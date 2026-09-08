@@ -34,6 +34,30 @@ enum DoorScreens {
         // account fact the screen already reads, not a screen of its own.
         case .home, .homeQuiet, .firstRun, .firstRunPaid:
             AgentsHome(model: host.stores.fleet, accounts: host.accounts) { _ in }
+        // The switcher is the home with its account list out. Drawn over the
+        // real screen rather than on bare ground, because what it covers and
+        // how the list behind it dims are facts about the screen underneath.
+        case .profiles:
+            AgentsHome(
+                model: host.stores.fleet, accounts: host.accounts,
+                accountsOpen: true) { _ in }
+        // You. The accounts this phone knows, what the one on screen has, and
+        // what belongs to the phone rather than to any account.
+        case .you:
+            YouScreen(
+                // Nothing, meaning whatever the phone is set to. The
+                // appearance the door is holding is the instrument taking the
+                // photograph, not a choice anybody made on this screen, and
+                // marking it as chosen would say the person picked the one the
+                // capture happens to be in.
+                accounts: host.accounts, appearance: nil,
+                // This phone's own key, read off the machine store the way
+                // the devices page reads it, so the row names the same
+                // identity the machines were paired with.
+                identity: host.stores.hosts.roster.map {
+                    Fingerprint.short($0.identity.fingerprint)
+                },
+                debugTools: true) { _ in }
         // The drawer is drawn over the screen it was opened from, which is a
         // conversation. It is the real one, filled from the same state, rather
         // than a stand-in: what the panel dims, what its edge uncovers and how

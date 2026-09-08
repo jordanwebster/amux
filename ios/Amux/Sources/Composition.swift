@@ -1,4 +1,5 @@
 import AmuxCore
+import AmuxDesign
 import AmuxShell
 import Foundation
 import Observation
@@ -20,6 +21,9 @@ final class Composition {
     /// What the App Store has to sell and how a purchase went. One per app:
     /// the store sells to an Apple Account, not to an amux one.
     let paywall = PaywallStore()
+    /// What the app is wearing. Nothing means whatever the phone is set to,
+    /// which is what most people want and what the app starts as.
+    var appearance: Appearance?
     /// The real account service. Every screen sees it as `CloudService` and
     /// none of them knows there is HTTP behind it.
     private let cloud: any CloudService = AmuxCloudService()
@@ -86,6 +90,17 @@ final class Composition {
                 guard await paywall.restore(store) == .bought else { return }
                 await refreshEntitlement()
             }
+        // Leaving an account. It stays listed with Sign In beside it: the
+        // address is the one thing a person recognises, and forgetting it
+        // would make signing back in look like adding a stranger.
+        case .signOutAccount(let id):
+            accounts.signOut(id)
+        case .wear(let wanted):
+            appearance = wanted
+        // Giving up an account for good is a page of its own, and this app
+        // does not have it yet.
+        case .deleteAccount:
+            break
         // Adding an account leaves the app for the web. Until that journey is
         // built there is nowhere to send somebody, and inventing a local one
         // the real one would have to undo would be worse than the button

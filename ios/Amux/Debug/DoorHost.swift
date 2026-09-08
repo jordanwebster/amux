@@ -187,15 +187,16 @@ final class DoorHost {
         Scenario.reading = Scenario.now
         stores = StoreBundle(account: AccountId("door"), clock: { Scenario.reading })
         accounts = AccountRegistry()
+        // Whole entries rather than one sign-in each: a declared state says
+        // which accounts are signed out and what each has reached, and adding
+        // them one at a time would sign every one of them in.
+        accounts.restore(fixture.accounts)
         signIn = SignInStore(phase: fixture.signIn)
         store.scripted = fixture.store
         store.reset()
         paywall = PaywallStore(
             entitlement: fixture.accounts.first?.entitlement ?? .none,
             plans: fixture.store.plans, phase: fixture.paywall)
-        for entry in fixture.accounts {
-            accounts.add(entry.account, entitlement: entry.entitlement)
-        }
         fixture.apply(stores)
         cloud.scripted = fixture.cloud
         cloud.reset()

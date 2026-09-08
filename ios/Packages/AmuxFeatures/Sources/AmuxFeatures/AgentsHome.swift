@@ -36,18 +36,32 @@ public struct AgentsHome: View {
     /// The fold is view state, not fleet state: opening it is a thing this
     /// screen is doing, and coming back to the screen starts it closed again.
     @State private var foldOpen = false
+    /// Whether the account switcher is out. View state for the same reason,
+    /// and handed in only so a capture can ask for the panel: which accounts
+    /// this phone has is a fact, having the list open is not.
+    @State private var switcherOpen: Bool
 
     public init(
         model: FleetStore,
         accounts: AccountRegistry,
+        accountsOpen: Bool = false,
         actions: @escaping @MainActor (HomeAction) -> Void
     ) {
         self.model = model
         self.accounts = accounts
         self.actions = actions
+        _switcherOpen = State(initialValue: accountsOpen)
     }
 
     public var body: some View {
+        SwitcherOverlay(
+            open: $switcherOpen, accounts: accounts, actions: switcher
+        ) {
+            home
+        }
+    }
+
+    private var home: some View {
         ZStack {
             Ground()
             VStack(alignment: .leading, spacing: 0) {
@@ -104,20 +118,7 @@ public struct AgentsHome: View {
     @ViewBuilder
     private var title: some View {
         if accounts.accounts.count > 1 || accounts.gate != .ready {
-            Menu {
-                ForEach(accounts.accounts) { entry in
-                    Button {
-                        actions(.switchAccount(entry.id))
-                    } label: {
-                        Label(
-                            entry.account.email,
-                            systemImage: entry.id == accounts.selected ? "checkmark" : "person")
-                    }
-                    .accessibilityIdentifier("home.account.\(entry.account.email)")
-                }
-                Button("Add Account") { actions(.addAccount) }
-                    .accessibilityIdentifier("home.addAccount")
-            } label: {
+            Button { switcherOpen.toggle() } label: {
                 HStack(spacing: 5) {
                     Text("Agents")
                         .designFont(.screenTitle, design)
@@ -126,14 +127,44 @@ public struct AgentsHome: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(design.inkFaint.color)
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("Agents, switch account")
-            .identified("home.title", label: "Agents, switch account", value: "Agents")
+            .identified(
+                "home.title", label: "Agents, switch account",
+                value: switcherOpen ? "open" : "Agents")
         } else {
             Text("Agents")
                 .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
                 .identified("home.title", value: "Agents")
+        }
+    }
+
+    /// What the switcher asked for, in the words this screen speaks.
+    ///
+    /// Switching, adding and signing back in all leave the screen, because
+    /// none of them is something a list can do; putting the panel away is the
+    /// one thing this screen decides for itself.
+    private func switcher(_ action: AccountsAction) {
+        switch action {
+        case .select(let id):
+            switcherOpen = false
+            actions(.switchAccount(id))
+        case .add:
+            switcherOpen = false
+            actions(.addAccount)
+        case .signIn:
+            switcherOpen = false
+            actions(.signIn)
+        case .dismiss:
+            switcherOpen = false
+        // Nothing else the panel can say reaches this screen: the rest of an
+        // account's actions live under You, where there is room to state what
+        // they do.
+        case .signOut, .delete, .subscription, .appearance, .identity, .support, .report:
+            break
         }
     }
 

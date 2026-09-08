@@ -1,6 +1,4 @@
-import AmuxCore
 import AmuxDesign
-import AmuxFeatures
 import SwiftUI
 
 // The shell is built before the screens that hang off it, so each tab and each
@@ -9,45 +7,6 @@ import SwiftUI
 // named for it as it lands, and nothing else about the shell changes when it
 // does — the Agents tab and the conversation have already been replaced this
 // way. Nothing here is a golden's subject; captures open a screen by name.
-
-/// The You tab until its screens land.
-struct YouPlaceholder: View {
-    let router: Router
-    let accounts: AccountRegistry
-    let actions: @MainActor (ShellAction) -> Void
-
-    var body: some View {
-        List {
-            if accounts.accounts.isEmpty {
-                Button("Sign In") { actions(.signIn) }
-                    .identified("you.signIn", label: "Sign In")
-            }
-            // What this account is entitled to and where that came from. A
-            // subscription bought on the web through the CLI is honoured, and
-            // this is the line that says so — the same one the You screen will
-            // carry when it lands.
-            Button { actions(.subscribe) } label: {
-                HStack {
-                    Text("Subscription")
-                    Spacer()
-                    Text(entitlement.summary)
-                }
-            }
-            .identified("you.subscription", label: "Subscription", value: entitlement.summary)
-            Button("Accounts") { router.open(.accounts) }
-                .identified("you.accounts", label: "Accounts")
-            Button("Appearance") { router.open(.appearance) }
-                .identified("you.appearance", label: "Appearance")
-            Button("Help") { router.open(.help) }
-                .identified("you.help", label: "Help")
-        }
-        .identified("you")
-    }
-
-    private var entitlement: Entitlement {
-        accounts.selectedAccount?.entitlement ?? .none
-    }
-}
 
 /// A route whose screen has not been built. It says which one, because a page
 /// that silently showed nothing would look like a screen that failed to load.

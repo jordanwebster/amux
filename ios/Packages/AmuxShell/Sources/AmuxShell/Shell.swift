@@ -36,6 +36,13 @@ public enum ShellAction: Equatable, Sendable {
     case buySubscription
     /// Put back a subscription this Apple Account already has.
     case restorePurchases
+    /// Leave an account. It stays listed with Sign In beside it.
+    case signOutAccount(AccountId)
+    /// Give up an account for good. It leaves the app for the account
+    /// service, so the shell does not do it.
+    case deleteAccount(AccountId)
+    /// Light, dark, or whatever the phone is set to.
+    case wear(Appearance?)
 }
 
 /// The app: three tabs, a stack under each, and a title menu on the Agents
@@ -54,6 +61,8 @@ public struct Shell: View {
     /// What is on offer and how a purchase went. One per app, not per account:
     /// the App Store sells to an Apple Account, not to an amux one.
     private let paywall: PaywallStore
+    /// What the app is wearing, or nothing for whatever the phone is set to.
+    private let appearance: Appearance?
     private let actions: @MainActor (ShellAction) -> Void
 
     public init(
@@ -62,8 +71,10 @@ public struct Shell: View {
         stores: StoreBundle,
         signIn: SignInStore,
         paywall: PaywallStore,
+        appearance: Appearance? = nil,
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
+        self.appearance = appearance
         self.router = router
         self.accounts = accounts
         self.stores = stores
@@ -89,7 +100,9 @@ public struct Shell: View {
             }
             SwiftUI.Tab(Tab.you.title, systemImage: Tab.you.symbol, value: Tab.you) {
                 NavigationStack(path: $router.youPath) {
-                    YouTabRoot(router: self.router, accounts: accounts, actions: actions)
+                    YouTabRoot(
+                        router: self.router, accounts: accounts, stores: stores,
+                        appearance: appearance, actions: actions)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
             }
@@ -647,13 +660,54 @@ struct LinkAsked {
     mutating func asked(_ current: AccountId) { account = current }
 }
 
+/// You.
+///
+/// The screen decides nothing: switching account, signing in and out, buying
+/// and deleting all leave here, because each of them either changes what the
+/// whole app is pointed at or reaches something outside it.
 private struct YouTabRoot: View {
     let router: Router
     let accounts: AccountRegistry
+    let stores: StoreBundle
+    let appearance: Appearance?
     let actions: @MainActor (ShellAction) -> Void
 
     var body: some View {
-        YouPlaceholder(router: router, accounts: accounts, actions: actions)
-            .navigationTitle(Tab.you.title)
+        YouScreen(
+            accounts: accounts, appearance: appearance,
+            // This phone's own key, read off the machine store the way the
+            // devices page reads it: absent until a connection has said what
+            // this device's identity is, rather than guessed at.
+            identity: stores.hosts.roster.map { Fingerprint.short($0.identity.fingerprint) },
+            debugTools: debugTools
+        ) { action in
+            switch action {
+            case .select(let id): actions(.selectAccount(id))
+            case .add: actions(.addAccount)
+            case .signIn: actions(.signIn)
+            case .signOut(let id): actions(.signOutAccount(id))
+            case .subscription: actions(.subscribe)
+            case .appearance(let wanted): actions(.wear(wanted))
+            case .delete(let id): actions(.deleteAccount(id))
+            // This phone's key and the machines that trust it are one page,
+            // and it is the machines tab: an identity is only interesting
+            // beside what it is trusted by.
+            case .identity: router.select(.hosts)
+            case .support, .report: router.open(.help)
+            case .dismiss: break
+            }
+        }
+        // The screen draws its own header, so the bar would be a second one.
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    /// Whether this build can write a report at all. A build a person installs
+    /// cannot, so it does not offer to.
+    private var debugTools: Bool {
+        #if AMUX_DEBUG_TOOLS
+        true
+        #else
+        false
+        #endif
     }
 }

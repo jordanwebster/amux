@@ -54,8 +54,13 @@ struct RootView: View {
             stores: composition.stores,
             signIn: composition.signIn,
             paywall: composition.paywall,
+            appearance: composition.appearance,
             actions: { composition.handle($0) }
         )
+        // What the app is wearing. Set here rather than inside a screen: it
+        // is the whole app's, and a screen that carried it could not be
+        // photographed in the other one.
+        .preferredColorScheme(composition.appearance?.colorScheme)
         .onOpenURL { composition.router.open($0) }
     }
 }

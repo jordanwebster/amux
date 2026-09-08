@@ -69,4 +69,25 @@ public struct Fixture: Identifiable, Sendable {
 
     /// Signed in, nothing bought.
     public static let unsubscribed = AccountEntry(account: ScriptedCloudState.ada)
+
+    /// A phone with more than one account on it: the person's own, the work
+    /// one they are also in, and one they signed out of and kept.
+    ///
+    /// Three because that is what the switcher has to cope with — a selected
+    /// account, another signed-in one, and one offering to sign back in. The
+    /// host counts are the ones a connection reported; the account nobody is
+    /// connected to has none, and says its address instead.
+    public static let several = [
+        AccountEntry(
+            account: ScriptedCloudState.ada,
+            entitlement: .active(source: .web, renews: nil), hosts: 3),
+        AccountEntry(
+            account: SignedInAccount(
+                id: AccountId("acme"), email: "ada@acme.example", displayName: "Acme"),
+            entitlement: .active(source: .appStore, renews: nil)),
+        AccountEntry(
+            account: SignedInAccount(
+                id: AccountId("side"), email: "side@example.com", displayName: "Side project"),
+            signedIn: false),
+    ]
 }

@@ -10,13 +10,44 @@ public struct AccountEntry: Sendable, Equatable, Identifiable {
     public var account: SignedInAccount
     public var signedIn: Bool
     public var entitlement: Entitlement
+    /// How many machines this account reaches, where this phone knows. Only
+    /// the account on screen has a connection behind it, so the others are
+    /// unknown rather than zero: writing zero would say an account has no
+    /// hosts when the truth is that nobody has asked.
+    public var hosts: Int?
+    /// How many agents on this account are waiting for you.
+    ///
+    /// Absent until something actually subscribes to that account's fleet in
+    /// the background. A phone with one connection cannot see another
+    /// account's agents, and a number this phone cannot see is not a number it
+    /// may invent — an inactive account with a fabricated "1" beside it would
+    /// send somebody to look at nothing.
+    public var attention: Int?
 
     public var id: AccountId { account.id }
 
-    public init(account: SignedInAccount, signedIn: Bool = true, entitlement: Entitlement = .none) {
+    public init(
+        account: SignedInAccount, signedIn: Bool = true, entitlement: Entitlement = .none,
+        hosts: Int? = nil, attention: Int? = nil
+    ) {
         self.account = account
         self.signedIn = signedIn
         self.entitlement = entitlement
+        self.hosts = hosts
+        self.attention = attention
+    }
+
+    /// What this account's row says under its name.
+    public var line: String {
+        if !signedIn { return "Signed out" }
+        guard let hosts else { return account.email }
+        return hosts == 1 ? "1 host" : "\(hosts) hosts"
+    }
+
+    /// What the person is called, falling back to the address when the account
+    /// service gave no name.
+    public var name: String {
+        account.displayName ?? account.email
     }
 }
 
@@ -92,6 +123,20 @@ public final class AccountRegistry {
         }
     }
 
+    /// Puts a whole set of accounts back, as a launch that remembered them or
+    /// a declared state has them.
+    ///
+    /// Apart from `add` because it carries everything an entry knows —
+    /// whether it is signed in, how many machines it reached, what is waiting
+    /// on it — and `add` deliberately does not: adding an account is the end
+    /// of a sign-in, and a sign-in knows none of that yet.
+    public func restore(_ entries: [AccountEntry], selected wanted: AccountId? = nil) {
+        accounts = entries
+        let chosen = wanted ?? entries.first(where: \.signedIn)?.id ?? entries.first?.id
+        selected = chosen
+        stores = chosen.map { StoreBundle(account: $0) }
+    }
+
     public func select(_ id: AccountId) {
         guard accounts.contains(where: { $0.id == id }) else { return }
         guard selected != id else { return }
@@ -104,6 +149,17 @@ public final class AccountRegistry {
         accounts[index].entitlement = entitlement
     }
 
+    /// How many agents on an account that is not on screen are waiting.
+    ///
+    /// Nothing in this app calls this yet, and that is deliberate: it is where
+    /// a background subscription to another account's fleet reports what it
+    /// found. Until one exists the switcher says nothing about the other
+    /// account, which is the truth.
+    public func attention(_ count: Int?, for id: AccountId) {
+        guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
+        accounts[index].attention = count
+    }
+
     /// Apply a batch that answers for one account. Returns whether it landed.
     @discardableResult
     public func deliver(_ batch: [Event], for account: AccountId) -> Bool {
@@ -112,6 +168,12 @@ public final class AccountRegistry {
             return false
         }
         stores.apply(batch)
+        // How many machines this account reaches, from the connection that
+        // just answered. The switcher reads it, and it is a fact rather than
+        // a guess exactly because it came from here.
+        if let index = accounts.firstIndex(where: { $0.id == account }) {
+            accounts[index].hosts = stores.hosts.hosts.count
+        }
         return true
     }
 

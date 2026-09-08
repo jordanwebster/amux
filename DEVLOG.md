@@ -4,6 +4,45 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The accounts this phone knows, the switcher over the list they
+are a lens on, and You.**
+
+An account is a lens over the agent list, so the control that changes it hangs
+off the title of the list it changes. That control used to be a system menu; it
+is now the app's own panel, because the rows are not menu items — each carries
+what this phone actually knows about that account, and one of them offers to
+sign back in rather than to switch. Retaking `first-run` and `first-run-paid`
+was the whole visible cost: the word and the chevron are the same size in the
+same place, and what moved is a fraction of a point of layout the system menu
+was adding around its label.
+
+What a row says is only what this phone knows. The account on screen has a
+connection behind it and counts its machines from what that connection
+answered; the others say their address, because writing "0 hosts" would claim
+they have none when the truth is that nobody has asked. A signed-out account
+stays listed with Sign In beside it — the address is the one thing a person
+recognises, and forgetting it would make signing back in look like adding a
+stranger — and signing out takes its stores down without touching the account
+next to it.
+
+The needs-you badge for an account that is not on screen renders from a store
+fact and nothing else, and nothing in this build populates it yet. That is
+deliberate: a phone with one connection cannot see another account's agents,
+and an invented count would send somebody to look at nothing. It appears the
+moment a background subscription to the other account's fleet reports what it
+found.
+
+You is one page. The accounts and Add Account, then the selected account's own
+actions continuing that list — what it has bought and where that came from,
+Sign Out, Delete Account — then what belongs to the phone: appearance as a
+control on its own row rather than a value behind a screen, and this device's
+key. Support sits with reporting because "something is wrong" is one intent
+with two exits, and Report a Problem is only there in a build that can write
+one. There is no Notifications row, because this app has no push at all and a
+row leading nowhere would be worse than its absence.
+
+---
+
 2026-09-08 — **The paywall sells through StoreKit, and a subscription bought
 anywhere else is honoured.**
 

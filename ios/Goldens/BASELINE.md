@@ -114,13 +114,22 @@ would teach that it is a service you subscribe to.
 
 No departures.
 
+The title's own control changed under these two on 2026-09-08 and the baselines
+were retaken. The account list used to be a system menu hanging off the word
+"Agents"; it is now the app's own panel, because the rows carry what this phone
+knows about each account and one of them offers to sign back in. The word and
+the chevron are the same size in the same place; what moved is a fraction of a
+point of layout the system menu was adding around its label, visible only as
+antialiasing on the last letters.
+
 ## first-run-paid
 
 Signed in and stopped at the second gate. The same empty screen with one word
 changed on the button and one line changed in the caption, because the state is
 the same: nothing is reachable yet.
 
-No departures.
+No departures. The title's control changed with `first-run`'s, and this
+baseline was retaken for the same reason.
 
 ## sign-in
 
@@ -146,6 +155,54 @@ on somebody else's behalf. The button reads *Try Again*; the caption still says
 where it opens, because that has not changed.
 
 There is no reference for this state.
+
+## profiles
+
+The account switcher out over the home it hangs from: three accounts, the one
+on screen marked, one signed out and offering to sign back in, and Add Account
+under them. An account is a lens over the agent list, so the control that
+changes it belongs on the thing it is a lens over.
+
+- **No count beside the inactive account.** The reference puts a "1" on the
+  account that is not on screen. Nothing in this build subscribes to another
+  account's fleet, so there is no count to draw — and a number this phone
+  cannot see is not one it may invent, because it would send somebody to look
+  at nothing. The badge renders from a store fact and appears the moment
+  something populates it.
+- **No disc beside the title.** The home draws one only when there is an
+  account problem to point at; on a working phone the title is a title. That is
+  the home screen's own rule and this is the home screen.
+- **The account nobody is connected to says its address, not a host count.**
+  The reference gives every account a count. Only the account on screen has a
+  connection behind it, and writing "0 hosts" for the others would say they
+  have none when the truth is that nobody has asked.
+- **The panel is the app's own, not a system menu.** Each row carries what this
+  phone knows about that account and one of them offers to sign back in rather
+  than to switch; a menu would flatten all of that into a list of words.
+
+## you
+
+One page: the accounts this phone knows, what the account on screen has, and
+the things that belong to the phone rather than to any account. Appearance is a
+control on its own row rather than a value behind a screen, support sits with
+reporting because "something is wrong" is one intent with two exits, and the
+account's own actions sit under the list of accounts because they are that
+list's selected row continued.
+
+- **No Notifications row.** This app has no push and no notification
+  authorisation at all, and the release audit asserts that the string is
+  absent. A row leading to a setting that does nothing would be worse than not
+  having it.
+- **Subscription reads "Active · amux.sh", not "Active · yearly".** What this
+  device needs to say is where the subscription came from, because that is
+  where it is cancelled and it is the one thing that differs between a phone
+  that bought it and a phone honouring one bought on the web. The interval
+  lives in the store that bills it.
+- **Report a Problem only where a report can be written.** The reference draws
+  it unconditionally; a build a person installs carries no capture and would be
+  offering an exit that goes nowhere.
+- **The accounts are this app's own scenario.** Ada, her work account and a
+  side project she signed out of, rather than the drawing's names.
 
 ## paywall
 

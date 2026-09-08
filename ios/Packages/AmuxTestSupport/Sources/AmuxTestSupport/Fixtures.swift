@@ -93,6 +93,8 @@ public enum Fixtures {
         Built(.firstRunPaid, "first-run-paid"),
         Built(.signIn, "sign-in"),
         Built(.signIn, "sign-in-failed"),
+        Built(.profiles, "profiles"),
+        Built(.you, "you"),
         Built(.paywall, "paywall"),
         Built(.paywall, "paywall-web"),
         Built(.paywall, "paywall-pending"),
@@ -326,11 +328,17 @@ public enum Fixtures {
         },
 
         // 6 · You
-        Fixture(id: "profiles", screen: .profiles) { bundle in
+        // The switcher out over the home it hangs from: three accounts, one
+        // selected, one signed out and offering to sign back in.
+        Fixture(id: "profiles", screen: .profiles, accounts: Fixture.several) { bundle in
             States.open(bundle)
         },
-        Fixture(id: "you", screen: .you) { bundle in
+        // The whole page: the accounts, what the one on screen has bought,
+        // and what belongs to the phone. The device roster is filled because
+        // this phone's own key is one of the rows.
+        Fixture(id: "you", screen: .you, accounts: Fixture.several) { bundle in
             States.open(bundle)
+            States.trusted(bundle)
         },
         Fixture(id: "delete", screen: .delete, cloud: ScriptedCloudState(
             deletion: .blockedByRenewal(source: .appStore,
