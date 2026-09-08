@@ -33,6 +33,19 @@ self-replays the bundle, then repaints live state; the flow's own inputs never
 enter the captured trace. The chrome is suspended during raw attach, so detach
 before capturing an agent's screen.
 
+On the phone the same flow starts from a screenshot. iOS cannot let an app
+intercept that gesture — the app is told after the system has already taken and
+saved its own picture — which costs nothing, because nothing on screen changed
+in between. The app freezes its composited frame, the runtime's recording and
+the view-state trace at once, and only then floats a Report pill over the
+screen, beside the system's own preview. Taking it opens the report on the
+frozen frame; a tap anywhere else puts the offer away and lets go of the
+picture. The system's preview covering the app does not cancel anything: coming
+back finds the same offer over the same frame. The flow is also reachable
+deliberately, from Report a Problem under Help on the You tab, which freezes
+the screen behind it before the report appears. Both exist only in a debug
+build; a build a person installs has neither.
+
 ## Find the report
 
 Reports belong to the selected profile. By default they live at that profile's

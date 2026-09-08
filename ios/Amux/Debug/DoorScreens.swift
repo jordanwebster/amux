@@ -167,6 +167,23 @@ enum DoorScreens {
         // them — including the account that already pays.
         case .paywall:
             Paywall(model: host.paywall) { _ in }
+        // Something looked wrong and the phone was photographed. The offer is
+        // drawn over the real conversation rather than over bare ground,
+        // because what is being reported is that screen: where the pill sits
+        // relative to the composer, and what of the transcript it covers, are
+        // facts about both at once.
+        //
+        // The system's own screenshot preview is not here and cannot be. It
+        // belongs to the system, appears only after a real screenshot, and is
+        // outside this app's window — which is the same reason the report's
+        // frozen frame has no status bar in it.
+        case .shake:
+            Conversation(
+                model: host.stores.conversation(Scenario.focus),
+                subject: ConversationSubject(
+                    agent: Scenario.focus, in: host.stores.fleet),
+                naming: { host.stores.fleet.name(of: $0) }) { _ in }
+                .reportOffer(true, take: {}, dismiss: {})
         // Starting an agent. The chooser over it is a state of this screen
         // rather than a screen beside it, so the fixture decides whether it is
         // open and this is the one arm either way.

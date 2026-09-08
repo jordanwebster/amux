@@ -29,6 +29,15 @@ final class Composition {
     /// What the app is wearing. Nothing means whatever the phone is set to,
     /// which is what most people want and what the app starts as.
     var appearance: Appearance?
+    /// The one report this phone is in the middle of, and what freezes a
+    /// screen into one.
+    ///
+    /// Both are nothing in a build a person installs. Reporting is a debug
+    /// tool: it reads the runtime's recording and the embedded daemon's dump,
+    /// neither of which the shipping library even exposes, so a shipping build
+    /// has nothing to hand the shell and the shell draws no way in.
+    let reports: ReportStore?
+    let freezer: (any ReportFreezing)?
     /// The account service. Every screen sees it as `CloudService` and none of
     /// them knows there is HTTP behind it.
     private let cloud: any CloudService
@@ -62,6 +71,13 @@ final class Composition {
         cloud = AmuxCloudService()
         store = AppStoreFront()
         webAuth = WebSignIn()
+        #endif
+        #if AMUX_DEBUG_TOOLS
+        reports = ReportStore()
+        freezer = ReportFreeze()
+        #else
+        reports = nil
+        freezer = nil
         #endif
         router.loads(with: self)
         rememberedFleet()

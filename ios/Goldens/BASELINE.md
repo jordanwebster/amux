@@ -1222,3 +1222,34 @@ The whole enumeration of that machine's repositories, searchable, and a field
 for a path it did not list, are one tap away on the directory row; they are a
 state of this screen rather than a screen of their own, so the machine, the
 layer and the button that starts it never leave the display.
+
+## shake
+
+Something looked wrong, the phone was photographed, and the app offers to
+report the same frame. The picture is the conversation the person was on with
+the app's own Report pill floating over it, just above the composer.
+
+The offer is drawn only after the frame, the runtime's recording and the
+view-state trace have all been frozen. That order is the whole flow: a capture
+taken once the report UI was up would be a picture of the report rather than of
+what was wrong.
+
+- **The system's screenshot preview is not in the picture, and cannot be.** The
+  reference draws Apple's thumbnail in the bottom-left corner with the pill
+  beside it. That thumbnail belongs to the system, appears only after a real
+  screenshot, and is drawn outside this app's window; a capture opens the state
+  directly, so there is nothing there. What the app owns is the pill, and the
+  pill is what this baseline locks.
+- **The pill is inset 108 pt from the leading edge, not 77 pt.** The reference
+  put it five points to the right of the thumbnail it drew, which is about
+  59 pt wide. The system's real preview is wider than that and its size follows
+  a setting the app is never told about, so the gap is set to clear the widest
+  of them rather than to match a drawing of the narrow one. Sitting under the
+  preview would be worse than sitting further from it.
+- **The conversation behind it is this build's** — the same rows, the same
+  header and the same composer every other conversation capture shows. The
+  reference's transcript is its own drawing and differs in its wording and in
+  the effort chip beside the model, both of which carry over from `run`.
+
+Everything else is the reference: one glass pill, a ladybug and the word
+Report, floating over the transcript just clear of the composer.

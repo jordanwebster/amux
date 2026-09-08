@@ -107,6 +107,7 @@ public enum Fixtures {
         Built(.pairConfirm, "pair-confirm"),
         Built(.newAgent, "new-agent"),
         Built(.offline, "offline"),
+        Built(.shake, "shake"),
     ]
 
     /// The screens the design catalogue describes, in its own order.

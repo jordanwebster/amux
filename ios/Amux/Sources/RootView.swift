@@ -56,6 +56,8 @@ struct RootView: View {
             paywall: composition.paywall,
             deletion: composition.deletion,
             appearance: composition.appearance,
+            reports: composition.reports,
+            freezer: composition.freezer,
             actions: { composition.handle($0) }
         )
         // What the app is wearing. Set here rather than inside a screen: it

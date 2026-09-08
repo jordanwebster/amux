@@ -34,6 +34,7 @@
 		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
 		894FA032EAF19BFC5E92664F /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4FC885DCA537FD2ABD0FD /* Trace.swift */; };
 		8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */; };
+		8F140E2B8F22F4D06C725763 /* ReportFreeze.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */; };
 		9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE1CD31C989C5DC52354A7AE /* WritingTests.swift */; };
 		9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */; };
 		A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */; };
@@ -95,6 +96,7 @@
 		71AECE15627BD11A3278E26C /* HostsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsTests.swift; sourceTree = "<group>"; };
 		7316CFA811C55B9CEEB041C5 /* Judge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Judge.swift; sourceTree = "<group>"; };
 		7841E9EA7855115C8262F599 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportFreeze.swift; sourceTree = "<group>"; };
 		7BF809F88F54D264E26E1F0B /* DrawerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerTests.swift; sourceTree = "<group>"; };
 		7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scenario.swift; sourceTree = "<group>"; };
 		8959E3A72299B8152BE86967 /* AmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -244,6 +246,7 @@
 				590B62F0B4C074AA2233FC70 /* DoorServer.swift */,
 				A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */,
 				2D67FA937AF3288820FA3464 /* Perturbation.swift */,
+				7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */,
 				E8CE78DF417F5614935595CA /* VisibleTree.swift */,
 			);
 			path = Debug;
@@ -467,6 +470,7 @@
 				344D301838279573239BD80D /* Judge.swift in Sources */,
 				A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */,
 				DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */,
+				8F140E2B8F22F4D06C725763 /* ReportFreeze.swift in Sources */,
 				F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */,
 				9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */,
 				05DFFA86753B995BB850DE4C /* ScriptedCloud.swift in Sources */,

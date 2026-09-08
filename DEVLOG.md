@@ -4,6 +4,54 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **A screenshot on the phone freezes what was on screen.**
+
+The report flow on the phone now starts where the design said it should: you
+press the buttons you already press when something looks wrong. iOS will not
+let an app intercept that gesture — the app is told once the system has taken
+and saved its own picture — which costs nothing, because nothing on screen
+changed in between.
+
+What matters is the order, and it is the terminal's `C-g` order copied rather
+than approximated. The app photographs its own composited window, freezes the
+shared runtime's recording and writes out the view-state trace, all in one pass
+with no suspension point in it, and only then floats a Report pill over the
+screen. A capture taken after the report UI was up would be a picture of the
+report instead of a picture of the problem, and a freeze that yielded halfway
+would produce a bundle whose picture and whose messages were of different
+moments.
+
+The offer is the app's own control, not the system's, and it sits beside the
+system's screenshot preview rather than under it — inset far enough to clear
+the widest preview, since an app is never told where that preview is. Taking it
+opens the report on the frozen frame; a tap anywhere else puts the offer away
+and lets the picture go, so an accidental screenshot costs nothing. The preview
+covering the app cancels nothing: the capture belongs to a store rather than to
+a screen, so being put away and coming back finds the same offer over the same
+frame. A second screenshot while one report is already in hand is ignored,
+because swapping the picture under somebody mid-report would lose what they had
+already said about it.
+
+Report a Problem, under Help on the You tab, is the same freeze without the
+offer in between: somebody who went looking for the row has already said yes.
+Both paths are behind the debug-tools flag — a build a person installs does not
+observe the notification, does not draw the row, and is handed neither the
+store nor the thing that freezes a screen.
+
+The screen the report opens on shows the frozen frame and a way out of it. The
+rectangles, their notes and Send are the next piece of it.
+
+The picture is the app's window, which means the status bar and everything else
+the system draws outside that window are not in it. A frozen frame therefore
+carries its own point size and scale, so a rectangle drawn on it later means
+the same place whatever read it back.
+
+Green: `wt run ios-goldens -- shake` (2 captures, 0 failed),
+`wt run ios-goldens -- --built` (106 captures, 0 failed), `wt run ios-unit`,
+`wt run ios-lint`.
+
+---
+
 2026-09-08 — **The cloud takes a report bundle.**
 
 A phone can capture a bug report but had nowhere to send one. `POST
