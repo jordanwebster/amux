@@ -15,7 +15,7 @@ final class SchemaTests: XCTestCase {
 
     func testEveryPinnedEventDecodes() throws {
         let events = try pinnedEvents()
-        XCTAssertEqual(events.count, 17)
+        XCTAssertEqual(events.count, 18)
     }
 
     /// The keys the phone holds arrive whole: a screen that showed half a
@@ -147,8 +147,10 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(diff.document.identity.base, .workingTree)
         XCTAssertEqual(diff.document.identity.head, "abc")
 
-        XCTAssertEqual(events[4], .tokenRequest(requestId: 7))
+        XCTAssertEqual(events[4], .tokenRequest(requestId: 7, account: "personal"))
         XCTAssertEqual(events[15], .invariant(detail: "example diagnostic"))
+        // What an account nobody is looking at has waiting, named for itself.
+        XCTAssertEqual(events[16], .attention(account: "work", waiting: 2))
     }
 
     func testTheLinkStatesWhyItIsDown() throws {

@@ -14,7 +14,12 @@ final class BridgeClientTests: XCTestCase {
             dataDirectory: URL(fileURLWithPath: "/tmp/data"),
             cacheDirectory: URL(fileURLWithPath: "/tmp/cache"),
             deviceName: "iPhone",
-            relay: .init(url: "https://relay.example", tls: .system, token: .fixed("bearer")),
+            relay: .init(url: "https://relay.example", tls: .system),
+            accounts: [
+                .init(id: "personal", token: .fixed("bearer")),
+                .init(id: "work", token: .callback),
+            ],
+            active: "work",
             logPath: URL(fileURLWithPath: "/tmp/amux.log"))
         let json = try XCTUnwrap(
             JSONSerialization.jsonObject(with: AmuxJSON.encoder.encode(configuration)) as? [String: Any])
@@ -23,7 +28,12 @@ final class BridgeClientTests: XCTestCase {
         XCTAssertEqual(json["frame_interval_ns"] as? UInt64, 16_666_667)
         let relay = try XCTUnwrap(json["relay"] as? [String: Any])
         XCTAssertEqual(relay["tls"] as? String, "System")
-        XCTAssertEqual((relay["token"] as? [String: Any])?["Static"] as? String, "bearer")
+        XCTAssertNil(relay["token"], "a token belongs to an account, not to the relay")
+        let accounts = try XCTUnwrap(json["accounts"] as? [[String: Any]])
+        XCTAssertEqual(accounts.map { $0["id"] as? String }, ["personal", "work"])
+        XCTAssertEqual((accounts[0]["token"] as? [String: Any])?["Static"] as? String, "bearer")
+        XCTAssertEqual(accounts[1]["token"] as? String, "Callback")
+        XCTAssertEqual(json["active"] as? String, "work")
 
         let callback = BridgeConfiguration.Token.callback
         XCTAssertEqual(String(decoding: try AmuxJSON.encoder.encode(callback), as: UTF8.self), "\"Callback\"")
@@ -52,7 +62,9 @@ final class BridgeClientTests: XCTestCase {
             dataDirectory: root.appendingPathComponent("data"),
             cacheDirectory: root.appendingPathComponent("cache"),
             deviceName: "unit-test",
-            relay: .init(url: "https://127.0.0.1:1", tls: .system, token: .fixed("unused")),
+            relay: .init(url: "https://127.0.0.1:1", tls: .system),
+            accounts: [.init(id: "unit-test", token: .fixed("unused"))],
+            active: "unit-test",
             logPath: root.appendingPathComponent("amux.log")))
         defer { client.stop() }
 

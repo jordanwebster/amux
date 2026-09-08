@@ -151,10 +151,10 @@ public final class AccountRegistry {
 
     /// How many agents on an account that is not on screen are waiting.
     ///
-    /// Nothing in this app calls this yet, and that is deliberate: it is where
-    /// a background subscription to another account's fleet reports what it
-    /// found. Until one exists the switcher says nothing about the other
-    /// account, which is the truth.
+    /// Written from that account's own live subscription, which the runtime
+    /// keeps folding while the app is in front of somebody. Nothing here
+    /// counts or guesses: an account that has reported nothing says nothing in
+    /// the switcher, which is the truth.
     public func attention(_ count: Int?, for id: AccountId) {
         guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
         accounts[index].attention = count
@@ -163,6 +163,13 @@ public final class AccountRegistry {
     /// Apply a batch that answers for one account. Returns whether it landed.
     @discardableResult
     public func deliver(_ batch: [Event], for account: AccountId) -> Bool {
+        // What an account nobody is looking at has waiting arrives on the
+        // selected account's stream naming its own account, so it is credited
+        // to the account it names rather than to the one that carried it.
+        for event in batch {
+            guard case .attention(let named, let waiting) = event else { continue }
+            attention(waiting, for: AccountId(named))
+        }
         guard account == selected, let stores, stores.account == account else {
             dropped += 1
             return false

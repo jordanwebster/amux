@@ -202,6 +202,13 @@ pub(crate) struct ProfileRuntime {
     in_process_connection: InProcessConnection,
     background_tasks: Vec<JoinHandle<()>>,
     cloud_connector: Mutex<Option<CloudConnector>>,
+    /// The relay loop of an embedded device, when its embedder brought one.
+    ///
+    /// A device with no configuration file and no cloud of its own is opened
+    /// with the relay it is to use, so this is that connection rather than
+    /// the connector a configured profile discovers for itself. It is held
+    /// with the profile so that stopping the profile stops the link.
+    relay_task: Mutex<Option<JoinHandle<()>>>,
     status: RuntimeStatus,
     #[cfg(unix)]
     unix_accept_task: Option<JoinHandle<()>>,
@@ -396,6 +403,7 @@ async fn build(
         in_process_connection,
         background_tasks,
         cloud_connector: Mutex::new(None),
+        relay_task: Mutex::new(None),
         status,
         #[cfg(unix)]
         unix_accept_task,
@@ -428,6 +436,28 @@ impl ProfileRuntime {
     /// against this before it will authenticate one.
     pub(crate) async fn set_cloud_url(&self, cloud_url: String) {
         self.state.write().await.config.cloud_url = cloud_url;
+    }
+
+    /// Attach an embedder's own relay to this profile.
+    ///
+    /// The cloud this profile is on becomes that relay, for the same reason an
+    /// embedded runtime's does: a pairing link names the cloud it was issued
+    /// for and is refused when that is not this one. One profile holds one
+    /// relay; attaching a second replaces the first.
+    pub(crate) async fn attach_relay(&self, relay: crate::EmbeddedRelay) {
+        self.set_cloud_url(relay.endpoint.url()).await;
+        let task = relay.spawn(self.services.link_connector_ctx());
+        if let Some(previous) = self.relay_task.lock().await.replace(task) {
+            previous.abort();
+            let _ = previous.await;
+        }
+    }
+
+    async fn stop_relay(&self) {
+        if let Some(task) = self.relay_task.lock().await.take() {
+            task.abort();
+            let _ = task.await;
+        }
     }
 
     pub(crate) async fn configure_credentials(
@@ -560,6 +590,7 @@ impl ProfileRuntime {
     pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
         self.stop_accepting_local_clients().await;
         self.stop_cloud().await;
+        self.stop_relay().await;
 
         if let Some(host) = &self.agent_host {
             host.notify_shutdown(reason).await;
@@ -610,6 +641,11 @@ impl Drop for ProfileRuntime {
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Some(task) = &self.unix_accept_task {
+            task.abort();
+        }
+        if let Ok(task) = self.relay_task.try_lock()
+            && let Some(task) = task.as_ref()
+        {
             task.abort();
         }
     }

@@ -506,6 +506,30 @@ impl Installation {
         Ok(())
     }
 
+    /// Give one profile the relay its embedder resolved.
+    ///
+    /// An embedded installation has no configuration file naming a cloud: the
+    /// application signs in to the account service itself and hands each
+    /// account's relay down. So a profile is told which relay it is on rather
+    /// than discovering one, and the link belongs to the profile — stopping
+    /// the profile stops it, and the account a late token would refresh is the
+    /// one that asked for it.
+    pub async fn use_embedded_relay(
+        &self,
+        id: ProfileId,
+        relay: crate::EmbeddedRelay,
+    ) -> Result<(), InstallationError> {
+        let slot = self.inner.state.lock().unwrap().active(id)?.slot.clone();
+        let runtime = slot.runtime.lock().await;
+        self.inner.state.lock().unwrap().active(id)?;
+        runtime
+            .as_ref()
+            .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))?
+            .attach_relay(relay)
+            .await;
+        Ok(())
+    }
+
     /// Obtain pairing and trust administration for a running profile in process.
     pub async fn admin(&self, id: ProfileId) -> Result<super::ProfileAdmin, InstallationError> {
         self.admin_service(id)

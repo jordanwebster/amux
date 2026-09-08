@@ -96,7 +96,8 @@ public final class StoreBundle {
         // Nothing here names an agent, so every open conversation is offered
         // the event and decides for itself. A result is claimed only by the
         // conversation that dispatched the operation it answers.
-        case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant, .devices:
+        case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant, .devices,
+             .attention:
             for store in conversations.values { store.apply(event) }
         }
     }

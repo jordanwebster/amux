@@ -11428,3 +11428,51 @@ Revoking is one-sided as this build stands: the phone stops trusting the key
 and closes the link with the reason on it, and the machine's own record of the
 phone stays until it is removed there. The journey says so rather than
 asserting it away.
+
+## Accounts are profiles: the bridge over the installation
+
+The phone's runtime seam now opens an `Installation` and gives every signed-in
+account a profile of its own, rather than one embedded device per launch. A
+profile is a whole device where it matters — its own key, its own trust store,
+its own relay link — so two accounts on one phone are two devices, and neither
+can see what the other has paired with. The start configuration says so
+directly: `accounts` is a list of `{id, token}` and `active` names the one on
+screen; the relay carries only its URL and TLS, because a token belongs to an
+account and not to a relay. Every token request names the account it wants, so
+a reply cannot be credited to the wrong one.
+
+Two small extensions to the layer this rests on. `Installation::use_embedded_relay`
+gives one profile the relay its embedder resolved, forwarding to a new
+`ProfileRuntime::attach_relay` whose task stops with the profile — the phone
+signs in to the account service itself and hands each account's relay down,
+where a desktop profile discovers one from its configuration. And
+`Runtime::switch_in_place_with_client` switches the reducer to a profile the
+process already holds a client for; the existing socket switch is the same code
+behind a different connector, so a switch retires the previous generation and
+refuses its late results exactly as before.
+
+The switcher's "waiting" count for an account nobody is looking at comes from
+that account's own fold, running on a task of its own and subscribed to all of
+its agents. Nothing runs on a phone, so the policy that keeps a machine's own
+agents streamed never fires here and an unsubscribed agent reports its
+attention as unknown; a badge derived from unknown would be a guess. The fold
+has to be a task rather than a branch of the screen's loop, because an account
+with machines answering produces messages continuously and would otherwise take
+every turn from the screen.
+
+Proved against an in-process testnet with two cloud users:
+`mobile_profiles_give_each_account_its_own_device_identity_and_trust` pairs one
+account with one machine and the other with another, and finds two distinct
+device identities, two disjoint trust rosters and no fleet that ever carried
+both accounts' agents; `mobile_profiles_switching_drops_every_late_result_from_the_previous_account`
+reports an inventory result on the shell edge of the account just left and
+finds it refused rather than folded, and never on any screen;
+`mobile_profiles_report_what_is_waiting_on_the_account_that_is_not_on_screen`
+leaves an agent waiting on one account, switches away, and reads the same count
+back for the account now off screen.
+
+Green: `wt run mobile-check`, `wt lint`, `wt test -- --lib mobile_profiles`,
+`wt test -- --lib mobile_` (one pre-existing failure,
+`mobile_cache_local_sync_prunes_unpaired_host_across_disconnected_frames`,
+which fails identically with every change here reverted and is tracked
+separately).

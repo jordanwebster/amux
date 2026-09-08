@@ -143,7 +143,10 @@ fn mobile_projection_schema_snapshot() {
     let mut projection = subscribed();
     let mut events = vec![Event::connection(&RelayConnection::Connecting)];
     events.extend(collect(&mut projection, &model));
-    events.push(Event::TokenRequest { request_id: 7 });
+    events.push(Event::TokenRequest {
+        request_id: 7,
+        account: "personal".into(),
+    });
     events.push(Event::OpResult {
         op: OpId(Uuid::from_u128(3)),
         outcome: OpOutcomeDto::Shared(Box::new(OpOutcome::InputSent)),
@@ -197,6 +200,10 @@ fn mobile_projection_schema_snapshot() {
     }));
     events.push(Event::Invariant {
         detail: "example diagnostic".into(),
+    });
+    events.push(Event::Attention {
+        account: "work".into(),
+        waiting: 2,
     });
     events.push(Event::Devices {
         identity: DeviceIdentityDto {

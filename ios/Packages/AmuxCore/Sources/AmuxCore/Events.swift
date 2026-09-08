@@ -16,7 +16,13 @@ public enum Event: Sendable, Equatable, Codable {
     case opResult(OpResult)
     case diff(DiffUpdate)
     case connection(ConnectionUpdate)
-    case tokenRequest(requestId: UInt64)
+    /// The bridge wants a fresh relay token for one signed-in account. The
+    /// account is named because a phone signed in twice has two of them.
+    case tokenRequest(requestId: UInt64, account: String)
+    /// How many agents are waiting on an account that is not on screen, read
+    /// from that account's own live subscription while the app is in front of
+    /// somebody. The only thing an unselected account reports.
+    case attention(account: String, waiting: Int)
     case invariant(detail: String)
     /// This phone's own identity and every machine it trusts. Apart from the
     /// fleet because it answers a different question: the fleet says what is
@@ -33,12 +39,19 @@ public enum Event: Sendable, Equatable, Codable {
         case diff = "Diff"
         case connection = "Connection"
         case tokenRequest = "TokenRequest"
+        case attention = "Attention"
         case invariant = "Invariant"
         case devices = "Devices"
     }
 
     private struct RequestId: Codable, Sendable, Equatable {
         var request_id: UInt64
+        var account: String
+    }
+
+    private struct Waiting: Codable, Sendable, Equatable {
+        var account: String
+        var waiting: Int
     }
 
     private struct Discovery: Codable, Sendable, Equatable {
@@ -66,7 +79,11 @@ public enum Event: Sendable, Equatable, Codable {
         case .diff: self = .diff(try container.decode(DiffUpdate.self, forKey: key))
         case .connection: self = .connection(try container.decode(ConnectionUpdate.self, forKey: key))
         case .tokenRequest:
-            self = .tokenRequest(requestId: try container.decode(RequestId.self, forKey: key).request_id)
+            let request = try container.decode(RequestId.self, forKey: key)
+            self = .tokenRequest(requestId: request.request_id, account: request.account)
+        case .attention:
+            let waiting = try container.decode(Waiting.self, forKey: key)
+            self = .attention(account: waiting.account, waiting: waiting.waiting)
         case .invariant:
             self = .invariant(detail: try container.decode(Detail.self, forKey: key).detail)
         case .devices: self = .devices(try container.decode(DeviceRoster.self, forKey: key))
@@ -84,8 +101,10 @@ public enum Event: Sendable, Equatable, Codable {
         case .opResult(let value): try container.encode(value, forKey: .opResult)
         case .diff(let value): try container.encode(value, forKey: .diff)
         case .connection(let value): try container.encode(value, forKey: .connection)
-        case .tokenRequest(let id):
-            try container.encode(RequestId(request_id: id), forKey: .tokenRequest)
+        case .tokenRequest(let id, let account):
+            try container.encode(RequestId(request_id: id, account: account), forKey: .tokenRequest)
+        case .attention(let account, let waiting):
+            try container.encode(Waiting(account: account, waiting: waiting), forKey: .attention)
         case .invariant(let detail):
             try container.encode(Detail(detail: detail), forKey: .invariant)
         case .devices(let roster): try container.encode(roster, forKey: .devices)

@@ -404,6 +404,38 @@ impl Runtime {
     /// put an owned one. The retired selection is dropped — and its tasks
     /// aborted — as soon as the new one has taken the Msg channel over.
     pub fn switch_in_place(&mut self, entry: &ProfileEntry, options: RuntimeOptions) {
+        let socket = entry.socket.clone();
+        let connector: Connector = Box::new(move || {
+            let socket = socket.clone();
+            Box::pin(async move {
+                Client::connect_socket(&socket)
+                    .await
+                    .map_err(|error| ConnectFailure {
+                        message: format!("{error}"),
+                        auth_required: false,
+                        subscription_required: false,
+                    })
+            })
+        });
+        self.switch_connector(connector, options);
+    }
+
+    /// Rebind the shell to another profile it already holds a client for.
+    ///
+    /// For an embedder that owns every profile in its own process: there is no
+    /// socket to dial, and the installation hands out a client per profile.
+    /// The selection changes exactly as it does over a socket — a retired
+    /// generation, an empty Model, and every late result from the account
+    /// being left refused.
+    pub fn switch_in_place_with_client(&mut self, client: Client, options: RuntimeOptions) {
+        let connector: Connector = Box::new(move || {
+            let client = client.clone();
+            Box::pin(async move { Ok(client) })
+        });
+        self.switch_connector(connector, options);
+    }
+
+    fn switch_connector(&mut self, connector: Connector, options: RuntimeOptions) {
         // A panic after the switch must report the profile the user is
         // actually looking at, so the panic-report slot follows the selection
         // — but only when it was this runtime's to begin with. A process that
@@ -424,19 +456,6 @@ impl Runtime {
             task.abort();
         }
 
-        let socket = entry.socket.clone();
-        let connector: Connector = Box::new(move || {
-            let socket = socket.clone();
-            Box::pin(async move {
-                Client::connect_socket(&socket)
-                    .await
-                    .map_err(|error| ConnectFailure {
-                        message: format!("{error}"),
-                        auth_required: false,
-                        subscription_required: false,
-                    })
-            })
-        });
         let next = Self::start_on_channel(connector, options, msg_tx, msg_rx, generation);
         // Dropping the retired runtime releases its client and caches.
         drop(std::mem::replace(self, next));

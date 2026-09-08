@@ -286,8 +286,9 @@ final class DoorHost {
                 url: relay,
                 // A test relay on this machine has no certificate anybody
                 // could trust, so a loopback URL is spoken to in the clear.
-                tls: url.scheme == "https" ? .system : .plainLoopback,
-                token: .fixed(token)),
+                tls: url.scheme == "https" ? .system : .plainLoopback),
+            accounts: [BridgeConfiguration.Account(id: user, token: .fixed(token))],
+            active: user,
             logPath: data.appendingPathComponent("door.log"))
         guard let client = try? BridgeClient(configuration: configuration) else {
             return .error("the runtime did not start")

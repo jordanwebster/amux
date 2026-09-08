@@ -34,11 +34,60 @@ unsafe extern "C" fn capture(bytes: *const c_char, context: *mut c_void) {
         let _ = context.sender.send(event);
     }
 }
+
+/// One credential provider per account, from that account's own configured
+/// token, exactly as the bridge builds them.
+/// A data root short enough for a profile's socket path.
+///
+/// Every profile allocates a Unix socket path under its own directory. This
+/// phone never listens on one — its profiles run in process — but the check
+/// that such a path would fit is compiled into the desktop build these tests
+/// run in, and a macOS temporary directory is long enough on its own to fail
+/// it before anything has started.
+fn test_root() -> tempfile::TempDir {
+    #[cfg(unix)]
+    let parent = std::path::PathBuf::from("/tmp");
+    #[cfg(not(unix))]
+    let parent = std::env::temp_dir();
+    tempfile::Builder::new()
+        .prefix("am")
+        .tempdir_in(parent)
+        .expect("create a short mobile test root")
+}
+
+fn test_credentials(
+    requests: mpsc::Sender<TokenRequest>,
+) -> impl Fn(&crate::runtime::AccountConfig) -> Arc<dyn CredentialProvider> {
+    let next_id = Arc::new(AtomicU64::new(1));
+    move |account: &crate::runtime::AccountConfig| {
+        Arc::new(Credentials {
+            account: account.id.clone(),
+            source: account.token.clone(),
+            requests: requests.clone(),
+            next_id: next_id.clone(),
+        }) as Arc<dyn CredentialProvider>
+    }
+}
+
 fn config(root: &std::path::Path, url: String, token: Value) -> Value {
+    accounts_config(root, url, &[("personal", token)], "personal")
+}
+
+/// The same configuration for a phone signed in to more than one account.
+fn accounts_config(
+    root: &std::path::Path,
+    url: String,
+    accounts: &[(&str, Value)],
+    active: &str,
+) -> Value {
     json!({
         "data_dir": root.join("data"), "cache_dir":root.join("cache"),
         "log_path":root.join("mobile.log"), "device_name":"phone",
-        "relay":{"url":url,"tls":"PlainLoopback","token":token}
+        "relay":{"url":url,"tls":"PlainLoopback"},
+        "accounts": accounts.iter()
+            .map(|(id, token)| json!({"id": id, "token": token}))
+            .collect::<Vec<_>>(),
+        "active": active
     })
 }
 fn start(config: &Value, events: &Events) -> *mut Handle {
@@ -51,6 +100,37 @@ fn start(config: &Value, events: &Events) -> *mut Handle {
         )
     }
 }
+/// How many events have been delivered so far, as a place to read from.
+fn mark(events: &Events) -> usize {
+    events.captured.lock().unwrap().len()
+}
+
+/// The most recent event since `from` that matches, waiting for one if none
+/// has arrived. Independent projections — the fleet, the trust roster — are
+/// emitted in whatever order their facts change, so a reader that waits for
+/// one of them in a fixed order can wait forever for something already said.
+async fn seen(
+    events: &mut mpsc::UnboundedReceiver<Value>,
+    captured: &Events,
+    from: usize,
+    handle: *mut Handle,
+    predicate: impl Fn(&Value) -> bool,
+) -> Value {
+    let already = captured
+        .captured
+        .lock()
+        .unwrap()
+        .iter()
+        .skip(from)
+        .rev()
+        .find(|event| predicate(event))
+        .cloned();
+    match already {
+        Some(event) => event,
+        None => until(events, handle, "", predicate).await,
+    }
+}
+
 async fn until(
     events: &mut mpsc::UnboundedReceiver<Value>,
     handle: *mut Handle,
@@ -89,7 +169,7 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
         .await;
     let host = net.daemon("host");
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let static_config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
@@ -97,11 +177,7 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
     );
     let parsed = serde_json::from_value::<StartConfig>(static_config.clone()).unwrap();
     let (requests, _receive) = mpsc::channel(1);
-    let credentials = Arc::new(Credentials {
-        source: parsed.relay.token.clone(),
-        requests,
-        next_id: AtomicU64::new(1),
-    });
+    let credentials = test_credentials(requests);
     let mut seed = MobileRuntime::open(&parsed, credentials).await.unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         while *seed.relay.borrow_and_update() != RelayConnection::Connected {
@@ -115,8 +191,7 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
     let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
         panic!("QR expected")
     };
-    seed.embedded
-        .admin()
+    seed.admin
         .pair_qr_cloud_peer(host.host_id(), secret)
         .await
         .unwrap();
@@ -136,7 +211,7 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
         })
         .await
         .unwrap();
-    seed.embedded.shutdown().await;
+    seed.shutdown().await;
 
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
@@ -145,7 +220,7 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
         batches: Mutex::new(vec![]),
     };
     let mut callback_config = static_config;
-    callback_config["relay"]["token"] = json!("Callback");
+    callback_config["accounts"][0]["token"] = json!("Callback");
     let running = Running {
         handle: start(&callback_config, &events),
         _events: &events,
@@ -244,6 +319,7 @@ fn the_phones_agent_writes_decode_as_the_commands_they_name() {
         CommandDto::Connection(_) => panic!("an agent write decoded as a connection command"),
         CommandDto::Devices(_) => panic!("an agent write decoded as a trust change"),
         CommandDto::Creation(_) => panic!("an agent write decoded as a creation"),
+        CommandDto::Accounts(_) => panic!("an agent write decoded as an account change"),
     };
 
     assert_eq!(
@@ -375,7 +451,7 @@ fn build_marker_names_the_debug_tools_library() {
 
 #[test]
 fn mobile_lifecycle_rejects_invalid_endpoints_and_config() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, _receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -415,7 +491,7 @@ fn mobile_lifecycle_rejects_invalid_endpoints_and_config() {
 
 #[tokio::test]
 async fn mobile_lifecycle_stop_cancels_unanswered_token_and_bad_reply() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -482,7 +558,7 @@ async fn mobile_projection_c_callback_batches_and_command_errors() {
         drop(context.gate.lock().unwrap());
     }
 
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -603,7 +679,7 @@ async fn mobile_unpaired_relay_hosts_are_discovered_without_entering_the_fleet()
     let host_id = net.daemon("owners-host").host_id().to_string();
     let other_id = net.daemon("other-accounts-host").host_id().to_string();
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -699,7 +775,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
         .await;
     let host = net.daemon("cache-host");
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
@@ -709,11 +785,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     let (requests, _receive) = mpsc::channel(1);
     let mut seed = MobileRuntime::open(
         &parsed,
-        Arc::new(Credentials {
-            source: parsed.relay.token.clone(),
-            requests,
-            next_id: AtomicU64::new(1),
-        }),
+        test_credentials(requests),
     )
     .await
     .unwrap();
@@ -729,8 +801,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
         panic!("QR expected")
     };
-    seed.embedded
-        .admin()
+    seed.admin
         .pair_qr_cloud_peer(host.host_id(), secret)
         .await
         .unwrap();
@@ -752,7 +823,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
             .await
             .unwrap();
     }
-    seed.embedded.shutdown().await;
+    seed.shutdown().await;
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -925,7 +996,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
 
 #[test]
 fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let path = root.path().join("fleet.json");
     for bytes in [
         None,
@@ -967,7 +1038,7 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
             .await;
         let host = net.daemon("inventory-host");
         let (_, token) = net.user_credentials("owner");
-        let root = tempfile::tempdir().unwrap();
+        let root = test_root();
         let config = config(
             root.path(),
             format!("http://{}", net.relay_addr()),
@@ -978,11 +1049,7 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
             let (requests, _receive) = mpsc::channel(1);
             MobileRuntime::open(
                 &parsed,
-                Arc::new(Credentials {
-                    source: parsed.relay.token.clone(),
-                    requests,
-                    next_id: AtomicU64::new(1),
-                }),
+                test_credentials(requests),
             )
         };
         let mut seed = open_runtime().await.unwrap();
@@ -998,8 +1065,7 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
         let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
             panic!("QR expected")
         };
-        seed.embedded
-            .admin()
+        seed.admin
             .pair_qr_cloud_peer(host.host_id(), secret)
             .await
             .unwrap();
@@ -1021,7 +1087,7 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
                 .await
                 .unwrap();
         }
-        seed.embedded.shutdown().await;
+        seed.shutdown().await;
         let (sender, mut receive) = mpsc::unbounded_channel();
         let events = Events {
             sender,
@@ -1072,14 +1138,13 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
                 }
             }
             "unpair" => {
-                let offline = open_runtime().await.unwrap();
+                let mut offline = open_runtime().await.unwrap();
                 offline
-                    .embedded
-                    .admin()
+                    .admin
                     .unpair(host.host_id(), "Remove this device")
                     .await
                     .unwrap();
-                offline.embedded.shutdown().await;
+                offline.shutdown().await;
             }
             _ => unreachable!(),
         }
@@ -1248,7 +1313,7 @@ async fn mobile_pairing_over_the_relay_admits_the_hosts_agents_to_the_fleet() {
         .await
         .unwrap();
 
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -1336,7 +1401,7 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
         .await;
     let host = net.daemon("chat-host");
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
@@ -1346,11 +1411,7 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
     let (requests, _tokens) = mpsc::channel(1);
     let mut seed = MobileRuntime::open(
         &parsed,
-        Arc::new(Credentials {
-            source: parsed.relay.token.clone(),
-            requests,
-            next_id: AtomicU64::new(1),
-        }),
+        test_credentials(requests),
     )
     .await
     .unwrap();
@@ -1365,8 +1426,7 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
     let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
         panic!("QR expected")
     };
-    seed.embedded
-        .admin()
+    seed.admin
         .pair_qr_cloud_peer(host.host_id(), secret)
         .await
         .unwrap();
@@ -1378,7 +1438,7 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
         host.register_scripted_claude_agent(id, name, root.path())
             .await;
     }
-    seed.embedded.shutdown().await;
+    seed.shutdown().await;
 
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
@@ -1535,7 +1595,7 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
     let host = net.daemon("workstation");
     let host_id = host.host_id();
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -1705,7 +1765,7 @@ async fn mobile_pairing_by_link_authenticates_against_the_relay_this_phone_is_on
         .await;
     let host = net.daemon("workstation");
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -1831,16 +1891,18 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
         .start()
         .await;
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let config: crate::runtime::StartConfig = serde_json::from_value(config(
         root.path(),
         format!("http://{}", net.relay_addr()),
         json!({ "Static": token }),
     ))
     .unwrap();
-    let runtime = crate::runtime::MobileRuntime::open(&config, Arc::new(StaticToken(token)))
-        .await
-        .unwrap();
+    let runtime = crate::runtime::MobileRuntime::open(&config, |_| {
+        Arc::new(StaticToken(token.clone())) as Arc<dyn CredentialProvider>
+    })
+    .await
+    .unwrap();
     let mut relay = runtime.relay.clone();
     tokio::time::timeout(Duration::from_secs(20), async {
         while *relay.borrow_and_update() != amux::RelayConnection::Connected {
@@ -1930,7 +1992,7 @@ async fn mobile_retry_now_reaches_the_connection_through_the_bridge() {
         .start()
         .await;
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -2003,7 +2065,7 @@ async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
         .await;
     let host = net.daemon("workstation");
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
@@ -2013,11 +2075,7 @@ async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
     let (requests, _tokens) = mpsc::channel(1);
     let mut seed = MobileRuntime::open(
         &parsed,
-        Arc::new(Credentials {
-            source: parsed.relay.token.clone(),
-            requests,
-            next_id: AtomicU64::new(1),
-        }),
+        test_credentials(requests),
     )
     .await
     .unwrap();
@@ -2032,8 +2090,7 @@ async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
     let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
         panic!("QR expected")
     };
-    seed.embedded
-        .admin()
+    seed.admin
         .pair_qr_cloud_peer(host.host_id(), secret)
         .await
         .unwrap();
@@ -2042,7 +2099,7 @@ async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
     let agent = uuid::Uuid::from_u128(401);
     host.register_scripted_claude_agent(agent, "fix-login", root.path())
         .await;
-    seed.embedded.shutdown().await;
+    seed.shutdown().await;
 
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
@@ -2274,7 +2331,7 @@ async fn mobile_a_refused_relay_reports_itself_unreachable() {
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = closed.local_addr().unwrap();
     drop(closed);
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
         sender,
@@ -2319,7 +2376,7 @@ async fn mobile_going_away_releases_the_link_and_coming_back_reconciles() {
         .await;
     let host = net.daemon("host");
     let (_, token) = net.user_credentials("owner");
-    let root = tempfile::tempdir().unwrap();
+    let root = test_root();
     let static_config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
@@ -2327,11 +2384,7 @@ async fn mobile_going_away_releases_the_link_and_coming_back_reconciles() {
     );
     let parsed = serde_json::from_value::<StartConfig>(static_config.clone()).unwrap();
     let (requests, _receive) = mpsc::channel(1);
-    let credentials = Arc::new(Credentials {
-        source: parsed.relay.token.clone(),
-        requests,
-        next_id: AtomicU64::new(1),
-    });
+    let credentials = test_credentials(requests);
     // Pairing first, through a seed runtime, so what the phone reconciles
     // afterwards is a machine that trusts it.
     let mut seed = MobileRuntime::open(&parsed, credentials).await.unwrap();
@@ -2346,12 +2399,11 @@ async fn mobile_going_away_releases_the_link_and_coming_back_reconciles() {
     let amux::PairingSecret::QrSecret(secret) = pairing.secret else {
         panic!("QR expected")
     };
-    seed.embedded
-        .admin()
+    seed.admin
         .pair_qr_cloud_peer(host.host_id(), secret)
         .await
         .unwrap();
-    seed.embedded.shutdown().await;
+    seed.shutdown().await;
 
     let (sender, mut receive) = mpsc::unbounded_channel();
     let events = Events {
@@ -2409,4 +2461,401 @@ async fn mobile_going_away_releases_the_link_and_coming_back_reconciles() {
         event["Fleet"]["reconciled"] == true
     })
     .await;
+}
+
+/// One agent on a machine, so an account has something to show.
+async fn seed_agent(host: &amux::testnet::Daemon, id: u128, name: &str) -> amux::Client {
+    let admin = host.admin_client().await;
+    admin
+        .create_agent(amux::CreateAgentRequest {
+            agent_id: uuid::Uuid::from_u128(id),
+            host_id: None,
+            name: Some(name.into()),
+            agent_type: amux::AgentType::TestAgent {
+                command: "cat".into(),
+            },
+            working_dir: std::env::temp_dir(),
+            terminal_size: None,
+            args: vec![],
+            parent: None,
+            initial_prompt: None,
+        })
+        .await
+        .unwrap();
+    admin
+}
+
+/// Pair the account currently on screen with a machine, the way a person
+/// pointing a phone at a screen does.
+async fn pair_with(handle: *mut Handle, net: &TestNet, host: &amux::testnet::Daemon) -> Value {
+    let mut start_pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
+    start_pairing.cloud_url = format!("http://{}", net.relay_addr());
+    let amux::PairingSecret::QrSecret(secret) = &start_pairing.secret else {
+        panic!("QR pairing returned a PIN")
+    };
+    let payload =
+        CString::new(amux::encode_qr_pairing_payload(&start_pairing, secret).unwrap()).unwrap();
+    owned_json(unsafe { amux_mobile_pair_qr(handle, payload.as_ptr()) })
+}
+
+/// Put another account on screen and wait for the bridge to say it is there.
+async fn select_account(
+    events: &mut mpsc::UnboundedReceiver<Value>,
+    handle: *mut Handle,
+    account: &str,
+) -> Value {
+    let json = CString::new(format!(r#"{{"command":"select","account":"{account}"}}"#)).unwrap();
+    let reply = unsafe { amux_mobile_dispatch(handle, json.as_ptr()) };
+    assert!(!reply.is_null(), "a select was not dispatched");
+    let op = unsafe { CString::from_raw(reply) }
+        .into_string()
+        .expect("an operation id is text");
+    let done = until(events, handle, "", |e| {
+        e["OpResult"]["op"] == json!(op) && e["OpResult"]["outcome"]["outcome"] == "selected"
+    })
+    .await;
+    assert_eq!(done["OpResult"]["outcome"]["account"], json!(account));
+    done
+}
+
+fn agent_names(fleet: &Value) -> Vec<String> {
+    fleet["Fleet"]["agents"]
+        .as_array()
+        .map(|agents| {
+            agents
+                .iter()
+                .map(|agent| agent["agent"]["name"].as_str().unwrap_or("").to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Two accounts on one phone are two devices, not one device with two names.
+///
+/// A machine admits a device by its key, so an account's pairings are that
+/// account's alone: what This Phone reports, and which machines are trusted,
+/// changes completely when the account being read changes — and switching back
+/// finds the first account exactly as it was left.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("personal")
+        .daemon("laptop")
+        .cloud_only()
+        .cloud_user("work")
+        .start()
+        .await;
+    let workstation = net.daemon("workstation");
+    let laptop = net.daemon("laptop");
+    let (_, personal_token) = net.user_credentials("personal");
+    let (_, work_token) = net.user_credentials("work");
+    let _workstation_admin = seed_agent(&workstation, 401, "fix-login").await;
+    let _laptop_admin = seed_agent(&laptop, 402, "write-docs").await;
+
+    let root = test_root();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &accounts_config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                &[
+                    ("personal", json!({ "Static": personal_token })),
+                    ("work", json!({ "Static": work_token })),
+                ],
+                "personal",
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    let handle = running.handle;
+    assert!(!handle.is_null());
+
+    until(&mut receive, handle, "", |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
+    // An unpaired account reaches nothing: the machines are there, and this
+    // device is not admitted to any of them.
+    let empty = until(&mut receive, handle, "", |e| e["Fleet"]["reconciled"] == true).await;
+    assert_eq!(agent_names(&empty), Vec::<String>::new(), "{empty}");
+
+    let personal_from = mark(&events);
+    let paired = pair_with(handle, &net, &workstation).await;
+    assert_eq!(paired["host"], "workstation", "{paired}");
+    let personal_fleet = seen(&mut receive, &events, personal_from, handle, |e| {
+        agent_names(e) == ["fix-login"]
+    })
+    .await;
+    let personal_devices = seen(&mut receive, &events, personal_from, handle, |e| {
+        e["Devices"]["devices"]
+            .as_array()
+            .is_some_and(|devices| devices.len() == 1)
+    })
+    .await;
+    assert_eq!(
+        personal_devices["Devices"]["devices"][0]["name"],
+        "workstation"
+    );
+    let personal_identity = personal_devices["Devices"]["identity"].clone();
+
+    let work_from = mark(&events);
+    select_account(&mut receive, handle, "work").await;
+    // The work account has never paired with anything, so it is a device with
+    // an empty trust store — not the personal account's device under another
+    // name, and not the personal account's machines.
+    let work_devices = seen(&mut receive, &events, work_from, handle, |e| {
+        e["Devices"]["devices"]
+            .as_array()
+            .is_some_and(|devices| devices.is_empty())
+    })
+    .await;
+    let work_identity = work_devices["Devices"]["identity"].clone();
+    assert_ne!(
+        work_identity["host"], personal_identity["host"],
+        "both accounts presented one device: {work_identity}"
+    );
+    assert_ne!(
+        work_identity["fingerprint"],
+        personal_identity["fingerprint"]
+    );
+
+    let laptop_from = mark(&events);
+    let paired = pair_with(handle, &net, &laptop).await;
+    assert_eq!(paired["host"], "laptop", "{paired}");
+    let work_fleet = seen(&mut receive, &events, laptop_from, handle, |e| {
+        agent_names(e) == ["write-docs"]
+    })
+    .await;
+
+    let back_from = mark(&events);
+    select_account(&mut receive, handle, "personal").await;
+    let back = seen(&mut receive, &events, back_from, handle, |e| {
+        e["Devices"]["identity"] == personal_identity
+    })
+    .await;
+    assert_eq!(
+        back["Devices"]["devices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|device| device["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["workstation"],
+        "the personal account was given the work account's machine: {back}"
+    );
+    let again = seen(&mut receive, &events, back_from, handle, |e| {
+        agent_names(e) == ["fix-login"]
+    })
+    .await;
+    println!("personal: {personal_fleet}\nwork: {work_fleet}\nback: {again}");
+    // Nothing either account showed ever reached the other one.
+    for event in events.captured.lock().unwrap().iter() {
+        let names = agent_names(event);
+        assert!(
+            !(names.contains(&"fix-login".to_string())
+                && names.contains(&"write-docs".to_string())),
+            "one fleet carried both accounts' agents: {event}"
+        );
+    }
+
+    drop(running);
+    net.shutdown().await;
+}
+
+/// Switching accounts is not reconnecting: a result already in flight for the
+/// account being left is refused, not folded into the account moved to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_profiles_switching_drops_every_late_result_from_the_previous_account() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("personal")
+        .start()
+        .await;
+    let (_, personal_token) = net.user_credentials("personal");
+    let (_, work_token) = net.user_credentials("work");
+
+    let root = test_root();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &accounts_config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                &[
+                    ("personal", json!({ "Static": personal_token })),
+                    ("work", json!({ "Static": work_token })),
+                ],
+                "personal",
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    let handle = running.handle;
+    assert!(!handle.is_null());
+    until(&mut receive, handle, "", |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
+
+    let unknown = owned_json(unsafe { amux_mobile_late_results(handle) });
+    assert_eq!(unknown["dropped"], 0, "{unknown}");
+
+    select_account(&mut receive, handle, "work").await;
+    let reported = owned_json(unsafe { amux_mobile_late_from_previous(handle) });
+    assert_eq!(
+        reported["reported"], true,
+        "the account left had no edge to report on: {reported}"
+    );
+    let dropped = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let ledger = owned_json(unsafe { amux_mobile_late_results(handle) });
+            if ledger["dropped"].as_u64().unwrap_or(0) > 0 {
+                return ledger;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a result from the previous account was neither folded nor refused");
+    assert_eq!(dropped["kinds"], json!(["Inventory"]), "{dropped}");
+    println!("refused after the switch: {dropped}");
+
+    // And it never reached a screen: no fleet this phone drew ever carried it.
+    for event in events.captured.lock().unwrap().iter() {
+        assert!(
+            !agent_names(event).contains(&"from-the-account-you-left".to_string()),
+            "a late result was folded into the account switched to: {event}"
+        );
+    }
+
+    drop(running);
+    net.shutdown().await;
+}
+
+/// What the switcher says about an account nobody is looking at is a count of
+/// real work, read from that account's own live subscription.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_profiles_report_what_is_waiting_on_the_account_that_is_not_on_screen() {
+    use amux::testnet::script::{Reaction, Script, ScriptAsk, Step, Trigger};
+
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("laptop")
+        .cloud_only()
+        .cloud_user("work")
+        .start()
+        .await;
+    let laptop = net.daemon("laptop");
+    let (_, personal_token) = net.user_credentials("personal");
+    let (_, work_token) = net.user_credentials("work");
+    let root = test_root();
+    let (agent, provider) = laptop
+        .spawn_scripted_agent(
+            "deploy",
+            root.path(),
+            Script {
+                reactions: vec![Reaction {
+                    on: Trigger::Any,
+                    play: vec![],
+                }],
+                ..Script::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &accounts_config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                &[
+                    ("personal", json!({ "Static": personal_token })),
+                    ("work", json!({ "Static": work_token })),
+                ],
+                "work",
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    let handle = running.handle;
+    assert!(!handle.is_null());
+    until(&mut receive, handle, "", |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
+    let paired = pair_with(handle, &net, &laptop).await;
+    assert_eq!(paired["host"], "laptop", "{paired}");
+
+    // The agent asks for something, so there is something to be waiting for.
+    provider
+        .play(vec![
+            Step::Prompt {
+                text: "deploy the service".into(),
+            },
+            Step::Ask(ScriptAsk::Permission {
+                tool: "Bash".into(),
+                invocation: json!({"command": "./deploy.sh"}),
+                scoped_directories: vec![],
+            }),
+        ])
+        .await
+        .unwrap();
+    // Nothing runs on a phone, so what an agent needs is known only where
+    // somebody is listening. On screen that is a conversation being open.
+    let subscribe = CString::new(format!(
+        r#"{{"command":"subscribe","agent":"{}"}}"#,
+        agent.id
+    ))
+    .unwrap();
+    let reply = unsafe { amux_mobile_dispatch(handle, subscribe.as_ptr()) };
+    assert!(!reply.is_null());
+    unsafe { amux_mobile_free(reply) };
+    let waiting_on_screen = until(&mut receive, handle, "", |e| {
+        e["Fleet"]["agents"].as_array().is_some_and(|agents| {
+            agents
+                .iter()
+                .any(|agent| agent["attention"]["attention"] == "needs_you")
+        })
+    })
+    .await;
+    println!("on screen: {waiting_on_screen}");
+
+    // Now nobody is looking at that account. What it has waiting is still
+    // read, and it is the same number.
+    select_account(&mut receive, handle, "personal").await;
+    let attention = until(&mut receive, handle, "", |e| {
+        e["Attention"]["account"] == "work" && e["Attention"]["waiting"] == json!(1)
+    })
+    .await;
+    println!("off screen: {attention}");
+
+    drop(running);
+    net.shutdown().await;
 }

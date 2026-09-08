@@ -8,6 +8,10 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     public var cache_dir: String
     public var device_name: String
     public var relay: Relay
+    /// Every account this phone is signed in to, in the order the switcher
+    /// lists them, and which of them is on screen.
+    public var accounts: [Account]
+    public var active: String
     public var log_path: String
     /// One callback batch per display frame by default.
     public var frame_interval_ns: UInt64
@@ -15,11 +19,21 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     public struct Relay: Codable, Sendable, Equatable {
         public var url: String
         public var tls: Tls
-        public var token: Token
 
-        public init(url: String, tls: Tls, token: Token) {
+        public init(url: String, tls: Tls) {
             self.url = url
             self.tls = tls
+        }
+    }
+
+    /// One signed-in account. The identifier is this app's own: the bridge
+    /// stores it, hands it back on every token request, and never reads it.
+    public struct Account: Codable, Sendable, Equatable {
+        public var id: String
+        public var token: Token
+
+        public init(id: String, token: Token) {
+            self.id = id
             self.token = token
         }
     }
@@ -61,12 +75,15 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
 
     public init(
         dataDirectory: URL, cacheDirectory: URL, deviceName: String, relay: Relay,
+        accounts: [Account], active: String,
         logPath: URL, frameIntervalNanoseconds: UInt64 = 16_666_667
     ) {
         self.data_dir = dataDirectory.path
         self.cache_dir = cacheDirectory.path
         self.device_name = deviceName
         self.relay = relay
+        self.accounts = accounts
+        self.active = active
         self.log_path = logPath.path
         self.frame_interval_ns = frameIntervalNanoseconds
     }
@@ -121,8 +138,8 @@ public final class BridgeClient: Sendable {
             }
             batches.yield(batch)
             for event in batch {
-                guard case .tokenRequest(let request) = event else { continue }
-                client?.answerToken(request)
+                guard case .tokenRequest(let request, let account) = event else { continue }
+                client?.answerToken(request, for: account)
             }
         }
     }
@@ -157,11 +174,11 @@ public final class BridgeClient: Sendable {
 
     private let delivery: Delivery
     private let state: Locked<State>
-    private let tokenProvider: @Sendable (UInt64) async -> ConnectToken?
+    private let tokenProvider: @Sendable (UInt64, String) async -> ConnectToken?
 
     public init(
         configuration: BridgeConfiguration,
-        tokenProvider: @escaping @Sendable (UInt64) async -> ConnectToken? = { _ in nil }
+        tokenProvider: @escaping @Sendable (UInt64, String) async -> ConnectToken? = { _, _ in nil }
     ) throws {
         var continuation: AsyncStream<[Event]>.Continuation!
         self.events = AsyncStream { continuation = $0 }
@@ -306,9 +323,9 @@ public final class BridgeClient: Sendable {
         json.withCString { delivery.receive($0) }
     }
 
-    private func answerToken(_ request: UInt64) {
+    private func answerToken(_ request: UInt64, for account: String) {
         Task { [tokenProvider] in
-            let token = await tokenProvider(request)
+            let token = await tokenProvider(request, account)
             let reply: [String: JSONValue] = if let token {
                 token.expiresAt.map {
                     ["token": .string(token.bearer), "expires_at": .int(Int($0.timeIntervalSince1970))]

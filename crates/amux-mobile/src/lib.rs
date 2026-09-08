@@ -16,8 +16,9 @@ use std::time::{Duration, SystemTime};
 use amux::{AccessToken, AuthError, CredentialProvider, RelayConnection};
 use amux_ui::{AgentId, Command, OpError, OpId, OpOutcome};
 use projection::{
-    Cadence, ConnectionOutcome, CreationOutcome, DeviceIdentityDto, DevicesOutcome, Event,
-    OpOutcomeDto, PairedDeviceDto, PairingOutcome, ProjectDto, Projection, SubscriptionOutcome,
+    AccountsOutcome, Cadence, ConnectionOutcome, CreationOutcome, DeviceIdentityDto, DevicesOutcome,
+    Event, OpOutcomeDto, PairedDeviceDto, PairingOutcome, ProjectDto, Projection,
+    SubscriptionOutcome,
 };
 use runtime::{MobileRuntime, StartConfig, TokenSource};
 use serde::{Deserialize, Serialize};
@@ -60,6 +61,10 @@ enum Control {
     RelayAttempts(std::sync::mpsc::SyncSender<Option<String>>),
     #[cfg(feature = "debug-tools")]
     ReportSnapshot(std::sync::mpsc::SyncSender<Option<String>>),
+    #[cfg(all(debug_assertions, feature = "debug-tools"))]
+    LateFromPrevious(std::sync::mpsc::SyncSender<Option<String>>),
+    #[cfg(all(debug_assertions, feature = "debug-tools"))]
+    LateResults(std::sync::mpsc::SyncSender<Option<String>>),
     #[cfg(feature = "debug-tools")]
     PairQr {
         payload: String,
@@ -79,12 +84,17 @@ enum Control {
 }
 struct TokenRequest {
     id: u64,
+    /// Which account the app is being asked for. A phone signed in twice has
+    /// two rotating credentials, and a reply is worthless unless the request
+    /// said which one it wanted.
+    account: String,
     reply: oneshot::Sender<Result<AccessToken, AuthError>>,
 }
 struct Credentials {
+    account: String,
     source: TokenSource,
     requests: mpsc::Sender<TokenRequest>,
-    next_id: AtomicU64,
+    next_id: Arc<AtomicU64>,
 }
 
 #[async_trait::async_trait]
@@ -99,7 +109,11 @@ impl CredentialProvider for Credentials {
                 let (reply, receive) = oneshot::channel();
                 let id = self.next_id.fetch_add(1, Ordering::Relaxed);
                 self.requests
-                    .send(TokenRequest { id, reply })
+                    .send(TokenRequest {
+                        id,
+                        account: self.account.clone(),
+                        reply,
+                    })
                     .await
                     .map_err(|_| AuthError::Unauthenticated)?;
                 tokio::time::timeout(Duration::from_secs(30), receive)
@@ -254,7 +268,17 @@ enum CommandDto {
     Connection(ConnectionCommand),
     Devices(DevicesCommand),
     Creation(CreationCommand),
+    Accounts(AccountsCommand),
     Shared(Command),
+}
+
+/// Something asked of the set of accounts this phone is signed in to.
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+enum AccountsCommand {
+    /// Read a different account. Every screen starts again from that account's
+    /// own machines; nothing the previous one showed is carried across.
+    Select { account: String },
 }
 
 /// Starting an agent on a machine, and finding somewhere to start it.
@@ -505,6 +529,54 @@ pub unsafe extern "C" fn amux_mobile_report_snapshot(handle: *mut Handle) -> *mu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amux_mobile_relay_attempts(handle: *mut Handle) -> *mut c_char {
     unsafe { snapshot(handle, Control::RelayAttempts) }
+}
+
+/// Reports one result on the shell edge of the account most recently switched
+/// away from, as a task that was still running for it would. Returns owned
+/// JSON `{"reported":true}`, or false when no account has been left yet.
+///
+/// Debug-tools builds only. Switching accounts cannot recall work already in
+/// flight, and what a driver has to be able to prove is that such work is
+/// refused rather than folded into the account the person moved to. There is
+/// no way to produce it from outside the process.
+///
+/// # Safety
+/// handle must be live and may not race stop. Never call from an event callback.
+#[cfg(all(debug_assertions, feature = "debug-tools"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_late_from_previous(handle: *mut Handle) -> *mut c_char {
+    unsafe { snapshot(handle, Control::LateFromPrevious) }
+}
+
+/// How many results belonging to an earlier account this runtime has refused,
+/// and which edges of the shell they came from, as owned JSON
+/// `{"dropped":n,"kinds":["Inventory",…]}`. Debug-tools builds only.
+///
+/// # Safety
+/// handle must be live and may not race stop. Never call from an event callback.
+#[cfg(all(debug_assertions, feature = "debug-tools"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_mobile_late_results(handle: *mut Handle) -> *mut c_char {
+    unsafe { snapshot(handle, Control::LateResults) }
+}
+
+/// An agent nothing on the account being read has ever heard of. Folding it
+/// would be visible in the fleet, which is what makes refusing it provable.
+#[cfg(all(debug_assertions, feature = "debug-tools"))]
+fn late_agent() -> amux::Agent {
+    amux::Agent {
+        id: uuid::Uuid::from_u128(0x1a7e),
+        host_id: uuid::Uuid::from_u128(0x1a7f),
+        name: Some("from-the-account-you-left".into()),
+        command: "cat".into(),
+        working_dir: PathBuf::from("/tmp"),
+        kind: amux::AgentKind::TestAgent,
+        readonly: false,
+        args: Vec::new(),
+        created_at: chrono::Utc::now(),
+        parent: None,
+        working_on: None,
+    }
 }
 
 /// Pairs this device with the host a QR pairing payload names, over the relay
@@ -936,13 +1008,27 @@ async fn run(
     callback.send(&[cache.initial()]);
     let mut cadence = Cadence::new(Duration::from_nanos(config.frame_interval_ns));
     cadence.emitted();
+    // One request channel for every account, and one counter, so a request
+    // identifier means the same thing whichever account raised it and a reply
+    // can be routed by that identifier alone.
     let (requests, mut token_requests) = mpsc::channel(1);
-    let credentials = Arc::new(Credentials {
-        source: config.relay.token.clone(),
-        requests,
-        next_id: AtomicU64::new(1),
-    });
-    let mut runtime = MobileRuntime::open(&config, credentials).await?;
+    let next_id = Arc::new(AtomicU64::new(1));
+    let mut runtime = MobileRuntime::open(&config, |account| {
+        Arc::new(Credentials {
+            account: account.id.clone(),
+            source: account.token.clone(),
+            requests: requests.clone(),
+            next_id: next_id.clone(),
+        })
+    })
+    .await?;
+    // Every account that is not on screen folds its own subscription while the
+    // app is in front of somebody, so the switcher can say which of them has
+    // something waiting.
+    let (counts, mut waiting) = mpsc::unbounded_channel();
+    let mut watchers = runtime.watch_others(counts.clone());
+    let mut watched: BTreeSet<String> = runtime.inactive_accounts();
+    let mut attention: HashMap<String, usize> = HashMap::new();
     let mut pending: HashMap<u64, oneshot::Sender<Result<AccessToken, AuthError>>> = HashMap::new();
     // Authenticated pairing attempts waiting for a person to say yes. Held
     // here rather than handed to the app: the capability the machine issued is
@@ -984,7 +1070,7 @@ async fn run(
                 }
                 #[cfg(feature = "debug-tools")]
                 Some(Control::PairQr { payload, reply }) => {
-                    let admin = runtime.embedded.admin();
+                    let admin = runtime.admin.clone();
                     tokio::spawn(async move {
                         let result = match amux::parse_qr_pairing_payload(&payload) {
                             Ok(payload) => admin
@@ -1002,7 +1088,7 @@ async fn run(
                 #[cfg(feature = "debug-tools")]
                 Some(Control::ReportSnapshot(reply)) => {
                     let snapshot = runtime.ui.recorder_snapshot();
-                    let client = runtime.embedded.client();
+                    let client = runtime.client();
                     tokio::spawn(async move {
                         let (daemon, reason) = match tokio::time::timeout(Duration::from_secs(3), client.debug_dump(amux::DebugFormat::Json)).await {
                             Ok(Ok(dump)) => (Some(dump), None),
@@ -1016,8 +1102,44 @@ async fn run(
                         let _ = reply.send(serde_json::to_string(&result).ok());
                     });
                 }
+                #[cfg(all(debug_assertions, feature = "debug-tools"))]
+                Some(Control::LateFromPrevious(reply)) => {
+                    // A result that was genuinely in flight for the account
+                    // the user left, produced the only way one can be: on the
+                    // shell edge that account's tasks still hold.
+                    let edge = runtime.previous_edge.clone();
+                    tokio::spawn(async move {
+                        let reported = match edge {
+                            Some(edge) => edge
+                                .report(amux_ui::Msg::Server(amux_ui::ServerMsg::AgentUpserted {
+                                    agent: late_agent(),
+                                }))
+                                .await
+                                .is_ok(),
+                            None => false,
+                        };
+                        let _ = reply.send(
+                            serde_json::to_string(&serde_json::json!({"reported": reported})).ok(),
+                        );
+                    });
+                }
+                #[cfg(all(debug_assertions, feature = "debug-tools"))]
+                Some(Control::LateResults(reply)) => {
+                    let _ = reply.send(
+                        serde_json::to_string(&serde_json::json!({
+                            "dropped": runtime.ui.discarded_late_results(),
+                            "kinds": runtime
+                                .ui
+                                .discarded_late_kinds()
+                                .iter()
+                                .map(|kind| format!("{kind:?}"))
+                                .collect::<Vec<_>>(),
+                        }))
+                        .ok(),
+                    );
+                }
                 Some(Control::FrameInterval(interval)) => cadence.set_interval(interval),
-                Some(Control::Active(active)) => runtime.retry.set_active(active),
+                Some(Control::Active(active)) => runtime.set_active(active),
                 Some(Control::Dispatch { op, command }) => {
                     match command {
                         Ok(CommandDto::Shared(command)) => runtime.ui.dispatch_with_id(op, command),
@@ -1067,6 +1189,28 @@ async fn run(
                             host, query, limit,
                         })) => {
                             list_repositories(op, host, query, limit, &runtime, listings.clone());
+                        }
+                        Ok(CommandDto::Accounts(AccountsCommand::Select { account })) => {
+                            let outcome = match runtime.switch(&account) {
+                                Ok(()) => {
+                                    // The account now on screen is being read
+                                    // rather than counted, and the one just
+                                    // left is counted rather than read.
+                                    watchers = runtime.watch_others(counts.clone());
+                                    watched = runtime.inactive_accounts();
+                                    attention.retain(|held, _| watched.contains(held));
+                                    devices = None;
+                                    trusted.clear();
+                                    projection = Projection::default();
+                                    read_devices(&runtime, devices_reads.clone());
+                                    AccountsOutcome::Selected { account }
+                                }
+                                Err(_) => AccountsOutcome::Unknown { account },
+                            };
+                            events.push(Event::OpResult {
+                                op,
+                                outcome: OpOutcomeDto::Accounts(outcome),
+                            });
                         }
                         Ok(CommandDto::Connection(ConnectionCommand::RetryNow)) => {
                             // The connection is a loop of its own; this only
@@ -1156,7 +1300,10 @@ async fn run(
             Some(request) = token_requests.recv() => {
                 pending.retain(|_, sender| !sender.is_closed());
                 pending.insert(request.id, request.reply);
-                events.push(Event::TokenRequest { request_id: request.id });
+                events.push(Event::TokenRequest {
+                    request_id: request.id,
+                    account: request.account.clone(),
+                });
             },
             changed = runtime.relay.changed() => {
                 if changed.is_err() { return Err("relay monitor closed".into()); }
@@ -1166,13 +1313,26 @@ async fn run(
                 if !active { break; }
                 dirty = true;
             },
+            Some((account, count)) = waiting.recv() => {
+                // Nothing from an account nobody is reading reaches a screen.
+                // The one thing it can say is how many of its agents are
+                // waiting — and a count from a fold that has already been put
+                // down, because its account is now the one on screen, says
+                // nothing about the account it names any more.
+                if watched.contains(&account) && attention.get(&account) != Some(&count) {
+                    attention.insert(account.clone(), count);
+                    events.push(Event::Attention { account, waiting: count });
+                    dirty = true;
+                }
+            },
         }
         projection.outcomes(runtime.ui.model(), &mut events);
     }
     drop(pending);
     // Dropping the executor after this future cancels and drains all owned
     // transport tasks, including in-flight connection and token work.
-    let _ = tokio::time::timeout(Duration::from_secs(1), runtime.embedded.shutdown()).await;
+    drop(watchers);
+    let _ = tokio::time::timeout(Duration::from_secs(1), runtime.shutdown()).await;
     Ok(())
 }
 
@@ -1183,7 +1343,7 @@ async fn run(
 /// losing their machines, and a section that blanked itself would invite
 /// pairing again with everything still paired.
 fn read_devices(runtime: &MobileRuntime, reads: mpsc::UnboundedSender<DevicesRead>) {
-    let admin = runtime.embedded.admin();
+    let admin = runtime.admin.clone();
     tokio::spawn(async move {
         if let Some(read) = current_devices(&admin).await {
             let _ = reads.send(read);
@@ -1231,7 +1391,7 @@ fn revoke(
     results: mpsc::UnboundedSender<(OpId, DevicesOutcome)>,
     reads: mpsc::UnboundedSender<DevicesRead>,
 ) {
-    let admin = runtime.embedded.admin();
+    let admin = runtime.admin.clone();
     tokio::spawn(async move {
         let outcome = match admin.unpair(host, "revoked from the phone").await {
             Ok(peer) => DevicesOutcome::Revoked {
@@ -1260,7 +1420,7 @@ fn list_repositories(
     runtime: &MobileRuntime,
     results: mpsc::UnboundedSender<(OpId, CreationOutcome)>,
 ) {
-    let client = runtime.embedded.client();
+    let client = runtime.client();
     tokio::spawn(async move {
         let listing = client
             .list_repositories(amux::ListRepositoriesRequest { host, query, limit })
@@ -1301,7 +1461,7 @@ fn pair(
     holding: &mut HashMap<String, amux::PendingPeer>,
     results: mpsc::UnboundedSender<PairingDone>,
 ) {
-    let admin = runtime.embedded.admin();
+    let admin = runtime.admin.clone();
     // Confirming and abandoning both consume the attempt, so it leaves the map
     // before the round trip: a second tap on either has nothing to answer with
     // and says so rather than spending the capability twice.

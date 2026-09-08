@@ -184,6 +184,20 @@ pub enum OpOutcomeDto {
     Connection(ConnectionOutcome),
     Devices(DevicesOutcome),
     Creation(CreationOutcome),
+    Accounts(AccountsOutcome),
+}
+
+/// How putting another account on screen ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum AccountsOutcome {
+    /// The account named is now the one being read. What was on screen is
+    /// gone rather than hidden: the screens start from nothing, and every
+    /// result the previous account still had in flight is refused.
+    Selected { account: String },
+    /// No account of that name is signed in on this phone — a stale switcher,
+    /// or an account signed out from somewhere else on the screen.
+    Unknown { account: String },
 }
 
 /// How asking a machine what it has to offer ended.
@@ -337,6 +351,17 @@ pub enum Event {
     },
     TokenRequest {
         request_id: u64,
+        /// Which signed-in account the token is wanted for.
+        account: String,
+    },
+    /// How many agents are waiting on an account nobody is looking at.
+    ///
+    /// Read from that account's own live subscription while the app is in
+    /// front of somebody, so it is a count of real work rather than a badge
+    /// somebody guessed. It is the only thing an unselected account reports.
+    Attention {
+        account: String,
+        waiting: usize,
     },
     Invariant {
         detail: String,

@@ -236,7 +236,8 @@ public final class NewAgentStore {
         case .opResult(let result):
             if result.op == awaitingListing { listed(result.outcome) }
             if result.op == awaitingCreate { started(result.outcome) }
-        case .feed, .fleet, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices:
+        case .feed, .fleet, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices,
+             .attention:
             break
         }
     }

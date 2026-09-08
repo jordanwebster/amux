@@ -133,6 +133,7 @@ dependencies = [
  "async-trait",
  "cbindgen",
  "chrono",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
