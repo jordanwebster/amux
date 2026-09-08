@@ -6,6 +6,9 @@ use super::*;
 
 const AGENT: AgentId = Uuid::from_u128(1);
 const HOST: AgentId = Uuid::from_u128(2);
+/// This phone. It is a device on the account like any machine and so has a
+/// host id, but nothing runs on it and it is never the machine an agent is on.
+const PHONE: AgentId = Uuid::from_u128(9);
 
 fn host(online: bool) -> Msg {
     Msg::Server(ServerMsg::HostUpserted {
@@ -42,7 +45,7 @@ fn model(kind: amux::AgentKind) -> Model {
     let mut model = Model::default();
     for msg in [
         Msg::Server(ServerMsg::Connected {
-            local_host_id: Some(HOST),
+            local_host_id: Some(PHONE),
         }),
         host(true),
         upsert(kind),
@@ -207,7 +210,7 @@ fn mobile_projection_schema_snapshot() {
     });
     events.push(Event::Devices {
         identity: DeviceIdentityDto {
-            host: uuid::Uuid::from_u128(9),
+            host: PHONE,
             name: "iPhone".into(),
             fingerprint: "4f2a91c05b7e8d3a6c14f0928be5d7a3419c60fe2d8b7a05c31e94f2ab7d69c1"
                 .into(),

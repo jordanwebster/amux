@@ -11499,3 +11499,19 @@ across frames where the relay never reconnects, and the machine that is still
 paired stays on the callback.
 
 Green: `wt test -- --lib mobile_cache` (6 passed).
+
+## The pinned projection snapshot keeps its machine
+
+The schema file the phone's Swift side reads — pinned so a change to a Rust DTO
+fails at a test rather than at a screen that quietly stops showing something —
+came back from a regeneration with an empty host list, and the Swift test that
+reads it failed.
+
+The same fixture mistake as the fleet cache's: the snapshot named "studio", the
+machine the pinned agent runs on, as the phone's own local host, and the
+machines list leaves the local host out. Regenerating therefore took the only
+machine out of the pinned fleet. The phone now has an id of its own in that
+fixture — the one the snapshot already gives its device identity — and the
+pinned fleet carries "studio" again.
+
+Green: `wt run ios-unit`, `wt test -- --lib mobile_`.

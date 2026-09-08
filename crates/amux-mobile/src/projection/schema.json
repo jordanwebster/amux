@@ -34,7 +34,21 @@
           "last_activity": "2023-11-14T22:13:20Z"
         }
       ],
-      "hosts": [],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null,
+            "platform": null
+          },
+          "epoch": 1
+        }
+      ],
       "reconciled": true
     }
   },
@@ -255,7 +269,21 @@
           "last_activity": "2023-11-14T22:13:20Z"
         }
       ],
-      "hosts": [],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null,
+            "platform": null
+          },
+          "epoch": 1
+        }
+      ],
       "reconciled": true
     }
   },
@@ -357,7 +385,21 @@
           "last_activity": "2023-11-14T22:13:20Z"
         }
       ],
-      "hosts": [],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null,
+            "platform": null
+          },
+          "epoch": 1
+        }
+      ],
       "reconciled": true
     }
   },
