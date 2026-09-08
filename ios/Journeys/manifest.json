@@ -85,6 +85,20 @@
         "from-help"
       ],
       "claim": "Reporting what went wrong on a phone paired with a machine the runner is really running, so the picture in every report is a screen that machine filled. The system photographs the app and the app's own Report appears — a hundred points clear of the corner the system draws its thumbnail preview in, because no app is given that preview to attach anything to — and anywhere else on the screen turns it down and lets the frozen frame go. With the other preview setting the system covers the app entirely; put away and brought back, the same offer over the same frozen frame is still there. Taking it opens the report on the frame frozen when the offer appeared, with no share step, no sheet and nothing asked of Photos — the build asks for no access to the photo library at all, so what it draws cannot be the picture the system saved. Three rectangles are dragged onto the picture, each takes a note and one more is written about the whole thing. The account service turns the report down in its own words, nothing written is lost, and Retry hands over the same bundle again and comes back with a receipt. What left the phone is opened where it crossed that boundary: every part is declared present with the file beside it or absent with the reason, the rectangles and both notes are carried, and the frame is the whole screen in points with the scale it was drawn at. Report a Problem under Help does the same deliberately, with no offer in between, and its bundle names the page it was pressed on rather than the one the screenshot was taken on. Nothing here reaches amux.sh: the account service is a double the app is handed at launch, which is what makes a refused upload a state a finger can reach."
+    },
+    {
+      "id": "accessibility",
+      "stage": 12,
+      "topology": "e2e-tests/topologies/accessibility.json",
+      "acts": [
+        "home",
+        "conversation",
+        "asks",
+        "writing",
+        "hosts",
+        "failures"
+      ],
+      "claim": "Everything a person mainly does with this app, done again with the accessibility settings on: VoiceOver running on the device and the whole app drawn at the largest text size a reader can ask for, against two machines the runner is really running. The app itself says it is in a VoiceOver session and says what size it is drawn at, so neither is taken on trust. At that size the fleet still lists its agents and every action it offers has a name to read out; a conversation still reads, and the patch its machine froze still gives up a range to a finger held on one line and dragged onto the next; a permission is refused and a plan approved with the panel's own controls, and the sheet that asks what should change is got out of without answering it; a token pasted into the message stands in the sentence as one character and one backspace takes the whole of it, and the card that renames the agent is opened and cancelled; the machines are listed; and a machine taken away while somebody is reading one of its agents says the same thing in light and in dark. What each screen drew, and how far the actions it is for sit from the bottom of the window, is written out beside the photographs."
     }
   ]
 }

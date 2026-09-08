@@ -1077,6 +1077,7 @@ final class DoorHost {
         return .state(VisibleState(
             screen: screen?.rawValue ?? "none",
             typeSize: typeSize.doorName,
+            voiceOver: UIAccessibility.isVoiceOverRunning,
             elements: declared + leaves,
             reconciled: stores.fleet.reconciled,
             shimmering: stores.fleet.rows.filter { !$0.confirmed }.count))

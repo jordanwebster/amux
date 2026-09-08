@@ -170,6 +170,7 @@ final class DoorTests: XCTestCase {
         let state = VisibleState(
             screen: "home",
             typeSize: "large",
+            voiceOver: true,
             elements: [VisibleElement(
                 identifier: "home.title", label: "Agents", value: nil,
                 frame: VisibleFrame(x: 16, y: 64, width: 200, height: 32), enabled: true)],

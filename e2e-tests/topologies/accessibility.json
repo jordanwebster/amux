@@ -1,0 +1,13 @@
+{
+  "users": ["personal"],
+  "daemons": [
+    {"name": "laptop", "user": "personal", "repository_roots": ["../../target/ios/journeys"]},
+    {"name": "desktop", "user": "personal", "repository_roots": ["../../target/ios/journeys"]}
+  ],
+  "paired": [],
+  "agents": [
+    {"name": "talk-me-through-it", "daemon": "laptop", "working_dir": "../../target/ios/journeys/accessibility-repository", "provider": {"Claude": {"script": "../scripts/writing.json"}}},
+    {"name": "mind-the-gap", "daemon": "laptop", "working_dir": "../../target/ios/journeys/accessibility-repository", "provider": {"Claude": {"script": "../scripts/answers.json"}}},
+    {"name": "release-notes", "daemon": "desktop", "working_dir": "../../target/ios/journeys/accessibility-repository", "provider": {"Claude": {"script": "../scripts/idle.json"}}}
+  ]
+}

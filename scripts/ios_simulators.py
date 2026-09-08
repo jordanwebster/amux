@@ -114,6 +114,28 @@ def pin(udid: str) -> None:
     )
 
 
+def voice_over(udid: str, running: bool) -> None:
+    """Turns the device's own screen reader on or off.
+
+    VoiceOver is a system setting, so it can only be reached from out here:
+    nothing inside an app can start a VoiceOver session, and a driver that
+    wanted the app drawn and read the way a blind reader gets it has to change
+    the device first. The preferences are what Settings writes; the two
+    notifications are what makes every running process notice, because the
+    accessibility state is cached per process and an app launched afterwards
+    reads the cache rather than the file.
+
+    Whether it took is not asked here. The app is the only thing that can
+    answer that, and the journey asks it through the door.
+    """
+    for key in ("VoiceOverTouchEnabled", "ApplicationAccessibilityEnabled",
+                "AccessibilityEnabled"):
+        run("xcrun", "simctl", "spawn", udid, "defaults", "write",
+            "com.apple.Accessibility", key, "-int", "1" if running else "0")
+    for cache in ("com.apple.accessibility.cache.app.ax", "com.apple.accessibility.cache.ax"):
+        run("xcrun", "simctl", "spawn", udid, "notifyutil", "-p", cache)
+
+
 def main() -> None:
     for name in DEVICES:
         udid = ensure(name)

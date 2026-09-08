@@ -23,6 +23,7 @@
 		40764CA1E1F2F8A2C244A3FF /* AmuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7A185CA200BF122E708201F8 /* AmuxCore */; };
 		48C852D18B47B3DA431FDA05 /* Door.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DA38C20C8560FEE2BB88D9F /* Door.swift */; };
 		526D112B4DCB651C254E5F9F /* ReportsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */; };
+		53E854553FBEB2A633CAF420 /* AccessibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DE352A112572D9D86D0590 /* AccessibilityTests.swift */; };
 		546E08243B4B5BE2BDFDAB84 /* DoorServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 590B62F0B4C074AA2233FC70 /* DoorServer.swift */; };
 		60B54AE413844E002F4EBB19 /* AmuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 848B7908370DBF226D9CCEF9 /* AmuxCore */; };
 		63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D140E97565E0C456B57BB601 /* DebugTools.swift */; };
@@ -91,6 +92,7 @@
 		33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorRecording.swift; sourceTree = "<group>"; };
 		35ED0CE4A533E8878FBD1675 /* AmuxFeatures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxFeatures; path = Packages/AmuxFeatures; sourceTree = SOURCE_ROOT; };
 		456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAuditTests.swift; sourceTree = "<group>"; };
+		51DE352A112572D9D86D0590 /* AccessibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityTests.swift; sourceTree = "<group>"; };
 		57E50ACE0C6E84D336B13332 /* Harness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Harness.swift; sourceTree = "<group>"; };
 		590B62F0B4C074AA2233FC70 /* DoorServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorServer.swift; sourceTree = "<group>"; };
 		5CBBB924EED36840518D0268 /* DoorHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorHost.swift; sourceTree = "<group>"; };
@@ -206,6 +208,7 @@
 			isa = PBXGroup;
 			children = (
 				456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */,
+				51DE352A112572D9D86D0590 /* AccessibilityTests.swift */,
 				6AF7C50B96593352DB0BC307 /* AccountsTests.swift */,
 				DCD0B049D76F4DAF62A8B46E /* AskTests.swift */,
 				B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */,
@@ -507,6 +510,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1F71DC755174214F60A5E1B2 /* AccessibilityAuditTests.swift in Sources */,
+				53E854553FBEB2A633CAF420 /* AccessibilityTests.swift in Sources */,
 				DDFD9CD189F0B140F851F65D /* AccountsTests.swift in Sources */,
 				71EF8392260DD101E76C1D32 /* AskTests.swift in Sources */,
 				37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */,

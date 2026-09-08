@@ -2592,6 +2592,173 @@ def no_photo_library(journey: Journey) -> None:
                 "report cannot be the one the system saved: it is the app's own window")
 
 
+def accessibility(journey: Journey, udid: str, ready: dict) -> None:
+    """The primary journeys again, under the settings a reader turns on.
+
+    Everything here has been proved once already at the ordinary text size
+    with nobody reading the screen out: the fleet, a conversation, an ask
+    answered, a patch written about, a message composed, the machines. What is
+    claimed here is that none of it stops working when the two settings that
+    change every layout and every label are on — the largest text size a
+    reader can ask for, and VoiceOver itself.
+
+    VoiceOver is genuinely running on the device for the whole of it. It is
+    turned on out here because that is the only place it can be turned on
+    from, and the app is asked whether it is in a VoiceOver session rather
+    than assumed to be, so the claim is about the app and not about the
+    preferences file this wrote. It is turned off again whatever happens: a
+    device left reading itself out would change what every golden run after
+    this one photographs.
+
+    What the run finds out about each screen — how many controls it drew, what
+    is wrong with any of them, and how far the actions that screen is for sit
+    from the bottom of the window — is written out beside the photographs. The
+    reachability numbers are reported and not judged: how far a thumb reaches
+    is a fact about a hand, and this says where each control is and leaves the
+    judging to whoever reads it.
+    """
+    daemons = {daemon["name"]: daemon for daemon in ready["daemons"]}
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+    control_address = ready["control"]
+
+    install(udid)
+    forget_cache(udid)
+    forget_pairings(udid)
+    pins = {name: answer(control_address,
+                         {"StartPinPairing": {"daemon": name, "ttl_secs": 900}})["pin"]
+            for name in ("laptop", "desktop")}
+    journey.say(f"two machines printed pairing codes and hold "
+                f"{', '.join(sorted(running))} in a repository this journey left with one "
+                f"uncommitted change in it")
+
+    driving = journey.acts
+    photographs = {
+        "home": ("accessibility-home.png",),
+        "conversation": ("accessibility-conversation.png", "accessibility-review.png"),
+        "asks": ("accessibility-ask.png",),
+        "writing": ("accessibility-composer.png", "accessibility-rename.png"),
+        "hosts": ("accessibility-hosts.png",),
+        "failures": ("accessibility-failure-light.png", "accessibility-failure-dark.png"),
+    }
+    taking = {name: journey.directory / name
+              for act in driving for name in photographs.get(act, ())}
+    read = journey.directory / "accessibility.json"
+
+    ios_simulators.voice_over(udid, True)
+    try:
+        perform(
+            journey, udid, "AmuxUITests/AccessibilityTests",
+            {"accessibility.json": read, **{name: path for name, path in taking.items()}},
+            telling={
+                "AMUX_ACTS": ",".join(driving) if journey.filtered else "",
+                "AMUX_RELAY": f"http://{ready['relay']}",
+                "AMUX_TOKEN": token,
+                "AMUX_USER": "journey-phone",
+                "AMUX_PIN": pins["laptop"],
+                "AMUX_HOST_ID": daemons["laptop"]["host_id"],
+                "AMUX_DESKTOP": daemons["desktop"]["host_id"],
+                "AMUX_DESKTOP_PIN": pins["desktop"],
+                "AMUX_CONTROL": control_address,
+                "AMUX_DOOR_PORT": str(free_port()),
+                "AMUX_AGENT": running["talk-me-through-it"]["agent_id"],
+                "AMUX_ASKING": "mind-the-gap",
+                "AMUX_ASKING_AGENT": running["mind-the-gap"]["agent_id"],
+                "AMUX_SUBJECT": "talk-me-through-it",
+                "AMUX_HOST": "laptop",
+            })
+    finally:
+        ios_simulators.voice_over(udid, False)
+    seen = json.loads(read.read_text())
+
+    # What the run was, before anything it found: a run that was not a
+    # VoiceOver session, or was drawn at the ordinary size, is not this
+    # journey however well it went.
+    journey.expect(seen.get("voiceOver") is True,
+                   "the app was not in a VoiceOver session while this ran")
+    journey.expect(seen.get("typeSize") == "accessibility5",
+                   f"the app was drawn at {seen.get('typeSize')!r}")
+    journey.expect(seen.get("actsPerformed") == driving,
+                   f"this run asked for {driving} and the phone drove "
+                   f"{seen.get('actsPerformed')}")
+    if journey.filtered:
+        journey.say(f"not driven: {', '.join(seen.get('actsShortcut') or []) or 'nothing'}")
+    else:
+        journey.expect(not seen.get("actsShortcut"),
+                       f"the whole journey skipped {seen.get('actsShortcut')}")
+    journey.say("VoiceOver was running on the device and the app said so, and every screen "
+                "below was drawn at accessibility5, the largest size a reader can ask for")
+
+    def act(name: str, say: str) -> None:
+        if name not in driving:
+            return
+        journey.say(say)
+
+    act("home", f"the fleet drew {seen.get('homeRows')} rows at the largest size, and "
+                f"{reachable(journey, seen.get('home'))}")
+    if "conversation" in driving:
+        journey.expect(bool(seen.get("sheetKept", {}).get("says")),
+                       f"no range of the patch could be taken hold of: {seen.get('sheetKept')}")
+        journey.say(f"a range was taken by holding a line and dragging — "
+                    f"{seen['sheetKept']['says']} at {seen['sheetKept']['lines']} — and one "
+                    f"taken the same way was let go of again without being said "
+                    f"({seen['sheetCancelled']['says']}); "
+                    f"{reachable(journey, seen.get('conversation'))}")
+    if "asks" in driving:
+        journey.say(f"a permission was refused and a plan approved with the panel's own "
+                    f"controls, and the sheet that asks what should change was got out of "
+                    f"without answering it; {reachable(journey, seen.get('plan'))}")
+    if "writing" in driving:
+        journey.expect("Pasted text" not in seen.get("afterRemove", ""),
+                       f"one backspace left part of a token behind: {seen.get('afterRemove')!r}")
+        journey.say(f"a paste of fourteen lines stood in the sentence as one token "
+                    f"({seen.get('afterPaste')!r}) and one backspace took the whole of it; the "
+                    f"card that renames the agent was opened and cancelled; "
+                    f"{reachable(journey, seen.get('composer'))}")
+    if "hosts" in driving:
+        journey.say(f"the machines this phone works on are {seen.get('hostsListed')}, and "
+                    f"{reachable(journey, seen.get('hosts'))}")
+    if "failures" in driving:
+        says = seen.get("failureSays", {})
+        journey.expect(says.get("light") and says.get("light") == says.get("dark"),
+                       f"the two appearances say different things about a lost machine: {says}")
+        journey.say(f"a machine taken away while somebody was reading one of its agents says "
+                    f"{says.get('light')!r} in both appearances, photographed in each")
+
+    faults = seen.get("faults") or []
+    (journey.directory / "faults.txt").write_text("\n".join(faults) + "\n" if faults else "")
+    journey.say(f"{len(faults)} controls on the screens this run walked through are unnamed or "
+                f"under 44 pt, listed in faults.txt; whether every control in the build is "
+                f"named and big enough is the accessibility audit's question, swept over every "
+                f"state rather than the handful a journey walks through")
+
+    for name, path in taking.items():
+        journey.expect(path.is_file() and path.stat().st_size > 0, f"{path} was not written")
+    journey.say("photographed " + ", ".join(sorted(taking)))
+    forget_cache(udid)
+
+
+def reachable(journey: Journey, findings: object) -> str:
+    """Where the actions one screen is for ended up, in one sentence."""
+    if not isinstance(findings, dict):
+        return "nothing was recorded about what it is for"
+    said = []
+    for control in findings.get("reach", []):
+        said.append(f"{control['identifier']} is {control['points']} pt, "
+                    f"{control['pointsFromTheBottom']} pt above the bottom of the window, and "
+                    f"reads as {control['label']!r}")
+    return "; ".join(said) or "it declares no primary action"
+
+
+def prepare_accessibility() -> None:
+    """A repository with one uncommitted change, so the patch this journey
+    takes a range of is one the machine computed."""
+    scratch_repository(
+        "accessibility-repository",
+        {"parser.rs": PARSER_COMMITTED, "wire.rs": WIRE_COMMITTED},
+        {"parser.rs": PARSER_EDITED})
+
+
 def prepare_hosts() -> None:
     """Three repositories for the machines to offer, so what a person picks on
     New Agent is a directory that really exists on the far side.
@@ -2632,11 +2799,11 @@ def prepare_writing() -> None:
 JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
             "writing": writing, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts,
-            "accounts": accounts, "reports": reports}
+            "accounts": accounts, "reports": reports, "accessibility": accessibility}
 # What has to exist before the daemons start: the runner resolves an
 # agent's working directory when it loads the topology.
 PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_writing,
-           "hosts": prepare_hosts}
+           "hosts": prepare_hosts, "accessibility": prepare_accessibility}
 
 
 def declared() -> list[dict]:

@@ -4,6 +4,41 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The primary journeys, walked again with VoiceOver running and
+every screen at the largest text size.**
+
+There is a new journey, `wt run ios-journey -- accessibility`. It is the
+ordinary work — the fleet, a conversation, a patch, an ask, a message, the
+machines — done once more against two machines the runner is really running,
+with the two settings on that change every layout and every label: the largest
+text size a reader can ask for, and VoiceOver itself.
+
+VoiceOver is genuinely running rather than imitated. It is a system setting, so
+it is turned on from outside the app, on the device, and turned off again
+whatever happens — a simulator left reading itself out would change what every
+golden run after it photographs. That it took is not assumed: the app now
+reports whether it is in a VoiceOver session when it is asked what is on
+screen, so the claim is about the app and not about the preferences file the
+journey wrote. XCUITest can still drive a device under VoiceOver, which is what
+makes the journey a journey rather than a survey.
+
+Two things about the largest size had to be learned the hard way. A row of the
+fleet is taller than the phone at that size, so the tap XCUITest aims at the
+middle of one lands on whatever is drawn where that middle would have been —
+which quietly opened a different agent's conversation and made every assertion
+afterwards true of the wrong screen. Presses now go where the screen says it
+drew the control, on the part of it that is actually on screen, after scrolling
+it into a band clear of the floating chrome. And `isHittable` stops meaning
+what it means once a screen reader is attached, so nothing in this journey is
+found by it.
+
+What the run leaves behind, beside its photographs: for each screen, how many
+controls it drew, what is wrong with any of them, and how far the actions that
+screen is for sit from the bottom of the window. The reachability numbers are
+reported rather than judged — how far a thumb reaches is a fact about a hand.
+The four controls it found under 44 pt are the same ones the whole-build
+accessibility audit lists, and fixing them is that audit's piece of work.
+
 2026-09-08 — **An audit that measures the rectangle the screen laid out, and a
 capture of the app with the glass turned off.**
 

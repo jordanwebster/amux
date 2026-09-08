@@ -248,6 +248,12 @@ class JourneyCase: XCTestCase {
         var store: [String: Any]?
         /// Which account a request is about, where more than one is signed in.
         var account: String?
+        /// The appearance to redraw the whole app in, and the reader's text
+        /// size to draw it at. Both are settings a person changes in the
+        /// system rather than in this app, so a test that wants the app drawn
+        /// under one says so here.
+        var appearance: String?
+        var size: String?
 
         var body: [String: Any] {
             var fields: [String: Any] = ["kind": kind]
@@ -273,6 +279,8 @@ class JourneyCase: XCTestCase {
             if let cloud { fields["cloud"] = cloud }
             if let store { fields["store"] = store }
             if let account { fields["account"] = account }
+            if let appearance { fields["appearance"] = appearance }
+            if let size { fields["size"] = size }
             return fields
         }
     }

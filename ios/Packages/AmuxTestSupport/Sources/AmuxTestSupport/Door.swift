@@ -357,6 +357,15 @@ public struct VisibleState: Codable, Sendable, Equatable {
     /// picture says which size it was taken at, so a run that leaked one
     /// would produce baselines nobody could tell apart from correct ones.
     public let typeSize: String
+    /// Whether this launch is running under VoiceOver.
+    ///
+    /// Reported for the same reason the type size is. VoiceOver is a
+    /// device-wide setting nobody inside the app can turn on, so a driver that
+    /// turned it on outside has no way of knowing it took: the app is the only
+    /// thing that can say whether it is in a VoiceOver session, and a run that
+    /// claimed to be one without asking would be claiming it of the plist it
+    /// wrote rather than of the app it drove.
+    public let voiceOver: Bool
     public let elements: [VisibleElement]
     /// Whether the fleet on screen has been confirmed by a host.
     public let reconciled: Bool
@@ -364,11 +373,12 @@ public struct VisibleState: Codable, Sendable, Equatable {
     public let shimmering: Int
 
     public init(
-        screen: String, typeSize: String, elements: [VisibleElement],
-        reconciled: Bool, shimmering: Int
+        screen: String, typeSize: String, voiceOver: Bool = false,
+        elements: [VisibleElement], reconciled: Bool, shimmering: Int
     ) {
         self.screen = screen
         self.typeSize = typeSize
+        self.voiceOver = voiceOver
         self.elements = elements
         self.reconciled = reconciled
         self.shimmering = shimmering
