@@ -140,6 +140,17 @@ mod tests {
     use super::*;
     use crate::projection::Projection;
 
+    /// The phone's own identity. It is a device on the account like any
+    /// machine, so it has a host id, but nothing runs on it and no test here
+    /// may hand it out to a machine as well.
+    const PHONE: Uuid = Uuid::from_u128(9);
+
+    fn connected() -> ServerMsg {
+        ServerMsg::Connected {
+            local_host_id: Some(PHONE),
+        }
+    }
+
     fn host(id: u128, online: bool) -> ServerMsg {
         ServerMsg::HostUpserted {
             host: amux::HostEntry {
@@ -204,9 +215,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut model = Model::default();
         for msg in [
-            ServerMsg::Connected {
-                local_host_id: Some(Uuid::from_u128(99)),
-            },
+            connected(),
             host(99, true),
             host(1, true),
             agent(11, 1),
@@ -227,9 +236,7 @@ mod tests {
         let mut previous_live_fleet = None;
         check(&cache.initial(), &[11], false);
         for msg in [
-            ServerMsg::Connected {
-                local_host_id: Some(Uuid::from_u128(99)),
-            },
+            connected(),
             host(99, true),
             ServerMsg::HostsSynchronized,
             ServerMsg::AgentsSynchronized,
@@ -298,9 +305,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut model = Model::default();
         for msg in [
-            ServerMsg::Connected {
-                local_host_id: Some(Uuid::from_u128(99)),
-            },
+            connected(),
             host(1, true),
             host(2, true),
             agent(11, 1),
@@ -322,9 +327,7 @@ mod tests {
         let mut projection = Projection::default();
         let mut model = Model::default();
         for msg in [
-            ServerMsg::Connected {
-                local_host_id: Some(Uuid::from_u128(99)),
-            },
+            connected(),
             host(1, true),
             host(2, true),
             agent(11, 1),
@@ -349,9 +352,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut model = Model::default();
         for msg in [
-            ServerMsg::Connected {
-                local_host_id: Some(Uuid::from_u128(99)),
-            },
+            connected(),
             host(1, true),
             host(2, true),
             agent(11, 1),
@@ -368,9 +369,7 @@ mod tests {
         let mut projection = Projection::default();
         let mut model = Model::default();
         for msg in [
-            ServerMsg::Connected {
-                local_host_id: Some(Uuid::from_u128(99)),
-            },
+            connected(),
             host(1, true),
             host(2, false),
             ServerMsg::HostsSynchronized,

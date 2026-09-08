@@ -11476,3 +11476,26 @@ Green: `wt run mobile-check`, `wt lint`, `wt test -- --lib mobile_profiles`,
 `mobile_cache_local_sync_prunes_unpaired_host_across_disconnected_frames`,
 which fails identically with every change here reverted and is tracked
 separately).
+
+## The phone is not one of the machines, in the cache tests too
+
+The fleet cache's local-synchronization proof went red: with the relay away and
+the account locally synchronized, the callback listed no machines at all, so
+the assertion that the one trusted machine survives the prune had nothing to
+hold on to.
+
+The product moved, not the reader. An embedded runtime trusts itself and so
+arrives in its own host inventory; when the phone learned to leave itself out
+of the machines it lists — nothing runs on a phone, and offering to pair with
+yourself is nonsense — the projection began filtering the host it was told is
+local. This test had handed the phone and the machine it expects to see the
+same identity, so the filter took the machine away with it.
+
+The fixture now gives the phone a host id of its own, distinct from every
+machine on the account, which is what a real launch looks like. The proof is
+unchanged and still holds: the remembered agent whose machine is no longer
+paired is pruned once local synchronization says the paired list is complete,
+across frames where the relay never reconnects, and the machine that is still
+paired stays on the callback.
+
+Green: `wt test -- --lib mobile_cache` (6 passed).
