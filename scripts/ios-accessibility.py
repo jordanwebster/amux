@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Audit every control the app draws for a name and a hit area.
 
+Links a markdown parser made out of a run of an agent's prose are judged on
+their name but not on their size — a span of a sentence is not a control this
+app draws and has no rectangle to grow. Each one is named here and in the
+record so nothing small goes unreported.
+
 The check itself is a UI test — XCUITest is the only accessibility client an
 app cannot be for itself, so element kinds, VoiceOver names and rectangles are
 only real from over there. This starts the pinned simulator, installs the build
@@ -53,8 +58,14 @@ def main() -> int:
         print("the audit passed but left no record behind", file=sys.stderr)
         return 1
     found = json.loads(written.read_text())
+    inline = found.get("inlineLinks", [])
     print(f"{found['controls']} controls across {found['states']} states: "
-          f"every one named and at least 44 pt")
+          f"every one named, and every one the app draws at least 44 pt "
+          f"(links inside agent prose, judged on their names alone: "
+          f"{len(inline)})")
+    for link in inline:
+        print(f"  inline link in {link['state']}: "
+              f"{link['label']!r} -> {link['url']} ({link['size']})")
     print(f"record: {written}")
     return 0
 

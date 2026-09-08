@@ -15,6 +15,20 @@ import XCTest
 /// The states it sweeps are whatever the build draws today — asked of the door
 /// rather than listed here, so a screen that lands tomorrow is audited the day
 /// it lands and nobody has to remember to add it.
+///
+/// One kind of thing is judged on its name and not on its size: a link the
+/// markdown parser made out of a run of an agent's prose. That is not a control
+/// the app draws. The app draws a paragraph; the parser turns a span of a
+/// sentence inside it into something tappable, laid out as part of a line and
+/// split across two of them when the line wraps. There is no rectangle to grow,
+/// and its height is the height of the prose around it. WCAG's target-size rule
+/// carves out inline targets in a sentence for exactly this reason, so the
+/// exception here is the standard's rather than this app's. It is kept narrow:
+/// only a link with no identifier of its own, sitting inside a block of agent
+/// prose, and only its size is excused — it must still say something VoiceOver
+/// can read out. Each one excused is written into the record with the state it
+/// was found in, its label and its URL, and counted in the run's summary line,
+/// so a small tappable thing nobody expected is reported rather than lost.
 final class AccessibilityAuditTests: XCTestCase {
     /// The smallest a control may be, in points, in either direction. Apple's
     /// own number, and the one a thumb actually needs.
@@ -28,6 +42,11 @@ final class AccessibilityAuditTests: XCTestCase {
     /// drawing — which the system's own keyboard and the status bar both do,
     /// and neither is this app's to change.
     static let notOurs = ["UIKeyboard", "Key.", "com.apple."]
+
+    /// What the screen calls a block of an agent's own markdown. A link with
+    /// no name of its own found inside one of these was made by the parser out
+    /// of a run of a sentence, not drawn by this app as a control.
+    static let proseBlocks = ["transcript.prose"]
 
     func testEveryControlIsNamedAndBigEnoughToHit() throws {
         let port = ProcessInfo.processInfo.environment["AMUX_DOOR_PORT"] ?? "8790"
@@ -44,6 +63,7 @@ final class AccessibilityAuditTests: XCTestCase {
 
         var audited = 0
         var complaints: [String] = []
+        var inlineLinks: [[String: String]] = []
         for state in states {
             guard let screen = state["screen"] as? String,
                   let name = state["state"] as? String else { continue }
@@ -52,7 +72,17 @@ final class AccessibilityAuditTests: XCTestCase {
             let laidOut = try laidOut(door)
             for control in controls(app) {
                 audited += 1
-                complaints += fault(control, on: name, laidOut: laidOut)
+                let inline = inlineProseLink(control, laidOut: laidOut)
+                if inline {
+                    inlineLinks.append([
+                        "state": name,
+                        "label": control.label,
+                        "url": control.identifier,
+                        "size": rectangle(control.frame),
+                    ])
+                }
+                complaints += fault(
+                    control, on: name, laidOut: laidOut, judgeSize: !inline)
             }
         }
 
@@ -61,6 +91,7 @@ final class AccessibilityAuditTests: XCTestCase {
         record["states"] = states.count
         record["controls"] = audited
         record["faults"] = complaints
+        record["inlineLinks"] = inlineLinks
         write(record, to: "accessibility-audit.json")
         XCTAssertTrue(
             complaints.isEmpty,
@@ -144,9 +175,31 @@ final class AccessibilityAuditTests: XCTestCase {
         rectangle.isNull ? 0 : rectangle.width * rectangle.height
     }
 
+    /// Whether this is a link the markdown parser made inside a run of an
+    /// agent's prose, which is judged on its name but not on its size.
+    ///
+    /// Three things at once, so nothing else can slip through: it has to be a
+    /// link, it has to carry no identifier the screen declared — the app names
+    /// every control it draws, and XCUITest falls back to reporting a bare
+    /// link's URL as its identifier — and it has to sit inside a rectangle the
+    /// screen declared as a block of agent markdown. Containment rather than
+    /// ancestry because the prose block combines its children for VoiceOver,
+    /// which lifts the links inside it out to the top of the tree.
+    private func inlineProseLink(
+        _ control: XCUIElement, laidOut: [String: [CGRect]]
+    ) -> Bool {
+        guard control.elementType == .link, laidOut[control.identifier] == nil else { return false }
+        let frame = control.frame
+        guard !frame.isNull, !frame.isEmpty else { return false }
+        return Self.proseBlocks
+            .flatMap { laidOut[$0] ?? [] }
+            .contains { $0.insetBy(dx: -1, dy: -1).contains(frame) }
+    }
+
     /// What is wrong with one control, said in words a person can act on.
     private func fault(
-        _ control: XCUIElement, on state: String, laidOut: [String: [CGRect]]
+        _ control: XCUIElement, on state: String, laidOut: [String: [CGRect]],
+        judgeSize: Bool
     ) -> [String] {
         let named = control.identifier.isEmpty ? "an unnamed control" : control.identifier
         var faults: [String] = []
@@ -155,6 +208,7 @@ final class AccessibilityAuditTests: XCTestCase {
                 "\(state): \(named) has nothing for VoiceOver to read out; it is at "
                 + "\(rectangle(control.frame))")
         }
+        guard judgeSize else { return faults }
         let frame = judged(control, laidOut: laidOut)
         if frame.width < Self.smallest || frame.height < Self.smallest {
             faults.append(

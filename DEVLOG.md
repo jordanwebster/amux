@@ -4,6 +4,54 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **Every control the app draws now answers to a thumb and says
+its name out loud.**
+
+The audit that sweeps every button, switch and link across every state the app
+can be in was reporting 128 complaints. It now reports none, and not one
+capture moved.
+
+The choice that made that possible: grow the target, not the drawing. Almost
+every complaint was about a control the design means to be small — a close
+cross, a back chevron, a row of two-word choices, a segment of a picker. Drawing
+those at 44 pt would be a different design. But what has to be 44 pt is what
+answers to a thumb, and that is a different rectangle from the drawn one. So
+there is a pair of modifiers, `.thumbTarget(x:y:)` and
+`.reclaimingThumbTarget(x:y:)`, that pads a control's tap area outwards and
+hands the room straight back to the layout. It has to be a pair, and the halves
+have to sit in particular places: padding or a content shape applied to a
+`Button` from outside does not extend what the button answers to, so the growth
+goes on the button's label; and the app reports the rectangle it declared, so
+the reclaim has to sit outside that declaration or the growth is invisible to
+anything measuring it. Note that a control drawn "20 pt tall" measures 19.67, so
+every pair carries a point of slack rather than landing on exactly 44.
+
+Three rows turned out to be declaring their name on the container around the
+button rather than on the button, which made them unnamed controls to anything
+looking: the folded run of reads, an agent-to-agent message, and a file header
+on the diff page. Moving the name onto the button is both the fix and the truer
+statement of what is tappable. The model line on the new-agent screen stopped
+being a `Menu`: SwiftUI puts a second button inside a `Menu`'s own, and nothing
+reaches it to give it a name. It is a button and a confirmation dialog now.
+
+What the app reports as a control's size is now the size the layout gave it,
+with only the position taken from the screen. The drawer scales the screen
+behind it by 0.96, which made 44 pt controls report 42 — a fact about a
+presentation transform, not about the room the layout gave them.
+
+One kind of thing is judged on its name and not its size, stated in the audit's
+own words and listed in its record: a link the markdown parser made out of a run
+of an agent's prose. That is not a control the app draws. The app draws a
+paragraph; the parser turns a span of a sentence inside it into something
+tappable, laid out as part of a line and split across two when the line wraps.
+There is no rectangle to grow and its height is the height of the prose around
+it. WCAG's target-size rule carves out inline targets in a sentence for the same
+reason. The exception is kept narrow — only a link with no name of its own,
+inside a block of agent markdown, and only its size — and each one excused is
+written into the record with its state, label and URL and counted in the run's
+summary line, so a small tappable thing nobody expected is reported rather than
+lost.
+
 2026-09-08 — **The primary journeys, walked again with VoiceOver running and
 every screen at the largest text size.**
 
