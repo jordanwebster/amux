@@ -4,6 +4,34 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Measure how long the phone takes to show you your own words.**
+
+The optimistic echo now has a number behind it. The performance suite sends a
+message from the shipped conversation page — a thousand rows in the transcript,
+a session in the store so the composer is really there — through the app's own
+send: the command is built, handed to the runtime and the row goes up. Five
+samples, a fresh runtime and a fresh window for each, and the page's own
+account of what it drew has to hold the sent row or the number is thrown out as
+being about a page the message never reached. On the pinned Mac the median is
+6.7 ms against a budget of 17, which is one frame of this simulator standing in
+for 8.3 ms on a ProMotion phone.
+
+Two things had to be settled first. `echoCommitted` used to be marked when the
+host's own copy of the row came back, which is a round trip over a network and
+can be anything at all; the budget is about the row the phone draws from what
+was typed, before anything has left the device, so the mark moved to there. And
+the mark for "the display is showing this" waited one display refresh past the
+render server committing the frame — slack worth having inside a
+four-hundred-millisecond launch, and half the whole answer inside a one-frame
+budget, where it reported two frames for work that took one. The launch keeps
+the conservative mark and its recorded numbers; the echo is marked at the
+commit, and docs/IOS_PERFORMANCE.md says which is which and why.
+
+`wt run ios-perf` passes whole with the new row, and `--only echo` runs it
+alone.
+
+---
+
 2026-09-08 — **Measure the app in a build shaped like a shipped one.**
 
 The performance suite used to measure a Debug build, which measures the Swift

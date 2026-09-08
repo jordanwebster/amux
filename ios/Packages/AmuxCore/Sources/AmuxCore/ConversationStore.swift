@@ -71,11 +71,6 @@ public final class ConversationStore {
     /// Absolute position of `entries.first`.
     public private(set) var firstPosition: UInt64 = 0
 
-    /// Set when the person has sent and the host has not yet echoed the row
-    /// back. The pair of marks around it is what the optimistic-echo budget
-    /// is measured between.
-    private var awaitingEcho = false
-
     /// Operations dispatched from this conversation that have not been
     /// answered yet. An answer claims its entry and removes it, so a second
     /// result carrying the same identifier is not claimed twice.
@@ -101,15 +96,22 @@ public final class ConversationStore {
     /// anything is drawn, so the echo budget covers the whole round from
     /// finger to row.
     public func sendTapped() {
-        awaitingEcho = true
         Signposts.emit(.sendTapped)
     }
 
     /// The person has sent this text. Called with the tap, so the row is on
     /// screen before anything has left the phone.
+    ///
+    /// The two marks are left here, around the one thing the echo budget is
+    /// about: the tap, and the frame a person can see their own words in.
+    /// That frame is this phone's alone — the row is drawn from what was
+    /// typed, before anything has left the device — so the interval is the
+    /// app's work and never the network's. The host's own row arriving later
+    /// and replacing this one is a different event with no budget on it.
     public func sent(_ text: String) {
-        unacknowledged.append(PendingSend(text: text))
         sendTapped()
+        unacknowledged.append(PendingSend(text: text))
+        Signposts.emitWhenDrawn(.echoCommitted)
     }
 
     /// The transcript as a reader sees it: what the host has sent, then
@@ -238,9 +240,5 @@ public final class ConversationStore {
         reconcile(update.append)
         for _ in update.append { Signposts.emit(.streamRow) }
         Signposts.emit(.transcriptCommit)
-        if awaitingEcho {
-            awaitingEcho = false
-            Signposts.emitWhenPresented(.echoCommitted)
-        }
     }
 }

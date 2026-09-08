@@ -50,6 +50,12 @@ final class PerformanceSuite: XCTestCase {
             }
         }
 
+        if inputs.measures(.echo) {
+            for _ in 0..<samples {
+                run.record(try await echo())
+            }
+        }
+
         if inputs.measures(.streaming) {
             for _ in 0..<samples {
                 for sample in try await streamingScroll() { run.record(sample) }
@@ -112,6 +118,75 @@ final class PerformanceSuite: XCTestCase {
             unit: .milliseconds,
             proxy: false,
             workload: workload)
+    }
+
+    // MARK: - The optimistic echo
+
+    /// From a send being handled to the frame a person can see their own words
+    /// in, on the page they wrote them on.
+    ///
+    /// Nothing has left the phone by the time that row appears: it is drawn
+    /// from what was typed, and the host's own copy of it arrives later and
+    /// replaces it. So this interval is the app's own work from end to end,
+    /// and a slow network cannot flatter it or spoil it.
+    ///
+    /// It is taken over the pinned thousand-row transcript with the composer
+    /// really there, because that is the page a message is sent from:
+    /// appending a row to a list that already has a screenful above it, with
+    /// the strip and the box laid out under it, is the work being budgeted.
+    @MainActor
+    private func echo() async throws -> MetricSample {
+        let harness = try Harness()
+        defer { harness.stop() }
+
+        let agent = AgentId(UUID())
+        let entries = Workloads.conversation(agent: agent, rows: 1_000)
+        let model = harness.stores.conversation(agent)
+        // The page's own account of what it drew, so the frame the echo was
+        // marked in can be shown to have carried the row rather than assumed
+        // to have.
+        let drawn = DrawnElements()
+        let window = harness.show {
+            self.page(harness, agent: agent, model: model) { drawn.record($0) }
+        }
+        defer { window.isHidden = true }
+        harness.deliver(Harness.encoded([
+            .session(Sessions.claude(agent: agent)),
+            Workloads.append(entries, to: agent, at: 0),
+        ]))
+        await harness.settle()
+        XCTAssertTrue(
+            model.gate.accepts,
+            "the composer would not take a message, so nothing here is an echo")
+
+        let text = "does this row arrive in the frame after the tap"
+        model.draft.body = text
+        // Everything before this is a person typing. The clock starts where
+        // they stop, and the app's own send is what runs after it: the
+        // command is built, handed to the runtime, and the row goes up.
+        Signposts.reset()
+        XCTAssertTrue(harness.stores.send(to: agent), "the send never happened")
+        try await harness.wait(for: .echoCommitted)
+
+        let tapped = try XCTUnwrap(Signposts.first(.sendTapped))
+        let committed = try XCTUnwrap(Signposts.first(.echoCommitted))
+        var carried = false
+        for _ in 0..<10 {
+            carried = drawn.transcriptRows.contains {
+                $0.identifier == "transcript.prompt" && $0.label == text
+            }
+            if carried { break }
+            await harness.settle()
+        }
+        XCTAssertTrue(carried, "the echo was marked on a page the sent row never reached")
+        return MetricSample(
+            metric: .echoFrames,
+            value: (committed - tapped) * 1_000,
+            unit: .milliseconds,
+            // One frame of this simulator is 17 ms where a ProMotion phone's
+            // is 8.3, so the budget met here stands in for the phone's.
+            proxy: true,
+            workload: .conversation1000)
     }
 
     // MARK: - Streaming scroll

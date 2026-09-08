@@ -39,7 +39,7 @@ recipe measures and which the physical-phone checklist holds.
 | Network | Runner latency 0 ms and 100 ms; reconciliation measured at both, budget applies at both |
 | Cold first frame | Kernel process start to the first presented frame containing the cached fleet rows themselves, shimmer running — not a launch image and not an empty list; 5 cold launches of a Debug build with the app terminated between; on the pinned simulator median ≤ 460 ms, worst ≤ 600 ms; the 400 ms this stands for on a phone is on the physical-phone checklist |
 | Reconciliation | `streamConnected` to the last row's shimmer ending; median ≤ 1,000 ms at either latency |
-| Optimistic echo | `sendTapped` to the first presented frame containing the row; ≤ 1 frame interval, measured on the simulator as ≤ 17 ms and labelled a proxy for 8.3 ms on ProMotion |
+| Optimistic echo | `sendTapped` to the first presented frame containing the row, taken over the conversation workload on the shipped page with the composer there; ≤ 1 frame interval, measured on the simulator as ≤ 17 ms and labelled a proxy for 8.3 ms on ProMotion |
 | Streaming scroll | Hitch time ratio ≤ 5 ms per second (display-link missed-frame accounting, labelled a proxy for `XCTHitchMetric` on a device); main-thread CPU ≤ 60% of one core averaged over the stream; footprint ≤ 250 MB |
 | Idle | After a 2 s settle with no stream, zero transcript commits and zero display-link ticks requested over 5 s |
 | Cadence readiness | `capped` false, `disableMinimumFrameDurationOnPhone` true, preferred range upper bound equal to the display maximum; the simulator's 60 is recorded as a proxy |
@@ -69,6 +69,14 @@ initialiser written in C, which the dynamic linker calls when it has finished
 its work; that is the earliest moment a program can observe itself, and no
 Swift declaration can reach it.
 
+Two of those marks are left when a frame reaches the display rather than when
+the state behind it changed, and they are not left at quite the same moment.
+The cold first frame is marked one display refresh after the render server
+committed the frame, which is a frame of slack nobody can see inside four
+hundred milliseconds. The echo is marked at that commit instead: its whole
+budget is one frame, so the same slack would double the number and report two
+frames for work that took one.
+
 The streaming and idle numbers are taken over the page the app pushes when
 somebody opens an agent, whole: the fleet's drawer over the conversation, and
 inside it the chrome, the transcript, the facts strip and the composer, with a
@@ -81,8 +89,8 @@ those arrivals cause, and a number taken with the feed alone would be a number
 about a screen nobody uses.
 
 A run can be asked for one group of measurements — `wt run ios-perf -- --only
-streaming`, or `cold`, or `reconciliation` — which is for working on that
-group rather than for reporting. The verdict then carries only the rows this
+streaming`, or `cold`, `reconciliation` or `echo` — which is for working on
+that group rather than for reporting. The verdict then carries only the rows this
 run measured, so a partial run cannot report a pass on a metric it never took;
 recording a baseline needs a whole run, and asking for both is refused.
 

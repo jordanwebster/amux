@@ -42,8 +42,15 @@ final class Harness {
             logPath: data.appendingPathComponent("perf.log")))
         stores = StoreBundle(account: AccountId("performance"), clock: { Workloads.now })
         let stores = stores
+        // Sending goes out the way it does in the app: the composer's command
+        // is encoded and handed to the runtime, which answers with the
+        // identifier its result will carry. Nothing reaches a relay, and
+        // nothing needs to — the row a send puts on screen is drawn from what
+        // was typed, and measuring the echo means measuring that.
+        let client = bridge
+        stores.dispatch = { [weak client] command in client?.dispatch(command) }
         pump = Task { @MainActor in
-            for await batch in bridge.events { stores.apply(batch) }
+            for await batch in client.events { stores.apply(batch) }
         }
     }
 

@@ -49,7 +49,7 @@ REPORT = "report.md"
 ARCHITECTURE = ["ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]
 # The groups of measurements a run can be asked for one of, named as the app
 # names them. A whole run takes all of them and is what CI does.
-SECTIONS = ["cold", "reconciliation", "streaming"]
+SECTIONS = ["cold", "reconciliation", "echo", "streaming"]
 
 
 def machines() -> list[dict]:

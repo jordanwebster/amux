@@ -33,7 +33,13 @@ public enum Signpost: String, Sendable, CaseIterable, Codable {
     case firstCachedFrame
     case streamConnected
     case reconciled
+    /// The instant a send is handled, before anything has been drawn or has
+    /// left the phone.
     case sendTapped
+    /// The first frame the display has actually shown carrying the row the
+    /// person just sent. Drawn from what was typed rather than from anything
+    /// the host said, so the interval from `sendTapped` is this app's own
+    /// work and never the network's.
     case echoCommitted
     case streamRow
     case transcriptCommit
@@ -108,6 +114,19 @@ public enum Signposts {
         Presentation.after { emit(signpost) }
     }
 
+    /// Marks a moment once the frame the caller is about to cause has been
+    /// committed for display, without waiting for the refresh after it.
+    ///
+    /// The difference between this and `emitWhenPresented` is one display
+    /// refresh, deliberately: waiting for the refresh after the commit is
+    /// slack worth having when the answer is four hundred milliseconds long
+    /// and nobody can tell one frame from the next. It is not worth having
+    /// when the whole budget is one frame, because the slack is then half the
+    /// number and the instrument reports two frames for work that took one.
+    public static func emitWhenDrawn(_ signpost: Signpost) {
+        Presentation.committed { emit(signpost) }
+    }
+
     /// Every mark so far, oldest first.
     public static var marks: [SignpostMark] { journal.marks }
 
@@ -180,12 +199,18 @@ public enum Signposts {
 /// committed the frame, and one further display refresh means it is on screen.
 enum Presentation {
     static func after(_ body: @escaping @Sendable () -> Void) {
-        CATransaction.begin()
-        CATransaction.setCompletionBlock {
+        committed {
             MainActor.assumeIsolated {
                 DisplayTick.once { body() }
             }
         }
+    }
+
+    /// Runs the body when the render server has committed the frame being
+    /// assembled — the frame that carries whatever the caller just changed.
+    static func committed(_ body: @escaping @Sendable () -> Void) {
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { body() }
         CATransaction.commit()
     }
 }

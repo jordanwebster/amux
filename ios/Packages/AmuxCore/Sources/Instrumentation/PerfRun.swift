@@ -44,6 +44,9 @@ public enum PerfSection: String, Codable, Sendable, CaseIterable {
     /// The fleet arriving, with and without a hundred milliseconds in front
     /// of it.
     case reconciliation
+    /// A message sent from the conversation page, timed to the frame that
+    /// carries it.
+    case echo
     /// The transcript: a thousand rows with fifty a second arriving on top of
     /// them, and the same thousand rows left alone.
     case streaming
