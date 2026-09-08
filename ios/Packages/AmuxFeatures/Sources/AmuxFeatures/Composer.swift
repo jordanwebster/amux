@@ -203,29 +203,37 @@ private struct RoundButton: View {
 
 /// What the agent is doing, above the field it will be answered in.
 ///
-/// A named activity and a number, and then a segment that travels. No track
-/// behind it, because a track is the shape of a thing with a known end and
-/// nothing here knows when the turn will finish; drawing the trough of a
+/// A named activity and a number, and under them a segment that travels. No
+/// track behind it, because a track is the shape of a thing with a known end
+/// and nothing here knows when the turn will finish; drawing the trough of a
 /// progress bar would promise a proportion the app cannot compute.
+///
+/// The segment gets a row of its own, the full width of the card, rather than
+/// the space left over beside the words. Two things come of that: it reads as
+/// movement, which a short stub starting wherever the text happens to end does
+/// not, and it draws the line the eye follows from the activity down into the
+/// field underneath. Beside the label it read as a rule somebody had left in
+/// the header.
 private struct WorkingLine: View {
     @Environment(\.design) private var design
     let activity: ComposerActivity
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(activity.name)
-                .designFont(.body, design)
-                .foregroundStyle(design.inkMuted.color)
-                .lineLimit(1)
-            if let elapsed = activity.elapsed {
-                Text(elapsed)
-                    .designFont(.caption, design)
-                    .foregroundStyle(design.inkFaint.color)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text(activity.name)
+                    .designFont(.body, design)
+                    .foregroundStyle(design.inkMuted.color)
+                    .lineLimit(1)
+                if let elapsed = activity.elapsed {
+                    Text(elapsed)
+                        .designFont(.caption, design)
+                        .foregroundStyle(design.inkFaint.color)
+                }
             }
             MovingSegment()
-                .frame(minWidth: 40)
-                .padding(.leading, 4)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .identified(
             "composer.working", label: activity.name, value: activity.elapsed ?? "")
@@ -237,8 +245,8 @@ private struct WorkingLine: View {
 /// Under Reduce Motion, and in front of a camera, it holds at one position:
 /// the capture keeps the last of many photographs when no run of them agree,
 /// so anything sweeping on a timer of its own makes a baseline a coin toss.
-/// Held part-way rather than at either end, because a segment pinned to the
-/// left edge reads as a bar that has not started.
+/// Held at the middle of its travel rather than at either end, because a
+/// segment pinned to the left edge reads as a bar that has not started.
 private struct MovingSegment: View {
     @Environment(\.design) private var design
     @Environment(\.photographed) private var photographed
@@ -246,7 +254,7 @@ private struct MovingSegment: View {
     @State private var travelled = false
 
     private static let width = 0.42
-    private static let resting = 0.3
+    private static let resting = 0.5
 
     var body: some View {
         GeometryReader { frame in

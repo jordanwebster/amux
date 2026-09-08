@@ -64,7 +64,7 @@ A screen the door is showing knows it is being photographed rather than used,
 and anything that runs on a timer of its own draws its resting state while it
 is. Two things do: the text caret, without which a capture of a focused field
 is a coin toss over a bar of accent, and the composer's moving segment, which
-holds a third of the way along its travel. Whatever is added next that blinks
+holds at the middle of its travel. Whatever is added next that blinks
 or sweeps belongs under the same rule, and any capture it changes is named in
 that screen's entry.
 
@@ -613,11 +613,15 @@ it has been doing it, a segment travelling under it, and a button that stops it.
   counts from when the agent said the work started. A timer the phone started
   would go on counting through a host that had stopped answering, and would
   photograph differently every run.
-- **The segment has no track and is held part-way.** No trough behind it,
-  because a trough is the shape of a thing with a known end and nothing here
-  knows when the turn will finish. It travels back and forth in use; in front
-  of a camera and under Reduce Motion it holds a third of the way along, since
-  a segment pinned to either end reads as a bar that has not started.
+- **The segment has no track and is held at the middle of its travel.** No
+  trough behind it, because a trough is the shape of a thing with a known end
+  and nothing here knows when the turn will finish. It travels back and forth
+  in use; in front of a camera and under Reduce Motion it holds still, halfway
+  along, since a segment pinned to either end reads as a bar that has not
+  started. It sits on a row of its own under the activity, the full width of
+  the box, as the reference draws it: beside the words it started wherever the
+  text happened to end and read as a rule left in a header rather than as
+  movement.
 - **The button stops the turn rather than sending.** With nothing written there
   is nothing to send and stopping is the reason a person reaches for the bottom
   of the screen mid-turn. Writing something turns it back into a send — which

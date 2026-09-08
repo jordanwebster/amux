@@ -12170,3 +12170,23 @@ no rectangle to grow.
 
 Green: `wt run ios-goldens -- --built` (112 captures, none moved),
 `wt run ios-unit`.
+
+## The travelling segment gets a row of its own
+
+In the composer, the segment that says a turn is running sat on the same line
+as the activity and the elapsed time, starting wherever the words happened to
+end. It read as a rule somebody had left in the header rather than as movement.
+It now sits on a row below them, the full width of the box, which is both how
+the approved drawing has it and the line the eye follows from the activity down
+into the field underneath.
+
+It also rests at the middle of its travel rather than a third of the way along.
+In front of a camera and under Reduce Motion the segment holds still so a
+baseline is reproducible, and across a row the full width of the box a third of
+the way along is nowhere in particular.
+
+Re-photographed: working, run-live, queued and strip, in both appearances —
+every capture that draws a running turn. Nothing without an active composer
+moved. BASELINE.md says what changed.
+
+Green: `wt run ios-goldens -- working reduced-glass`.
