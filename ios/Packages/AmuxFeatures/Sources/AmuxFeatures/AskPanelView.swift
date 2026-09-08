@@ -230,11 +230,12 @@ private struct PlanAsk: View {
                 .fill(design.hairline.color)
                 .frame(width: 40, height: 5)
                 .frame(maxWidth: .infinity, minHeight: 22)
-                .contentShape(Rectangle())
+                .thumbTarget(y: 12)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(open ? "Fold the plan" : "Read the whole plan")
         .identified("ask.plan.more", label: open ? "Fold the plan" : "Read the whole plan")
+        .reclaimingThumbTarget(y: 12)
         HStack(spacing: 10) {
             Button { answer(.approvePlan) } label: {
                 ActionLabel("Approve", kind: .primary, fill: true)

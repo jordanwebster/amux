@@ -301,20 +301,25 @@ private struct FileHeading: View {
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
-                .contentShape(Rectangle())
+                .thumbTarget(y: 14)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(file.path)
+            .identified(
+                "review.file", label: file.path,
+                value: collapsed ? "collapsed" : "open")
+            .reclaimingThumbTarget(y: 14)
             Button(action: list) {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(design.inkFaint.color)
                     .frame(width: 30, height: 44)
-                    .thumbTarget(x: 8, y: 1)
+                    .thumbTarget(x: 8, y: 2)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("All files")
             .identified("review.files", label: "All files")
-            .reclaimingThumbTarget(x: 8, y: 1)
+            .reclaimingThumbTarget(x: 8, y: 2)
             Spacer(minLength: 4)
             if comments > 0 { CommentCount(count: comments, size: 20) }
             Text("+\(file.added)")
@@ -332,9 +337,6 @@ private struct FileHeading: View {
             Rectangle().fill(design.hairline.color).frame(height: design.metrics.hairline)
         }
         .accessibilityElement(children: .contain)
-        .identified(
-            "review.file", label: file.path,
-            value: collapsed ? "collapsed" : "open")
     }
 }
 

@@ -259,12 +259,14 @@ public struct NewAgent: View {
                             .padding(.horizontal, 14)
                             .padding(.vertical, 9)
                             .background(Capsule().fill(design.sunken.color))
+                            .thumbTarget(y: 6)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Start in \(project.name)")
                     .identified(
                         "new-agent.recent.\(project.name)", label: "Start in \(project.name)",
                         value: project.path)
+                    .reclaimingThumbTarget(y: 6)
                 }
             }
             .padding(.vertical, 1)
@@ -357,6 +359,8 @@ private struct LayerCard: View {
     let choices: [ModelInfo]
     let choose: @MainActor () -> Void
     let chooseModel: @MainActor (String?) -> Void
+    /// Whether the list of models is up.
+    @State private var picking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -398,24 +402,37 @@ private struct LayerCard: View {
             line
                 .identified("new-agent.model.\(provider.rawValue)", value: model)
         } else {
-            Menu {
-                Button("host default") { chooseModel(nil) }
-                ForEach(choices, id: \.id) { choice in
-                    Button(choice.name) { chooseModel(choice.id) }
-                }
-            } label: {
+            // A button and a list of choices rather than a `Menu`, which draws
+            // the same line but puts two controls in the accessibility tree:
+            // its own, and a second one inside it that answers to nothing
+            // stated out here — no name, no identifier — so somebody using
+            // VoiceOver meets a control with nothing to read out and no way to
+            // guess what it does. Neither hiding it, naming it from inside nor
+            // combining the pair reaches it.
+            Button { picking = true } label: {
                 HStack(spacing: 4) {
                     line
                     Image(systemName: "chevron.down")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(design.inkFaint.color)
                 }
+                .thumbTarget(y: 15)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Model for \(provider.title)")
             .identified(
                 "new-agent.model.\(provider.rawValue)",
                 label: "Model for \(provider.title)", value: model)
+            .reclaimingThumbTarget(y: 15)
+            .confirmationDialog(
+                "Model for \(provider.title)", isPresented: $picking,
+                titleVisibility: .visible
+            ) {
+                Button("host default") { chooseModel(nil) }
+                ForEach(choices, id: \.id) { choice in
+                    Button(choice.name) { chooseModel(choice.id) }
+                }
+            }
         }
     }
 

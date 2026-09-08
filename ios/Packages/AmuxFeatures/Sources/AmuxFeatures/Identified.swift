@@ -65,7 +65,21 @@ private struct Identify: ViewModifier {
                     key: IdentifiedElements.self,
                     value: [IdentifiedElement(
                         identifier: identifier, label: label, value: value,
-                        frame: geometry.frame(in: .global), enabled: enabled)])
+                        // The size is the one the layout gave this thing, and
+                        // the position is where it ended up. They come from
+                        // different places on purpose. A presentation can put
+                        // a whole screen through a transform — the drawer
+                        // slides the conversation aside and shrinks it — and
+                        // that transform moves and resizes what is drawn
+                        // without the layout ever hearing about it. Where a
+                        // thing is is then a fact about the transform; how big
+                        // it was laid out is not, and it is the second one
+                        // that says whether a control was given the room a
+                        // thumb needs.
+                        frame: CGRect(
+                            origin: geometry.frame(in: .global).origin,
+                            size: geometry.size),
+                        enabled: enabled)])
             }
         }
     }

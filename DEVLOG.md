@@ -12129,3 +12129,44 @@ choices. Every one of them was between 17 and 35 pt in one direction.
 Green: `wt run ios-goldens -- --built` (112 captures, none moved). The
 accessibility audit is down from 118 complaints to 62; the rest are the
 transcript's own rows and the new-agent screen, still to do.
+
+## The rest of the app's controls, named and given room
+
+The remaining sixty-two complaints from the audit came in four shapes, and
+three of them were the same mistake made in different places.
+
+A row whose name was declared on the container around its button, rather than
+on the button. The folded run of reads in a transcript, an agent-to-agent
+message and a file header on the review page each read out as an unnamed
+control twenty points tall, because the name and the identifier sat on the
+stack holding the button and its fold-out contents. Naming the button itself
+is both the fix and the more honest declaration: the thing that answers to a
+press is the thing with the name on it, and the rectangle it declares is now
+the one a thumb gets.
+
+Controls simply drawn small: the child-agent chips under a conversation, the
+recent-directory chips and the model line on the new-agent screen, the plan's
+fold handle, the link out to the App Store on the delete page. Each got the
+thumb-target pair, so the target grew and the drawing did not move.
+
+A screen underneath the drawer was being judged on the size the drawer's own
+shrink drew it at. `identified` now reports the size the layout gave a thing
+and the position it ended up at, from different places on purpose: a
+presentation can put a whole screen through a transform without the layout
+hearing about it, and where a thing is is then a fact about the transform,
+while how much room it was given is not.
+
+The model line on the new-agent screen is a button and a list of choices
+rather than a `Menu`. A `Menu` draws the same line but puts two controls in
+the accessibility tree — its own, and a second one inside it that takes
+neither a name nor an identifier from outside, so VoiceOver meets a control
+with nothing to read out. Hiding it, naming it from inside and combining the
+pair all fail to reach it.
+
+457 of 458 controls across 57 states now pass. The one left is a link inside
+a paragraph of agent prose: a run of text the markdown parser made actionable,
+laid out as part of a line and split across lines when it wraps, so there is
+no rectangle to grow.
+
+Green: `wt run ios-goldens -- --built` (112 captures, none moved),
+`wt run ios-unit`.

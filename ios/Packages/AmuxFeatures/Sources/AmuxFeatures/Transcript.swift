@@ -500,9 +500,14 @@ private struct ExplorationRow: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(design.inkFaint.color)
                 }
-                .contentShape(Rectangle())
+                .thumbTarget(y: 13)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(counts), \(last)")
+            .identified(
+                "transcript.exploration", label: "\(counts), \(last)",
+                value: open ? "open" : "folded")
+            .reclaimingThumbTarget(y: 13)
             if open {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(inside) { detail in
@@ -521,7 +526,6 @@ private struct ExplorationRow: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .identified("transcript.exploration", label: "\(counts), \(last)", value: open ? "open" : "folded")
     }
 
     /// "4 reads · 2 searches", and only the halves that happened.
@@ -727,9 +731,14 @@ private struct AgentMessageRow: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(design.inkFaint.color)
                 }
-                .contentShape(Rectangle())
+                .thumbTarget(y: 13)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("\(from): \(text)")
+            .identified(
+                "transcript.agent-message", label: "\(from): \(text)",
+                value: open ? "open" : "collapsed")
+            .reclaimingThumbTarget(y: 13)
             Text(text)
                 .designFont(.mono, design)
                 .foregroundStyle(design.inkMuted.color)
@@ -737,9 +746,6 @@ private struct AgentMessageRow: View {
                 .fixedSize(horizontal: false, vertical: open)
         }
         .accessibilityElement(children: .contain)
-        .identified(
-            "transcript.agent-message", label: "\(from): \(text)",
-            value: open ? "open" : "collapsed")
     }
 }
 

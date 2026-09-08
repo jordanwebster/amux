@@ -115,11 +115,13 @@ struct DeleteAccountCard: View {
                             .font(.system(size: 13, weight: .semibold))
                     }
                     .foregroundStyle(design.accent.color)
+                    .thumbTarget(y: 13)
                 }
                 .buttonStyle(.plain)
                 .identified(
                     "delete.manage", label: "Cancel Renewal in \(source.place)",
                     value: manageURL.absoluteString)
+                .reclaimingThumbTarget(y: 13)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain)

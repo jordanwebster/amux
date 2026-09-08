@@ -706,11 +706,12 @@ private struct ChildChip: View {
             .padding(.horizontal, 12)
             .frame(minHeight: 34)
             .background { Color.clear.frosted(Capsule()) }
-            .contentShape(Capsule())
+            .thumbTarget(y: 6)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(spoken)
         .identified("conversation.child.\(child.id)", label: spoken, value: value)
+        .reclaimingThumbTarget(y: 6)
     }
 
     /// The accent glyph is the fleet's, so a child waiting on a permission
