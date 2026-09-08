@@ -12082,3 +12082,26 @@ reformatting on its own, with nothing else in it: whitespace and line breaking,
 no behaviour.
 
 Green: `wt fmt`, `wt build`.
+
+## Where a cold launch's time actually goes
+
+The launch measurement said "before this app ran" and "from there to the first
+frame", but the first of those two was not what its name suggested: the mark
+that started it is the SwiftUI `App`'s initialiser, which runs after the
+dynamic linker has finished *and* after UIKit has started, so loading the app
+and starting it were charged to the same number.
+
+A C image initialiser splits them. It runs at the end of the linker's work and
+before `main()`, which is the earliest moment a program can observe and one
+that no Swift declaration can reach — the earliest a Swift `let` can be
+evaluated is the first time something reads it, and by then the launch is
+mostly over. `wt run ios-perf` now reports three numbers instead of two.
+
+On the pinned simulator the answer turns out to be nearly all loading: 287 ms
+to load the app, 2 ms for UIKit to reach the app's first line, and 151 ms to
+draw the first frame. Measured against a hello-world SwiftUI app built and
+launched the same way, which reaches its own first line in 206 ms, almost all
+of the difference is two frameworks: linking StoreKit costs 85 ms and
+AuthenticationServices 90 ms before any app code runs.
+
+Green: `wt run ios-unit`, `wt run ios-build`.

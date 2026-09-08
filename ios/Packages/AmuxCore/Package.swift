@@ -14,7 +14,10 @@ let package = Package(
         // Assembled by `wt run ios-rust` from the Rust bridge; the recipes that
         // build or test this package produce it first.
         .binaryTarget(name: "AmuxMobile", path: "../../../target/ios/AmuxMobile.xcframework"),
-        .target(name: "AmuxCore", dependencies: ["AmuxMobile"]),
+        // The only code in this app that runs before `main()`. It exists
+        // in C because nothing written in Swift can: see LaunchClock.h.
+        .target(name: "LaunchClock"),
+        .target(name: "AmuxCore", dependencies: ["AmuxMobile", "LaunchClock"]),
         .target(name: "Instrumentation", dependencies: ["AmuxCore"]),
         .testTarget(
             name: "InstrumentationTests",

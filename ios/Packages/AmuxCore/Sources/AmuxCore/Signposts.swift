@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import LaunchClock
 import QuartzCore
 import os
 
@@ -13,13 +14,20 @@ import os
 public enum Signpost: String, Sendable, CaseIterable, Codable {
     /// The kernel's start time for this process, not the first line of main().
     case processStart
+    /// The moment the dynamic linker had finished mapping, binding and
+    /// initialising every image the app is built out of, just before main().
+    ///
+    /// Everything before it is loading the app; everything after it is
+    /// running it. The two get slower for completely different reasons — one
+    /// from what the binary is made of, the other from what the code does —
+    /// so a launch that got slower is worth almost nothing as a single
+    /// number and quite a lot once it is cut here.
+    case imagesLoaded
     /// The first moment this app's own code runs.
     ///
-    /// Everything before it belongs to the system: the dynamic linker mapping
-    /// and binding what the app is built out of, and UIKit getting as far as
-    /// building the scene. Without this mark a launch that got slower says
-    /// only that it got slower; with it, the two halves can be told apart and
-    /// the next regression can be put on the side of the line it belongs to.
+    /// Between `imagesLoaded` and this one the app is loaded but idle: UIKit
+    /// is starting up and getting as far as building the scene that asks for
+    /// the app's first view.
     case appEntered
     /// The first frame the display has actually shown carrying cached rows.
     case firstCachedFrame
@@ -65,6 +73,23 @@ public enum Signposts {
     /// measurement rather than hidden by it.
     public static let processStartedAt: Date = kernelProcessStart() ?? Date()
 
+    /// Seconds from the kernel starting this process to the dynamic linker
+    /// finishing with it, or nothing if the image initialiser never ran.
+    ///
+    /// Both ends are absolute, so this reads the same whenever it is asked.
+    public static let imagesLoadedAfter: Double? = {
+        let loadedAt = amux_images_loaded_at()
+        guard loadedAt != 0 else { return nil }
+        var timebase = mach_timebase_info_data_t()
+        guard mach_timebase_info(&timebase) == KERN_SUCCESS, timebase.denom != 0 else {
+            return nil
+        }
+        let ticks = mach_absolute_time() - loadedAt
+        let sinceLoaded =
+            Double(ticks) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000_000
+        return Date().timeIntervalSince(processStartedAt) - sinceLoaded
+    }()
+
     /// Marks a moment now.
     @discardableResult
     public static func emit(_ signpost: Signpost) -> SignpostMark {
@@ -108,10 +133,18 @@ public enum Signposts {
         private static let limit = 65_536
         private let lock = NSLock()
         /// The process's own start is mark zero: every other mark is stated
-        /// as a distance from it, so the journal is readable on its own.
-        private var kept: [SignpostMark] = [
-            SignpostMark(signpost: .processStart, sinceProcessStart: 0)
-        ]
+        /// as a distance from it, so the journal is readable on its own. The
+        /// linker's finish is the other mark nobody emits, because it
+        /// happened before there was anything to emit it.
+        private var kept: [SignpostMark] = Journal.origin()
+
+        private static func origin() -> [SignpostMark] {
+            var marks = [SignpostMark(signpost: .processStart, sinceProcessStart: 0)]
+            if let loaded = Signposts.imagesLoadedAfter {
+                marks.append(SignpostMark(signpost: .imagesLoaded, sinceProcessStart: loaded))
+            }
+            return marks
+        }
 
         var marks: [SignpostMark] { lock.withLock { kept } }
 
@@ -124,8 +157,7 @@ public enum Signposts {
 
         func reset() {
             lock.withLock {
-                kept.removeAll(keepingCapacity: true)
-                kept.append(SignpostMark(signpost: .processStart, sinceProcessStart: 0))
+                kept = Journal.origin()
             }
         }
     }

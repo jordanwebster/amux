@@ -189,27 +189,32 @@ def cold_starts(udid: str, perf: Path) -> None:
 def split(marks: Path) -> str:
     """Where a cold launch's time went, in one line.
 
-    A launch is two halves and only one of them is this app's: the system maps
-    and binds what the app is built out of and gets as far as building a scene,
-    and then the app's own code runs. The mark the app makes as it enters is
-    the line between them, so a launch that has got slower can be put on the
-    side it belongs to instead of argued about.
+    A launch is three stretches and only the last is this app's code running.
+    First the dynamic linker maps and binds every image the app is built out
+    of and runs their initialisers, which is the app's shape rather than its
+    behaviour. Then UIKit starts and gets as far as asking for a scene. Only
+    then does the app run. They get slower for unrelated reasons, so a launch
+    that got slower is nearly useless as a single number and quite usable once
+    it is cut at those two lines.
     """
     if not marks.is_file():
         return "nothing recorded where the time went; this build marks no entry"
-    before, after = [], []
+    loading, starting, drawing = [], [], []
     for line in marks.read_text().splitlines():
         moments = {mark["signpost"]: mark["sinceProcessStart"] for mark in json.loads(line)}
+        loaded = moments.get("imagesLoaded")
         entered, drawn = moments.get("appEntered"), moments.get("firstCachedFrame")
-        if entered is None or drawn is None:
+        if loaded is None or entered is None or drawn is None:
             continue
-        before.append(entered * 1000)
-        after.append((drawn - entered) * 1000)
-    if not before:
-        return "nothing recorded where the time went; no launch marked both moments"
-    return (f"before this app ran: {median(before):.0f} ms; "
-            f"from there to the first frame: {median(after):.0f} ms "
-            f"(medians of {len(before)} launches)")
+        loading.append(loaded * 1000)
+        starting.append((entered - loaded) * 1000)
+        drawing.append((drawn - entered) * 1000)
+    if not loading:
+        return "nothing recorded where the time went; no launch marked every moment"
+    return (f"loading the app: {median(loading):.0f} ms; "
+            f"starting it: {median(starting):.0f} ms; "
+            f"drawing the first frame: {median(drawing):.0f} ms "
+            f"(medians of {len(loading)} launches)")
 
 
 def median(values: list[float]) -> float:
