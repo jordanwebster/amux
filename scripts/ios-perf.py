@@ -153,6 +153,7 @@ def inputs(udid: str, row: dict, only: str | None) -> Path:
         "only": only,
     }, indent=2))
     (perf / "cold-samples.jsonl").unlink(missing_ok=True)
+    (perf / "cold-marks.jsonl").unlink(missing_ok=True)
     return perf
 
 
@@ -182,6 +183,40 @@ def cold_starts(udid: str, perf: Path) -> None:
     print(
         "cold first frame: "
         + ", ".join(f"{value:.0f} ms" for value in values), flush=True)
+    print(split(perf / "cold-marks.jsonl"), flush=True)
+
+
+def split(marks: Path) -> str:
+    """Where a cold launch's time went, in one line.
+
+    A launch is two halves and only one of them is this app's: the system maps
+    and binds what the app is built out of and gets as far as building a scene,
+    and then the app's own code runs. The mark the app makes as it enters is
+    the line between them, so a launch that has got slower can be put on the
+    side it belongs to instead of argued about.
+    """
+    if not marks.is_file():
+        return "nothing recorded where the time went; this build marks no entry"
+    before, after = [], []
+    for line in marks.read_text().splitlines():
+        moments = {mark["signpost"]: mark["sinceProcessStart"] for mark in json.loads(line)}
+        entered, drawn = moments.get("appEntered"), moments.get("firstCachedFrame")
+        if entered is None or drawn is None:
+            continue
+        before.append(entered * 1000)
+        after.append((drawn - entered) * 1000)
+    if not before:
+        return "nothing recorded where the time went; no launch marked both moments"
+    return (f"before this app ran: {median(before):.0f} ms; "
+            f"from there to the first frame: {median(after):.0f} ms "
+            f"(medians of {len(before)} launches)")
+
+
+def median(values: list[float]) -> float:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    return (ordered[middle] if len(ordered) % 2
+            else (ordered[middle - 1] + ordered[middle]) / 2)
 
 
 def measure(udid: str) -> None:
@@ -210,7 +245,7 @@ def collect(perf: Path, row: dict, record_baseline: bool, output: Path) -> None:
             "The suite did not reach the end, so this run has no result; anything "
             f"under {output} belongs to an earlier run and is not it.")
     output.mkdir(parents=True, exist_ok=True)
-    for name in [*PRODUCED, "cold-samples.jsonl"]:
+    for name in [*PRODUCED, "cold-samples.jsonl", "cold-marks.jsonl"]:
         source = perf / name
         if source.is_file():
             (output / name).write_text(source.read_text())

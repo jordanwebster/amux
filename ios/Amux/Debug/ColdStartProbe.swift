@@ -53,5 +53,8 @@ enum ColdStartProbe {
             unit: .milliseconds,
             proxy: false,
             workload: .cachedFleet40))
+        // And where the time went inside the launch, so a number that moves
+        // says which half of the launch moved it.
+        PerfRun.appendColdMarks(Signposts.marks)
     }
 }

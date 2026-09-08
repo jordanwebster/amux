@@ -1,3 +1,4 @@
+import AmuxCore
 import Foundation
 
 /// What the Mac tells the app before a measured run, and where the run's
@@ -17,6 +18,10 @@ public enum PerfFiles {
     public static var inputs: URL { directory.appendingPathComponent("inputs.json") }
     /// One line of JSON per cold launch, appended by the app itself.
     public static var coldSamples: URL { directory.appendingPathComponent("cold-samples.jsonl") }
+    /// One line of JSON per cold launch, holding every moment that launch
+    /// marked. The samples say how long a launch took; these say where the
+    /// time went inside it.
+    public static var coldMarks: URL { directory.appendingPathComponent("cold-marks.jsonl") }
     public static var samples: URL { directory.appendingPathComponent("samples.json") }
     public static var verdict: URL { directory.appendingPathComponent("verdict.json") }
     public static var cadence: URL { directory.appendingPathComponent("cadence.json") }
@@ -133,8 +138,29 @@ public struct PerfRun: Sendable {
         }
     }
 
+    /// Writes what one cold launch marked, beside the sample it produced.
+    ///
+    /// A number on its own cannot be acted on: a launch that has got slower
+    /// says nothing about whether the extra time went on loading the app or on
+    /// running it. The marks say which, so the next regression can be put on
+    /// the side of the line it belongs to.
+    public static func appendColdMarks(_ marks: [SignpostMark]) {
+        PerfFiles.ensure()
+        guard let json = try? JSONEncoder().encode(marks) else { return }
+        var line = json
+        line.append(0x0A)
+        if let handle = try? FileHandle(forWritingTo: PerfFiles.coldMarks) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: line)
+        } else {
+            try? line.write(to: PerfFiles.coldMarks)
+        }
+    }
+
     public static func forgetColdSamples() {
         try? FileManager.default.removeItem(at: PerfFiles.coldSamples)
+        try? FileManager.default.removeItem(at: PerfFiles.coldMarks)
     }
 
     /// Judges what was measured and writes both the samples and the verdict.

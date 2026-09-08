@@ -13,6 +13,14 @@ import os
 public enum Signpost: String, Sendable, CaseIterable, Codable {
     /// The kernel's start time for this process, not the first line of main().
     case processStart
+    /// The first moment this app's own code runs.
+    ///
+    /// Everything before it belongs to the system: the dynamic linker mapping
+    /// and binding what the app is built out of, and UIKit getting as far as
+    /// building the scene. Without this mark a launch that got slower says
+    /// only that it got slower; with it, the two halves can be told apart and
+    /// the next regression can be put on the side of the line it belongs to.
+    case appEntered
     /// The first frame the display has actually shown carrying cached rows.
     case firstCachedFrame
     case streamConnected
