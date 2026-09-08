@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use amux_ui::report::{
     FrameCapture, LOG_TAIL_BYTES, Mark, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
-    ReportWriter, log_tail, set_verdict,
+    ReportWriter, TerminalFrame, TraceKind, log_tail, set_verdict,
 };
 use amux_ui::{RecorderSnapshot, Runtime};
 use chrono::{DateTime, Utc};
@@ -44,7 +44,7 @@ pub struct Frozen {
     /// The buffer that was on screen, kept whole so the flow can repaint
     /// it under the prompt and the marks.
     pub frame: Buffer,
-    pub capture: FrameCapture,
+    pub capture: TerminalFrame,
     pub viewport: (u16, u16),
     pub now: DateTime<Utc>,
     /// The events since the oldest retained snapshot. `None` when nothing
@@ -398,8 +398,9 @@ impl ReportFlow {
         let path = writer.write(
             draft,
             ReportParts {
-                frame: Some(frozen.capture),
+                frame: Some(FrameCapture::Terminal(frozen.capture)),
                 trace,
+                trace_kind: TraceKind::TerminalChrome,
                 msgs: Some(frozen.msgs),
                 daemon,
                 log: frozen.log,
@@ -474,8 +475,8 @@ fn self_verify(report: &Path) -> ReplayVerdict {
 fn marks_stage(rect: &Mark) -> Stage {
     Stage::Marks {
         cursor: (
-            rect.x.saturating_add(rect.width.saturating_sub(1)),
-            rect.y.saturating_add(rect.height.saturating_sub(1)),
+            cell(rect.x).saturating_add(cell(rect.width).saturating_sub(1)),
+            cell(rect.y).saturating_add(cell(rect.height).saturating_sub(1)),
         ),
         anchor: None,
         drag: None,
@@ -483,13 +484,31 @@ fn marks_stage(rect: &Mark) -> Stage {
 }
 
 /// A rectangle from two corners, in either order, inclusive of both.
+/// A terminal marks whole cells, so every coordinate is a whole number
+/// even though a mark is free to be fractional on a screen that is not
+/// made of cells.
 fn rectangle(a: (u16, u16), b: (u16, u16)) -> Mark {
     Mark {
-        x: a.0.min(b.0),
-        y: a.1.min(b.1),
-        width: a.0.abs_diff(b.0) + 1,
-        height: a.1.abs_diff(b.1) + 1,
+        x: f64::from(a.0.min(b.0)),
+        y: f64::from(a.1.min(b.1)),
+        width: f64::from(a.0.abs_diff(b.0) + 1),
+        height: f64::from(a.1.abs_diff(b.1) + 1),
         note: String::new(),
+    }
+}
+
+/// A mark coordinate back in the cells this terminal paints. A mark drawn
+/// here was made of whole cells; one that arrived from elsewhere is
+/// rounded down to the cell it starts in.
+fn cell(value: f64) -> u16 {
+    if value <= 0.0 {
+        return 0;
+    }
+    let floored = value.floor();
+    if floored >= f64::from(u16::MAX) {
+        u16::MAX
+    } else {
+        floored as u16
     }
 }
 
@@ -563,8 +582,9 @@ pub fn paint<'a>(
     // whatever the frame said, not blended with it.
     let highlight = theme.mark();
     for mark in marks {
-        for y in mark.y..mark.y.saturating_add(mark.height).min(area.height) {
-            for x in mark.x..mark.x.saturating_add(mark.width).min(area.width) {
+        let (mark_x, mark_y) = (cell(mark.x), cell(mark.y));
+        for y in mark_y..mark_y.saturating_add(cell(mark.height)).min(area.height) {
+            for x in mark_x..mark_x.saturating_add(cell(mark.width)).min(area.width) {
                 if let Some(cell) = buffer.cell_mut((x, y)) {
                     cell.set_style(highlight);
                 }
@@ -857,24 +877,24 @@ mod flow {
             draft.marks,
             vec![
                 Mark {
-                    x: 2,
-                    y: 1,
-                    width: 4,
-                    height: 3,
+                    x: 2.0,
+                    y: 1.0,
+                    width: 4.0,
+                    height: 3.0,
                     note: "footer".into()
                 },
                 Mark {
-                    x: 10,
-                    y: 0,
-                    width: 2,
-                    height: 2,
+                    x: 10.0,
+                    y: 0.0,
+                    width: 2.0,
+                    height: 2.0,
                     note: "clipped title".into()
                 },
                 Mark {
-                    x: 11,
-                    y: 1,
-                    width: 2,
-                    height: 2,
+                    x: 11.0,
+                    y: 1.0,
+                    width: 2.0,
+                    height: 2.0,
                     note: "stray cell".into()
                 },
             ]

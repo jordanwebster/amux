@@ -11,7 +11,7 @@ use std::{fs, io};
 use amux::{Config, DebugFormat};
 use amux_tui::replay::{self, Replay};
 use amux_ui::report::{
-    self, ReplayVerdict, ReportHeader, ReportKind, ReportStatus, read_frame, set_verdict,
+    self, ReplayVerdict, ReportHeader, ReportKind, ReportStatus, TraceKind, read_frame, set_verdict,
 };
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
@@ -86,7 +86,7 @@ pub enum ReportCommands {
 }
 
 /// Provenance and operator context retained beside a graduated report fixture.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FixtureManifest {
     pub name: String,
     pub kind: ReportKind,
@@ -327,6 +327,13 @@ fn redact_file(
     rules: &Redaction,
     summary: &mut RedactionSummary,
 ) -> Result<()> {
+    // A captured picture is copied as it is. There is no text in it to
+    // rewrite, and what it shows is the screen the report is about.
+    if source.extension().and_then(|extension| extension.to_str()) == Some("png") {
+        fs::copy(source, destination)
+            .with_context(|| format!("failed to copy {}", source.display()))?;
+        return Ok(());
+    }
     let input = fs::read_to_string(source)
         .with_context(|| format!("report file is not UTF-8 text: {}", source.display()))?;
     let output = match source.extension().and_then(|extension| extension.to_str()) {
@@ -370,15 +377,44 @@ fn redact_json_lines(
     Ok(output)
 }
 
+/// Why this machine cannot fold a bundle back into its screen, in the
+/// words a reader needs: a recording of a native view is replayed by the
+/// platform that drew it, not by the terminal chrome.
+fn replayed_elsewhere(header: &ReportHeader) -> Option<&'static str> {
+    if header.parts.trace_kind == Some(TraceKind::NativeView) {
+        return Some("this report carries a native view trace");
+    }
+    header
+        .image_frame
+        .is_some()
+        .then_some("this report's frame is a picture rather than terminal cells")
+}
+
 fn replay_report(
     report_dir: &Path,
     at: Option<usize>,
     print_frame: bool,
     print_styles: bool,
 ) -> Result<ReportCommandOutput> {
-    let expected = read_frame(report_dir)
+    let header = report::read_header(report_dir)
+        .with_context(|| format!("failed to read report {}", report_dir.display()))?;
+    if let Some(reason) = replayed_elsewhere(&header) {
+        set_verdict(report_dir, ReplayVerdict::Unchecked)
+            .with_context(|| format!("failed to update report {}", report_dir.display()))?;
+        return Ok(ReportCommandOutput::success(format!(
+            "Unchecked: {reason}, so nothing here can redraw it.\n\
+             Replay it on the platform that drew it: wt run ios-replay -- {}\n",
+            report_dir.display()
+        )));
+    }
+
+    let captured = read_frame(report_dir)
         .with_context(|| format!("failed to read captured frame in {}", report_dir.display()))?
         .ok_or_else(|| anyhow!("report {} has no captured frame", report_dir.display()))?;
+    let expected = captured
+        .as_terminal()
+        .ok_or_else(|| anyhow!("report {} has no terminal frame", report_dir.display()))?
+        .clone();
     let mut replay = Replay::load(report_dir)
         .with_context(|| format!("failed to load report {}", report_dir.display()))?;
 
@@ -587,8 +623,8 @@ mod tests {
     use amux_tui::trace::{Snapshot, TraceWindow};
     use amux_tui::{Notice, Theme, ViewState};
     use amux_ui::report::{
-        FrameCapture, Mark, PartState, Parts, REPORT_SCHEMA_VERSION, ReportDraft, ReportParts,
-        ReportWriter,
+        FrameCapture, ImageFrame, Mark, PartState, Parts, REPORT_SCHEMA_VERSION, ReportDraft,
+        ReportParts, ReportWriter,
     };
     use amux_ui::{BUILD, Model};
     use chrono::{TimeZone, Utc};
@@ -623,13 +659,14 @@ mod tests {
             detail: None,
             note: "the note".to_string(),
             marks: vec![Mark {
-                x: 1,
-                y: 2,
-                width: 3,
-                height: 4,
+                x: 1.0,
+                y: 2.0,
+                width: 3.0,
+                height: 4.0,
                 note: "the mark".to_string(),
             }],
             viewport: Some((80, 24)),
+            image_frame: None,
             parts: Parts {
                 frame: PartState::Absent {
                     reason: "test".to_string(),
@@ -637,6 +674,7 @@ mod tests {
                 trace: PartState::Absent {
                     reason: "test".to_string(),
                 },
+                trace_kind: None,
                 msgs: PartState::Absent {
                     reason: "test".to_string(),
                 },
@@ -697,11 +735,9 @@ mod tests {
                     replay: ReplayVerdict::Unchecked,
                 },
                 ReportParts {
-                    frame: Some(FrameCapture {
-                        text: "placeholder\n".to_string(),
-                        styles: "?\n".to_string(),
-                    }),
+                    frame: Some(FrameCapture::terminal("placeholder\n", "?\n")),
                     trace: Some(window.to_bytes().unwrap()),
+                    trace_kind: TraceKind::TerminalChrome,
                     msgs: None,
                     daemon: None,
                     log: None,
@@ -718,6 +754,140 @@ mod tests {
         fs::write(report_dir.join("frame.txt"), captured.text).unwrap();
         fs::write(report_dir.join("frame.styles"), captured.styles).unwrap();
         report_dir
+    }
+
+    /// A bundle the phone wrote: a picture of a native view and the trace
+    /// that view recorded. `show` reads it, and `replay` says where it can
+    /// be replayed instead of pretending to have tried.
+    #[test]
+    fn report_image_frame_bundle_shows_and_points_replay_at_the_phone() {
+        let temp = tempfile::tempdir().unwrap();
+        let reports_dir = temp.path().join("reports");
+        let report_dir = ReportWriter::new(reports_dir.clone(), BUILD, "test-sha")
+            .write(
+                ReportDraft {
+                    kind: ReportKind::Bug,
+                    detail: None,
+                    note: "the send button sits under the keyboard".to_string(),
+                    marks: vec![Mark {
+                        x: 8.5,
+                        y: 712.0,
+                        width: 120.0,
+                        height: 48.0,
+                        note: "hidden".to_string(),
+                    }],
+                    viewport: None,
+                    replay: ReplayVerdict::Unchecked,
+                },
+                ReportParts {
+                    frame: Some(FrameCapture::Image {
+                        png: b"\x89PNG\r\n\x1a\nphone screen".to_vec(),
+                        frame: ImageFrame {
+                            width_pt: 393.0,
+                            height_pt: 852.0,
+                            scale: 3,
+                        },
+                    }),
+                    trace: Some(b"{\"screen\":\"conversation\"}\n".to_vec()),
+                    trace_kind: TraceKind::NativeView,
+                    msgs: None,
+                    daemon: None,
+                    log: None,
+                    absent_reason: "not captured on the phone".to_string(),
+                    log_absent_reason: None,
+                    daemon_absent_reason: None,
+                },
+            )
+            .unwrap();
+        let report_name = PathBuf::from(report_dir.file_name().unwrap());
+        let config = config(&reports_dir);
+
+        let shown = run_report(
+            ReportCommands::Show {
+                report: report_name.clone(),
+            },
+            &config,
+        )
+        .unwrap();
+        let header: ReportHeader = serde_json::from_str(&shown.text).unwrap();
+        assert_eq!(header.parts.trace_kind, Some(TraceKind::NativeView));
+        assert_eq!(header.image_frame.unwrap().scale, 3);
+        assert_eq!(header.marks[0].y, 712.0);
+
+        let replayed = run_report(
+            ReportCommands::Replay {
+                report: report_name,
+                at: None,
+                frame: false,
+                styles: false,
+            },
+            &config,
+        )
+        .unwrap();
+        assert_eq!(replayed.exit_code, ExitCode::SUCCESS);
+        assert!(replayed.text.starts_with("Unchecked: "));
+        assert!(replayed.text.contains("native view trace"));
+        assert!(replayed.text.contains("wt run ios-replay -- "));
+        assert_eq!(
+            report::read_header(&report_dir).unwrap().replay,
+            ReplayVerdict::Unchecked
+        );
+    }
+
+    /// The same picture, graduated into a fixture: the bytes survive the
+    /// redaction pass that rewrites every text file beside them.
+    #[test]
+    fn report_image_frame_graduates_with_its_picture_intact() {
+        let temp = tempfile::tempdir().unwrap();
+        let reports_dir = temp.path().join("reports");
+        let png = b"\x89PNG\r\n\x1a\nphone screen".to_vec();
+        let report_dir = ReportWriter::new(reports_dir.clone(), BUILD, "test-sha")
+            .write(
+                ReportDraft {
+                    kind: ReportKind::Bug,
+                    detail: None,
+                    note: "the send button sits under the keyboard".to_string(),
+                    marks: Vec::new(),
+                    viewport: None,
+                    replay: ReplayVerdict::Unchecked,
+                },
+                ReportParts {
+                    frame: Some(FrameCapture::Image {
+                        png: png.clone(),
+                        frame: ImageFrame {
+                            width_pt: 393.0,
+                            height_pt: 852.0,
+                            scale: 3,
+                        },
+                    }),
+                    trace: None,
+                    trace_kind: TraceKind::NativeView,
+                    msgs: None,
+                    daemon: None,
+                    log: None,
+                    absent_reason: "not captured on the phone".to_string(),
+                    log_absent_reason: None,
+                    daemon_absent_reason: None,
+                },
+            )
+            .unwrap();
+        let fixture_root = temp.path().join("fixtures");
+        fs::create_dir_all(&fixture_root).unwrap();
+
+        let output = run_report(
+            ReportCommands::Graduate {
+                report: PathBuf::from(report_dir.file_name().unwrap()),
+                name: "conversation_keyboard".to_string(),
+                into: Some(fixture_root.clone()),
+            },
+            &config(&reports_dir),
+        )
+        .unwrap();
+        assert!(output.text.starts_with("Graduated report to "));
+        assert_eq!(
+            fs::read(fixture_root.join("conversation_keyboard/frame.png")).unwrap(),
+            png
+        );
     }
 
     #[test]
@@ -951,6 +1121,7 @@ mod tests {
         source_header.parts = Parts {
             frame: PartState::Present,
             trace: PartState::Present,
+            trace_kind: Some(TraceKind::TerminalChrome),
             msgs: PartState::Present,
             daemon: PartState::Present,
             log: PartState::Present,

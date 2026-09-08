@@ -85,3 +85,69 @@ fn assert_private_text_absent(path: &Path, hostname: &str) {
         }
     }
 }
+
+/// A bundle from the phone: a picture of a composited view and the trace
+/// the view recorded. Nothing in this crate draws that screen, so the
+/// terminal replay says so rather than comparing a picture with cells.
+#[test]
+fn report_image_frame_bundle_is_not_replayed_by_the_terminal_chrome() {
+    use amux_ui::report::{
+        FrameCapture, ImageFrame, Mark, ReportDraft, ReportKind, ReportParts, ReportWriter,
+        TraceKind, read_frame, read_header,
+    };
+
+    let root = tempfile::tempdir().expect("temp dir");
+    let report = ReportWriter::new(root.path().to_path_buf(), "phone", "sha1234")
+        .write(
+            ReportDraft {
+                kind: ReportKind::Bug,
+                detail: None,
+                note: "the send button sits under the keyboard".to_string(),
+                marks: vec![Mark {
+                    x: 8.5,
+                    y: 712.0,
+                    width: 120.0,
+                    height: 48.0,
+                    note: "hidden".to_string(),
+                }],
+                viewport: None,
+                replay: ReplayVerdict::Unchecked,
+            },
+            ReportParts {
+                frame: Some(FrameCapture::Image {
+                    png: b"\x89PNG\r\n\x1a\nphone screen".to_vec(),
+                    frame: ImageFrame {
+                        width_pt: 393.0,
+                        height_pt: 852.0,
+                        scale: 3,
+                    },
+                }),
+                trace: Some(b"{\"screen\":\"conversation\"}\n".to_vec()),
+                trace_kind: TraceKind::NativeView,
+                msgs: None,
+                daemon: None,
+                log: None,
+                absent_reason: "not captured on the phone".to_string(),
+                log_absent_reason: None,
+                daemon_absent_reason: None,
+            },
+        )
+        .expect("report writes");
+
+    let header = read_header(&report).expect("header reads");
+    assert_eq!(header.parts.trace_kind, Some(TraceKind::NativeView));
+    assert!(header.image_frame.is_some());
+    assert!(
+        read_frame(&report)
+            .expect("frame reads")
+            .expect("a frame was captured")
+            .as_terminal()
+            .is_none()
+    );
+
+    let error = replay::verify(&report).expect_err("the chrome cannot redraw a picture");
+    assert!(
+        matches!(error, replay::ReplayError::NotATerminalFrame),
+        "unexpected error: {error}"
+    );
+}

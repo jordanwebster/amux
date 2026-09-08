@@ -17,7 +17,7 @@ use crate::RecorderSnapshot;
 use crate::recorder::{MSGS_SCHEMA_VERSION, RecorderSnapshotHeader};
 
 /// Bumped whenever the report header or directory layout changes.
-pub const REPORT_SCHEMA_VERSION: u32 = 1;
+pub const REPORT_SCHEMA_VERSION: u32 = 2;
 /// Newest automatic reports retained for each automatic kind.
 pub const RETAINED_AUTOMATIC_REPORTS: usize = 20;
 
@@ -52,14 +52,31 @@ pub enum ReportStatus {
     Done,
 }
 
-/// One annotated rectangle in terminal cells.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// One annotated rectangle, in whatever unit the frame it marks is
+/// measured in: terminal cells for a terminal frame, points for an image
+/// one. A phone's rectangle rarely lands on a whole point, so the
+/// coordinates are fractional and the reader converts if it needs to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Mark {
-    pub x: u16,
-    pub y: u16,
-    pub width: u16,
-    pub height: u16,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
     pub note: String,
+}
+
+/// Which recorder produced a report's trace. The terminal chrome's trace
+/// replays here; a native view's trace replays on the platform that drew
+/// it, so naming the recorder is what lets a reader tell the two apart
+/// before it opens the file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceKind {
+    /// What a report carries unless its writer says otherwise: the shared
+    /// runtime's own embedding is the terminal.
+    #[default]
+    TerminalChrome,
+    NativeView,
 }
 
 /// Whether a report part was captured.
@@ -75,6 +92,8 @@ pub enum PartState {
 pub struct Parts {
     pub frame: PartState,
     pub trace: PartState,
+    /// Which recorder the trace came from; absent exactly when the trace is.
+    pub trace_kind: Option<TraceKind>,
     pub msgs: PartState,
     pub daemon: PartState,
     pub log: PartState,
@@ -90,7 +109,7 @@ pub enum ReplayVerdict {
 }
 
 /// The small, self-describing entry point for one report bundle.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReportHeader {
     pub schema_version: u32,
     pub build: String,
@@ -103,21 +122,63 @@ pub struct ReportHeader {
     pub note: String,
     pub marks: Vec<Mark>,
     pub viewport: Option<(u16, u16)>,
+    /// The size an image frame was drawn at, when the frame is an image.
+    /// It lives in the header because the bundle carries the picture
+    /// alone: `frame.png` has pixels, and nothing in it says how large
+    /// the marks beside it were measured against.
+    pub image_frame: Option<ImageFrame>,
     pub parts: Parts,
     pub replay: ReplayVerdict,
 }
 
 /// The terminal frame text and per-cell style classes captured together.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FrameCapture {
+pub struct TerminalFrame {
     pub text: String,
     pub styles: String,
+}
+
+/// The size an image frame was captured at, in the points its marks are
+/// measured in, with the scale the pixels were rendered at.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImageFrame {
+    pub width_pt: f64,
+    pub height_pt: f64,
+    pub scale: u8,
+}
+
+/// What the screen looked like: either the cells a terminal drew or the
+/// picture a native view composited.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FrameCapture {
+    Terminal(TerminalFrame),
+    Image { png: Vec<u8>, frame: ImageFrame },
+}
+
+impl FrameCapture {
+    pub fn terminal(text: impl Into<String>, styles: impl Into<String>) -> Self {
+        Self::Terminal(TerminalFrame {
+            text: text.into(),
+            styles: styles.into(),
+        })
+    }
+
+    /// The cells, when this frame is a terminal one. A caller that can
+    /// only compare cells asks for them rather than assuming.
+    pub fn as_terminal(&self) -> Option<&TerminalFrame> {
+        match self {
+            Self::Terminal(frame) => Some(frame),
+            Self::Image { .. } => None,
+        }
+    }
 }
 
 /// Payloads available to the writer. Missing payloads are declared absent.
 pub struct ReportParts {
     pub frame: Option<FrameCapture>,
     pub trace: Option<Vec<u8>>,
+    /// Which recorder produced `trace`; ignored when there is no trace.
+    pub trace_kind: TraceKind,
     pub msgs: Option<RecorderSnapshot>,
     pub daemon: Option<String>,
     pub log: Option<String>,
@@ -170,6 +231,7 @@ impl ReportWriter {
         let states = Parts {
             frame: part_state(&parts.frame, &parts.absent_reason),
             trace: part_state(&parts.trace, &parts.absent_reason),
+            trace_kind: parts.trace.as_ref().map(|_| parts.trace_kind),
             msgs: part_state(&parts.msgs, &parts.absent_reason),
             daemon: part_state(
                 &parts.daemon,
@@ -187,9 +249,17 @@ impl ReportWriter {
             ),
         };
 
-        if let Some(frame) = parts.frame {
-            write_private(&report_dir.join("frame.txt"), frame.text.as_bytes())?;
-            write_private(&report_dir.join("frame.styles"), frame.styles.as_bytes())?;
+        let mut image_frame = None;
+        match parts.frame {
+            Some(FrameCapture::Terminal(frame)) => {
+                write_private(&report_dir.join("frame.txt"), frame.text.as_bytes())?;
+                write_private(&report_dir.join("frame.styles"), frame.styles.as_bytes())?;
+            }
+            Some(FrameCapture::Image { png, frame }) => {
+                write_private(&report_dir.join("frame.png"), &png)?;
+                image_frame = Some(frame);
+            }
+            None => {}
         }
         if let Some(trace) = parts.trace {
             write_private(&report_dir.join("trace.jsonl"), &trace)?;
@@ -216,6 +286,7 @@ impl ReportWriter {
             note: draft.note,
             marks: draft.marks,
             viewport: draft.viewport,
+            image_frame,
             parts: states,
             replay: draft.replay,
         };
@@ -443,11 +514,25 @@ pub fn set_verdict(report: &Path, verdict: ReplayVerdict) -> Result<(), ReportEr
     Ok(())
 }
 
-/// Read a report's captured frame. Both halves are one part, so a report
+/// Read a report's captured frame, whichever kind it is.
+///
+/// A terminal frame is two files and both halves are one part, so a report
 /// carrying only one of them is a report with no frame — a half-frame
 /// would fail a comparison for a reason that has nothing to do with the
-/// bug being reported.
+/// bug being reported. An image frame is the picture plus the size the
+/// header records it was drawn at; a picture with no recorded size is the
+/// same kind of half-frame.
 pub fn read_frame(report: &Path) -> io::Result<Option<FrameCapture>> {
+    match fs::read(report.join("frame.png")) {
+        Ok(png) => {
+            let header = read_header(report).map_err(io::Error::other)?;
+            return Ok(header
+                .image_frame
+                .map(|frame| FrameCapture::Image { png, frame }));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let text = match fs::read_to_string(report.join("frame.txt")) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -458,7 +543,7 @@ pub fn read_frame(report: &Path) -> io::Result<Option<FrameCapture>> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    Ok(Some(FrameCapture { text, styles }))
+    Ok(Some(FrameCapture::terminal(text, styles)))
 }
 
 /// How much of the log a report carries. One budget for every capture
@@ -507,10 +592,10 @@ mod tests {
             detail: Some("capture detail".to_string()),
             note: "main note".to_string(),
             marks: vec![Mark {
-                x: 3,
-                y: 4,
-                width: 5,
-                height: 2,
+                x: 3.0,
+                y: 4.0,
+                width: 5.0,
+                height: 2.0,
                 note: "marked cells".to_string(),
             }],
             viewport: Some((100, 40)),
@@ -538,11 +623,9 @@ mod tests {
             .write(
                 draft(ReportKind::Bug),
                 ReportParts {
-                    frame: Some(FrameCapture {
-                        text: "hello frame\n".to_string(),
-                        styles: "default default\n".to_string(),
-                    }),
+                    frame: Some(FrameCapture::terminal("hello frame\n", "default default\n")),
                     trace: Some(b"{\"draw\":1}\n".to_vec()),
+                    trace_kind: TraceKind::TerminalChrome,
                     msgs: Some(recorder_snapshot()),
                     daemon: Some("{\"hosts\":[]}".to_string()),
                     log: Some("first\nsecond\n".to_string()),
@@ -612,6 +695,138 @@ mod tests {
     }
 
     #[test]
+    fn report_image_frame_bundle_round_trips_with_its_native_trace() {
+        let root = tempfile::tempdir().unwrap();
+        let writer = ReportWriter::new(root.path().to_path_buf(), "phone", "sha1234");
+        let png = b"\x89PNG\r\n\x1a\nphone screen".to_vec();
+        let report = writer
+            .write(
+                ReportDraft {
+                    kind: ReportKind::Bug,
+                    detail: None,
+                    note: "the composer sits under the keyboard".to_string(),
+                    marks: vec![Mark {
+                        x: 12.5,
+                        y: 340.25,
+                        width: 180.0,
+                        height: 44.5,
+                        note: "this row is cut off".to_string(),
+                    }],
+                    viewport: None,
+                    replay: ReplayVerdict::Unchecked,
+                },
+                ReportParts {
+                    frame: Some(FrameCapture::Image {
+                        png: png.clone(),
+                        frame: ImageFrame {
+                            width_pt: 393.0,
+                            height_pt: 852.0,
+                            scale: 3,
+                        },
+                    }),
+                    trace: Some(b"{\"screen\":\"home\"}\n".to_vec()),
+                    trace_kind: TraceKind::NativeView,
+                    msgs: Some(recorder_snapshot()),
+                    daemon: Some("{\"hosts\":[]}".to_string()),
+                    log: None,
+                    absent_reason: "the phone keeps no log file".to_string(),
+                    log_absent_reason: None,
+                    daemon_absent_reason: None,
+                },
+            )
+            .unwrap();
+
+        let header = read_header(&report).unwrap();
+        assert_eq!(header.parts.frame, PartState::Present);
+        assert_eq!(header.parts.trace_kind, Some(TraceKind::NativeView));
+        assert_eq!(
+            header.image_frame,
+            Some(ImageFrame {
+                width_pt: 393.0,
+                height_pt: 852.0,
+                scale: 3,
+            })
+        );
+        // The picture is the only frame file, and the marks beside it are
+        // measured in the points the header records, not in cells.
+        assert!(report.join("frame.png").exists());
+        assert!(!report.join("frame.txt").exists());
+        assert_eq!(header.marks[0].y, 340.25);
+
+        let read = read_frame(&report).unwrap().unwrap();
+        assert_eq!(
+            read,
+            FrameCapture::Image {
+                png,
+                frame: ImageFrame {
+                    width_pt: 393.0,
+                    height_pt: 852.0,
+                    scale: 3,
+                },
+            }
+        );
+        assert!(read.as_terminal().is_none());
+    }
+
+    #[test]
+    fn report_image_frame_is_half_a_frame_without_its_recorded_size() {
+        let root = tempfile::tempdir().unwrap();
+        let writer = ReportWriter::new(root.path().to_path_buf(), "phone", "sha1234");
+        let report = writer
+            .write(
+                draft(ReportKind::Bug),
+                ReportParts {
+                    frame: None,
+                    trace: None,
+                    trace_kind: TraceKind::NativeView,
+                    msgs: None,
+                    daemon: None,
+                    log: None,
+                    absent_reason: "test".to_string(),
+                    log_absent_reason: None,
+                    daemon_absent_reason: None,
+                },
+            )
+            .unwrap();
+        fs::write(report.join("frame.png"), b"not declared in the header").unwrap();
+
+        assert_eq!(read_frame(&report).unwrap(), None);
+        // A trace that was never captured names no recorder either.
+        assert_eq!(read_header(&report).unwrap().parts.trace_kind, None);
+    }
+
+    #[test]
+    fn report_image_frame_leaves_terminal_bundles_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let writer = ReportWriter::new(root.path().to_path_buf(), "test", "abc");
+        let report = writer
+            .write(
+                draft(ReportKind::Bug),
+                ReportParts {
+                    frame: Some(FrameCapture::terminal("hello\n", "d\n")),
+                    trace: Some(b"{}\n".to_vec()),
+                    trace_kind: TraceKind::TerminalChrome,
+                    msgs: None,
+                    daemon: None,
+                    log: None,
+                    absent_reason: "test".to_string(),
+                    log_absent_reason: None,
+                    daemon_absent_reason: None,
+                },
+            )
+            .unwrap();
+
+        let header = read_header(&report).unwrap();
+        assert_eq!(header.image_frame, None);
+        assert_eq!(header.parts.trace_kind, Some(TraceKind::TerminalChrome));
+        assert!(!report.join("frame.png").exists());
+        assert_eq!(
+            read_frame(&report).unwrap(),
+            Some(FrameCapture::terminal("hello\n", "d\n"))
+        );
+    }
+
+    #[test]
     fn writes_a_degraded_report_with_every_part_declared() {
         let root = tempfile::tempdir().unwrap();
         let writer = ReportWriter::new(root.path().to_path_buf(), "release", "def456");
@@ -621,6 +836,7 @@ mod tests {
                 ReportParts {
                     frame: None,
                     trace: None,
+                    trace_kind: TraceKind::TerminalChrome,
                     msgs: Some(recorder_snapshot()),
                     daemon: None,
                     log: Some("tripwire log\n".to_string()),
@@ -658,6 +874,7 @@ mod tests {
                 ReportParts {
                     frame: None,
                     trace: None,
+                    trace_kind: TraceKind::TerminalChrome,
                     msgs: None,
                     daemon: None,
                     log: None,
@@ -673,6 +890,7 @@ mod tests {
                 ReportParts {
                     frame: None,
                     trace: None,
+                    trace_kind: TraceKind::TerminalChrome,
                     msgs: None,
                     daemon: None,
                     log: None,
@@ -732,6 +950,7 @@ mod tests {
         let empty_parts = || ReportParts {
             frame: None,
             trace: None,
+            trace_kind: TraceKind::TerminalChrome,
             msgs: None,
             daemon: None,
             log: None,

@@ -38,7 +38,7 @@ use crate::msg::{
 use crate::recorder::{DEFAULT_RECORDER_CAPACITY, Recorder};
 use crate::report::{
     FrameCapture, LOG_TAIL_BYTES, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
-    ReportWriter, log_tail,
+    ReportWriter, TraceKind, log_tail,
 };
 use crate::update::{NOT_CONNECTED_ERROR, update};
 
@@ -84,6 +84,10 @@ pub type SubscriptionStatusProvider = Arc<dyn Fn() -> bool + Send + Sync>;
 pub struct ReportExtras {
     pub frame: Option<FrameCapture>,
     pub trace: Option<Vec<u8>>,
+    /// Which recorder produced the trace. An embedding that draws a native
+    /// view says so, so the bundle's reader knows the trace replays on that
+    /// platform rather than in the terminal chrome.
+    pub trace_kind: TraceKind,
     pub viewport: Option<(u16, u16)>,
 }
 
@@ -676,6 +680,7 @@ impl Runtime {
             ReportParts {
                 frame: extras.frame,
                 trace: extras.trace,
+                trace_kind: extras.trace_kind,
                 msgs: Some(self.recorder_snapshot()),
                 daemon: None,
                 log,
@@ -1125,6 +1130,7 @@ pub fn write_panic_report(detail: &str) {
         ReportParts {
             frame: extras.frame,
             trace: extras.trace,
+            trace_kind: extras.trace_kind,
             msgs: Some(snapshot),
             daemon: None,
             log,

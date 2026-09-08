@@ -17,7 +17,9 @@
 
 use std::path::Path;
 
-use amux_ui::report::{FrameCapture, Mark, ReplayVerdict, ReportError, ReportHeader, read_frame};
+use amux_ui::report::{
+    FrameCapture, Mark, ReplayVerdict, ReportError, ReportHeader, TerminalFrame, read_frame,
+};
 use amux_ui::{Model, update};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -33,7 +35,7 @@ use crate::trace::{TraceError, TraceWindow};
 /// letter per cell naming the theme token the cell was painted from. The
 /// class map is what catches a cell painted from a colour literal — it
 /// classifies as `?` rather than passing for a token.
-pub fn capture_frame(buffer: &Buffer, theme: Theme) -> FrameCapture {
+pub fn capture_frame(buffer: &Buffer, theme: Theme) -> TerminalFrame {
     let mut text = String::new();
     let mut styles = String::new();
     for y in 0..buffer.area.height {
@@ -45,7 +47,7 @@ pub fn capture_frame(buffer: &Buffer, theme: Theme) -> FrameCapture {
         text.push('\n');
         styles.push('\n');
     }
-    FrameCapture { text, styles }
+    TerminalFrame { text, styles }
 }
 
 #[derive(Debug, Error)]
@@ -56,6 +58,8 @@ pub enum ReplayError {
     NoFrame,
     #[error("report has no captured frame to verify against")]
     NoCapturedFrame,
+    #[error("report captured an image of a native view, which this chrome cannot redraw")]
+    NotATerminalFrame,
     #[error(transparent)]
     Trace(#[from] TraceError),
     #[error(transparent)]
@@ -187,7 +191,7 @@ impl Replay {
     }
 
     /// The frame as last drawn at the current position.
-    pub fn frame(&self) -> Result<FrameCapture, ReplayError> {
+    pub fn frame(&self) -> Result<TerminalFrame, ReplayError> {
         let buffer = self.last_frame.as_ref().ok_or(ReplayError::NoFrame)?;
         Ok(capture_frame(buffer, self.theme))
     }
@@ -196,7 +200,10 @@ impl Replay {
 /// Replay a report to its end and compare the frame it produces with the
 /// one it captured.
 pub fn verify(report: &Path) -> Result<ReplayVerdict, ReplayError> {
-    let expected = read_frame(report)?.ok_or(ReplayError::NoCapturedFrame)?;
+    let captured = read_frame(report)?.ok_or(ReplayError::NoCapturedFrame)?;
+    let FrameCapture::Terminal(expected) = captured else {
+        return Err(ReplayError::NotATerminalFrame);
+    };
     let mut replay = Replay::load(report)?;
     replay.step_to_end()?;
     let actual = replay.frame()?;
@@ -205,7 +212,7 @@ pub fn verify(report: &Path) -> Result<ReplayVerdict, ReplayError> {
 
 /// The verdict for one pair of frames, with the first differing cell named
 /// so a divergence points somewhere before anyone opens the files.
-pub fn verdict(expected: &FrameCapture, actual: &FrameCapture) -> ReplayVerdict {
+pub fn verdict(expected: &TerminalFrame, actual: &TerminalFrame) -> ReplayVerdict {
     let diff = frame_diff(expected, actual);
     match diff.cells.first() {
         None => ReplayVerdict::Reproduces,
@@ -219,7 +226,7 @@ pub fn verdict(expected: &FrameCapture, actual: &FrameCapture) -> ReplayVerdict 
 }
 
 /// Which cells differ, and the rectangle that covers them.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FrameDiff {
     pub cells: Vec<(u16, u16)>,
     pub bounding: Option<Mark>,
@@ -229,7 +236,7 @@ pub struct FrameDiff {
 /// symbol or its style class differs — the class map is half the capture,
 /// so a frame that reads the same but is painted from different tokens is
 /// a divergence, not a match.
-pub fn frame_diff(expected: &FrameCapture, actual: &FrameCapture) -> FrameDiff {
+pub fn frame_diff(expected: &TerminalFrame, actual: &TerminalFrame) -> FrameDiff {
     let mut cells = Vec::new();
     let expected_rows: Vec<&str> = expected.text.lines().collect();
     let actual_rows: Vec<&str> = actual.text.lines().collect();
@@ -262,17 +269,19 @@ fn bounding_mark(cells: &[(u16, u16)]) -> Option<Mark> {
         max = (max.0.max(*x), max.1.max(*y));
     }
     Some(Mark {
-        x: min.0,
-        y: min.1,
-        width: max.0 - min.0 + 1,
-        height: max.1 - min.1 + 1,
+        x: f64::from(min.0),
+        y: f64::from(min.1),
+        width: f64::from(max.0 - min.0 + 1),
+        height: f64::from(max.1 - min.1 + 1),
         note: "replay diverges here".to_string(),
     })
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use amux_ui::report::{ReportDraft, ReportKind, ReportParts, ReportWriter};
+    use amux_ui::report::{
+        FrameCapture, ReportDraft, ReportKind, ReportParts, ReportWriter, TraceKind,
+    };
     use amux_ui::{AgentId, BUILD, Msg, StreamEntry, StreamMsg};
     use chrono::{DateTime, TimeDelta, Utc};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -397,7 +406,7 @@ pub(crate) mod tests {
             }
         }
 
-        pub(crate) fn capture(&self) -> FrameCapture {
+        pub(crate) fn capture(&self) -> TerminalFrame {
             capture_frame(
                 self.frame.as_ref().expect("a frame has been drawn"),
                 Theme::default(),
@@ -427,8 +436,9 @@ pub(crate) mod tests {
                         replay: ReplayVerdict::Unchecked,
                     },
                     ReportParts {
-                        frame: Some(self.capture()),
+                        frame: Some(FrameCapture::Terminal(self.capture())),
                         trace: Some(window.to_bytes().expect("trace serializes")),
+                        trace_kind: TraceKind::TerminalChrome,
                         msgs: None,
                         daemon: None,
                         log: None,
@@ -634,7 +644,9 @@ pub(crate) mod tests {
 #[cfg(test)]
 mod divergence {
     use amux_ui::BUILD;
-    use amux_ui::report::{ReportDraft, ReportKind, ReportParts, ReportWriter};
+    use amux_ui::report::{
+        FrameCapture, ReportDraft, ReportKind, ReportParts, ReportWriter, TraceKind,
+    };
 
     use super::tests::scrolled_session;
     use super::*;
@@ -670,13 +682,14 @@ mod divergence {
             other => panic!("a tampered frame must diverge, not {other:?}"),
         }
 
-        let expected = read_frame(&report).expect("read").expect("frame present");
-        let diff = frame_diff(&expected, &session.capture());
+        let captured = read_frame(&report).expect("read").expect("frame present");
+        let expected = captured.as_terminal().expect("a terminal frame");
+        let diff = frame_diff(expected, &session.capture());
         assert_eq!(diff.cells, vec![(5, 2)]);
         let bounding = diff.bounding.expect("a diff has a bounding rectangle");
         assert_eq!(
             (bounding.x, bounding.y, bounding.width, bounding.height),
-            (5, 2, 1, 1)
+            (5.0, 2.0, 1.0, 1.0)
         );
     }
 
@@ -695,8 +708,9 @@ mod divergence {
                     replay: ReplayVerdict::Unchecked,
                 },
                 ReportParts {
-                    frame: Some(session.capture()),
+                    frame: Some(FrameCapture::Terminal(session.capture())),
                     trace: None,
+                    trace_kind: TraceKind::TerminalChrome,
                     msgs: None,
                     daemon: None,
                     log: None,

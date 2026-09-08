@@ -26,14 +26,16 @@
     "frame": "present",
     "log": "present",
     "msgs": "present",
-    "trace": "present"
+    "trace": "present",
+    "trace_kind": "terminal_chrome"
   },
   "replay": "reproduces",
-  "schema_version": 1,
+  "schema_version": 2,
   "stamp": "1788409259982-9610",
   "status": "open",
   "viewport": [
     140,
     40
-  ]
+  ],
+  "image_frame": null
 }

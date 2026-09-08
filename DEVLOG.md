@@ -4,6 +4,39 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **A report can be a picture of a phone screen.**
+
+A report bundle assumed the screen it froze was made of terminal cells: two
+text files, and rectangles measured in rows and columns. A phone draws
+something no text file describes, so the bundle now holds either kind of
+frame. A terminal capture is still `frame.txt` and `frame.styles`; a phone
+capture is `frame.png`, and the size it was drawn at — points, and the scale
+the pixels came out at — is recorded in `report.json`, because the picture
+itself says nothing about the space its marks were measured in. Marks are
+fractional now for the same reason: a rectangle drawn with a finger rarely
+lands on a whole point.
+
+The bundle also says which recorder made its trace. The terminal chrome's
+trace folds back into a frame here; a native view's does not, and a reader
+that cannot tell them apart would have to open the file to find out.
+`amux debug report replay` reads that declaration first: given a phone bundle
+it writes `unchecked` — the honest verdict for a comparison it never made —
+and names the recipe that does redraw those screens, instead of failing as
+though the recording were broken. `show` reads a phone bundle like any other,
+and graduation copies its picture across untouched; there is no text in a
+screenshot to redact.
+
+The `report_image_frame_*` tests hold all of it: in the bundle writer, that an
+image bundle round-trips with its geometry and its native trace kind, that a
+picture with no recorded size reads as no frame at all, and that a terminal
+bundle is untouched by any of it; in the CLI, that `show` reads a phone bundle
+and `replay` leaves `unchecked` behind with the pointer, and that graduation
+keeps the picture byte for byte; in the report fixture suite, that the terminal
+chrome refuses a picture rather than comparing one. The CLI pair is observed
+passing. `docs/DEBUGGING.md` now says what happens to a report captured on the
+phone: nothing, until the person who captured it presses Send.
+
+---
 2026-09-08 — **The fleet a phone remembers belongs to an account.**
 
 The remembered fleet — the rows drawn before any machine has answered — was

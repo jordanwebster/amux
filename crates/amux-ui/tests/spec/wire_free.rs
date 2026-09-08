@@ -7,7 +7,9 @@
 use amux_ui::claude::answer::{
     AskAnswer, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
 };
-use amux_ui::report::{ReplayVerdict, ReportDraft, ReportKind, ReportParts, ReportWriter};
+use amux_ui::report::{
+    ReplayVerdict, ReportDraft, ReportKind, ReportParts, ReportWriter, TraceKind,
+};
 use amux_ui::{
     ArtifactKind, ArtifactRef, BUILD, DisconnectReason, DumpReason, Effect, Model, Msg, OpError,
     OpOutcome, Recorder, StreamCloseReason, StreamEntry, StreamMsg, replay_msgs, update,
@@ -99,6 +101,7 @@ fn replaying_a_recorded_log_twice_yields_identical_models() {
             ReportParts {
                 frame: None,
                 trace: None,
+                trace_kind: TraceKind::TerminalChrome,
                 msgs: Some(recorder.snapshot()),
                 daemon: None,
                 log: None,
