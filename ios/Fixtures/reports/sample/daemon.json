@@ -1,6 +1,6 @@
 {
   "is_cloud_server": false,
-  "use_cloud_mode": false,
+  "has_credential_provider": true,
   "user_count": 1,
   "agent_count": 0,
   "remote_agent_count": 0,
@@ -10,7 +10,7 @@
   "tunnel_count": 0,
   "hosts": [
     {
-      "id": "804cca0d-572d-4c02-84e8-e0fcdc074f4e",
+      "id": "5c6984bf-7a04-4628-987e-7544cc1b96fe",
       "name": "laptop",
       "version": "0.6.0",
       "capabilities": {
@@ -28,7 +28,17 @@
       }
     },
     {
-      "id": "eb78729e-d46b-45ca-b517-99811a98fae9",
+      "id": "5dd1f378-9c94-4c39-b29c-3832b72003fb",
+      "name": "cloud",
+      "version": "0.6.0",
+      "capabilities": {
+        "features": [
+          "amux.cloud_relay"
+        ]
+      }
+    },
+    {
+      "id": "860faf7f-77c5-4e3b-b71b-5ef8d03946fd",
       "name": "desktop",
       "version": "0.6.0",
       "capabilities": {
@@ -44,48 +54,38 @@
           }
         ]
       }
-    },
-    {
-      "id": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9",
-      "name": "cloud",
-      "version": "0.6.0",
-      "capabilities": {
-        "features": [
-          "amux.cloud_relay"
-        ]
-      }
     }
   ],
   "routes": [
     {
-      "dst": "804cca0d-572d-4c02-84e8-e0fcdc074f4e",
+      "dst": "5c6984bf-7a04-4628-987e-7544cc1b96fe",
       "via": {
         "kind": "relay",
-        "host": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9"
+        "host": "5dd1f378-9c94-4c39-b29c-3832b72003fb"
       },
       "hops": 2
     },
     {
-      "dst": "eb78729e-d46b-45ca-b517-99811a98fae9",
-      "via": {
-        "kind": "relay",
-        "host": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9"
-      },
-      "hops": 2
-    },
-    {
-      "dst": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9",
+      "dst": "5dd1f378-9c94-4c39-b29c-3832b72003fb",
       "via": {
         "kind": "direct",
-        "link": "fd47f2554dd143d1afd16e8f5b92b0e9#6a2eb07d"
+        "link": "5dd1f3789c944c39b29c3832b72003fb#e893d7c1"
       },
       "hops": 1
+    },
+    {
+      "dst": "860faf7f-77c5-4e3b-b71b-5ef8d03946fd",
+      "via": {
+        "kind": "relay",
+        "host": "5dd1f378-9c94-4c39-b29c-3832b72003fb"
+      },
+      "hops": 2
     }
   ],
   "links": [
     {
-      "id": "fd47f2554dd143d1afd16e8f5b92b0e9#6a2eb07d",
-      "peer": "fd47f255-4dd1-43d1-afd1-6e8f5b92b0e9",
+      "id": "5dd1f3789c944c39b29c3832b72003fb#e893d7c1",
+      "peer": "5dd1f378-9c94-4c39-b29c-3832b72003fb",
       "direction": "bidirectional",
       "transport": "cloud_relay",
       "established_at": null
@@ -94,11 +94,11 @@
   "tunnels": [],
   "config": {
     "host_name": "door-smoke",
-    "cloud_url": "https://amux.sh",
-    "socket_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/37FAA7BA-D9B6-4D45-970A-2B9882A20F3A/tmp/door-data/amux.sock",
-    "state_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/37FAA7BA-D9B6-4D45-970A-2B9882A20F3A/tmp/door-data/state.yaml",
-    "data_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/37FAA7BA-D9B6-4D45-970A-2B9882A20F3A/tmp/door-data",
-    "enable_cloud_mode": false,
+    "cloud_url": "http://127.0.0.1:52625",
+    "socket_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3C5C10C8-12DC-4476-9B42-E23E2DE4AE31/tmp/door-data/door-smoke/installation/profiles/ef0da11f-642a-4e32-8821-fa8867e505fe.sock",
+    "state_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3C5C10C8-12DC-4476-9B42-E23E2DE4AE31/tmp/door-data/door-smoke/installation/profiles/ef0da11f-642a-4e32-8821-fa8867e505fe/state/state.yaml",
+    "data_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3C5C10C8-12DC-4476-9B42-E23E2DE4AE31/tmp/door-data/door-smoke/installation/profiles/ef0da11f-642a-4e32-8821-fa8867e505fe/data",
+    "reports_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3C5C10C8-12DC-4476-9B42-E23E2DE4AE31/tmp/door-data/door-smoke/installation/profiles/ef0da11f-642a-4e32-8821-fa8867e505fe/data/reports",
     "prevent_idle_sleep": false,
     "repository_roots": [],
     "keybinds": {
@@ -106,9 +106,12 @@
     },
     "ui": {
       "default_open_mode": "raw",
-      "theme": "dark",
+      "theme": "terminal",
       "color": "auto",
       "artifact_cache_mib": 256
+    },
+    "claude": {
+      "driver": "pty"
     }
   }
 }

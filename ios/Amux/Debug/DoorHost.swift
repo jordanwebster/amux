@@ -174,7 +174,8 @@ final class DoorHost {
             typeSize = size
             trace.append(.dynamicType(name))
             return .ack
-        case .report(let path): return report(to: path)
+        case .report(let path, let note, let marks):
+            return report(to: path, note: note, marks: marks)
         case .replay(let path): return replay(from: path)
         case .settle:
             await settle()
@@ -888,15 +889,22 @@ final class DoorHost {
 
     // MARK: - Recording and replaying
 
-    /// Writes the shared runtime's recording and the view-state trace into a
-    /// directory the driver then reads out of the app's container.
-    private func report(to path: String) -> DoorReply {
-        guard let bridge else {
-            return .error("nothing is connected, so there is no recording to write")
-        }
+    /// Writes the report this app would send into a directory the driver then
+    /// reads out of the app's container.
+    ///
+    /// The screen is frozen here rather than taken from whatever the door has
+    /// captured before: a report is about the frame somebody was looking at
+    /// when they decided something was wrong, and freezing it through the same
+    /// seam the screenshot path uses is what makes the bundle a real one.
+    private func report(to path: String, note: String, marks: [ReportMark]) -> DoorReply {
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         do {
-            let parts = try DoorRecording.write(directory, runtime: bridge, trace: trace)
+            let parts = try DoorRecording.write(
+                directory,
+                freezer: ReportFreeze(),
+                draft: ReportDraft(note: note, marks: marks),
+                build: AppFiles.build,
+                log: AppFiles.logTail)
             return .bundle(path: path, parts: parts)
         } catch {
             return .error("\(error)")

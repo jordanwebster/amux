@@ -5,8 +5,10 @@ import Foundation
 /// Writing what this app has been through into a bundle, and rebuilding a
 /// screen from one somebody else wrote.
 ///
-/// A bug on a phone is reported as two recordings side by side in one
-/// directory. `msgs.jsonl` is the shared runtime's own: the reducer model it
+/// A bug on a phone is reported as the picture of the screen it was found on
+/// and the recordings behind it, in one directory, with `report.json`
+/// declaring every part and the reason for each one that is missing.
+/// `msgs.jsonl` is the shared runtime's own recording: the reducer model it
 /// had checkpointed and every message it folded after that. `trace.jsonl` is
 /// what the person was looking at while those messages arrived. Rebuilding
 /// means folding the first back into a model, projecting that model into the
@@ -14,70 +16,59 @@ import Foundation
 /// second — so the screen comes back without the phone, the relay, the host
 /// or any of the work the recording originally asked for.
 ///
+/// The bundle is assembled by the same code the Send button uses, so what a
+/// driver collects is what a person's report would have been rather than a
+/// second layout that could drift from it.
+///
 /// This is a driving tool. The calls it makes exist only in the library built
 /// with the driving tools compiled in, so it must never be reachable from a
 /// build a person could install.
 enum DoorRecording {
     enum Failure: Error, CustomStringConvertible {
-        case notRunning
+        case notPhotographed
         case unreadable(String)
         case refused(String)
 
         var description: String {
             switch self {
-            case .notRunning: "nothing is connected, so there is no recording to write"
+            case .notPhotographed: "the screen could not be photographed, so there is no report"
             case .unreadable(let what): "the bundle's \(what) could not be read"
             case .refused(let why): "the recording could not be replayed: \(why)"
             }
         }
     }
 
-    /// Writes the runtime's recording and the view-state trace into a
-    /// directory, and answers the files it left there.
+    /// Freezes the screen the way a screenshot does, assembles the report this
+    /// app would send about it, writes every part it has into a directory and
+    /// answers the files it left there.
     ///
-    /// The runtime hands its recording back as a checkpoint and a list of
-    /// message lines rather than as a file; the header line and the lines
-    /// under it are assembled here, in the shape `replay` reads back.
+    /// A part the phone could not take is not written, and is not silently
+    /// dropped either: `report.json` says it is absent and why, which is the
+    /// thing a reader of the bundle needs and a directory listing cannot say.
+    @MainActor
     static func write(
-        _ directory: URL, runtime: BridgeClient, trace: [TraceEvent]
+        _ directory: URL,
+        freezer: any ReportFreezing,
+        draft: ReportDraft,
+        build: String,
+        log: Result<String, PartAbsent>
     ) throws -> [String] {
-        guard let json = runtime.withRuntime({ handle -> String? in
-            guard let owned = amux_mobile_report_snapshot(handle) else { return nil }
-            defer { amux_mobile_free(owned) }
-            return String(cString: owned)
-        }) ?? nil else { throw Failure.notRunning }
-        guard
-            let snapshot = try? JSONSerialization.jsonObject(with: Data(json.utf8)),
-            let report = snapshot as? [String: Any],
-            let recording = report["msgs"] as? [String: Any],
-            let version = recording["format_version"],
-            let checkpoint = recording["checkpoint"],
-            let messages = recording["msgs"] as? [String]
-        else { throw Failure.unreadable(Trace.messagesFile) }
+        let report = ReportStore()
+        guard report.begin(freezer) else { throw Failure.notPhotographed }
+        report.draft = draft
+        guard let bundle = report.assembled(build: build, log: log) else {
+            throw Failure.notPhotographed
+        }
 
         try FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
-        let header = try JSONSerialization.data(
-            withJSONObject: ["format_version": version, "checkpoint": checkpoint])
-        var lines = [String(decoding: header, as: UTF8.self)]
-        lines.append(contentsOf: messages)
-        try (lines.joined(separator: "\n") + "\n").write(
-            to: directory.appendingPathComponent(Trace.messagesFile),
-            atomically: true, encoding: .utf8)
-        try Trace.lines(trace).write(
-            to: directory.appendingPathComponent(Trace.traceFile),
-            atomically: true, encoding: .utf8)
-        var parts = [Trace.messagesFile, Trace.traceFile]
-        // The embedded daemon's own dump, when it answered. Its absence is
-        // recorded by the runtime rather than hidden, and a bundle without it
-        // still replays: the screen comes from the two recordings above.
-        if let daemon = report["daemon"] as? String {
-            try daemon.write(
-                to: directory.appendingPathComponent("daemon.json"),
-                atomically: true, encoding: .utf8)
-            parts.append("daemon.json")
+        var written: [String] = []
+        for part in bundle.parts {
+            guard let data = part.data else { continue }
+            try data.write(to: directory.appendingPathComponent(part.name))
+            written.append(part.name)
         }
-        return parts
+        return written
     }
 
     /// Folds a bundle's runtime recording into fresh stores.

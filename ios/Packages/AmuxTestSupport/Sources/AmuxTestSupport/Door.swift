@@ -170,9 +170,11 @@ public enum DoorRequest: Sendable, Equatable {
     /// will keep them and sends the draft the conversation holds — the same
     /// message, through the same gate, with the patch attached.
     case sendDraft(agent: String, prose: String)
-    /// Write a report bundle into this directory: the shared runtime's own
-    /// recording and the view-state trace beside it.
-    case report(path: String)
+    /// Write the report this app would send into this directory: the frozen
+    /// picture of the screen, the shared runtime's own recording, the
+    /// view-state trace, the daemon's state and `report.json` declaring them,
+    /// with the note and the rectangles carried on it.
+    case report(path: String, note: String, marks: [ReportMark])
     /// Rebuild the stores and the view from the bundle in this directory,
     /// without carrying out anything the recording asked the app to do.
     case replay(path: String)
@@ -418,6 +420,7 @@ extension DoorRequest: Codable {
         case account
         case identifier, text, seconds, qr, agent, base, prose, from, to
         case attachment, name, mime, base64, host, pin
+        case note, marks
     }
 
     public init(from decoder: any Decoder) throws {
@@ -512,7 +515,10 @@ extension DoorRequest: Codable {
                 agent: try fields.decode(String.self, forKey: .agent),
                 prose: try fields.decode(String.self, forKey: .prose))
         case "report":
-            self = .report(path: try fields.decode(String.self, forKey: .path))
+            self = .report(
+                path: try fields.decode(String.self, forKey: .path),
+                note: try fields.decodeIfPresent(String.self, forKey: .note) ?? "",
+                marks: try fields.decodeIfPresent([ReportMark].self, forKey: .marks) ?? [])
         case "replay":
             self = .replay(path: try fields.decode(String.self, forKey: .path))
         case "shutdown": self = .shutdown
@@ -632,9 +638,11 @@ extension DoorRequest: Codable {
             try fields.encode("sendDraft", forKey: .kind)
             try fields.encode(agent, forKey: .agent)
             try fields.encode(prose, forKey: .prose)
-        case .report(let path):
+        case .report(let path, let note, let marks):
             try fields.encode("report", forKey: .kind)
             try fields.encode(path, forKey: .path)
+            try fields.encode(note, forKey: .note)
+            try fields.encode(marks, forKey: .marks)
         case .replay(let path):
             try fields.encode("replay", forKey: .kind)
             try fields.encode(path, forKey: .path)

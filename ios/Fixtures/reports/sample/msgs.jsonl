@@ -1,7 +1,7 @@
 {"checkpoint":{"remote_inventories":{},"streams":{},"agents":{},"now":null,"finished_ops":[],"queues":{},"epoch":0,"invariant_warning":false,"pending_ops":{},"connection":{"connection":"connecting"},"cloud_auth_required":false,"hosts":{},"cloud_subscription_required":false,"local_host_id":null,"op_seq":0},"format_version":1}
-{"msg":"server","server":"connected","local_host_id":null}
-{"msg":"server","server":"host_upserted","host":{"id":"77041f87-79c2-4af0-9b6d-ddbf8f402069","name":"door-smoke","online":true,"version":"0.6.0","capabilities":{},"trust_status":"trusted","last_dial_error":null}}
-{"msg":"server","server":"hosts_synchronized"}
+{"msg":"server","server":"connected","local_host_id":"c9a668e0-203d-4ab2-a2ac-9d2b658f5a0c"}
 {"msg":"server","server":"agents_synchronized"}
-{"msg":"server","server":"host_upserted","host":{"id":"804cca0d-572d-4c02-84e8-e0fcdc074f4e","name":"laptop","online":true,"version":"0.6.0","capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"trust_status":"untrusted_but_online","last_dial_error":null}}
-{"msg":"server","server":"host_upserted","host":{"id":"eb78729e-d46b-45ca-b517-99811a98fae9","name":"desktop","online":true,"version":"0.6.0","capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"trust_status":"untrusted_but_online","last_dial_error":null}}
+{"msg":"server","server":"host_upserted","host":{"id":"c9a668e0-203d-4ab2-a2ac-9d2b658f5a0c","name":"door-smoke","online":true,"version":"0.6.0","capabilities":{},"trust_status":"trusted","last_dial_error":null,"platform":"ios"}}
+{"msg":"server","server":"hosts_synchronized"}
+{"msg":"server","server":"host_upserted","host":{"id":"5c6984bf-7a04-4628-987e-7544cc1b96fe","name":"laptop","online":true,"version":"0.6.0","capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"trust_status":"untrusted_but_online","last_dial_error":null,"platform":"macOS"}}
+{"msg":"server","server":"host_upserted","host":{"id":"860faf7f-77c5-4e3b-b71b-5ef8d03946fd","name":"desktop","online":true,"version":"0.6.0","capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"trust_status":"untrusted_but_online","last_dial_error":null,"platform":"macOS"}}

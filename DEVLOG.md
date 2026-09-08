@@ -4,6 +4,43 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **A report written on the phone, read and replayed on the Mac.**
+
+The driving door used to write two recordings into a directory and call it a
+bundle. It now writes the report the Send button would have sent: the frozen
+picture of the screen, the runtime's recording, the view-state trace, the
+embedded service's dump and `report.json` declaring each of them, with a note
+and rectangles the driver hands over. One assembly serves both, so what a
+driver collects cannot drift from what a person's report holds.
+
+`ios/Fixtures/reports/sample` is that bundle, captured by the app during the
+door smoke against the two-host topology. `amux debug report show` reads its
+header — schema 2, the frame's size in points and its scale, the log declared
+absent with the reason, the trace named a native one — and `amux debug report
+replay` records it Unchecked and points at the recipe that can redraw it.
+`wt run ios-replay` then does: it folds the recording into fresh stores, puts
+the trace back on top and photographs the result, and the picture that comes
+back is the phone's frozen frame byte for byte.
+
+Converting the same recording into a host-side script is refused, by name:
+`PartialSession`, because a phone's report holds the client's half of a
+conversation and a script plays the provider's. A recording that does carry a
+whole session still converts, and the two now sit in one test beside each
+other, so the refusal is a stated boundary rather than a gap.
+
+Two things the door smoke was quietly getting wrong are fixed with it. It
+expected an unbuilt screen to be refused and named `hosts`, which has since
+been built, so the assertion had stopped meaning anything; it now asks for a
+state that is still unbuilt. And it left the runtime's identity, trust and
+last relay in the app's container, so a second run in the same simulator
+started a phone that had already been somewhere and never reached the new
+relay — the connection simply never arrived. Each run now begins from a phone
+that has never connected.
+
+Green: `wt run ios-replay -- ios/Fixtures/reports/sample`, `amux debug report
+show` and `replay` over it, `wt test -- --bins script_from_report` (4 passed),
+`wt run ios-door-smoke`, `wt run ios-unit`, `wt run ios-lint`.
+
 2026-09-08 — **The report screen, and the bundle it sends.**
 
 The frozen frame now has a screen to sit on. The picture is drawn small enough

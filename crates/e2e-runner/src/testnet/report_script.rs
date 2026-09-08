@@ -226,6 +226,38 @@ mod tests {
         println!("truncated: EvictedHistory; mid_session: PartialSession");
     }
 
+    /// The phone's own bundle, read by the host tooling, and what can be made
+    /// of it.
+    ///
+    /// A report written on a phone is a client recording: the runtime's
+    /// messages and the view-state trace beside them, with no provider session
+    /// in it. The host-side script this converter builds plays what a provider
+    /// said, so a bundle without one is refused by name rather than turned
+    /// into a session that would invent the host's half. A bundle that does
+    /// carry a whole session converts, which is what the refusal is worth
+    /// reading against.
+    #[test]
+    fn script_from_report_reads_the_phone_bundle_and_refuses_a_recording_with_no_session() {
+        let phone = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ios/Fixtures/reports/sample/msgs.jsonl");
+        let recorded = read_snapshot(&phone).expect("the phone writes the recorder format");
+        let refusal = script_from_report(&recorded).unwrap_err();
+        assert_eq!(refusal, ConversionRefusal::PartialSession);
+
+        let converted = script_from_report(&fixture("complete")).unwrap();
+        let Step::Rows { jsonl } = &converted.reactions[0].play[0] else {
+            panic!("raw rows")
+        };
+        println!(
+            "ios/Fixtures/reports/sample: {} recorded messages, {refusal}",
+            recorded.msgs.len()
+        );
+        println!(
+            "tests/fixtures/reports/complete: converted to {} provider rows",
+            jsonl.len()
+        );
+    }
+
     #[test]
     fn script_from_report_rejects_gaps_reopens_mixed_layers_and_semantic_rows() {
         let snapshot = fixture("complete");

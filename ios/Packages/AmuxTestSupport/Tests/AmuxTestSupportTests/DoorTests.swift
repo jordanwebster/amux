@@ -1,3 +1,4 @@
+import AmuxCore
 import AmuxDesign
 import AmuxFeatures
 import SwiftUI
@@ -52,7 +53,9 @@ final class DoorTests: XCTestCase {
             .watch(agent: "6f1c1f8e-0000-4000-8000-000000000001"),
             .requestChanges(agent: "6f1c1f8e-0000-4000-8000-000000000001", base: "HEAD~1"),
             .requestChanges(agent: "6f1c1f8e-0000-4000-8000-000000000001", base: ""),
-            .report(path: "/tmp/report"),
+            .report(
+                path: "/tmp/report", note: "the badge counted twice",
+                marks: [ReportMark(x: 12, y: 40.5, width: 96, height: 24, note: "here")]),
             .replay(path: "/tmp/report"),
             .shutdown,
         ]
@@ -116,7 +119,14 @@ final class DoorTests: XCTestCase {
         // Nothing named puts the design back, and is sent as an absent field
         // rather than a null, like every other request the door takes.
         XCTAssertNil(try wire(.perturb(token: nil))["token"])
-        XCTAssertEqual(try wire(.report(path: "/tmp/report"))["path"] as? String, "/tmp/report")
+        let report = try wire(.report(
+            path: "/tmp/report", note: "the badge counted twice",
+            marks: [ReportMark(x: 12, y: 40.5, width: 96, height: 24, note: "here")]))
+        XCTAssertEqual(report["path"] as? String, "/tmp/report")
+        XCTAssertEqual(report["note"] as? String, "the badge counted twice")
+        // The rectangles travel in the frame's own points, fractions and all:
+        // a driver asks for the report a person would have written.
+        XCTAssertEqual((report["marks"] as? [[String: Any]])?.first?["y"] as? Double, 40.5)
         XCTAssertEqual(try wire(.pair(qr: "payload"))["qr"] as? String, "payload")
         let code = try wire(.pairByCode(host: "workstation", pin: "419507"))
         XCTAssertEqual(code["host"] as? String, "workstation")

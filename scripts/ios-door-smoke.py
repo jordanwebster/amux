@@ -45,6 +45,7 @@ CAPTURE = OUTPUT / "door-capture.png"
 # are what `wt run ios-replay` rebuilds a screen from.
 BUNDLE = OUTPUT / "bundle"
 SIMULATOR = "amux-golden"
+BUNDLE_ID = "sh.amux.Amux"
 TOPOLOGY = "e2e-tests/topologies/two-hosts.json"
 # What the bridge built with the driving tools answers when asked what it is.
 # The shipping library answers the version alone and does not contain this
@@ -60,10 +61,11 @@ DRIVING_SYMBOLS = ["amux_mobile_report_snapshot", "amux_mobile_replay_report"]
 def exchange(relay: str, token: str) -> list[tuple[dict, str]]:
     return [
         ({"kind": "open", "screen": "atlantis"}, "error"),
-        # A screen in the catalogue that nobody has built yet. It changes as
-        # the screens land; what is being proven is that the door names an
-        # unbuilt screen instead of showing a placeholder in its place.
-        ({"kind": "open", "screen": "hosts"}, "error"),
+        # A state the catalogue describes and nobody has built yet. Which one
+        # that is changes as the states land, so this asks for whichever is
+        # still missing from Fixtures.built; what is being proven is that the
+        # door names it instead of drawing a placeholder in its place.
+        ({"kind": "open", "screen": "home", "fixture": "home-empty"}, "error"),
         ({"kind": "dynamicType", "size": "enormous"}, "error"),
         ({"kind": "tap", "identifier": "nothing.here"}, "error"),
         # Nothing has been connected yet, so waiting for a connection is a
@@ -87,11 +89,36 @@ def exchange(relay: str, token: str) -> list[tuple[dict, str]]:
         # trace in the bundle ends somewhere a replay of it can be seen to
         # have followed rather than at whatever a fresh launch defaults to.
         ({"kind": "appearance", "appearance": "dark"}, "ack"),
-        # What a bug report is made of: the runtime's own recording and the
-        # view-state trace beside it, written by the app that was connected.
-        ({"kind": "report", "path": str(BUNDLE)}, "bundle"),
+        # What a bug report is made of: the frozen picture of the screen, the
+        # runtime's own recording and the view-state trace beside it, with
+        # report.json declaring every part — assembled by the same code the
+        # Send button runs, on the app that was connected.
+        ({"kind": "report", "path": str(BUNDLE),
+          "note": "the probe screen, reported from a driven run",
+          "marks": [{"x": 24, "y": 96, "width": 240, "height": 44,
+                     "note": "this title is what the door opened"}]}, "bundle"),
         ({"kind": "shutdown"}, "ack"),
     ]
+
+
+def forget_pairings(udid: str) -> None:
+    """Gives the phone back the identity it had before it ever ran this.
+
+    What the runtime keeps — its key, the machines it trusts and the relay it
+    last spoke to — lives in the app's container and outlives the run that
+    wrote it, and installing the app again leaves it exactly where it was. A
+    second run against a fresh relay then starts a runtime that has already
+    been somewhere, and it never reaches the new one: the connection this
+    smoke is about simply does not arrive. So each run starts from a phone
+    that has never connected, which is also the phone this smoke describes.
+    """
+    found = subprocess.run(
+        ["xcrun", "simctl", "get_app_container", udid, BUNDLE_ID, "data"],
+        text=True, capture_output=True, timeout=120)
+    # Nothing to forget before the first install.
+    if found.returncode != 0:
+        return
+    shutil.rmtree(Path(found.stdout.strip()) / "tmp/door-data", ignore_errors=True)
 
 
 def speak(plan: list[tuple[dict, str]]) -> list[dict]:
@@ -103,7 +130,7 @@ def speak(plan: list[tuple[dict, str]]) -> list[dict]:
     spoken = subprocess.run([
         "cargo", "run", "-q", "-p", "xtask", "--", "door",
         "--simulator", SIMULATOR,
-        "--bundle-id", "sh.amux.Amux",
+        "--bundle-id", BUNDLE_ID,
         "--install", str(APPLICATION),
         "--timeout", "300",
         "--requests", str(requests),
@@ -124,8 +151,8 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
                 f"{request} was answered {reply['kind']}, not {expected}: {reply}")
     refusals = [reply["message"] for reply in replies if reply["kind"] == "error"]
     print("refused: " + "; ".join(refusals), flush=True)
-    if not any("unimplemented: hosts" == message for message in refusals):
-        raise SystemExit(f"a screen nobody has built was not named unimplemented: {refusals}")
+    if not any("unimplemented: home-empty" == message for message in refusals):
+        raise SystemExit(f"a state nobody has built was not named unimplemented: {refusals}")
 
     visible = next(reply for reply in replies if reply["kind"] == "state")["state"]
     if visible["screen"] != "probe":
@@ -169,19 +196,42 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
 
 
 def check_bundle(written: dict) -> None:
-    """A report bundle is two recordings side by side: what the shared runtime
-    had folded, and what was on screen while it folded it. Both must be there
-    and both must be readable, or a replay of the bundle rebuilds half a
-    moment."""
-    for part in ("msgs.jsonl", "trace.jsonl"):
+    """A report bundle is the picture of a screen and the recordings behind it,
+    with `report.json` saying what is there and why anything missing is
+    missing. All of it must be readable, or a reader of the bundle is left
+    with half a moment."""
+    for part in ("report.json", "frame.png", "msgs.jsonl", "trace.jsonl"):
         if part not in written["parts"]:
             raise SystemExit(f"the app did not write {part}: {written}")
         if not (BUNDLE / part).is_file():
             raise SystemExit(f"{BUNDLE / part} was not collected from the app")
-    header, *messages = (BUNDLE / "msgs.jsonl").read_text().splitlines()
-    checkpoint = json.loads(header)
+    header = json.loads((BUNDLE / "report.json").read_text())
+    if header["schema_version"] != 2:
+        raise SystemExit(f"report.json is at schema {header['schema_version']}, not 2")
+    files = {"frame": "frame.png", "trace": "trace.jsonl", "msgs": "msgs.jsonl",
+             "daemon": "daemon.json", "log": "log.txt"}
+    for part, named in files.items():
+        declaration = header["parts"][part]
+        if declaration == "present" and not (BUNDLE / named).is_file():
+            raise SystemExit(f"report.json declares {named} present and it is not there")
+        if declaration != "present" and (BUNDLE / named).is_file():
+            raise SystemExit(f"report.json declares {named} absent and it is there")
+        if declaration != "present" and not declaration["absent"]["reason"]:
+            raise SystemExit(f"{named} is absent with no reason given: {declaration}")
+    # What recorded the trace decides where it can be put back, and it is named
+    # beside the declarations rather than at the top of the file: a terminal
+    # reading this bundle has to refuse it before it tries.
+    if header["parts"]["trace_kind"] != "native_view":
+        raise SystemExit(f"the trace is not named a native one: {header['parts']}")
+    if header["image_frame"]["width_pt"] <= 0 or header["image_frame"]["scale"] <= 0:
+        raise SystemExit(f"the frozen frame has no size: {header['image_frame']}")
+    if not header["marks"] or not header["note"]:
+        raise SystemExit(f"what the driver wrote on the report is not in it: {header}")
+    header_line, *messages = (BUNDLE / "msgs.jsonl").read_text().splitlines()
+    checkpoint = json.loads(header_line)
     if "format_version" not in checkpoint or "checkpoint" not in checkpoint:
-        raise SystemExit(f"msgs.jsonl does not start with a recorder header: {header[:200]}")
+        raise SystemExit(
+            f"msgs.jsonl does not start with a recorder header: {header_line[:200]}")
     for line in messages:
         json.loads(line)
     trace = [json.loads(line) for line in (BUNDLE / "trace.jsonl").read_text().splitlines()]
@@ -271,6 +321,7 @@ def runner():
 def main() -> None:
     udid = ios_simulators.ensure(SIMULATOR)
     ios_simulators.pin(udid)
+    forget_pairings(udid)
     with runner() as ready:
         token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
         machines = {daemon["name"] for daemon in ready["daemons"]}
