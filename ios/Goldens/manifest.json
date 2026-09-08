@@ -664,6 +664,19 @@
       ]
     },
     {
+      "id": "reduced-glass",
+      "stage": 12,
+      "screen": "run",
+      "fixture": "run-reduced",
+      "origin": "added_state",
+      "reason": "the conversation for a reader who has asked for less transparency and less motion",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "ax-home",
       "stage": 12,
       "screen": "home",

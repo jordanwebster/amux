@@ -49,9 +49,10 @@ final class AccessibilityAuditTests: XCTestCase {
                   let name = state["state"] as? String else { continue }
             _ = try door.ask(["kind": "open", "screen": screen, "fixture": name])
             _ = try door.ask(["kind": "settle"])
+            let laidOut = try laidOut(door)
             for control in controls(app) {
                 audited += 1
-                complaints += fault(control, on: name)
+                complaints += fault(control, on: name, laidOut: laidOut)
             }
         }
 
@@ -86,8 +87,67 @@ final class AccessibilityAuditTests: XCTestCase {
         }
     }
 
+    /// Where the screen laid each named thing out, in window points, asked of
+    /// the screen itself.
+    ///
+    /// A rectangle has to come from here rather than from XCUITest. The frame
+    /// XCUITest hands back is the accessibility frame, and that is not the
+    /// frame the screen laid out: a round control drawn at 44x44 comes back
+    /// 42x42, and a control whose name is declared on the button comes back as
+    /// the line of text inside it, tens of points shorter than the button
+    /// around it. Judging a hit area on either of those judges a rectangle
+    /// nobody laid out. What only XCUITest can say — whether a thing is a
+    /// button at all, and what VoiceOver would read out — is still read from
+    /// over there.
+    ///
+    /// A name can be laid out more than once on a page, so every rectangle
+    /// under a name is kept and the one covering the control is chosen later.
+    private func laidOut(_ door: JourneyCase.Lines) throws -> [String: [CGRect]] {
+        let answered = try door.ask(["kind": "query"])
+        let elements = (answered["state"] as? [String: Any])?["elements"] as? [[String: Any]] ?? []
+        var found: [String: [CGRect]] = [:]
+        for element in elements {
+            guard let identifier = element["identifier"] as? String, !identifier.isEmpty,
+                  let frame = element["frame"] as? [String: Any],
+                  let x = frame["x"] as? Double, let y = frame["y"] as? Double,
+                  let width = frame["width"] as? Double, let height = frame["height"] as? Double
+            else { continue }
+            found[identifier, default: []].append(
+                CGRect(x: x, y: y, width: width, height: height))
+        }
+        return found
+    }
+
+    /// The rectangle to judge one control on: the laid-out one the screen
+    /// declared under that name, where the screen declared one big enough to
+    /// hold what XCUITest found, and XCUITest's own where it did not.
+    ///
+    /// Size and not position, because the two do not have to agree on where a
+    /// control is and are both right. A screen that slides sideways — the
+    /// conversation with the drawer open — is moved by a transform the layout
+    /// never sees, so the screen's declaration stays at the untranslated
+    /// place while XCUITest reports where it ended up. What a thumb needs is
+    /// the size either way.
+    ///
+    /// The smallest declaration that could hold the control is the one taken,
+    /// which is what keeps a name declared once per row honest: a short row
+    /// among tall ones is judged on the short one.
+    private func judged(_ control: XCUIElement, laidOut: [String: [CGRect]]) -> CGRect {
+        let frame = control.frame
+        let holding = (laidOut[control.identifier] ?? []).filter {
+            $0.width >= frame.width && $0.height >= frame.height
+        }
+        return holding.min(by: { area($0) < area($1) }) ?? frame
+    }
+
+    private func area(_ rectangle: CGRect) -> CGFloat {
+        rectangle.isNull ? 0 : rectangle.width * rectangle.height
+    }
+
     /// What is wrong with one control, said in words a person can act on.
-    private func fault(_ control: XCUIElement, on state: String) -> [String] {
+    private func fault(
+        _ control: XCUIElement, on state: String, laidOut: [String: [CGRect]]
+    ) -> [String] {
         let named = control.identifier.isEmpty ? "an unnamed control" : control.identifier
         var faults: [String] = []
         if control.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -95,7 +155,7 @@ final class AccessibilityAuditTests: XCTestCase {
                 "\(state): \(named) has nothing for VoiceOver to read out; it is at "
                 + "\(rectangle(control.frame))")
         }
-        let frame = control.frame
+        let frame = judged(control, laidOut: laidOut)
         if frame.width < Self.smallest || frame.height < Self.smallest {
             faults.append(
                 "\(state): \(named) (\"\(control.label)\") is \(rectangle(frame)), under the "

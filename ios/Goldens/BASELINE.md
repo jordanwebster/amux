@@ -768,6 +768,26 @@ The design has no preserved capture of this either.
   a retry would ask for. The button appears only where something has actually
   stopped, which is `stale`.
 
+## reduced-glass
+
+The same conversation as `run`, drawn for a reader who has asked the system for
+less transparency and less motion. There is no design reference for it; what it
+locks is that both settings reach the screen rather than stopping at the app's
+front door.
+
+- **Every glass surface fills solid, with a hairline rim.** The chrome pill,
+  the round overflow button, the ask card and the composer all draw a plate in
+  the raised colour instead of sampling what is behind them, and each one takes
+  a hairline edge. The rim is the part that matters: lensing is what said a
+  surface was floating, and a solid panel over a solid ground with no edge
+  between them is two flat areas.
+- **The pill hides the transcript instead of showing it through.** Behind the
+  name in `run` the message above is visible and dimmed; here it is simply
+  covered. That is the point of the setting.
+- **Nothing sweeps.** An unconfirmed row's shimmer and the composer's
+  animations are still, so a capture of this state is stable for the same
+  reason a reader asked for it.
+
 ## ax-home
 
 The same Agents home at the largest accessibility text size the system offers.
@@ -819,8 +839,16 @@ The composer with a message half-written in it, at the largest accessibility
 text size, so what the box does under the reader's thumb is photographed apart
 from the conversation behind it. There is no design reference at this size.
 
-- **The transcript above it keeps every word.** Prose wraps and the feed
-  scrolls; nothing on it is shortened to fit.
+- **The box grows to hold what is written, and keeps every word of it.** Four
+  lines of a half-written sentence wrap inside the box rather than being cut to
+  a line and an ellipsis.
+- **There is nothing behind it.** A feed long enough to scroll rests in one of
+  two places at this size — the box grows with the reader, the feed is held
+  clear of whatever height it settles on, and which of the two heights the
+  scroll view hears about first decides where the bottom is. It was a hundred
+  points at worst and one row of text showing through the glass at best. A
+  conversation at this size is what `ax-conversation` locks; this capture is of
+  the box, and a capture that cannot be taken twice locks nothing.
 
 ## unreadable-agent
 

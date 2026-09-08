@@ -4,6 +4,47 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **An audit that measures the rectangle the screen laid out, and a
+capture of the app with the glass turned off.**
+
+The sweep that checks every control for a VoiceOver name and a 44 pt target was
+reading its rectangles from XCUITest, and most of what it complained about was
+not a defect. The frame an accessibility client hands back is the accessibility
+frame, and that is not the frame the screen laid out: a round button drawn at
+44×44 comes back 42×42, and a control whose name is declared on the button
+comes back as the line of text inside it, tens of points shorter than the
+button around it. The audit now takes the rectangle from the screen's own
+declaration, which is the laid-out one in window points, and keeps XCUITest for
+the two things only an attached client knows — whether something is a button at
+all, and what VoiceOver would read out. Size and not position decides which
+declaration belongs to which control, because a screen that slides sideways
+under a transform the layout never sees leaves the two disagreeing about where
+a control is while both are right about how big it is.
+
+That leaves the complaints that are real, and there are more of them than the
+noise was hiding: around twenty-five controls are genuinely drawn under 44 pt
+and nine buttons have no name at all. Fixing them is its own piece of work,
+because the honest fix — grow the touch target without moving what is drawn —
+has to happen inside each button's label, and growing the drawing instead would
+move nearly every screen.
+
+Reduce Transparency now has a capture proving it reaches the screen. The
+conversation drawn for a reader who has asked for less transparency and less
+motion fills every glass surface solid with a hairline rim, covers the
+transcript behind the chrome pill instead of showing it through, and holds
+still.
+
+The composer's capture at the largest text size could not be taken twice. With
+a message half-written in the box and a conversation long enough to scroll
+behind it, six runs went ok/fail, fail/fail, ok/fail, fail/fail, fail/ok — the
+whole image shifted by about a hundred points, and the two appearances tossed
+independently within a run. The box grows with the reader's size, the feed is
+held clear of whatever height it settles on, and which of the two heights the
+scroll view hears about first decides where the bottom is. The capture is of
+the box, so the feed behind it is now empty and there is nothing to scroll;
+three runs in a row are identical. The conversation at that size is still
+locked, by the capture that is about the conversation.
+
 2026-09-08 — **The app at the largest text size, and glass that gets out of the way.**
 
 Turned up to the largest accessibility text size, a conversation drew its own

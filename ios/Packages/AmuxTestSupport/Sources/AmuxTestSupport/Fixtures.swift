@@ -67,6 +67,7 @@ public enum Fixtures {
         Built(.home, "home"),
         Built(.home, "home-accessibility"),
         Built(.run, "run-accessibility"),
+        Built(.run, "run-reduced"),
         Built(.typing, "composer-accessibility"),
         Built(.home, "home-unreadable"),
         Built(.homeQuiet, "home-quiet"),
@@ -574,11 +575,31 @@ public enum Fixtures {
             States.open(bundle, entries: Transcript.pairingCopy,
                         session: Sessions.claude(gate: .needsYou, asks: [Sessions.claudePermission]))
         },
+        // The same conversation for a reader who has asked the system for less
+        // transparency and less motion. Both are honoured, and this is where
+        // that can be seen: every glass surface fills solid with a hairline
+        // rim in place of the sampled backdrop, and nothing sweeps across an
+        // unconfirmed row.
+        Fixture(id: "run-reduced", screen: .run, reduceMotion: true, reduceTransparency: true) {
+            bundle in
+            States.open(bundle, entries: Transcript.pairingCopy,
+                        session: Sessions.claude(gate: .needsYou, asks: [Sessions.claudePermission]))
+        },
         // The box with a message half-written in it, at the same size: the
         // composer is the one surface that grows under the reader's thumb, so
         // it is photographed separately from the conversation behind it.
+        //
+        // Nothing behind it, so there is nothing to scroll. A feed that does
+        // scroll rests in one of two places here: the box grows with the
+        // reader's size, the feed is held clear of whatever height it settles
+        // on, and which of the two heights the scroll view is told about first
+        // decides where the bottom is — a difference of a hundred points at
+        // worst and of one row of text through the glass at best. A
+        // conversation at this size is what ax-conversation is for; this
+        // capture is of the box, and it is worth nothing if it cannot be taken
+        // twice.
         Fixture(id: "composer-accessibility", screen: .typing, typeSize: "accessibility5") { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            States.open(bundle, session: Sessions.claude())
             bundle.conversation(Scenario.focus).draft.body =
                 "Check the reconnect path before you squash it."
         },
