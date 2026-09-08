@@ -32,6 +32,17 @@ waiting badge is named in its own right, so what an account off screen has
 waiting can be read by anybody driving the app — the row's own name carries
 what the row says, and the number is a fact about somewhere else.
 
+The journey those changes exist for now runs: `wt run ios-journey -- accounts`
+drives one phone through one sitting in eight acts — the unsigned launch, the
+hand-off refused and cancelled and finished, both subscriptions pressed at the
+App Store with every answer it can give, a second account added and honoured
+with the subscription it bought on the web, two accounts pairing with their own
+machines on a real relay with the one off screen still reporting what it has
+waiting, an account signed out of and come back to with a subscription that has
+ended, the deletion refused by billing and then done, and the three appearances
+applied live. It declares its acts, so a failure is reproduced with
+`--act <name>` instead of by paying for the whole story again.
+
 The door grew what an accounts journey needs and nothing more: a second account
 with a credential of its own (the runtime takes its accounts when it starts, so
 this restarts it with both), the accounts the registry holds, what the two
