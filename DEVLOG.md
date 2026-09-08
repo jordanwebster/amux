@@ -12190,3 +12190,24 @@ every capture that draws a running turn. Nothing without an active composer
 moved. BASELINE.md says what changed.
 
 Green: `wt run ios-goldens -- working reduced-glass`.
+
+## A conversation opens at its own tail, not at the height it first guessed
+
+A conversation sometimes opened a screen and a half short of the last thing
+said, showing the first prompt of the session instead. It was a race, not a
+rule: about one open in six.
+
+A scroll view decides where to start from the height its content has at the
+moment it is asked, and a transcript does not know its own height then. The
+markdown in a prose row is parsed away from the main thread, so a row of prose
+stands at nothing until the parse lands — and a conversation whose rows are
+mostly prose is briefly a fraction of its finished height. Ask it where the
+bottom is in that window and the answer is the top.
+
+The rows that arrive at their size late now say so, and the feed puts its last
+row back under the eye once nothing is still being measured. Once, and never
+again: a reader who has gone looking for something further up is not asking to
+be brought back.
+
+Green: `wt run ios-goldens -- --built` (112 captures, none moved), ten
+consecutive `wt run ios-goldens -- queued`, `wt run ios-unit`.

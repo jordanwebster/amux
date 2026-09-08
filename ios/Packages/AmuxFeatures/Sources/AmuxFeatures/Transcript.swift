@@ -39,9 +39,28 @@ struct TranscriptFeed: View {
 /// alignment is not — so a transcript shorter than the screen stays at the top
 /// where it began instead of being pushed down against the composer. A
 /// two-row conversation must never open with empty ground above its first row.
+///
+/// Opening is finished off by hand, once, because a feed does not know its own
+/// height when it first draws. The markdown in a prose row is parsed away from
+/// the main thread and the row stands at nothing until the parse lands, so a
+/// conversation whose rows are mostly prose is briefly a fraction of its
+/// finished height — and where a scroll view starts is decided from the height
+/// it had at the moment it was asked. A conversation that opened a screen and
+/// a half short of its own tail is the visible cost. So the last row is put
+/// back under the eye when the feed has finished measuring itself, and after
+/// that the anchors have it: this fires once and never again, because a reader
+/// who has gone looking for something further up is not asking to be brought
+/// back.
 struct TranscriptContainer<Content: View>: View {
     @Environment(\.design) private var design
     @ViewBuilder let content: Content
+    /// Where the feed is, so opening can finish putting it at the end.
+    @State private var position = ScrollPosition()
+    /// Whether anything below was ever still being measured. Without it the
+    /// count reads zero before the rows that will report have drawn at all.
+    @State private var measured = false
+    /// Whether opening has already put the feed at its end.
+    @State private var opened = false
 
     var body: some View {
         ScrollView {
@@ -58,6 +77,31 @@ struct TranscriptContainer<Content: View>: View {
         .scrollIndicators(.hidden)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        .scrollPosition($position)
+        .onPreferenceChange(RowsBeingMeasured.self) { pending in
+            Task { @MainActor in
+                if pending > 0 {
+                    measured = true
+                } else if measured, !opened {
+                    opened = true
+                    position.scrollTo(edge: .bottom)
+                }
+            }
+        }
+    }
+}
+
+/// How many rows below have not settled on their height yet.
+///
+/// Reported by the rows that arrive at their size late rather than inferred
+/// from the feed, because a height that has stopped changing for one frame and
+/// a height that is final are different facts and only the row knows which it
+/// has.
+struct RowsBeingMeasured: PreferenceKey {
+    static let defaultValue = 0
+
+    static func reduce(value: inout Int, nextValue: () -> Int) {
+        value += nextValue()
     }
 }
 
@@ -303,6 +347,9 @@ struct Prose: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(markdown)
         .identified("transcript.prose", value: open ? "open" : "final")
+        // Standing at nothing until the parse lands, and the feed above is
+        // deciding where to open from the height it can see.
+        .preference(key: RowsBeingMeasured.self, value: document == nil ? 1 : 0)
     }
 }
 
