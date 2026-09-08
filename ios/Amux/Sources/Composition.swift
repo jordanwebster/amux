@@ -13,7 +13,7 @@ import Observation
 @Observable
 final class Composition {
     let accounts = AccountRegistry()
-    let router = Router()
+    let router: Router
     /// The one sign-in this phone has in flight. It outlives the page that
     /// shows it, so a person who leaves the screen while the browser is up
     /// comes back to the attempt rather than to a fresh one.
@@ -56,6 +56,11 @@ final class Composition {
     var stores: StoreBundle { accounts.stores ?? signedOut }
 
     init() {
+        // Held locally as well as stored, so what freezes a report can be
+        // given the router without reaching back through an object that is
+        // still being built.
+        let router = Router()
+        self.router = router
         // The real services, unless the launch says otherwise. A launch driven
         // by a test says otherwise: signing in must not open a browser at
         // amux.sh, buying must not reach the App Store, and deleting must not
@@ -74,7 +79,11 @@ final class Composition {
         #endif
         #if AMUX_DEBUG_TOOLS
         reports = ReportStore()
-        freezer = ReportFreeze()
+        // The page the person is on goes into the report, so whoever opens the
+        // bundle knows what they are looking at before they open the picture —
+        // and so a picture taken on one page and written up on another says
+        // which one it is of.
+        freezer = ReportFreeze(route: { router.top?.name ?? router.tab.rawValue })
         #else
         reports = nil
         freezer = nil

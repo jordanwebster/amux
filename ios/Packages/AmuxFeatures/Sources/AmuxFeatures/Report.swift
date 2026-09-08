@@ -152,6 +152,11 @@ public struct ReportScreen: View {
                 .scrollDismissesKeyboard(.interactively)
             }
         }
+        // A container, so Cancel and Send keep their own names. Without this
+        // the screen's identifier is what every control under it reports, and
+        // nothing on the page can be reached by the name it declared — by
+        // VoiceOver or by anything driving it.
+        .accessibilityElement(children: .contain)
         .identified("report.screen", value: state)
     }
 
@@ -246,6 +251,11 @@ public struct ReportScreen: View {
                 .textInputAutocapitalization(.sentences)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Named in its own right. The card around it is a container
+                // and hands nothing down, so without this the field somebody
+                // types into has no name at all.
+                .identified(
+                    "report.mark.\(at).note", label: "What is wrong here?", value: mark.note)
             Button { model.unmark(at) } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 13, weight: .semibold))
@@ -258,6 +268,9 @@ public struct ReportScreen: View {
         .padding(13)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous).fill(design.raised.color))
+        // A container for the same reason the screen is one: the field and
+        // the cross beside it are what somebody reaches for here.
+        .accessibilityElement(children: .contain)
         .identified("report.mark.\(at)", label: "Box \(at + 1)", value: mark.note)
     }
 

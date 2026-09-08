@@ -75,6 +75,7 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
     private let lock = NSLock()
     private var state: ScriptedCloudState
     private var recorded: [CloudCall] = []
+    private var uploads: [ReportBundle] = []
 
     public init(state: ScriptedCloudState = ScriptedCloudState()) {
         self.state = state
@@ -82,13 +83,26 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
 
     public var calls: [CloudCall] { lock.withLock { recorded } }
 
+    /// Every report bundle this was handed, in order, whether it then accepted
+    /// it or refused it.
+    ///
+    /// Kept whole rather than as the names of its parts, because what a driver
+    /// asks about a report afterwards is what it declared: which parts are
+    /// there, and the reason beside each one that is not. A refused upload is
+    /// here too — the retry has to be the same bundle, and only the bundles
+    /// themselves can say whether it was.
+    public var uploaded: [ReportBundle] { lock.withLock { uploads } }
+
     public var scripted: ScriptedCloudState {
         get { lock.withLock { state } }
         set { lock.withLock { state = newValue } }
     }
 
     public func reset() {
-        lock.withLock { recorded = [] }
+        lock.withLock {
+            recorded = []
+            uploads = []
+        }
     }
 
     private func record(_ call: CloudCall) -> ScriptedCloudState {
@@ -152,7 +166,11 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
     public func uploadReport(
         _ id: AccountId, bundle: ReportBundle
     ) async throws(CloudError) -> ReportReceipt {
-        let state = record(.uploadReport(id, parts: bundle.parts.map(\.name)))
+        let state = lock.withLock {
+            recorded.append(.uploadReport(id, parts: bundle.parts.map(\.name)))
+            uploads.append(bundle)
+            return self.state
+        }
         await wait(state)
         switch state.upload {
         case .accepted(let receipt):
@@ -214,6 +232,16 @@ public struct CloudScript: Codable, Sendable, Equatable {
     public var token: String? = "scripted-connect-token"
     /// `deleted` or `blockedByRenewal`.
     public var deletion = "deleted"
+    /// What becomes of a report handed over: `accepted`, `refused` or
+    /// `offline`.
+    public var upload = "accepted"
+    /// Why the report was turned down, where it was. Its own field rather than
+    /// `reason`, so a driver can leave a refused sign-in scripted and change
+    /// only what happens to a report.
+    public var uploadReason = "amux.sh could not take this report"
+    /// What an accepted report is filed under, which is what the screen shows
+    /// the person afterwards.
+    public var receipt = "report-1"
     /// Where a blocked deletion says the billing can be stopped.
     public var manageURL = "https://apps.apple.com/account/subscriptions"
     /// How long every answer takes, so a screen that is only on show while a
@@ -242,6 +270,9 @@ public struct CloudScript: Codable, Sendable, Equatable {
             ? try fields.decodeIfPresent(String.self, forKey: .token) : token
         deletion = try said(.deletion, deletion)
         manageURL = try said(.manageURL, manageURL)
+        upload = try said(.upload, upload)
+        uploadReason = try said(.uploadReason, uploadReason)
+        receipt = try said(.receipt, receipt)
         latencyMillis = try fields.decodeIfPresent(Int.self, forKey: .latencyMillis)
             ?? latencyMillis
     }
@@ -250,7 +281,7 @@ public struct CloudScript: Codable, Sendable, Equatable {
     public var state: ScriptedCloudState {
         ScriptedCloudState(
             signIn: outcome, entitlement: entitled, token: token, deletion: deleting,
-            latency: .milliseconds(latencyMillis))
+            upload: uploading, latency: .milliseconds(latencyMillis))
     }
 
     private var who: SignedInAccount {
@@ -277,6 +308,14 @@ public struct CloudScript: Codable, Sendable, Equatable {
         // said "ended" would be telling somebody less than they knew.
         case "lapsed": .lapsed(source: bought, endedAt: Scenario.now.addingTimeInterval(-86_400))
         default: .active(source: bought, renews: nil)
+        }
+    }
+
+    private var uploading: ScriptedCloudState.UploadOutcome {
+        switch upload {
+        case "refused": .refused(uploadReason)
+        case "offline": .offline
+        default: .accepted(id: receipt)
         }
     }
 

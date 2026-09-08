@@ -175,6 +175,28 @@ public enum DoorRequest: Sendable, Equatable {
     /// view-state trace, the daemon's state and `report.json` declaring them,
     /// with the note and the rectangles carried on it.
     case report(path: String, note: String, marks: [ReportMark])
+    /// Tell the app the system has just taken a screenshot of it, the way iOS
+    /// tells it.
+    ///
+    /// The notification is the whole of what an app is given: iOS takes and
+    /// saves its own picture first and no app can intercept the gesture. A
+    /// driver cannot make the gesture happen either — a host-side capture
+    /// posts nothing inside the app, and the simulator's own shortcut belongs
+    /// to a window nobody is at during a test run — so this posts the same
+    /// notification the system posts, and everything the app does about a
+    /// screenshot happens from here on exactly as it would.
+    ///
+    /// Which preview the phone is set to show afterwards is not said, because
+    /// the app is never told: full screen and thumbnail differ only in what
+    /// covers the app next, which is the driver's to stage.
+    case screenshot
+    /// Write the last report the scripted account service was handed into this
+    /// directory, and answer the files it left.
+    ///
+    /// What a person's Send actually uploaded, read at the boundary it left
+    /// the app through. Not the same as writing a fresh bundle: this is the
+    /// one that was sent, declarations and all.
+    case uploaded(path: String)
     /// Rebuild the stores and the view from the bundle in this directory,
     /// without carrying out anything the recording asked the app to do.
     case replay(path: String)
@@ -519,6 +541,9 @@ extension DoorRequest: Codable {
                 path: try fields.decode(String.self, forKey: .path),
                 note: try fields.decodeIfPresent(String.self, forKey: .note) ?? "",
                 marks: try fields.decodeIfPresent([ReportMark].self, forKey: .marks) ?? [])
+        case "screenshot": self = .screenshot
+        case "uploaded":
+            self = .uploaded(path: try fields.decode(String.self, forKey: .path))
         case "replay":
             self = .replay(path: try fields.decode(String.self, forKey: .path))
         case "shutdown": self = .shutdown
@@ -643,6 +668,11 @@ extension DoorRequest: Codable {
             try fields.encode(path, forKey: .path)
             try fields.encode(note, forKey: .note)
             try fields.encode(marks, forKey: .marks)
+        case .screenshot:
+            try fields.encode("screenshot", forKey: .kind)
+        case .uploaded(let path):
+            try fields.encode("uploaded", forKey: .kind)
+            try fields.encode(path, forKey: .path)
         case .replay(let path):
             try fields.encode("replay", forKey: .kind)
             try fields.encode(path, forKey: .path)

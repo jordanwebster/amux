@@ -176,6 +176,11 @@ final class DoorHost {
             return .ack
         case .report(let path, let note, let marks):
             return report(to: path, note: note, marks: marks)
+        case .screenshot:
+            NotificationCenter.default.post(
+                name: UIApplication.userDidTakeScreenshotNotification, object: nil)
+            return .ack
+        case .uploaded(let path): return uploaded(to: path)
         case .replay(let path): return replay(from: path)
         case .settle:
             await settle()
@@ -906,6 +911,34 @@ final class DoorHost {
                 build: AppFiles.build,
                 log: AppFiles.logTail)
             return .bundle(path: path, parts: parts)
+        } catch {
+            return .error("\(error)")
+        }
+    }
+
+    /// Writes the last report the scripted account service was handed into a
+    /// directory the driver then reads out of the app's container.
+    ///
+    /// The bundle is not rebuilt here. It is the one the Send button handed
+    /// over, kept by the double at the boundary it crossed, so what a driver
+    /// opens afterwards is what left the phone rather than a second assembly
+    /// of the same capture — which is the only way `report.json`'s
+    /// declarations can be read as a claim about the upload.
+    private func uploaded(to path: String) -> DoorReply {
+        guard let bundle = cloud.uploaded.last else {
+            return .error("nothing has been uploaded")
+        }
+        let directory = URL(fileURLWithPath: path, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true)
+            var written: [String] = []
+            for part in bundle.parts {
+                guard let data = part.data else { continue }
+                try data.write(to: directory.appendingPathComponent(part.name))
+                written.append(part.name)
+            }
+            return .bundle(path: path, parts: written)
         } catch {
             return .error("\(error)")
         }

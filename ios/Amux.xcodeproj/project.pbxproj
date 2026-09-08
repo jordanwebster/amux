@@ -21,6 +21,7 @@
 		3E12136749508940FA54BC5F /* Fixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE7599AB005A8225918A3EF /* Fixture.swift */; };
 		40764CA1E1F2F8A2C244A3FF /* AmuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7A185CA200BF122E708201F8 /* AmuxCore */; };
 		48C852D18B47B3DA431FDA05 /* Door.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DA38C20C8560FEE2BB88D9F /* Door.swift */; };
+		526D112B4DCB651C254E5F9F /* ReportsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */; };
 		546E08243B4B5BE2BDFDAB84 /* DoorServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 590B62F0B4C074AA2233FC70 /* DoorServer.swift */; };
 		60B54AE413844E002F4EBB19 /* AmuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 848B7908370DBF226D9CCEF9 /* AmuxCore */; };
 		63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D140E97565E0C456B57BB601 /* DebugTools.swift */; };
@@ -76,6 +77,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsTests.swift; sourceTree = "<group>"; };
 		0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JourneyCase.swift; sourceTree = "<group>"; };
 		11108752C34ADBDF5089E372 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
 		1E66BD0F085353353B013CB1 /* AmuxCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxCore; path = Packages/AmuxCore; sourceTree = SOURCE_ROOT; };
@@ -209,6 +211,7 @@
 				71AECE15627BD11A3278E26C /* HostsTests.swift */,
 				0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */,
 				31777DF351ACE50870B1C6A5 /* LaunchTests.swift */,
+				00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */,
 				BC486A7A07178E55789AE94C /* ReviewTests.swift */,
 				BE1CD31C989C5DC52354A7AE /* WritingTests.swift */,
 			);
@@ -508,6 +511,7 @@
 				D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */,
 				8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */,
 				0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */,
+				526D112B4DCB651C254E5F9F /* ReportsTests.swift in Sources */,
 				7D4CF562DADA4EB7723324CD /* ReviewTests.swift in Sources */,
 				9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */,
 			);

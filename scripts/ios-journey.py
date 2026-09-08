@@ -2263,6 +2263,310 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
     forget_pairings(udid)
 
 
+
+def reports(journey: Journey, udid: str, ready: dict) -> None:
+    """Reporting a problem from the phone, end to end.
+
+    The relay and the machine under this are real: the phone pairs with the
+    machine the runner is running and draws its agents, and the picture in
+    every report here is that screen. What is not real is the account service,
+    which is the double the app is handed at launch — a report is the one thing
+    on the screen that leaves the phone, and a refusal and the retry after it
+    are only states a finger can reach if the far side says what it will do
+    before it is asked.
+
+    The screenshot itself is said rather than made. iOS gives an app one
+    notification and nothing else: the picture is taken and saved by the system
+    before the app hears anything, and no app can intercept the gesture. A
+    host-side capture of the simulator posts nothing inside the app, so the
+    door posts the same notification the system posts and everything the app
+    does from there is its own.
+
+    Which preview the phone shows afterwards is never told to the app, so the
+    two settings are staged rather than configured: with a thumbnail the app
+    stays in front and the offer has to stand clear of the corner the thumbnail
+    sits in; with the full-screen preview the app is covered, which is what
+    being sent away and brought back does to it, and the offer and its frozen
+    frame have to survive that.
+    """
+    daemon = ready["daemons"][0]
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+
+    install(udid)
+    forget_cache(udid)
+    forget_pairings(udid)
+    pin = answer(ready["control"],
+                 {"StartPinPairing": {"daemon": daemon["name"], "ttl_secs": 600}})["pin"]
+    journey.say(f"{daemon['name']} printed a pairing code; the phone trusts it by that code, "
+                f"so what the report is a picture of is a screen a real machine filled")
+
+    driving = journey.acts
+    pictures = {"screenshot-thumbnail": ("prompt",), "annotate": ("report-screen",)}
+    photographs = {name: journey.directory / f"{name}.png"
+                   for act in driving for name in pictures.get(act, ())}
+    read = journey.directory / "reports.json"
+    # What the system built out of the report screen, which is what says why a
+    # control could not be pressed when one cannot be.
+    tree = journey.directory / "report-tree.txt"
+    # The bundles are written by the app, so they land in the app's container
+    # rather than the test runner's, and are collected whole rather than file
+    # by file: what report.json declares is only checkable against what is
+    # beside it.
+    sent = container(udid) / "tmp/report-bundle"
+    helped = container(udid) / "tmp/help-bundle"
+    port = free_port()
+    perform(
+        journey, udid, "AmuxUITests/ReportsTests",
+        {"reports.json": read,
+         **({"report-tree.txt": tree} if "annotate" in driving else {}),
+         **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_ACTS": ",".join(driving) if journey.filtered else "",
+            "AMUX_RELAY": f"http://{ready['relay']}",
+            "AMUX_TOKEN": token,
+            "AMUX_USER": "journey-phone",
+            "AMUX_PIN": pin,
+            "AMUX_HOST_ID": daemon["host_id"],
+            "AMUX_CONTROL": ready["control"],
+            "AMUX_DOOR_PORT": str(port),
+            "AMUX_AGENT": running["fix-login"]["agent_id"],
+            "AMUX_HOST": daemon["name"],
+            "AMUX_BUNDLE": str(sent),
+            "AMUX_HELP_BUNDLE": str(helped),
+        })
+    seen = json.loads(read.read_text())
+
+    shortcut = seen.get("actsShortcut") or []
+    journey.expect(seen.get("actsPerformed") == driving,
+                   f"this run asked for {driving} and the phone drove "
+                   f"{seen.get('actsPerformed')}")
+    journey.expect(not set(shortcut) & set(driving),
+                   f"the phone both drove and shortcut {sorted(set(shortcut) & set(driving))}")
+    if journey.filtered:
+        journey.say(f"shortcut without a finger: {', '.join(shortcut) or 'nothing'}; "
+                    f"driven through the screen: {', '.join(driving)}")
+    else:
+        journey.expect(not shortcut, f"the whole journey shortcut {shortcut}")
+
+    def screenshot_thumbnail() -> None:
+        """The app's own offer, beside the system's thumbnail."""
+        journey.expect(seen.get("promptSays") == "Report",
+                       f"a screenshot offered {seen.get('promptSays')!r}")
+        journey.expect((seen.get("promptLeftEdge") or 0) >= 100,
+                       f"the offer stands {seen.get('promptLeftEdge')} points from the leading "
+                       f"edge, where the system draws its screenshot thumbnail")
+        journey.expect(seen.get("promptAfterTappingElsewhere") is False,
+                       "the offer stayed after the screen was tapped, so an accidental "
+                       "screenshot costs something")
+        journey.say(f"a system screenshot brings up the app's own Report, "
+                    f"{seen.get('promptLeftEdge')} points clear of the corner the thumbnail "
+                    f"preview sits in — the app is never told that preview's frame and cannot "
+                    f"attach anything to it. Anywhere else on the screen is no, and the frozen "
+                    f"frame goes with it")
+
+    def screenshot_full_screen() -> None:
+        """The offer, still there once the system stops covering the app."""
+        journey.expect(seen.get("promptSurvivedTheSystemPreview") is True,
+                       "the offer was gone once the app came back from being covered")
+        journey.say("with the full-screen preview the system covers the app entirely. The app "
+                    "is put away and brought back, which is that and more, and the same offer "
+                    "over the same frozen frame is still there")
+
+    def annotate() -> None:
+        """The report on the frame that was already frozen."""
+        journey.expect(seen.get("reportOpensAt") == "ready"
+                       and seen.get("frameWhenOpened") == "0 marked",
+                       f"taking the offer opened a report at {seen.get('reportOpensAt')!r} "
+                       f"showing {seen.get('frameWhenOpened')!r}")
+        journey.expect(seen.get("sheetsWhileReporting") == 0
+                       and seen.get("systemAlertsWhileReporting") == 0,
+                       f"opening the report put up {seen.get('sheetsWhileReporting')} sheets and "
+                       f"{seen.get('systemAlertsWhileReporting')} system alerts")
+        journey.expect(seen.get("marksOnTheFrame") == "3 marked",
+                       f"three rectangles drawn left the frame saying "
+                       f"{seen.get('marksOnTheFrame')!r}")
+        written = seen.get("marksWritten") or []
+        journey.expect(len(written) == 3 and all(note for note in written),
+                       f"the rectangles were written about as {written}")
+        journey.expect(bool(seen.get("noteWritten")),
+                       f"the one note about the whole thing reads {seen.get('noteWritten')!r}")
+        journey.say(f"the offer opens the report on the frame frozen when it appeared — no "
+                    f"share step, no sheet, and nothing asked of Photos: the system's own "
+                    f"screenshot went to the library and this app never sees it. Three "
+                    f"rectangles are dragged onto the picture and each takes a note, with one "
+                    f"more about the whole thing")
+
+    def send() -> None:
+        """Turned down once, and sent by the press that offered to try again."""
+        journey.expect(seen.get("refusalSaid") == "amux.sh could not take this report",
+                       f"a refused upload said {seen.get('refusalSaid')!r}")
+        journey.expect(seen.get("offersAfterRefusal") == "Retry",
+                       f"after a refusal the button reads {seen.get('offersAfterRefusal')!r}")
+        journey.expect(seen.get("marksAfterRefusal") == seen.get("marksWritten")
+                       and seen.get("noteAfterRefusal") == seen.get("noteWritten"),
+                       f"a refusal lost what was written: {seen.get('marksAfterRefusal')} and "
+                       f"{seen.get('noteAfterRefusal')!r}")
+        journey.expect(seen.get("receipt") == "report-7c2"
+                       and seen.get("stateAfterSending") == "sent",
+                       f"an accepted report came back as {seen.get('receipt')!r} with the screen "
+                       f"at {seen.get('stateAfterSending')!r}")
+        uploads = seen.get("uploadsWhenSent") or []
+        journey.expect(len(uploads) == 2,
+                       f"sending handed the account service {len(uploads)} reports: {uploads}")
+        journey.expect(uploads[0] == uploads[1],
+                       f"Retry sent a different report from the one that was refused: {uploads}")
+        journey.say(f"the report is handed to the account service and turned down in its own "
+                    f"words ({seen.get('refusalSaid')!r}); nothing written is lost and the "
+                    f"button becomes Retry, which sends the same bundle again — the double was "
+                    f"handed the same parts twice — and the receipt comes back on screen")
+
+    def from_help() -> None:
+        """The same flow, gone looking for."""
+        journey.expect(seen.get("offeredBeforeTheHelpReport") is False,
+                       "Report a Problem stopped to offer what had already been asked for")
+        journey.expect(seen.get("helpReportOpensAt") == "ready"
+                       and seen.get("helpFrameWhenOpened") == "0 marked",
+                       f"Report a Problem opened a report at "
+                       f"{seen.get('helpReportOpensAt')!r} showing "
+                       f"{seen.get('helpFrameWhenOpened')!r}")
+        journey.expect(seen.get("helpReceipt") == "report-help",
+                       f"the report from Help came back as {seen.get('helpReceipt')!r}")
+        # One more hand-off than the send act made, and no more: the
+        # deliberate path sends its own report rather than the one already
+        # gone.
+        if "send" in driving:
+            journey.expect(len(seen.get("uploadsAfterHelp") or [])
+                           == len(seen.get("uploadsWhenSent") or []) + 1,
+                           f"Help sent {len(seen.get('uploadsAfterHelp') or [])} reports against "
+                           f"{len(seen.get('uploadsWhenSent') or [])} before it")
+        journey.say("Report a Problem under Help freezes the page it was pressed on and opens "
+                    "the same report, with no offer in between: somebody who went looking for "
+                    "the row has already said yes")
+
+    checks = {
+        "screenshot-thumbnail": screenshot_thumbnail,
+        "screenshot-full-screen": screenshot_full_screen,
+        "annotate": annotate,
+        "send": send,
+        "from-help": from_help,
+    }
+    journey.expect(journey.filtered or list(checks) == driving,
+                   f"the manifest declares {driving} and this driver asserts {list(checks)}")
+    for act in driving:
+        checks[act]()
+
+    # What actually left the phone, opened where it crossed the boundary. Only
+    # a whole bundle can answer this: report.json declares every part as
+    # present or absent-with-a-reason, and the account service refuses one
+    # whose declarations and whose files disagree.
+    if "send" in driving:
+        bundle = journey.directory / "bundle"
+        shutil.copytree(sent, bundle, dirs_exist_ok=True)
+        declared_parts = report_parts(journey, bundle, "the report that was sent")
+        journey.expect(declared_parts["frame"] == "present"
+                       and declared_parts["msgs"] == "present",
+                       f"the report that was sent declares its picture as "
+                       f"{declared_parts['frame']} and the runtime's recording as "
+                       f"{declared_parts['msgs']}")
+        header = json.loads((bundle / "report.json").read_text())
+        journey.expect(header.get("detail") == "agents",
+                       f"the report says it is of {header.get('detail')!r}, and the screenshot "
+                       f"was taken on the Agents home")
+        journey.expect(header.get("image_frame") == {
+            "width_pt": 402.0, "height_pt": 874.0, "scale": 3},
+            f"the frozen frame is {header.get('image_frame')} rather than the whole screen")
+        journey.expect([mark["note"] for mark in header.get("marks") or []]
+                       == (seen.get("marksWritten") or []),
+                       f"the bundle carries {header.get('marks')} for the notes typed on the "
+                       f"three rectangles")
+        journey.expect(header.get("note") == seen.get("noteWritten"),
+                       f"the bundle's note reads {header.get('note')!r}")
+        (journey.directory / "upload-request.json").write_text(json.dumps({
+            "calls": [call for call in seen.get("cloudCalls") or []
+                      if call.startswith("uploadReport")],
+            "receipt": seen.get("receipt"),
+            "declared": declared_parts,
+            "files": sorted(path.name for path in bundle.iterdir()),
+        }, indent=2, sort_keys=True) + "\n")
+        journey.say(f"every part the bundle declares is accounted for: "
+                    f"{', '.join(f'{name} {state}' for name, state in sorted(declared_parts.items()))}")
+
+    if "from-help" in driving:
+        deliberate = journey.directory / "help-bundle"
+        shutil.copytree(helped, deliberate, dirs_exist_ok=True)
+        report_parts(journey, deliberate, "the report asked for under Help")
+        header = json.loads((deliberate / "report.json").read_text())
+        journey.expect(header.get("detail") == "you",
+                       f"the report asked for on the You page says it is of "
+                       f"{header.get('detail')!r}, so the frame it opened on was not the one "
+                       f"that was frozen when it was asked for")
+
+    no_photo_library(journey)
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    if photographs:
+        journey.say("photographed " + ", ".join(sorted(photographs)))
+    forget_cache(udid)
+    forget_pairings(udid)
+
+
+def report_parts(journey: Journey, bundle: Path, what: str) -> dict[str, str]:
+    """Every part `report.json` declares, checked against what is beside it.
+
+    A part is either there or says why it is not, and the two must agree with
+    the directory: a declared file that is missing is a bundle nobody can read,
+    and a file nobody declared is one the account service refuses.
+    """
+    header = json.loads((bundle / "report.json").read_text())
+    journey.expect(header.get("schema_version") == 2,
+                   f"{what} is written at schema version {header.get('schema_version')}")
+    files = {"frame": "frame.png", "trace": "trace.jsonl", "msgs": "msgs.jsonl",
+             "daemon": "daemon.json", "log": "log.txt"}
+    declared = {}
+    for part, filename in files.items():
+        said = (header.get("parts") or {}).get(part)
+        journey.expect(said is not None, f"{what} declares nothing about {part}")
+        beside = (bundle / filename).is_file()
+        if said == "present":
+            journey.expect(beside, f"{what} declares {part} present and {filename} is not there")
+            declared[part] = "present"
+        else:
+            reason = (said or {}).get("absent", {}).get("reason")
+            journey.expect(bool(reason),
+                           f"{what} leaves out {part} and says nothing about why: {said}")
+            journey.expect(not beside,
+                           f"{what} says {part} is absent and carries {filename} anyway")
+            declared[part] = f"absent: {reason}"
+    unexpected = sorted({path.name for path in bundle.iterdir()}
+                        - set(files.values()) - {"report.json"})
+    journey.expect(not unexpected, f"{what} carries {unexpected}, which it declares nothing about")
+    return declared
+
+
+def no_photo_library(journey: Journey) -> None:
+    """The app never asks for the photo library, so nothing it draws can be
+    reading what the system saved.
+
+    A report's picture is the app's own window, drawn by the app. The system's
+    screenshot went to the library and this app cannot open it: an app that
+    reads the library has to say why in its Info.plist before the system will
+    let it, and this one says nothing — the one place it touches Photos at all
+    is the picker for attaching a photograph to a message, which runs in
+    another process and hands back only what the person chose. That is a claim
+    about the build rather than about one run, so it is made against the build.
+    """
+    plist = json.loads(subprocess.run(
+        ["plutil", "-convert", "json", "-o", "-", str(APPLICATION / "Info.plist")],
+        capture_output=True, text=True, check=True).stdout)
+    asks = sorted(key for key in plist if "Photo" in key)
+    journey.expect(not asks, f"the app asks the person for {asks}")
+    journey.say("the build asks for no access to the photo library, so the picture in a "
+                "report cannot be the one the system saved: it is the app's own window")
+
+
 def prepare_hosts() -> None:
     """Three repositories for the machines to offer, so what a person picks on
     New Agent is a directory that really exists on the far side.
@@ -2303,7 +2607,7 @@ def prepare_writing() -> None:
 JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
             "writing": writing, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts,
-            "accounts": accounts}
+            "accounts": accounts, "reports": reports}
 # What has to exist before the daemons start: the runner resolves an
 # agent's working directory when it loads the topology.
 PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_writing,

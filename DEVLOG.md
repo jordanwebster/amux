@@ -4,6 +4,59 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The reports journey: a screenshot, three rectangles, and what left the phone.**
+
+`wt run ios-journey -- reports` drives the whole of reporting a problem against a
+real relay and a real machine, so the picture in every report is a screen that
+machine filled. A simulated system screenshot brings up the app's own Report a
+hundred points clear of the corner iOS draws its thumbnail preview in; anywhere
+else on the screen turns it down and lets the frozen frame go. Put away and
+brought back — which is what the full-screen preview does to an app and more —
+the same offer over the same frozen frame is still there. Taking it opens the
+report on that frame, three rectangles are dragged onto the picture and each
+takes a note, and the account service turns the report down in its own words
+before Retry hands over the same bundle and comes back with a receipt. Report a
+Problem under Help does it deliberately, with no offer in between.
+
+The journey opens what left the phone at the boundary it crossed. The scripted
+account service keeps every bundle it is handed, and a new door verb writes the
+last one out, so the run reads `report.json` against the files beside it: each
+part present with its file or absent with the reason — the log is absent
+because this app logs through the system, which keeps no file it can read back
+— the three rectangles and both notes carried, and the frame recorded as the
+whole screen in points with the scale it was drawn at.
+
+Three things were wrong underneath and are fixed.
+
+The screenshot path had never worked in the app. The shell listened for the
+system's notification behind `#if AMUX_DEBUG_TOOLS`, and a Swift package does
+not carry the app target's compilation flags — so the listener was compiled out
+of the build that has the tools. Whether to listen is now a fact about what the
+shell was handed: a build a person installs has nothing to freeze a screen
+with, is handed nothing, and registers for nothing.
+
+Nothing on the report screen could be reached by the name it declared. Every
+other screen pairs its identifier with `accessibilityElement(children: .contain)`;
+this one did not, so the screen's own name was what Cancel, Send and every
+rectangle's cross reported, and VoiceOver would have read the page as one
+undifferentiated thing. The screen and each note card are containers now, and
+the field a note is typed into has a name of its own.
+
+A report written by a person said nothing about where it was taken. The route
+in a bundle was only ever filled for a screen the driving door had opened, so
+`detail` was null for every real report. It is now the page on show, and the two
+bundles this journey collects prove it: the one from the screenshot says
+`agents` and the one from Help says `you`.
+
+The account service double now says what becomes of a report — accepted,
+refused or offline, with the receipt or the reason — which is what makes a
+failed upload and the retry after it states a finger can reach.
+
+Green: `wt run ios-journey -- reports`, `wt run ios-unit` (5 schemes),
+`wt run ios-lint`, `wt run ios-goldens -- dump upload-failed shake`.
+
+---
+
 2026-09-08 — **A report written on the phone, read and replayed on the Mac.**
 
 The driving door used to write two recordings into a directory and call it a

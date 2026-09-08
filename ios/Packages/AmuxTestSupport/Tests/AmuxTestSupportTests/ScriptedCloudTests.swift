@@ -87,6 +87,47 @@ final class ScriptedCloudTests: XCTestCase {
         XCTAssertTrue(cloud.calls.isEmpty)
     }
 
+    /// What a report was is only answerable from the bundle itself: the names
+    /// of its parts say nothing about the reason beside a part that is not
+    /// there, and a retry has to be readable as the same bundle as the attempt
+    /// that failed.
+    func testItKeepsEveryBundleItWasHandedIncludingTheOnesItRefused() async throws {
+        let cloud = ScriptedCloudService(state: ScriptedCloudState(upload: .refused("too large")))
+        let bundle = ReportBundle(parts: [
+            ReportPart(name: "report.json", data: Data("{}".utf8)),
+            ReportPart(name: "daemon.json", absenceReason: "the embedded daemon did not answer"),
+        ])
+        do {
+            _ = try await cloud.uploadReport(ada, bundle: bundle)
+            XCTFail("a refused upload answered with a receipt")
+        } catch {
+            XCTAssertEqual(error, CloudError.refused("too large"))
+        }
+        cloud.scripted.upload = .accepted(id: "report-9")
+        let receipt = try await cloud.uploadReport(ada, bundle: bundle)
+
+        XCTAssertEqual(receipt.id, "report-9")
+        XCTAssertEqual(cloud.uploaded, [bundle, bundle])
+        XCTAssertEqual(
+            cloud.uploaded.last?.part("daemon.json")?.absenceReason,
+            "the embedded daemon did not answer")
+    }
+
+    /// A driver writes what happens to a report in the door's own words, and
+    /// changing that must not disturb what it has already said about signing
+    /// in — which is why a refused upload has a reason of its own.
+    func testAScriptSaysWhatBecomesOfAReportWithoutTouchingTheRest() {
+        var script = CloudScript()
+        script.signIn = "refused"
+        script.reason = "amux.sh has no account for this sign-in"
+        script.upload = "refused"
+        script.uploadReason = "amux.sh could not take this report"
+
+        XCTAssertEqual(script.state.signIn, .refused("amux.sh has no account for this sign-in"))
+        XCTAssertEqual(script.state.upload, .refused("amux.sh could not take this report"))
+        XCTAssertEqual(CloudScript().state.upload, .accepted(id: "report-1"))
+    }
+
     func testEveryFixtureDeclaresItsCloud() {
         for fixture in Fixtures.all {
             XCTAssertNotNil(ScriptedCloudService(state: fixture.cloud).scripted.latency)

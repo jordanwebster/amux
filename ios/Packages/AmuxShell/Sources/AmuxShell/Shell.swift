@@ -179,7 +179,8 @@ public struct Shell: View {
                 }
             }
         }
-        .modifier(FreezeOnScreenshot(freeze: freezeFromScreenshot))
+        .modifier(FreezeOnScreenshot(
+            freeze: reports != nil && freezer != nil ? freezeFromScreenshot : nil))
     }
 
     /// The system took a screenshot: freeze at once, then offer.
@@ -827,19 +828,27 @@ private struct YouTabRoot: View {
 /// brace. A build a person installs does not observe the notification and has
 /// no path at all from a screenshot to a capture, which is what the release
 /// scope audit asserts.
+/// Listens for the system's word that it has just photographed the app.
+///
+/// Whether to listen at all is a fact about this build rather than a
+/// compilation flag: a build a person installs has nothing to freeze a screen
+/// with, so it is handed nothing and never registers for the notification.
+/// Deciding it with `#if` instead would compile the listener out of the
+/// packages, which do not carry the app target's flags — and the screenshot
+/// path would quietly do nothing in the very build that has the tools.
 private struct FreezeOnScreenshot: ViewModifier {
-    let freeze: @MainActor () -> Void
+    let freeze: (@MainActor () -> Void)?
 
     func body(content: Content) -> some View {
-        #if AMUX_DEBUG_TOOLS && canImport(UIKit)
-        content.onReceive(
-            NotificationCenter.default.publisher(
-                for: UIApplication.userDidTakeScreenshotNotification)
-        ) { _ in
-            freeze()
+        if let freeze {
+            content.onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIApplication.userDidTakeScreenshotNotification)
+            ) { _ in
+                freeze()
+            }
+        } else {
+            content
         }
-        #else
-        content
-        #endif
     }
 }

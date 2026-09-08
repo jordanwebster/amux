@@ -56,6 +56,8 @@ final class DoorTests: XCTestCase {
             .report(
                 path: "/tmp/report", note: "the badge counted twice",
                 marks: [ReportMark(x: 12, y: 40.5, width: 96, height: 24, note: "here")]),
+            .screenshot,
+            .uploaded(path: "/tmp/uploaded"),
             .replay(path: "/tmp/report"),
             .shutdown,
         ]
