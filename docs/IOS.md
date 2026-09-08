@@ -43,7 +43,7 @@ the simulator's proxy, that is when the question is asked again.
 The figures come from the simulator, which reports 60 Hz and composites
 through the Mac's display, so the frame-rate ones are proxies —
 `docs/IOS_PERFORMANCE.md` says which and what for, and holds the
-physical-phone checklist that is still not ticked. Take them again with
+physical-phone checklist, every line of which is still unmeasured. Take them again with
 `wt run ios-perf -- --only streaming`.
 
 ## The composer's field is not SwiftUI

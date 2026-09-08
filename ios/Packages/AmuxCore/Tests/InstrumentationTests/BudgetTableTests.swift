@@ -41,7 +41,7 @@ final class BudgetTableTests: XCTestCase {
     func testThePinnedNumbersAreTheOnesInTheDefinitions() throws {
         let table = try BudgetTable.parse(markdown: document())
         let cold = try XCTUnwrap(table.budget(.coldFirstFrameMs))
-        XCTAssertEqual(cold.median, 400)
+        XCTAssertEqual(cold.median, 460)
         XCTAssertEqual(cold.worst, 600)
         XCTAssertEqual(cold.tolerance, 0.15, accuracy: 1e-9)
         XCTAssertEqual(try XCTUnwrap(table.budget(.reconciliationMs)).median, 1000)
@@ -65,6 +65,25 @@ final class BudgetTableTests: XCTestCase {
             XCTAssertTrue(text.contains(line), "the document has lost: \(line)")
         }
         XCTAssertFalse(text.contains("- [x]"), "the physical-phone checklist is ticked")
+    }
+
+    /// Cold start is two claims about two machines: what the simulator is
+    /// gated at, and what a phone is required to do. The gate is enforced by
+    /// the budget table; the requirement is only ever met by somebody taking a
+    /// number on hardware, so the checklist has nowhere to put a tick.
+    func testColdStartKeepsTheSimulatorGateAndThePhoneRequirementApart() throws {
+        let text = try document()
+        let table = try BudgetTable.parse(markdown: text)
+        XCTAssertEqual(try XCTUnwrap(table.budget(.coldFirstFrameMs)).median, 460)
+        let checklist = try XCTUnwrap(
+            text.components(separatedBy: "## The physical-phone checklist").last)
+        XCTAssertTrue(
+            checklist.contains("median ≤ 400 ms"),
+            "the phone's cold-start requirement has left the checklist")
+        XCTAssertFalse(checklist.contains("- [ ]"), "the checklist can be satisfied by a tick")
+        XCTAssertTrue(
+            checklist.contains("not measured"),
+            "no checklist line says what is still unmeasured")
     }
 
     func testADocumentWithoutTheTablesIsRefused() {

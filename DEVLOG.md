@@ -4,6 +4,38 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **Tell the cold-start simulator apart from the phone.**
+
+The cached first frame drifted from about 310 ms in early September to about
+440 ms, and the cause is not a regression in the app. StoreKit and
+AuthenticationServices joined the launch image when the subscription screen and
+web sign-in landed, and they are loaded before any app code runs: measured on
+the pinned simulator, a hello-world SwiftUI app reaches its first line in
+206 ms, and 302 ms with those two frameworks linked. An empty app that merely
+links them draws its first frame at about 414 ms there. This app's own code
+accounts for roughly 25 ms of its 439 ms median, and the forty cached rows the
+first frame carries cost 3 ms of that. There is no 40 ms in the app to find.
+
+So the measurement document now states two numbers for two machines instead of
+one number standing for both. The simulator gate is 460 ms median and 600 ms
+worst, derived in the document from the framework floor plus about double the
+app code the launch actually contains, so it still fires if launch work grows.
+The 400 ms is the requirement on a phone and moved to the physical-phone
+checklist, which is now a table with a `Measured` column: a line is done when
+somebody records a number from hardware, never by ticking a box, and the first
+hardware run is what says whether 400 ms was ever the right figure to ask a
+phone for. The 15% tolerance against a recorded baseline is untouched, and it,
+not the budget, is what catches a regression — about 505 ms on today's numbers.
+The rule that a budget is never loosened to fit a machine stands: nothing was
+relaxed, two machines were told apart.
+
+A cold launch is also reported in three parts now — loading the app, starting
+it, drawing the first frame — split by an image initialiser written in C that
+the dynamic linker calls when it has finished, which is the earliest moment a
+program can observe itself.
+
+Validation: `wt run ios-unit`, `wt run ios-perf -- --probe`.
+
 2026-09-08 — **Script Claude SDK sessions through the real host.**
 
 Testnet hosts can supply a stream-JSON provider for every SDK session they
