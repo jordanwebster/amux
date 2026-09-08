@@ -130,9 +130,12 @@ final class PerformanceSuite: XCTestCase {
         // land in, so a row's journey from the bridge to a drawn view is the
         // app's whole journey rather than a shortcut the test took.
         let model = harness.stores.conversation(agent)
-        let window = harness.show { BenchTranscriptScreen(model: model) }
+        let window = harness.show { self.page(harness, agent: agent, model: model) }
         defer { window.isHidden = true }
-        harness.deliver([Workloads.append(entries, to: agent, at: 0)])
+        harness.deliver(Harness.encoded([
+            .session(Sessions.claude(agent: agent)),
+            Workloads.append(entries, to: agent, at: 0),
+        ]))
         await harness.settle()
 
         // The rows arrive as the runtime would hand them over: fifty a
@@ -181,6 +184,30 @@ final class PerformanceSuite: XCTestCase {
         ]
     }
 
+    /// The page a measured conversation is drawn on: the shipped conversation
+    /// with the fleet's drawer over it, which is what the app pushes when
+    /// somebody opens an agent.
+    ///
+    /// The session is delivered with the rows rather than left out, because
+    /// the gate is what decides whether the composer is on the screen at all.
+    /// Without it the layer is unavailable, the foot draws nothing, and every
+    /// streaming number would be taken over a page missing the strip and the
+    /// box that sit under the arriving rows.
+    @MainActor
+    private func page(
+        _ harness: Harness, agent: AgentId, model: ConversationStore,
+        drew: (@Sendable ([IdentifiedElement]) -> Void)? = nil
+    ) -> some View {
+        BenchConversationScreen(
+            model: model,
+            fleet: harness.stores.fleet,
+            hosts: harness.stores.hosts,
+            subject: ConversationSubject(
+                name: "measured", host: "bench", directory: "~/src/amux",
+                age: "2m", working: "12s"),
+            drew: drew)
+    }
+
     // MARK: - Idle
 
     /// A settled screen with nothing arriving must commit nothing and ask for
@@ -200,10 +227,13 @@ final class PerformanceSuite: XCTestCase {
         // question and answers it about the same list.
         let drawn = DrawnElements()
         let window = harness.show {
-            BenchTranscriptScreen(model: model) { drawn.record($0) }
+            self.page(harness, agent: agent, model: model) { drawn.record($0) }
         }
         defer { window.isHidden = true }
-        harness.deliver([Workloads.append(entries, to: agent, at: 0)])
+        harness.deliver(Harness.encoded([
+            .session(Sessions.claude(agent: agent)),
+            Workloads.append(entries, to: agent, at: 0),
+        ]))
         await harness.settle()
         try await Task.sleep(for: .seconds(2))
 

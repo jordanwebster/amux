@@ -53,12 +53,16 @@ the same main-thread application a relay-fed run would do.
 `main()`, so the dynamic linker's work is inside the cold-start measurement
 rather than hidden by it.
 
-The streaming and idle numbers are taken over the transcript the app ships:
-the same rows, projected by the same code, laid out by the same lazy stack and
-inside the same scroll view the conversation uses. That last part is what makes
-the stream a stream — the shipped container rests at its tail and follows it
-while rows arrive, and a row appended below the fold of a lazy stack is never
-built, so a list resting anywhere else would measure nothing.
+The streaming and idle numbers are taken over the page the app pushes when
+somebody opens an agent, whole: the fleet's drawer over the conversation, and
+inside it the chrome, the transcript, the facts strip and the composer, with a
+session in the store so the box is really there. Nothing is a stand-in and
+nothing is left out. The container is what makes the stream a stream — it rests
+at its tail and follows it while rows arrive, and a row appended below the fold
+of a lazy stack is never built, so a list resting anywhere else would measure
+nothing — but the strip, the foot and the composer are laid out on every frame
+those arrivals cause, and a number taken with the feed alone would be a number
+about a screen nobody uses.
 
 A run can be asked for one group of measurements — `wt run ios-perf -- --only
 streaming`, or `cold`, or `reconciliation` — which is for working on that

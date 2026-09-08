@@ -17,6 +17,7 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).parent))
+import ios_project
 import ios_simulators
 
 DOCUMENT = Path("docs/IOS_PERFORMANCE.md")
@@ -109,9 +110,7 @@ def container(udid: str) -> Path:
 
 
 def build(udid: str) -> None:
-    subprocess.run([
-        "xcodegen", "generate", "--spec", "ios/project.yml", "--project", "ios",
-    ], check=True, timeout=600)
+    ios_project.generate()
     subprocess.run([
         "xcodebuild", "build-for-testing",
         "-project", "ios/Amux.xcodeproj",

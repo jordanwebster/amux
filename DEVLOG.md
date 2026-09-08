@@ -11889,3 +11889,28 @@ fixture — the one the snapshot already gives its device identity — and the
 pinned fleet carries "studio" again.
 
 Green: `wt run ios-unit`, `wt test -- --lib mobile_`.
+
+## The streaming numbers are taken on the page people read
+
+The streaming and idle measurements used to be taken over a bench that drew the
+transcript alone inside the conversation's scroll container. That was enough to
+say the list is lazy and follows its tail, and not enough to say anything about
+the product: the facts strip, the foot and the composer are laid out on every
+frame an arriving row causes, and a number taken without them is a number about
+a screen nobody uses.
+
+The bench is now the page the app pushes when somebody opens an agent — the
+fleet's drawer over the conversation, with the same chrome, transcript, strip
+and composer — and the measured run delivers a session with the rows so the
+composer is really on screen rather than absent behind an unavailable gate.
+
+Two things fell out of running it. The perf recipe regenerated the Xcode project
+without the repair that gives the test action its StoreKit configuration, so
+every measured run left the committed scheme changed on disk; generating the
+project now lives in one place that both recipes call. And `ReportFreeze`
+imported `AmuxTestSupport`, whose sources are compiled into the app rather than
+linked — the import only ever resolved because another scheme had left that
+module in the shared products directory.
+
+Green: `wt run ios-perf` for every budget except the cold first frame, which is
+over at 437 ms against 400 and is being triaged on its own.
