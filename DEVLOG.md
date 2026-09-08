@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **Deleting an account, and where the two Help rows lead.**
+
+Delete Account now asks its question over the page it was asked from, dimmed as
+one thing, and states what deleting does instead of asking whether you are
+sure: your agents keep running and nothing on your hosts changes, this phone
+can no longer reach them, and — the line the design's own drawing gets wrong —
+what happens to what you pay. Deleting an amux account cannot cancel an App
+Store or a web subscription, because the money is billed by a system this app
+does not own; the account service refuses the deletion outright while a renewal
+is still set. So the card names when the subscription renews and where, says
+plainly that deleting does not cancel it, and when the refusal comes back it
+grows a block above the field: only the place it was bought can stop it, here
+is the way there, come back and press Delete again. The address stays typed
+across that trip, so returning from the App Store is one press from finished.
+
+The address is typed to confirm, and the button that cannot be undone is greyed
+until what is typed is that account's own address. The account service checks
+it too, against what it says the account is rather than against anything this
+phone remembers.
+
+Help's two rows now lead somewhere. Contact Support opens the account service's
+support page — a form in here would have to be carried by the same service
+somebody may be writing about because they cannot reach it. Report a Problem is
+still only offered in a build that can write a report, and the screen that
+freezes the frame it reports on is not built yet. The two routes that named
+pages neither row needs are gone: appearance is a control on its own row, and
+help is a section of You.
+
+---
+
 2026-09-08 — **The accounts this phone knows, the switcher over the list they
 are a lens on, and You.**
 

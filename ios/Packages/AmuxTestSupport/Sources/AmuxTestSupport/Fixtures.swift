@@ -95,6 +95,8 @@ public enum Fixtures {
         Built(.signIn, "sign-in-failed"),
         Built(.profiles, "profiles"),
         Built(.you, "you"),
+        Built(.delete, "delete"),
+        Built(.delete, "delete-blocked"),
         Built(.paywall, "paywall"),
         Built(.paywall, "paywall-web"),
         Built(.paywall, "paywall-pending"),
@@ -340,11 +342,31 @@ public enum Fixtures {
             States.open(bundle)
             States.trusted(bundle)
         },
-        Fixture(id: "delete", screen: .delete, cloud: ScriptedCloudState(
-            deletion: .blockedByRenewal(source: .appStore,
-                                        manageURL: URL(string: "https://apps.apple.com/account/subscriptions")!))
+        // Giving up an account, asked over the page it was asked from. The
+        // address is already typed, because what the button does once it is
+        // typed is the whole point of the screen; the subscription renews, so
+        // the third consequence is the one that has to be honest about
+        // billing.
+        Fixture(id: "delete", screen: .delete, accounts: renewing,
+                deletion: Fixture.Deleting(
+                    account: ScriptedCloudState.ada.id,
+                    typed: ScriptedCloudState.ada.email)) { bundle in
+            States.open(bundle)
+            States.trusted(bundle)
+        },
+        // The same question, refused: the account service will not delete an
+        // account whose subscription is still set to renew, and only the App
+        // Store can stop an App Store one.
+        Fixture(id: "delete-blocked", screen: .delete, cloud: ScriptedCloudState(
+            deletion: .blockedByRenewal(source: .appStore, manageURL: appStoreSubscriptions)),
+                accounts: renewing,
+                deletion: Fixture.Deleting(
+                    account: ScriptedCloudState.ada.id,
+                    typed: ScriptedCloudState.ada.email,
+                    phase: .blocked(source: .appStore, manageURL: appStoreSubscriptions))
         ) { bundle in
             States.open(bundle)
+            States.trusted(bundle)
         },
         Fixture(id: "first-run", screen: .firstRun, cloud: .firstRun, accounts: []),
         Fixture(id: "sign-in", screen: .signIn, cloud: .firstRun, accounts: []),
@@ -364,6 +386,23 @@ public enum Fixtures {
             States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
     ]
+
+    /// Where the App Store keeps a person's own subscriptions. The system's
+    /// page, not one amux owns, which is the whole reason a blocked deletion
+    /// has to send somebody out of the app.
+    static let appStoreSubscriptions = URL(
+        string: "https://apps.apple.com/account/subscriptions")!
+
+    /// The accounts of the two deletion states: the same phone the You page
+    /// shows, with the account being given up paying a subscription that is
+    /// still set to renew. A renewal is what the account service refuses to
+    /// delete around, so a state about deleting has to have one.
+    static let renewing: [AccountEntry] = {
+        var accounts = Fixture.several
+        accounts[0].entitlement = .active(
+            source: .appStore, renews: Scenario.now.addingTimeInterval(11 * 24 * 60 * 60))
+        return accounts
+    }()
 
     /// States a screenshot of a good morning never shows.
     public static let states: [Fixture] = [

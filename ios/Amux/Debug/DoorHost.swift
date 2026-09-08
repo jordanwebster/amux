@@ -47,6 +47,11 @@ final class DoorHost {
     /// chosen and how a purchase went. Its own store because a subscription is
     /// bought before there is anything for an account's stores to hold.
     private(set) var paywall = PaywallStore()
+    /// The account a driven screen is in the middle of giving up. Its own
+    /// store for the same reason the app's is: the question outlives the page
+    /// it is asked over, and a blocked deletion sends somebody out of the app
+    /// and back again.
+    private(set) var deletion = DeletionStore()
 
     /// What the App Store answers while the door is driving. The paywall is
     /// handed this rather than the real store, so no capture and no journey
@@ -197,6 +202,9 @@ final class DoorHost {
         paywall = PaywallStore(
             entitlement: fixture.accounts.first?.entitlement ?? .none,
             plans: fixture.store.plans, phase: fixture.paywall)
+        deletion = DeletionStore(
+            asking: fixture.deletion?.account, typed: fixture.deletion?.typed ?? "",
+            phase: fixture.deletion?.phase ?? .asking)
         fixture.apply(stores)
         cloud.scripted = fixture.cloud
         cloud.reset()

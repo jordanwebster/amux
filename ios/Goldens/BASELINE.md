@@ -204,6 +204,45 @@ list's selected row continued.
 - **The accounts are this app's own scenario.** Ada, her work account and a
   side project she signed out of, rather than the drawing's names.
 
+## delete
+
+Giving up an account, asked over the page it was asked from: what deleting does
+in three lines, the account's own address typed to confirm it, and Cancel
+beside Delete. The You page behind is the real one, dimmed as one thing —
+what the card covers and how far the dimming reaches are facts about both
+screens at once, and a card photographed on bare ground would be a picture of
+neither.
+
+- **The third consequence does not say the subscription ends.** The reference
+  reads "Your subscription ends on 12 August and is not refunded". Deleting an
+  amux account does not cancel an App Store or a web subscription and cannot:
+  the money is billed by a system this app does not own, and the account
+  service refuses the deletion outright while a renewal is still set — which is
+  the `delete-blocked` state below. So the line says what is true instead:
+  when the subscription renews, where it renews, and that deleting does not
+  cancel it. A subscription already cancelled says it is not refunded, and an
+  account with nothing bought draws no third line at all.
+- **The renewal date is the scenario's, not the reference's.** December 12, a
+  fortnight after the fixed morning every fixture is a state of, so a capture
+  taken next year still reads the same.
+- **The field is empty until somebody types in it.** The reference shows the
+  address already in the box; drawn that way the app would be typing its own
+  confirmation. The account's address is the label above the field and the
+  placeholder inside it, and Delete stays greyed until what is typed is that
+  address. The capture is of the moment after it has been typed, because what
+  the button does once it is typed is the point of the screen.
+- **The account is this app's own scenario**, Ada's, rather than the drawing's.
+
+## delete-blocked
+
+The same question, refused, which the design has no capture of. The account
+service will not delete an account whose subscription is still set to renew,
+and it names the system that is billing. So the card grows a block above the
+field: what happened, that only the place it was bought can stop it, and a link
+that goes there. The address stays typed and Delete stays where it is, so
+coming back from the App Store is one press from finished — the deletion is
+retried rather than restarted.
+
 ## paywall
 
 The subscription, and nothing dressed up around it: one sentence saying what it

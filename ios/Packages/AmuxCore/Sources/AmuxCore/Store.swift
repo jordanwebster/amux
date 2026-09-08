@@ -236,6 +236,16 @@ extension EntitlementSource {
         case .web: "amux.sh"
         }
     }
+
+    /// The same place as a sentence names it. Apart from `named` because a row
+    /// reporting where a subscription came from wants the bare name, and a
+    /// sentence about going there to stop it wants the article.
+    public var place: String {
+        switch self {
+        case .appStore: "the App Store"
+        case .web: "amux.sh"
+        }
+    }
 }
 
 extension Entitlement {

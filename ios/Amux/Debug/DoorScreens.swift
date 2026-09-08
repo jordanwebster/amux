@@ -58,6 +58,23 @@ enum DoorScreens {
                     Fingerprint.short($0.identity.fingerprint)
                 },
                 debugTools: true) { _ in }
+        // Giving up an account, over the page it was asked from. The You page
+        // behind it is the real one, filled from the same accounts, because
+        // how the page dims and how much of it the card covers are facts about
+        // both at once — a card photographed on bare ground would be a picture
+        // of neither.
+        case .delete:
+            DeleteAccountOverlay(
+                entry: host.accounts.selectedAccount, model: host.deletion,
+                actions: { _ in }
+            ) {
+                YouScreen(
+                    accounts: host.accounts, appearance: nil,
+                    identity: host.stores.hosts.roster.map {
+                        Fingerprint.short($0.identity.fingerprint)
+                    },
+                    debugTools: true) { _ in }
+            }
         // The drawer is drawn over the screen it was opened from, which is a
         // conversation. It is the real one, filled from the same state, rather
         // than a stand-in: what the panel dims, what its edge uncovers and how

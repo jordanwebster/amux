@@ -54,6 +54,7 @@ struct RootView: View {
             stores: composition.stores,
             signIn: composition.signIn,
             paywall: composition.paywall,
+            deletion: composition.deletion,
             appearance: composition.appearance,
             actions: { composition.handle($0) }
         )

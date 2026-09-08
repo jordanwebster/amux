@@ -38,11 +38,29 @@ public enum ShellAction: Equatable, Sendable {
     case restorePurchases
     /// Leave an account. It stays listed with Sign In beside it.
     case signOutAccount(AccountId)
-    /// Give up an account for good. It leaves the app for the account
-    /// service, so the shell does not do it.
+    /// Somebody asked to give up an account for good. What that costs is a
+    /// question the app asks before anything leaves this phone.
     case deleteAccount(AccountId)
+    /// The answer to that question, with the address typed. It reaches the
+    /// account service, so the shell does not do it.
+    case confirmDeletion
+    /// Changed their mind about it.
+    case cancelDeletion
     /// Light, dark, or whatever the phone is set to.
     case wear(Appearance?)
+}
+
+/// Leaves the app for a page somewhere else: a billing portal, the App Store's
+/// own subscriptions page, a way to reach a person.
+///
+/// Reached from here rather than from a screen for the same reason the
+/// clipboard is: a screen that opened a URL would be a screen that could not
+/// be photographed or replayed away from a device.
+@MainActor
+private func leave(for url: URL) {
+    #if canImport(UIKit)
+    UIApplication.shared.open(url)
+    #endif
 }
 
 /// The app: three tabs, a stack under each, and a title menu on the Agents
@@ -61,6 +79,11 @@ public struct Shell: View {
     /// What is on offer and how a purchase went. One per app, not per account:
     /// the App Store sells to an Apple Account, not to an amux one.
     private let paywall: PaywallStore
+    /// The account this phone is in the middle of giving up, if any. Its own
+    /// store because the question outlives the page it is asked over: leaving
+    /// to cancel a renewal and coming back finds the same question, with the
+    /// address still typed.
+    private let deletion: DeletionStore
     /// What the app is wearing, or nothing for whatever the phone is set to.
     private let appearance: Appearance?
     private let actions: @MainActor (ShellAction) -> Void
@@ -71,10 +94,12 @@ public struct Shell: View {
         stores: StoreBundle,
         signIn: SignInStore,
         paywall: PaywallStore,
+        deletion: DeletionStore,
         appearance: Appearance? = nil,
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
         self.appearance = appearance
+        self.deletion = deletion
         self.router = router
         self.accounts = accounts
         self.stores = stores
@@ -102,7 +127,7 @@ public struct Shell: View {
                 NavigationStack(path: $router.youPath) {
                     YouTabRoot(
                         router: self.router, accounts: accounts, stores: stores,
-                        appearance: appearance, actions: actions)
+                        deletion: deletion, appearance: appearance, actions: actions)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
             }
@@ -669,10 +694,31 @@ private struct YouTabRoot: View {
     let router: Router
     let accounts: AccountRegistry
     let stores: StoreBundle
+    let deletion: DeletionStore
     let appearance: Appearance?
     let actions: @MainActor (ShellAction) -> Void
 
     var body: some View {
+        DeleteAccountOverlay(
+            entry: accounts.selectedAccount, model: deletion,
+            actions: { asked in
+                switch asked {
+                case .cancel: actions(.cancelDeletion)
+                case .confirm: actions(.confirmDeletion)
+                // The only place a renewal can be stopped is where it was
+                // bought, which for an App Store subscription is a page of the
+                // system's rather than one this app or amux.sh owns.
+                case .manageBilling(let url): leave(for: url)
+                }
+            }
+        ) {
+            you
+        }
+        // The screen draws its own header, so the bar would be a second one.
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var you: some View {
         YouScreen(
             accounts: accounts, appearance: appearance,
             // This phone's own key, read off the machine store the way the
@@ -693,12 +739,18 @@ private struct YouTabRoot: View {
             // and it is the machines tab: an identity is only interesting
             // beside what it is trusted by.
             case .identity: router.select(.hosts)
-            case .support, .report: router.open(.help)
+            // Reaching a person happens on the web, where the people are.
+            // There is no form in here to fill in: a message written into this
+            // app would have to be carried by the same account service the
+            // person may be writing about because they cannot reach it.
+            case .support: leave(for: CloudEndpoint.production.support)
+            // Writing a report is the debug tools' own screen, which freezes
+            // the frame that was on show. This build does not draw it yet, and
+            // the row is only offered where those tools are compiled in.
+            case .report: break
             case .dismiss: break
             }
         }
-        // The screen draws its own header, so the bar would be a second one.
-        .toolbar(.hidden, for: .navigationBar)
     }
 
     /// Whether this build can write a report at all. A build a person installs

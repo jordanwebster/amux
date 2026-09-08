@@ -21,6 +21,11 @@ final class Composition {
     /// What the App Store has to sell and how a purchase went. One per app:
     /// the store sells to an Apple Account, not to an amux one.
     let paywall = PaywallStore()
+    /// The account somebody is in the middle of giving up. It outlives the
+    /// question it is asked over: a deletion the billing system refuses sends
+    /// the person out of the app to cancel a renewal, and coming back finds
+    /// the same question with the same address typed.
+    let deletion = DeletionStore()
     /// What the app is wearing. Nothing means whatever the phone is set to,
     /// which is what most people want and what the app starts as.
     var appearance: Appearance?
@@ -97,10 +102,19 @@ final class Composition {
             accounts.signOut(id)
         case .wear(let wanted):
             appearance = wanted
-        // Giving up an account for good is a page of its own, and this app
-        // does not have it yet.
-        case .deleteAccount:
-            break
+        // Giving up an account for good. What it costs is asked first, over
+        // the page it was asked from; nothing leaves this phone until the
+        // address has been typed and Delete pressed.
+        case .deleteAccount(let id):
+            deletion.ask(id)
+        case .cancelDeletion:
+            deletion.dismiss()
+        // The account service is what deletes an account, and it refuses while
+        // a subscription is still set to renew. Both answers land in the store
+        // the question is drawn from, and a deletion that went through takes
+        // the account off this phone with it.
+        case .confirmDeletion:
+            Task { await deletion.delete(with: cloud, from: accounts) }
         // Adding an account leaves the app for the web. Until that journey is
         // built there is nowhere to send somebody, and inventing a local one
         // the real one would have to undo would be worse than the button
@@ -135,8 +149,7 @@ extension Composition: RouteLoader {
         switch route {
         case .conversation(let agent), .changes(let agent):
             stores.openConversation(agent)
-        case .newAgent, .pairByCode, .pairConfirmation, .host, .signIn, .paywall,
-             .accounts, .appearance, .help:
+        case .newAgent, .pairByCode, .pairConfirmation, .host, .signIn, .paywall, .accounts:
             break
         }
     }
@@ -153,7 +166,7 @@ extension Composition: RouteLoader {
         case .conversation(let agent):
             stores.releaseStream(agent)
         case .changes, .newAgent, .pairByCode, .pairConfirmation, .host, .signIn,
-             .paywall, .accounts, .appearance, .help:
+             .paywall, .accounts:
             break
         }
     }

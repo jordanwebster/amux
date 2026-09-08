@@ -37,6 +37,12 @@ public struct CloudEndpoint: Sendable, Equatable {
     /// and the hand-off open another.
     public var host: String { base.host() ?? base.absoluteString }
 
+    /// Where somebody is sent to reach a person. Public because the screen
+    /// that offers it is not this adapter's, and derived from the same base as
+    /// everything else so a build pointed at another service cannot offer to
+    /// contact the production one's support.
+    public var support: URL { base.appending(path: "support") }
+
     var authorize: URL { base.appending(path: "connect/authorize") }
     var token: URL { base.appending(path: "connect/token") }
     var userinfo: URL { base.appending(path: "connect/userinfo") }

@@ -53,8 +53,6 @@ public enum Route: Hashable, Sendable {
     /// reason signing in is.
     case paywall(Tab)
     case accounts
-    case appearance
-    case help
 
     /// Which tab this page belongs under. A route opened from elsewhere takes
     /// its tab with it, so the tab bar always agrees with what is on screen.
@@ -63,7 +61,7 @@ public enum Route: Hashable, Sendable {
         case .conversation, .changes, .newAgent: .agents
         case .pairByCode, .pairConfirmation, .host: .hosts
         case .signIn(let from), .paywall(let from): from
-        case .accounts, .appearance, .help: .you
+        case .accounts: .you
         }
     }
 
@@ -80,8 +78,6 @@ public enum Route: Hashable, Sendable {
         case .signIn: "sign-in"
         case .paywall: "paywall"
         case .accounts: "profiles"
-        case .appearance: "appearance"
-        case .help: "help"
         }
     }
 }

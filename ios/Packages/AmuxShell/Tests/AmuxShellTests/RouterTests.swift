@@ -148,11 +148,11 @@ final class RouterTests: XCTestCase {
         let agent = agent()
 
         router.open(.conversation(agent))
-        router.open(.help)
+        router.open(.accounts)
 
         XCTAssertEqual(router.tab, .you)
         XCTAssertEqual(router.path(.agents), [.conversation(agent)])
-        XCTAssertEqual(router.path(.you), [.help])
+        XCTAssertEqual(router.path(.you), [.accounts])
 
         router.select(.agents)
         XCTAssertEqual(router.path, [.conversation(agent)])
@@ -222,7 +222,5 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(Route.pairByCode(nil).tab, .hosts)
         XCTAssertEqual(Route.host(HostId(UUID())).tab, .hosts)
         XCTAssertEqual(Route.accounts.tab, .you)
-        XCTAssertEqual(Route.appearance.tab, .you)
-        XCTAssertEqual(Route.help.tab, .you)
     }
 }

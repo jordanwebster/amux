@@ -22,6 +22,10 @@ public struct Fixture: Identifiable, Sendable {
     /// declared rather than reached, because a store sheet belongs to another
     /// process and cannot be pressed from here.
     public let paywall: PaywallStore.Phase
+    /// The account this state is in the middle of giving up, if any. Nothing
+    /// means nobody has been asked about, which is every state but the two the
+    /// question itself is the subject of.
+    public let deletion: Deleting?
     /// Where a sign-in stands in this state. It is declared here rather than
     /// applied to a bundle because it is not an account's fact: signing in is
     /// what makes an account, so there is none to hang it on yet.
@@ -46,6 +50,7 @@ public struct Fixture: Identifiable, Sendable {
         signIn: SignInStore.Phase = .ready,
         store: ScriptedStoreState = ScriptedStoreState(),
         paywall: PaywallStore.Phase = .ready,
+        deletion: Deleting? = nil,
         typeSize: String? = nil,
         overlay: ConversationOverlay? = nil,
         apply: @escaping @Sendable @MainActor (StoreBundle) -> Void = { _ in }
@@ -57,9 +62,29 @@ public struct Fixture: Identifiable, Sendable {
         self.signIn = signIn
         self.store = store
         self.paywall = paywall
+        self.deletion = deletion
         self.typeSize = typeSize
         self.overlay = overlay
         self.apply = apply
+    }
+
+    /// A deletion in progress, as a state declares it: whose account, what has
+    /// been typed to confirm it, and what the account service has answered.
+    /// Declared rather than performed, because the card is only on screen once
+    /// somebody has pressed the row that opens it.
+    public struct Deleting: Sendable, Equatable {
+        public var account: AccountId
+        public var typed: String
+        public var phase: DeletionStore.Phase
+
+        public init(
+            account: AccountId, typed: String = "",
+            phase: DeletionStore.Phase = .asking
+        ) {
+            self.account = account
+            self.typed = typed
+            self.phase = phase
+        }
     }
 
     /// The account every state assumes unless it is about not having one.
