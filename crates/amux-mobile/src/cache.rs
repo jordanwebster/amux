@@ -14,9 +14,36 @@ pub struct FleetCache {
     fleet: Event,
 }
 
+/// The file name an account's remembered fleet is kept under.
+///
+/// An account identifier is the application's — normally an email address —
+/// so it cannot be used as a path component as it stands: it may hold a
+/// separator, and two addresses differing only in case would be one file on a
+/// phone, whose filesystem does not distinguish them. Everything outside a
+/// lowercase, unambiguous set is therefore escaped rather than replaced, so
+/// distinct accounts always name distinct files.
+pub fn file_name(account: &str) -> String {
+    let mut name = String::with_capacity(account.len() + 8);
+    for byte in account.bytes() {
+        match byte {
+            b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' => name.push(byte as char),
+            _ => name.push_str(&format!("%{byte:02x}")),
+        }
+    }
+    name.push_str(".json");
+    name
+}
+
 impl FleetCache {
-    pub fn open(directory: &Path) -> Self {
-        let path = directory.join("fleet.json");
+    /// Open the fleet one account remembers.
+    ///
+    /// The remembered fleet is an account's, not the phone's: its rows are
+    /// that account's machines and that account's agents, and a phone signed
+    /// in to two accounts must never draw one of them under the other's name.
+    /// Each account therefore keeps its own file, the way each profile keeps
+    /// its own artifacts.
+    pub fn open(directory: &Path, account: &str) -> Self {
+        let path = directory.join("fleet").join(file_name(account));
         // The cache is disposable across schema changes or interrupted writes.
         let mut fleet = fs::read(&path)
             .ok()
@@ -224,10 +251,10 @@ mod tests {
         ] {
             update(&mut model, Msg::Server(msg));
         }
-        let mut cache = FleetCache::open(root.path());
+        let mut cache = FleetCache::open(root.path(), "owner");
         collect(&mut cache, &mut Projection::default(), &model);
 
-        let mut cache = FleetCache::open(root.path());
+        let mut cache = FleetCache::open(root.path(), "owner");
         let mut projection = Projection::default();
         let mut model = Model::default();
         let connection = RelayConnection::Disconnected {
@@ -278,7 +305,7 @@ mod tests {
                 "cached rows stay outside the reducer"
             );
         }
-        check(&FleetCache::open(root.path()).initial(), &[], false);
+        check(&FleetCache::open(root.path(), "owner").initial(), &[], false);
         let mut events = vec![];
         projection.collect(&model, &connection, &mut events);
         assert!(
@@ -315,11 +342,11 @@ mod tests {
         ] {
             update(&mut model, Msg::Server(msg));
         }
-        let mut cache = FleetCache::open(root.path());
+        let mut cache = FleetCache::open(root.path(), "owner");
         collect(&mut cache, &mut Projection::default(), &model);
 
         // A fresh launch: nothing has been confirmed by anybody yet.
-        let mut cache = FleetCache::open(root.path());
+        let mut cache = FleetCache::open(root.path(), "owner");
         assert_eq!(awaiting(&cache.initial()), [(11, true), (21, true)]);
 
         // The first machine answers. Its row is live and confirmed; the other
@@ -363,9 +390,9 @@ mod tests {
         ] {
             update(&mut model, Msg::Server(msg));
         }
-        let mut cache = FleetCache::open(root.path());
+        let mut cache = FleetCache::open(root.path(), "owner");
         collect(&mut cache, &mut Projection::default(), &model);
-        let mut cache = FleetCache::open(root.path());
+        let mut cache = FleetCache::open(root.path(), "owner");
         let mut projection = Projection::default();
         let mut model = Model::default();
         for msg in [

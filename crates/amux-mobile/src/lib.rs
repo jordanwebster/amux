@@ -153,9 +153,9 @@ pub extern "C" fn amux_mobile_build() -> *const c_char {
     }
 }
 
-/// Returns the fleet this device last displayed, as an owned JSON array of one
-/// Fleet event, or NULL when the directory holds nothing readable. Free it with
-/// amux_mobile_free.
+/// Returns the fleet one account last displayed on this device, as an owned
+/// JSON array of one Fleet event, or NULL when the directory holds nothing
+/// readable for it. Free it with amux_mobile_free.
 ///
 /// The application draws this before it has a connection, so the answer is the
 /// same one the running library delivers first: every card marked as awaiting
@@ -163,13 +163,22 @@ pub extern "C" fn amux_mobile_build() -> *const c_char {
 /// runtime and no network, so a cold launch can put rows on screen in its first
 /// frame and start the connection afterwards.
 ///
+/// The account has to be named because what a phone remembers belongs to the
+/// account that saw it: a launch that opens on a second account must draw that
+/// account's machines and not the ones the first account left behind.
+///
 /// # Safety
-/// cache_dir must be a readable NUL-terminated UTF-8 string for this call.
+/// cache_dir and account must be readable NUL-terminated UTF-8 strings for
+/// this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amux_mobile_cached_fleet(cache_dir: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn amux_mobile_cached_fleet(
+    cache_dir: *const c_char,
+    account: *const c_char,
+) -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
         let directory = unsafe { read_string(cache_dir) }?;
-        let fleet = cache::FleetCache::open(std::path::Path::new(directory)).initial();
+        let account = unsafe { read_string(account) }?;
+        let fleet = cache::FleetCache::open(std::path::Path::new(directory), account).initial();
         Some(
             CString::new(serde_json::to_string(&[fleet]).ok()?)
                 .ok()?
@@ -1004,7 +1013,10 @@ async fn run(
     mut commands: mpsc::UnboundedReceiver<Control>,
     callback: &Callback,
 ) -> Result<(), String> {
-    let mut cache = cache::FleetCache::open(&config.cache_dir);
+    // The remembered fleet belongs to the account on screen. Switching opens
+    // the account moved to, so nothing the account left behind can be carried
+    // into a fleet drawn under the new one's name.
+    let mut cache = cache::FleetCache::open(&config.cache_dir, &config.active);
     callback.send(&[cache.initial()]);
     let mut cadence = Cadence::new(Duration::from_nanos(config.frame_interval_ns));
     cadence.emitted();
@@ -1199,6 +1211,10 @@ async fn run(
                                     watchers = runtime.watch_others(counts.clone());
                                     watched = runtime.inactive_accounts();
                                     attention.retain(|held, _| watched.contains(held));
+                                    cache = cache::FleetCache::open(
+                                        &config.cache_dir,
+                                        &account,
+                                    );
                                     devices = None;
                                     trusted.clear();
                                     projection = Projection::default();

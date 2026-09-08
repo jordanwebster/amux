@@ -4,6 +4,31 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **The fleet a phone remembers belongs to an account.**
+
+The remembered fleet — the rows drawn before any machine has answered — was
+kept in one file per phone. On a phone signed in to two accounts that was one
+account's machines and agents shown under the other's name: switching folded
+the rows the previous account left behind into the fleet projected for the new
+one, and whichever account was on screen last overwrote the file for both.
+
+Each account now keeps its own file, the way each account already keeps its own
+artifacts, named after the account with everything outside a lowercase,
+unambiguous set escaped so two addresses can never be one file on a filesystem
+that ignores case. Switching opens the account moved to, so its own rows are
+what the frames before its machines answer are filled from. The cold-launch
+read takes the account as part of the question, and the app asks it for the
+account on screen — nobody signed in has nothing to remember.
+
+Proved by `mobile_profiles_the_remembered_fleet_belongs_to_the_account_that_saw_it`:
+two accounts, each paired with a machine holding an agent, switched between and
+back; no fleet drawn after either switch carries the account left behind, in any
+frame, and the two files on disk are one account each. Without the reopen the
+test fails. `wt test -- --lib mobile_` is 38 passed, and `wt lint` and
+`wt run ios-unit` are green.
+
+---
+
 2026-09-08 — **The phone runs against a scripted account service, and the
 switcher re-points the runtime.**
 

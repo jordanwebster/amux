@@ -27,7 +27,8 @@ public enum Bridge {
 }
 
 extension Bridge {
-    /// The fleet this device last displayed, read straight off disk.
+    /// The fleet one account last displayed on this device, read straight off
+    /// disk.
     ///
     /// A cold launch has rows to draw long before it has a connection, and
     /// starting the runtime to get them would put the network's setup in front
@@ -35,8 +36,12 @@ extension Bridge {
     /// first — every card marked as awaiting its machine, the fleet as a whole
     /// unreconciled — read by the same code, so the screen a launch draws and
     /// the screen a connection replaces it with cannot disagree.
-    public static func cachedFleet(in directory: URL) -> [Event] {
-        guard let json = amux_mobile_cached_fleet(directory.path) else { return [] }
+    ///
+    /// The account is part of the question: a remembered row is one account's
+    /// machine and one account's agent, and a phone signed in to two of them
+    /// keeps a fleet for each.
+    public static func cachedFleet(in directory: URL, for account: AccountId) -> [Event] {
+        guard let json = amux_mobile_cached_fleet(directory.path, account.value) else { return [] }
         defer { amux_mobile_free(json) }
         let data = Data(String(cString: json).utf8)
         return (try? AmuxJSON.decoder.decode([Event].self, from: data)) ?? []

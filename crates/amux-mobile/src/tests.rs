@@ -69,6 +69,13 @@ fn test_credentials(
     }
 }
 
+/// Where one account's remembered fleet is kept under a phone's cache
+/// directory. Each account has a file of its own, so a test that reads the
+/// cache has to say whose.
+fn cache_path(cache_dir: &std::path::Path, account: &str) -> std::path::PathBuf {
+    cache_dir.join("fleet").join(cache::file_name(account))
+}
+
 fn config(root: &std::path::Path, url: String, token: Value) -> Value {
     accounts_config(root, url, &[("personal", token)], "personal")
 }
@@ -756,7 +763,7 @@ async fn mobile_unpaired_relay_hosts_are_discovered_without_entering_the_fleet()
         }
     }
     let cache: Value =
-        serde_json::from_slice(&std::fs::read(root.path().join("cache/fleet.json")).unwrap())
+        serde_json::from_slice(&std::fs::read(cache_path(&root.path().join("cache"), "personal")).unwrap())
             .unwrap();
     for host in cache["Fleet"]["hosts"].as_array().unwrap() {
         assert_eq!(host["entry"]["name"], "phone", "{cache}");
@@ -852,7 +859,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
             .is_some_and(|a| a.iter().any(|a| a["display_name"] == "Renamed"))
     })
     .await;
-    let cache_path = root.path().join("cache/fleet.json");
+    let cache_path = cache_path(&root.path().join("cache"), "personal");
     let disk: Value = serde_json::from_slice(&std::fs::read(&cache_path).unwrap()).unwrap();
     assert_eq!(
         disk, changed,
@@ -997,7 +1004,8 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
 #[test]
 fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
     let root = test_root();
-    let path = root.path().join("fleet.json");
+    let path = cache_path(root.path(), "personal");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     for bytes in [
         None,
         Some("{"),
@@ -1006,14 +1014,14 @@ fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
         if let Some(bytes) = bytes {
             std::fs::write(&path, bytes).unwrap();
         }
-        let cache = cache::FleetCache::open(root.path());
+        let cache = cache::FleetCache::open(root.path(), "personal");
         assert!(
             matches!(cache.initial(), Event::Fleet { agents, reconciled: false, .. } if agents.is_empty())
         );
     }
     let file = root.path().join("not-a-directory");
     std::fs::write(&file, "file").unwrap();
-    let mut cache = cache::FleetCache::open(&file);
+    let mut cache = cache::FleetCache::open(&file, "personal");
     assert!(
         cache
             .update(&mut cache.initial(), &amux_ui::Model::default())
@@ -1113,7 +1121,7 @@ async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpai
         .await;
         drop(running);
 
-        let path = root.path().join("cache/fleet.json");
+        let path = cache_path(&root.path().join("cache"), "personal");
         let mut cached: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         cached["Fleet"]["agents"].as_array_mut().unwrap().reverse();
         std::fs::write(&path, cached.to_string()).unwrap();
@@ -2747,6 +2755,131 @@ async fn mobile_profiles_switching_drops_every_late_result_from_the_previous_acc
     }
 
     drop(running);
+    net.shutdown().await;
+}
+
+fn host_names(fleet: &Value) -> Vec<String> {
+    fleet["Fleet"]["hosts"]
+        .as_array()
+        .map(|hosts| {
+            hosts
+                .iter()
+                .map(|host| host["entry"]["name"].as_str().unwrap_or("").to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What a phone remembers is an account's, not the phone's.
+///
+/// The remembered fleet is what puts rows on screen before a machine has
+/// answered, and every one of those rows is a machine and an agent that
+/// belongs to one account. Switching therefore opens the account moved to:
+/// the frames drawn while the new account is still reaching its machines show
+/// what it remembered, never what the account just left did, and the files on
+/// disk are one account each.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mobile_profiles_the_remembered_fleet_belongs_to_the_account_that_saw_it() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("personal")
+        .daemon("laptop")
+        .cloud_only()
+        .cloud_user("work")
+        .start()
+        .await;
+    let workstation = net.daemon("workstation");
+    let laptop = net.daemon("laptop");
+    let (_, personal_token) = net.user_credentials("personal");
+    let (_, work_token) = net.user_credentials("work");
+    let _workstation_admin = seed_agent(&workstation, 411, "fix-login").await;
+    let _laptop_admin = seed_agent(&laptop, 412, "write-docs").await;
+
+    let root = test_root();
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let running = Running {
+        handle: start(
+            &accounts_config(
+                root.path(),
+                format!("http://{}", net.relay_addr()),
+                &[
+                    ("personal", json!({ "Static": personal_token })),
+                    ("work", json!({ "Static": work_token })),
+                ],
+                "personal",
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    let handle = running.handle;
+    assert!(!handle.is_null());
+    until(&mut receive, handle, "", |e| {
+        e["Connection"]["state"] == "connected"
+    })
+    .await;
+
+    // Each account pairs with a machine of its own and remembers what it saw.
+    let from = mark(&events);
+    pair_with(handle, &net, &workstation).await;
+    seen(&mut receive, &events, from, handle, |e| {
+        agent_names(e) == ["fix-login"] && host_names(e) == ["workstation"]
+    })
+    .await;
+
+    let from = mark(&events);
+    select_account(&mut receive, handle, "work").await;
+    pair_with(handle, &net, &laptop).await;
+    seen(&mut receive, &events, from, handle, |e| {
+        agent_names(e) == ["write-docs"] && host_names(e) == ["laptop"]
+    })
+    .await;
+    // Nothing the personal account remembered was drawn under the work
+    // account, in any frame — including the ones before the work account had
+    // reached its own machine.
+    let leaked = |from: usize, agent: &str, host: &str| {
+        for event in events.captured.lock().unwrap().iter().skip(from) {
+            assert!(
+                !agent_names(event).iter().any(|name| name == agent)
+                    && !host_names(event).iter().any(|name| name == host),
+                "a fleet drawn after the switch carried the account left behind: {event}"
+            );
+        }
+    };
+    leaked(from, "fix-login", "workstation");
+
+    // And switching back is the same in the other direction.
+    let from = mark(&events);
+    select_account(&mut receive, handle, "personal").await;
+    let back = seen(&mut receive, &events, from, handle, |e| {
+        agent_names(e) == ["fix-login"] && host_names(e) == ["workstation"]
+    })
+    .await;
+    leaked(from, "write-docs", "laptop");
+    println!("the account switched back to: {back}");
+
+    drop(running);
+
+    // Two accounts, two files, neither of them a mixture.
+    let cache_dir = root.path().join("cache");
+    let personal: Value =
+        serde_json::from_slice(&std::fs::read(cache_path(&cache_dir, "personal")).unwrap())
+            .unwrap();
+    let work: Value =
+        serde_json::from_slice(&std::fs::read(cache_path(&cache_dir, "work")).unwrap()).unwrap();
+    assert_eq!(agent_names(&personal), ["fix-login"], "{personal}");
+    assert_eq!(host_names(&personal), ["workstation"], "{personal}");
+    assert_eq!(agent_names(&work), ["write-docs"], "{work}");
+    assert_eq!(host_names(&work), ["laptop"], "{work}");
+    println!("remembered by personal: {personal}\nremembered by work: {work}");
+
     net.shutdown().await;
 }
 
