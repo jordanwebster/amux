@@ -74,11 +74,12 @@ struct ComposerBox: View {
                         .font(.system(size: 16, weight: .regular))
                         .foregroundStyle(design.inkFaint.color)
                         .frame(width: 28, height: 28)
-                        .contentShape(Circle())
+                        .thumbTarget(x: 9, y: 9)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear")
                 .identified("composer.clear", label: "Clear")
+                .reclaimingThumbTarget(x: 9, y: 9)
             }
         }
     }

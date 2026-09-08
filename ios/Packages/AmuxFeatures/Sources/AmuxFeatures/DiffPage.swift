@@ -198,10 +198,12 @@ public struct DiffPage: View {
                         .lineLimit(1)
                 }
                 .foregroundStyle(design.accent.color)
+                .thumbTarget(y: 13)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back to \(subject)")
             .identified("review.back", label: "Back to \(subject)")
+            .reclaimingThumbTarget(y: 13)
             Spacer(minLength: 4)
             VStack(spacing: 0) {
                 Text("Review")
@@ -307,11 +309,12 @@ private struct FileHeading: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(design.inkFaint.color)
                     .frame(width: 30, height: 44)
-                    .contentShape(Rectangle())
+                    .thumbTarget(x: 8, y: 1)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("All files")
             .identified("review.files", label: "All files")
+            .reclaimingThumbTarget(x: 8, y: 1)
             Spacer(minLength: 4)
             if comments > 0 { CommentCount(count: comments, size: 20) }
             Text("+\(file.added)")

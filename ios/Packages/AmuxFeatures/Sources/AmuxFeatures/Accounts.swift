@@ -352,12 +352,14 @@ public struct YouScreen: View {
                 .background {
                     if chosen { Capsule().fill(design.ink.color) }
                 }
+                .thumbTarget(y: 7)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(chosen ? [.isSelected] : [])
         .identified(
             "you.appearance.\(wanted?.rawValue ?? "system")", label: title,
             value: chosen ? "chosen" : "not chosen")
+        .reclaimingThumbTarget(y: 7)
     }
 
     private var help: some View {

@@ -84,11 +84,12 @@ struct FactsStrip: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(design.inkMuted.color)
                         .frame(width: 32, height: 44)
-                        .contentShape(Rectangle())
+                        .thumbTarget(x: 7)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(open ? "Hide tasks" : "Show tasks")
                 .identified("facts.grow", label: open ? "Hide tasks" : "Show tasks")
+                .reclaimingThumbTarget(x: 7)
             }
         }
         .padding(.leading, 16)

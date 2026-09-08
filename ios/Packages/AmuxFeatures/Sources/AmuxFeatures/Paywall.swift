@@ -81,10 +81,12 @@ public struct Paywall: View {
                         .designFont(.body, design)
                 }
                 .foregroundStyle(design.accent.color)
+                .thumbTarget(y: 13)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back to \(back)")
             .identified("paywall.back", label: "Back to \(back)")
+            .reclaimingThumbTarget(y: 13)
             Spacer()
         }
         .padding(.vertical, 8)
@@ -234,11 +236,13 @@ public struct Paywall: View {
                         Text("Restore Purchases")
                             .designFont(.mono, design)
                             .foregroundStyle(design.accent.color)
+                            .thumbTarget(y: 14)
                     }
                     .buttonStyle(.plain)
                     .disabled(model.working)
                     .identified(
                         "paywall.restore", label: "Restore Purchases", enabled: !model.working)
+                    .reclaimingThumbTarget(y: 14)
                 }
             }
             .padding(14)

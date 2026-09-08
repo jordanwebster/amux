@@ -46,11 +46,12 @@ struct ModelChip: View {
                 .padding(.horizontal, 12)
                 .frame(minHeight: 34)
                 .background { Capsule().fill(design.sunken.color) }
-                .contentShape(Capsule())
+                .thumbTarget(y: 6)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Model and effort, \(label)")
             .identified("composer.model", label: "Model and effort", value: label)
+            .reclaimingThumbTarget(y: 6)
         }
     }
 }

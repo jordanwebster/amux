@@ -106,10 +106,12 @@ public struct NewAgent: View {
                             .designFont(.body, design)
                     }
                     .foregroundStyle(design.accent.color)
+                    .thumbTarget(y: 13)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Back to Agents")
                 .identified("new-agent.back", label: "Back to Agents")
+                .reclaimingThumbTarget(y: 13)
                 Spacer()
             }
         }

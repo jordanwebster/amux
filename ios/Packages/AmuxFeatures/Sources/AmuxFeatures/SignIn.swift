@@ -77,10 +77,12 @@ public struct SignIn: View {
                         .designFont(.body, design)
                 }
                 .foregroundStyle(design.accent.color)
+                .thumbTarget(y: 13)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back to \(back)")
             .identified("sign-in.back", label: "Back to \(back)")
+            .reclaimingThumbTarget(y: 13)
             Spacer()
         }
         .padding(.vertical, 8)

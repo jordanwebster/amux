@@ -12105,3 +12105,27 @@ of the difference is two frameworks: linking StoreKit costs 85 ms and
 AuthenticationServices 90 ms before any app code runs.
 
 Green: `wt run ios-unit`, `wt run ios-build`.
+
+## A thumb target the size of a thumb, around a control the size it is drawn
+
+Plenty of controls are meant to be small: the cross that clears the composer,
+the chevron that walks back off a screen, a row of two-word appearance choices.
+Drawing them at the 44 pt a finger needs would be a different design. What has
+to be 44 pt is what answers to a thumb, and that is a different rectangle from
+the drawn one.
+
+`thumbTarget` and `reclaimingThumbTarget` are that rectangle. It has to be a
+pair, because padding or a content shape applied to a `Button` from outside
+does not extend what the button answers to: the first goes inside the button's
+label and grows it, the second goes outside and gives the layout back exactly
+the room the first took. What is measured — by VoiceOver, by the screen's own
+declaration — is the grown rectangle; what is drawn does not move.
+
+Fifteen controls now carry it: the composer's clear and model chip, the four
+back rows, the file list and task fold chevrons, restore purchases, the
+report's cancel, send and box-removal, the home title and the three appearance
+choices. Every one of them was between 17 and 35 pt in one direction.
+
+Green: `wt run ios-goldens -- --built` (112 captures, none moved). The
+accessibility audit is down from 118 complaints to 62; the rest are the
+transcript's own rows and the new-agent screen, still to do.

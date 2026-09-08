@@ -171,9 +171,11 @@ public struct ReportScreen: View {
                         .designFont(.body, design)
                 }
                 .foregroundStyle(design.accent.color)
+                .thumbTarget(y: 13)
             }
             .buttonStyle(.plain)
             .identified("report.cancel", label: "Cancel")
+            .reclaimingThumbTarget(y: 13)
             Spacer(minLength: 8)
             Text("Report")
                 .designFont(.bodyEmphasis, design)
@@ -183,10 +185,12 @@ public struct ReportScreen: View {
                 Text(sendTitle)
                     .designFont(.bodyEmphasis, design)
                     .foregroundStyle(design.accent.color.opacity(sending ? 0.4 : 1))
+                    .thumbTarget(x: 5, y: 13)
             }
             .buttonStyle(.plain)
             .disabled(sending)
             .identified("report.send", label: sendTitle, enabled: !sending)
+            .reclaimingThumbTarget(x: 5, y: 13)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -261,9 +265,11 @@ public struct ReportScreen: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(design.inkMuted.color)
                     .frame(width: 22, height: 22)
+                    .thumbTarget(x: 12, y: 12)
             }
             .buttonStyle(.plain)
             .identified("report.mark.\(at).remove", label: "Remove box \(at + 1)")
+            .reclaimingThumbTarget(x: 12, y: 12)
         }
         .padding(13)
         .background(

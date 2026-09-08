@@ -128,13 +128,14 @@ public struct AgentsHome: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(design.inkFaint.color)
                 }
-                .contentShape(Rectangle())
+                .thumbTarget(y: 7)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Agents, switch account")
             .identified(
                 "home.title", label: "Agents, switch account",
                 value: switcherOpen ? "open" : "Agents")
+            .reclaimingThumbTarget(y: 7)
         } else {
             Text("Agents")
                 .designFont(.screenTitle, design)

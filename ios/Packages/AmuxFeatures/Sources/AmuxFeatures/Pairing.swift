@@ -73,10 +73,12 @@ public struct PairByCode: View {
                         .designFont(.body, design)
                 }
                 .foregroundStyle(design.accent.color)
+                .thumbTarget(y: 13)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back to Hosts")
             .identified("pin.back", label: "Back to Hosts")
+            .reclaimingThumbTarget(y: 13)
             Spacer()
         }
         .padding(.vertical, 8)
