@@ -18,6 +18,13 @@ changes, one host — leaves the part declared absent naming that page, rather
 than carried empty. The reports journey now reads both bundles' `trace.jsonl`
 and holds them to that.
 
+Pressing Send with nobody signed in did nothing whatever: no request, no error,
+the screen still saying "ready". A phone before its first sign-in can take a
+screenshot and write three notes on it, so this was reachable on a first run.
+The report is filed under an account, and where there is none it now says so
+in the same panel the account service's own refusals appear in, keeping
+everything written so that signing in and pressing again sends the same report.
+
 2026-09-08 — **Two failing tests: a missing report, and what a revocation reaches.**
 
 Asking the CLI to replay a report that is not saved said "failed to read report

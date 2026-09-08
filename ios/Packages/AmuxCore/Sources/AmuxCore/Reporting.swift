@@ -287,12 +287,25 @@ public final class ReportStore {
     /// frame are all still here afterwards, so Retry is one press and not a
     /// second report: somebody who wrote three notes about a bug on a train
     /// must not lose them to a tunnel.
+    ///
+    /// The account is what the report is filed under, and there may not be
+    /// one: a phone nobody has signed in on yet can still take a screenshot
+    /// and write three notes on it. Pressing Send then is refused in the same
+    /// place the account service's own refusals are said, because the one
+    /// thing it must not do is nothing at all — a button that quietly does
+    /// not work leaves somebody pressing it and waiting.
     public func send(
-        with cloud: any CloudService, as account: AccountId,
+        with cloud: any CloudService, as account: AccountId?,
         build: String, gitSHA: String = "", log: Result<String, PartAbsent>,
         now: Date = Date()
     ) async {
         guard let capture, sending != .sending else { return }
+        guard let account else {
+            sending = .failed(
+                "no account is signed in on this phone, and a report is filed under the "
+                    + "account it is about. Sign in under You, then send it again.")
+            return
+        }
         sending = .sending
         let bundle = ReportAssembly.bundle(
             from: capture, draft: draft, build: build, gitSHA: gitSHA,

@@ -199,12 +199,15 @@ final class Composition {
         // The report leaves the phone. What goes with it is what was frozen
         // plus what has been written on it since; the account it is filed
         // under is the one on screen, because a report is about what this
-        // phone could and could not reach as that account.
+        // phone could and could not reach as that account. Nobody signed in
+        // is handed down rather than dropped here, so the report says why it
+        // cannot go instead of the press doing nothing.
         case .sendReport:
-            guard let reports, let id = accounts.selected else { break }
+            guard let reports else { break }
             Task {
                 await reports.send(
-                    with: cloud, as: id, build: AppFiles.build, log: AppFiles.logTail)
+                    with: cloud, as: accounts.selected, build: AppFiles.build,
+                    log: AppFiles.logTail)
             }
         // The account service is what deletes an account, and it refuses while
         // a subscription is still set to renew. Both answers land in the store

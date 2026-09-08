@@ -214,6 +214,32 @@ final class ReportBundleTests: XCTestCase {
             ReportAssembly.messagesFile, ReportAssembly.daemonFile, ReportAssembly.logFile,
         ])
     }
+
+    /// A phone nobody has signed in on can still take a screenshot and write
+    /// on it. Pressing Send there says why it cannot go, in the place the
+    /// account service's own refusals are said; what it must not do is
+    /// nothing, leaving somebody pressing a button and waiting.
+    @MainActor
+    func testSendingWithNobodySignedInSaysWhyInsteadOfDoingNothing() async throws {
+        let reports = ReportStore(
+            capture: wholeCapture(),
+            draft: ReportDraft(note: "the fleet is empty"),
+            open: true)
+        let cloud = OneUpload(.success(ReportReceipt(id: "report-7", receivedAt: Date())))
+
+        await reports.send(with: cloud, as: nil, build: "amux-ios/0.1.0", log: noLog)
+
+        guard case .failed(let why) = reports.sending else {
+            return XCTFail("the report was left at \(reports.sending)")
+        }
+        XCTAssertTrue(why.contains("no account is signed in"), why)
+        XCTAssertTrue(why.contains("Sign in under You"), why)
+        // Nothing was uploaded, and nothing written was thrown away: signing
+        // in and pressing Send again sends this same report.
+        XCTAssertEqual(cloud.sent.count, 0)
+        XCTAssertEqual(reports.draft.note, "the fleet is empty")
+        XCTAssertNotNil(reports.capture)
+    }
 }
 
 /// A cloud that answers an upload one way and remembers what it was handed.
