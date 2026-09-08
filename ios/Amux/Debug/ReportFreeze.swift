@@ -22,15 +22,23 @@ final class ReportFreeze: ReportFreezing {
     /// The window to photograph, or nothing to find the one on screen. Handed
     /// in so a test can drive this against a window it built.
     private let window: () -> UIWindow?
-    /// What the person was looking at, by the screen catalogue's name for it.
+    /// What page the person was looking at, in the words the app names its
+    /// pages by.
     private let route: () -> String?
+    /// The same page by the screen catalogue's name for it, where the
+    /// catalogue has one. A replay puts a report back by that name, so this is
+    /// what decides whether a bundle can be replayed to the page its picture
+    /// was taken on.
+    private let screen: () -> String?
 
     init(
         window: @escaping () -> UIWindow? = { ReportFreeze.foreground },
-        route: @escaping () -> String? = { DoorHost.shared.screen?.rawValue }
+        route: @escaping () -> String? = { DoorHost.shared.screen?.rawValue },
+        screen: @escaping () -> String? = { DoorHost.shared.screen?.rawValue }
     ) {
         self.window = window
         self.route = route
+        self.screen = screen
     }
 
     func freeze() -> ReportCapture? {
@@ -40,11 +48,37 @@ final class ReportFreeze: ReportFreezing {
         case .success(let json): capture.snapshot = json
         case .failure(let absent): capture.snapshotAbsent = absent.why
         }
-        switch DoorHost.shared.traceLines {
+        switch traceLines() {
         case .success(let lines): capture.trace = lines
         case .failure(let absent): capture.traceAbsent = absent.why
         }
         return capture
+    }
+
+    /// The view-state recording a bundle carries: what has been done to the
+    /// view since launch, ending with the screen the freeze happened on.
+    ///
+    /// The screen on show is written even when nothing has changed the view.
+    /// Somebody who opens the app and photographs the first thing they see has
+    /// changed nothing, and a trace declared present but empty says "nothing
+    /// was recorded" and "nothing happened" in the same breath — while a
+    /// replay of it puts back no screen at all. Where the page has no name in
+    /// the screen catalogue there is nothing a replay could put back, and the
+    /// part is declared absent with that as its reason rather than carried
+    /// empty.
+    private func traceLines() -> Result<String, PartAbsent> {
+        var events = DoorHost.shared.traceEvents
+        if let screen = screen(), events.last != .route(screen) {
+            events.append(.route(screen))
+        }
+        guard !events.isEmpty else {
+            return .failure(PartAbsent(
+                "nothing had changed the view since this app started, and "
+                    + "\(route() ?? "the page on screen") is not a screen a replay can put back"))
+        }
+        do { return .success(try Trace.lines(events)) } catch {
+            return .failure(PartAbsent("the view-state recording could not be written: \(error)"))
+        }
     }
 
     /// The window the person is looking at.

@@ -1,5 +1,6 @@
 import AmuxCore
 import AmuxDesign
+import AmuxFeatures
 import AmuxShell
 import Foundation
 import Observation
@@ -83,13 +84,34 @@ final class Composition {
         // bundle knows what they are looking at before they open the picture —
         // and so a picture taken on one page and written up on another says
         // which one it is of.
-        freezer = ReportFreeze(route: { router.top?.name ?? router.tab.rawValue })
+        freezer = ReportFreeze(
+            route: { router.top?.name ?? router.tab.rawValue },
+            screen: { Self.catalogueName(for: router) })
         #else
         reports = nil
         freezer = nil
         #endif
         router.loads(with: self)
         rememberedFleet()
+    }
+
+    /// What the screen catalogue calls the page on show, where it has a name
+    /// for it.
+    ///
+    /// A report's view-state recording is replayed against the catalogue, so
+    /// this is the vocabulary that decides whether a bundle can be put back on
+    /// the page its picture was taken on. Most pages are named the same in
+    /// both, and a tab with nothing pushed on it is the screen at its root.
+    /// A conversation, an agent's changes and one host have no catalogue name
+    /// yet; a report taken there says so rather than naming a screen that
+    /// would come back as the wrong thing.
+    private static func catalogueName(for router: Router) -> String? {
+        if let top = router.top { return Screen(rawValue: top.name)?.rawValue }
+        return switch router.tab {
+        case .agents: Screen.home.rawValue
+        case .hosts: Screen.hosts.rawValue
+        case .you: Screen.you.rawValue
+        }
     }
 
     /// Puts the fleet the account on screen saw last time in front of it,

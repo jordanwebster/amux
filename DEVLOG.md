@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **A report says which screen it is of, and says why it cannot go.**
+
+A report captured by a person carried an empty view-state recording and
+declared it present. The recording was only ever written to by the driving
+door, so anybody using the app froze a file with nothing in it — which cannot
+be told apart from a recording of a session in which nothing happened, and
+which replays to no screen at all. The freeze now finishes the recording with
+the screen the app is on, in the vocabulary a replay puts screens back by: a
+report taken on the Agents home replays to `home`, one asked for under Help to
+`you`. A page the screen catalogue has no name for — a conversation, an agent's
+changes, one host — leaves the part declared absent naming that page, rather
+than carried empty. The reports journey now reads both bundles' `trace.jsonl`
+and holds them to that.
+
 2026-09-08 — **Two failing tests: a missing report, and what a revocation reaches.**
 
 Asking the CLI to replay a report that is not saved said "failed to read report

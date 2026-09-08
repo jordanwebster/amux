@@ -2469,6 +2469,7 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
                        f"the report that was sent declares its picture as "
                        f"{declared_parts['frame']} and the runtime's recording as "
                        f"{declared_parts['msgs']}")
+        trace_says_where(journey, bundle, "the report that was sent", "home", declared_parts)
         header = json.loads((bundle / "report.json").read_text())
         journey.expect(header.get("detail") == "agents",
                        f"the report says it is of {header.get('detail')!r}, and the screenshot "
@@ -2495,7 +2496,9 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
     if "from-help" in driving:
         deliberate = journey.directory / "help-bundle"
         shutil.copytree(helped, deliberate, dirs_exist_ok=True)
-        report_parts(journey, deliberate, "the report asked for under Help")
+        helped_parts = report_parts(journey, deliberate, "the report asked for under Help")
+        trace_says_where(
+            journey, deliberate, "the report asked for under Help", "you", helped_parts)
         header = json.loads((deliberate / "report.json").read_text())
         journey.expect(header.get("detail") == "you",
                        f"the report asked for on the You page says it is of "
@@ -2511,6 +2514,28 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
         journey.say("photographed " + ", ".join(sorted(photographs)))
     forget_cache(udid)
     forget_pairings(udid)
+
+
+def trace_says_where(journey: Journey, bundle: Path, what: str, screen: str,
+                     declared: dict[str, str]) -> None:
+    """The view-state recording names the screen the report was taken on, or
+    the bundle says why there is no recording.
+
+    A file declared present and empty is the one thing it must not be: nobody
+    reading it can tell that nothing was recorded from that nothing happened,
+    and a replay of it puts back no screen at all.
+    """
+    if declared["trace"].startswith("absent"):
+        journey.say(f"{what} carries no view-state recording, and says why: {declared['trace']}")
+        return
+    events = [json.loads(line) for line in (bundle / "trace.jsonl").read_text().splitlines()
+              if line.strip()]
+    journey.expect(events,
+                   f"{what} declares a view-state recording and carries an empty file")
+    journey.expect(any(event.get("kind") == "route" and event.get("screen") == screen
+                       for event in events),
+                   f"{what} was taken on {screen} and its view-state recording says {events}")
+    journey.say(f"{what} records the view it was taken on: {events}")
 
 
 def report_parts(journey: Journey, bundle: Path, what: str) -> dict[str, str]:

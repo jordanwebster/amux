@@ -119,16 +119,14 @@ final class DoorHost {
     /// somebody using the app carries what they were looking at.
     @ObservationIgnored private var trace: [TraceEvent] = []
 
-    /// The same recording written the way a bundle carries it, for a report
-    /// being frozen right now. A trace with nothing in it is still a trace:
-    /// somebody who has changed nothing about the view since launch has an
-    /// empty recording rather than a missing one, and the two say different
-    /// things to whoever reads the bundle.
-    var traceLines: Result<String, PartAbsent> {
-        do { return .success(try Trace.lines(trace)) } catch {
-            return .failure(PartAbsent("the view-state recording could not be written: \(error)"))
-        }
-    }
+    /// What has been recorded so far, for a report being frozen right now.
+    ///
+    /// Handed over as events rather than as the lines a bundle carries,
+    /// because a freeze finishes the recording with the screen it is being
+    /// taken on: somebody who has changed nothing since launch has recorded
+    /// nothing, and a bundle whose trace is an empty file cannot tell a reader
+    /// whether nothing was recorded or nothing happened.
+    var traceEvents: [TraceEvent] { trace }
 
     func handle(_ request: DoorRequest) async -> DoorReply {
         switch request {
