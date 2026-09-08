@@ -34,6 +34,23 @@ final class JudgeTests: XCTestCase {
         XCTAssertNil(result.note)
     }
 
+    /// A number is only a claim about the app if the app was built the way a
+    /// shipped build is, so the verdict carries the configuration it was told
+    /// and, separately, what the compiled code says about itself.
+    func testAVerdictSaysWhichBuildTookTheNumbers() throws {
+        let table = BudgetTable(machines: machines, budgets: budgets)
+        let verdict = try judge(
+            samples: samples(.coldFirstFrameMs, [310, 322, 330, 341, 358]),
+            budgets: table, machine: "pinned-mac", simulator: "amux-golden",
+            configuration: "Measured")
+        XCTAssertEqual(verdict.configuration, "Measured")
+        XCTAssertEqual(verdict.optimised, optimisedBuild)
+        let written = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(verdict)) as? [String: Any]
+        XCTAssertEqual(written?["configuration"] as? String, "Measured")
+        XCTAssertNotNil(written?["optimised"])
+    }
+
     func testABudgetBreachFails() throws {
         let table = BudgetTable(machines: machines, budgets: budgets)
         let verdict = try judge(

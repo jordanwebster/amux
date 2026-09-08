@@ -4,6 +4,44 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **Measure the app in a build shaped like a shipped one.**
+
+The performance suite used to measure a Debug build, which measures the Swift
+compiler as much as the app. It now builds a third configuration, `Measured`:
+optimised the way a shipped build is, with the driving door, the fixtures and
+the workload generator still compiled in and testability on, because the suite
+runs inside the app and reaches into it. Coverage and the sanitizers are off on
+the command line — either one would be measured as though it were the app — and
+the packages are told `ARCHS=arm64 ONLY_ACTIVE_ARCH=YES` there too, since a
+package target hears neither from the project and would go looking for an
+x86_64 slice of an arm64-only bridge.
+
+A verdict now says which configuration produced it and, separately, whether the
+code that took the numbers was compiled optimised — the second reported by that
+code about itself, so a run that named one configuration and built another says
+so. Beside the JSON the run writes report.md: the same rows in the form a
+person reads, with every proxy marked and what it stands in for written
+underneath, the cold launch split into loading, starting and drawing, and the
+run's own wall time.
+
+The whole suite passes on the pinned Mac: cold first frame 440 ms against 460,
+reconciliation 6 ms and 115 ms against 1,000, hitch time 0.0 ms/s, main-thread
+CPU 42% against 60, footprint 68 MB against 250, no idle commits. A run takes
+about three and a half minutes once the app is built and about sixteen from a
+cold tree, and that figure is now in docs/IOS_PERFORMANCE.md rather than being
+something a person finds out by starting one.
+
+No runner baseline is recorded. CI's ios job skips the measured run on the
+GitHub runner precisely because that machine has no baseline yet, so no
+completed run has ever produced perf numbers to download, and
+ios/Perf/baselines/macos-26.json stays absent. Baselines are tracked in git
+when they do arrive: an invisible baseline makes re-baselining the cheapest way
+to turn a red suite green, and tracked, that act is a reviewable diff. A run's
+own numbers are not tracked — they land under target/ with the rest of the
+build output.
+
+Validation: `wt run ios-perf` (passed, every budget), `wt run ios-unit`.
+
 2026-09-08 — **Tell the cold-start simulator apart from the phone.**
 
 The cached first frame drifted from about 310 ms in early September to about

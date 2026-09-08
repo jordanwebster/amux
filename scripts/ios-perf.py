@@ -23,7 +23,13 @@ import ios_simulators
 DOCUMENT = Path("docs/IOS_PERFORMANCE.md")
 BASELINES = Path("ios/Perf/baselines")
 DERIVED_DATA = Path("target/ios/DerivedData")
-PRODUCTS = DERIVED_DATA / "Build/Products/Debug-iphonesimulator"
+# The configuration a measured run is built in: optimised the way a shipped
+# build is, with the driving door, the fixtures and the workload generator
+# still compiled in and `@testable` still allowed. An unoptimised build
+# measures the Swift compiler as much as the app, and a build without the
+# tools cannot be measured at all.
+CONFIGURATION = "Measured"
+PRODUCTS = DERIVED_DATA / f"Build/Products/{CONFIGURATION}-iphonesimulator"
 OUTPUT = Path("target/ios/perf")
 SIMULATOR = "amux-golden"
 BUNDLE_ID = "sh.amux.Amux"
@@ -33,6 +39,14 @@ COLD_LAUNCHES = 5
 # What a measured run writes and what therefore has to be gone before one
 # starts: a file left over from last time is indistinguishable from a result.
 PRODUCED = ["verdict.json", "samples.json", "cadence.json"]
+# What the Mac writes beside them, from what the app wrote: the same verdict
+# in the form a person reads. Cleared with the rest, for the same reason.
+REPORT = "report.md"
+# The packages are built by SwiftPM through Xcode, and a package target takes
+# neither the project's ARCHS nor its ONLY_ACTIVE_ARCH. Left alone they go
+# looking for an x86_64 slice of a bridge that is built for arm64 alone, so
+# both are said again on the command line, where a package does hear them.
+ARCHITECTURE = ["ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]
 # The groups of measurements a run can be asked for one of, named as the app
 # names them. A whole run takes all of them and is what CI does.
 SECTIONS = ["cold", "reconciliation", "streaming"]
@@ -115,10 +129,11 @@ def build(udid: str) -> None:
         "xcodebuild", "build-for-testing",
         "-project", "ios/Amux.xcodeproj",
         "-scheme", "AmuxPerformance",
-        "-configuration", "Debug",
+        "-configuration", CONFIGURATION,
         "-destination", f"id={udid}",
         "-derivedDataPath", str(DERIVED_DATA),
         "-quiet",
+        *ARCHITECTURE,
     ], check=True, timeout=1800)
     subprocess.run(
         ["xcrun", "simctl", "install", udid, str(PRODUCTS / "Amux.app")],
@@ -136,6 +151,7 @@ def clear_previous(perf: Path, output: Path) -> None:
     for folder in [perf, output]:
         for name in PRODUCED:
             (folder / name).unlink(missing_ok=True)
+    (output / REPORT).unlink(missing_ok=True)
 
 
 def inputs(udid: str, row: dict, only: str | None) -> Path:
@@ -151,6 +167,7 @@ def inputs(udid: str, row: dict, only: str | None) -> Path:
         "measurements": DOCUMENT.read_text(),
         "baselines": json.loads(baseline.read_text()) if baseline.is_file() else {},
         "only": only,
+        "configuration": CONFIGURATION,
     }, indent=2))
     (perf / "cold-samples.jsonl").unlink(missing_ok=True)
     (perf / "cold-marks.jsonl").unlink(missing_ok=True)
@@ -229,14 +246,23 @@ def measure(udid: str) -> None:
         "xcodebuild", "test-without-building",
         "-project", "ios/Amux.xcodeproj",
         "-scheme", "AmuxPerformance",
-        "-configuration", "Debug",
+        "-configuration", CONFIGURATION,
         "-destination", f"id={udid}",
         "-derivedDataPath", str(DERIVED_DATA),
         "-only-testing:AmuxPerformanceTests",
+        # Coverage counts every call and a sanitizer rewrites every access.
+        # Either one would be measured as though it were the app.
+        "-enableCodeCoverage", "NO",
+        "-enableAddressSanitizer", "NO",
+        "-enableThreadSanitizer", "NO",
+        "-enableUndefinedBehaviorSanitizer", "NO",
+        *ARCHITECTURE,
     ], check=True, timeout=2400)
 
 
-def collect(perf: Path, row: dict, record_baseline: bool, output: Path) -> None:
+def collect(
+    perf: Path, row: dict, record_baseline: bool, output: Path, minutes: float = 0
+) -> None:
     """Copy this run's numbers out of the app and judge them.
 
     What the app wrote is the only thing that can be reported. A run whose
@@ -262,6 +288,15 @@ def collect(perf: Path, row: dict, record_baseline: bool, output: Path) -> None:
             + (" (proxy)" if result["proxy"] else "")
             + ("" if result["passed"] else f" — FAILED: {result['note']}"),
             flush=True)
+    print(
+        f"configuration: {verdict.get('configuration') or 'unknown'}"
+        + (", optimised" if verdict.get("optimised") else ", NOT optimised"),
+        flush=True)
+    print(
+        f"the run took {minutes:.1f} minutes: building the app, five cold "
+        "launches and the suite, without the Rust bridge built before it",
+        flush=True)
+    report(verdict, output, minutes)
     print(f"{output / 'verdict.json'}: {'passed' if verdict['passed'] else 'FAILED'}", flush=True)
     if not verdict["passed"]:
         raise SystemExit("the run is over budget")
@@ -270,6 +305,54 @@ def collect(perf: Path, row: dict, record_baseline: bool, output: Path) -> None:
         recorded = {measured(result): result["median"] for result in verdict["results"]}
         (BASELINES / f"{row['name']}.json").write_text(json.dumps(recorded, indent=2) + "\n")
         print(f"recorded {BASELINES}/{row['name']}.json", flush=True)
+
+
+def report(verdict: dict, output: Path, minutes: float) -> None:
+    """The same verdict in the form a person reads.
+
+    A number that stands for something it is not has to say so wherever it is
+    read, so the proxies are marked in this table as they are in the JSON
+    beside it, and what each one stands in for is written underneath. The
+    configuration is here for the same reason: these are the app's numbers
+    only because the app was built the way a shipped build is.
+    """
+    lines = [
+        "# Performance run",
+        "",
+        f"- Machine: `{verdict['machine']}`",
+        f"- Simulator: `{verdict['simulator']}`",
+        f"- Configuration: `{verdict.get('configuration') or 'unknown'}`"
+        + (", optimised" if verdict.get("optimised") else ", NOT optimised"),
+        f"- Wall time: {minutes:.1f} minutes (build, five cold launches and the "
+        "suite; the Rust bridge is built before this and is not in it)",
+        f"- Verdict: {'passed' if verdict['passed'] else 'FAILED'}",
+        "",
+        "| Measurement | Median | Worst | Budget | Baseline | Proxy | Verdict |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for result in verdict["results"]:
+        budget = "—" if result.get("budget") is None else f"{result['budget']:.0f}"
+        baseline = "—" if result.get("baseline") is None else f"{result['baseline']:.1f}"
+        lines.append(
+            f"| `{measured(result)}` | {result['median']:.1f} | {result['worst']:.1f} "
+            f"| {budget} | {baseline} | {'proxy' if result['proxy'] else 'measured'} "
+            f"| {'passed' if result['passed'] else 'FAILED: ' + str(result['note'])} |")
+    split_line = split(output / "cold-marks.jsonl")
+    lines += [
+        "",
+        f"Where a cold launch's time went: {split_line}.",
+        "",
+        "A row marked `proxy` is a number about this simulator standing in for "
+        "a number about a phone. The simulator reports 60 Hz and composites "
+        "through the Mac's display, so hitch time is display-link missed-frame "
+        "accounting rather than `XCTHitchMetric`, and the echo budget of 17 ms "
+        "is one simulator frame where a ProMotion phone's is 8.3 ms. "
+        "`docs/IOS_PERFORMANCE.md` holds the phone measurements nobody has "
+        "taken yet.",
+        "",
+    ]
+    (output / REPORT).write_text("\n".join(lines))
+    print(f"{output / REPORT}: written", flush=True)
 
 
 def describe() -> None:
@@ -335,6 +418,11 @@ def selection(arguments: list[str]) -> tuple[str | None, list[str]]:
 
 
 def main() -> None:
+    # The whole recipe's clock, so what is reported is what a person waits
+    # for: building the app, launching it five times and running the suite.
+    # The Rust bridge is not in it — `wt run ios-rust` builds that before this
+    # script is reached, and on a cold tree it is the longer half.
+    started = time.monotonic()
     only, arguments = selection(sys.argv[1:])
     record_baseline = "--baseline" in arguments
     unknown = [
@@ -371,7 +459,9 @@ def main() -> None:
     # The container is asked for again rather than remembered: installing the
     # test build can give the app a new one, and copying out of the old one
     # would report the run before last.
-    collect(container(udid) / "Documents/perf", row, record_baseline, OUTPUT)
+    collect(
+        container(udid) / "Documents/perf", row, record_baseline, OUTPUT,
+        minutes=(time.monotonic() - started) / 60)
 
 
 if __name__ == "__main__":

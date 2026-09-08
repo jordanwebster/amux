@@ -33,6 +33,14 @@ overnight_cleanup.py
 .handoff
 .handoff/
 
+# A performance run's own numbers — verdict, samples, cadence and the report
+# written from them — land under target/ and are ignored with it: they belong
+# to one run, and tracking them would make every run a diff. The recorded
+# baselines under ios/Perf/baselines are the opposite case and are tracked on
+# purpose: an invisible baseline makes re-baselining the cheapest way to turn a
+# red suite green, and nobody ever sees the number get worse. Do not add a rule
+# that swallows them.
+
 # Xcode and SwiftPM per-user state beside the generated iOS project
 ios/**/.swiftpm/
 ios/**/xcuserdata/

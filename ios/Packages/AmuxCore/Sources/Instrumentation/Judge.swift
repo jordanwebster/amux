@@ -110,16 +110,40 @@ public struct MetricResult: Codable, Sendable, Equatable {
 public struct PerfVerdict: Codable, Sendable, Equatable {
     public let machine: String
     public let simulator: String
+    /// The build configuration these numbers came out of. An unoptimised
+    /// build measures the compiler as much as the app, so a verdict that did
+    /// not say which one it is could be read as a claim about the product
+    /// when it is not one.
+    public let configuration: String
+    /// Whether the code that took these numbers was compiled the way a
+    /// shipped build is. Reported by that code about itself rather than
+    /// copied from what the Mac asked for, so a run that named one
+    /// configuration and built another says so.
+    public let optimised: Bool
     public let results: [MetricResult]
     public let passed: Bool
 
-    public init(machine: String, simulator: String, results: [MetricResult], passed: Bool) {
+    public init(
+        machine: String, simulator: String, configuration: String = "",
+        optimised: Bool = optimisedBuild, results: [MetricResult], passed: Bool
+    ) {
         self.machine = machine
         self.simulator = simulator
+        self.configuration = configuration
+        self.optimised = optimised
         self.results = results
         self.passed = passed
     }
 }
+
+/// Whether this copy of the measuring code was optimised.
+public let optimisedBuild: Bool = {
+    #if DEBUG
+    return false
+    #else
+    return true
+    #endif
+}()
 
 public enum PerfError: Error, Sendable, Equatable {
     case unknownMachine(String)
@@ -139,7 +163,8 @@ public let requiredSamples = 5
 /// machine, a metric with too few samples, a baseline the machine is required
 /// to have recorded — is an error rather than a pass.
 public func judge(
-    samples: [MetricSample], budgets: BudgetTable, machine: String, simulator: String = ""
+    samples: [MetricSample], budgets: BudgetTable, machine: String, simulator: String = "",
+    configuration: String = ""
 ) throws(PerfError) -> PerfVerdict {
     guard let row = budgets.machine(machine) else { throw PerfError.unknownMachine(machine) }
 
@@ -195,6 +220,7 @@ public func judge(
     return PerfVerdict(
         machine: machine,
         simulator: simulator,
+        configuration: configuration,
         results: results,
         passed: results.allSatisfy(\.passed))
 }

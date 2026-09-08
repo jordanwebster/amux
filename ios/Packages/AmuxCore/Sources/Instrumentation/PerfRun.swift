@@ -62,16 +62,21 @@ public struct PerfInputs: Codable, Sendable, Equatable {
     public let baselines: [String: Double]
     /// The one group this run was asked for, or nothing for all of them.
     public let only: PerfSection?
+    /// The build configuration the Mac built before it launched anything.
+    /// The app cannot see the name, so it is told; whether that build was
+    /// actually optimised the app answers for itself in the verdict.
+    public let configuration: String
 
     public init(
         machine: String, simulator: String, measurements: String,
-        baselines: [String: Double], only: PerfSection? = nil
+        baselines: [String: Double], only: PerfSection? = nil, configuration: String = ""
     ) {
         self.machine = machine
         self.simulator = simulator
         self.measurements = measurements
         self.baselines = baselines
         self.only = only
+        self.configuration = configuration
     }
 
     /// Whether this run takes that group's measurements.
@@ -172,7 +177,8 @@ public struct PerfRun: Sendable {
         if let cadence { try encoder.encode(cadence).write(to: PerfFiles.cadence) }
         let verdict = try judge(
             samples: taken, budgets: inputs.budgets(),
-            machine: inputs.machine, simulator: inputs.simulator)
+            machine: inputs.machine, simulator: inputs.simulator,
+            configuration: inputs.configuration)
         try encoder.encode(verdict).write(to: PerfFiles.verdict)
         return verdict
     }

@@ -8,6 +8,17 @@ options:
   minimumXcodeGenVersion: "2.46.0"
   generateEmptyDirectories: true
 
+# Three configurations, not two. `Measured` is how the performance suite is
+# built: optimised the way a shipped build is, because an unoptimised Swift
+# build measures the compiler rather than the app, but with the driving door,
+# the fixtures and the workload generator still compiled in and `@testable`
+# still allowed, because the suite runs inside the app and reaches into it.
+# Nobody installs a `Measured` build; `Release` is still what ships.
+configs:
+  Debug: debug
+  Measured: release
+  Release: release
+
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -105,6 +116,18 @@ targets:
           # marker back out of the running app and checks that the release
           # binary does not carry it.
           OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a
+        Measured:
+          # The same tools as Debug, and for the same reason: the suite drives
+          # the app through the door and measures the workloads the harness
+          # generates, so a build without them cannot be measured at all. What
+          # it does not carry is DEBUG, so the app and the packages behind it
+          # are compiled the way a shipped build is.
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: AMUX_DEBUG_TOOLS
+          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a
+          # The suite is `@testable import Amux`: it builds the app's own
+          # screens and reads the app's own stores, which is what makes the
+          # numbers the app's rather than a UI test's.
+          ENABLE_TESTABILITY: YES
         Release:
           # Belt as well as the AMUX_DEBUG_TOOLS braces: the debug sources
           # are not compiled at all, so a door symbol or a fixture cannot
@@ -147,6 +170,12 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux"
         BUNDLE_LOADER: "$(TEST_HOST)"
         TARGETED_DEVICE_FAMILY: "1"
+      configs:
+        Measured:
+          # A test bundle gets testability for nothing in a debug
+          # configuration and not in a release one, and this suite is
+          # `@testable import Amux` in an optimised build.
+          ENABLE_TESTABILITY: YES
 
   AmuxUITests:
     type: bundle.ui-testing
@@ -186,8 +215,11 @@ schemes:
         Amux: all
         AmuxPerformanceTests: [test]
     run:
-      config: Debug
+      config: Measured
     test:
-      config: Debug
+      config: Measured
+      # Coverage instruments every call and a sanitizer rewrites every access;
+      # both would be measured as if they were the app.
+      gatherCoverageData: false
       targets:
         - AmuxPerformanceTests

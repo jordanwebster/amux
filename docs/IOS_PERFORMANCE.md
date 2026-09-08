@@ -32,6 +32,7 @@ recipe measures and which the physical-phone checklist holds.
 | Mac | MacBook Pro Mac14,6, Apple M2 Max, 32 GB, macOS 26.5.2, Xcode 26.6 (17F113); the perf recipe refuses an unknown machine |
 | Simulator | amux-golden: iPhone 17 Pro, iOS 26.5, 3× scale, en_US, 9:41 status bar, full battery; reports 60 Hz, so every frame-rate figure from it is a proxy |
 | CI runner | GitHub-hosted `macos-26` (Xcode 26.6 default, iOS 26.5 simulator runtime, iPhone 17 Pro device type), Xcode selected explicitly in the workflow |
+| Build | The `Measured` configuration: optimised the way a shipped build is, with the driving door, the fixtures and the workload generator still compiled in and testability on, and coverage and sanitizers off. Every verdict names the configuration and says whether the code that took the numbers was optimised |
 | Fleet workload | 40 cached agents over 3 hosts: 6 needing you, 4 finished, 3 unknown, 5 day-old, the rest running or idle; seed 1 |
 | Conversation workload | 1,000 rows: 55% prose with markdown, 20% tool rows, 10% folded reads, 5% command output over 200 lines, 5% edits, 5% rules and unknown rows; seed 1 |
 | Stream | 50 rows per second for 20 s appended to the conversation workload while the list auto-scrolls to the tail; the arriving rows carry identities that continue the transcript's, as a real feed's do |
@@ -89,6 +90,15 @@ Every measurement is taken five times with the app's state reset between
 samples, and the median is what a budget is applied to. One suite runs at a
 time: two measurements sharing a machine measure each other.
 
+What it costs to run, because a person deciding whether to start one should
+not have to find out by starting one: on the pinned Mac, about three and a half
+minutes once the app is built — five cold launches and a suite of about two and
+a half minutes — and about sixteen from a cold tree, where building the Rust
+bridge is the longer half and `wt run ios-rust` does it before this recipe is
+reached. Every run prints its own figure and `report.md` carries it. The
+recipe's own timeout is a hang guard and says nothing about how long a run
+takes.
+
 ## Where the two cold-start numbers come from
 
 The 400 ms was always a claim about a phone. It was checked on a simulator
@@ -124,6 +134,12 @@ work grew the way it has. The worst sample stays at 600 ms; the slowest of the
 five measured launches was 491 ms. The 15% tolerance against a recorded
 baseline is untouched, and it, rather than the budget, is what catches a
 regression: it fires at about 505 ms on today's numbers.
+
+Those parts were taken in Debug, before the suite was moved onto the optimised
+`Measured` configuration, and moving it changed nothing here: the same five
+launches read a median of 446 ms optimised against 447 ms unoptimised. Two
+thirds of a launch is the dynamic linker, and optimisation has no opinion about
+that.
 
 The 400 ms stays where it belongs, on the physical-phone checklist, and stays
 unmeasured until somebody runs the app on a phone.
