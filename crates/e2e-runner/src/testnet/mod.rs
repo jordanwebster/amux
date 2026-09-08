@@ -44,6 +44,8 @@ pub struct Topology {
     #[serde(skip)]
     scripts: HashMap<String, Script>,
     #[serde(skip)]
+    sdk_scripts: HashMap<String, amux::testnet::sdk::Script>,
+    #[serde(skip)]
     #[cfg(unix)]
     recordings: HashMap<String, codex_recording::Prepared>,
 }
@@ -54,6 +56,10 @@ pub struct DaemonDecl {
     pub name: String,
     pub user: String,
     pub repository_roots: Vec<PathBuf>,
+    /// Provider transport for every SDK session this host creates, including
+    /// requests that arrive later from a paired client.
+    #[serde(default)]
+    pub sdk_script: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +81,7 @@ pub struct AgentDecl {
 #[serde(deny_unknown_fields)]
 pub enum ScriptedProvider {
     Claude { script: PathBuf },
+    ClaudeSdk { model: String },
     Codex { recording: PathBuf },
 }
 
@@ -228,6 +235,8 @@ pub enum Reply {
         pin: Option<String>,
         qr: Option<String>,
         observed: Vec<ObservedInput>,
+        /// Raw stdin seen by the SDK transport, addressed by agent identity.
+        sdk_inputs: Vec<serde_json::Value>,
         connections: Option<u32>,
         /// One entry per host, as `"<host id>: <links>"`, sorted. Present for
         /// a `Connections` about a cloud user.
@@ -248,6 +257,7 @@ impl Reply {
             pin: None,
             qr: None,
             observed: Vec::new(),
+            sdk_inputs: Vec::new(),
             connections: None,
             links: Vec::new(),
             agents: Vec::new(),
@@ -290,6 +300,17 @@ impl Topology {
             for root in &mut daemon.repository_roots {
                 *root = resolve_directory(&base, root)?;
             }
+            if let Some(script) = &daemon.sdk_script {
+                let script = base.join(script);
+                topology.sdk_scripts.insert(
+                    daemon.name.clone(),
+                    serde_json::from_slice(
+                        &std::fs::read(&script)
+                            .with_context(|| format!("read SDK script {}", script.display()))?,
+                    )
+                    .context("parse SDK script")?,
+                );
+            }
         }
         for (a, b, via) in &topology.paired {
             ensure!(
@@ -322,6 +343,13 @@ impl Topology {
             );
             agent.working_dir = resolve_directory(&base, &agent.working_dir)?;
             match &mut agent.provider {
+                ScriptedProvider::ClaudeSdk { .. } => {
+                    ensure!(
+                        topology.sdk_scripts.contains_key(&agent.daemon),
+                        "SDK agent {} needs its host's sdk_script",
+                        agent.name
+                    );
+                }
                 ScriptedProvider::Claude { script } => {
                     *script = base.join(&*script);
                     let script: Script = serde_json::from_slice(
@@ -381,6 +409,7 @@ struct ScriptedAgent {
 
 enum AgentProvider {
     Claude(Provider),
+    ClaudeSdk,
     #[cfg(unix)]
     Codex(codex_recording::Recorded),
 }
@@ -389,6 +418,9 @@ impl AgentProvider {
     fn claude(&self) -> Result<&Provider> {
         match self {
             Self::Claude(provider) => Ok(provider),
+            Self::ClaudeSdk => {
+                bail!("SDK sessions accept stream-JSON inputs through their own layer")
+            }
             #[cfg(unix)]
             Self::Codex(_) => bail!("Codex recordings accept only recorded client interactions"),
         }
@@ -428,6 +460,9 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
         );
     }
     let net = builder.start().await;
+    for (name, script) in &topology.sdk_scripts {
+        net.daemon(name).script_sdk_sessions(script.clone()).await;
+    }
     let users = topology
         .users
         .iter()
@@ -458,6 +493,26 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
     for decl in &topology.agents {
         let daemon = net.daemon(&decl.daemon);
         let (agent, provider) = match &decl.provider {
+            ScriptedProvider::ClaudeSdk { model } => {
+                let agent = daemon
+                    .admin_client()
+                    .await
+                    .create_agent(amux::CreateAgentRequest {
+                        agent_id: Uuid::new_v4(),
+                        host_id: None,
+                        name: Some(decl.name.clone()),
+                        agent_type: amux::AgentType::Claude {
+                            driver: amux::ClaudeDriver::Sdk,
+                        },
+                        working_dir: decl.working_dir.clone(),
+                        terminal_size: None,
+                        args: vec!["--model".into(), model.clone()],
+                        parent: None,
+                        initial_prompt: None,
+                    })
+                    .await?;
+                (agent, AgentProvider::ClaudeSdk)
+            }
             ScriptedProvider::Claude { .. } => {
                 let (agent, provider) = daemon
                     .spawn_scripted_agent(
@@ -623,11 +678,38 @@ async fn apply(
             AgentProvider::Codex(recorded) => {
                 recorded.verify()?;
             }
-            AgentProvider::Claude(_) => bail!("agent has no Codex recording"),
+            AgentProvider::Claude(_) | AgentProvider::ClaudeSdk => {
+                bail!("agent has no Codex recording")
+            }
         },
         Control::AgentObserve { agent } => {
-            if let Reply::Ack { observed, .. } = &mut reply {
-                *observed = scripted(&agent)?.provider.claude()?.observed();
+            if let Reply::Ack {
+                observed,
+                sdk_inputs,
+                ..
+            } = &mut reply
+            {
+                if let Some(ScriptedAgent {
+                    provider: AgentProvider::Claude(provider),
+                    ..
+                }) = agents.get(&agent)
+                {
+                    *observed = provider.observed();
+                } else {
+                    let id = agents
+                        .get(&agent)
+                        .map(|agent| agent.agent.id)
+                        .or_else(|| agent.parse().ok())
+                        .context("SDK observation needs an agent name or UUID")?;
+                    let mut found = None;
+                    for name in names {
+                        if let Some(inputs) = daemon(name)?.observed_sdk_inputs(id).await {
+                            ensure!(found.is_none(), "SDK identity exists on more than one host");
+                            found = Some(inputs);
+                        }
+                    }
+                    *sdk_inputs = found.context("no scripted SDK session has this identity")?;
+                }
             }
         }
         Control::AgentSpawnChild { agent, child } => {
@@ -880,6 +962,8 @@ pub fn run(command: Command) -> Result<()> {
 mod agents_tests;
 #[cfg(all(test, unix))]
 mod codex_tests;
+#[cfg(test)]
+mod sdk_tests;
 
 #[cfg(test)]
 mod tests {

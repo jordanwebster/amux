@@ -51,7 +51,7 @@ Each daemon's `repository_roots` configures its host repository enumeration; an
 empty list exposes no enumerated repositories. Successfully created agent
 directories also appear as recent projects.
 
-Each agent names its daemon and either a Claude script or a Codex recording.
+Each agent names its daemon and a Claude PTY script, a Claude SDK model, or a Codex recording.
 All directory, script and recording paths resolve relative to the topology
 file; directories must
 exist. Invalid declarations fail before network startup. Empty lists are
@@ -90,12 +90,13 @@ not undo an operation that has already started.
 | `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, pointing at the test relay. |
 | `{"Latency":{"millis":100}}` | Delay each newly received TCP chunk entering the relay by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
 | `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. RPC tunnels are not additional links. |
+| `{"Inventory":{"daemon":"desktop"}}` | Return the daemon's agents with their UUID, kind and driver, plus the devices it trusts. |
 | `"Shutdown"` | Stop daemons and relay, remove temporary state, acknowledge and exit. SIGTERM also cleans up. |
 
 An acknowledgement always has the same shape; unused fields are null or empty:
 
 ```json
-{"Ack":{"pin":null,"qr":null,"observed":[],"connections":2}}
+{"Ack":{"pin":null,"qr":null,"observed":[],"sdk_inputs":[],"connections":2,"links":[],"agents":[],"devices":[]}}
 ```
 
 Replay the control protocol and its independent daemon observations with
@@ -204,6 +205,36 @@ Run `timeout 900 wt test -- testnet_agents -- --nocapture` to see the control
 requests, exact host observations and projected transcript from a production
 `amux_ui::Runtime` using that connection. The test also checks account isolation,
 child asks, invalid controls, exit and restart cleanup.
+
+## Scripted Claude SDK sessions
+
+`e2e-tests/topologies/claude-sessions.json` runs SDK and PTY agents on the same
+host. A daemon's optional `sdk_script` names a JSON file with the SDK
+`initialization` response and a `reply` string. An agent declared as
+`{"ClaudeSdk":{"model":"sonnet"}}` uses that host's script. Missing scripts
+are rejected before startup.
+
+The script replaces the provider transport with `claude::sdk::from_io`.
+Requests to create SDK agents, including requests from a paired client, still
+pass through normal directory validation, backend construction and daemon
+registration. Each session initializes independently, answers prompts with
+native assistant and result messages, and acknowledges model changes only
+for models listed in its initialization response. Other controls return a
+provider error. The script does not implement permission dialogs or effort
+changes. It is a testnet fixture, compiled out of production builds.
+
+`AgentObserve` accepts a seeded SDK agent's name or any scripted SDK agent's
+UUID, including one created after startup. Its `sdk_inputs` contains the raw
+stdin envelopes the provider received, including initialization, prompts and
+model controls. PTY inputs remain in `observed`. A UUID whose SDK transport
+never opened returns an error. Restart ends the scripted sessions and removes
+the daemon's script configuration; it does not launch a replacement provider.
+
+Run `timeout 900 wt test -- testnet_sdk -- --nocapture` to exercise paired
+creation over the relay, both SDK sessions, the PTY session, model control and
+its PTY refusal, and rejected creation without an inventory change. This
+tests the real host and shared client runtime; it does not prove the iPhone
+view or qualify an authenticated Claude service.
 
 ## Convert a report transcript
 

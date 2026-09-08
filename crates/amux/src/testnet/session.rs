@@ -25,6 +25,28 @@ use crate::{
 };
 
 impl Daemon {
+    /// Replace only the provider transport for SDK sessions created on this host.
+    /// Creation still uses the service's validation, backend and live registry.
+    pub async fn script_sdk_sessions(&self, script: super::sdk::Script) {
+        let parts = self.try_parts().await.expect("daemon is running");
+        parts.agent_host.state().write().await.deps.scripted_sdk =
+            Some(super::sdk::Provider::new(script));
+    }
+
+    /// Provider-side observations for an SDK agent created on this daemon.
+    pub async fn observed_sdk_inputs(&self, agent: Uuid) -> Option<Vec<serde_json::Value>> {
+        let parts = self.try_parts().await?;
+        parts
+            .agent_host
+            .state()
+            .read()
+            .await
+            .deps
+            .scripted_sdk
+            .as_ref()?
+            .observed(agent)
+    }
+
     /// Register a recorded Codex thread through the normal backend ingest and
     /// input paths. The caller keeps the recording transport alive.
     #[cfg(unix)]

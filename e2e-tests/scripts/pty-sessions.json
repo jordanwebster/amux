@@ -1,0 +1,5 @@
+{
+  "reactions": [
+    {"on": "AnyPrompt", "play": [{"Markdown": {"text": "The PTY session received your prompt."}}, "EndTurn"]}
+  ]
+}

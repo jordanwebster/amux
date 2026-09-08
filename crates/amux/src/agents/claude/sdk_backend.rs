@@ -146,6 +146,8 @@ pub(crate) struct ClaudeSdkBackend {
     input_done: Arc<Notify>,
     log: StructuredLogSource,
     injected: Option<Session>,
+    #[cfg(testnet)]
+    scripted: Option<crate::testnet::sdk::Provider>,
     resumed: bool,
     started: bool,
     ingest_abort: Option<AbortHandle>,
@@ -182,6 +184,8 @@ impl ClaudeSdkBackend {
             input_done: Arc::new(Notify::new()),
             log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
             injected: None,
+            #[cfg(testnet)]
+            scripted: None,
             resumed: false,
             started: false,
             ingest_abort: None,
@@ -242,6 +246,8 @@ impl ClaudeSdkBackend {
             input_done: Arc::new(Notify::new()),
             log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
             injected: Some(session),
+            #[cfg(testnet)]
+            scripted: None,
             resumed: false,
             started: false,
             ingest_abort: None,
@@ -366,6 +372,15 @@ impl ClaudeSdkBackend {
         Ok(options)
     }
 
+    #[cfg(testnet)]
+    pub(crate) fn with_scripted_provider(
+        mut self,
+        provider: Option<crate::testnet::sdk::Provider>,
+    ) -> Self {
+        self.scripted = provider;
+        self
+    }
+
     fn start_session_task(
         &mut self,
         event_tx: &mpsc::Sender<SessionEvent>,
@@ -383,8 +398,17 @@ impl ClaudeSdkBackend {
             ))
         } else {
             let options = self.query_options()?;
+            #[cfg(testnet)]
+            let scripted = self.scripted.clone();
             tokio::spawn(async move {
-                match claude::sdk::spawn(options).await {
+                #[cfg(testnet)]
+                let session = match scripted {
+                    Some(provider) => provider.open(agent_id, options).await,
+                    None => claude::sdk::spawn(options).await,
+                };
+                #[cfg(not(testnet))]
+                let session = claude::sdk::spawn(options).await;
+                match session {
                     Ok(session) => {
                         ingest_session(
                             agent_id, resumed, session, runtime, input_done, log, event_tx,

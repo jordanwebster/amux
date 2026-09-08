@@ -54,6 +54,7 @@ pub use installation::{
 };
 mod pairing;
 pub mod script;
+pub mod sdk;
 mod session;
 mod wire;
 

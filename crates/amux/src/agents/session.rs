@@ -272,6 +272,8 @@ pub(crate) fn mcp_launch_route_for_tests(host_id: Uuid) -> McpLaunchRoute {
 /// Host-owned resources shared by agent backends.
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
+    #[cfg(testnet)]
+    pub(crate) scripted_sdk: Option<crate::testnet::sdk::Provider>,
     pub(crate) data_dir: std::path::PathBuf,
     pub(crate) runtime_dir: std::path::PathBuf,
     pub(crate) claude_user_keymap_dir: std::path::PathBuf,
@@ -295,6 +297,8 @@ impl AgentDeps {
         // fresh machine, and canonicalizing a path requires it to exist.
         std::fs::create_dir_all(&data_dir)?;
         Ok(Self {
+            #[cfg(testnet)]
+            scripted_sdk: None,
             data_dir: std::fs::canonicalize(data_dir)?,
             runtime_dir,
             claude_user_keymap_dir,
@@ -434,10 +438,13 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
         )),
         AgentType::Claude {
             driver: ClaudeDriver::Sdk,
-        } => Ok(Box::new(
-            ClaudeSdkBackend::new(req, deps.mcp_launch_route.clone())
-                .with_artifact_root(deps.artifact_root(req.agent_id)),
-        )),
+        } => {
+            let backend = ClaudeSdkBackend::new(req, deps.mcp_launch_route.clone())
+                .with_artifact_root(deps.artifact_root(req.agent_id));
+            #[cfg(testnet)]
+            let backend = backend.with_scripted_provider(deps.scripted_sdk.clone());
+            Ok(Box::new(backend))
+        }
         #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexBackend::new(
             req,

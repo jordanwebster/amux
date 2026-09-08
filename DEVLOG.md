@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **Script Claude SDK sessions through the real host.**
+
+Testnet hosts can supply a stream-JSON provider for every SDK session they
+create. The provider uses the SDK's existing `from_io` seam; normal creation
+still validates the directory, constructs the backend and registers the agent.
+The runner can seed SDK and PTY agents together and report raw SDK stdin by
+the original agent UUID, including agents created later through the relay.
+Initialization fixtures use the SDK's own decoder and unsupported controls
+receive a provider error.
+
+The relay regression creates an SDK agent, opens it and a pre-existing SDK
+agent through their shared client layer, observes one prompt and a model
+change on each, and separately observes a PTY prompt. PTY refuses the model
+change with its named gate reason and receives no extra input. A refused
+creation leaves the inventory unchanged. The PTY test waits for both replay
+and the live tailer's readiness marker, since replay can finish before that
+marker reaches the daemon's log. This establishes the host seam; the phone's
+SDK projection and rendered journey still need wiring.
+
+Validation: `wt build`, `wt test -- testnet_` (20 tests), `wt test -- claude_sdk`
+(96 tests), and `wt lint` pass. Pairing waits for the host announcement through
+the same owner-inventory capability the phone uses.
+
 2026-09-08 — **Every control the app draws now answers to a thumb and says
 its name out loud.**
 

@@ -1,0 +1,14 @@
+{
+  "users": ["personal"],
+  "daemons": [{
+    "name": "laptop", "user": "personal", "repository_roots": ["../.."],
+    "sdk_script": "../scripts/sdk-sessions.json"
+  }],
+  "paired": [],
+  "agents": [
+    {"name": "existing-sdk", "daemon": "laptop", "working_dir": "../..",
+      "provider": {"ClaudeSdk": {"model": "sonnet"}}},
+    {"name": "existing-pty", "daemon": "laptop", "working_dir": "../..",
+      "provider": {"Claude": {"script": "../scripts/pty-sessions.json"}}}
+  ]
+}
