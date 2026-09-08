@@ -181,8 +181,7 @@ fn graduate(
 ) -> Result<PathBuf> {
     validate_fixture_name(name)?;
     let report_dir = resolve_report(reports_dir, requested);
-    report::read_header(&report_dir)
-        .with_context(|| format!("failed to read report {}", report_dir.display()))?;
+    read_report_header(&report_dir)?;
 
     let fixture_root = match into {
         Some(path) => path.to_path_buf(),
@@ -396,8 +395,7 @@ fn replay_report(
     print_frame: bool,
     print_styles: bool,
 ) -> Result<ReportCommandOutput> {
-    let header = report::read_header(report_dir)
-        .with_context(|| format!("failed to read report {}", report_dir.display()))?;
+    let header = read_report_header(report_dir)?;
     if let Some(reason) = replayed_elsewhere(&header) {
         set_verdict(report_dir, ReplayVerdict::Unchecked)
             .with_context(|| format!("failed to update report {}", report_dir.display()))?;
@@ -544,8 +542,7 @@ fn list_reports(reports_dir: &Path) -> Result<String> {
 
 fn show_report(reports_dir: &Path, requested: &Path) -> Result<String> {
     let report_dir = resolve_report(reports_dir, requested);
-    let header = report::read_header(&report_dir)
-        .with_context(|| format!("failed to read report {}", report_dir.display()))?;
+    let header = read_report_header(&report_dir)?;
     let mut output =
         serde_json::to_string_pretty(&header).context("failed to render report header")?;
     output.push('\n');
@@ -565,6 +562,18 @@ fn prune_reports(reports_dir: &Path) -> Result<String> {
         reports_dir.display()
     ));
     Ok(output)
+}
+
+/// Read a report's header, saying plainly when nothing is saved under that
+/// name: without this, a name that resolves to a directory nobody wrote comes
+/// back as a bare "No such file or directory" about report.json, which reads
+/// like a damaged report rather than a missing one.
+fn read_report_header(report_dir: &Path) -> Result<ReportHeader> {
+    if !report_dir.join("report.json").exists() {
+        bail!("no report at {}", report_dir.display());
+    }
+    report::read_header(report_dir)
+        .with_context(|| format!("failed to read report {}", report_dir.display()))
 }
 
 fn resolve_report(reports_dir: &Path, requested: &Path) -> PathBuf {

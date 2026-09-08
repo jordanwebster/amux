@@ -4,6 +4,26 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-08 — **Two failing tests: a missing report, and what a revocation reaches.**
+
+Asking the CLI to replay a report that is not saved said "failed to read report
+<path>: failed to read report header: No such file or directory", which reads
+like a damaged report rather than a missing one — and it changed under the work
+that let a report carry a picture, because a replay now reads `report.json`
+before it looks for a frame. Replay, show and graduate now go through one read
+that says `no report at <path>` when nothing is saved under that name, and the
+test that pins a bare report name to the profile it was asked under asserts
+that whole sentence against the selected profile's own reports directory.
+
+The other was an assertion that contradicted how revocation works. The testnet
+control test unpaired 'b' at 'a' and then expected 'b' to be holding only the
+machine it had just let in by code. Revocation is local: 'a' removes 'b' from
+its own trust store and closes the link, which leaves 'b' unable to call 'a'
+and still holding the pin it granted 'a' itself. The inventory it reads is the
+far side's own account of what it holds, so it names both peers, and the test
+now says that and why.
+
+
 2026-09-08 — **The reports journey: a screenshot, three rectangles, and what left the phone.**
 
 `wt run ios-journey -- reports` drives the whole of reporting a problem against a

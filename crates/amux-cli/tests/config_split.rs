@@ -235,7 +235,7 @@ mod saved_report_replay {
         assert!(!output.status.success());
         let personal = ProfilePaths::for_id(&fixture.installation.root, fixture.id).unwrap();
         let expected = format!(
-            "report {} has no captured frame",
+            "no report at {}",
             personal.reports_dir.join("saved-report").display()
         );
         assert!(

@@ -1022,17 +1022,22 @@ mod tests {
 
             // What 'b' itself says it is holding, which is where a driver
             // reads the far side's own account of a pairing or a creation
-            // rather than the asking client's.
+            // rather than the asking client's. Both peers are there: 'a',
+            // because revocation is local — 'a' removed 'b' from its own
+            // trust store and closed the link, which leaves 'b' unable to
+            // call 'a' but still holding the pin it granted 'a' itself — and
+            // 'c', which 'b' has just let in by code.
             let held = control.ack(json!({"Inventory":{"daemon":"b"}})).await;
-            assert_eq!(
-                held["devices"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|device| device["host"].as_str().unwrap().to_owned())
-                    .collect::<Vec<_>>(),
-                [c.host_id().to_string()]
-            );
+            let mut holding = held["devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|device| device["host"].as_str().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            holding.sort();
+            let mut both = vec![a.host_id().to_string(), c.host_id().to_string()];
+            both.sort();
+            assert_eq!(holding, both);
             assert!(held["agents"].as_array().unwrap().is_empty());
 
             let qr = control.ack(json!({"StartQrPairing":{"daemon":"a"}})).await["qr"]
