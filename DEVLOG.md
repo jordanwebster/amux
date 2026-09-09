@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **The cloud document's access read now matches the query the app sends.**
+
+`docs/CLOUD.md` printed a GraphQL query asking for a purchase's `status` and
+`trialEndsAt` and a grant's `reason`. The app asks for none of the three: it
+reads `pro`, `until`, and a grant narrowed to `provider`, `willRenew` and
+`entitledUntil` behind `__typename`. The printed query is now that query.
+
+The paragraph explaining `status` also described a screen by way of a
+subscription status the app never reads — access being switched on. That state
+is real and the app now draws it, but it reaches it a different way: the phone
+knows it has just handed over a purchase the account service accepted, so a
+read still answering `pro: false` is what puts the paywall on *Your
+subscription is still switching on* with a Retry that re-runs the read. The
+section says that instead, and the renewal-date paragraph now names the one
+place the app derives a date — the warning before deleting an account — rather
+than implying a screen that shows a billing report.
+
+Validation: `wt run ios-lint` green; every claim in the section checked
+against `AmuxCloud.entitlement`, `Access.entitlement`, `PaywallStore.entitled`
+and the delete-account copy.
+
+---
+
 2026-09-09 — **A purchase amux.sh has taken but not yet turned into access says so.**
 
 The paywall had a dead end. When the account service accepted a signed

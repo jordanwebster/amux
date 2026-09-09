@@ -57,33 +57,43 @@ One query, against `/api/graphql`:
     until
     grant {
       __typename
-      ... on Purchased { status provider willRenew entitledUntil trialEndsAt }
-      ... on Granted { reason }
+      ... on Purchased { provider willRenew entitledUntil }
     }
 } } }
 ```
 
 `pro` is the only thing anything gates on, and it is never null. `until` is
-when access runs out, absent when it does not run out at all. `grant` explains
-where the access came from, and an account can be entitled without ever having
-bought anything — a gift, a beta, an employee, a referral, an administrator's
-grant — so the explanation is a choice between two shapes rather than a
-subscription that might be missing.
+when access runs out — or when it ran out, for an account whose subscription
+has lapsed — and is absent when access does not run out at all. `grant`
+explains where the access came from, and an account can be entitled without
+ever having bought anything — a gift, a beta, an employee, a referral, an
+administrator's grant — so the explanation is a choice between two shapes
+rather than a subscription that might be missing.
 
-`Purchased` says what was bought and how it is going: `provider` is the one
-thing a screen shows about the source (`REVENUE_CAT` is the App Store,
-anything else is the web), `entitledUntil` is when the paid period runs out,
-and `willRenew` is whether it will be charged again. That date is not always
-`until`: somebody who is both paying and holding an open-ended grant keeps
-access after the billing stops, and the two fields answer the two questions
-separately. `status` distinguishes a subscription that has ended from one that
-has not, which matters in the seconds between a purchase landing and the
-access behind it being projected — the paid period is live and `pro` is not
-yet true, and the screen for that says Pro is switching on rather than
-offering a subscription the person already has.
+Only the purchase's own fields are asked for. `provider` is the one thing a
+screen shows about the source (`REVENUE_CAT` is the App Store, anything else
+is the web), `entitledUntil` is when the paid period runs out, and `willRenew`
+is whether it will be charged again. The one date the app derives from them is
+the renewal date it warns about before deleting an account: a subscription
+with `willRenew` false renews on no date at all, because the person has paid
+for the period they are in and nothing more is coming, and one that does renew
+does so on `entitledUntil` where there is one and on `until` otherwise —
+somebody who is both paying and holding an open-ended grant keeps access after
+the billing stops, so the two dates answer two different questions.
 
-`Granted` says why access was given. A client has to handle it: it is a state
-with a name, not a subscription that failed to arrive.
+`__typename` is what says which member of the union arrived, so a member added
+later — or a grant, whose own fields this app asks for none of — reads as a
+grant rather than as a purchase with everything missing. A grant is a state
+with a name and the app handles it as one; it just has nothing different to
+show for one reason over another.
+
+A purchase can be live before the access behind it is. In the seconds between
+amux.sh taking a signed transaction and projecting the access, this read still
+answers `pro: false`, and the app does not go looking for a subscription
+status to explain that: it knows it has just handed over a purchase amux.sh
+accepted, so the paywall says *Your subscription is still switching on* and
+keeps a Retry button that re-runs this read. Nothing is offered for sale a
+second time, because the read, not the store, is what turns the screen over.
 
 **This read and the relay's own gate answer from the same place.** `pro` and
 `GET /api/connect` are one call into the account service, so the phone and the
