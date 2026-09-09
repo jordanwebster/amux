@@ -6,7 +6,7 @@ import XCTest
 /// reached without a browser.
 private struct OneAnswer: CloudService, @unchecked Sendable {
     var answer: Result<SignedInAccount, CloudError>
-    var entitlement: Entitlement = .active(source: .web, renews: nil)
+    var entitlement: Entitlement = .active(grant: .purchased(.web), renews: nil)
 
     func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
         switch answer {
@@ -55,7 +55,7 @@ final class SignInStoreTests: XCTestCase {
     func testASignInThatSucceedsAddsTheAccountWithWhatItIsEntitledTo() async {
         let store = SignInStore()
         let registry = AccountRegistry()
-        let cloud = OneAnswer(answer: .success(ada), entitlement: .active(source: .web, renews: nil))
+        let cloud = OneAnswer(answer: .success(ada), entitlement: .active(grant: .purchased(.web), renews: nil))
 
         let account = await store.signIn(with: cloud, presenting: Silent(), into: registry)
 

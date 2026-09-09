@@ -133,6 +133,28 @@ What the app does with each answer:
 | `502` | Unconfirmed and refused, in the cloud's own words: it could not reach the billing provider, so nothing was recorded. |
 | no answer at all | Unconfirmed and unreachable: paid for, kept, and tried again. |
 
+## Which read answers which question
+
+The app asks two questions and never mixes them up.
+
+*May this account act?* is `pro`, and only `pro`. Not the `tier` claim in the
+access token, which is a copy of the same answer that goes stale between token
+issues; not the presence of a billing record, which many entitled accounts do
+not have; and not a date compared against the phone's clock. When access ends
+is the account service's answer, not a sum this phone does.
+
+*Why does it have it, and where would somebody change it?* is `grant`, and
+only `grant`. It is what the paywall and the Settings row read to name the
+store a subscription was bought in and offer to manage it. An account whose
+access was given is a case those screens handle in words of its own: they name
+no store, and they do not offer to manage a subscription that does not exist.
+
+The app got this wrong before, and it is worth saying how, because the shape
+of the read is what prevents it. It used to ask about the subscription record
+and treat its absence as the absence of access — so an account entitled by a
+gift, as every complimentary, employee and beta account is, was shown a
+paywall while the relay was already letting it in.
+
 ## The `payment_required` rule
 
 `403` with `{"error":"payment_required"}` means the account has nothing bought.
@@ -153,9 +175,9 @@ of it is visible in any copy of the app anyway:
   `ios/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift`. Every other URL
   the app offers — support, the account page — is derived from that base, so a
   build pointed elsewhere cannot offer the production one's pages.
-- The subscription's own name as the cloud reports it. There is no entitlement
-  identifier in this app: what an account may do is the shape of the
-  `subscription` answer above, not a string matched against a constant.
+- No entitlement identifier at all. What an account may do is `pro` in the
+  access read above, and nothing in the app is matched against a constant to
+  decide it.
 
 **In the amuxcloud repository, encrypted** (that service is a separate .NET
 repository; it is what issues connect tokens and what verifies purchases):

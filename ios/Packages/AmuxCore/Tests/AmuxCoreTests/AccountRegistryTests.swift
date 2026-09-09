@@ -43,7 +43,7 @@ final class AccountRegistryTests: XCTestCase {
         registry.add(ada)
         registry.add(bo)
         registry.select(bo.id)
-        XCTAssertNil(registry.accept(Entitlement.active(source: .web, renews: nil), for: ada.id))
+        XCTAssertNil(registry.accept(Entitlement.active(grant: .purchased(.web), renews: nil), for: ada.id))
         XCTAssertEqual(registry.accept(Entitlement.none, for: bo.id), Entitlement.none)
         XCTAssertEqual(registry.dropped, 1)
     }
@@ -64,7 +64,7 @@ final class AccountRegistryTests: XCTestCase {
 
     func testASignedOutAccountStaysListedAndItsStoresGoAway() {
         let registry = AccountRegistry()
-        registry.add(ada, entitlement: .active(source: .appStore, renews: nil))
+        registry.add(ada, entitlement: .active(grant: .purchased(.appStore), renews: nil))
         registry.signOut(ada.id)
         XCTAssertEqual(registry.accounts.map(\.id), [ada.id])
         XCTAssertFalse(registry.accounts[0].signedIn)

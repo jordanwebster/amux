@@ -129,10 +129,17 @@ public struct Fixture: Identifiable, Sendable {
     /// The account every state assumes unless it is about not having one.
     public static let subscribed = AccountEntry(
         account: ScriptedCloudState.ada,
-        entitlement: .active(source: .web, renews: nil))
+        entitlement: .active(grant: .purchased(.web), renews: nil))
 
     /// Signed in, nothing bought.
     public static let unsubscribed = AccountEntry(account: ScriptedCloudState.ada)
+
+    /// Signed in and entitled, having bought nothing: the access was given.
+    /// Every screen that reads an entitlement has something different to say
+    /// about this account, and none of it may name a store.
+    public static let given = [AccountEntry(
+        account: ScriptedCloudState.ada,
+        entitlement: .active(grant: .granted, renews: nil), hosts: 3)]
 
     /// A phone with more than one account on it: the person's own, the work
     /// one they are also in, and one they signed out of and kept.
@@ -144,11 +151,11 @@ public struct Fixture: Identifiable, Sendable {
     public static let several = [
         AccountEntry(
             account: ScriptedCloudState.ada,
-            entitlement: .active(source: .web, renews: nil), hosts: 3),
+            entitlement: .active(grant: .purchased(.web), renews: nil), hosts: 3),
         AccountEntry(
             account: SignedInAccount(
                 id: AccountId("acme"), email: "ada@acme.example", displayName: "Acme"),
-            entitlement: .active(source: .appStore, renews: nil)),
+            entitlement: .active(grant: .purchased(.appStore), renews: nil)),
         AccountEntry(
             account: SignedInAccount(
                 id: AccountId("side"), email: "side@example.com", displayName: "Side project"),

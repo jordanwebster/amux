@@ -140,7 +140,10 @@ public final class PaywallStore {
         /// the button, or by the next launch on its own.
         case unconfirmed(Unconfirmed)
         case failed(String)
-        case bought(EntitlementSource)
+        /// Entitled: bought here or on the web, or given. What the screen says
+        /// differs, so the phase carries which it was rather than assuming a
+        /// purchase.
+        case entitled(Grant)
     }
 
     /// Why a purchase that went through is not confirmed. The two read
@@ -202,11 +205,11 @@ public final class PaywallStore {
         return false
     }
 
-    /// Where this device's entitlement came from, for the one line that says
-    /// so. Nothing when there is none to describe.
-    public var source: EntitlementSource? {
+    /// Why this account has what it has, for the one line that says so.
+    /// Nothing when there is nothing to describe.
+    public var grant: Grant? {
         switch entitlement {
-        case .active(let source, _), .lapsed(let source, _): source
+        case .active(let grant, _), .lapsed(let grant, _): grant
         case .none: nil
         }
     }
@@ -347,8 +350,8 @@ public final class PaywallStore {
     /// actually lives, and the store only knows about the ones bought on it.
     public func entitled(_ entitlement: Entitlement) {
         self.entitlement = entitlement
-        if case .active(let source, _) = entitlement, phase != .buying {
-            phase = .bought(source)
+        if case .active(let grant, _) = entitlement, phase != .buying {
+            phase = .entitled(grant)
         }
     }
 
@@ -381,14 +384,37 @@ extension EntitlementSource {
     }
 }
 
+extension Grant {
+    /// The two or three words a row has room for. A purchase names the place
+    /// it was bought, because that is where somebody would go to change it; a
+    /// grant names no place, because there is not one.
+    public var named: String {
+        switch self {
+        case .purchased(let source): source.named
+        case .granted: "Included"
+        }
+    }
+}
+
 extension Entitlement {
     /// The one line a settings row shows: what this account has and where it
-    /// came from. *Active · App Store*, *Ended · amux.sh*, *None*.
+    /// came from. *Active · App Store*, *Ended · amux.sh*, *Active ·
+    /// Included*, *None*.
+    /// What a row showing this calls it. Access that was given is not a
+    /// subscription: a row headed *Subscription* would name something the
+    /// person could go looking for and never find.
+    public var noun: String {
+        switch self {
+        case .active(.granted, _), .lapsed(.granted, _): "Pro"
+        case .active, .lapsed, .none: "Subscription"
+        }
+    }
+
     public var summary: String {
         switch self {
         case .none: "None"
-        case .active(let source, _): "Active · \(source.named)"
-        case .lapsed(let source, _): "Ended · \(source.named)"
+        case .active(let grant, _): "Active · \(grant.named)"
+        case .lapsed(let grant, _): "Ended · \(grant.named)"
         }
     }
 }

@@ -273,11 +273,11 @@ final class PaywallStoreTests: XCTestCase {
 
         // The CLI bought it; the account service is what says so. Nothing on
         // this phone was purchased and there is nothing to restore.
-        model.entitled(.active(source: .web, renews: renews))
+        model.entitled(.active(grant: .purchased(.web), renews: renews))
 
         XCTAssertTrue(model.entitled)
-        XCTAssertEqual(model.source, .web)
-        XCTAssertEqual(model.phase, .bought(.web))
+        XCTAssertEqual(model.grant, .purchased(.web))
+        XCTAssertEqual(model.phase, .entitled(.purchased(.web)))
         // The paywall refuses to sell a second subscription for the same thing.
         let outcome = await model.buy(OneStore())
         XCTAssertNil(outcome)
@@ -285,11 +285,38 @@ final class PaywallStoreTests: XCTestCase {
 
     func testTheSourceIsSaidWhereverAnEntitlementIsShown() {
         XCTAssertEqual(
-            Entitlement.active(source: .appStore, renews: nil).summary, "Active · App Store")
-        XCTAssertEqual(Entitlement.active(source: .web, renews: nil).summary, "Active · amux.sh")
+            Entitlement.active(grant: .purchased(.appStore), renews: nil).summary,
+            "Active · App Store")
         XCTAssertEqual(
-            Entitlement.lapsed(source: .web, endedAt: Date()).summary, "Ended · amux.sh")
+            Entitlement.active(grant: .purchased(.web), renews: nil).summary, "Active · amux.sh")
+        XCTAssertEqual(
+            Entitlement.lapsed(grant: .purchased(.web), endedAt: Date()).summary, "Ended · amux.sh")
         XCTAssertEqual(Entitlement.none.summary, "None")
+    }
+
+    /// Access nobody paid for names no store and is not called a subscription:
+    /// a row headed *Subscription · amux.sh* would send somebody looking for a
+    /// billing page that does not exist for them.
+    func testAccessThatWasGivenNamesNoStore() {
+        let given = Entitlement.active(grant: .granted, renews: nil)
+        XCTAssertEqual(given.summary, "Active · Included")
+        XCTAssertEqual(given.noun, "Pro")
+        XCTAssertEqual(
+            Entitlement.active(grant: .purchased(.web), renews: nil).noun, "Subscription")
+        XCTAssertEqual(Entitlement.none.noun, "Subscription")
+    }
+
+    /// The paywall does not offer to sell to somebody who was given it, and
+    /// says where it came from without inventing a store.
+    func testAGivenEntitlementIsNotSoldASubscription() async {
+        let model = await loaded()
+        model.entitled(.active(grant: .granted, renews: nil))
+
+        XCTAssertTrue(model.entitled)
+        XCTAssertEqual(model.grant, .granted)
+        XCTAssertEqual(model.phase, .entitled(.granted))
+        let outcome = await model.buy(OneStore())
+        XCTAssertNil(outcome)
     }
 
     func testAStoreWithNothingToSellSaysSoRatherThanDrawingAnEmptyList() async {

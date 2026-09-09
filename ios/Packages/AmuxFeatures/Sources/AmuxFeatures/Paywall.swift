@@ -77,7 +77,7 @@ public struct Paywall: View {
         case .confirming: "confirming"
         case .unconfirmed(let why): "unconfirmed \(why.named)"
         case .failed: "failed"
-        case .bought(let source): "subscribed on \(source.named)"
+        case .entitled(let grant): "entitled by \(grant.named)"
         }
     }
 
@@ -187,39 +187,49 @@ public struct Paywall: View {
             .identified("paywall.terms")
     }
 
-    /// Somebody who already pays. The screen says so and where it came from,
-    /// rather than offering to sell a second subscription for the same thing.
+    /// Somebody who already has it. The screen says so and where it came
+    /// from, rather than offering to sell a second subscription for the same
+    /// thing.
     @ViewBuilder
     private var subscribed: some View {
-        if let source = model.source {
+        if let grant = model.grant {
             VStack(alignment: .leading, spacing: 4) {
-                Text(Self.subscribed(source))
+                Text(Self.subscribed(grant))
                     .designFont(.bodyEmphasis, design)
                     .foregroundStyle(design.ink.color)
-                Explain(honoured(source))
+                Explain(Self.honoured(grant))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 14)
             .accessibilityElement(children: .combine)
-            .identified("paywall.subscribed", value: source.named)
+            .identified("paywall.subscribed", value: grant.named)
         }
     }
 
     /// Where the subscription was bought, in the preposition that place
-    /// takes: one is a store you are in, the other a site you are on.
-    static func subscribed(_ source: EntitlementSource) -> String {
-        switch source {
-        case .appStore: "Subscribed in the App Store"
-        case .web: "Subscribed on amux.sh"
+    /// takes: one is a store you are in, the other a site you are on. Access
+    /// that was given was bought nowhere, so it names no place and does not
+    /// call itself a subscription.
+    static func subscribed(_ grant: Grant) -> String {
+        switch grant {
+        case .purchased(.appStore): "Subscribed in the App Store"
+        case .purchased(.web): "Subscribed on amux.sh"
+        case .granted: "Pro is on for this account"
         }
     }
 
     /// A subscription bought anywhere counts everywhere, and where it is
-    /// managed is where it was bought.
-    private func honoured(_ source: EntitlementSource) -> String {
-        switch source {
-        case .appStore: "This phone is reaching your hosts. Manage it in the App Store."
-        case .web: "This phone is reaching your hosts. Manage it on amux.sh."
+    /// managed is where it was bought. Access that was given is managed
+    /// nowhere, and saying otherwise would send somebody looking for a
+    /// subscription that does not exist.
+    static func honoured(_ grant: Grant) -> String {
+        switch grant {
+        case .purchased(.appStore):
+            "This phone is reaching your hosts. Manage it in the App Store."
+        case .purchased(.web):
+            "This phone is reaching your hosts. Manage it on amux.sh."
+        case .granted:
+            "This phone is reaching your hosts. It was given rather than bought, so there is nothing to pay for or cancel."
         }
     }
 

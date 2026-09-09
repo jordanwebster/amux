@@ -83,7 +83,7 @@ final class DoorTests: XCTestCase {
             return XCTFail("that was not a cloud request")
         }
         XCTAssertEqual(script.state.signIn, .refused("no such account"))
-        XCTAssertEqual(script.state.entitlement, .active(source: .web, renews: nil))
+        XCTAssertEqual(script.state.entitlement, .active(grant: .purchased(.web), renews: nil))
         XCTAssertEqual(script.state.token, "scripted-connect-token")
 
         // An account with nothing bought is refused a relay credential, which

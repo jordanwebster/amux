@@ -396,7 +396,7 @@ final class DoorHost {
                         id: AccountId(credential.user),
                         email: "\(credential.user)@example.com",
                         displayName: credential.user),
-                    entitlement: .active(source: .appStore, renews: nil))
+                    entitlement: .active(grant: .purchased(.appStore), renews: nil))
             }
             // The account this connection is for is the account on screen:
             // a driver that connected as somebody else and left the screen on

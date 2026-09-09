@@ -196,18 +196,23 @@ public actor AmuxCloudService: CloudService {
 
     /// What this account is allowed to do, and where that came from.
     ///
-    /// Read from the subscription itself rather than from the tier claim in the
-    /// access token: the claim says yes or no, and the screen has to say which
-    /// store the subscription was bought in and when it renews or ended.
+    /// One read, and `pro` is the whole gate. Not the tier claim in the access
+    /// token, which is a copy of this answer that goes stale between token
+    /// issues, and above all not the presence of a billing record: an account
+    /// can be entitled without ever having bought anything, and an app that
+    /// looked for a purchase would tell such a person to subscribe while the
+    /// relay was already letting them in. The grant beside it is only ever the
+    /// explanation of the access, never the test for it.
     public func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement {
-        let query = #"{"query":"{ me { subscription { status provider willRenew entitledUntil } } }"}"#
+        let query = "{ me { access { pro until grant { __typename "
+            + "... on Purchased { provider willRenew entitledUntil } } } } }"
         var request = URLRequest(url: endpoint.graphQL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data(query.utf8)
+        request.httpBody = try? JSONEncoder().encode(["query": query])
         let answer: GraphQLAnswer<Me> = try await ask(request, as: GraphQLAnswer<Me>.self, for: id)
-        guard let subscription = answer.data?.me?.subscription else { return .none }
-        return subscription.entitlement(now())
+        guard let access = answer.data?.me?.access else { return .none }
+        return access.entitlement
     }
 
     /// A relay credential, minted for this account and good for the hour.
@@ -548,29 +553,66 @@ private struct Me: Decodable {
     let me: Account?
 
     struct Account: Decodable {
-        let subscription: Subscription?
+        let access: Access?
     }
 
-    struct Subscription: Decodable {
-        let status: String
-        let provider: String
-        let willRenew: Bool
-        let entitledUntil: Date
+    /// What the account service says this account may do.
+    ///
+    /// `pro` is a plain yes or no and nothing here second-guesses it. The app
+    /// used to decide for itself by comparing a subscription's end date with
+    /// the clock, which is how an account the relay would let in ended up
+    /// being shown a paywall; when access ends is the account service's
+    /// answer, not a sum this phone does.
+    struct Access: Decodable {
+        let pro: Bool
+        /// When access ends, or ended. Null when nothing ever ends.
+        let until: Date?
+        /// Why the account has it. Null when nothing was ever bought or given.
+        let grant: Given?
 
-        /// One subscription read as what the app shows.
-        ///
-        /// A cancelled subscription whose period has not run out is still
-        /// active — the person paid for the month they are in — and it renews
-        /// on no date, which is exactly what `renews: nil` says. The date the
-        /// entitlement runs out is what makes it lapsed, not the word the
-        /// billing system uses for it: a subscription can be `active` at the
-        /// provider and past its paid-for period here after a failed charge.
-        func entitlement(_ now: Date) -> Entitlement {
-            let bought = provider == "REVENUE_CAT" ? EntitlementSource.appStore : .web
-            guard entitledUntil > now else {
-                return .lapsed(source: bought, endedAt: entitledUntil)
-            }
-            return .active(source: bought, renews: willRenew ? entitledUntil : nil)
+        var entitlement: Entitlement {
+            let given = grant?.grant
+            // Access with no explanation beside it is still access. Demanding
+            // one before believing `pro` would be gating on the explanation,
+            // which is the whole mistake this read replaced.
+            if pro { return .active(grant: given ?? .granted, renews: renews) }
+            // Nothing to say about a lapse nobody can date, so it reads as
+            // having nothing rather than as having ended on no day.
+            guard let given, let until else { return .none }
+            return .lapsed(grant: given, endedAt: until)
+        }
+
+        /// When this is charged again, where anything is. A grant renews on no
+        /// date because nothing is being charged, and a subscription that has
+        /// been cancelled but not yet run out renews on none either — the
+        /// person paid for the month they are in.
+        private var renews: Date? {
+            guard let given = grant, given.willRenew == true else { return nil }
+            return given.entitledUntil ?? until
+        }
+    }
+
+    /// One member of the grant union.
+    ///
+    /// Only the purchase's fields are asked for: what a grant says about
+    /// itself is a reason — complimentary, employee, beta — and this app has
+    /// nothing different to show for each of them. The type name is what says
+    /// which member arrived, so a member added later reads as a grant rather
+    /// than as a purchase with everything missing.
+    struct Given: Decodable {
+        let typeName: String
+        let provider: String?
+        let willRenew: Bool?
+        let entitledUntil: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case typeName = "__typename"
+            case provider, willRenew, entitledUntil
+        }
+
+        var grant: Grant {
+            guard typeName == "Purchased", let provider else { return .granted }
+            return .purchased(provider == "REVENUE_CAT" ? .appStore : .web)
         }
     }
 }

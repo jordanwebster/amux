@@ -7,7 +7,7 @@ final class ScriptedCloudTests: XCTestCase {
 
     func testItAnswersWhatTheStateSaysAndRecordsWhatItWasAsked() async throws {
         let cloud = ScriptedCloudService(state: ScriptedCloudState(
-            entitlement: .active(source: .appStore, renews: Scenario.now),
+            entitlement: .active(grant: .purchased(.appStore), renews: Scenario.now),
             token: "connect-me",
             deletion: .deleted,
             upload: .accepted(id: "report-7")))
@@ -15,11 +15,11 @@ final class ScriptedCloudTests: XCTestCase {
         let account = try await cloud.signIn(presenting: ScriptedWebAuth())
         XCTAssertEqual(account.email, "ada@example.com")
         let entitlement = try await cloud.entitlement(ada)
-        XCTAssertEqual(entitlement, .active(source: .appStore, renews: Scenario.now))
+        XCTAssertEqual(entitlement, .active(grant: .purchased(.appStore), renews: Scenario.now))
         let token = try await cloud.connectToken(ada)
         XCTAssertEqual(token.bearer, "connect-me")
         let facts = try await cloud.account(ada)
-        XCTAssertEqual(facts.entitlement, .active(source: .appStore, renews: Scenario.now))
+        XCTAssertEqual(facts.entitlement, .active(grant: .purchased(.appStore), renews: Scenario.now))
         let deletion = try await cloud.requestDeletion(ada, confirmedEmail: "ada@example.com")
         XCTAssertEqual(deletion, .deleted)
         let receipt = try await cloud.uploadReport(ada, bundle: ReportBundle(
@@ -80,9 +80,9 @@ final class ScriptedCloudTests: XCTestCase {
         let cloud = ScriptedCloudService(state: .unsubscribed)
         let before = try await cloud.entitlement(ada)
         XCTAssertEqual(before, .none)
-        cloud.scripted.entitlement = .active(source: .web, renews: nil)
+        cloud.scripted.entitlement = .active(grant: .purchased(.web), renews: nil)
         let after = try await cloud.entitlement(ada)
-        XCTAssertEqual(after, .active(source: .web, renews: nil))
+        XCTAssertEqual(after, .active(grant: .purchased(.web), renews: nil))
         cloud.reset()
         XCTAssertTrue(cloud.calls.isEmpty)
     }

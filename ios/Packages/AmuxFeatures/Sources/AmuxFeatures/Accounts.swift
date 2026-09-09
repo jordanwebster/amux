@@ -292,7 +292,10 @@ public struct YouScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: entry.name)
             VStack(spacing: 0) {
-                row("Subscription", value: entry.entitlement.summary, id: "subscription") {
+                row(
+                    entry.entitlement.noun, value: entry.entitlement.summary,
+                    id: "subscription"
+                ) {
                     actions(.subscription)
                 }
                 rule()

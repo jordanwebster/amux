@@ -16,8 +16,8 @@ final class AccountSwitchingTests: XCTestCase {
     private func phone() -> AccountRegistry {
         let registry = AccountRegistry()
         registry.restore([
-            AccountEntry(account: ada, entitlement: .active(source: .web, renews: nil), hosts: 3),
-            AccountEntry(account: acme, entitlement: .active(source: .appStore, renews: nil)),
+            AccountEntry(account: ada, entitlement: .active(grant: .purchased(.web), renews: nil), hosts: 3),
+            AccountEntry(account: acme, entitlement: .active(grant: .purchased(.appStore), renews: nil)),
         ])
         return registry
     }
@@ -73,7 +73,7 @@ final class AccountSwitchingTests: XCTestCase {
 
     func testAddingAnAccountFromEitherPlaceSelectsTheFirstOne() {
         let registry = AccountRegistry()
-        registry.add(ada, entitlement: .active(source: .web, renews: nil))
+        registry.add(ada, entitlement: .active(grant: .purchased(.web), renews: nil))
         registry.add(acme)
 
         XCTAssertEqual(registry.accounts.map(\.id), [ada.id, acme.id])

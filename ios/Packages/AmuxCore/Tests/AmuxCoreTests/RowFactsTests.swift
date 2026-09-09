@@ -57,10 +57,10 @@ final class RowFactsTests: XCTestCase {
         registry.add(ada)
         XCTAssertEqual(registry.gate, .unsubscribed)
 
-        registry.entitlement(.active(source: .web, renews: nil), for: ada.id)
+        registry.entitlement(.active(grant: .purchased(.web), renews: nil), for: ada.id)
         XCTAssertEqual(registry.gate, .ready)
 
-        registry.entitlement(.lapsed(source: .appStore, endedAt: now), for: ada.id)
+        registry.entitlement(.lapsed(grant: .purchased(.appStore), endedAt: now), for: ada.id)
         XCTAssertEqual(registry.gate, .unsubscribed)
 
         registry.signOut(ada.id)

@@ -19,7 +19,7 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
 
     public init(
         signIn: SignInOutcome = .succeeds(Self.ada),
-        entitlement: Entitlement = .active(source: .web, renews: nil),
+        entitlement: Entitlement = .active(grant: .purchased(.web), renews: nil),
         token: String? = "scripted-connect-token",
         deletion: DeletionOutcome = .deleted,
         purchase: PurchaseRecording = .accepted,
@@ -46,6 +46,15 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
     /// Signed in, nothing bought.
     public static var unsubscribed: ScriptedCloudState {
         ScriptedCloudState(entitlement: .none)
+    }
+
+    /// Signed in, entitled, and nothing was ever bought: the account was given
+    /// its access. It is a state the app got wrong for real people before the
+    /// cloud could say so — the relay let them in while the phone offered them
+    /// a paywall — so every screen that reads an entitlement can be driven
+    /// from here.
+    public static var granted: ScriptedCloudState {
+        ScriptedCloudState(entitlement: .active(grant: .granted, renews: nil))
     }
 
     public enum SignInOutcome: Codable, Sendable, Equatable {
@@ -264,7 +273,8 @@ public struct CloudScript: Codable, Sendable, Equatable {
     public var reason = "amux.sh could not sign this account in"
     /// `none`, `active` or `lapsed`.
     public var entitlement = "active"
-    /// Where the subscription was bought: `appStore` or `web`.
+    /// Where the access came from: `appStore`, `web`, or `granted` for an
+    /// account that was given it and never bought anything.
     public var source = "web"
     /// The relay credential to hand back. Nothing refuses to issue one, which
     /// is what an account with no subscription is answered with.
@@ -345,8 +355,14 @@ public struct CloudScript: Codable, Sendable, Equatable {
         }
     }
 
-    private var bought: EntitlementSource {
-        source == "appStore" ? .appStore : .web
+    /// How this account came by what it has. `granted` is access nobody paid
+    /// for, which names no store; anything else was bought in one.
+    private var bought: Grant {
+        switch source {
+        case "granted": .granted
+        case "appStore": .purchased(.appStore)
+        default: .purchased(.web)
+        }
     }
 
     private var entitled: Entitlement {
@@ -354,8 +370,8 @@ public struct CloudScript: Codable, Sendable, Equatable {
         case "none": .none
         // A subscription that ran out says when, because a screen that only
         // said "ended" would be telling somebody less than they knew.
-        case "lapsed": .lapsed(source: bought, endedAt: Scenario.now.addingTimeInterval(-86_400))
-        default: .active(source: bought, renews: nil)
+        case "lapsed": .lapsed(grant: bought, endedAt: Scenario.now.addingTimeInterval(-86_400))
+        default: .active(grant: bought, renews: nil)
         }
     }
 
@@ -379,6 +395,8 @@ public struct CloudScript: Codable, Sendable, Equatable {
         guard deletion == "blockedByRenewal", let url = URL(string: manageURL) else {
             return .deleted
         }
-        return .blockedByRenewal(source: bought, manageURL: url)
+        // A deletion is only ever blocked by money still moving, so the
+        // refusal names a store even when the scripted access was a gift.
+        return .blockedByRenewal(source: bought.purchase ?? .web, manageURL: url)
     }
 }

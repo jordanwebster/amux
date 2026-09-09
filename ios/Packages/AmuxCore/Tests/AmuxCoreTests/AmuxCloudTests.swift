@@ -282,53 +282,98 @@ final class AmuxCloudTests: XCTestCase {
         }
     }
 
-    func testEntitlementReadsTheSubscriptionsProviderAndItsRenewal() async throws {
+    func testEntitlementReadsTheGrantsProviderAndItsRenewal() async throws {
         let ends = Date(timeIntervalSince1970: 1_701_004_800)
         for (provider, source) in [("REVENUE_CAT", EntitlementSource.appStore),
                                    ("STRIPE", EntitlementSource.web)] {
             let answers = signedIn
             answers.plus("/api/graphql", status: 200, body: """
-                {"data":{"me":{"subscription":{"status":"ACTIVE","provider":"\(provider)",
-                 "willRenew":true,"entitledUntil":"2023-11-26T13:20:00Z"}}}}
+                {"data":{"me":{"access":{"pro":true,"until":"2023-11-26T13:20:00Z",
+                 "grant":{"__typename":"Purchased","provider":"\(provider)",
+                 "willRenew":true,"entitledUntil":"2023-11-26T13:20:00Z"}}}}}
                 """)
             let cloud = service(answers)
             let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
             let entitlement = try await cloud.entitlement(account.id)
-            XCTAssertEqual(entitlement, Entitlement.active(source: source, renews: ends))
+            XCTAssertEqual(entitlement, Entitlement.active(grant: .purchased(source), renews: ends))
         }
     }
 
     func testASubscriptionRidingOutItsPeriodIsActiveAndRenewsOnNoDate() async throws {
         let answers = signedIn
         answers.plus("/api/graphql", status: 200, body: """
-            {"data":{"me":{"subscription":{"status":"CANCELLED","provider":"STRIPE",
-             "willRenew":false,"entitledUntil":"2023-11-26T13:20:00Z"}}}}
+            {"data":{"me":{"access":{"pro":true,"until":"2023-11-26T13:20:00Z",
+             "grant":{"__typename":"Purchased","provider":"STRIPE",
+             "willRenew":false,"entitledUntil":"2023-11-26T13:20:00Z"}}}}}
             """)
         let cloud = service(answers)
         let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
         let entitlement = try await cloud.entitlement(account.id)
-        XCTAssertEqual(entitlement, Entitlement.active(source: .web, renews: nil))
+        XCTAssertEqual(entitlement, Entitlement.active(grant: .purchased(.web), renews: nil))
     }
 
-    func testAnEntitlementPastItsPeriodIsLapsedWhateverTheBillingSystemCallsIt() async throws {
+    /// An account that was given its access, which is how every complimentary,
+    /// employee and beta account is entitled. Nothing was ever bought, so the
+    /// old read — which asked about the billing record — answered null and the
+    /// phone offered a paywall to somebody the relay was already letting in.
+    func testAccessThatWasGivenRatherThanBoughtIsStillAccess() async throws {
         let answers = signedIn
-        // The provider still says active; the period this account paid for ran
-        // out yesterday. The date is what the screen has to say, not the word.
         answers.plus("/api/graphql", status: 200, body: """
-            {"data":{"me":{"subscription":{"status":"ACTIVE","provider":"REVENUE_CAT",
-             "willRenew":true,"entitledUntil":"2023-11-13T13:20:00Z"}}}}
+            {"data":{"me":{"access":{"pro":true,"until":null,
+             "grant":{"__typename":"Granted"}}}}}
+            """)
+        let cloud = service(answers)
+        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let entitlement = try await cloud.entitlement(account.id)
+        XCTAssertEqual(entitlement, Entitlement.active(grant: .granted, renews: nil))
+        // One question is asked, and it is not about billing.
+        let asked = answers.body("/api/graphql")
+        XCTAssertTrue(asked.contains("access"), "the phone must ask what the account may do")
+        XCTAssertFalse(
+            asked.contains("subscription"), "asking about a subscription is asking the wrong thing")
+    }
+
+    /// `pro` is the whole gate. An answer that says yes and explains nothing is
+    /// still yes: refusing it would be gating on the explanation, which is the
+    /// mistake the old read made in the other direction.
+    func testAccessWithNoGrantBesideItIsStillAccess() async throws {
+        let answers = signedIn
+        answers.plus("/api/graphql", status: 200, body: """
+            {"data":{"me":{"access":{"pro":true,"until":null,"grant":null}}}}
+            """)
+        let cloud = service(answers)
+        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let entitlement = try await cloud.entitlement(account.id)
+        XCTAssertEqual(entitlement, Entitlement.active(grant: .granted, renews: nil))
+    }
+
+    /// When access ended is the account service's answer, not a sum this phone
+    /// does: the billing record here still says the subscription is active and
+    /// renewing, and the phone reports what `pro` says regardless.
+    func testAnEntitlementIsLapsedWhenTheCloudSaysSoWhateverTheBillingRecordSays()
+        async throws
+    {
+        let answers = signedIn
+        answers.plus("/api/graphql", status: 200, body: """
+            {"data":{"me":{"access":{"pro":false,"until":"2023-11-13T13:20:00Z",
+             "grant":{"__typename":"Purchased","provider":"REVENUE_CAT",
+             "willRenew":true,"entitledUntil":"2023-11-13T13:20:00Z"}}}}}
             """)
         let cloud = service(answers)
         let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
         let entitlement = try await cloud.entitlement(account.id)
         XCTAssertEqual(
             entitlement,
-            Entitlement.lapsed(source: .appStore, endedAt: Date(timeIntervalSince1970: 1_699_881_600)))
+            Entitlement.lapsed(
+                grant: .purchased(.appStore),
+                endedAt: Date(timeIntervalSince1970: 1_699_881_600)))
     }
 
     func testAnAccountThatBoughtNothingIsEntitledToNothing() async throws {
         let answers = signedIn
-        answers.plus("/api/graphql", status: 200, body: #"{"data":{"me":{"subscription":null}}}"#)
+        answers.plus("/api/graphql", status: 200, body: """
+            {"data":{"me":{"access":{"pro":false,"until":null,"grant":null}}}}
+            """)
         let cloud = service(answers)
         let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
         let entitlement = try await cloud.entitlement(account.id)

@@ -78,10 +78,39 @@ public struct AccountFacts: Sendable, Equatable, Codable {
 
 /// What this account is allowed to do, and where that came from. A lapsed
 /// entitlement says when it ended rather than pretending it never existed.
+///
+/// The cloud answers one question — may this account act — and this is that
+/// answer. It is never inferred from whether a billing record exists: an
+/// account can be entitled without anybody ever having paid, and reading the
+/// absence of a purchase as the absence of access is the mistake this shape
+/// exists to prevent.
 public enum Entitlement: Sendable, Equatable, Codable {
     case none
-    case active(source: EntitlementSource, renews: Date?)
-    case lapsed(source: EntitlementSource, endedAt: Date)
+    case active(grant: Grant, renews: Date?)
+    case lapsed(grant: Grant, endedAt: Date)
+}
+
+/// Why an account has what it has.
+///
+/// Two cases, not an optional purchase, because an entitlement that was given
+/// rather than sold is a state every screen has to say something about — and a
+/// screen that treated it as a missing purchase would offer to manage a
+/// subscription that does not exist.
+public enum Grant: Sendable, Equatable, Codable {
+    /// Bought, in the place it was bought.
+    case purchased(EntitlementSource)
+    /// Given: complimentary, an employee, a beta tester. There is no store
+    /// behind it, nothing is being billed, and there is nothing to cancel.
+    case granted
+
+    /// Where it was bought, for the screens that only have something to say
+    /// about a purchase. Nothing when it was not one.
+    public var purchase: EntitlementSource? {
+        switch self {
+        case .purchased(let source): source
+        case .granted: nil
+        }
+    }
 }
 
 public enum EntitlementSource: String, Sendable, Equatable, Codable {

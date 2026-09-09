@@ -612,6 +612,19 @@
       ]
     },
     {
+      "id": "you-granted",
+      "stage": 10,
+      "screen": "you",
+      "fixture": "you-granted",
+      "origin": "added_state",
+      "reason": "an account whose access was given rather than bought reads differently on this page, and the design catalogue only pictured a bought subscription",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "dump",
       "stage": 11,
       "screen": "dump",

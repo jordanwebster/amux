@@ -70,14 +70,19 @@ struct DeleteAccountCard: View {
     /// this app cannot keep.
     private var billing: String? {
         switch entry.entitlement {
-        case .active(let source, .some(let renews)):
+        case .active(.purchased(let source), .some(let renews)):
             "Your subscription renews on \(Self.day(renews)) through \(source.place). "
                 + "Deleting this account does not cancel it."
-        case .active(let source, nil):
+        case .active(.purchased(let source), nil):
             "Your subscription through \(source.place) is not refunded."
-        case .lapsed:
+        // Nothing was paid for, so there is nothing to warn about losing money
+        // over — only the access itself, which the sentence above already says
+        // goes.
+        case .active(.granted, _):
+            nil
+        case .lapsed(.purchased, _):
             "Nothing already paid for is refunded."
-        case .none:
+        case .lapsed(.granted, _), .none:
             nil
         }
     }

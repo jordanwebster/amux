@@ -4,6 +4,28 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **The phone gates on what an account may do.**
+
+The app now asks `me { access }` and gates on `pro` alone. Nothing infers
+access from whether a billing record exists, nothing consults the tier claim
+in the access token, and nothing recomputes a lapse by comparing a date with
+this phone's clock — when access ends is the account service's answer.
+
+Access that was given rather than bought is a case the type system makes the
+screens handle. `Entitlement` carries a `Grant`, which is either a purchase in
+a named store or a grant in no store at all, so every screen that used to
+assume a store had to say what it means without one. Settings heads the row
+*Pro* rather than *Subscription* and reads *Active · Included*; the page
+behind it says Pro is on for this account and that there is nothing to pay for
+or cancel, instead of offering to manage a subscription that does not exist;
+and deleting such an account no longer warns about money that is not moving.
+The home screen's gate was already the right one and now opens for these
+accounts, so nobody the relay would let in is shown a Subscribe button.
+
+The scripted cloud can be entitled that way, `you-granted` locks the Settings
+page in both appearances, and `docs/CLOUD.md` says which read answers which
+question and how the app got it wrong before.
+
 2026-09-09 — **One question about what an account may do.**
 
 The cloud read the phone treats as its single source of truth asked how an

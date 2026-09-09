@@ -105,6 +105,7 @@ public enum Fixtures {
         Built(.signIn, "sign-in-failed"),
         Built(.profiles, "profiles"),
         Built(.you, "you"),
+        Built(.you, "you-granted"),
         Built(.delete, "delete"),
         Built(.delete, "delete-blocked"),
         Built(.paywall, "paywall"),
@@ -356,6 +357,16 @@ public enum Fixtures {
             States.open(bundle)
             States.trusted(bundle)
         },
+        // The same page for an account that was given its access rather than
+        // buying it. It is here because the words differ and nothing else on
+        // the page does: the row is headed Pro rather than Subscription, and
+        // it names no store, because there is no store this account could go
+        // to and no subscription for it to manage.
+        Fixture(id: "you-granted", screen: .you, cloud: .granted, accounts: Fixture.given) {
+            bundle in
+            States.open(bundle)
+            States.trusted(bundle)
+        },
         // Giving up an account, asked over the page it was asked from. The
         // address is already typed, because what the button does once it is
         // typed is the whole point of the screen; the subscription renews, so
@@ -429,8 +440,7 @@ public enum Fixtures {
     /// delete around, so a state about deleting has to have one.
     static let renewing: [AccountEntry] = {
         var accounts = Fixture.several
-        accounts[0].entitlement = .active(
-            source: .appStore, renews: Scenario.now.addingTimeInterval(11 * 24 * 60 * 60))
+        accounts[0].entitlement = .active(grant: .purchased(.appStore), renews: Scenario.now.addingTimeInterval(11 * 24 * 60 * 60))
         return accounts
     }()
 
