@@ -767,14 +767,14 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 fn reference_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let captures = value(arguments, "--captures")
-        .unwrap_or_else(|| "notes/ios-intake/design-reference/design/captures".into());
+    let captures =
+        value(arguments, "--captures").unwrap_or_else(|| "ios/Goldens/References".into());
     let out = value(arguments, "--out").unwrap_or_else(|| format!("{OUT}/reference"));
     let manifest = GoldenManifest::read(Path::new(MANIFEST))?;
     if !Path::new(&captures).is_dir() {
         println!(
             "{captures} is not here, so there is nothing to pair with; \
-             the intake bundle is working material, not a build input"
+             provide the preserved design captures with --captures"
         );
         return Ok(());
     }

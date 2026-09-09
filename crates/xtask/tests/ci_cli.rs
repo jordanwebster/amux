@@ -349,8 +349,7 @@ exec "$XTASK" ci-status --wait 0
     }
 }
 
-#[test]
-fn ios_verify_cli_runs_available_checks_in_order_and_stops_on_failure() {
+fn ios_verify_fixture() -> tempfile::TempDir {
     let dir = commands();
     std::fs::create_dir_all(dir.path().join("ios/Journeys")).unwrap();
     std::fs::write(
@@ -358,36 +357,144 @@ fn ios_verify_cli_runs_available_checks_in_order_and_stops_on_failure() {
         include_str!("../../../ios/Journeys/manifest.json"),
     )
     .unwrap();
-    std::fs::write(
-        dir.path().join(".wt.toml"),
-        "[task.test]\nrun='test'\n[task.mobile-check]\nrun='mobile'\n[task.ios-unit]\nrun='unit'\n",
-    )
-    .unwrap();
+    let recipes = [
+        "lint",
+        "test",
+        "spec",
+        "mobile-check",
+        "ios-lint",
+        "ios-rust",
+        "ios-simulator",
+        "ios-build",
+        "ios-loopback-smoke",
+        "ios-unit",
+        "ios-door-smoke",
+        "ios-goldens",
+        "ios-journey",
+        "ios-perf",
+        "ios-scope-audit",
+    ];
+    let config: String = recipes
+        .iter()
+        .map(|name| format!("[task.{name}]\nrun='true'\n"))
+        .collect();
+    std::fs::write(dir.path().join(".wt.toml"), config).unwrap();
     executable(
         &dir.path().join("wt"),
-        "#!/bin/sh\necho \"$*\" >> calls\n[ \"$2\" != \"$FAIL_RECIPE\" ]\n",
+        r#"#!/bin/sh
+echo "$*" >> calls
+[ "$2" != "$FAIL_RECIPE" ] || exit 1
+if [ "$2" = ios-journey ]; then
+    for id in home-coldstart home conversation asks review writing claude-sessions hosts-lifecycle hosts accounts reports accessibility; do
+        [ "$id" = "$SKIP_JOURNEY" ] || echo "$id: passed"
+    done
+fi
+"#,
     );
-    let path = format!(
-        "{}:{}",
-        dir.path().display(),
-        std::env::var("PATH").unwrap()
+    executable(
+        &dir.path().join("python3"),
+        r#"#!/bin/sh
+[ "$*" = '-B scripts/ios-perf.py --machine' ] || exit 92
+[ "$MACHINE_ERROR" != 1 ] || { echo 'unknown performance machine' >&2; exit 1; }
+printf '%s' "$PERF_MACHINE"
+"#,
     );
-    for (fail, success, expected) in [
-        ("", true, "run test\nrun mobile-check\nrun ios-unit\n"),
-        ("mobile-check", false, "run test\nrun mobile-check\n"),
+    dir
+}
+
+fn ios_verify_command(dir: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+    command
+        .arg("ios-verify")
+        .current_dir(dir)
+        .env(
+            "PATH",
+            format!("{}:{}", dir.display(), std::env::var("PATH").unwrap()),
+        )
+        .env(
+            "PERF_MACHINE",
+            r#"{"name":"pinned-mac","hard":true,"baseline":"unused","baseline_present":false}"#,
+        );
+    command
+}
+
+#[test]
+fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey() {
+    let dir = ios_verify_fixture();
+    for (fail, skip, success, last) in [
+        ("", "", true, "ios-scope-audit"),
+        ("mobile-check", "", false, "mobile-check"),
+        ("", "claude-sessions", false, "ios-journey"),
+        ("", "accounts", false, "ios-journey"),
     ] {
         std::fs::write(dir.path().join("calls"), "").unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-            .arg("ios-verify")
-            .current_dir(dir.path())
-            .env("PATH", &path)
+        let output = ios_verify_command(dir.path())
             .env("FAIL_RECIPE", fail)
+            .env("SKIP_JOURNEY", skip)
             .output()
             .unwrap();
-        assert_eq!(output.status.success(), success);
         assert_eq!(
-            std::fs::read_to_string(dir.path().join("calls")).unwrap(),
-            expected
+            output.status.success(),
+            success,
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
         );
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert!(calls.ends_with(&format!("run {last}\n")), "{calls}");
+        assert!(
+            !calls.contains("--"),
+            "verification must not filter, update or record: {calls}"
+        );
+        if success {
+            assert_eq!(
+                calls,
+                "run lint\nrun test\nrun spec\nrun mobile-check\nrun ios-lint\nrun ios-rust\nrun ios-simulator\nrun ios-build\nrun ios-loopback-smoke\nrun ios-unit\nrun ios-door-smoke\nrun ios-goldens\nrun ios-journey\nrun ios-perf\nrun ios-scope-audit\n"
+            );
+        }
+        if !skip.is_empty() {
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains(&format!("{skip} did not report a full pass"))
+            );
+        }
     }
+}
+
+#[test]
+fn ios_verify_cli_reports_missing_runner_baseline_and_fails_machine_errors() {
+    let dir = ios_verify_fixture();
+    for present in [false, true] {
+        std::fs::write(dir.path().join("calls"), "").unwrap();
+        let machine = serde_json::json!({"name":"macos-26", "hard":false,
+            "baseline":"ios/Perf/baselines/macos-26.json", "baseline_present":present});
+        let output = ios_verify_command(dir.path())
+            .env("PERF_MACHINE", machine.to_string())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert_eq!(calls.contains("run ios-perf\n"), present);
+        assert!(!calls.contains("--baseline"));
+        if !present {
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("no baseline for this runner")
+            );
+            let verdict: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(dir.path().join("target/ios/perf/verdict.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(verdict["status"], "not_measured");
+            assert_eq!(verdict["reason"], "no baseline for this runner");
+        }
+    }
+    let output = ios_verify_command(dir.path())
+        .env("MACHINE_ERROR", "1")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown performance machine"));
 }

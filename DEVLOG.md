@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Run complete iOS verification on every push.**
+
+The iOS verifier requires every recipe, captures the full golden manifest,
+and refuses a journey run unless every required group reports a full pass,
+including Claude sessions and accounts. The pinned Mac always measures against
+its hard performance budgets. A runner without a committed relative baseline
+records “no baseline for this runner” in its performance artifacts; verification
+never creates its own baseline. Machine detection errors remain failures.
+
+The macos-26 job uploads captures, journeys and performance results on every
+run. The 66 preserved in-scope reference captures now live beside the golden
+assets so a clean CI checkout can produce the reference pairs. Linux jobs are
+unchanged. Remote CI is supplementary evidence; local verification is the gate.
+Focused Rust library and command-boundary tests cover missing recipes, missing
+or skipped journeys, bare golden invocation and performance baseline handling.
+
 2026-09-09 — **GraphQL answers the phone's credential, not only the browser's.**
 
 The live journey exposed a service defect nothing local could have caught.

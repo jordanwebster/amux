@@ -1,3 +1,3 @@
 #!/bin/sh
 set -eu
-exec timeout 9000 cargo run -q -p xtask -- ios-verify
+exec timeout 12600 cargo run -q -p xtask -- ios-verify

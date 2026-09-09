@@ -155,7 +155,7 @@ jobs:
   ios:
     name: ios
     runs-on: macos-26
-    timeout-minutes: 150
+    timeout-minutes: 210
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode 26.6
@@ -189,20 +189,15 @@ jobs:
       - name: Register checkout with wt
         run: timeout 60 wt register . --label amux
       - name: Run iOS verification
-        # The runner is not a Mac anybody wrote a hardware row for, so it names
-        # the budget row it is measured against rather than being identified by
-        # its model. That row is judged against its own recorded numbers, so the
-        # first run here records them: it is held to the pinned budgets and its
-        # medians are uploaded below to be committed as the runner's baseline.
+        # The runner uses its own recorded baseline when one is committed.
+        # Without one, verification records that performance was not measured.
         env:
           AMUX_PERF_MACHINE: macos-26
-        run: timeout 9000 wt run ios-verify
-      - name: What the measured run recorded
-        # The verdict, the report a person reads and the medians the runner
-        # would be enrolled with. Uploaded whether or not the run passed: a
-        # failed budget is exactly when somebody needs to read the numbers, and
-        # a recorded baseline only reaches the repository by being taken from
-        # here and committed.
+        run: timeout 12600 wt run ios-verify
+      - name: Pair preserved design references
+        if: always()
+        run: timeout 900 wt run ios-goldens-reference
+      - name: Upload performance results and limits
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -210,18 +205,16 @@ jobs:
           path: |
             target/ios/perf
             ios/Perf/baselines
-          if-no-files-found: ignore
+          if-no-files-found: warn
           retention-days: 7
-      - name: What a failed verification drew
-        # A golden that differs here and nowhere else can only be read by
-        # looking at what this machine drew, so the captures leave with the
-        # run. Expected, actual and diff sit side by side per screen.
-        if: failure()
+      - name: Upload golden triplets, reference pairs and journeys
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ios-verification-captures
           path: |
             target/ios/goldens
             target/ios/journeys
-          if-no-files-found: ignore
+            target/ios/scope-audit
+          if-no-files-found: warn
           retention-days: 7

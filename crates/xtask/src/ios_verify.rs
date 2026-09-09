@@ -1,5 +1,7 @@
+use std::collections::BTreeSet;
 use std::error::Error;
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 
 // Ordering matters: build the bridge and app before simulator checks. Destructive
 // baseline updates and deliberate-failure probes are separate developer commands.
@@ -55,31 +57,21 @@ fn recipes(config: &str) -> Result<Vec<&'static str>, Box<dyn Error>> {
         .get("task")
         .and_then(toml::Value::as_table)
         .ok_or("no declared tasks")?;
-    let selected: Vec<_> = RECIPES
-        .iter()
-        .copied()
-        .filter(|name| tasks.contains_key(*name))
-        .collect();
-    if !selected
-        .iter()
-        .any(|name| matches!(*name, "test" | "mobile-check" | "ios-rust"))
-    {
-        return Err("iOS verification has no Rust checks".into());
+    for recipe in RECIPES {
+        if !tasks.contains_key(*recipe) {
+            return Err(format!("iOS verification requires recipe {recipe}").into());
+        }
     }
-    Ok(selected)
+    Ok(RECIPES.to_vec())
 }
 
-/// What this branch's own verification asks a recipe for.
-///
-/// Mid-flight the goldens are asked the narrower of their two questions: of
-/// the screens that exist today, does every one still draw what it was locked
-/// as. The whole catalogue — every screen the flight owes, built or not — is
-/// the closing gate, and stays a bare `wt run ios-goldens`.
-fn arguments(recipe: &str) -> &'static [&'static str] {
-    match recipe {
-        "ios-goldens" => &["--", "--built"],
-        _ => &[],
+fn check_completed_journeys(completed: &BTreeSet<String>) -> Result<(), Box<dyn Error>> {
+    for required in REQUIRED_JOURNEYS {
+        if !completed.contains(*required) {
+            return Err(format!("iOS journey {required} did not report a full pass").into());
+        }
     }
+    Ok(())
 }
 
 /// A machine's budget row, as `scripts/ios-perf.py --machine` answers it.
@@ -93,20 +85,34 @@ struct PerfMachine {
     baseline_present: bool,
 }
 
-/// What a measured run on this machine has to be asked for.
-///
-/// A machine with hard budgets, or one that has already recorded a run, is
-/// measured with no argument: the numbers it is judged against exist. A machine
-/// judged against its own recorded run and holding no recording yet is asked
-/// for that recording, because skipping it instead is a state nothing leaves:
-/// the run that would write the baseline is the run being skipped for want of
-/// one. The recording run is still judged, against the budgets the definitions
-/// pin, and its medians become what the next run is held to.
-fn perf_arguments(machine: &PerfMachine) -> Vec<&'static str> {
-    if machine.hard || machine.baseline_present {
-        return Vec::new();
+// Hard budgets exist independently of a recorded run. Relative budgets need a
+// committed baseline; verification must never create its own comparison data.
+fn measure_perf(machine: &PerfMachine) -> bool {
+    machine.hard || machine.baseline_present
+}
+
+fn report_missing_baseline(machine: &PerfMachine) -> Result<(), Box<dyn Error>> {
+    let output = std::path::Path::new("target/ios/perf");
+    if output.exists() {
+        std::fs::remove_dir_all(output)?;
     }
-    vec!["--", "--baseline"]
+    std::fs::create_dir_all(output)?;
+    let report = format!(
+        "no baseline for this runner: {} ({}). Performance was not measured.\n",
+        machine.name, machine.baseline
+    );
+    eprint!("{report}");
+    std::fs::write(output.join("report.md"), &report)?;
+    std::fs::write(
+        output.join("verdict.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "status": "not_measured",
+            "reason": "no baseline for this runner",
+            "machine": machine.name,
+            "baseline": machine.baseline,
+        }))?,
+    )?;
+    Ok(())
 }
 
 /// Asks the measurement script which machine this is. The script owns the
@@ -128,34 +134,36 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
     eprintln!("iOS verification: {}", selected.join(", "));
     for recipe in selected {
-        let mut extra: Vec<&'static str> = Vec::new();
         if recipe == "ios-perf" {
-            match perf_machine() {
-                // An unrecognised Mac has no budget row at all, so a number
-                // from it would mean nothing and there is nothing to record.
-                Err(why) => {
-                    eprintln!("Skipping wt run ios-perf: {why}");
-                    continue;
-                }
-                Ok(machine) => {
-                    extra = perf_arguments(&machine);
-                    if !extra.is_empty() {
-                        eprintln!(
-                            "Recording {}'s baseline: {} does not exist yet",
-                            machine.name, machine.baseline
-                        );
-                    }
-                }
+            let machine = perf_machine()?;
+            if !measure_perf(&machine) {
+                report_missing_baseline(&machine)?;
+                continue;
             }
         }
-        let arguments = [arguments(recipe), extra.as_slice()].concat();
-        eprintln!("Running wt run {recipe} {}", arguments.join(" "));
-        let status = Command::new("timeout")
-            .args(["1800", "wt", "run", recipe])
-            .args(arguments)
-            .status()?;
+        eprintln!("Running wt run {recipe}");
+        // Recipes own their individual deadlines. The outer deadline also
+        // bounds dependencies without cutting off a longer recipe early.
+        let mut child = Command::new("timeout")
+            .args(["12600", "wt", "run", recipe])
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut completed = BTreeSet::new();
+        for line in BufReader::new(child.stdout.take().ok_or("no recipe stdout")?).lines() {
+            let line = line?;
+            println!("{line}");
+            if recipe == "ios-journey"
+                && let Some(id) = line.strip_suffix(": passed")
+            {
+                completed.insert(id.to_owned());
+            }
+        }
+        let status = child.wait()?;
         if !status.success() {
             return Err(format!("wt run {recipe} failed: {status}").into());
+        }
+        if recipe == "ios-journey" {
+            check_completed_journeys(&completed)?;
         }
     }
     Ok(())
@@ -165,105 +173,82 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
 
+    fn config() -> String {
+        RECIPES
+            .iter()
+            .map(|name| format!("[task.{name}]\nrun='true'\n"))
+            .collect()
+    }
+
     #[test]
-    fn ios_verify_requires_sdk_sessions_alongside_every_other_journey() {
+    fn ios_verify_requires_every_recipe_without_selecting_update_or_remote_commands() {
+        assert_eq!(recipes(&config()).unwrap(), RECIPES);
+        for recipe in RECIPES {
+            let incomplete = config().replace(&format!("[task.{recipe}]\nrun='true'\n"), "");
+            assert!(
+                recipes(&incomplete)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(recipe)
+            );
+        }
+        for excluded in [
+            "ios-verify",
+            "ios-goldens-perturb",
+            "ci-gate",
+            "ci-observe",
+            "qa-cloud-signin",
+            "qa-sandbox-purchase",
+            "qa-live-journey",
+        ] {
+            assert!(!RECIPES.contains(&excluded));
+        }
+    }
+
+    #[test]
+    fn ios_verify_requires_every_journey_to_exist_and_report_a_full_pass() {
         let manifest = include_str!("../../../ios/Journeys/manifest.json");
         check_journeys(manifest).unwrap();
-        let mut value: serde_json::Value = serde_json::from_str(manifest).unwrap();
-        value["journeys"]
-            .as_array_mut()
-            .unwrap()
-            .retain(|journey| journey["id"] != "claude-sessions");
-        assert!(
-            check_journeys(&value.to_string())
-                .unwrap_err()
-                .to_string()
-                .contains("claude-sessions")
-        );
-    }
-
-    #[test]
-    fn ios_verify_rejects_empty_or_ui_only_verification() {
-        for config in ["", "[task.ios-unit]\nrun='true'", "[task.lint]\nrun='true'"] {
-            assert!(recipes(config).is_err());
-        }
-    }
-
-    fn machine(json: &str) -> PerfMachine {
-        serde_json::from_str(json).expect("a machine row")
-    }
-
-    /// The pinned Mac's budgets are written down, so it is measured whether or
-    /// not anybody has recorded a run on it.
-    #[test]
-    fn a_machine_with_written_budgets_is_measured() {
-        assert!(
-            perf_arguments(&machine(
-                r#"{"name":"pinned-mac","hard":true,
-                "baseline":"ios/Perf/baselines/pinned-mac.json","baseline_present":false}"#
-            ))
-            .is_empty()
-        );
-    }
-
-    /// A machine judged against its own recorded run has nothing to compare
-    /// with until that run exists, so its first verification takes the run that
-    /// records it. Skipping instead would never end: the missing file is what
-    /// the skipped run writes.
-    #[test]
-    fn a_machine_awaiting_its_baseline_records_one() {
-        let awaiting = machine(
-            r#"{"name":"macos-26","hard":false,
-                "baseline":"ios/Perf/baselines/macos-26.json","baseline_present":false}"#,
-        );
-        assert_eq!(perf_arguments(&awaiting), ["--", "--baseline"]);
-
-        let recorded = machine(
-            r#"{"name":"macos-26","hard":false,
-                "baseline":"ios/Perf/baselines/macos-26.json","baseline_present":true}"#,
-        );
-        assert!(perf_arguments(&recorded).is_empty());
-    }
-
-    /// Mid-flight the goldens are run over the screens that exist; the whole
-    /// catalogue is the closing gate and nothing else takes an argument.
-    #[test]
-    fn verification_runs_the_goldens_over_the_screens_that_exist() {
-        assert_eq!(arguments("ios-goldens"), ["--", "--built"]);
-        for recipe in RECIPES.iter().filter(|name| **name != "ios-goldens") {
-            assert!(arguments(recipe).is_empty(), "{recipe} was given arguments");
-        }
-    }
-
-    /// The screens package's own rules — no UIKit outside a registered leaf,
-    /// no platform conditionals, no spinners — are only rules if a check runs
-    /// them, so this branch's verification has to name the recipe that does.
-    #[test]
-    fn verification_runs_the_screens_lint() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let config = std::fs::read_to_string(root.join(".wt.toml")).expect("the checkout's tasks");
-        let selected = recipes(&config).expect("a verification selection");
-        assert!(selected.contains(&"ios-lint"), "{selected:?}");
-    }
-
-    /// The QA recipes reach the production account service with a real
-    /// account's password out of this Mac's keychain, and one of them wants a
-    /// phone and a person making a purchase. Verification has to be something
-    /// a clean checkout can run, so they are named here to keep them out of
-    /// it: a red QA recipe is a conversation, not a build failure.
-    #[test]
-    fn verification_never_runs_a_recipe_that_needs_a_person() {
-        for by_hand in ["qa-cloud-signin", "qa-sandbox-purchase"] {
+        let all: BTreeSet<_> = REQUIRED_JOURNEYS
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect();
+        check_completed_journeys(&all).unwrap();
+        for required in REQUIRED_JOURNEYS {
+            let mut value: serde_json::Value = serde_json::from_str(manifest).unwrap();
+            value["journeys"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|journey| journey["id"] != *required);
             assert!(
-                !RECIPES.contains(&by_hand),
-                "{by_hand} needs a person and must stay out of verification"
+                check_journeys(&value.to_string())
+                    .unwrap_err()
+                    .to_string()
+                    .contains(required)
+            );
+            let mut incomplete = all.clone();
+            incomplete.remove(*required);
+            assert!(
+                check_completed_journeys(&incomplete)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(required)
             );
         }
     }
 
     #[test]
-    fn ios_verify_grows_with_recipes_without_recursing_or_updating_goldens() {
-        let selected = recipes("[task.mobile-check]\nrun='rust-check'\n[task.ios-verify]\nrun='verify'\n[task.ios-goldens]\nrun='goldens'\n[task.ci-gate]\nrun='push'\n[task.ios-goldens-perturb]\nrun='perturb'\n[task.ios-unit]\nrun='unit'").unwrap();
-        assert_eq!(selected, ["mobile-check", "ios-unit", "ios-goldens"]);
+    fn ios_verify_measures_hard_budgets_and_existing_baselines_only() {
+        for hard in [false, true] {
+            for baseline_present in [false, true] {
+                let machine = PerfMachine {
+                    name: "test-machine".into(),
+                    hard,
+                    baseline: "ios/Perf/baselines/test-machine.json".into(),
+                    baseline_present,
+                };
+                assert_eq!(measure_perf(&machine), hard || baseline_present);
+            }
+        }
     }
 }
