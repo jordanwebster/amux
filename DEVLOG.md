@@ -46,6 +46,14 @@ Validation: all 20 targeted testnet tests pass; full `wt test` passes 2,372 test
 
 ---
 
+2026-09-09 — **The production cloud path re-proved end to end after the cloud-model change.**
+
+With the cloud fixed in configuration and pairing routed through the relay the account credential names, the whole live path was run once against `https://amux.sh` with a QA account: the phone signs in, reads its access back from the account service, pairs with this checkout's daemon by the invitation that machine actually shows, asks a real Claude session a question and reads the answer, relaunches on the session it saved for itself, then forgets the machine and pairs again by the printed code. Nothing tells the app where to go; the relay address comes from the credential the account service mints. The App Store purchase route is not claimed here — a sandbox purchase needs a phone in somebody's hand.
+
+Validation: `wt run qa-live-journey` passes in full, and the run removes the profile it made. Alongside it, `wt run ios-unit` (all six bundles), `wt run ios-lint` and the `accounts` journey pass on this revision.
+
+---
+
 2026-09-09 — **Configuration owns the cloud; a relay supplies only a route.**
 
 The cloud is the well-known account service configured by `cloud_url`, defaulting to `https://amux.sh`. Attaching or replacing an embedded relay no longer changes it, and the relay carries no cloud identity. The phone uses that default with no app override; its account JSON carries only an identifier and credentials. Installation binding still derives configuration from the bound account service, or the default for an unbound profile. Pairing reaches the host through the configured cloud's independently addressed relay. Core tests cover both default and custom configuration through attachment and replacement; mobile tests accept the daemon-issued `https://amux.sh` invitation over loopback and refuse another cloud; Swift tests pin the account JSON shape.
