@@ -40,7 +40,7 @@ run = 'scripts/workspace-test.sh "$@"'
 needs = ["test-recipes", "build"]
 
 [task.test-recipes]
-run = "timeout 30 python3 scripts/tests/workspace_test.py"
+run = "timeout 60 python3 -m unittest discover -s scripts/tests -p '*_test.py' -t scripts/tests"
 
 [task.lint]
 run = "cargo clippy --workspace --all-targets -- -D warnings"
@@ -162,6 +162,17 @@ run = "scripts/ios-verify.sh"
 # absent from the iOS verification list in crates/xtask/src/ios_verify.rs.
 [task.qa-cloud-signin]
 run = "timeout 300 python3 -B scripts/qa-cloud-signin.py"
+
+# Carries a real App Store sandbox purchase from a physical phone to the
+# account service and reads back what the account may then do. A sandbox
+# transaction exists only on a phone signed into a sandbox Apple Account
+# running a development-signed build, so this never runs on a simulator and
+# never invents one; `--preflight` reports what is present and missing on this
+# Mac without touching StoreKit, the store or amux.sh. Evidence a person runs
+# by hand, never a test and never in CI, and deliberately absent from the iOS
+# verification list in crates/xtask/src/ios_verify.rs.
+[task.qa-sandbox-purchase]
+run = 'timeout 3600 python3 -B scripts/qa-sandbox-purchase.py "$@"'
 
 [task.ci-status]
 run = 'timeout 3300 cargo run -q -p xtask -- ci-status "$@"'

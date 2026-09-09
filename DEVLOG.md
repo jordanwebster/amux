@@ -4,6 +4,46 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **A QA recipe for a sandbox purchase on a real phone.**
+
+`wt run qa-sandbox-purchase` carries an App Store sandbox purchase from a
+physical iPhone to the account service and reads back what the account may
+then do. It exists because a sandbox transaction exists in exactly one place:
+a phone signed into a sandbox Apple Account running a development-signed
+build. Apple's engineers state that sandbox sign-in is not supported on the
+Simulator, and the StoreKit configuration this repository commits is StoreKit
+Testing — its transactions are signed by the local test certificate and are
+not sandbox transactions. So the recipe never runs on a simulator and never
+invents a transaction; on a Mac without the phone it reports that and stops.
+
+`--preflight` names what is present and missing and exits 0 without touching
+StoreKit, the store or amux.sh. Four facts it can answer itself: the account's
+address, its keychain password, a phone reachable over `xcrun devicectl`, and
+a Team ID and bundle id from `ios/Signing.local.xcconfig`, an untracked file
+`.gitignore` now covers because this repository builds simulator-only and
+holds no signing identity. Two it cannot answer from a Mac at all — both
+subscription products present in App Store Connect and known to the billing
+provider, and the phone's sandbox Apple Account — are printed as facts for the
+person running it to confirm with `--confirmed`, rather than guessed at. On
+this Mac today every one of the six is outstanding, and that report is the
+recipe working.
+
+A full run builds and installs on the phone, names the purchase to make, then
+watches amux.sh as that account until a credential is issued or a bound
+elapses. The entitlement read and `GET /api/connect` are asked separately
+because they are answered from different places, and a purchase that moved one
+without the other is the failure worth catching. `--transaction-file` is the
+other road to the same two answers for a transaction captured earlier.
+
+The account is its own: `AMUX_QA_DEVICE_EMAIL`, refused when it names the
+end-to-end account the sign-in recipe uses, with no address built in. The
+authorization-code sign-in both recipes perform now lives in one module rather
+than two copies, and a test in the iOS verification list keeps both recipes
+out of it — they need a person, and verification has to be something a clean
+checkout can run.
+
+---
+
 2026-09-09 — **The account service records an App Store purchase, deployed.**
 
 `POST /api/purchases` is live on amux.sh at revision `2a7f636`. It takes the

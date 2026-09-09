@@ -246,6 +246,21 @@ mod tests {
         assert!(selected.contains(&"ios-lint"), "{selected:?}");
     }
 
+    /// The QA recipes reach the production account service with a real
+    /// account's password out of this Mac's keychain, and one of them wants a
+    /// phone and a person making a purchase. Verification has to be something
+    /// a clean checkout can run, so they are named here to keep them out of
+    /// it: a red QA recipe is a conversation, not a build failure.
+    #[test]
+    fn verification_never_runs_a_recipe_that_needs_a_person() {
+        for by_hand in ["qa-cloud-signin", "qa-sandbox-purchase"] {
+            assert!(
+                !RECIPES.contains(&by_hand),
+                "{by_hand} needs a person and must stay out of verification"
+            );
+        }
+    }
+
     #[test]
     fn ios_verify_grows_with_recipes_without_recursing_or_updating_goldens() {
         let selected = recipes("[task.mobile-check]\nrun='rust-check'\n[task.ios-verify]\nrun='verify'\n[task.ios-goldens]\nrun='goldens'\n[task.ci-gate]\nrun='push'\n[task.ios-goldens-perturb]\nrun='perturb'\n[task.ios-unit]\nrun='unit'").unwrap();

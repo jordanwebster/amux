@@ -47,3 +47,9 @@ ios/**/xcuserdata/
 
 # Bytecode Python leaves beside the scripts it runs
 __pycache__/
+
+# A Team ID and the bundle id to build the phone build as. This repository
+# builds simulator-only and holds no signing identity, so whoever runs the
+# sandbox-purchase recipe on a real phone writes this file locally; a
+# committed one would build somebody else's app under their team.
+ios/Signing.local.xcconfig

@@ -163,25 +163,71 @@ verification list.
   actually keeps — a sign-in that works in a simulator against a double proves
   nothing about the production one.
 
-**The account.** The address comes from `AMUX_QA_EMAIL`. When the environment
-already sets it, that value is used and nothing overwrites it; otherwise the
-recipe reads `.autopilot/qa-account.env` at the repository root, an
-operator-written file that sets `AMUX_QA_EMAIL` and nothing else. That
-directory is untracked, which is the point: this repository is public. There
-is no built-in address to fall back to.
+- `wt run qa-sandbox-purchase` — carries a real App Store sandbox purchase
+  from a physical iPhone to the account service and reads back what the
+  account may then do. A sandbox transaction exists in exactly one place: a
+  phone signed into a sandbox Apple Account, running a development-signed
+  build. Apple's engineers say so plainly — sandbox sign-in is not supported
+  on the Simulator — and `ios/Amux/Amux.storekit` is a StoreKit Testing
+  configuration, whose transactions are signed by the local test certificate
+  and are not sandbox transactions. So this recipe never runs on a simulator
+  and never invents a transaction. What it proves is the one thing no
+  simulator run can: that a purchase the real App Store signed reaches
+  amux.sh, is recognised on the other side, and turns the relay's
+  `payment_required` refusal into a credential.
+
+  `--preflight` reports what is present and missing on this Mac and exits 0,
+  touching neither StoreKit, the store nor amux.sh. Without it, anything
+  missing is named and the run exits non-zero. Four facts are checked here —
+  the account's address, its keychain password, a phone reachable over `xcrun
+  devicectl`, and a Team ID and bundle id in `ios/Signing.local.xcconfig`, an
+  untracked file `.gitignore` covers because this repository builds
+  simulator-only and holds no signing identity. Two more cannot be checked
+  from a Mac at all and are printed as facts to confirm: that the bundle id
+  carries both subscription products in App Store Connect and is known to the
+  billing provider, and that the phone's sandbox Apple Account is this
+  account. `--confirmed` says they are true; nothing here asserts them for
+  you.
+
+  A full run generates the project, builds and installs a development-signed
+  build on the phone, names the purchase to make, and then watches amux.sh as
+  that account — the entitlement read and `GET /api/connect`, asked
+  separately because they are answered from different places — until a
+  credential is issued or a bound elapses, saying which in words.
+  `--transaction-file PATH` is the other road to the same two answers: a
+  transaction a phone already signed, posted through `POST /api/purchases` as
+  this account. That file is never committed.
+
+  **Its account.** The device QA account and only that: the one
+  `AMUX_QA_DEVICE_EMAIL` names, in the environment or in
+  `.autopilot/qa-account.env`. The end-to-end account the sign-in recipe uses
+  is refused even when that variable names it, because it is not a sandbox
+  account. There is no built-in address, so until an operator sets the
+  variable the honest preflight result is that the address source is missing,
+  naming the variable and the file.
+
+**The accounts.** Each recipe has its own variable — `AMUX_QA_EMAIL` for the
+sign-in, `AMUX_QA_DEVICE_EMAIL` for the sandbox purchase — and they name
+different accounts, because only one of them is a sandbox account. When the
+environment already sets a variable, that value is used and nothing overwrites
+it; otherwise the recipe reads `.autopilot/qa-account.env` at the repository
+root, an operator-written file that sets those variables and nothing else.
+That directory is untracked, which is the point: this repository is public.
+There is no built-in address to fall back to.
 
 **The password.** Read from this Mac's login keychain at the moment it is
-needed, with `security find-generic-password -s amuxcloud-qa -a "$AMUX_QA_EMAIL" -w`,
-and never printed, logged or written anywhere. Add one with
-`security add-generic-password -s amuxcloud-qa -a "$AMUX_QA_EMAIL" -w`.
+needed, with `security find-generic-password -s amuxcloud-qa -a "<the
+address>" -w`, and never printed, logged or written anywhere. Add one with
+`security add-generic-password -s amuxcloud-qa -a "<the address>" -w`. A
+password is never written down beside the address it belongs to.
 
-**What is never printed.** The address appears only masked; the password, the
+**What is never printed.** An address appears only masked; the password, the
 authorization code and every token are used and dropped; the account
 identifier is not printed at all, because it finds a person as well as an
 address does. No address is written in this document, in a script, in an
 example, in a golden, in a journey record or in an evidence file.
 
 When there is no address, no keychain entry, or the login form cannot be
-driven, the recipe says which of those it is — naming the variable and the
-file when the address is what is missing — and exits non-zero. It never
-passes quietly on a sign-in it did not perform.
+driven, a recipe says which of those it is — naming the variable and the file
+when the address is what is missing — and exits non-zero. Neither ever passes
+quietly on work it did not do.
