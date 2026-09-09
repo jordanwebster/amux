@@ -836,7 +836,7 @@ def main() -> None:
     record_baseline = "--baseline" in arguments
     unknown = [
         argument for argument in arguments
-        if argument not in ["--probe", "--baseline", "--machine", "--self-test"]
+        if argument not in ["--probe", "--baseline", "--machine", "--describe", "--self-test"]
     ]
     if unknown:
         raise SystemExit(f"unknown argument: {' '.join(unknown)}")
@@ -847,7 +847,7 @@ def main() -> None:
         raise SystemExit(
             "--baseline records the machine's whole baseline, so it needs a whole run; "
             f"drop --only {only}")
-    if "--machine" in arguments:
+    if "--machine" in arguments or "--describe" in arguments:
         describe()
         return
     if "--self-test" in arguments:

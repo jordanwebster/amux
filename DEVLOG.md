@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Document native iPhone development and report contents accurately.**
+
+The iPhone guide now explains package ownership, the Rust bridge, build and
+simulator pins, fixture driving, baseline review, real journeys, replay and
+physical-phone qualification. Performance guidance covers periodic use,
+tracked baseline review and the drift a hard budget alone misses. It no longer
+claims verification automatically records missing baselines. The performance
+script accepts `--describe` for the same build-free machine check as `--machine`.
+
+The debug report caption now names the screen and available session and host
+records. It no longer promises an app log: system logs cannot be read back by
+this app, and the bundle already declares that part absent with a reason.
+Both report states have updated, visually inspected light/dark baselines and
+an explanation of the departure from the preserved reference.
+
+Validation: both report states pass ordinary golden comparison in both
+appearances; all 28 recipe tests pass; the documented machine preflight reports
+the pinned Mac and accurately reports that it has no recorded baseline.
+
 2026-09-09 — **Verify the complete iPhone golden catalogue.**
 
 The unfiltered golden run passes all 116 captures: 33 reference screens and

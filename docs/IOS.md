@@ -1,14 +1,170 @@
 # The iPhone app
 
+The app is native SwiftUI for iPhone, with iOS 26.0 as its minimum. Its network
+runtime, protocol projection and send gates come from the Rust sources in this
+checkout. The phone does not run local agents.
+
+## Packages and bridge
+
+| Component | Owns |
+| --- | --- |
+| `crates/amux-mobile` | C ABI, embedded runtime lifecycle, frame-coalesced JSON projection and fleet cache over `amux` and `amux-ui` |
+| `AmuxCore` | Swift bridge adapter, observable stores and model/action contracts, account and purchase service boundaries |
+| `AmuxDesign` | Light/dark tokens, bundled fonts, type scaling, glass and target geometry |
+| `AmuxFeatures` | SwiftUI screens driven by state and actions, plus registered UIKit leaves |
+| `AmuxShell` | iPhone navigation, tabs, routes, deep links and service coordination |
+| `AmuxTestSupport` | Named fixtures, scripted account and StoreKit adapters, driving protocol, report models and views |
+| `ios/Amux` | App entry, platform services, debug capture and driving server |
+
+The runtime streams ordered batches into Swift; Swift copies callback bytes
+before returning and applies store changes on the main actor. Feed updates
+carry deltas, not a replacement transcript on each frame. A single multiplexed
+stream per host supplies the shared projection. Navigation pushes immediately
+and fills from remembered state while the host reconciles. See the
+[bridge contract](../crates/amux-mobile/README.md) for ownership, shutdown,
+token refresh and the generated C interface.
+
+Core models and feature actions remain reusable for a separate future Mac UI.
+The shell belongs to iPhone; there is no Mac, Catalyst or iPad target. Debug
+support is compiled directly into Debug and Measured, with its sources and
+resources excluded from Release. Release retains Contact Support; it exposes
+neither fixture driving nor reporting.
+
+## Build and simulator pins
+
+Use an Apple silicon Mac with Xcode 26.6 (17F113), the iOS 26.5 simulator
+runtime, XcodeGen 2.46 or newer, Rust with the ARM64 iOS device and simulator
+targets, and the repository's `wt` command. Build and test through wt so the
+workspace uses one build configuration and the recipes' timeouts.
+
+```sh
+timeout 900 wt run ios-simulator
+timeout 1800 wt run ios-build
+timeout 1800 wt run ios-unit
+timeout 300 wt run ios-lint
+```
+
+`ios-build` builds the Rust XCFramework under the workspace `mobile` profile
+and regenerates `ios/Amux.xcodeproj` from `ios/project.yml`. Commit generator
+input and generated project together when changing targets. Outputs live under
+`target/ios/`, with the Debug simulator app in
+`DerivedData/Build/Products/Debug-iphonesimulator/Amux.app`.
+
+The default simulator is `amux-golden`, an iPhone 17 Pro on iOS 26.5 at 3×.
+`amux-small` is the iPhone SE (3rd generation) on the same runtime. The recipes
+pin en_US, a 12-hour clock, 9:41, full battery and the requested appearance.
+Small-display captures test layout width; they do not qualify that physical
+phone for the app's OS minimum. Simulator changes require reviewed baseline
+changes, with the new pin and its reason recorded.
+
+## Driving a debug build
+
+`timeout 1800 wt run ios-door-smoke` proves launch, fixture selection, visible
+state, composited capture and the real loopback relay connection. For a single
+screen after building the workspace with `timeout 900 wt build`:
+
+```sh
+timeout 120 target/debug/xtask door --simulator amux-golden \
+  --install target/ios/DerivedData/Build/Products/Debug-iphonesimulator/Amux.app \
+  '{"kind":"open","screen":"home"}' \
+  '{"kind":"appearance","appearance":"dark"}' \
+  '{"kind":"settle"}' '{"kind":"query"}' \
+  '{"kind":"capture","path":"/tmp/amux-home.png"}'
+```
+
+The door exchanges newline-delimited JSON on loopback. `query` returns the
+screen, accessibility identifiers, labels, values, frames and enabled states;
+`open` accepts a named screen and optional fixture. Unknown states fail.
+`tap` and `type` address controls by identifier. Named fixtures set stores
+without a network and establish appearance, not protocol correctness.
+`connect` instead supplies the test relay, token and user for real journeys.
+The request and reply types live in `AmuxTestSupport/Door.swift`.
+
+## Goldens and baseline changes
+
+```sh
+timeout 2400 wt run ios-goldens
+timeout 2400 wt run ios-goldens -- dump upload-failed
+timeout 900 wt run ios-goldens-reference
+timeout 1200 wt run ios-goldens-perturb
+```
+
+The unfiltered manifest covers 33 reference screens and 25 additional states,
+each in light and dark. Captures use the composited app window through
+`drawHierarchy(in:afterScreenUpdates:)`, so glass is part of the comparison.
+Expected, actual and difference PNGs land in `target/ios/goldens/`. The reference
+recipe pairs all 66 preserved design images in `ios/Goldens/References/` with
+the app baselines under `target/ios/goldens/reference/`. Reference comparisons support
+visual review; baseline comparisons are the regression gate.
+
+Inspect a mismatch before updating anything. A deliberate visual change uses
+`timeout 2400 wt run ios-goldens -- --update SCREEN`, limited to the changed
+screens, followed by an ordinary comparison. Inspect both appearances and
+record the reason in [the baseline notes](../ios/Goldens/BASELINE.md), including
+any departure from the preserved design. Never refresh baselines to conceal
+nondeterminism. The perturbation recipe deliberately changes a visible token
+and must detect a difference. Pixel equality alone does not establish usable
+VoiceOver navigation, gestures, transitions or network behavior.
+
+## Journeys and replay
+
+`timeout 2400 wt run ios-journey -- NAME` runs a group from
+`ios/Journeys/manifest.json`; omit NAME to run every group. Groups include home,
+conversation, asks, review, writing, hosts, claude-sessions, accounts and reports.
+The recipe starts declared topologies, runs accessibility-driven XCUITests,
+collects screenshots, recordings, test results and host observations under
+`target/ios/journeys/`, and tears its processes down.
+
+Protocol journeys use real relay and daemon processes from `amux::testnet`,
+with provider scripting on the host. Testnet substitutes registered bearer
+tokens for production JWT validation. Account journeys inject the scripted
+cloud boundary; StoreKit configuration drives purchase UI. These establish
+app contracts, not production OAuth, billing or live provider qualification.
+There is no amuxcloud server or container dependency here.
+
+For a captured debug report, begin with [the debugging guide](DEBUGGING.md).
+Run `timeout 1800 wt run ios-replay -- /path/to/report` to rebuild stores from
+`msgs.jsonl` and the native `trace.jsonl`, then capture and compare the restored
+screen. No recorded effect executes and no host is contacted. Client recordings
+do not reconstruct arbitrary provider history; host replay requires provider
+records or an explicitly tested conversion.
+
+Reporting freezes the app's own frame after screenshot notification, or from
+Report a Problem under Help. The system preview remains system-owned. The
+report retains rectangles, notes and available session/host records. Its
+`report.json` declares each part present or absent with a reason; this app
+cannot read its system log back, so its log part is absent. A failed upload
+retains the same report for Retry.
+
+## Performance and device qualification
+
+Run `timeout 3000 wt run ios-perf` periodically to compare measured performance
+with the budgets and recorded machine baseline. It prints each metric and
+fails on budget breaches or excessive drift. The
+[performance guide](IOS_PERFORMANCE.md) gives the cheap machine preflight,
+wall time, workloads, baseline review policy and metric definitions. Its
+physical-phone checklist remains required before release: measure cold start
+and reconciliation on older supported hardware, presented-frame cadence and
+hitches on ProMotion and standard displays, and thermal and battery behavior.
+Simulator timing proxies do not mark those checks passed.
+
+`timeout 2400 wt run ios-accessibility` checks labels and target geometry across
+states and sizes. Also exercise VoiceOver navigation, Dynamic Type, Reduce
+Motion/Transparency, dictation and system pickers on supported phones. The
+complete `timeout 12600 wt run ios-verify` runs lint, tests, goldens, journeys,
+performance and Release scope inspection; it does not publish or push.
+
 ## Claude sessions
 
-New Agent creates Claude sessions with the SDK driver. Existing SDK and PTY
+New Agent explicitly creates Claude sessions with the SDK driver and reports
+a refused creation without silently falling back to PTY. Existing SDK and PTY
 sessions open under their original identities and use their own shared Rust
 transcript projections. SDK sessions expose the models, effort levels,
 permission mode and commands their session reports. PTY sessions take prompts
 and refuse model and effort changes with the shared gate reason.
 
-`timeout 2400 wt run ios-journey -- claude-sessions` drives creation, opening,
+`timeout 2400 wt run ios-journey -- hosts` proves host-observed creation and
+pairing; `timeout 2400 wt run ios-journey -- claude-sessions` drives opening,
 prompts and settings through the real app and relay. Its artifacts include
 the daemon inventory, SDK transport inputs, PTY inputs and screenshots of
 both conversations and a refused creation.
@@ -38,7 +194,7 @@ Mac's simulator, five samples each:
 | Commits over 5 s of idle | 0 | 0 |
 
 Nothing here is close to its limit, and the two numbers a UIKit leaf would be
-bought for are the two furthest from it: the list dropped no frames at all
+bought for are the two furthest from it: the display-link proxy recorded no missed frames
 under the stream, and a settled screen of a thousand rows draws 15
 of them — the screenful in front of the tail, with the folded runs of reads
 among them still folded. That last part is checked rather than assumed: a run
@@ -63,7 +219,7 @@ physical-phone checklist, every line of which is still unmeasured. Take them aga
 
 `RegisteredLeaves` carries `tokenTextField`, and unlike the other two it has a
 file behind it: `AmuxFeatures/Leaves/TokenTextField.swift`, a `UITextView`
-behind one representable. It is the only UIKit view in the app.
+behind one representable. It is the only registered UIKit leaf in the features package.
 
 What the field has to do is not a performance budget, so what settled it is not
 a frame time. Attachments in amux are elements *inside* the message text, and

@@ -11,18 +11,57 @@ verdict is deleted before anything is launched, and a run whose suite never
 wrote one stops with that as its reason rather than reporting the file it
 found on disk.
 
-Budgets are hard on the pinned Mac. Any other machine records its own baseline
-row once and from then on is judged against that row with the same tolerances.
-A budget is never loosened to fit a machine.
+## Running it periodically
 
-The run that records that row — `wt run ios-perf -- --baseline` — is judged
-too, against the budgets in the table below where one is written and against
-nothing where none is, because there is nothing yet to compare it with. It says
-which machine it enrolled, and writes the medians to
-`ios/Perf/baselines/<machine>.json` for the next run to be held to. The
-branch's own verification takes that run by itself the first time it meets a
-machine with no recorded row: waiting for the file instead would wait forever,
-since the run that writes it is the one being waited on.
+Run `timeout 3000 wt run ios-perf` when checking for regressions. It prints a
+line per metric, with its median, budget and baseline comparison, and exits
+non-zero if any measured metric exceeds its budget or regression tolerance.
+Read `target/ios/perf/report.md` for the table, proxy labels and wall time;
+`verdict.json`, `samples.json`, `cadence.json`, `lifecycle.json` and `size.md`
+retain the underlying evidence. Per-run artifacts are ignored, so copy a run
+somewhere durable when comparing it later.
+
+This suite is intended for periodic use, not as a required gate on every pull
+request. The branch's complete `ios-verify` recipe and its current push workflow
+include it; that full verification is also available when qualifying a release.
+Allow about seven and a half minutes on the pinned Mac with warm build outputs,
+or about twenty minutes from a cold tree. Each run records its actual wall time.
+
+Before spending that time, run `timeout 60 python3 -B scripts/ios-perf.py
+--describe`. It prints the machine row and whether its baseline exists without
+building or launching anything. `--machine` is the older spelling of the same
+query. The wt recipe also accepts `--describe`, but runs its build prerequisites
+first. An unknown Mac is refused. To enroll one, add its `sysctl -n hw.model`
+value and a unique name to the Machines table below, record the OS, Xcode and
+simulator configuration, then deliberately record and review its baseline.
+`AMUX_PERF_MACHINE` selects an existing row explicitly, as CI does; it is not a
+way to claim one Mac's measurements describe another.
+
+## Baselines and drift
+
+Baselines under `ios/Perf/baselines/` are tracked in git, one file per machine.
+Record one with `timeout 3000 wt run ios-perf -- --baseline`, after checking
+that the workload and measurement are still appropriate. Re-baselining is a
+deliberate reviewed act with a reason in the commit message, never a way to
+make a failing run pass. An invisible baseline lets performance ratchet
+downward unnoticed: replacing yesterday's number becomes cheaper than fixing
+the regression. Per-run output is disposable; the comparison history is not.
+
+Budgets always apply on the pinned Mac. A recorded baseline adds a drift check:
+the median may grow by at most 15% for timing, hitches and CPU, or 10% for memory.
+If `--describe` reports `baseline_present: false`, there is no recorded drift
+comparison for this machine; a passing budget alone does not establish one.
+On the CI runner a missing baseline is reported as `no baseline for this runner`;
+verification still runs the hard budgets and never records a baseline on its
+own. A deliberate first baseline run also has to meet the hard budgets.
+
+Drift catches a slow bleed that a budget alone misses. Cold first frame grew
+from about 310 ms to about 439 ms across roughly 250 commits. Each incremental
+change looked small, and the runs stayed inside the then-400 ms budget until
+the last few. Comparing with the original 310 ms baseline would have flagged
+the drift at about 357 ms. Moving the baseline with every run would have erased
+that signal. The current simulator gate is 460 ms for the reason below; the
+physical-phone target remains 400 ms.
 
 Telling two machines apart is a different thing, and cold start needs it. Every
 number here is taken in a simulator, and for cold start the simulator's own
@@ -210,14 +249,27 @@ figure to ask a phone for.
 | Cold first frame, median and worst of five cold launches | Oldest supported iPhone, household Wi-Fi rather than loopback | median ≤ 400 ms, worst ≤ 600 ms | not measured |
 | Reconciliation after a cold start | Oldest supported iPhone, household Wi-Fi | median ≤ 1,000 ms | not measured |
 | Hitch time over the 1,000-row streaming conversation, with `XCTHitchMetric` rather than the display-link proxy | ProMotion iPhone | ≤ 5 ms/s, and the presented frame rate reaches 120 Hz | not measured |
+| Presented-frame cadence under the same streaming workload | Standard 60 Hz iPhone | reaches 60 Hz when the system permits it | not measured |
+| Cadence with Low Power Mode, thermal constraints and accessibility settings | ProMotion and standard iPhones | adapts to the system-selected rate without imposing a fixed 60 Hz ceiling | not measured |
 | Thermal state and battery drain after ten minutes of streaming | Oldest supported iPhone | nominal or fair, no serious drain | not measured |
 | The optimistic echo, judged by eye | ProMotion iPhone | the row is in the frame after the tap | not measured |
 
+Use the same seed, row count and stream rate described above in a signed
+Measured build. Record the device model, OS/build, refresh-rate capability,
+power and thermal state alongside each result. Use Instruments signposts for
+launch/reconciliation and a device presentation or hitch trace for cadence;
+retain the trace and the five individual samples, not just their average.
+Repeat cold launches with the app terminated, and test return from background
+with the same process still alive. Run VoiceOver, Dynamic Type, dictation and
+picker checks separately from the timing run so that their results remain
+identifiable. Distribution signing and live-service qualification are separate
+release checks.
+
 ## Machines
 
-The `Model` column is the machine's `hw.model`. A machine that is not listed is
-refused: an unrecognised Mac has no budget row and no baseline, and a number
-from it would mean nothing.
+The `Model` column is the machine’s `hw.model`. A machine that is not listed is
+refused. Add a reviewed row before measuring on another Mac; `--describe`
+checks this without running the suite.
 
 | Machine | Model | Budgets | Baseline |
 | --- | --- | --- | --- |

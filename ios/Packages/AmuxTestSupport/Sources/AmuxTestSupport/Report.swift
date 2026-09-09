@@ -143,7 +143,7 @@ public struct ReportScreen: View {
                             markNote(at: at, mark: mark)
                         }
                         note
-                        guidance("Includes this screen, the app log and your hosts' state.")
+                        guidance("Includes this screen and the available session and host records.")
                         if case .failed(let why) = model.sending { refusal(why) }
                         if case .sent(let receipt) = model.sending { sent(receipt) }
                     }

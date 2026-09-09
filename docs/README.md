@@ -12,6 +12,9 @@ subject; when two overlap, the owner named here wins.
   surfaces, isolation scope and internal layering.
 - `A2A.md` — agent-to-agent messaging and families: envelopes, provider
   carriers, model-facing tools, parent/child lifecycle, and client behavior.
+- [iPhone app](IOS.md) — packages, bridge, build pins, fixture driving, goldens,
+  journeys, replay and device qualification; [performance](IOS_PERFORMANCE.md)
+  owns measurement definitions, budgets and reviewed baselines.
 - `UI.md` — the client layer: the amux-ui reducer core, the
   kernel/per-agent-layer split, edge contracts, and the TUI.
 - `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the

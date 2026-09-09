@@ -1366,8 +1366,12 @@ pressed, scrolled or opened, because none of it is there any more.
   drawn as filled cards.** The reference draws only the second one as a card
   and puts the box's words on the picture; both are typed into, so both are
   drawn as the same kind of thing.
-- **The two mono lines are the reference's**, word for word: what to do with
-  the picture, and what is being sent.
+- **The drawing instruction follows the reference; the contents caption
+  names only available records.** The app cannot read back its system log,
+  so the bundle declares the log absent with a reason. Session and host
+  records can also be unavailable; the caption says ‘Includes this screen
+  and the available session and host records.’ rather than promising parts
+  the bundle may not contain. The same caption appears in `upload-failed`.
 
 The fixture states both notes on two lines rather than letting them wrap. A
 vertical text field settles a few points wider or narrower depending on how
