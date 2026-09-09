@@ -330,17 +330,28 @@ public struct Paywall: View {
         // just opening the app again — offers it once more.
         case .unconfirmed(let why):
             note(
-                "Your purchase is not confirmed yet",
-                Self.unconfirmed(why), id: "unconfirmed", value: why.named)
+                Self.trouble(why), Self.unconfirmed(why), id: "unconfirmed", value: why.named)
         default:
             EmptyView()
+        }
+    }
+
+    /// What a purchase that went through and is not access yet is called. A
+    /// purchase amux.sh has taken is confirmed — saying it is not would be
+    /// telling somebody their money went nowhere — so that one is headed by
+    /// what is actually still happening.
+    static func trouble(_ why: PaywallStore.Unconfirmed) -> String {
+        switch why {
+        case .unreachable, .refused: "Your purchase is not confirmed yet"
+        case .switchingOn: "Your subscription is still switching on"
         }
     }
 
     /// Why a purchase that went through is not this account's yet, and what
     /// happens next. A phone that could not get through will try again on its
     /// own; amux.sh saying no will not change by waiting, so that one says
-    /// where to go instead.
+    /// where to go instead; and one amux.sh has taken is only waiting, so it
+    /// says what to do while it waits.
     static func unconfirmed(_ why: PaywallStore.Unconfirmed) -> String {
         switch why {
         case .unreachable:
@@ -349,6 +360,8 @@ public struct Paywall: View {
             // Ended for us, because the reason is the account service's
             // sentence and nothing makes it finish one.
             "Your purchase is saved, but amux.sh could not confirm it: \(ended(said))"
+        case .switchingOn:
+            "amux.sh has your purchase and is still turning your subscription on. Tap Retry in a moment to check again."
         }
     }
 

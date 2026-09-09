@@ -146,20 +146,28 @@ public final class PaywallStore {
         case entitled(Grant)
     }
 
-    /// Why a purchase that went through is not confirmed. The two read
-    /// differently because they are different situations: one is a phone that
-    /// could not get through, and the other is amux.sh saying no.
+    /// Why a purchase that went through has not become access. The three read
+    /// differently because they are different situations: a phone that could
+    /// not get through, amux.sh saying no, and amux.sh saying yes to the
+    /// purchase while the account it was bought for still has nothing.
     public enum Unconfirmed: Sendable, Equatable {
         /// The post never got there.
         case unreachable
         /// amux.sh would not take the transaction, in its own words.
         case refused(String)
+        /// amux.sh took the purchase and the entitlement read back afterwards
+        /// still says no access. The App Store's receipt reaches the account
+        /// service through its own webhook, so the two can be minutes apart;
+        /// the screen says access is on its way and goes on offering to ask
+        /// again.
+        case switchingOn
 
         /// The one word the screen and the driver name this state by.
         public var named: String {
             switch self {
             case .unreachable: "unreachable"
             case .refused: "refused"
+            case .switchingOn: "switching on"
             }
         }
     }
@@ -350,8 +358,15 @@ public final class PaywallStore {
     /// actually lives, and the store only knows about the ones bought on it.
     public func entitled(_ entitlement: Entitlement) {
         self.entitlement = entitlement
-        if case .active(let grant, _) = entitlement, phase != .buying {
-            phase = .entitled(grant)
+        if case .active(let grant, _) = entitlement {
+            if phase != .buying { phase = .entitled(grant) }
+        } else if phase == .confirming {
+            // A purchase amux.sh took, and an account that still has nothing.
+            // Staying on "Confirming with amux.sh…" would leave somebody who
+            // has paid looking at a screen with nothing on it they can press,
+            // so the screen says access is still switching on and keeps the
+            // button that asks again.
+            phase = .unconfirmed(.switchingOn)
         }
     }
 

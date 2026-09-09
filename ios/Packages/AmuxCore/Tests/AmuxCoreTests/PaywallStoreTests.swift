@@ -179,6 +179,55 @@ final class PaywallStoreTests: XCTestCase {
         XCTAssertEqual(store.finished, [])
     }
 
+    /// The cloud takes the post and the entitlement read back afterwards still
+    /// says nothing. Somebody has paid: leaving the screen on a disabled
+    /// "Confirming with amux.sh…" would give them nothing to press at all.
+    func testAPurchaseTheCloudTookWithoutAccessYetLeavesSomethingToPress() async {
+        let model = await loaded()
+        let store = OneStore(held: [OneStore.signed])
+        let cloud = OneCloud()
+        let taken = await model.confirm(
+            OneStore.signed, with: cloud, as: AccountId("ada"), finishing: store)
+        XCTAssertTrue(taken)
+        XCTAssertEqual(model.phase, .confirming)
+
+        // The read the screen believes, which is what the cloud actually says
+        // this account may do.
+        model.entitled(.none)
+
+        XCTAssertEqual(model.phase, .unconfirmed(.switchingOn))
+        // Pressable: nothing is waiting on anybody else any more.
+        XCTAssertFalse(model.working)
+        // And still not for sale a second time — the phase the screen reads
+        // hides the plans and turns the button into asking again.
+        XCTAssertFalse(model.entitled)
+    }
+
+    /// Asking again, and the answer is still no access. The screen stays where
+    /// somebody can ask once more rather than falling back into the dead wait.
+    func testAskingAgainWithoutAccessLeavesTheScreenAskable() async {
+        let model = await loaded()
+        let store = OneStore(held: [OneStore.signed])
+        let cloud = OneCloud()
+        await model.confirm(OneStore.signed, with: cloud, as: AccountId("ada"), finishing: store)
+        model.entitled(.none)
+        // The Retry path with nothing left to send: the transaction is
+        // finished, so all that is left is reading the entitlement again.
+        XCTAssertNil(model.holding)
+        model.entitled(.none)
+
+        XCTAssertEqual(model.phase, .unconfirmed(.switchingOn))
+        XCTAssertFalse(model.working)
+    }
+
+    /// The same read arriving on a screen nobody has bought anything on is not
+    /// news, and must not turn a paywall into a purchase that is switching on.
+    func testAnEmptyEntitlementOnAnUntouchedPaywallSaysNothing() async {
+        let model = await loaded()
+        model.entitled(.none)
+        XCTAssertEqual(model.phase, .ready)
+    }
+
     func testAnUnconfirmedPurchaseIsOfferedAgainByTheNextLaunchWithoutAnybodyPressing() async {
         let model = await loaded()
         let store = OneStore(held: [OneStore.signed])

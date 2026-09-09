@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **A purchase amux.sh has taken but not yet turned into access says so.**
+
+The paywall had a dead end. When the account service accepted a signed
+transaction and the entitlement read that followed still said the account had
+no access, the screen stayed on a disabled *Confirming with amux.sh…* for
+good: the phase only ever moved on an active entitlement, and while it did not
+move nothing on the screen could be pressed — not the button, not Restore, not
+the plans. Somebody who had just paid was left with nothing to do. The two
+services are genuinely minutes apart in production, because the App Store's
+receipt reaches amux.sh through its own webhook rather than through the phone,
+so this is an ordinary state and not an error.
+
+There is now a third unconfirmed state for it. A purchase the account service
+took, with the access not switched on yet, is headed *Your subscription is
+still switching on* rather than *not confirmed* — saying a purchase amux.sh
+accepted was not confirmed would tell somebody their money went nowhere — and
+keeps the Retry button, which reads the entitlement again. The transaction has
+already been finished with the store by then, so asking again posts nothing a
+second time and the plans stay off the screen: the subscription is never
+offered for sale twice.
+
+Validation: paywall unit tests drive an accepted post whose entitlement read
+answers none, from the first confirmation and from asking again, and check
+that an empty read on an untouched paywall still says nothing. The accounts
+journey drives the same state through the scripted cloud, reads the words off
+the running app, and asserts that asking again adds an entitlement read and no
+second recordPurchase.
+
+---
+
 2026-09-09 — **Forgetting a machine keeps it reachable for pairing again.**
 
 Revoking a machine used to leave the phone with no way back into it. Unpair

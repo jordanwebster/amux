@@ -2219,6 +2219,31 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
             f"a phone that could not get through and an account service that refused read the "
             f"same: {seen.get('unreachableExplained')!r}")
 
+        # Taken by the account service, with the access not switched on yet.
+        # A person who has paid must be left somewhere they can act, and the
+        # purchase must not be sold or posted a second time while they wait.
+        journey.expect(seen.get("afterAPostTakenWithoutAccessYet") == "unconfirmed switching on",
+                       f"a purchase the account service took without granting access left the "
+                       f"paywall at {seen.get('afterAPostTakenWithoutAccessYet')!r}")
+        journey.expect(seen.get("offersWhileSwitchingOn") == "Retry",
+                       f"a subscription still switching on offers "
+                       f"{seen.get('offersWhileSwitchingOn')!r}")
+        journey.expect(
+            bool(seen.get("switchingOnExplained"))
+            and seen.get("switchingOnExplained") != seen.get("refusedPostExplained")
+            and seen.get("switchingOnExplained") != seen.get("unreachableExplained"),
+            f"a purchase amux.sh took reads the same as one it never got: "
+            f"{seen.get('switchingOnExplained')!r}")
+        journey.expect(seen.get("afterAskingAgain") == "unconfirmed switching on",
+                       f"asking again while the subscription was switching on left the paywall "
+                       f"at {seen.get('afterAskingAgain')!r}")
+        journey.expect(
+            bool(seen.get("callsAddedByAskingAgain"))
+            and not any(call.startswith("recordPurchase")
+                        for call in seen.get("callsAddedByAskingAgain") or []),
+            f"asking again sent the same purchase to the account service a second time: "
+            f"{seen.get('callsAddedByAskingAgain')}")
+
         journey.expect(seen.get("subscribedSource") == "App Store"
                        and seen.get("offersAfterBuying") == "Done",
                        f"a purchase that went through said {seen.get('subscribedSource')!r}")
@@ -2271,7 +2296,10 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                     "service never heard about is kept, said in words, and offered again with "
                     "the transaction still the store's; one it refuses reads differently, "
                     "because waiting will not change it. Sent again and taken, the entitlement "
-                    "is read back and only then is the transaction finished. Restoring on a "
+                    "is read back and only then is the transaction finished. An account service "
+                    "that took the purchase and has not switched the access on yet says exactly "
+                    "that and keeps a button that asks again, which asks what this account may "
+                    "do rather than posting the purchase twice. Restoring on a "
                     "phone with nothing bought takes the same road, and a purchase the store "
                     "approves by itself reaches the account service with nobody pressing "
                     "anything")

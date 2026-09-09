@@ -285,9 +285,38 @@ final class AccountsTests: JourneyCase {
         record["refusedPostSaid"] = try says("paywall.unconfirmed")
         record["refusedPostExplained"] = try called("paywall.unconfirmed")
 
-        // Sent again, and taken. What the account may do is read back from the
-        // account service afterwards, which is where a subscription actually
-        // lives — the store's word for it is never enough.
+        // Sent again and taken, and the account it was bought for still has
+        // nothing: the App Store's receipt reaches amux.sh through its own
+        // webhook, so the purchase and the access can be minutes apart. The
+        // screen says which of the two is still happening and stays somewhere
+        // a person can press.
+        try scriptCloud(["recordPurchase": "accepted", "entitlement": "none"])
+        press(app, "paywall.buy")
+        record["afterAPostTakenWithoutAccessYet"] = try waitForValue(
+            runner, "paywall", "unconfirmed switching on")
+        record["switchingOnSaid"] = try says("paywall.unconfirmed")
+        record["switchingOnExplained"] = try called("paywall.unconfirmed")
+        record["offersWhileSwitchingOn"] = try called("paywall.buy")
+        record["storeCallsWhileSwitchingOn"] = try storeCalls()
+
+        // Asked again while it is still switching on. The transaction is the
+        // account service's now, so all that is left is reading the
+        // entitlement back — nothing sells a second subscription and nothing
+        // posts the same purchase twice.
+        let beforeAskingAgain = try cloudCalls()
+        press(app, "paywall.buy")
+        XCTAssertTrue(
+            waitUntil { ((try? self.cloudCalls()) ?? []).count > beforeAskingAgain.count },
+            "asking again while the subscription was switching on asked amux.sh nothing")
+        record["afterAskingAgain"] = try waitForValue(
+            runner, "paywall", "unconfirmed switching on")
+        record["callsAddedByAskingAgain"] = Array(
+            (try cloudCalls()).dropFirst(beforeAskingAgain.count))
+
+        // And asked once more, with the access switched on. What the account
+        // may do is read back from the account service, which is where a
+        // subscription actually lives — the store's word for it is never
+        // enough.
         try scriptCloud([
             "recordPurchase": "accepted", "entitlement": "active", "source": "appStore",
         ])
