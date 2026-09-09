@@ -4,6 +4,33 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **A QA account signs into the real amux.sh from this Mac.**
+
+`wt run qa-cloud-signin` performs, with no app and no simulator, the same
+authorization-code sign-in with PKCE the phone performs — same client, same
+redirect, same scopes — against the production account service, and then asks
+the three questions the app asks: who the account is, what it is entitled to,
+and whether the relay will issue it a credential. A sign-in proved against a
+double proves nothing about the live service; this is what closes that gap.
+
+It is evidence a person runs, never a test: it is absent from the iOS
+verification list and nothing gates on it. The address comes from
+AMUX_QA_EMAIL, or from an operator's untracked file when the environment does
+not carry one, and there is no built-in address to fall back to; the password
+is read from the login keychain at the moment it is needed. Nothing that finds
+a person reaches the output — the address only masked, the account identifier
+not at all, and no token, code or password anywhere. Missing address, missing
+keychain entry and a login form that cannot be driven each say which they are
+and exit non-zero rather than passing quietly.
+
+docs/CLOUD.md gains a QA recipes section saying how to run it and what it
+proves. No address is written there or anywhere else in this repository.
+
+Validation: the recipe run against amux.sh, and its missing-address path with
+the file moved aside; the iOS verification lock test.
+
+---
+
 2026-09-09 — **A purchase is not a subscription until amux.sh has it.**
 
 The App Store's signed transaction now crosses out of StoreKit with the

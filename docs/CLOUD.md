@@ -133,4 +133,45 @@ repository; it is what issues connect tokens and what verifies purchases):
 **Nowhere in this repository, at all:** the addresses of the QA accounts. Not
 in a script, a document, a fixture, a golden, a journey record, an evidence
 file or a transcript. A recipe that needs one is given it at the moment it
-runs, from the environment or from an operator's own untracked file.
+runs, from the environment or from an operator's own untracked file — see
+below.
+
+## QA recipes
+
+These are evidence a person runs on this Mac. They are not tests, they never
+run in CI, and nothing gates on them: they reach the production account
+service with a real account's credentials, and a red one is a conversation
+rather than a build failure. They are deliberately absent from the iOS
+verification list.
+
+- `wt run qa-cloud-signin` — signs a QA account into `https://amux.sh` with
+  no app at all, performing the same authorization-code sign-in with PKCE the
+  phone performs, as the same `mobile` client with the same redirect and
+  scopes. It then asks the three questions the app asks: who the account is,
+  what it is entitled to, and whether the relay will issue it a credential.
+  What it proves is that the contract above is the contract the live service
+  actually keeps — a sign-in that works in a simulator against a double proves
+  nothing about the production one.
+
+**The account.** The address comes from `AMUX_QA_EMAIL`. When the environment
+already sets it, that value is used and nothing overwrites it; otherwise the
+recipe reads `.autopilot/qa-account.env` at the repository root, an
+operator-written file that sets `AMUX_QA_EMAIL` and nothing else. That
+directory is untracked, which is the point: this repository is public. There
+is no built-in address to fall back to.
+
+**The password.** Read from this Mac's login keychain at the moment it is
+needed, with `security find-generic-password -s amuxcloud-qa -a "$AMUX_QA_EMAIL" -w`,
+and never printed, logged or written anywhere. Add one with
+`security add-generic-password -s amuxcloud-qa -a "$AMUX_QA_EMAIL" -w`.
+
+**What is never printed.** The address appears only masked; the password, the
+authorization code and every token are used and dropped; the account
+identifier is not printed at all, because it finds a person as well as an
+address does. No address is written in this document, in a script, in an
+example, in a golden, in a journey record or in an evidence file.
+
+When there is no address, no keychain entry, or the login form cannot be
+driven, the recipe says which of those it is — naming the variable and the
+file when the address is what is missing — and exits non-zero. It never
+passes quietly on a sign-in it did not perform.
