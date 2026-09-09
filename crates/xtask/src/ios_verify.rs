@@ -65,22 +65,20 @@ struct PerfMachine {
     baseline_present: bool,
 }
 
-/// Whether a measured run on this machine would mean anything, or why not.
+/// What a measured run on this machine has to be asked for.
 ///
-/// A machine with hard budgets is judged against numbers written down in the
-/// measurement document, so it can be measured the moment it exists. A machine
-/// judged against its own recorded run cannot: until that run has been
-/// recorded there is nothing to compare with, and the suite would fail on an
-/// absence rather than on a regression. Recording the baseline is what enrols
-/// such a machine, with no edit here.
-fn perf_selected(machine: &PerfMachine) -> Result<(), String> {
+/// A machine with hard budgets, or one that has already recorded a run, is
+/// measured with no argument: the numbers it is judged against exist. A machine
+/// judged against its own recorded run and holding no recording yet is asked
+/// for that recording, because skipping it instead is a state nothing leaves:
+/// the run that would write the baseline is the run being skipped for want of
+/// one. The recording run is still judged, against the budgets the definitions
+/// pin, and its medians become what the next run is held to.
+fn perf_arguments(machine: &PerfMachine) -> Vec<&'static str> {
     if machine.hard || machine.baseline_present {
-        return Ok(());
+        return Vec::new();
     }
-    Err(format!(
-        "{} is judged against its own recorded run and {} has not been recorded yet",
-        machine.name, machine.baseline
-    ))
+    vec!["--", "--baseline"]
 }
 
 /// Asks the measurement script which machine this is. The script owns the
@@ -100,13 +98,27 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let selected = recipes(&std::fs::read_to_string(".wt.toml")?)?;
     eprintln!("iOS verification: {}", selected.join(", "));
     for recipe in selected {
-        if recipe == "ios-perf"
-            && let Err(why) = perf_machine().and_then(|machine| perf_selected(&machine))
-        {
-            eprintln!("Skipping wt run ios-perf: {why}");
-            continue;
+        let mut extra: Vec<&'static str> = Vec::new();
+        if recipe == "ios-perf" {
+            match perf_machine() {
+                // An unrecognised Mac has no budget row at all, so a number
+                // from it would mean nothing and there is nothing to record.
+                Err(why) => {
+                    eprintln!("Skipping wt run ios-perf: {why}");
+                    continue;
+                }
+                Ok(machine) => {
+                    extra = perf_arguments(&machine);
+                    if !extra.is_empty() {
+                        eprintln!(
+                            "Recording {}'s baseline: {} does not exist yet",
+                            machine.name, machine.baseline
+                        );
+                    }
+                }
+            }
         }
-        let arguments = arguments(recipe);
+        let arguments = [arguments(recipe), extra.as_slice()].concat();
         eprintln!("Running wt run {recipe} {}", arguments.join(" "));
         let status = Command::new("timeout")
             .args(["1800", "wt", "run", recipe])
@@ -139,32 +151,31 @@ mod tests {
     #[test]
     fn a_machine_with_written_budgets_is_measured() {
         assert!(
-            perf_selected(&machine(
+            perf_arguments(&machine(
                 r#"{"name":"pinned-mac","hard":true,
                 "baseline":"ios/Perf/baselines/pinned-mac.json","baseline_present":false}"#
             ))
-            .is_ok()
+            .is_empty()
         );
     }
 
     /// A machine judged against its own recorded run has nothing to compare
-    /// with until that run exists, and the skip says which file is missing so
-    /// recording it is the whole fix.
+    /// with until that run exists, so its first verification takes the run that
+    /// records it. Skipping instead would never end: the missing file is what
+    /// the skipped run writes.
     #[test]
-    fn a_machine_awaiting_its_baseline_is_skipped_until_the_file_exists() {
+    fn a_machine_awaiting_its_baseline_records_one() {
         let awaiting = machine(
             r#"{"name":"macos-26","hard":false,
                 "baseline":"ios/Perf/baselines/macos-26.json","baseline_present":false}"#,
         );
-        let why = perf_selected(&awaiting).expect_err("no baseline, no measurement");
-        assert!(why.contains("macos-26"), "{why}");
-        assert!(why.contains("ios/Perf/baselines/macos-26.json"), "{why}");
+        assert_eq!(perf_arguments(&awaiting), ["--", "--baseline"]);
 
         let recorded = machine(
             r#"{"name":"macos-26","hard":false,
                 "baseline":"ios/Perf/baselines/macos-26.json","baseline_present":true}"#,
         );
-        assert!(perf_selected(&recorded).is_ok());
+        assert!(perf_arguments(&recorded).is_empty());
     }
 
     /// Mid-flight the goldens are run over the screens that exist; the whole

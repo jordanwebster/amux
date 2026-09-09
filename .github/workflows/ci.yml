@@ -191,11 +191,27 @@ jobs:
       - name: Run iOS verification
         # The runner is not a Mac anybody wrote a hardware row for, so it names
         # the budget row it is measured against rather than being identified by
-        # its model. Until that row's baseline has been recorded, the measured
-        # run is skipped with a line saying which file is missing.
+        # its model. That row is judged against its own recorded numbers, so the
+        # first run here records them: it is held to the pinned budgets and its
+        # medians are uploaded below to be committed as the runner's baseline.
         env:
           AMUX_PERF_MACHINE: macos-26
         run: timeout 9000 wt run ios-verify
+      - name: What the measured run recorded
+        # The verdict, the report a person reads and the medians the runner
+        # would be enrolled with. Uploaded whether or not the run passed: a
+        # failed budget is exactly when somebody needs to read the numbers, and
+        # a recorded baseline only reaches the repository by being taken from
+        # here and committed.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-performance
+          path: |
+            target/ios/perf
+            ios/Perf/baselines
+          if-no-files-found: ignore
+          retention-days: 7
       - name: What a failed verification drew
         # A golden that differs here and nowhere else can only be read by
         # looking at what this machine drew, so the captures leave with the

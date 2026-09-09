@@ -233,7 +233,7 @@ def clear_previous(perf: Path, output: Path) -> None:
         (output / name).unlink(missing_ok=True)
 
 
-def inputs(udid: str, row: dict, only: str | None) -> Path:
+def inputs(udid: str, row: dict, only: str | None, record_baseline: bool = False) -> Path:
     """What only the Mac knows, left where the app will read it."""
     baseline = BASELINES / f"{row['name']}.json"
     perf = container(udid) / "Documents/perf"
@@ -247,6 +247,7 @@ def inputs(udid: str, row: dict, only: str | None) -> Path:
         "baselines": json.loads(baseline.read_text()) if baseline.is_file() else {},
         "only": only,
         "configuration": CONFIGURATION,
+        "recording": record_baseline,
     }, indent=2))
     for name in ["cold-samples.jsonl", "cold-marks.jsonl", LIFECYCLE_SAMPLES]:
         (perf / name).unlink(missing_ok=True)
@@ -613,18 +614,26 @@ def collect(
         f"the run took {minutes:.1f} minutes: building the app, five cold "
         "launches and the suite, without the Rust bridge built before it",
         flush=True)
-    report(verdict, output, minutes)
+    file = BASELINES / f"{row['name']}.json"
+    enrolled = record_baseline and not file.is_file()
+    report(verdict, output, minutes, enrolled)
     print(f"{output / 'verdict.json'}: {'passed' if verdict['passed'] else 'FAILED'}", flush=True)
     if not verdict["passed"]:
         raise SystemExit("the run is over budget")
     if record_baseline:
         BASELINES.mkdir(parents=True, exist_ok=True)
         recorded = {measured(result): result["median"] for result in verdict["results"]}
-        (BASELINES / f"{row['name']}.json").write_text(json.dumps(recorded, indent=2) + "\n")
-        print(f"recorded {BASELINES}/{row['name']}.json", flush=True)
+        file.write_text(json.dumps(recorded, indent=2) + "\n")
+        if enrolled:
+            print(
+                f"enrolled {row['name']}: this run's medians are now its baseline in "
+                f"{file}, and every later run on this machine is judged against them",
+                flush=True)
+        else:
+            print(f"recorded {file}", flush=True)
 
 
-def report(verdict: dict, output: Path, minutes: float) -> None:
+def report(verdict: dict, output: Path, minutes: float, enrolled: bool = False) -> None:
     """The same verdict in the form a person reads.
 
     A number that stands for something it is not has to say so wherever it is
@@ -643,6 +652,12 @@ def report(verdict: dict, output: Path, minutes: float) -> None:
         f"- Wall time: {minutes:.1f} minutes (build, five cold launches and the "
         "suite; the Rust bridge is built before this and is not in it)",
         f"- Verdict: {'passed' if verdict['passed'] else 'FAILED'}",
+    ]
+    if enrolled:
+        lines.append(
+            "- This run enrolled the machine: it had no recorded baseline, so its "
+            "medians become one and it was judged against the pinned budgets alone")
+    lines += [
         "",
         "| Measurement | Median | Worst | Budget | Baseline | Proxy | Verdict |",
         "| --- | --- | --- | --- | --- | --- | --- |",
@@ -817,10 +832,20 @@ def main() -> None:
     self_test()
     row = machine()
     print(f"machine: {row['name']} ({'hard budgets' if row['hard'] else 'baseline'})", flush=True)
+    if record_baseline and not (BASELINES / f"{row['name']}.json").is_file():
+        # The first run on a machine judged against its own recorded numbers
+        # has nothing to be compared with, so it is held to the pinned budgets
+        # where the definitions state one and to nothing where they do not.
+        # Saying so up front means a passing line in this run is not mistaken
+        # for a machine that has been holding to its own history all along.
+        print(
+            f"{row['name']} has no recorded baseline; this run enrols it, judged against "
+            "the pinned budgets alone",
+            flush=True)
     udid = ios_simulators.ensure(SIMULATOR)
     ios_simulators.pin(udid)
     build(udid)
-    perf = inputs(udid, row, only)
+    perf = inputs(udid, row, only, record_baseline)
     if only:
         print(f"only the {only} measurements were asked for", flush=True)
     if only in [None, "cold"]:

@@ -12454,3 +12454,27 @@ be brought back.
 
 Green: `wt run ios-goldens -- --built` (112 captures, none moved), ten
 consecutive `wt run ios-goldens -- queued`, `wt run ios-unit`.
+
+## The first run on a machine is the one that records what it is judged against
+
+The CI runner is not a Mac anybody wrote budgets for, so it is judged against
+its own recorded numbers. It had none, and could never get any: the judge
+refused every measurement on such a machine before it wrote a verdict, so the
+run that was supposed to record the baseline failed instead of recording it,
+and the branch's verification skipped the measured run for want of the file
+that run writes. Performance was never measured on a push.
+
+A run can now say it is recording. A measurement with no recorded number yet is
+held to the absolute budget the definitions pin for it — and to nothing where
+they pin none, because inventing a limit for a first run is a budget nobody
+agreed to — and its medians become the baseline the next run is held to. The
+run says which machine it enrolled, in its output and in the report. A machine
+that already has a recorded row is judged against it exactly as before.
+
+The verification now takes that recording run itself the first time it meets a
+machine with no row, and CI uploads the verdict, the report and the medians
+whether the run passed or failed, so the runner's row can be read and
+committed.
+
+Green: `wt run ios-unit` (432 tests), `wt test -- ios_verify`,
+`AMUX_PERF_MACHINE=macos-26 wt run ios-perf -- --baseline`.

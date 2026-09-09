@@ -82,10 +82,16 @@ public struct PerfInputs: Codable, Sendable, Equatable {
     /// The app cannot see the name, so it is told; whether that build was
     /// actually optimised the app answers for itself in the verdict.
     public let configuration: String
+    /// Whether this run's numbers are being recorded as the machine's
+    /// baseline. A machine that must be judged against a recorded run has to
+    /// take that run once, and until it has, a missing baseline is what is
+    /// expected rather than a fault.
+    public let recording: Bool
 
     public init(
         machine: String, simulator: String, measurements: String,
-        baselines: [String: Double], only: PerfSection? = nil, configuration: String = ""
+        baselines: [String: Double], only: PerfSection? = nil, configuration: String = "",
+        recording: Bool = false
     ) {
         self.machine = machine
         self.simulator = simulator
@@ -93,6 +99,7 @@ public struct PerfInputs: Codable, Sendable, Equatable {
         self.baselines = baselines
         self.only = only
         self.configuration = configuration
+        self.recording = recording
     }
 
     /// Whether this run takes that group's measurements.
@@ -202,7 +209,7 @@ public struct PerfRun: Sendable {
         let verdict = try judge(
             samples: taken, budgets: inputs.budgets(),
             machine: inputs.machine, simulator: inputs.simulator,
-            configuration: inputs.configuration)
+            configuration: inputs.configuration, recording: inputs.recording)
         try encoder.encode(verdict).write(to: PerfFiles.verdict)
         return verdict
     }

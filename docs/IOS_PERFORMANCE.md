@@ -15,6 +15,15 @@ Budgets are hard on the pinned Mac. Any other machine records its own baseline
 row once and from then on is judged against that row with the same tolerances.
 A budget is never loosened to fit a machine.
 
+The run that records that row — `wt run ios-perf -- --baseline` — is judged
+too, against the budgets in the table below where one is written and against
+nothing where none is, because there is nothing yet to compare it with. It says
+which machine it enrolled, and writes the medians to
+`ios/Perf/baselines/<machine>.json` for the next run to be held to. The
+branch's own verification takes that run by itself the first time it meets a
+machine with no recorded row: waiting for the file instead would wait forever,
+since the run that writes it is the one being waited on.
+
 Telling two machines apart is a different thing, and cold start needs it. Every
 number here is taken in a simulator, and for cold start the simulator's own
 cost is most of the number: an empty SwiftUI app that links StoreKit and

@@ -117,6 +117,59 @@ final class JudgeTests: XCTestCase {
         }
     }
 
+    /// The run that records a baseline is the only one a machine judged
+    /// against its own numbers can take first. Refusing it for want of the
+    /// file it writes is a state nothing leaves.
+    func testTheFirstRecordedRunOnSuchAMachineIsJudgedNotRefused() throws {
+        let table = BudgetTable(machines: machines, budgets: budgets)
+        let verdict = try judge(
+            samples: samples(.coldFirstFrameMs, [300, 310, 320, 330, 340]),
+            budgets: table, machine: "macos-26", recording: true)
+        XCTAssertTrue(verdict.passed)
+        let result = try XCTUnwrap(verdict.results.first)
+        XCTAssertNil(result.baseline, "there is nothing recorded yet to compare with")
+        XCTAssertEqual(result.median, 320, "the medians this run records")
+    }
+
+    /// A recording run is not an unjudged one: where the definitions pin an
+    /// absolute budget, the first run on a machine is held to it, so a machine
+    /// cannot enrol itself with numbers nobody would accept.
+    func testARecordedRunStillMeetsThePinnedBudgets() throws {
+        let table = BudgetTable(machines: machines, budgets: budgets)
+        let verdict = try judge(
+            samples: samples(.coldFirstFrameMs, [390, 401, 460, 470, 480]),
+            budgets: table, machine: "macos-26", recording: true)
+        XCTAssertFalse(verdict.passed)
+        XCTAssertTrue(try XCTUnwrap(verdict.results.first?.note).contains("over the budget"))
+    }
+
+    /// Where the definitions pin no absolute number there is nothing for a
+    /// first run to be held to, and inventing one would be a budget nobody
+    /// agreed to. The run records the median instead.
+    func testAMetricWithNoPinnedBudgetIsRecordedRatherThanJudged() throws {
+        let table = BudgetTable(machines: machines, budgets: [:])
+        let verdict = try judge(
+            samples: samples(.reconciliationMs, [800, 900, 1000, 1100, 5000], workload: .latency100),
+            budgets: table, machine: "macos-26", recording: true)
+        XCTAssertTrue(verdict.passed)
+        let result = try XCTUnwrap(verdict.results.first)
+        XCTAssertNil(result.budget)
+        XCTAssertNil(result.baseline)
+        XCTAssertEqual(result.median, 1000)
+    }
+
+    /// Recording permits a missing baseline; it does not discard one that
+    /// exists. A machine that has recorded a run is still judged against it.
+    func testARecordingRunStillObeysABaselineThatExists() throws {
+        let table = BudgetTable(machines: machines, budgets: budgets)
+            .with(baselines: [Measured(.coldFirstFrameMs, .cachedFleet40): 300])
+        let verdict = try judge(
+            samples: samples(.coldFirstFrameMs, [350, 355, 360, 365, 370]),
+            budgets: table, machine: "macos-26", recording: true)
+        XCTAssertFalse(verdict.passed)
+        XCTAssertTrue(try XCTUnwrap(verdict.results.first?.note).contains("15% over"))
+    }
+
     func testAnUnknownMachineIsRefused() {
         let table = BudgetTable(machines: machines, budgets: budgets)
         XCTAssertThrowsError(

@@ -162,9 +162,17 @@ public let requiredSamples = 5
 /// is the same either way. Anything the table cannot judge — an unknown
 /// machine, a metric with too few samples, a baseline the machine is required
 /// to have recorded — is an error rather than a pass.
+///
+/// `recording` is the exception, and it is the run that creates the baseline
+/// the rest of them are judged against. A machine that must have a recorded
+/// baseline cannot record its first one if a missing baseline is an error, so
+/// the first run says it is recording: a measurement with no baseline yet is
+/// held to the absolute budget the definitions pin for it, and to nothing at
+/// all where they pin none, rather than being refused. Every later run on that
+/// machine has the baseline and is judged against it.
 public func judge(
     samples: [MetricSample], budgets: BudgetTable, machine: String, simulator: String = "",
-    configuration: String = ""
+    configuration: String = "", recording: Bool = false
 ) throws(PerfError) -> PerfVerdict {
     guard let row = budgets.machine(machine) else { throw PerfError.unknownMachine(machine) }
 
@@ -184,15 +192,21 @@ public func judge(
             let worst = values[values.count - 1]
             let budget = budgets.budget(metric)
             let baseline = budgets.baseline(measured)
-            if row.baselineRequired && baseline == nil {
+            let enrolling = baseline == nil && recording
+            if row.baselineRequired && baseline == nil && !recording {
                 throw PerfError.missingBaseline(measured)
             }
 
+            // A run being enrolled has nothing of its own to be compared with,
+            // so the pinned budget is the only thing left that can catch a
+            // machine measuring something absurd, and it is applied even where
+            // this machine's budgets are otherwise relative.
+            let holdToBudget = row.budgetsAreHard || enrolling
             var note: String?
-            if row.budgetsAreHard, let limit = budget?.median, middle > limit {
+            if holdToBudget, let limit = budget?.median, middle > limit {
                 note = "median \(rounded(middle)) is over the budget of \(rounded(limit))"
             }
-            if note == nil, row.budgetsAreHard, let limit = budget?.worst, worst > limit {
+            if note == nil, holdToBudget, let limit = budget?.worst, worst > limit {
                 note = "worst \(rounded(worst)) is over the worst-case budget of "
                     + "\(rounded(limit))"
             }
