@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Bridge smoke probes use the current account configuration.**
+
+The standalone simulator probes now supply an account list, selected account
+and account-owned token. Their old relay-owned token shape was rejected before
+the bridge started, breaking the real relay round trip and falsely satisfying
+the shipping library's plaintext-rejection check.
+
+The shipping probe first requires acceptance of the equivalent valid TLS
+configuration, then requires plaintext rejection. The loopback probe still
+requires both daemon identities, excludes unpaired hosts from the displayed
+fleet, verifies discovery grants no trust, and checks worker and runner cleanup.
+
+Validation: `wt run ios-rust` and `wt run ios-loopback-smoke` pass on the pinned
+simulator, including the shipping positive control and real relay inventory.
+
+---
+
 2026-09-09 — **Use the authenticated cloud route for both pairing methods.**
 
 QR and printed-code pairing now share the same route check. A host on another
