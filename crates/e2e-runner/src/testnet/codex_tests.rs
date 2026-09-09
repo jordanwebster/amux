@@ -23,9 +23,10 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
         panic!("Codex recording")
     };
     let replay = recorded.controller.clone();
-    let client = amux::testnet::connect_user(ready.relay, ready.users[0].token.clone())
-        .await
-        .unwrap();
+    let client =
+        amux::testnet::connect_user(&ready.cloud_url, ready.relay, ready.users[0].token.clone())
+            .await
+            .unwrap();
     let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
     let server = serve_net(net, listener, ["host".into()].into(), agents);
     let exercise = async {
@@ -228,9 +229,10 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
         .await
         .unwrap();
     let agent = ready.agents[0].agent_id;
-    let client = amux::testnet::connect_user(ready.relay, ready.users[0].token.clone())
-        .await
-        .unwrap();
+    let client =
+        amux::testnet::connect_user(&ready.cloud_url, ready.relay, ready.users[0].token.clone())
+            .await
+            .unwrap();
     let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
     let server = serve_net(net, listener, ["studio".into()].into(), agents);
     let exercise = async {

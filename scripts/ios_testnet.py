@@ -1,4 +1,4 @@
-"""The test relay, its daemons, and the two ways of talking to a phone.
+"""The test cloud, its assigned relay, and the two ways of talking to a phone.
 
 A claim about what a phone's connection does can only be made from outside the
 phone. This module holds the small amount of machinery that puts a real relay
@@ -64,7 +64,10 @@ def runner(topology: str):
             env=environment, stdout=subprocess.PIPE, text=True)
         try:
             ready = read_ready(process)
-            print(f"testnet: relay {ready['relay']}, control {ready['control']}", flush=True)
+            if ready["cloud_url"] != "https://amux.sh":
+                raise RuntimeError("phone topologies must match the default cloud in the phone's profile config")
+            print(f"testnet: cloud {ready['cloud_url']} assigns relay {ready['relay']}, "
+                  f"control {ready['control']}", flush=True)
             yield ready
             control(ready["control"], "Shutdown")
             if process.wait(timeout=30) != 0:

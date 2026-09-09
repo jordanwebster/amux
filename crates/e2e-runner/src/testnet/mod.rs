@@ -37,6 +37,8 @@ pub enum Command {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Topology {
+    #[serde(default = "default_cloud_url")]
+    pub cloud_url: String,
     pub users: Vec<String>,
     pub daemons: Vec<DaemonDecl>,
     pub paired: Vec<(String, String, PairVia)>,
@@ -87,6 +89,7 @@ pub enum ScriptedProvider {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Readiness {
+    pub cloud_url: String,
     pub relay: SocketAddr,
     pub control: SocketAddr,
     pub users: Vec<UserCredential>,
@@ -266,6 +269,10 @@ impl Reply {
     }
 }
 
+fn default_cloud_url() -> String {
+    amux::testnet::default_cloud_url()
+}
+
 impl Topology {
     fn load(path: &Path) -> Result<Self> {
         let mut topology: Self = serde_json::from_slice(
@@ -442,7 +449,7 @@ impl AgentProvider {
 type Agents = HashMap<String, ScriptedAgent>;
 
 async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Readiness, Agents)> {
-    let mut builder = TestNet::builder().cloud();
+    let mut builder = TestNet::builder().cloud_url(&topology.cloud_url);
     for daemon in &topology.daemons {
         builder = builder
             .daemon(&daemon.name)
@@ -555,6 +562,7 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
         );
     }
     let readiness = Readiness {
+        cloud_url: net.cloud_url().into(),
         relay: net.relay_addr(),
         control,
         users,
@@ -1003,7 +1011,7 @@ mod tests {
     async fn testnet_control_every_network_verb_is_observed_by_another_client() {
         use serde_json::json;
         let net = TestNet::builder()
-            .cloud()
+            .cloud_url("https://cloud.testnet.example")
             .daemon("a")
             .daemon("b")
             .daemon("c")
@@ -1013,6 +1021,8 @@ mod tests {
         let [a, b, c] = net.daemons(["a", "b", "c"]);
         let identity = a.identity_on_disk();
         let relay = net.relay_addr();
+        let cloud_url = net.cloud_url().to_owned();
+        assert_ne!(cloud_url, format!("http://{relay}"));
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = serve_net(
@@ -1106,7 +1116,7 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .to_owned();
-            c.pair(&b).with_pin(&pin).await.unwrap();
+            c.pair(&b).with_cloud_pin(&pin).await.unwrap();
             assert!(!observer.pairing_is_active().await.unwrap());
             c.can_call(&b).await;
 
@@ -1134,12 +1144,10 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .to_owned();
-            // Against the cloud the accepting device is on, not the relay it
-            // reaches that cloud over: an invitation names a service, and a
-            // testnet device is on the one a fresh configuration names.
-            let qr =
-                amux::parse_qr_pairing_payload_for_cloud(&qr, &amux::Config::default().cloud_url)
-                    .unwrap();
+            // Validate the host-produced invitation against this topology
+            // before passing its secret to the accepting device.
+            let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, &cloud_url).unwrap();
+            assert_eq!(qr.cloud_url, cloud_url);
             assert_eq!(qr.host_id, a.host_id());
             c.pairing_admin()
                 .await

@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Test networks configure a cloud that assigns a separate relay.**
+
+The testnet cloud now owns its identity URL and token issuance separately from the relay that carries device traffic. Topologies and readiness publish `cloud_url` alongside the assigned relay address. Daemons and Rust clients write and load their cloud configuration before starting; daemon restart reads the existing file. Installation binding fixtures establish one cloud identity before any device starts. The runner returns host-produced invitations unchanged and validates them against the topology's configured cloud.
+
+Phone topologies explicitly name `https://amux.sh`, matching the default in the phone's installation profile files. The journey runner reports that cloud and its independent loopback relay and refuses a topology that does not match the phone configuration. No mobile override or runtime cloud writer is added. Custom-cloud Rust regressions pair by QR and printed code through the relay and drive the shared UI client from readiness configuration.
+
+Validation: all 20 targeted testnet tests pass; full `wt test` passes 2,372 tests with one existing ignored test; `wt run spec` passes 101 host and 360 reducer specs. The complete `hosts` and `accounts` simulator journeys pass all seven and eight acts respectively, without shortcuts. Ten fresh composited captures were inspected, and the two active phone profile files were read to confirm their configured cloud.
+
+---
+
 2026-09-09 — **Configuration owns the cloud; a relay supplies only a route.**
 
 The cloud is the well-known account service configured by `cloud_url`, defaulting to `https://amux.sh`. Attaching or replacing an embedded relay no longer changes it, and the relay carries no cloud identity. The phone uses that default with no app override; its account JSON carries only an identifier and credentials. Installation binding still derives configuration from the bound account service, or the default for an unbound profile. Pairing compares an invitation with the configured cloud while reaching the host through the independently addressed relay. Core tests cover both default and custom configuration through attachment and replacement; mobile tests accept the daemon-issued `https://amux.sh` invitation over loopback and refuse another cloud; Swift tests pin the account JSON shape.

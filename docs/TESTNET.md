@@ -26,11 +26,13 @@ Start the debug runner with a topology file:
 timeout 3600 wt run testnet -- serve --topology e2e-tests/topologies/two-hosts.json
 ```
 
-A topology is a JSON object with four required lists. For example,
+A topology is a JSON object with a `cloud_url` and four required lists.
+Omitting `cloud_url` uses the installation default, `https://amux.sh`. For example,
 `e2e-tests/topologies/two-hosts.json` contains:
 
 ```json
 {
+  "cloud_url": "https://amux.sh",
   "users": ["personal", "work", "unattached"],
   "daemons": [
     {"name": "laptop", "user": "personal", "repository_roots": ["../.."]},
@@ -59,7 +61,7 @@ allowed, including users without a daemon.
 
 The runner starts real daemons and a loopback relay with isolated identities,
 trust stores and temporary data directories. The first and only stdout line
-is JSON containing `relay`, `control`, per-user bearer credentials, daemon
+is JSON containing `cloud_url`, `relay`, `control`, per-user bearer credentials, daemon
 identities and agent identities. Readiness follows daemon attachment and the
 declared pairings. A cold workspace build happens before the 30-second
 readiness deadline begins.
@@ -70,6 +72,31 @@ of its public key). Each agent entry has `name`, `daemon` and `agent_id`
 (UUID). Both socket addresses use `127.0.0.1` with an ephemeral port. Tokens
 belong only to this isolated relay instance. Diagnostic output goes to
 stderr, leaving stdout available for a driver to parse.
+
+The cloud owns its identity URL, issues per-user credentials, and assigns a
+relay. The relay authenticates those credentials and carries device traffic;
+its socket address is never a cloud identity. The topology writes `cloud_url`
+into each daemon's config file before startup. Client-only Rust harnesses
+likewise write and load a config file using readiness's `cloud_url`, then
+connect to the independently supplied `relay`. Restart reads the existing
+config. Neither relay attachment nor the driver rewrites a running device's
+cloud or the invitation produced by a host.
+
+The iPhone loads the cloud from its installation's profile config, which
+currently uses the `https://amux.sh` default. Phone journey topologies name
+that cloud and receive an ephemeral loopback relay from it. The scripted
+account boundary supplies relay credentials and routing; it does not change
+cloud identity. Rust topologies can use `TestNet::builder().cloud_url(...)`
+to exercise another cloud. Topologies with installation binding use the
+existing identity HTTP fixture's own URL for every attached device; that
+fixture names the cloud's independently addressed relay.
+
+`timeout 900 wt test -- testnet_control -- --nocapture` pairs by printed code
+and QR over a relay whose address differs from the custom configured cloud.
+`timeout 900 wt test -- testnet_agents -- --nocapture` also exercises a
+client config loaded from readiness with a nondefault cloud. Phone pairing
+and account switching are exercised by `timeout 2400 wt run ios-journey -- hosts`
+and `timeout 2400 wt run ios-journey -- accounts`.
 
 ## Control protocol
 
@@ -87,7 +114,7 @@ not undo an operation that has already started.
 | `{"RestartDaemon":{"name":"laptop"}}` | Stop and restart the daemon, preserving its identity, trust and listening address; wait for reachable peers to see it again. Provider processes end with the old runtime. |
 | `{"Unpair":{"daemon":"laptop","peer":"desktop"}}` | Revoke the peer through the daemon's normal local administration API. |
 | `{"StartPinPairing":{"daemon":"desktop","ttl_secs":30}}` | Start PIN pairing with a TTL of 1–3,600 seconds; return the six-digit `pin`. |
-| `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, pointing at the test relay. |
+| `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, naming the configured cloud identity. |
 | `{"Latency":{"millis":100}}` | Delay each newly received TCP chunk entering the relay by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
 | `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. RPC tunnels are not additional links. |
 | `{"Inventory":{"daemon":"desktop"}}` | Return the daemon's agents with their UUID, kind and driver, plus the devices it trusts. |
@@ -195,7 +222,7 @@ The daemon checks the stream sequence and the real provider control validates
 input before script delivery. Observations remain readable after provider
 exit. Restart removes handles for the stopped daemon's scripted agents.
 
-`amux::testnet::connect_user(relay, token)` opens a client-only embedded runtime
+`amux::testnet::connect_user(cloud_url, relay, token)` opens a client-only embedded runtime
 with the normal routing and client services against the loopback relay. It
 supplies the test token directly in place of production token exchange. The
 client has an isolated device identity and must pair with the host, even when

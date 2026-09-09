@@ -49,9 +49,10 @@ async fn exercise() {
     let (net, ready, agents) = start(&topology, listener.local_addr().unwrap())
         .await
         .unwrap();
-    let client = amux::testnet::connect_user(ready.relay, ready.users[0].token.clone())
-        .await
-        .unwrap();
+    let client =
+        amux::testnet::connect_user(&ready.cloud_url, ready.relay, ready.users[0].token.clone())
+            .await
+            .unwrap();
     let mut runtime = Runtime::start_with_client(
         client.clone(),
         RuntimeOptions {

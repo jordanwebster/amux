@@ -43,19 +43,24 @@ pub(super) async fn succeeded(runtime: &mut Runtime, command: UiCommand) {
 async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../e2e-tests/topologies/scripted-agents.json");
-    let topology = Topology::load(&path).unwrap();
+    let mut topology = Topology::load(&path).unwrap();
+    topology.cloud_url = "https://accounts.testnet.example".into();
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let (net, ready, agents) = start(&topology, listener.local_addr().unwrap())
         .await
         .unwrap();
     eprintln!("readiness {}", serde_json::to_string(&ready).unwrap());
+    assert_eq!(ready.cloud_url, topology.cloud_url);
+    assert_ne!(ready.cloud_url, format!("http://{}", ready.relay));
     let agent = ready.agents[0].agent_id;
-    let client = amux::testnet::connect_user(ready.relay, ready.users[0].token.clone())
-        .await
-        .unwrap();
-    let outsider = amux::testnet::connect_user(ready.relay, ready.users[1].token.clone())
-        .await
-        .unwrap();
+    let client =
+        amux::testnet::connect_user(&ready.cloud_url, ready.relay, ready.users[0].token.clone())
+            .await
+            .unwrap();
+    let outsider =
+        amux::testnet::connect_user(&ready.cloud_url, ready.relay, ready.users[1].token.clone())
+            .await
+            .unwrap();
     let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
     let server = serve_net(net, listener, ["host".into()].into(), agents);
     let exercise = async {

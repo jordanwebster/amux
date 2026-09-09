@@ -199,31 +199,7 @@ pub(crate) async fn start_daemon_runtime(
         (None, None) => None,
     };
     let config_path = inner.data_dir.join("config.yaml");
-    let config = crate::config::Config {
-        host_name: inner.name.clone(),
-        repository_roots: inner.repository_roots.clone(),
-        socket_path: inner.data_dir.join("amux.sock"),
-        state_path: inner.data_dir.join("state.yaml"),
-        data_dir: inner.data_dir.clone(),
-        tcp_port: inner.tcp_addr.map(|addr| addr.port()),
-        path: Some(config_path.clone()),
-
-        prevent_idle_sleep: Some(false),
-        ..crate::config::Config::default()
-    };
-    // A daemon's profile config exists on disk, and an agent it starts needs
-    // it there: every managed session launches this host's MCP server by
-    // pointing a fresh amux at this profile, so a runtime whose configuration
-    // only ever lived in memory can create no agent at all. Written where the
-    // rest of this profile's directory is.
-    std::fs::create_dir_all(&inner.data_dir)
-        .unwrap_or_else(|error| panic!("make daemon '{}' data directory: {error}", inner.name));
-    std::fs::write(
-        &config_path,
-        serde_yaml::to_string(&config)
-            .unwrap_or_else(|error| panic!("write daemon '{}' config: {error}", inner.name)),
-    )
-    .unwrap_or_else(|error| panic!("write daemon '{}' config: {error}", inner.name));
+    let config = crate::Config::from_file(&config_path).expect("read daemon configuration");
     let mut options = ProfileRuntimeOptions::from_legacy_config(
         config,
         None,
@@ -346,7 +322,15 @@ impl Daemon {
     /// receive its frame; the foreign tenant must allocate no endpoint.
     pub async fn cloud_cannot_forward_to(&self, other: &Daemon, control: &Daemon) {
         use wire::pb;
-        let relay_id = self.net.upgrade().unwrap().cloud.as_ref().unwrap().host_id;
+        let relay_id = self
+            .net
+            .upgrade()
+            .unwrap()
+            .cloud
+            .as_ref()
+            .unwrap()
+            .relay
+            .host_id;
         let parts = self.try_parts().await.unwrap();
         let (_, tx) = parts
             .tunnels
@@ -1170,7 +1154,7 @@ impl Daemon {
         );
         eventually(
             &assertion,
-            async || !self.has_direct_route_to(cloud_relay.host_id).await,
+            async || !self.has_direct_route_to(cloud_relay.relay.host_id).await,
             self.failure_dump(),
         )
         .await;
@@ -1198,7 +1182,7 @@ impl Daemon {
         );
         eventually(
             &assertion,
-            async || self.knows_host(cloud_relay.host_id).await,
+            async || self.knows_host(cloud_relay.relay.host_id).await,
             self.failure_dump(),
         )
         .await;
@@ -1242,7 +1226,7 @@ impl Daemon {
         if let Some(net) = self.net.upgrade() {
             let _ = writeln!(out, "declared topology:\n{}", net.topology);
             if let Some(cloud) = &net.cloud {
-                let status = if cloud.is_online().await {
+                let status = if cloud.relay.is_online().await {
                     "online"
                 } else {
                     "offline"
@@ -1250,7 +1234,8 @@ impl Daemon {
                 let _ = writeln!(
                     out,
                     "cloud relay: {status} at {} (host_id {})",
-                    cloud.addr, cloud.host_id
+                    cloud.relay_addr(),
+                    cloud.relay.host_id
                 );
             }
             for daemon in &net.daemons {
@@ -1475,7 +1460,7 @@ impl RouteAssertion<'_> {
             .from
             .net
             .upgrade()
-            .and_then(|net| net.cloud.as_ref().map(|cloud| cloud.host_id))
+            .and_then(|net| net.cloud.as_ref().map(|cloud| cloud.relay.host_id))
             .expect("topology has no cloud relay");
         self.via_host(cloud_id, "cloud").await;
     }
@@ -1494,4 +1479,35 @@ impl RouteAssertion<'_> {
         )
         .await;
     }
+}
+
+/// Writes the installation fixture before its runtime is started.
+pub(super) fn write_daemon_config(inner: &DaemonInner, cloud_url: &str) {
+    let config_path = inner.data_dir.join("config.yaml");
+    let config = crate::config::Config {
+        host_name: inner.name.clone(),
+        cloud_url: cloud_url.into(),
+        repository_roots: inner.repository_roots.clone(),
+        socket_path: inner.data_dir.join("amux.sock"),
+        state_path: inner.data_dir.join("state.yaml"),
+        data_dir: inner.data_dir.clone(),
+        tcp_port: inner.tcp_addr.map(|addr| addr.port()),
+        path: Some(config_path.clone()),
+
+        prevent_idle_sleep: Some(false),
+        ..crate::config::Config::default()
+    };
+    // A daemon's profile config exists on disk, and an agent it starts needs
+    // it there: every managed session launches this host's MCP server by
+    // pointing a fresh amux at this profile, so a runtime whose configuration
+    // only ever lived in memory can create no agent at all. Written where the
+    // rest of this profile's directory is.
+    std::fs::create_dir_all(&inner.data_dir)
+        .unwrap_or_else(|error| panic!("make daemon '{}' data directory: {error}", inner.name));
+    std::fs::write(
+        &config_path,
+        serde_yaml::to_string(&config)
+            .unwrap_or_else(|error| panic!("write daemon '{}' config: {error}", inner.name)),
+    )
+    .unwrap_or_else(|error| panic!("write daemon '{}' config: {error}", inner.name));
 }

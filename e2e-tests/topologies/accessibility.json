@@ -1,4 +1,5 @@
 {
+  "cloud_url": "https://amux.sh",
   "users": ["personal"],
   "daemons": [
     {"name": "laptop", "user": "personal", "repository_roots": ["../../target/ios/journeys"]},

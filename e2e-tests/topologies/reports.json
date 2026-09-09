@@ -1,4 +1,5 @@
 {
+  "cloud_url": "https://amux.sh",
   "users": ["personal"],
   "daemons": [
     {"name": "studio", "user": "personal", "repository_roots": ["../.."]}

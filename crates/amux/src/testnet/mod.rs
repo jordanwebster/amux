@@ -65,7 +65,7 @@ use std::sync::Arc;
 use assertions::eventually;
 use daemon::{CloudAttachment, DaemonInner, start_daemon_runtime};
 pub use daemon::{Daemon, ExpiringJwt, RouteAssertion, RoutedStream};
-use net::CloudRelay;
+use net::Cloud;
 pub use pairing::{PairAttempt, Pin, QrPayload};
 pub use session::EchoSession;
 use tokio::net::TcpListener;
@@ -96,7 +96,7 @@ pub struct TestNet {
 pub(crate) struct NetInner {
     pub(crate) topology: String,
     pub(crate) daemons: Vec<Daemon>,
-    pub(crate) cloud: Option<CloudRelay>,
+    pub(crate) cloud: Option<Cloud>,
     installations: Vec<InstallationHandle>,
     pairs: Vec<(String, String, Via)>,
     /// Owns every daemon's data dir; removed when the net is dropped.
@@ -107,16 +107,26 @@ pub(crate) struct NetInner {
 /// call attempt before treating "still not completed" as cannot-call.
 const RELAY_CALL_ATTEMPT_TIMEOUT: std::time::Duration = assertions::DEFAULT_TIMEOUT;
 
+/// Default cloud identity for topology configuration, matching an installation.
+pub fn default_cloud_url() -> String {
+    crate::Config::default().cloud_url
+}
+
 impl TestNet {
     /// Loopback endpoint for clients outside the harness process.
     pub fn relay_addr(&self) -> SocketAddr {
-        self.cloud().addr
+        self.cloud().relay_addr()
+    }
+
+    /// The cloud identity configured by this topology, separate from its relay.
+    pub fn cloud_url(&self) -> &str {
+        &self.cloud().url
     }
 
     /// Delay each inbound relay TCP chunk, including on already-open sockets.
     /// Direct device links and local admin calls remain unaffected.
     pub fn set_relay_latency(&self, millis: u64) {
-        self.cloud().set_latency(millis);
+        self.cloud().relay.set_latency(millis);
     }
 
     /// Restart a daemon and wait for its previously reachable peers to return.
@@ -134,10 +144,10 @@ impl TestNet {
             }
         }
         daemon.restart().await;
-        if self.cloud().is_online().await {
+        if self.cloud().relay.is_online().await {
             eventually(
                 "restarted daemon attaches to the relay",
-                async || daemon.has_direct_route_to(self.cloud().host_id).await,
+                async || daemon.has_direct_route_to(self.cloud().relay.host_id).await,
                 daemon.failure_dump(),
             )
             .await;
@@ -173,7 +183,7 @@ impl TestNet {
     /// has gone away stops appearing at all.
     pub async fn cloud_links(&self, label: &str) -> Vec<(crate::HostId, usize)> {
         let (user_id, _) = self.user_credentials(label);
-        self.cloud().links_for(user_id).await
+        self.cloud().relay.links_for(user_id).await
     }
 
     pub fn user_credentials(&self, label: &str) -> (uuid::Uuid, String) {
@@ -186,7 +196,7 @@ impl TestNet {
             daemon.stop().await;
         }
         if let Some(cloud) = &self.inner.cloud {
-            cloud.go_offline().await;
+            cloud.relay.go_offline().await;
         }
     }
 
@@ -232,7 +242,7 @@ impl TestNet {
     /// learned through peers may linger until their HostDowns propagate.)
     pub async fn cloud_offline(&self) {
         let cloud = self.cloud();
-        cloud.go_offline().await;
+        cloud.relay.go_offline().await;
         // Note: the daemons' connector tasks are left running so they can
         // observe the dead socket and tear their links down themselves.
         for daemon in self.cloud_attached_daemons() {
@@ -242,7 +252,7 @@ impl TestNet {
             );
             eventually(
                 &assertion,
-                async || !daemon.has_direct_route_to(cloud.host_id).await,
+                async || !daemon.has_direct_route_to(cloud.relay.host_id).await,
                 daemon.failure_dump(),
             )
             .await;
@@ -253,10 +263,10 @@ impl TestNet {
     /// cloud-attached daemon.
     pub async fn cloud_online(&self) {
         let cloud = self.cloud();
-        if cloud.is_online().await {
+        if cloud.relay.is_online().await {
             return;
         }
-        cloud.go_online().await;
+        cloud.relay.go_online().await;
         for daemon in self.cloud_attached_daemons() {
             daemon.reconnect_cloud().await;
         }
@@ -264,7 +274,7 @@ impl TestNet {
             let assertion = format!("'{}' reattaches to the cloud relay", daemon.name());
             eventually(
                 &assertion,
-                async || daemon.knows_host(cloud.host_id).await,
+                async || daemon.knows_host(cloud.relay.host_id).await,
                 daemon.failure_dump(),
             )
             .await;
@@ -364,7 +374,7 @@ impl TestNet {
             .user_id;
         let attempt = tokio::time::timeout(
             RELAY_CALL_ATTEMPT_TIMEOUT,
-            cloud.try_call_into(user_id, target.host_id()),
+            cloud.relay.try_call_into(user_id, target.host_id()),
         )
         .await;
         if let Ok(Ok(())) = attempt {
@@ -389,13 +399,13 @@ impl TestNet {
         let assertion = format!("cloud relay observes '{}' going offline", target.name());
         eventually(
             &assertion,
-            async || !cloud.has_link_to(user_id, target.host_id()).await,
+            async || !cloud.relay.has_link_to(user_id, target.host_id()).await,
             target.failure_dump(),
         )
         .await;
     }
 
-    fn cloud(&self) -> &CloudRelay {
+    fn cloud(&self) -> &Cloud {
         self.inner
             .cloud
             .as_ref()
@@ -418,7 +428,7 @@ impl TestNet {
                 let assertion = format!("'{}' attaches to the cloud relay", daemon.name());
                 eventually(
                     &assertion,
-                    async || daemon.knows_host(cloud.host_id).await,
+                    async || daemon.knows_host(cloud.relay.host_id).await,
                     daemon.failure_dump(),
                 )
                 .await;
@@ -465,6 +475,7 @@ struct DaemonSpec {
 #[derive(Default)]
 pub struct TestNetBuilder {
     cloud: bool,
+    cloud_url: Option<String>,
     installations: Vec<installation::InstallationSpec>,
     selecting_profile: bool,
     daemons: Vec<DaemonSpec>,
@@ -522,6 +533,14 @@ impl TestNetBuilder {
     /// Adds an in-process cloud relay; daemons attach to it by default.
     pub fn cloud(mut self) -> Self {
         self.cloud = true;
+        self
+    }
+
+    /// Configures the cloud identity written to every daemon config. The
+    /// cloud still assigns an independent loopback relay address.
+    pub fn cloud_url(mut self, url: impl Into<String>) -> Self {
+        self.cloud = true;
+        self.cloud_url = Some(url.into());
         self
     }
 
@@ -636,10 +655,55 @@ impl TestNetBuilder {
             .tempdir()
             .expect("create testnet data root");
 
-        let cloud = if self.cloud {
-            Some(CloudRelay::start().await)
+        let mut cloud = if self.cloud {
+            Some(Cloud::start(self.cloud_url.clone().unwrap_or_else(default_cloud_url)).await)
         } else {
             None
+        };
+
+        let identity = if self.installations.is_empty() {
+            None
+        } else {
+            let mut users = std::collections::BTreeSet::new();
+            for installation in &self.installations {
+                for profile in &installation.profiles {
+                    if let Some(user) = &profile.cloud_user {
+                        users.insert(user.clone());
+                        let cloud = cloud.as_ref().expect("cloud_user requires .cloud()");
+                        let (user_id, _) = cloud.credentials_for_user(user);
+                        cloud.register_token(
+                            &crate::test_fixtures::relay_token(user),
+                            user_id,
+                            std::time::Duration::from_secs(3600),
+                        );
+                    }
+                }
+            }
+            if users.is_empty() {
+                users.insert("default".into());
+            }
+            let identity = Arc::new(
+                crate::test_fixtures::IdentityServer::start(
+                    users
+                        .into_iter()
+                        .map(|sub| crate::test_fixtures::TestAccount {
+                            name: Some(format!("{sub} Example")),
+                            email: Some(format!("{sub}@example.test")),
+                            sub,
+                        })
+                        .collect(),
+                    cloud.as_ref().map(|relay| relay.relay_addr()),
+                )
+                .await,
+            );
+            if let Some(cloud) = &mut cloud {
+                assert!(
+                    self.cloud_url.is_none(),
+                    "installation topologies use their identity fixture URL"
+                );
+                cloud.url = identity.url();
+            }
+            Some(identity)
         };
 
         // Identities and direct-TCP listeners first, so trust seeding can
@@ -748,7 +812,7 @@ impl TestNetBuilder {
                         None => (cloud.default_user_id(), cloud.token.clone()),
                     };
                     CloudAttachment {
-                        addr: cloud.addr,
+                        addr: cloud.relay_addr(),
                         token,
                         user_id,
                     }
@@ -757,6 +821,11 @@ impl TestNetBuilder {
                 installation: None,
                 tracked_tcp: Default::default(),
             });
+            let cloud_url = cloud
+                .as_ref()
+                .map(|cloud| cloud.url.clone())
+                .unwrap_or_else(default_cloud_url);
+            daemon::write_daemon_config(&inner, &cloud_url);
             let runtime = start_daemon_runtime(&inner, prep.listener).await;
             *inner.runtime.lock().await = Some(runtime);
             daemon_inners.push(inner);
@@ -764,41 +833,10 @@ impl TestNetBuilder {
 
         let mut installations = Vec::new();
         if !self.installations.is_empty() {
-            let mut users = std::collections::BTreeSet::new();
-            for installation in &self.installations {
-                for profile in &installation.profiles {
-                    if let Some(user) = &profile.cloud_user {
-                        users.insert(user.clone());
-                        let cloud = cloud.as_ref().expect("cloud_user requires .cloud()");
-                        let (user_id, _) = cloud.credentials_for_user(user);
-                        cloud.register_token(
-                            &crate::test_fixtures::relay_token(user),
-                            user_id,
-                            std::time::Duration::from_secs(3600),
-                        );
-                    }
-                }
-            }
-            if users.is_empty() {
-                users.insert("default".into());
-            }
-            let identity = Arc::new(
-                crate::test_fixtures::IdentityServer::start(
-                    users
-                        .into_iter()
-                        .map(|sub| crate::test_fixtures::TestAccount {
-                            name: Some(format!("{sub} Example")),
-                            email: Some(format!("{sub}@example.test")),
-                            sub,
-                        })
-                        .collect(),
-                    cloud.as_ref().map(|relay| relay.addr),
-                )
-                .await,
-            );
             for spec in self.installations {
                 let installation =
-                    installation::start(spec, identity.clone(), cloud.as_ref()).await;
+                    installation::start(spec, identity.as_ref().unwrap().clone(), cloud.as_ref())
+                        .await;
                 daemon_inners.extend(installation.daemon_inners());
                 installations.push(installation);
             }
@@ -907,7 +945,7 @@ fn trust_entry(peer: &DeviceIdentity, name: &str, reachabilities: Vec<Reachabili
 fn render_topology(
     specs: &[DaemonSpec],
     inners: &[Arc<DaemonInner>],
-    cloud: Option<&CloudRelay>,
+    cloud: Option<&Cloud>,
     pairs: &[(String, String, Via)],
     trusted: &[(String, String)],
 ) -> String {
@@ -915,8 +953,10 @@ fn render_topology(
     if let Some(cloud) = cloud {
         let _ = writeln!(
             out,
-            "  cloud relay at {} (host_id {})",
-            cloud.addr, cloud.host_id
+            "  cloud {} assigns relay {} (host_id {})",
+            cloud.url,
+            cloud.relay_addr(),
+            cloud.relay.host_id
         );
     }
     for (spec, inner) in specs.iter().zip(inners) {

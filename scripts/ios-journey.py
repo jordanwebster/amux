@@ -3094,6 +3094,7 @@ def main() -> None:
         if plan["id"] in PREPARE:
             PREPARE[plan["id"]]()
         with runner(plan["topology"]) as ready:
+            journey.say(f"configured cloud {ready['cloud_url']} assigns relay {ready['relay']}")
             JOURNEYS[plan["id"]](journey, udid, ready)
         journey.write()
         if acts:

@@ -533,7 +533,7 @@ fn fixture_factory(
 pub(super) async fn start(
     spec: InstallationSpec,
     identity: Arc<IdentityServer>,
-    cloud: Option<&super::net::CloudRelay>,
+    cloud: Option<&super::net::Cloud>,
 ) -> InstallationHandle {
     let disk_root = crate::test_fixtures::short_installation_root();
     let root = InstallationRoot::OnDisk(disk_root.path().into());
@@ -547,7 +547,7 @@ pub(super) async fn start(
     }));
     let installation = Installation::open_for_test(
         options(&spec.name, root),
-        fixture_factory(fixtures.clone(), cloud.map(|cloud| cloud.addr)),
+        fixture_factory(fixtures.clone(), cloud.map(|cloud| cloud.relay_addr())),
     )
     .await
     .expect("start production installation");
@@ -596,7 +596,7 @@ pub(super) async fn start(
                         let cloud = cloud.expect("cloud_user requires .cloud()");
                         let (user_id, token) = cloud.credentials_for_user(user);
                         CloudAttachment {
-                            addr: cloud.addr,
+                            addr: cloud.relay_addr(),
                             user_id,
                             token,
                         }
@@ -616,7 +616,7 @@ pub(super) async fn start(
         current: RwLock::new(Some(Arc::new(installation))),
         identity,
         fixtures,
-        cloud_addr: cloud.map(|cloud| cloud.addr),
+        cloud_addr: cloud.map(|cloud| cloud.relay_addr()),
         root,
         persistent: spec.persistent,
         _disk_root: Some(disk_root),

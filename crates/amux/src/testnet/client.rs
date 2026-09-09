@@ -51,19 +51,30 @@ impl Drop for UserClient {
 
 /// Opens the production embedded client services without a local agent host,
 /// using a supplied test relay token instead of the production token exchange.
-pub async fn connect_user(relay: SocketAddr, token: String) -> anyhow::Result<UserClient> {
+pub async fn connect_user(
+    cloud_url: &str,
+    relay: SocketAddr,
+    token: String,
+) -> anyhow::Result<UserClient> {
     anyhow::ensure!(relay.ip().is_loopback(), "testnet relay must be loopback");
     let root = tempfile::tempdir()?;
     let identity = load_or_create_device_identity_in(root.path())?;
     let trust = TrustStore::load_or_create_in(root.path())?;
-    let state = super::net::testnet_server_state("testnet-client", identity.host_id, None);
-    {
-        let mut state = state.write().await;
-        state.config.data_dir = root.path().to_owned();
-        state.config.state_path = root.path().join("state.yaml");
-        state.config.socket_path = root.path().join("amux.sock");
-    }
-    let cloud_url = state.read().await.config.cloud_url.clone();
+    let config_path = root.path().join("config.yaml");
+    let config = crate::Config {
+        host_name: "testnet-client".into(),
+        cloud_url: cloud_url.into(),
+        data_dir: root.path().to_owned(),
+        state_path: root.path().join("state.yaml"),
+        socket_path: root.path().join("amux.sock"),
+        ..crate::Config::default()
+    };
+    std::fs::write(&config_path, serde_yaml::to_string(&config)?)?;
+    let config = crate::Config::from_file(&config_path)?;
+    let cloud_url = config.cloud_url.clone();
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::user_state::ServerState::new(config, identity.host_id, None, None),
+    ));
     let services = start_user_services(
         state,
         None,

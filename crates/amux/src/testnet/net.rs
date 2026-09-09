@@ -1,4 +1,4 @@
-//! In-process cloud relay for testnet topologies.
+//! A configured cloud identity and its independently addressed test relay.
 //!
 //! Mirrors the assembly used by the startup tests: a real
 //! [`CloudLinkService`] served over localhost TCP, with a bearer-token
@@ -52,9 +52,9 @@ pub(crate) type TokenRegistry = Arc<std::sync::RwLock<HashMap<String, Registered
 /// TTL for ordinary (non-expiring-test) testnet tokens.
 const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(3600);
 
-pub(crate) struct CloudRelay {
-    pub(crate) addr: SocketAddr,
-    pub(crate) host_id: HostId,
+pub(crate) struct Cloud {
+    pub(crate) url: String,
+    pub(crate) relay: Relay,
     /// The default cloud user's bearer token.
     pub(crate) token: String,
     user_id: Uuid,
@@ -62,6 +62,15 @@ pub(crate) struct CloudRelay {
     failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
     /// builder `cloud_user` label → that user's `(user_id, token)`.
     user_labels: std::sync::Mutex<HashMap<String, (Uuid, String)>>,
+}
+
+/// Carries authenticated device traffic; cloud identity and token issuance
+/// belong to `Cloud`, which supplies this relay's address to devices.
+pub(crate) struct Relay {
+    pub(crate) addr: SocketAddr,
+    pub(crate) host_id: HostId,
+    tokens: TokenRegistry,
+    failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
     server: Mutex<Option<RunningCloud>>,
     latency_millis: Arc<AtomicU64>,
 }
@@ -95,8 +104,8 @@ impl Drop for RunningCloud {
     }
 }
 
-impl CloudRelay {
-    pub(crate) async fn start() -> Self {
+impl Cloud {
+    pub(crate) async fn start(url: String) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("bind testnet cloud relay listener");
@@ -116,42 +125,30 @@ impl CloudRelay {
                     ttl: DEFAULT_TOKEN_TTL,
                 },
             );
-        let relay = Self {
+        let failures = Arc::default();
+        let relay = Relay {
             addr,
             host_id: Uuid::new_v4(),
-            token,
-            user_id,
-            tokens,
-            failures: Arc::default(),
-            user_labels: std::sync::Mutex::new(HashMap::new()),
+            tokens: tokens.clone(),
+            failures: Arc::clone(&failures),
             server: Mutex::new(None),
             latency_millis: Arc::default(),
         };
         relay.serve(listener).await;
-        relay
+        Self {
+            url,
+            relay,
+            token,
+            user_id,
+            tokens,
+            failures,
+            user_labels: std::sync::Mutex::new(HashMap::new()),
+        }
     }
 
-    async fn serve(&self, listener: TcpListener) {
-        let state = testnet_server_state("cloud", self.host_id, None);
-        state.write().await.is_cloud_server = true;
-        let service = CloudLinkService::with_authenticator(
-            state,
-            Arc::new(RegistryTokenAuthenticator {
-                tokens: self.tokens.clone(),
-                failures: self.failures.clone(),
-            }),
-        );
-        let connections: TrackedConnections = Arc::default();
-        let task = service.serve_on_incoming(tracked_tcp_incoming(
-            listener,
-            connections.clone(),
-            self.latency_millis.clone(),
-        ));
-        *self.server.lock().await = Some(RunningCloud {
-            service,
-            task,
-            connections,
-        });
+    /// The relay assigned by this cloud, independent of its identity URL.
+    pub(crate) fn relay_addr(&self) -> SocketAddr {
+        self.relay.addr
     }
 
     pub(crate) fn reject_user(&self, label: &str, error: Option<tonic::Status>) {
@@ -197,6 +194,31 @@ impl CloudRelay {
 
     pub(crate) fn token_registry(&self) -> TokenRegistry {
         self.tokens.clone()
+    }
+}
+
+impl Relay {
+    async fn serve(&self, listener: TcpListener) {
+        let state = testnet_server_state("relay", self.host_id, None);
+        state.write().await.is_cloud_server = true;
+        let service = CloudLinkService::with_authenticator(
+            state,
+            Arc::new(RegistryTokenAuthenticator {
+                tokens: self.tokens.clone(),
+                failures: self.failures.clone(),
+            }),
+        );
+        let connections: TrackedConnections = Arc::default();
+        let task = service.serve_on_incoming(tracked_tcp_incoming(
+            listener,
+            connections.clone(),
+            self.latency_millis.clone(),
+        ));
+        *self.server.lock().await = Some(RunningCloud {
+            service,
+            task,
+            connections,
+        });
     }
 
     /// Attempts a routed `ClientService.ListAgents` call from the relay's

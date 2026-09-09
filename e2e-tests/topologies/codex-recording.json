@@ -1,4 +1,5 @@
 {
+  "cloud_url": "https://amux.sh",
   "users": ["alice"],
   "daemons": [{"name":"host","user":"alice","repository_roots":["."]}],
   "paired": [],
