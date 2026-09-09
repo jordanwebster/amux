@@ -4,6 +4,42 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **The account service records an App Store purchase, deployed.**
+
+`POST /api/purchases` is live on amux.sh at revision `2a7f636`. It takes the
+signed transaction the phone posts, hands it to the billing provider as a
+receipt against the caller's own account, and then runs the same subscription
+projection the provider's webhook runs — so the purchase becomes an
+entitlement in one place, and the webhook saying the same thing later changes
+nothing. The account credited is the caller's `sub` claim; the body names no
+user, and there is no second entitlement state machine and no table that
+exists only for this path.
+
+It answers `200` with the same subscription view the entitlement read exposes,
+`202` when the provider has taken the transaction but has nothing to report
+about the account yet, `401` unauthenticated, `422` when the body is not JSON
+or carries no transaction, and `502` when the provider could not be reached.
+The refusals carry a sentence, not a code, because the app puts what the cloud
+says on the paywall of somebody who has just paid. Nothing cheerful comes back
+for a purchase that was not recorded: a `202` for a failed write would let the
+app finish a transaction the App Store will never offer it again.
+
+Sandbox purchases are honoured only for the account service's QA allowlist,
+read from the receipt response's own sandbox flag — the same rule the webhook
+already applied to a sandbox event, so a TestFlight build cannot entitle an
+arbitrary account.
+
+The work was reviewed before merging, and the review found two ways to tell a
+buyer their purchase was taken when it was not: a `404` from the receipt post
+was being read as an answer rather than a failed write, and a body with a
+missing or wrong content type escaped as a server error instead of the
+malformed answer the contract promises. Both are fixed and covered.
+
+`docs/CLOUD.md` now states this contract. Both suites in the account service
+repository are green and it is deployed and healthy.
+
+---
+
 2026-09-09 — **The accounts journey proves a purchase reaches the account service.**
 
 The subscribe act now drives every state a purchase can rest in. A purchase

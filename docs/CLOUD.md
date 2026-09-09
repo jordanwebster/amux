@@ -70,6 +70,15 @@ does not trust its contents and does not know which billing system reconciles
 it on the other side — that is the cloud's business, and an app that knew would
 be a second place for it to change.
 
+On the other side the transaction is handed to the billing provider as a
+receipt against this account, and the account's subscription is then refetched
+from that provider and projected — the same projection the provider's own
+webhook performs, run at once rather than whenever that webhook arrives. So a
+purchase made on this phone and one the webhook reports later are the same
+thing recorded once, and the entitlement read answers the same either way. A
+`200` carries that subscription; a `202` means the cloud has the transaction
+but the provider has not turned it into anything yet.
+
 The order matters and is the point of the whole path:
 
 1. The App Store signs a purchase. The transaction is **not** finished.
@@ -94,6 +103,7 @@ What the app does with each answer:
 | `401` | Unconfirmed, and read as unreachable: the session is renewed on the next launch, which then sends the purchase again. |
 | `403 payment_required` | Unconfirmed and refused, in the words the gate uses. |
 | `422` | Unconfirmed and refused, in the cloud's own words. |
+| `502` | Unconfirmed and refused, in the cloud's own words: it could not reach the billing provider, so nothing was recorded. |
 | no answer at all | Unconfirmed and unreachable: paid for, kept, and tried again. |
 
 ## The `payment_required` rule
