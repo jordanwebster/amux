@@ -187,7 +187,8 @@ final class FixtureTests: XCTestCase {
         let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("unreadable")!.apply(bundle)
         let conversation = bundle.conversation(Scenario.agentId("legacy-port"))
-        XCTAssertEqual(conversation.facts, .claudeSdk(supported: false))
+        XCTAssertEqual(conversation.facts, .unavailable)
+        XCTAssertFalse(bundle.fleet.rows.first { $0.id == conversation.agent }!.readable)
         XCTAssertEqual(conversation.gate, .unavailable)
         XCTAssertFalse(conversation.gate.accepts)
     }

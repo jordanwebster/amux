@@ -29,6 +29,7 @@ public struct AskPanel: Identifiable, Equatable, Sendable {
     public enum Address: Equatable, Sendable {
         /// Claude's per-window ask number.
         case claude(ask: Int)
+        case claudeSdk(ask: Int)
         /// Codex's opaque request identifier, carried back exactly as it came.
         case codex(request: JSONValue)
     }
@@ -274,6 +275,17 @@ extension AskPanel {
                 "ask": .int(ask),
                 "answer": answer,
             ])
+        case .claudeSdk(let ask):
+            guard case .object(var value) = Self.claudeAnswer(decision),
+                  let kind = value.removeValue(forKey: "answer") else { return nil }
+            let payload = kind.stringValue == "question" ? value["answers"]! : JSONValue.object(value)
+            return .object([
+                "command": .string("claude_sdk"),
+                "claude_sdk_command": .string("answer_ask"),
+                "agent": .string(agent.description),
+                "ask": .int(ask),
+                "answer": .object(["answer": kind, "value": payload]),
+            ])
         case .codex(let request):
             guard case .decided(let word) = decision else { return nil }
             return .object([
@@ -332,7 +344,7 @@ extension Ask {
     /// travels would invite them to answer it twice.
     public var panel: AskPanel? {
         switch layer {
-        case .claudePty: claudePanel
+        case .claudePty, .claudeSdk: claudePanel
         case .codex: codexPanel
         }
     }
@@ -345,21 +357,27 @@ extension Ask {
         guard ["pending", "send_failed"].contains(body["state"]?["state"]?.stringValue ?? "")
         else { return nil }
         guard let ask = body["id"]?.intValue else { return nil }
-        let id = "claude:\(ask)"
+        let sdk = layer == .claudeSdk
+        let id = "\(sdk ? "claude_sdk" : "claude"):\(ask)"
+        let address: AskPanel.Address = sdk ? .claudeSdk(ask: ask) : .claude(ask: ask)
         let kind = body["kind"]
-        switch kind?["ask"]?.stringValue {
+        switch kind?[layer == .claudeSdk ? "kind" : "ask"]?.stringValue {
         case "permission":
             let invocation = kind?["invocation"]
             if invocation?["tool"]?.stringValue == "plan" {
-                return AskPanel(id: id, address: .claude(ask: ask), kind: .plan(AskPanel.Plan(
+                return AskPanel(id: id, address: address, kind: .plan(AskPanel.Plan(
                     markdown: invocation?["plan"]?.stringValue ?? "",
                     path: invocation?["plan_file_path"]?.stringValue)))
             }
             return AskPanel(
-                id: id, address: .claude(ask: ask),
+                id: id, address: address,
                 kind: .permission(Self.permission(
                     tool: kind?["tool_name"]?.stringValue, invocation: invocation,
-                    suggestions: kind?["suggestions"]?.arrayValue ?? [])))
+                    suggestions: kind?["suggestions"]?.arrayValue ?? [], sdk: sdk)))
+        case "plan" where sdk:
+            return AskPanel(id: id, address: address, kind: .plan(AskPanel.Plan(
+                markdown: kind?["plan"]?.stringValue ?? "",
+                path: kind?["plan_file_path"]?.stringValue)))
         case "question":
             let questions = (kind?["questions"]?.arrayValue ?? []).enumerated().map {
                 index, question in
@@ -374,10 +392,10 @@ extension Ask {
                             description: $0.element["description"]?.stringValue)
                     })
             }
-            return AskPanel(id: id, address: .claude(ask: ask), kind: .question(questions))
+            return AskPanel(id: id, address: address, kind: .question(questions))
         case let other:
             return AskPanel(
-                id: id, address: .claude(ask: ask),
+                id: id, address: address,
                 kind: .unreadable(label: other ?? "an ask with no kind"))
         }
     }
@@ -389,7 +407,7 @@ extension Ask {
     /// that summarised it would be the phone's opinion of a thing only the
     /// characters themselves state.
     private static func permission(
-        tool: String?, invocation: JSONValue?, suggestions: [JSONValue]
+        tool: String?, invocation: JSONValue?, suggestions: [JSONValue], sdk: Bool = false
     ) -> AskPanel.Permission {
         let name = tool ?? "a tool"
         let headline: String
@@ -426,7 +444,7 @@ extension Ask {
             headline: headline, subject: subject, literal: literal,
             purpose: invocation?["description"]?.stringValue,
             scope: scope(suggestions),
-            unanswerable: Self.unanswerable(suggestions))
+            unanswerable: sdk ? nil : Self.unanswerable(suggestions))
     }
 
     /// The standing grant to offer, from the host's own suggestion.

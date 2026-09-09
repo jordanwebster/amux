@@ -1,5 +1,18 @@
 # The iPhone app
 
+## Claude sessions
+
+New Agent creates Claude sessions with the SDK driver. Existing SDK and PTY
+sessions open under their original identities and use their own shared Rust
+transcript projections. SDK sessions expose the models, effort levels,
+permission mode and commands their session reports. PTY sessions take prompts
+and refuse model and effort changes with the shared gate reason.
+
+`timeout 2400 wt run ios-journey -- claude-sessions` drives creation, opening,
+prompts and settings through the real app and relay. Its artifacts include
+the daemon inventory, SDK transport inputs, PTY inputs and screenshots of
+both conversations and a refused creation.
+
 ## The transcript is SwiftUI
 
 The transcript is the one screen in the app with a real chance of needing a

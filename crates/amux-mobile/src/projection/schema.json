@@ -407,10 +407,14 @@
     "Session": {
       "agent": "00000000-0000-0000-0000-000000000001",
       "gate": {
-        "layer": "unavailable"
+        "layer": "claude_sdk",
+        "value": "unknown"
       },
       "phase": {
-        "layer": "unavailable"
+        "layer": "claude_sdk",
+        "value": {
+          "phase": "unknown"
+        }
       },
       "stream": {
         "stream_phase": "live"
@@ -418,7 +422,164 @@
       "asks": [],
       "facts": {
         "layer": "claude_sdk",
-        "supported": false
+        "session": {
+          "model": "claude-haiku-4-5-20251001",
+          "effort": null,
+          "models": [
+            {
+              "value": "default",
+              "resolved_model": "claude-opus-5[1m]",
+              "display_name": "Default (recommended)",
+              "supported_effort_levels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "value": "opus[1m]",
+              "resolved_model": "claude-opus-5[1m]",
+              "display_name": "Opus (1M context)",
+              "supported_effort_levels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "value": "claude-fable-5[1m]",
+              "resolved_model": "claude-fable-5",
+              "display_name": "Fable",
+              "supported_effort_levels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "value": "sonnet",
+              "resolved_model": "claude-sonnet-5",
+              "display_name": "Sonnet",
+              "supported_effort_levels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "value": "haiku",
+              "resolved_model": "claude-haiku-4-5-20251001",
+              "display_name": "Haiku",
+              "supported_effort_levels": null
+            }
+          ],
+          "permission_mode": "default",
+          "context": {
+            "used_tokens": 27910,
+            "window_tokens": 200000,
+            "source": "result_usage"
+          },
+          "mcp_servers": [
+            {
+              "name": "plugin:stripe:stripe",
+              "status": "connected"
+            },
+            {
+              "name": "linear-server",
+              "status": "connected"
+            },
+            {
+              "name": "claude.ai Google Drive",
+              "status": "needs-auth"
+            },
+            {
+              "name": "claude.ai Google Calendar",
+              "status": "connected"
+            },
+            {
+              "name": "claude.ai Gmail",
+              "status": "connected"
+            }
+          ],
+          "slash_commands": [
+            "autopilot",
+            "delegate",
+            "frontend-design",
+            "handoff",
+            "intake",
+            "tasks",
+            "deep-research",
+            "stripe:explain-error",
+            "stripe:test-cards",
+            "stripe:connect-recommend",
+            "stripe:connect-required-verification-information",
+            "stripe:stripe-apps",
+            "stripe:stripe-best-practices",
+            "stripe:stripe-directory",
+            "stripe:stripe-docs",
+            "stripe:stripe-projects",
+            "stripe:upgrade-stripe",
+            "design-sync",
+            "dataviz",
+            "update-config",
+            "verify",
+            "debug",
+            "code-review",
+            "simplify",
+            "batch",
+            "fewer-permission-prompts",
+            "doctor",
+            "loop",
+            "schedule",
+            "claude-api",
+            "run",
+            "run-skill-generator",
+            "agents",
+            "auto-mode-setup",
+            "autocompact",
+            "clear",
+            "color",
+            "compact",
+            "config",
+            "context",
+            "effort",
+            "fast",
+            "heapdump",
+            "init",
+            "mcp",
+            "import",
+            "model",
+            "__remote-workflow",
+            "workflow-launch-exec",
+            "reload-skills",
+            "rename",
+            "ultrareview",
+            "security-review",
+            "usage-credits",
+            "extra-usage",
+            "usage",
+            "insights",
+            "recap",
+            "goal",
+            "design",
+            "design-consent",
+            "design-revoke",
+            "list-agents",
+            "team-onboarding"
+          ],
+          "terminal_slash_commands": [
+            "doctor",
+            "color"
+          ]
+        }
       },
       "provider": {
         "model": "claude-haiku-4-5-20251001",

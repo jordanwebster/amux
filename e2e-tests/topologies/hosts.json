@@ -9,7 +9,8 @@
       "user": "personal",
       "repository_roots": [
         "../../target/ios/journeys/hosts-projects"
-      ]
+      ],
+      "sdk_script": "../scripts/sdk-sessions.json"
     },
     {
       "name": "desktop",

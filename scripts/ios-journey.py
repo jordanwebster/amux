@@ -1504,6 +1504,90 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
     forget_cache(udid)
 
 
+def claude_sessions(journey: Journey, udid: str, ready: dict) -> None:
+    """Create an SDK session and open both drivers through the production phone."""
+    daemon, = ready["daemons"]
+    running = {agent["name"]: agent for agent in ready["agents"]}
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+    install(udid)
+    forget_cache(udid)
+    forget_pairings(udid)
+    pin = answer(ready["control"],
+                 {"StartPinPairing": {"daemon": daemon["name"], "ttl_secs": 600}})["pin"]
+    inventory = answer(ready["control"], {"Inventory": {"daemon": daemon["name"]}})["agents"]
+    directory = next(agent["working_dir"] for agent in inventory
+                     if agent["id"] == running["existing-sdk"]["agent_id"])
+    read = journey.directory / "claude-sessions.json"
+    pictures = {name: journey.directory / name for name in
+                ("sdk-open.png", "pty-open.png", "refused.png")}
+    perform(journey, udid, "AmuxUITests/ClaudeSessionsTests",
+            pictures | {"claude-sessions.json": read}, telling={
+                "AMUX_RELAY": f"http://{ready['relay']}", "AMUX_TOKEN": token,
+                "AMUX_USER": "journey-phone", "AMUX_PIN": pin,
+                "AMUX_HOST_ID": daemon["host_id"], "AMUX_HOST": daemon["name"],
+                "AMUX_CONTROL": ready["control"], "AMUX_DOOR_PORT": str(free_port()),
+                "AMUX_AGENT": running["existing-sdk"]["agent_id"],
+                "AMUX_PTY_AGENT": running["existing-pty"]["agent_id"],
+                "AMUX_DIRECTORY": directory,
+            })
+    seen = json.loads(read.read_text())
+    created = seen["created"]
+    journey.expect(created["kind"] == "claude" and created["driver"] == "sdk",
+                   f"the daemon reports the created agent as {created}")
+    before, after = seen["inventoryBefore"], seen["inventoryAfter"]
+    for name, driver in [("existing-sdk", "sdk"), ("existing-pty", "pty")]:
+        agent = next(item for item in before if item["id"] == running[name]["agent_id"])
+        journey.expect(agent["kind"] == "claude" and agent["driver"] == driver,
+                       f"the daemon reports the existing {driver} session as {agent}")
+    journey.expect({agent["id"] for agent in after} - {agent["id"] for agent in before}
+                   == {created["id"]}, "creation did not add exactly one original identity")
+    journey.expect([agent["id"] for agent in after if agent.get("driver") == "pty"]
+                   == [running["existing-pty"]["agent_id"]], "a PTY agent was created")
+    observed = seen["observed"]
+    sdk = running["existing-sdk"]["agent_id"]
+    pty = running["existing-pty"]["agent_id"]
+    for key, agent, layer in [("createdConversation", created["id"], "claude_sdk"),
+                               ("sdkConversation", sdk, "claude_sdk"),
+                               ("ptyConversation", pty, "claude_pty")]:
+        conversation = seen[key]
+        journey.expect(conversation["agent"] == agent
+                       and conversation["gate"]["layer"] == layer
+                       and conversation["entries"]
+                       and all(row["layer"] == layer for row in conversation["entries"]),
+                       f"{agent} did not render through its own {layer} projection")
+    for agent, prompt in [(created["id"], "Created SDK prompt"), (sdk, "Existing SDK prompt")]:
+        inputs = observed[agent]["sdk_inputs"]
+        users = [item for item in inputs if item.get("type") == "user"]
+        journey.expect(len(users) == 1 and users[0]["message"]["content"] == prompt
+                       and users[0]["session_id"] == agent and observed[agent]["observed"] == [],
+                       f"the SDK session did not receive exactly its own prompt: {users}")
+    journey.expect(any(item.get("request") == {"subtype": "set_model", "model": "haiku"}
+                       for item in observed[sdk]["sdk_inputs"]),
+                   "the typed model change never reached the SDK transport")
+    journey.expect(len(observed[pty]["observed"]) == 1
+                   and observed[pty]["observed"][0]["text"] == "Existing PTY prompt"
+                   and observed[pty]["sdk_inputs"] == [],
+                   f"the PTY session received unexpected inputs: {observed[pty]}")
+    journey.expect(seen["ptyRefusal"]["settingsGate"]["gate"] == "pty_settings_unavailable",
+                   "the PTY setting lacks its named shared gate")
+    journey.expect({a["id"] for a in seen["inventoryAfterRefusal"]}
+                   == {a["id"] for a in after} and seen["creationRefusal"],
+                   "refused creation changed the daemon inventory or has no failure state")
+    for name, value in [("created.json", created), ("observed-inputs.json", observed)]:
+        (journey.directory / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    for picture in pictures.values():
+        journey.expect(picture.is_file() and picture.stat().st_size > 0, f"missing {picture.name}")
+    journey.say("New Agent created exactly one Claude SDK agent; the daemon reports its original "
+                f"identity as {created['id']}, and no PTY agent was created.")
+    journey.say("The created SDK agent and the pre-existing SDK and PTY agents each rendered "
+                "through their own native projection and received exactly one prompt on their own "
+                "session. The SDK transport received the typed Haiku model change; PTY refused it "
+                "with its named settings gate and received no extra input.")
+    journey.say("A host-refused directory stayed on New Agent with the designed failure state, "
+                "and the daemon inventory was unchanged. Captured sdk-open.png, pty-open.png and "
+                "refused.png, with host records in created.json and observed-inputs.json.")
+
+
 def hosts_lifecycle(journey: Journey, udid: str, ready: dict) -> None:
     """What this phone's link to its machines does over time.
 
@@ -1798,9 +1882,10 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
                        <= set(seen.get("fleetAfterStartingThree") or []),
                        f"laptop is running {started} and the phone shows "
                        f"{seen.get('fleetAfterStartingThree')}")
-        journey.expect("transcript.unsupported" in (seen.get("rowsOnTheCreatedAgent") or []),
-                       f"a session on the SDK layer was drawn as "
-                       f"{seen.get('rowsOnTheCreatedAgent')}")
+        created_conversation = seen.get("createdConversation") or {}
+        journey.expect(created_conversation.get("gate", {}).get("layer") == "claude_sdk"
+                       and created_conversation.get("agent") in {agent["id"] for agent in started},
+                       f"the created SDK conversation reports {created_conversation}")
         journey.expect("transcript.prose" in (seen.get("rowsOnTheSeededAgent") or []),
                        f"the terminal session the topology seeded drew "
                        f"{seen.get('rowsOnTheSeededAgent')}")
@@ -2737,7 +2822,7 @@ def prepare_writing() -> None:
 
 JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
-            "writing": writing, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts,
+            "writing": writing, "claude-sessions": claude_sessions, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts,
             "accounts": accounts, "reports": reports, "accessibility": accessibility}
 # What has to exist before the daemons start: the runner resolves an
 # agent's working directory when it loads the topology.

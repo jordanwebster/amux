@@ -852,10 +852,8 @@ private struct ActivityRow: View {
 
 /// A layer this build cannot read, said plainly.
 ///
-/// The Claude SDK layer reports itself unsupported in this checkout. That is a
-/// typed fact from the core, not a failure to load, so the transcript states it
-/// as one: the conversation exists, the app knows what it is, and it says what
-/// it cannot do rather than showing an empty feed that looks like a bug.
+/// A provider this build cannot read, including a conversation reached through
+/// an old link. Its identity is retained instead of drawing an empty feed.
 struct UnsupportedLayer: View {
     @Environment(\.design) private var design
     let layer: String

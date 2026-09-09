@@ -4,6 +4,32 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Claude SDK conversations open and accept input on the iPhone.**
+
+The mobile bridge now projects the shared SDK layer's native rows, gates,
+phases, asks and session facts. Swift renders that layer, offers its composer
+and command list, routes permission/question/plan answers to SDK commands,
+and reconciles prompt echoes without changing their layer. Unknown providers
+retain the unreadable state; SDK sessions no longer use that placeholder.
+
+The Claude sessions journey creates an agent from New Agent and asks the daemon
+what was created. It proves exactly one Claude SDK agent and no new PTY agent;
+opens that agent and pre-existing SDK and PTY agents under their original
+identities; sends one prompt to each; changes the SDK model; and checks a named
+PTY model refusal with no extra input. A directory refused by the host stays on
+New Agent and leaves the inventory unchanged. Screenshots and host-observed
+inputs accompany the passing run. The debug door can read the conversation's
+actual projection and attempt the same typed model command as the settings
+sheet. Runner observations now accept a seeded PTY agent's UUID as well as its
+name, matching SDK observation. Hosts uses the same scripted SDK transport when
+it creates agents, and checks the readable SDK state. Verification requires the
+Claude sessions journey alongside the other phone journeys; its CLI fixture now
+includes the required manifest.
+
+Validation: the full Claude sessions and Hosts journeys, all Swift package unit
+suites, focused SDK question and echo regressions, Rust projection and SDK host
+tests, verification tests, workspace lint and iOS source lint pass.
+
 2026-09-09 — **The measured build gets its driving bridge back, and the relay says what the phone holds.**
 
 A `Measured` build could not reach a plaintext test relay, and nothing said so:

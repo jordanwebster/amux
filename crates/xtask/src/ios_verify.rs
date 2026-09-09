@@ -21,6 +21,34 @@ const RECIPES: &[&str] = &[
     "ios-scope-audit",
 ];
 
+const REQUIRED_JOURNEYS: &[&str] = &[
+    "home-coldstart",
+    "home",
+    "conversation",
+    "asks",
+    "review",
+    "writing",
+    "claude-sessions",
+    "hosts-lifecycle",
+    "hosts",
+    "accounts",
+    "reports",
+    "accessibility",
+];
+
+fn check_journeys(manifest: &str) -> Result<(), Box<dyn Error>> {
+    let manifest: serde_json::Value = serde_json::from_str(manifest)?;
+    let journeys = manifest["journeys"]
+        .as_array()
+        .ok_or("no declared journeys")?;
+    for required in REQUIRED_JOURNEYS {
+        if !journeys.iter().any(|journey| journey["id"] == *required) {
+            return Err(format!("iOS verification requires journey {required}").into());
+        }
+    }
+    Ok(())
+}
+
 fn recipes(config: &str) -> Result<Vec<&'static str>, Box<dyn Error>> {
     let config: toml::Value = toml::from_str(config)?;
     let tasks = config
@@ -96,6 +124,8 @@ fn perf_machine() -> Result<PerfMachine, String> {
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let selected = recipes(&std::fs::read_to_string(".wt.toml")?)?;
+    check_journeys(&std::fs::read_to_string("ios/Journeys/manifest.json")?)?;
+    eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
     eprintln!("iOS verification: {}", selected.join(", "));
     for recipe in selected {
         let mut extra: Vec<&'static str> = Vec::new();
@@ -134,6 +164,23 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ios_verify_requires_sdk_sessions_alongside_every_other_journey() {
+        let manifest = include_str!("../../../ios/Journeys/manifest.json");
+        check_journeys(manifest).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(manifest).unwrap();
+        value["journeys"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|journey| journey["id"] != "claude-sessions");
+        assert!(
+            check_journeys(&value.to_string())
+                .unwrap_err()
+                .to_string()
+                .contains("claude-sessions")
+        );
+    }
 
     #[test]
     fn ios_verify_rejects_empty_or_ui_only_verification() {

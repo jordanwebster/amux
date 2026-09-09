@@ -99,6 +99,7 @@ public struct ConversationSubject: Equatable, Sendable {
     /// strength of not having heard yet is the same lie in the other
     /// direction.
     public let hostReachable: Bool
+    public let readable: Bool
     /// How long ago this agent last did anything, in the shortest true unit.
     /// Absent while the fleet that knows has not arrived.
     public let age: String?
@@ -131,9 +132,10 @@ public struct ConversationSubject: Equatable, Sendable {
     public init(
         name: String, host: String?, directory: String,
         hostReachable: Bool = true, age: String? = nil, ended: Ended? = nil,
-        finished: Bool = false, working: String? = nil
+        finished: Bool = false, working: String? = nil, readable: Bool = true
     ) {
         self.name = name
+        self.readable = readable
         self.host = host
         self.directory = directory
         self.hostReachable = hostReachable
@@ -161,7 +163,7 @@ public struct ConversationSubject: Equatable, Sendable {
             age: row.age(at: fleet.orderedAt),
             ended: ended,
             finished: row.attention == .needsYou(why: .finished),
-            working: row.working(at: fleet.orderedAt))
+            working: row.working(at: fleet.orderedAt), readable: row.readable)
     }
 
     /// "Studio · ~/src/amux", or just the directory while the machine that
@@ -309,7 +311,7 @@ public struct Conversation: View {
     /// frosting the top edge means anything.
     private var transcript: some View {
         TranscriptContainer {
-            if case .claudeSdk(let supported) = model.facts, !supported {
+            if !subject.readable {
                 UnsupportedLayer(layer: "this agent's transcript")
                     .padding(.top, design.metrics.feedGap)
             } else {

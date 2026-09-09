@@ -72,11 +72,12 @@ final class SchemaTests: XCTestCase {
         XCTAssertNil(pty.queue)
         XCTAssertEqual(codexSession.gate, .codex(.ready))
         XCTAssertEqual(codexSession.settingsGate, .ready)
-        XCTAssertEqual(sdkSession.gate, .unavailable)
+        XCTAssertEqual(sdkSession.gate, .claudeSdk(.unknown))
         XCTAssertEqual(sdkSession.settingsGate, .claudeSdk(reason: .unknown))
-        // This build cannot read the SDK chat layer, and the projection says so
-        // rather than presenting an empty conversation as an idle one.
-        XCTAssertEqual(sdkSession.facts, .claudeSdk(supported: false))
+        guard case .claudeSdk(let facts) = sdkSession.facts else {
+            return XCTFail("expected SDK session facts")
+        }
+        XCTAssertEqual(facts["session"]?["model"]?.stringValue, sdkSession.provider.model)
     }
 
     func testSDKModelChoicesDecodeFromRecordedInitialization() throws {

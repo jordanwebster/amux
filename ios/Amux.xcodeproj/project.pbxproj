@@ -45,6 +45,7 @@
 		B37C5282B90F7083711687FC /* ColdStartProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */; };
 		BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7841E9EA7855115C8262F599 /* Localizable.xcstrings */; };
 		C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E1FE40B447768ED3E301C2 /* Instruments.swift */; };
+		C80961F296CEC5BE7BD77318 /* ClaudeSessionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */; };
 		CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */ = {isa = PBXBuildFile; fileRef = 6DC1FF3D962A7B46549AF24A /* frozen-frame.png */; };
 		CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */; };
 		D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71AECE15627BD11A3278E26C /* HostsTests.swift */; };
@@ -102,6 +103,7 @@
 		7316CFA811C55B9CEEB041C5 /* Judge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Judge.swift; sourceTree = "<group>"; };
 		7841E9EA7855115C8262F599 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportFreeze.swift; sourceTree = "<group>"; };
+		7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSessionsTests.swift; sourceTree = "<group>"; };
 		7BF809F88F54D264E26E1F0B /* DrawerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerTests.swift; sourceTree = "<group>"; };
 		7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scenario.swift; sourceTree = "<group>"; };
 		8959E3A72299B8152BE86967 /* AmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -198,6 +200,7 @@
 				51DE352A112572D9D86D0590 /* AccessibilityTests.swift */,
 				6AF7C50B96593352DB0BC307 /* AccountsTests.swift */,
 				DCD0B049D76F4DAF62A8B46E /* AskTests.swift */,
+				7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */,
 				B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */,
 				7BF809F88F54D264E26E1F0B /* DrawerTests.swift */,
 				8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */,
@@ -496,6 +499,7 @@
 				53E854553FBEB2A633CAF420 /* AccessibilityTests.swift in Sources */,
 				DDFD9CD189F0B140F851F65D /* AccountsTests.swift in Sources */,
 				71EF8392260DD101E76C1D32 /* AskTests.swift in Sources */,
+				C80961F296CEC5BE7BD77318 /* ClaudeSessionsTests.swift in Sources */,
 				37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */,
 				6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */,
 				A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */,

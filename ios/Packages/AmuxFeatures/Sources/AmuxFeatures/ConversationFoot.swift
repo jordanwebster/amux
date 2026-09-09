@@ -60,6 +60,12 @@ public enum ConversationFootState: Equatable {
             case .sendInFlight: inFlight
             default: nil
             }
+        case .claudeSdk(let gate):
+            switch gate {
+            case .replaying: replaying
+            case .inputInFlight: inFlight
+            default: nil
+            }
         case .codex(let gate):
             switch gate {
             case .replaying: replaying

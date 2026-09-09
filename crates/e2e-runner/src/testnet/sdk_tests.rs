@@ -239,6 +239,12 @@ async fn exercise() {
         let pty_before = control
             .ack(json!({"AgentObserve":{"agent":"existing-pty"}}))
             .await;
+        assert_eq!(
+            control
+                .ack(json!({"AgentObserve":{"agent":pty.to_string()}}))
+                .await,
+            pty_before
+        );
         assert_eq!(pty_before["observed"].as_array().unwrap().len(), 1);
         assert_eq!(pty_before["observed"][0]["text"], "PTY prompt");
         assert_eq!(

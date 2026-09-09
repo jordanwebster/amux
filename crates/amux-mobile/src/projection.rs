@@ -6,7 +6,7 @@ use std::time::Duration;
 use amux::{DisconnectReason, RelayConnection};
 use amux_ui::{
     Agent, AgentId, AgentPhase, Attention, Command, HostState, Model, OpId, OpOutcome, StreamPhase,
-    StructuredProtocol, Why, claude, codex, review,
+    StructuredProtocol, Why, claude, claude_sdk, codex, review,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -23,10 +23,9 @@ pub struct AgentCardDto {
     /// reported to a reader in words rather than as a tick, and the words are
     /// only worth reading if they carry the numbers.
     ///
-    /// Nothing populates it yet: the only provider that reports these counts
-    /// is the Claude SDK driver, whose result rows are not folded into the
-    /// shared model in this checkout. Absent means "not known", never "no
-    /// changes", so a reader states the outcome without arithmetic.
+    /// The shared inventory does not yet report aggregate changed-file
+    /// counts. Absent means "not known", never "no changes", so a reader
+    /// states the outcome without arithmetic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<TurnOutcome>,
     /// Remembered from the last run and not yet confirmed by the machine that
@@ -62,7 +61,7 @@ pub struct TurnOutcome {
 #[serde(tag = "layer", content = "row", rename_all = "snake_case")]
 pub enum FeedEntryDto {
     ClaudePty(claude::FeedEntry),
-    ClaudeSdk(ClaudeSdkEntryDto),
+    ClaudeSdk(claude_sdk::FeedEntry),
     Codex(codex::FeedEntry),
 }
 
@@ -71,20 +70,16 @@ impl FeedEntryDto {
         match self {
             Self::ClaudePty(row) => row.seq,
             Self::Codex(row) => row.seq,
-            Self::ClaudeSdk(row) => match *row {},
+            Self::ClaudeSdk(row) => row.seq,
         }
     }
 }
-
-/// This checkout's SDK layer folds no rows. Keep its type separate until the
-/// shared SDK reducer supplies its vocabulary; a PTY row is never an SDK row.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ClaudeSdkEntryDto {}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "layer", content = "value", rename_all = "snake_case")]
 pub enum GateDto {
     ClaudePty(claude::SendGate),
+    ClaudeSdk(claude_sdk::SendGate),
     Codex(codex::SendGate),
     Unavailable,
 }
@@ -93,6 +88,7 @@ pub enum GateDto {
 #[serde(tag = "layer", content = "value", rename_all = "snake_case")]
 pub enum PhaseDto {
     ClaudePty(claude::ChatPhase),
+    ClaudeSdk(claude_sdk::SdkPhase),
     Codex(codex::CodexPhase),
     Unavailable,
 }
@@ -101,6 +97,7 @@ pub enum PhaseDto {
 #[serde(tag = "layer", content = "value", rename_all = "snake_case")]
 pub enum AskDto {
     ClaudePty(claude::Ask),
+    ClaudeSdk(claude_sdk::Ask),
     Codex(codex::Ask),
 }
 
@@ -116,7 +113,7 @@ pub enum FactsDto {
         active_turn_id: Option<String>,
     },
     ClaudeSdk {
-        supported: bool,
+        session: claude_sdk::SessionFacts,
     },
     Unavailable,
 }
@@ -430,24 +427,28 @@ struct FeedState {
 // Compare borrowed native rows; clone only rows that will cross the callback.
 enum RowRef<'a> {
     Claude(&'a claude::FeedEntry),
+    ClaudeSdk(&'a claude_sdk::FeedEntry),
     Codex(&'a codex::FeedEntry),
 }
 impl RowRef<'_> {
     fn id(&self) -> u64 {
         match self {
             Self::Claude(row) => row.id,
+            Self::ClaudeSdk(row) => row.id,
             Self::Codex(row) => row.id,
         }
     }
     fn seq(&self) -> u64 {
         match self {
             Self::Claude(row) => row.seq,
+            Self::ClaudeSdk(row) => row.seq,
             Self::Codex(row) => row.seq,
         }
     }
     fn same(&self, previous: &FeedEntryDto) -> bool {
         match (self, previous) {
             (Self::Claude(row), FeedEntryDto::ClaudePty(old)) => *row == old,
+            (Self::ClaudeSdk(row), FeedEntryDto::ClaudeSdk(old)) => *row == old,
             (Self::Codex(row), FeedEntryDto::Codex(old)) => *row == old,
             _ => false,
         }
@@ -455,6 +456,7 @@ impl RowRef<'_> {
     fn owned(&self) -> FeedEntryDto {
         match self {
             Self::Claude(row) => FeedEntryDto::ClaudePty((*row).clone()),
+            Self::ClaudeSdk(row) => FeedEntryDto::ClaudeSdk((*row).clone()),
             Self::Codex(row) => FeedEntryDto::Codex((*row).clone()),
         }
     }
@@ -679,6 +681,17 @@ impl Projection {
                         layer.entries().map(RowRef::Claude),
                     )
                 }
+            } else if let Some(layer) = model.claude_sdk(*agent) {
+                if layer.entry_count() == 0 && !state.rows.is_empty() {
+                    None
+                } else {
+                    state.project(
+                        *agent,
+                        (StructuredProtocol::ClaudeSdk, None),
+                        layer.evicted_entries(),
+                        layer.entries().map(RowRef::ClaudeSdk),
+                    )
+                }
             } else if let Some(layer) = model.codex(*agent) {
                 if layer.entry_count() == 0 && !state.rows.is_empty() {
                     None
@@ -724,7 +737,11 @@ fn keeps_its_rows(model: &Model, agent: AgentId, host: Option<amux::HostId>) -> 
         // coming back and replaying what it holds.
         Some(card) => matches!(
             card.structured_protocol(),
-            Some(StructuredProtocol::Claude | StructuredProtocol::Codex)
+            Some(
+                StructuredProtocol::Claude
+                    | StructuredProtocol::ClaudeSdk
+                    | StructuredProtocol::Codex
+            )
         ),
         // The machine that owned it has stopped answering. Nothing has said
         // this agent is gone, only that nobody can be asked about it.
@@ -773,10 +790,18 @@ fn session(model: &Model, agent: AgentId) -> SessionDto {
             },
         ),
         Some(StructuredProtocol::ClaudeSdk) => (
-            GateDto::Unavailable,
-            PhaseDto::Unavailable,
-            vec![],
-            FactsDto::ClaudeSdk { supported: false },
+            GateDto::ClaudeSdk(claude_sdk::send_gate(model, agent)),
+            PhaseDto::ClaudeSdk(claude_sdk::phase(model, agent)),
+            model
+                .claude_sdk(agent)
+                .map(|layer| layer.asks().cloned().map(AskDto::ClaudeSdk).collect())
+                .unwrap_or_default(),
+            FactsDto::ClaudeSdk {
+                session: model
+                    .claude_sdk(agent)
+                    .map(|layer| layer.session().clone())
+                    .unwrap_or_default(),
+            },
         ),
         None => (
             GateDto::Unavailable,

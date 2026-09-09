@@ -226,8 +226,8 @@ changes. It is a testnet fixture, compiled out of production builds.
 `AgentObserve` accepts a seeded SDK agent's name or any scripted SDK agent's
 UUID, including one created after startup. Its `sdk_inputs` contains the raw
 stdin envelopes the provider received, including initialization, prompts and
-model controls. PTY inputs remain in `observed`. A UUID whose SDK transport
-never opened returns an error. Restart ends the scripted sessions and removes
+model controls. Seeded PTY agents also accept their original UUID or name;
+their typed inputs remain in `observed`. An unknown UUID returns an error. Restart ends the scripted sessions and removes
 the daemon's script configuration; it does not launch a replacement provider.
 
 Run `timeout 900 wt test -- testnet_sdk -- --nocapture` to exercise paired

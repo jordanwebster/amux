@@ -689,15 +689,18 @@ async fn apply(
                 ..
             } = &mut reply
             {
+                let scripted = agents.get(&agent).or_else(|| {
+                    let id: Uuid = agent.parse().ok()?;
+                    agents.values().find(|scripted| scripted.agent.id == id)
+                });
                 if let Some(ScriptedAgent {
                     provider: AgentProvider::Claude(provider),
                     ..
-                }) = agents.get(&agent)
+                }) = scripted
                 {
                     *observed = provider.observed();
                 } else {
-                    let id = agents
-                        .get(&agent)
+                    let id = scripted
                         .map(|agent| agent.agent.id)
                         .or_else(|| agent.parse().ok())
                         .context("SDK observation needs an agent name or UUID")?;

@@ -80,10 +80,10 @@ Projection callbacks contain `Fleet`, `Feed`, `Session`, `OpResult`, `Diff`,
 `Connection`, `TokenRequest` and diagnostic `Invariant` events. Their JSON
 contract is pinned in `src/projection/schema.json`. Fleet cards contain only
 inventory and display facts, never retained transcripts. Session gates, phases,
-asks and facts come from the shared native provider layer. Claude PTY and Codex
-rows retain their own typed vocabularies under `layer: "claude_pty"` and
-`layer: "codex"`. The current shared Claude SDK layer is explicitly unsupported;
-its distinct row type cannot accept a PTY row.
+asks and facts come from the shared native provider layer. Claude PTY, Claude
+SDK and Codex rows retain their own typed vocabularies under `layer:
+"claude_pty"`, `layer: "claude_sdk"` and `layer: "codex"`. The SDK layer carries
+its native session facts and send gates; it cannot accept a PTY row.
 
 Call `amux_mobile_dispatch` with a shared `amux-ui::Command` JSON object, or
 `{"command":"subscribe","agent":"UUID"}` to receive that agent's session and

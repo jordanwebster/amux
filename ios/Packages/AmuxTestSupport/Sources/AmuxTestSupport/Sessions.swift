@@ -65,7 +65,7 @@ public enum Sessions {
             phase: .unavailable,
             stream: nil,
             asks: [],
-            facts: .claudeSdk(supported: false),
+            facts: .unavailable,
             provider: ProviderFacts(),
             settingsGate: .unavailable,
             queue: nil,

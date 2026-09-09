@@ -352,6 +352,12 @@ exec "$XTASK" ci-status --wait 0
 #[test]
 fn ios_verify_cli_runs_available_checks_in_order_and_stops_on_failure() {
     let dir = commands();
+    std::fs::create_dir_all(dir.path().join("ios/Journeys")).unwrap();
+    std::fs::write(
+        dir.path().join("ios/Journeys/manifest.json"),
+        include_str!("../../../ios/Journeys/manifest.json"),
+    )
+    .unwrap();
     std::fs::write(
         dir.path().join(".wt.toml"),
         "[task.test]\nrun='test'\n[task.mobile-check]\nrun='mobile'\n[task.ios-unit]\nrun='unit'\n",

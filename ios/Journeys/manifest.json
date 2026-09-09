@@ -37,6 +37,12 @@
       "claim": "Writing to two agents the runner is really running. A paragraph typed over two lines; a long paste, a stored photograph, a stored file and a patch the machine computed each standing in that sentence as one token at the caret; one backspace taking a whole token entire, and one token taken from between two others and put in front of both — whole, as the one character it is in the sentence. That move goes through the field's own draft rather than a finger: the gesture that performs it on a device is the text view's own text drag, which the system begins from drawn text and no driver outside the process can start. One message sent, drawn before the machine answered for it and still one row once it had. One message held while a turn ran, replaced by a second, taken back into the field, and a third that survived the turn being stopped and was delivered when the turn ended — the machine's own account says it received exactly those two and nothing that was replaced or withdrawn. The cross empties the field and leaves the turn running; Stop is offered only where there is nothing to send, so no press does both. The address copied, a rename cancelled and then kept by the machine, a deletion cancelled and later confirmed. And on the session that offers them: a command raised by a slash, sent as a token and answered, and a model and an effort changed and read back off the chip the machine's own facts relabel."
     },
     {
+      "id": "claude-sessions",
+      "stage": 9,
+      "topology": "e2e-tests/topologies/claude-sessions.json",
+      "claim": "New Agent creates Claude on the SDK driver, confirmed by the daemon inventory with no PTY agent created. The created SDK agent and pre-existing SDK and PTY agents open under their original identities, render through their own projections, and each round-trip a prompt observed by the host. A typed model change reaches the SDK session; the PTY gate refuses it with no extra input. A creation the host refuses leaves a designed failure state and creates nothing."
+    },
+    {
       "id": "hosts-lifecycle",
       "stage": 9,
       "topology": "e2e-tests/topologies/home-fleet.json",

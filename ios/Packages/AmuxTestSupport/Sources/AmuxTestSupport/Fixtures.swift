@@ -483,8 +483,13 @@ public enum Fixtures {
         },
         // An agent this build cannot read. It is not offered to open.
         Fixture(id: "unreadable", screen: .run) { bundle in
+            let agents = Scenario.agents.map { card in
+                var card = card
+                if card.id == Scenario.agentId("legacy-port") { card.agent.kind = .unknown("legacy") }
+                return card
+            }
             States.open(
-                bundle, entries: [], agent: Scenario.agentId("legacy-port"),
+                bundle, agents: agents, entries: [], agent: Scenario.agentId("legacy-port"),
                 session: Sessions.unreadable())
         },
         // The same strip grown: the provider's whole list above the line that

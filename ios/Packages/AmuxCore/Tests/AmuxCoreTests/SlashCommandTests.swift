@@ -92,8 +92,7 @@ final class SlashCommandTests: XCTestCase {
 
     func testNothingIsOfferedToAPtyClaudeAgent() {
         XCTAssertNil(offered("/co", layer: .claudePty(.object([:]))))
-        XCTAssertNil(offered("/co", layer: .claudeSdk(supported: false)))
-        XCTAssertNotNil(offered("/co", layer: .claudeSdk(supported: true)))
+        XCTAssertNotNil(offered("/co", layer: .claudeSdk(.object(["layer": .string("claude_sdk")]))))
     }
 
     func testASlashInTheMiddleOfASentenceIsASlash() {

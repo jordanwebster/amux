@@ -52,7 +52,7 @@ extension SessionFacts {
     public var takesCommands: Bool {
         switch self {
         case .codex: true
-        case .claudeSdk(let supported): supported
+        case .claudeSdk: true
         case .claudePty, .unavailable: false
         }
     }

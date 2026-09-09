@@ -232,7 +232,7 @@ fn mobile_projection_schema_snapshot() {
         assert_eq!(actual, include_str!("schema.json"));
     }
     assert_eq!(serde_json::from_str::<Vec<Event>>(&actual).unwrap(), events);
-    // An unsupported SDK must never accept a PTY row by structural coincidence.
+    // An SDK row must never accept a PTY payload by structural coincidence.
     let mut wrong = serde_json::to_value(FeedEntryDto::ClaudePty(
         model
             .claude(AGENT)
@@ -846,4 +846,66 @@ fn mobile_projection_ask_snapshot() {
     } else {
         assert_eq!(actual, include_str!("asks.json"));
     }
+}
+
+#[test]
+fn mobile_projection_sdk_keeps_native_rows_gates_asks_and_reconnect_history() {
+    let mut model = model(amux::AgentKind::Claude {
+        driver: amux::ClaudeDriver::Sdk,
+    });
+    row(&mut model, 1, json!({"type":"amux.claude_sdk.ready"}));
+    row(&mut model, 2, message(1, "SDK reply"));
+    row(
+        &mut model,
+        3,
+        json!({"type":"result", "subtype":"success", "is_error":false}),
+    );
+    let mut projection = subscribed();
+    let events = collect(&mut projection, &model);
+    let mut phone = PhoneFeed::default();
+    phone.apply_events(&events);
+    assert!(!phone.rows.is_empty());
+    assert!(phone.rows.values().all(|row| row["layer"] == "claude_sdk"));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Session(session)
+        if session.agent == AGENT && session.gate == GateDto::ClaudeSdk(claude_sdk::SendGate::Ready)
+        && session.phase == PhaseDto::ClaudeSdk(claude_sdk::SdkPhase::Finished)))
+    );
+    row(
+        &mut model,
+        4,
+        json!({"type":"amux.claude_sdk.permission_required",
+        "request_id":"permission-1", "tool_name":"Bash", "input":{"command":"pwd"}, "suggestions":[]}),
+    );
+    let events = collect(&mut projection, &model);
+    assert!(events.iter().any(|event| matches!(event, Event::Session(session)
+        if session.gate == GateDto::ClaudeSdk(claude_sdk::SendGate::NeedsYou)
+        && matches!(session.asks.first(), Some(AskDto::ClaudeSdk(ask)) if ask.request_id == "permission-1"))));
+    phone.apply_events(&events);
+    let before = phone.rows.clone();
+    update(&mut model, host(false));
+    phone.apply_events(&collect(&mut projection, &model));
+    assert_eq!(phone.rows, before);
+    update(&mut model, host(true));
+    update(
+        &mut model,
+        Msg::Stream {
+            agent: AGENT,
+            event: StreamMsg::Opened { truncated: false },
+        },
+    );
+    phone.apply_events(&collect(&mut projection, &model));
+    assert_eq!(phone.rows, before);
+    row(&mut model, 10, message(2, "Replayed SDK reply"));
+    phone.apply_events(&collect(&mut projection, &model));
+    assert!(phone.rows.values().all(|row| row["layer"] == "claude_sdk"));
+    assert_ne!(phone.rows, before);
+    assert!(
+        phone
+            .rows
+            .values()
+            .any(|row| row.to_string().contains("Replayed SDK reply"))
+    );
 }

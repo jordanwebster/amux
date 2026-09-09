@@ -32,6 +32,8 @@ final class DoorTests: XCTestCase {
             .awaitReconciled(seconds: 90),
             .awaitOffline(seconds: 30),
             .bridge,
+            .conversation(agent: "00000000-0000-0000-0000-000000000001"),
+            .setModel(agent: "00000000-0000-0000-0000-000000000001", name: "haiku"),
             .appearance(.dark),
             .dynamicType("accessibility3"),
             .assist(motion: true, transparency: true),
@@ -166,6 +168,7 @@ final class DoorTests: XCTestCase {
         XCTAssertThrowsError(try decoder.decode(DoorRequest.self, from: unknown))
     }
 
+    @MainActor
     func testEveryReplySurvivesTheWire() throws {
         let state = VisibleState(
             screen: "home",
@@ -183,6 +186,7 @@ final class DoorTests: XCTestCase {
             .ack,
             .state(state),
             .bridge(bridge),
+            .conversation(ConversationReading(ConversationStore(agent: Scenario.focus))),
             .captured(path: "/tmp/home.png", width: 1206, height: 2622, scale: 3),
             .bundle(path: "/tmp/report", parts: ["msgs.jsonl", "trace.jsonl"]),
             .replayed(ReplayedState(

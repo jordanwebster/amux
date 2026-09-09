@@ -156,6 +156,16 @@ final class DoorHost {
         case .awaitOffline(let seconds):
             return await awaitOffline(within: seconds)
         case .bridge: return .bridge(bridgeState())
+        case .conversation(let agent):
+            guard let identity = AgentId(agent), let conversation = stores.conversations[identity]
+            else { return .error("no conversation is open with \(agent)") }
+            return .conversation(ConversationReading(conversation))
+        case .setModel(let agent, let name):
+            guard let identity = AgentId(agent), let conversation = stores.conversations[identity],
+                  let op = bridge?.dispatch(AgentWrite.model(name, of: identity))
+            else { return .error("no conversation is open with \(agent)") }
+            conversation.dispatched(op)
+            return .ack
         case .signposts: return .signposts(Signposts.marks)
         case .appearance(let appearance):
             await wear(appearance)

@@ -588,6 +588,7 @@ public struct SessionSnapshot: Codable, Sendable, Equatable {
 /// The two layers' refusals are different vocabularies, kept apart on purpose.
 public enum SendGate: Sendable, Equatable, Codable {
     case claudePty(ClaudePtySendGate)
+    case claudeSdk(ClaudeSdkSendGate)
     case codex(CodexSendGate)
     case unavailable
 
@@ -597,6 +598,7 @@ public enum SendGate: Sendable, Equatable, Codable {
         let container = try decoder.container(keyedBy: Key.self)
         switch try container.decode(String.self, forKey: .layer) {
         case "claude_pty": self = .claudePty(try container.decode(ClaudePtySendGate.self, forKey: .value))
+        case "claude_sdk": self = .claudeSdk(try container.decode(ClaudeSdkSendGate.self, forKey: .value))
         case "codex": self = .codex(try container.decode(CodexSendGate.self, forKey: .value))
         case "unavailable": self = .unavailable
         case let other:
@@ -611,6 +613,9 @@ public enum SendGate: Sendable, Equatable, Codable {
         case .claudePty(let gate):
             try container.encode("claude_pty", forKey: .layer)
             try container.encode(gate, forKey: .value)
+        case .claudeSdk(let gate):
+            try container.encode("claude_sdk", forKey: .layer)
+            try container.encode(gate, forKey: .value)
         case .codex(let gate):
             try container.encode("codex", forKey: .layer)
             try container.encode(gate, forKey: .value)
@@ -622,6 +627,7 @@ public enum SendGate: Sendable, Equatable, Codable {
     public var accepts: Bool {
         switch self {
         case .claudePty(let gate): gate == .ready
+        case .claudeSdk(let gate): gate == .ready
         case .codex(let gate): gate == .ready
         case .unavailable: false
         }
@@ -669,6 +675,7 @@ public enum CodexSendGate: String, Codable, Sendable, Equatable {
 /// The chat phase this layer reports. Its shape is the layer's own.
 public enum LayerPhase: Sendable, Equatable, Codable {
     case claudePty(JSONValue)
+    case claudeSdk(JSONValue)
     case codex(JSONValue)
     case unavailable
 
@@ -678,6 +685,7 @@ public enum LayerPhase: Sendable, Equatable, Codable {
         let container = try decoder.container(keyedBy: Key.self)
         switch try container.decode(String.self, forKey: .layer) {
         case "claude_pty": self = .claudePty(try container.decode(JSONValue.self, forKey: .value))
+        case "claude_sdk": self = .claudeSdk(try container.decode(JSONValue.self, forKey: .value))
         case "codex": self = .codex(try container.decode(JSONValue.self, forKey: .value))
         case "unavailable": self = .unavailable
         case let other:
@@ -692,6 +700,9 @@ public enum LayerPhase: Sendable, Equatable, Codable {
         case .claudePty(let value):
             try container.encode("claude_pty", forKey: .layer)
             try container.encode(value, forKey: .value)
+        case .claudeSdk(let value):
+            try container.encode("claude_sdk", forKey: .layer)
+            try container.encode(value, forKey: .value)
         case .codex(let value):
             try container.encode("codex", forKey: .layer)
             try container.encode(value, forKey: .value)
@@ -704,7 +715,7 @@ public enum LayerPhase: Sendable, Equatable, Codable {
     /// whatever else that layer adds.
     public var phase: String? {
         switch self {
-        case .claudePty(let value), .codex(let value): value["phase"]?.stringValue
+        case .claudePty(let value), .claudeSdk(let value), .codex(let value): value["phase"]?.stringValue
         case .unavailable: nil
         }
     }
@@ -754,6 +765,7 @@ public struct Ask: Codable, Sendable, Equatable {
 
     public enum Layer: String, Codable, Sendable, Equatable {
         case claudePty = "claude_pty"
+        case claudeSdk = "claude_sdk"
         case codex
     }
 
@@ -778,14 +790,14 @@ public struct Ask: Codable, Sendable, Equatable {
 }
 
 /// Session facts belonging to one layer, kept whole under the layer that owns
-/// them. `claudeSdk` says outright that this build cannot read that layer.
+/// them. SDK facts are kept separate from terminal session facts.
 public enum SessionFacts: Sendable, Equatable, Codable {
     case claudePty(JSONValue)
     case codex(JSONValue)
-    case claudeSdk(supported: Bool)
+    case claudeSdk(JSONValue)
     case unavailable
 
-    private enum Key: String, CodingKey { case layer, supported }
+    private enum Key: String, CodingKey { case layer }
 
     public init(from decoder: any Decoder) throws {
         let tagged = try decoder.container(keyedBy: Key.self)
@@ -793,7 +805,7 @@ public enum SessionFacts: Sendable, Equatable, Codable {
         switch try tagged.decode(String.self, forKey: .layer) {
         case "claude_pty": self = .claudePty(body)
         case "codex": self = .codex(body)
-        case "claude_sdk": self = .claudeSdk(supported: try tagged.decode(Bool.self, forKey: .supported))
+        case "claude_sdk": self = .claudeSdk(body)
         case "unavailable": self = .unavailable
         case let other:
             throw DecodingError.dataCorrupted(.init(
@@ -803,12 +815,8 @@ public enum SessionFacts: Sendable, Equatable, Codable {
 
     public func encode(to encoder: any Encoder) throws {
         switch self {
-        case .claudePty(let body), .codex(let body):
+        case .claudePty(let body), .claudeSdk(let body), .codex(let body):
             try body.encode(to: encoder)
-        case .claudeSdk(let supported):
-            var container = encoder.container(keyedBy: Key.self)
-            try container.encode("claude_sdk", forKey: .layer)
-            try container.encode(supported, forKey: .supported)
         case .unavailable:
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("unavailable", forKey: .layer)

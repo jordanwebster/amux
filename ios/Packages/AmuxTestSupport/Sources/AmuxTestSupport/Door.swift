@@ -57,6 +57,11 @@ public enum DoorRequest: Sendable, Equatable {
     case awaitOffline(seconds: Double)
     /// What library this app linked and what its connection has arrived at.
     case bridge
+    /// Read the production conversation's projection, including its native layer.
+    case conversation(agent: String)
+    /// Attempt the same typed model change as the settings sheet, including
+    /// where the shared core refuses it and the screen disables the control.
+    case setModel(agent: String, name: String)
     /// Every moment this launch has marked, in order. A driver reads them to
     /// tell a screen that was drawn from a frame that was shown, and to see
     /// when the fleet stopped being a memory.
@@ -220,6 +225,7 @@ public enum DoorReply: Sendable, Equatable {
     case ack
     case state(VisibleState)
     case bridge(BridgeState)
+    case conversation(ConversationReading)
     case signposts([SignpostMark])
     case captured(path: String, width: Int, height: Int, scale: Int)
     /// A bundle was written at this path, holding these files.
@@ -539,6 +545,11 @@ extension DoorRequest: Codable {
             self = .awaitReconciled(seconds: try fields.decode(Double.self, forKey: .seconds))
         case "awaitOffline":
             self = .awaitOffline(seconds: try fields.decode(Double.self, forKey: .seconds))
+        case "conversation":
+            self = .conversation(agent: try fields.decode(String.self, forKey: .agent))
+        case "setModel":
+            self = .setModel(agent: try fields.decode(String.self, forKey: .agent),
+                             name: try fields.decode(String.self, forKey: .name))
         case "bridge": self = .bridge
         case "signposts": self = .signposts
         case "appearance":
@@ -658,6 +669,13 @@ extension DoorRequest: Codable {
         case .awaitOffline(let seconds):
             try fields.encode("awaitOffline", forKey: .kind)
             try fields.encode(seconds, forKey: .seconds)
+        case .conversation(let agent):
+            try fields.encode("conversation", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+        case .setModel(let agent, let name):
+            try fields.encode("setModel", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(name, forKey: .name)
         case .bridge:
             try fields.encode("bridge", forKey: .kind)
         case .signposts:
@@ -761,13 +779,15 @@ extension DoorRequest: Codable {
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
         case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
-        case host, delivered, reason, cloud, store, known, states
+        case host, delivered, reason, cloud, store, known, states, conversation
     }
 
     public init(from decoder: any Decoder) throws {
         let fields = try decoder.container(keyedBy: Key.self)
         let kind = try fields.decode(String.self, forKey: .kind)
         switch kind {
+        case "conversation":
+            self = .conversation(try fields.decode(ConversationReading.self, forKey: .conversation))
         case "ack": self = .ack
         case "state":
             self = .state(try fields.decode(VisibleState.self, forKey: .state))
@@ -817,6 +837,9 @@ extension DoorReply: Codable {
         case .state(let state):
             try fields.encode("state", forKey: .kind)
             try fields.encode(state, forKey: .state)
+        case .conversation(let reading):
+            try fields.encode("conversation", forKey: .kind)
+            try fields.encode(reading, forKey: .conversation)
         case .bridge(let state):
             try fields.encode("bridge", forKey: .kind)
             try fields.encode(state, forKey: .bridge)
@@ -946,5 +969,23 @@ extension SwiftUI.DynamicTypeSize {
     public init?(doorName: String) {
         guard let size = Self.doorNames[doorName] else { return nil }
         self = size
+    }
+}
+
+/// The state a conversation view actually reads, without creating or altering it.
+public struct ConversationReading: Codable, Sendable, Equatable {
+    public let agent: AgentId
+    public let entries: [FeedEntry]
+    public let gate: SendGate
+    public let settingsGate: SettingsGate
+    public let results: [OpResult]
+
+    @MainActor
+    public init(_ conversation: ConversationStore) {
+        agent = conversation.agent
+        entries = conversation.entries
+        gate = conversation.gate
+        settingsGate = conversation.settingsGate
+        results = conversation.results
     }
 }

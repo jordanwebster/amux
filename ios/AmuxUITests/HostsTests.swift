@@ -619,20 +619,14 @@ final class HostsTests: JourneyCase {
         let fromRecents = try newest("starting from a recent directory reached no new agent")
         record["startedFromRecents"] = fromRecents["working_dir"] as? String ?? ""
 
-        // The conversation it opened into is the SDK layer's own, which this
-        // build cannot read yet and says so. What it must never be is a
-        // terminal transcript: an SDK session re-read as a PTY one would draw
-        // somebody else's rows under this agent's name.
-        waitFor(app, "transcript.unsupported",
-                "the created agent's conversation is not the SDK layer's")
-        let drawn = transcriptRows(app)
-        record["rowsOnTheCreatedAgent"] = drawn
-        let terminalRows = drawn.filter {
-            ["transcript.prose", "transcript.code", "transcript.read", "transcript.wrote",
-             "transcript.tool", "transcript.turn-end"].contains($0)
-        }
-        XCTAssertTrue(terminalRows.isEmpty,
-                      "an SDK session was drawn as a terminal transcript: \(terminalRows)")
+        waitFor(app, "composer", "the created SDK session offered no composer")
+        let reading = try door(runner, .init(kind: "conversation", agent: fromRecents["id"] as? String))
+        let conversation = try XCTUnwrap(reading["conversation"] as? [String: Any])
+        XCTAssertEqual((conversation["gate"] as? [String: Any])?["layer"] as? String, "claude_sdk")
+        XCTAssertEqual(conversation["agent"] as? String, fromRecents["id"] as? String)
+        record["createdConversation"] = conversation
+        record["rowsOnTheCreatedAgent"] = transcriptRows(app)
+        XCTAssertFalse(element(app, "transcript.unsupported").exists)
 
         // MARK: A repository the machine listed.
         openNewAgent()

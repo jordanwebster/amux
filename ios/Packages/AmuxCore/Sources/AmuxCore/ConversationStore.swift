@@ -123,10 +123,18 @@ public final class ConversationStore {
     /// distinguishes them is that a pending row is named `pending-…`, so a
     /// test can say which frame it appeared in and which frame it stopped
     /// being pending in.
+    private var layer: FeedEntry.Layer {
+        switch facts {
+        case .claudeSdk: .claudeSdk
+        case .codex: .codex
+        case .claudePty, .unavailable: .claudePty
+        }
+    }
+
     public func rows() -> [TranscriptRow] {
         entries.transcriptRows() + unacknowledged.map {
             TranscriptRow(
-                id: "pending-\($0.id.uuidString)", layer: .claudePty,
+                id: "pending-\($0.id.uuidString)", layer: layer,
                 kind: .prompt(text: $0.text))
         }
     }

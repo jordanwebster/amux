@@ -47,6 +47,12 @@ public enum ComposerState: Equatable, Sendable {
             case .working: self = .working(Self.activity(tail, elapsed))
             default: return nil
             }
+        case .claudeSdk(let gate):
+            switch gate {
+            case .ready: self = .writing
+            case .working: self = .working(Self.activity(tail, elapsed))
+            default: return nil
+            }
         case .codex(let gate):
             switch gate {
             case .ready: self = .writing
@@ -119,6 +125,12 @@ extension SendGate {
             .object([
                 "command": .string("claude"),
                 "claude_command": .string("interrupt"),
+                "agent": .string(agent.description),
+            ])
+        case .claudeSdk:
+            .object([
+                "command": .string("claude_sdk"),
+                "claude_sdk_command": .string("interrupt"),
                 "agent": .string(agent.description),
             ])
         case .codex:
