@@ -418,6 +418,70 @@ def refusal(answers: list[dict]) -> str:
                      if answer.get("kind") == "error")
 
 
+# MARK: - What the phone is asked to do
+
+# The session is imported once, in the first of the two visits below, and
+# never again. A refresh token is spent the first time it is used and the
+# account service answers with a replacement, so the token this run read out
+# of the browser is dead the moment the phone has used it. A second visit that
+# handed the same token over again would be refused — and would be asking the
+# phone to do something no phone ever does: a person who opens the app again
+# is opened on the session the app kept, not on one somebody re-imported.
+
+
+def first_visit(account: str, refresh: str, invitation: str, agent: str) -> list[dict]:
+    """The phone, from nothing remembered to a real agent's answer.
+
+    Everything after the first line is the app's own production path. It is
+    handed a session and nothing else: no relay, no credential and no opinion
+    about what this account may do."""
+    return [
+        {"kind": "restoreSession", "account": account, "refresh": refresh},
+        {"kind": "awaitReconciled", "seconds": 120},
+        {"kind": "accounts"},
+        # By the machine's own invitation, which names the account service
+        # both ends are on. A phone that disagreed about that would refuse
+        # this before it ever reached the machine.
+        {"kind": "pair", "qr": invitation},
+        # Read twice: once the moment the trust is written, so a phone that
+        # never got a fleet says so, and once after the conversation is
+        # ready, which is what a working run reports.
+        {"kind": "bridge"},
+        {"kind": "awaitAgent", "agent": agent, "seconds": 180},
+        {"kind": "watch", "agent": agent},
+        # Asked before the fleet is read, not after: a machine that has
+        # just admitted this phone has not finished saying so, and a
+        # conversation that will take a message is the phone's own word
+        # for the moment the machine's account of itself has landed.
+        {"kind": "awaitSendable", "agent": agent, "seconds": 240},
+        {"kind": "bridge"},
+        {"kind": "send", "agent": agent, "text": QUESTION},
+        {"kind": "awaitReply", "agent": agent, "saying": ANSWER, "seconds": 300},
+    ]
+
+
+def second_visit(machine: str, code: str) -> list[dict]:
+    """The same phone, closed and opened again, pairing the other way.
+
+    Nothing signs it in: the app comes up on the session it saved for itself
+    while the first visit was running, refreshes it against the account
+    service and dials the relay that service names. Waiting for the connection
+    is the first thing asked, because a launch that restores its own session
+    is doing so while the driver is already talking to it.
+
+    Then the machine is forgotten and trusted again by the six digits it
+    prints, the route a phone that cannot see the screen takes. Second because
+    a machine holds one offer at a time, and the invitation had to be the one
+    a phone that trusted nobody arrived at."""
+    return [
+        {"kind": "awaitReconciled", "seconds": 180},
+        {"kind": "accounts"},
+        {"kind": "revoke", "host": machine},
+        {"kind": "pairByCode", "host": machine, "pin": code},
+        {"kind": "bridge"},
+    ]
+
+
 # MARK: - The run
 
 
@@ -483,32 +547,8 @@ def main() -> None:
         # installing an app takes some of them.
         invitation, offered = pairing_invitation(journal, profile)
 
-        answers = speak(journal, udid, [
-            # Everything after this line is the app's own production path. It
-            # is handed a session and nothing else: no relay, no credential and
-            # no opinion about what this account may do.
-            {"kind": "restoreSession", "account": account, "refresh": refresh},
-            {"kind": "awaitReconciled", "seconds": 120},
-            {"kind": "accounts"},
-            # By the machine's own invitation, which names the account service
-            # both ends are on. A phone that disagreed about that would refuse
-            # this before it ever reached the machine.
-            {"kind": "pair", "qr": invitation},
-            # Read twice: once the moment the trust is written, so a phone that
-            # never got a fleet says so, and once after the conversation is
-            # ready, which is what a working run reports.
-            {"kind": "bridge"},
-            {"kind": "awaitAgent", "agent": agent, "seconds": 180},
-            {"kind": "watch", "agent": agent},
-            # Asked before the fleet is read, not after: a machine that has
-            # just admitted this phone has not finished saying so, and a
-            # conversation that will take a message is the phone's own word
-            # for the moment the machine's account of itself has landed.
-            {"kind": "awaitSendable", "agent": agent, "seconds": 240},
-            {"kind": "bridge"},
-            {"kind": "send", "agent": agent, "text": QUESTION},
-            {"kind": "awaitReply", "agent": agent, "saying": ANSWER, "seconds": 300},
-        ], seconds=900)
+        answers = speak(journal, udid, first_visit(account, refresh, invitation, agent),
+                        seconds=900)
 
         complaint = refusal(answers)
         # What the phone got wrong rather than what stopped it. A disagreement
@@ -571,19 +611,25 @@ def main() -> None:
             f"back: {len(answered[-1]['conversation']['entries'])} rows in the "
             f"conversation, one of them saying {ANSWER!r}")
 
-        # The other way into the same machine, in the same run: a phone that
-        # cannot see the screen types the six digits instead. Second because
-        # a machine holds one offer at a time, and the invitation had to be
-        # the one a phone that trusted nobody arrived at.
+        # The machine now holds the other kind of offer out, and the phone is
+        # closed and opened again to take it — on its own saved session, as
+        # `second_visit` says.
         stop_offering(offered, profile)
         code = pairing_code(journal, profile)
-        again = speak(journal, udid, [
-            {"kind": "restoreSession", "account": account, "refresh": refresh},
-            {"kind": "awaitReconciled", "seconds": 120},
-            {"kind": "revoke", "host": machine},
-            {"kind": "pairByCode", "host": machine, "pin": code},
-            {"kind": "bridge"},
-        ], seconds=600)
+        again = speak(journal, udid, second_visit(machine, code), seconds=600)
+
+        resumed = replies(again, "accounts")
+        reopened = [known for reply in resumed
+                    for known in reply["known"]["accounts"]
+                    if known["id"] == account and known["signedIn"]]
+        if not reopened:
+            journal.say(logs(journal, udid, account))
+            journal.stop("the phone was opened again and did not come back signed in "
+                         f"from the session it had saved: {refusal(again)}")
+        journal.say("the phone was closed and opened again, and reached the production "
+                    "relay from the session it had saved for itself — nobody handed it "
+                    "a token a second time")
+
         recoded = replies(again, "paired")
         if not recoded:
             journal.say(logs(journal, udid, account))
@@ -598,7 +644,9 @@ def main() -> None:
             "— reaches a machine and a real agent through the production account "
             "service and the production relay, on the credential that service "
             "minted and the address it named — by both of the ways a person "
-            "pairs, the machine's invitation and the code it prints. The App "
+            "pairs, the machine's invitation and the code it prints, and the "
+            "second of them after a relaunch on the session the phone kept "
+            "for itself. The App "
             "Store purchase route is a "
             "different one and is not claimed here; a sandbox purchase needs a "
             "phone in somebody's hand.")

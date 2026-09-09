@@ -4,6 +4,37 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Resume the saved phone session instead of re-importing a token.**
+
+The production QA recipe now hands the phone a browser session once. Its
+second act closes the app and opens it again, and the app comes up on the
+session it saved for itself, refreshes it against the account service and
+dials the relay that service names. Previously the second act replayed the
+original refresh token; the account service rotates a refresh token on every
+use, so the replay was refused with `invalid_grant` and the printed-code
+pairing was never reached. It also asked the phone to do something no phone
+does: nobody re-imports a session into an app they signed in yesterday.
+
+The recipe builds each act's requests in a named function, and recipe tests
+check that the session is imported once, in the first act, and that no field
+of the second act carries a credential. The run now also asserts that the
+reopened app comes back signed in as the same account before it pairs again.
+
+The driving door's reconciliation wait no longer refuses a launch whose
+runtime has not started: an app restoring its own session starts one a moment
+after launch, and the driver's first request beats it. A wait that never sees
+a runtime still fails, saying so.
+
+Validation: recipe tests, iOS lint and one authorized production QA run. The
+run restored the sign-in, paired on the machine's QR invitation, received a
+real agent reply from a Claude session, and came back signed in after being
+closed and opened again — the replay is gone. It now stops one step further
+on, at the printed code: a client that revokes a machine drops its routes
+along with the trust, and reachability through the relay is only announced
+when a machine connects, so there is no route left to pair over and the
+machine is never asked. Two daemons on a test relay reproduce it without a
+phone.
+
 2026-09-09 — **Let simulator sign-ins persist in Keychain.**
 
 Simulator builds now sign ad-hoc and declare the app’s own Keychain group.

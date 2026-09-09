@@ -808,15 +808,24 @@ final class DoorHost {
     /// Polling a frame at a time rather than awaiting the event stream,
     /// because the stream is already being drained into the stores on this
     /// actor; a second reader would take batches away from them.
+    ///
+    /// A connection that has not started yet is waited for rather than
+    /// refused: an app opened again on an account it signed in earlier starts
+    /// its own runtime from the session it saved, and that takes a network
+    /// round trip the driver's first request can easily beat.
     private func awaitReconciled(within seconds: Double) async -> DoorReply {
-        guard bridge != nil else { return .error("nothing has been connected") }
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
-            let state = bridgeState()
-            if state.connection == "connected" && state.reconciled && !state.discovered.isEmpty {
-                return .ack
+            if bridge != nil {
+                let state = bridgeState()
+                if state.connection == "connected" && state.reconciled && !state.discovered.isEmpty {
+                    return .ack
+                }
             }
             await DoorFrames.next()
+        }
+        guard bridge != nil else {
+            return .error("nothing connected within \(seconds)s, and nothing was starting one")
         }
         let state = bridgeState()
         return .error(

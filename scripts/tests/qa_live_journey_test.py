@@ -8,6 +8,7 @@ simulator or a daemon, so both are checked here.
 
 import contextlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -102,6 +103,53 @@ class WhatItWritesDown(unittest.TestCase):
         journal.keep("no")
         self.assertEqual(journal.scrub("there is nothing to say"),
                          "there is nothing to say")
+
+
+class TheSessionItImports(unittest.TestCase):
+    """A refresh token is spent the first time it is used: the account service
+    answers a refresh with a replacement and refuses the one just spent. The
+    run reads one token out of the browser, so the phone may be handed a
+    session once and never again — and a second visit that re-imported it
+    would be asking for a refusal, and asking the phone to do something no
+    phone does."""
+
+    def plans(self) -> dict[str, list[dict]]:
+        return {
+            "first": recipe.first_visit(
+                account="30f5c2ac-0000-4000-8000-000000000001",
+                refresh="eyJhbGciOiJSUzI1NiJ9.payload.signature",
+                invitation="https://amux.sh/pair/whatever",
+                agent="6f0c0000-0000-4000-8000-000000000002"),
+            "second": recipe.second_visit(
+                machine="8a2b0000-0000-4000-8000-000000000003", code="123456"),
+        }
+
+    def kinds(self, plan: list[dict]) -> list[str]:
+        return [request["kind"] for request in plan]
+
+    def test_the_session_is_imported_once_and_in_the_first_visit(self):
+        plans = self.plans()
+        self.assertEqual(self.kinds(plans["first"]).count("restoreSession"), 1)
+        self.assertEqual(self.kinds(plans["first"])[0], "restoreSession")
+        self.assertNotIn("restoreSession", self.kinds(plans["second"]))
+
+    def test_no_credential_is_spoken_to_the_phone_a_second_time(self):
+        """Nothing carrying the token in any field, under any request name:
+        the second visit is the app's own saved session or it proves nothing
+        about one."""
+        refresh = "eyJhbGciOiJSUzI1NiJ9.payload.signature"
+        spoken = json.dumps(self.plans()["second"])
+        self.assertNotIn(refresh, spoken)
+        self.assertNotIn("refresh", spoken)
+
+    def test_the_second_visit_waits_for_the_connection_the_app_starts(self):
+        """Nothing signs the phone in, so the first thing asked is the wait: a
+        launch restoring its own session is doing it while the driver is
+        already talking."""
+        second = self.kinds(self.plans()["second"])
+        self.assertEqual(second[0], "awaitReconciled")
+        self.assertIn("accounts", second)
+        self.assertIn("pairByCode", second)
 
 
 class TheQuestionItAsks(unittest.TestCase):
