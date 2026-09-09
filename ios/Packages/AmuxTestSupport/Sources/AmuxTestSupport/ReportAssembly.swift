@@ -1,3 +1,4 @@
+import AmuxCore
 import Foundation
 
 /// Turns a frozen capture and what somebody wrote about it into the bundle the

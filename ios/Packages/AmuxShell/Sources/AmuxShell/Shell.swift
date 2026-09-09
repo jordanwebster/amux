@@ -50,10 +50,7 @@ public enum ShellAction: Equatable, Sendable {
     case cancelDeletion
     /// Light, dark, or whatever the phone is set to.
     case wear(Appearance?)
-    /// Send the report that is open. It assembles a bundle out of what was
-    /// frozen and what has been written on it, and hands it to the account
-    /// service; a failure leaves the draft alone so Retry is one press.
-    case sendReport
+
 }
 
 /// Leaves the app for a page somewhere else: a billing portal, the App Store's
@@ -92,12 +89,9 @@ public struct Shell: View {
     private let deletion: DeletionStore
     /// What the app is wearing, or nothing for whatever the phone is set to.
     private let appearance: Appearance?
-    /// The one report this phone is in the middle of, and what freezes a
-    /// screen into one. Both absent in a build a person installs: reporting is
-    /// a debug tool, and a build without the tools has nothing to hand in
-    /// here, so the offer can never appear and Help never draws the row.
-    private let reports: ReportStore?
-    private let freezer: (any ReportFreezing)?
+    /// A debug build may supply a Help action. The shell carries no capture
+    /// types or report views, so linking it cannot ship the reporting tools.
+    private let report: (@MainActor () -> Void)?
     private let actions: @MainActor (ShellAction) -> Void
 
     public init(
@@ -108,8 +102,7 @@ public struct Shell: View {
         paywall: PaywallStore,
         deletion: DeletionStore,
         appearance: Appearance? = nil,
-        reports: ReportStore? = nil,
-        freezer: (any ReportFreezing)? = nil,
+        report: (@MainActor () -> Void)? = nil,
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
         self.appearance = appearance
@@ -119,8 +112,7 @@ public struct Shell: View {
         self.stores = stores
         self.signIn = signIn
         self.paywall = paywall
-        self.reports = reports
-        self.freezer = freezer
+        self.report = report
         self.actions = actions
     }
 
@@ -144,8 +136,8 @@ public struct Shell: View {
                     YouTabRoot(
                         router: self.router, accounts: accounts, stores: stores,
                         deletion: deletion, appearance: appearance,
-                        reporting: reports != nil && freezer != nil,
-                        report: beginReport, actions: actions)
+                        reporting: report != nil,
+                        report: { report?() }, actions: actions)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
             }
@@ -157,52 +149,6 @@ public struct Shell: View {
         // the way a person reads it. What the shell does state is which tab is
         // showing.
         .identified("shell", value: router.tab.rawValue)
-        // The offer to report what was just photographed, over the whole app
-        // rather than over one screen: what somebody screenshots is whichever
-        // tab and page they were on.
-        .reportOffer(
-            reports?.offering == true,
-            take: { reports?.accept() },
-            dismiss: { reports?.dismiss() })
-        // The report itself, over everything, because the frame it is about is
-        // behind it and pushing a page would have navigated away from what the
-        // report is of.
-        .overlay {
-            if let reports, reports.open {
-                ReportScreen(model: reports) { asked in
-                    switch asked {
-                    case .cancel: reports.dismiss()
-                    // Sending is the one thing on this screen that leaves the
-                    // phone, so it leaves the shell too: the account service
-                    // and the log the bundle carries are both the app's, not
-                    // this screen's.
-                    case .send: actions(.sendReport)
-                    }
-                }
-            }
-        }
-        .modifier(FreezeOnScreenshot(
-            freeze: reports != nil && freezer != nil ? freezeFromScreenshot : nil))
-    }
-
-    /// The system took a screenshot: freeze at once, then offer.
-    ///
-    /// iOS cannot let an app intercept the gesture — the notification arrives
-    /// after the system has already taken and saved its own picture — which
-    /// costs nothing, because nothing on screen changed in between. What would
-    /// cost something is drawing the offer first and photographing afterwards,
-    /// so the capture is taken here before any of this app's own UI moves.
-    private func freezeFromScreenshot() {
-        guard let reports, let freezer else { return }
-        reports.offer(freezer)
-    }
-
-    /// Help asked for it. The same freeze, with no offer in between: somebody
-    /// who went looking for the row has already said yes, and the frame frozen
-    /// is the one that was on show when they pressed it.
-    private func beginReport() {
-        guard let reports, let freezer else { return }
-        reports.begin(freezer)
     }
 
     /// The tab bar, written through the router rather than straight into it.
@@ -821,37 +767,6 @@ private struct YouTabRoot: View {
             case .report: report()
             case .dismiss: break
             }
-        }
-    }
-}
-
-/// Watches for the system's screenshot and freezes the app when it happens.
-///
-/// A modifier of its own so the whole mechanism sits behind one compile-time
-/// brace. A build a person installs does not observe the notification and has
-/// no path at all from a screenshot to a capture, which is what the release
-/// scope audit asserts.
-/// Listens for the system's word that it has just photographed the app.
-///
-/// Whether to listen at all is a fact about this build rather than a
-/// compilation flag: a build a person installs has nothing to freeze a screen
-/// with, so it is handed nothing and never registers for the notification.
-/// Deciding it with `#if` instead would compile the listener out of the
-/// packages, which do not carry the app target's flags — and the screenshot
-/// path would quietly do nothing in the very build that has the tools.
-private struct FreezeOnScreenshot: ViewModifier {
-    let freeze: (@MainActor () -> Void)?
-
-    func body(content: Content) -> some View {
-        if let freeze {
-            content.onReceive(
-                NotificationCenter.default.publisher(
-                    for: UIApplication.userDidTakeScreenshotNotification)
-            ) { _ in
-                freeze()
-            }
-        } else {
-            content
         }
     }
 }

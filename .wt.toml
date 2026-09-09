@@ -151,6 +151,11 @@ needs = ["ios-rust", "build"]
 run = "timeout 1800 python3 -B ios/Tools/loopback_smoke.py"
 needs = ["build"]
 
+# Inspect the release bundle for excluded platforms and debug-only surfaces.
+[task.ios-scope-audit]
+run = "timeout 1200 python3 -B scripts/ios-scope-audit.py"
+needs = ["ios-rust"]
+
 [task.ios-verify]
 run = "scripts/ios-verify.sh"
 

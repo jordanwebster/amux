@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
-@testable import AmuxCore
+import AmuxCore
+@testable import AmuxTestSupport
 
 /// A freeze that answers with a picture it was told to answer with, and counts
 /// how many times it was asked. Nothing here photographs anything: what the

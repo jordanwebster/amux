@@ -1,3 +1,4 @@
+import AmuxCore
 import Foundation
 import SwiftUI
 #if canImport(UIKit)

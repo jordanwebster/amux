@@ -49,6 +49,14 @@ struct RootView: View {
         #endif
     }
 
+    private var report: (@MainActor () -> Void)? {
+        #if AMUX_DEBUG_TOOLS
+        { composition.beginReport() }
+        #else
+        nil
+        #endif
+    }
+
     private var app: some View {
         Shell(
             router: composition.router,
@@ -58,13 +66,13 @@ struct RootView: View {
             paywall: composition.paywall,
             deletion: composition.deletion,
             appearance: composition.appearance,
-            reports: composition.reports,
-            freezer: composition.freezer,
+            report: report,
             actions: { composition.handle($0) }
         )
         // What the app is wearing. Set here rather than inside a screen: it
         // is the whole app's, and a screen that carried it could not be
         // photographed in the other one.
+        .modifier(ReportTools(composition: composition))
         .preferredColorScheme(composition.appearance?.colorScheme)
         .onOpenURL { composition.router.open($0) }
     }

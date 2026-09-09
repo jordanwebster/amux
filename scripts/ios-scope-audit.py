@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Build Release and inspect the iPhone app's shipped scope."""
+
+from pathlib import Path
+import json
+import plistlib
+import re
+import subprocess
+import tomllib
+
+import ios_project
+
+OUTPUT = Path("target/ios/scope-audit")
+DERIVED = Path("target/ios/DerivedData")
+APP = DERIVED / "Build/Products/Release-iphonesimulator/Amux.app"
+DEBUG_SYMBOLS = (
+    "DoorServer", "DoorHost", "DoorScreens", "DoorCapture", "DoorFrames",
+    "DoorRecording", "DrivenRoot", "VisibleTree", "AmuxTestSupport",
+    "ReportCapture", "ReportFreeze", "ReportAssembly", "ReportStore", "ReportScreen",
+    "FreezeOnScreenshot", "DebugReports", "FrozenFrame", "ColdStartProbe", "PerfRun",
+    "Workloads", "BudgetTable",
+    "amux_mobile_report_snapshot", "amux_mobile_replay_report", "+debug-tools",
+)
+FORBIDDEN_APIS = (
+    "UNUserNotificationCenter", "requestAuthorizationWithOptions",
+    "ActivityKit", "ActivityAuthorizationInfo", "NWBrowser", "nw_browser_create",
+    "DNSServiceBrowse", "NSNetServiceBrowser",
+)
+FORBIDDEN_ROWS = ("Live Activity", "Live Activities", "Mute", "Notifications")
+
+
+def run(argv, *, timeout=120, check=True):
+    result = subprocess.run(argv, check=False, capture_output=True, timeout=timeout)
+    if check and result.returncode:
+        raise RuntimeError(f"{' '.join(map(str, argv))} failed:\n"
+                           + result.stderr.decode(errors="replace"))
+    return result
+
+
+def binary_violations(symbols: str, strings: str) -> list[str]:
+    text = symbols + "\n" + strings
+    failures = [f"excluded symbol or API: {name}"
+                for name in (*DEBUG_SYMBOLS, *FORBIDDEN_APIS) if name in text]
+    rows = set(strings.splitlines())
+    failures += [f"excluded row: {row}" for row in FORBIDDEN_ROWS if row in rows]
+    return failures
+
+
+def bundle_violations(info: dict, entitlements: dict, settings: dict) -> list[str]:
+    failures = []
+    if "aps-environment" in entitlements:
+        failures.append("push entitlement: aps-environment")
+    if "NSBonjourServices" in info:
+        failures.append("Bonjour services declared")
+    if info.get("UIDeviceFamily") != [1]:
+        failures.append("bundle device family must be iPhone only")
+    if settings.get("TARGETED_DEVICE_FAMILY") != "1":
+        failures.append("build device family must be iPhone only")
+    for flag in ("SUPPORTS_MACCATALYST", "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD",
+                 "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD"):
+        if settings.get(flag) != "NO":
+            failures.append(f"destination not disabled: {flag}")
+    if set(settings.get("SUPPORTED_PLATFORMS", "").split()) - {"iphoneos", "iphonesimulator"}:
+        failures.append("non-iPhone platform in supported destinations")
+    return failures
+
+
+def graph_violations(graphs: list[dict]) -> list[str]:
+    failures = []
+    def visit(node):
+        for key in ("name", "identity", "url", "path"):
+            if re.search(r"amuxcloud|react[-_ ]?native", str(node.get(key, "")), re.I):
+                failures.append(f"excluded package dependency: {node.get(key)}")
+        for dependency in node.get("dependencies", []):
+            visit(dependency)
+    for graph in graphs:
+        visit(graph)
+    return failures
+
+
+def inspect_binary(binary: Path) -> tuple[str, str]:
+    symbols = run(["xcrun", "nm", "-a", str(binary)]).stdout.decode(errors="replace")
+    strings = run(["strings", "-a", str(binary)]).stdout.decode(errors="replace")
+    return symbols, strings
+
+
+def entitlements() -> dict:
+    result = run(["codesign", "-d", "--entitlements", ":-", str(APP)], check=False)
+    if result.returncode:
+        if b"not signed at all" in result.stderr:
+            return {}
+        raise RuntimeError(result.stderr.decode(errors="replace"))
+    return plistlib.loads(result.stdout) if result.stdout.strip() else {}
+
+
+def detector_probe() -> None:
+    """Compile a test executable with a debug export and require rejection.
+
+    This exercises the same Mach-O inspection used on the app, rather than
+    asserting that a search through a synthetic symbol listing works.
+    """
+    source = OUTPUT / "excluded-symbol.c"
+    binary = OUTPUT / "excluded-symbol"
+    source.write_text("void amux_mobile_report_snapshot(void) {}\n"
+                      "int main(void) { amux_mobile_report_snapshot(); return 0; }\n")
+    sdk = run(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"]).stdout.decode().strip()
+    run(["xcrun", "clang", "-target", "arm64-apple-ios26.0-simulator", "-isysroot", sdk,
+         str(source), "-o", str(binary)])
+    failures = binary_violations(*inspect_binary(binary))
+    if "excluded symbol or API: amux_mobile_report_snapshot" not in failures:
+        raise RuntimeError("audit accepted a test build containing a debug-only export")
+    (OUTPUT / "detector-probe.txt").write_text("Rejected compiler-built probe:\n" + "\n".join(failures) + "\n")
+
+
+def main() -> None:
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    report = OUTPUT / "audit.txt"
+    report.write_text("Release scope audit started; no verdict yet.\n")
+    ios_project.generate()
+    args = ["xcodebuild", "-project", "ios/Amux.xcodeproj", "-scheme", "Amux",
+            "-configuration", "Release", "-destination", "generic/platform=iOS Simulator",
+            "-derivedDataPath", str(DERIVED), "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]
+    built = run([*args, "build", "-quiet"], timeout=900)
+    (OUTPUT / "build.txt").write_bytes(built.stdout + built.stderr)
+    settings_rows = json.loads(run([*args, "-showBuildSettings", "-json"]).stdout)
+    settings = next(row["buildSettings"] for row in settings_rows if row["target"] == "Amux")
+    (OUTPUT / "build-settings.json").write_text(json.dumps(settings, indent=2))
+    info = plistlib.loads((APP / "Info.plist").read_bytes())
+    grants = entitlements()
+    # Simulator builds may be unsigned. Inspect the Release signing input too,
+    # so a push entitlement cannot hide behind disabled simulator signing.
+    declared = settings.get("CODE_SIGN_ENTITLEMENTS", "")
+    if declared:
+        path = Path(declared)
+        if not path.is_absolute():
+            path = Path(settings["SRCROOT"]) / path
+        grants |= plistlib.loads(path.read_bytes())
+    (OUTPUT / "entitlements.json").write_text(json.dumps(grants, indent=2))
+    failures = bundle_violations(info, grants, settings)
+    symbols, strings = inspect_binary(APP / info["CFBundleExecutable"])
+    (OUTPUT / "symbols.txt").write_text(symbols)
+    # Include compiled localization resources: a row may no longer be a literal
+    # in the executable after it moves into the string catalogue.
+    for resource in APP.rglob("*.strings"):
+        table = plistlib.loads(resource.read_bytes())
+        strings += "\n" + "\n".join(str(value) for value in table.values())
+    (OUTPUT / "strings.txt").write_text(strings)
+    failures += binary_violations(symbols, strings)
+    if "Contact Support" not in strings:
+        failures.append("Contact Support is absent")
+    if not any(copy in strings for copy in ("need you", "needs you")):
+        failures.append("in-app attention copy is absent")
+    graphs = []
+    for package in sorted(Path("ios/Packages").glob("*/Package.swift")):
+        graphs.append(json.loads(run([
+            "swift", "package", "--package-path", str(package.parent),
+            "--scratch-path", str((OUTPUT / "SwiftPM" / package.parent.name).resolve()),
+            "show-dependencies", "--format", "json"]).stdout))
+    rust_packages = tomllib.loads(Path("Cargo.lock").read_text())["package"]
+    rust_graph = [{"name": package["name"], "url": package.get("source", ""),
+                   "dependencies": [{"name": dependency} for dependency in package.get("dependencies", [])]}
+                  for package in rust_packages]
+    (OUTPUT / "package-graph.json").write_text(json.dumps(
+        {"swift": graphs, "rust": rust_graph}, indent=2))
+    failures += graph_violations(graphs + rust_graph)
+    detector_probe()
+    lines = [f"Release app: {APP}",
+             "Inspected: Info.plist, entitlements, build destinations, executable symbols,",
+             "compiled strings and the complete Swift package and locked Rust dependency graphs.",
+             "Detector rejected a compiler-built test executable carrying a debug export."]
+    if failures:
+        lines += ["FAIL: " + failure for failure in failures]
+    else:
+        lines += ["PASS: no push authorization, Live Activity, Mute or Notifications row;",
+                  "no Bonjour declaration or network browser; iPhone destinations only;",
+                  "no amuxcloud or React Native package; no driving or report-capture code.",
+                  "PASS: in-app attention copy and Contact Support remain."]
+    lines += ["Limit: simulator Release bundle inspection; distribution signing is checked before release."]
+    report.write_text("\n".join(lines) + "\n")
+    print(report.read_text(), end="", flush=True)
+    if failures:
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Keep reporting out of the shipped iPhone app.**
+
+The Release audit found report views and capture models linked through the
+shared shell even though the app passed nil for its report store. Reporting
+models, views and bundle assembly now compile with the existing debug-only
+support sources. The debug app owns the screenshot listener and overlays;
+the shared shell accepts only an optional Help action. The report unit tests
+move with their implementation. The cloud upload data contract remains in Core.
+
+`wt run ios-scope-audit` builds Release and checks entitlements, destination
+settings, bundle metadata, executable symbols, compiled copy and Swift/Rust
+package dependencies. Mac and headset destinations are explicitly disabled.
+The audit requires attention copy and Contact Support, rejects excluded
+notification and discovery APIs, and compiles a deliberately contaminated
+test executable to prove that its debug-symbol detector fails closed.
+
+Validation: the Release audit passes, all 67 debug-support unit tests pass,
+and the relay-backed reporting journey still captures a frozen frame,
+annotates it, retains its draft after upload refusal, retries, and opens
+from Help. Recipe tests and Swift feature lint pass.
+
 2026-09-09 — **Run complete iOS verification on every push.**
 
 The iOS verifier requires every recipe, captures the full golden manifest,

@@ -104,6 +104,9 @@ targets:
         # XcodeGen gives an iOS target iPhone and iPad by default; this app is
         # designed for the phone only.
         TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG AMUX_DEBUG_TOOLS
@@ -171,6 +174,9 @@ targets:
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux"
         BUNDLE_LOADER: "$(TEST_HOST)"
         TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
       configs:
         Measured:
           # A test bundle gets testability for nothing in a debug
@@ -190,6 +196,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: sh.amux.AmuxUITests
         TEST_TARGET_NAME: Amux
         TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
 
 schemes:
   Amux:

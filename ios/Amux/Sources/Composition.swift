@@ -30,15 +30,10 @@ final class Composition {
     /// What the app is wearing. Nothing means whatever the phone is set to,
     /// which is what most people want and what the app starts as.
     var appearance: Appearance?
-    /// The one report this phone is in the middle of, and what freezes a
-    /// screen into one.
-    ///
-    /// Both are nothing in a build a person installs. Reporting is a debug
-    /// tool: it reads the runtime's recording and the embedded daemon's dump,
-    /// neither of which the shipping library even exposes, so a shipping build
-    /// has nothing to hand the shell and the shell draws no way in.
+    #if AMUX_DEBUG_TOOLS
     let reports: ReportStore?
     let freezer: (any ReportFreezing)?
+    #endif
     /// The account service. Every screen sees it as `CloudService` and none of
     /// them knows there is HTTP behind it. A debug build's driving door is
     /// handed the same one, so a launch driven against the real service is
@@ -89,9 +84,6 @@ final class Composition {
         freezer = ReportFreeze(
             route: { router.top?.name ?? router.tab.rawValue },
             screen: { Self.catalogueName(for: router) })
-        #else
-        reports = nil
-        freezer = nil
         #endif
         router.loads(with: self)
         rememberedFleet()
@@ -208,19 +200,6 @@ final class Composition {
             deletion.ask(id)
         case .cancelDeletion:
             deletion.dismiss()
-        // The report leaves the phone. What goes with it is what was frozen
-        // plus what has been written on it since; the account it is filed
-        // under is the one on screen, because a report is about what this
-        // phone could and could not reach as that account. Nobody signed in
-        // is handed down rather than dropped here, so the report says why it
-        // cannot go instead of the press doing nothing.
-        case .sendReport:
-            guard let reports else { break }
-            Task {
-                await reports.send(
-                    with: cloud, as: accounts.selected, build: AppFiles.build,
-                    log: AppFiles.logTail)
-            }
         // The account service is what deletes an account, and it refuses while
         // a subscription is still set to renew. Both answers land in the store
         // the question is drawn from, and a deletion that went through takes
@@ -337,17 +316,6 @@ enum AppFiles {
     static var build: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
         return "amux-ios/\(version as? String ?? "0")"
-    }
-
-    /// The tail of this app's own log, or why there is none.
-    ///
-    /// There is none. The app logs through the system, which keeps its records
-    /// in a store no app may read back — not even its own — so there is no
-    /// file to take a tail of. The part is declared absent with that reason
-    /// rather than left out, because a reader who found no log needs to know
-    /// whether it was withheld, lost, or never existed.
-    static var logTail: Result<String, PartAbsent> {
-        .failure(PartAbsent("this app logs through the system, which keeps no file it can read back"))
     }
 
     private static func directory(_ search: FileManager.SearchPathDirectory) -> URL {
