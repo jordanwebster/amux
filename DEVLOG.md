@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Subscription access text is included in the string catalogue.**
+
+The existing switching-on subscription state, heading and retry explanation are now registered in the app's string catalogue. The non-copy exemption for the stable `unconfirmed` UI identifier follows its current source line. The displayed wording and behaviour are unchanged. Validation: `wt run ios-lint` passes.
+
+---
+
 2026-09-09 — **The cloud document's access read now matches the query the app sends.**
 
 `docs/CLOUD.md` printed a GraphQL query asking for a purchase's `status` and

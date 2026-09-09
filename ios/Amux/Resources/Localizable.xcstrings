@@ -5712,6 +5712,42 @@
           }
         }
       }
+    },
+    "switching on": {
+      "comment": "Subscription access state, also exposed to accessibility and the driving door.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "switching on"
+          }
+        }
+      }
+    },
+    "Your subscription is still switching on": {
+      "comment": "Paywall heading while an accepted purchase is waiting for subscription access.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your subscription is still switching on"
+          }
+        }
+      }
+    },
+    "amux.sh has your purchase and is still turning your subscription on. Tap Retry in a moment to check again.": {
+      "comment": "Paywall explanation and retry guidance while an accepted purchase is waiting for subscription access.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "amux.sh has your purchase and is still turning your subscription on. Tap Retry in a moment to check again."
+          }
+        }
+      }
     }
   },
   "version": "1.0"
