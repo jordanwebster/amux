@@ -26,6 +26,8 @@ settings:
     SWIFT_STRICT_CONCURRENCY: complete
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     CODE_SIGNING_ALLOWED: NO
+    "CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]": YES
+    "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": "-"
     # The Rust bridge is assembled for arm64 alone (scripts/ios-rust.py), the
     # phone is arm64 and every simulator this is measured on runs on Apple
     # silicon. An Intel slice would be a second configuration nobody builds
@@ -113,6 +115,7 @@ targets:
         # Git worktree metadata can live outside SRCROOT. The revision phase
         # reads it each build and updates only the built app's Info.plist.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+        CODE_SIGN_ENTITLEMENTS: Amux/Amux.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: sh.amux.app
         SWIFT_EMIT_LOC_STRINGS: YES
         # XcodeGen gives an iOS target iPhone and iPad by default; this app is
@@ -184,6 +187,7 @@ targets:
       - target: Amux
     settings:
       base:
+        GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: sh.amux.AmuxPerformanceTests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux"
         BUNDLE_LOADER: "$(TEST_HOST)"
@@ -198,6 +202,26 @@ targets:
           # `@testable import Amux` in an optimised build.
           ENABLE_TESTABILITY: YES
 
+  # Keychain access belongs to the signed process. These tests run in the
+  # actual app so disabling its signing cannot pass through a package runner.
+  AmuxAppTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - AmuxAppTests
+    dependencies:
+      - target: Amux
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: sh.amux.AmuxAppTests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+
   AmuxUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -207,6 +231,7 @@ targets:
       - target: Amux
     settings:
       base:
+        GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: sh.amux.AmuxUITests
         TEST_TARGET_NAME: Amux
         TARGETED_DEVICE_FAMILY: "1"
@@ -220,6 +245,7 @@ schemes:
       targets:
         Amux: all
         AmuxUITests: [test]
+        AmuxAppTests: [test]
     run:
       config: Debug
       storeKitConfiguration: Amux/Amux.storekit
@@ -227,9 +253,10 @@ schemes:
       config: Debug
       # The package unit suites run from their own package schemes (see
       # scripts/ios-unit.py); this action carries the UI tests, which the
-      # journey plans select from.
+      # journey plans select from, and the app-hosted Keychain tests.
       targets:
         - AmuxUITests
+        - AmuxAppTests
 
   # Its own scheme, because a performance run must never share a process or a
   # machine with another suite.

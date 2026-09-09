@@ -60,6 +60,7 @@
 		DDFD9CD189F0B140F851F65D /* AccountsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AF7C50B96593352DB0BC307 /* AccountsTests.swift */; };
 		E2141E4F9E984ECACF441955 /* Sessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FF4DBFB3F554EC2761318D /* Sessions.swift */; };
 		E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */; };
+		EBAE1EC4295F9EBBA0AF2D66 /* CloudSessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */; };
 		EEEEF4C1DDA205961E7286E0 /* DebugCopy.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */; };
 		EF9507B8D384D5EAE754EFB4 /* AmuxShell in Frameworks */ = {isa = PBXBuildFile; productRef = 62675EA602BEE702494C2D3C /* AmuxShell */; };
 		F58309647B1BADB6407F626C /* DebugReports.swift in Sources */ = {isa = PBXBuildFile; fileRef = F285BF2881D10503D4252DF7 /* DebugReports.swift */; };
@@ -69,6 +70,13 @@
 
 /* Begin PBXContainerItemProxy section */
 		4A353F499577E7D8C9493874 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4B97051BF0BFB50D573975CE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8CE566509F5A43BE6BF3E256;
+			remoteInfo = Amux;
+		};
+		5951062B3B4AFD2F0DA405C5 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 4B97051BF0BFB50D573975CE /* Project object */;
 			proxyType = 1;
@@ -109,6 +117,7 @@
 		63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceSuite.swift; sourceTree = "<group>"; };
 		66609895E99B406673EEADA3 /* States.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = States.swift; sourceTree = "<group>"; };
 		6AF7C50B96593352DB0BC307 /* AccountsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsTests.swift; sourceTree = "<group>"; };
+		6B110703FCD2FD223978C97E /* AmuxAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6BAD30E79F5FE66C97691B57 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		6DC1FF3D962A7B46549AF24A /* frozen-frame.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "frozen-frame.png"; sourceTree = "<group>"; };
 		71AECE15627BD11A3278E26C /* HostsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsTests.swift; sourceTree = "<group>"; };
@@ -134,6 +143,7 @@
 		C038F1CC378B4A9539628D19 /* Reporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Reporting.swift; sourceTree = "<group>"; };
 		C0FF4DBFB3F554EC2761318D /* Sessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sessions.swift; sourceTree = "<group>"; };
 		C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedCloud.swift; sourceTree = "<group>"; };
+		C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSessionStoreTests.swift; sourceTree = "<group>"; };
 		CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedStore.swift; sourceTree = "<group>"; };
 		D0E455E43044DD55EB8662D4 /* Transcript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transcript.swift; sourceTree = "<group>"; };
 		D140E97565E0C456B57BB601 /* DebugTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugTools.swift; sourceTree = "<group>"; };
@@ -281,6 +291,14 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		8D168EC7A03FA2A38159AE6D /* AmuxAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */,
+			);
+			path = AmuxAppTests;
+			sourceTree = "<group>";
+		};
 		93E975D8BBA6A4EE577D8738 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
@@ -302,6 +320,7 @@
 			isa = PBXGroup;
 			children = (
 				8ED8247A9E0214AD28831928 /* Amux.app */,
+				6B110703FCD2FD223978C97E /* AmuxAppTests.xctest */,
 				DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */,
 				8959E3A72299B8152BE86967 /* AmuxUITests.xctest */,
 			);
@@ -312,6 +331,7 @@
 			isa = PBXGroup;
 			children = (
 				64DAC62299FAA0DD1E9445EA /* Amux */,
+				8D168EC7A03FA2A38159AE6D /* AmuxAppTests */,
 				079E0F65A5017818AF6B8C54 /* AmuxPerformanceTests */,
 				5445FBC267DE6D42E3D857C1 /* AmuxUITests */,
 				ECABC02511DE788415933245 /* Packages */,
@@ -373,6 +393,24 @@
 			);
 			productName = AmuxPerformanceTests;
 			productReference = DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		39E34D09D12B6D7C614BBB7E /* AmuxAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5359A6802F93ECA967FB5952 /* Build configuration list for PBXNativeTarget "AmuxAppTests" */;
+			buildPhases = (
+				16428338F9A0A10824F76155 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				965AEF19A167D1DC379083CB /* PBXTargetDependency */,
+			);
+			name = AmuxAppTests;
+			packageProductDependencies = (
+			);
+			productName = AmuxAppTests;
+			productReference = 6B110703FCD2FD223978C97E /* AmuxAppTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		3DAE7AD018B70A791E1B19D2 /* AmuxUITests */ = {
@@ -454,6 +492,7 @@
 			targets = (
 				8CE566509F5A43BE6BF3E256 /* Amux */,
 				0E3DEC796899800C70DE59A8 /* AmuxPerformanceTests */,
+				39E34D09D12B6D7C614BBB7E /* AmuxAppTests */,
 				3DAE7AD018B70A791E1B19D2 /* AmuxUITests */,
 			);
 		};
@@ -503,6 +542,14 @@
 			files = (
 				F840D37348D0746EA906D110 /* Harness.swift in Sources */,
 				A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		16428338F9A0A10824F76155 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EBAE1EC4295F9EBBA0AF2D66 /* CloudSessionStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -576,6 +623,11 @@
 			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
 			targetProxy = 4A353F499577E7D8C9493874 /* PBXContainerItemProxy */;
 		};
+		965AEF19A167D1DC379083CB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
+			targetProxy = 5951062B3B4AFD2F0DA405C5 /* PBXContainerItemProxy */;
+		};
 		A0D731EC13F9142BB2A92EBF /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
@@ -619,6 +671,8 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -655,6 +709,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = Amux/Info.plist;
@@ -678,6 +733,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -702,6 +758,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -721,6 +778,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				EXCLUDED_SOURCE_FILE_NAMES = "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*";
@@ -743,6 +801,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -758,10 +817,31 @@
 			};
 			name = Debug;
 		};
+		553ECCECE82F6F452BAE186A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxAppTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Debug;
+		};
 		62CBA0674792A649E6E61464 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -782,6 +862,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -801,6 +882,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -816,10 +898,51 @@
 			};
 			name = Measured;
 		};
+		7EA0143F3EF99114A4D5DB7E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxAppTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Release;
+		};
+		9E74B7CC23B1363A40BF1044 /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxAppTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Measured;
+		};
 		9EAFCF25DF8CB11DA1F9749F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -870,6 +993,8 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -930,6 +1055,8 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -964,6 +1091,16 @@
 				1C6A74E2A949CE5DA9BC6C59 /* Debug */,
 				2244784CDFC88C6A4DEA3688 /* Measured */,
 				43EAF82C28C6FB2A3DB797AE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5359A6802F93ECA967FB5952 /* Build configuration list for PBXNativeTarget "AmuxAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				553ECCECE82F6F452BAE186A /* Debug */,
+				9E74B7CC23B1363A40BF1044 /* Measured */,
+				7EA0143F3EF99114A4D5DB7E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

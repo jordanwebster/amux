@@ -337,7 +337,7 @@ public final class PaywallStore {
 
     static func unconfirmed(after error: CloudError) -> Unconfirmed {
         switch error {
-        case .refused(let reason): .refused(reason)
+        case .refused(let reason), .keychain(let reason, _): .refused(reason)
         // Everything else is a phone that did not get through, including a
         // session that has to be renewed first — which the next launch does
         // before it offers this purchase again.

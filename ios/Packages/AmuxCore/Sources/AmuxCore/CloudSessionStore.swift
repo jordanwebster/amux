@@ -36,7 +36,7 @@ public struct KeychainCloudSessions: CloudSessionStore {
         guard let token else {
             let status = SecItemDelete(request as CFDictionary)
             guard status == errSecSuccess || status == errSecItemNotFound else {
-                throw CloudError.refused("This phone could not forget the sign-in")
+                throw CloudError.keychain("This phone could not forget the sign-in", status: status)
             }
             return
         }
@@ -49,7 +49,8 @@ public struct KeychainCloudSessions: CloudSessionStore {
             status = SecItemAdd(request.merging(values) { _, value in value } as CFDictionary, nil)
         }
         guard status == errSecSuccess else {
-            throw CloudError.refused("This phone could not remember the sign-in. Please try again.")
+            throw CloudError.keychain(
+                "This phone could not remember the sign-in. Please try again.", status: status)
         }
     }
 }

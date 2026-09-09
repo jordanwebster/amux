@@ -46,6 +46,8 @@ public enum CloudError: Error, Sendable, Equatable {
     case unauthenticated
     case network(String)
     case refused(String)
+    /// The screen shows the sentence; diagnostics retain the Security status.
+    case keychain(String, status: Int32)
     case timeout
 }
 

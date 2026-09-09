@@ -135,6 +135,7 @@ public actor AmuxCloudService: CloudService {
 
     private func save(_ token: String?, for account: AccountId) throws(CloudError) {
         do { try savedSessions?.write(token, for: account) }
+        catch let error as CloudError { throw error }
         catch { throw .refused("This phone could not remember the sign-in. Please try again.") }
     }
 

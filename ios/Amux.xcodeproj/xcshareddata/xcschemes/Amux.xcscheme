@@ -29,6 +29,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "39E34D09D12B6D7C614BBB7E"
+               BuildableName = "AmuxAppTests.xctest"
+               BlueprintName = "AmuxAppTests"
+               ReferencedContainer = "container:Amux.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "3DAE7AD018B70A791E1B19D2"
                BuildableName = "AmuxUITests.xctest"
                BlueprintName = "AmuxUITests"
@@ -61,6 +75,17 @@
                BlueprintIdentifier = "3DAE7AD018B70A791E1B19D2"
                BuildableName = "AmuxUITests.xctest"
                BlueprintName = "AmuxUITests"
+               ReferencedContainer = "container:Amux.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "39E34D09D12B6D7C614BBB7E"
+               BuildableName = "AmuxAppTests.xctest"
+               BlueprintName = "AmuxAppTests"
                ReferencedContainer = "container:Amux.xcodeproj">
             </BuildableReference>
          </TestableReference>

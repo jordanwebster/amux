@@ -171,6 +171,24 @@ final class AmuxCloudTests: XCTestCase {
         } catch { XCTAssertEqual(error, .unauthenticated) }
     }
 
+    func testKeychainFailureKeepsItsStatusThroughSignInAndRestore() async {
+        let failure = CloudError.keychain(
+            "This phone could not remember the sign-in. Please try again.", status: -34018)
+        let cloud = AmuxCloudService(
+            endpoint: endpoint, transport: signedIn, savedSessions: RefusingSessions(failure: failure))
+        await assert(failure) {
+            try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        }
+        await assert(failure) {
+            try await cloud.restore(AccountId("ada"), refresh: "secret-token")
+        }
+        XCTAssertTrue(String(describing: failure).contains("-34018"))
+        await MainActor.run {
+            XCTAssertEqual(SignInStore.phase(after: failure),
+                           .failed("This phone could not remember the sign-in. Please try again."))
+        }
+    }
+
     func testSignInHandsOffWithPkceAndRedeemsTheCodeItComesBackWith() async throws {
         let answers = signedIn
         let presenter = Handed.returning(code: "code-1")
@@ -562,4 +580,10 @@ private final class MemorySessions: CloudSessionStore, @unchecked Sendable {
     private var tokens: [AccountId: String] = [:]
     func read(_ account: AccountId) -> String? { lock.withLock { tokens[account] } }
     func write(_ token: String?, for account: AccountId) { lock.withLock { tokens[account] = token } }
+}
+
+private struct RefusingSessions: CloudSessionStore {
+    let failure: CloudError
+    func read(_ account: AccountId) -> String? { nil }
+    func write(_ token: String?, for account: AccountId) throws { throw failure }
 }

@@ -100,7 +100,7 @@ public final class DeletionStore {
         switch error {
         case .cancelled: .asking
         case .unauthenticated: .failed("amux.sh no longer recognises this account")
-        case .refused(let reason): .failed(reason)
+        case .refused(let reason), .keychain(let reason, _): .failed(reason)
         case .network(let what): .failed(what)
         case .timeout: .failed("amux.sh did not answer")
         }

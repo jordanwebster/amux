@@ -4,6 +4,35 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Let simulator sign-ins persist in Keychain.**
+
+Simulator builds now sign ad-hoc and declare the app’s own Keychain group.
+Previously the linker-signed app had no grants, so Security refused refresh
+storage with `-34018` before the production cloud session could be restored.
+Signing overrides apply only to the simulator SDK. Test bundles generate the
+Info.plists signing requires; device signing remains unchanged.
+
+Keychain write and removal errors retain their Security status through the
+cloud adapter and driving reply. Screens still show the designed sentence,
+without the numeric diagnostic. The unit recipe now includes a test hosted by
+the signed app that inserts, reopens, rotates and deletes tokens, and checks
+account isolation. A package test runner cannot prove this access because it
+has a different signing identity and no Keychain group. Cloud tests also prove
+that sign-in and restore retain storage errors and keep the screen copy.
+
+Xcode embeds simulator grants in the executable’s `__TEXT,__entitlements`
+section while its separate code-signature entitlement dictionary stays empty.
+Both Debug and Release executables contain the expanded app group; the Release
+scope report declares only that group.
+
+Validation: simulator unit suites, recipe tests, iOS lint, Release scope
+audit and the accounts journey pass. The sign-in golden matches in light and
+dark. A production QA run now restores the sign-in, pairs on the host’s QR
+invitation, reconciles the fleet and receives a real agent reply. The complete
+recipe still fails later: its second session import reuses the original refresh
+token after rotation and receives `invalid_grant`; that recipe needs to resume
+the saved session instead.
+
 2026-09-09 — **Pair by a machine's QR invitation over the production cloud.**
 
 A phone refused every scanned invitation before anything left it, so the

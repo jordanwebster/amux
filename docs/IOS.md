@@ -64,6 +64,18 @@ input and generated project together when changing targets. Outputs live under
 `target/ios/`, with the Debug simulator app in
 `DerivedData/Build/Products/Debug-iphonesimulator/Amux.app`.
 
+Simulator builds are signed ad-hoc with `Amux/Amux.entitlements`, which grants
+access to the app's own Keychain group. A linker-signed app without this grant
+cannot save refresh tokens: Security returns `-34018` (missing entitlement).
+The signing override applies only to the simulator SDK; device and distribution
+signing remain separate configuration work. Keychain failures keep their status
+code in diagnostics while screens retain the designed sign-in message.
+`ios-unit` includes an app-hosted Keychain round-trip alongside the package
+suites, so it checks the signed app’s access rather than a test double.
+Xcode places simulator grants in the executable’s `__TEXT,__entitlements`
+section; `codesign -d --entitlements` reads the separate signature dictionary,
+which is empty for these simulator builds.
+
 The default simulator is `amux-golden`, an iPhone 17 Pro on iOS 26.5 at 3×.
 `amux-small` is the iPhone SE (3rd generation) on the same runtime. The recipes
 pin en_US, a 12-hour clock, 9:41, full battery and the requested appearance.

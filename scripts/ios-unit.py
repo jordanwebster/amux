@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run the package unit suites on the golden simulator.
+"""Run package and app-hosted unit suites on the golden simulator.
 
 Each local package is its own Xcode scheme, so a `-only-testing:` selector
-picks the package that owns the named test target and the rest of the
-arguments are handed to xcodebuild unchanged. A package with more than one
+picks the package that owns the named test target and the other arguments are handed to xcodebuild unchanged. Selectors for another
+scheme are removed before invoking each one. A package with more than one
 library gets its whole-package scheme named `<package>-Package`, and only that
 scheme carries the test action, so the scheme is asked for rather than assumed.
+Keychain tests run in AmuxAppTests, hosted by the signed application rather than the package test runner.
 """
 
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
 import ios_simulators
+import ios_project
 
 PACKAGES = Path("ios/Packages")
 DERIVED_DATA = Path("target/ios/DerivedData")
@@ -31,7 +33,7 @@ def suites() -> dict[str, str]:
 
 
 def selected(arguments: list[str]) -> tuple[list[str], list[str]]:
-    owners = suites()
+    owners = suites() | {"AmuxAppTests": "AmuxAppTests"}
     packages = []
     for argument in arguments:
         if not argument.startswith("-only-testing"):
@@ -39,7 +41,7 @@ def selected(arguments: list[str]) -> tuple[list[str], list[str]]:
         target = argument.split(":", 1)[1].split("/", 1)[0]
         if target not in owners:
             raise SystemExit(
-                f"No package owns the test target {target}; known targets: "
+                f"No suite owns the test target {target}; known targets: "
                 + ", ".join(sorted(owners))
             )
         if owners[target] not in packages:
@@ -99,6 +101,19 @@ def forwarded(udid: str, variables: dict[str, str]):
 
 def test(package: str, udid: str, arguments: list[str]) -> None:
     print(f"Testing {package}", flush=True)
+    owners = suites() | {"AmuxAppTests": "AmuxAppTests"}
+    arguments = [arg for arg in arguments if not arg.startswith("-only-testing:")
+                 or owners[arg.split(":", 1)[1].split("/", 1)[0]] == package]
+    if package == "AmuxAppTests":
+        ios_project.generate()
+        if not any(arg.startswith("-only-testing:") for arg in arguments):
+            arguments = [*arguments, "-only-testing:AmuxAppTests"]
+        subprocess.run([
+            "xcodebuild", "test", "-project", "ios/Amux.xcodeproj", "-scheme", "Amux",
+            "-configuration", "Debug", "-destination", f"id={udid}",
+            "-derivedDataPath", str(DERIVED_DATA.resolve()), *arguments,
+        ], check=True, timeout=1500)
+        return
     subprocess.run([
         "xcodebuild", "test",
         "-scheme", scheme(package),
