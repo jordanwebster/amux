@@ -409,6 +409,33 @@ impl RoutingCore {
             .emit(HostReachabilityEvent::Removed { host_id });
     }
 
+    /// Drops our own links to `host_id` but keeps what our neighbors say
+    /// about it. Forgetting a machine ends trust and live access; it does not
+    /// un-tell us that a relay still has that machine online. A machine we
+    /// have just forgotten is then in the same position as one we were never
+    /// paired with — untrusted and unable to call, but reachable through the
+    /// relay, which is the only route a fresh pairing has.
+    pub(crate) async fn remove_direct_links(&self, host_id: HostId) {
+        let mut state = self.state.write().await;
+        let removed = state.directs.remove(&host_id);
+        let was_direct = removed.is_some();
+        if let Some(entry) = removed {
+            for link in entry.links {
+                state.routing_events.emit(RoutingEvent::NeighborDown {
+                    host_id,
+                    link,
+                    last_link: true,
+                });
+            }
+        }
+        if was_direct && !state.is_present(host_id) {
+            state.client_visible_activity.remove(&host_id);
+            state
+                .host_events
+                .emit(HostReachabilityEvent::Removed { host_id });
+        }
+    }
+
     /// Suppresses route updates for `host_id` until `finish_replacement`
     /// (trust replacement window).
     pub(crate) async fn begin_replacement(&self, host_id: HostId) {
@@ -813,6 +840,45 @@ mod tests {
         ));
 
         core.remove_host(peer).await;
+
+        assert_eq!(core.route_to(peer).await, None);
+        assert!(
+            matches!(host_rx.recv().await, Some(HostReachabilityEvent::Removed { host_id }) if host_id == peer)
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_direct_links_keeps_a_relays_claim_and_the_host_present() {
+        let core = RoutingCore::new();
+        let mut host_rx = core.subscribe_hosts().await;
+        let peer = HostId::from_u128(5);
+        let relay = HostId::from_u128(9);
+        core.apply_direct_up(host(5, "peer"), link(5, 1)).await;
+        core.apply_claim_up(relay, host(5, "peer")).await;
+        assert!(matches!(
+            host_rx.recv().await,
+            Some(HostReachabilityEvent::Added { .. })
+        ));
+
+        core.remove_direct_links(peer).await;
+
+        assert_eq!(core.route_to(peer).await, Some(Route::Via(relay)));
+        assert!(core.host_entry(peer).await.is_some());
+        assert!(host_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn remove_direct_links_reports_a_host_gone_when_nothing_else_holds_it() {
+        let core = RoutingCore::new();
+        let mut host_rx = core.subscribe_hosts().await;
+        let peer = HostId::from_u128(5);
+        core.apply_direct_up(host(5, "peer"), link(5, 1)).await;
+        assert!(matches!(
+            host_rx.recv().await,
+            Some(HostReachabilityEvent::Added { .. })
+        ));
+
+        core.remove_direct_links(peer).await;
 
         assert_eq!(core.route_to(peer).await, None);
         assert!(

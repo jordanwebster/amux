@@ -175,6 +175,19 @@ impl ConnectionManager {
         self.remove_host_runtime_state(peer).await;
     }
 
+    /// Ends live access to `peer` — trusted streams, tunnels, links and our
+    /// own routes — without forgetting the relay's word that it is online.
+    /// Used when a peer is unpaired: the trust is gone and nothing of the old
+    /// connection survives, but the peer stays reachable for pairing, the way
+    /// any other machine on the account is before it is ever paired.
+    pub(crate) async fn close_host_access(&self, peer: HostId) {
+        self.routing.remove_direct_links(peer).await;
+        self.remove_host_runtime_state(peer).await;
+        self.trusted_connections.close_host(peer).await;
+        self.tunnels.link_registry().close_host(peer).await;
+        self.remove_host_runtime_state(peer).await;
+    }
+
     pub(crate) async fn finish_host_replacement(&self, peer: HostId) {
         self.routing.finish_replacement(peer).await;
         self.trusted_connections.finish_host_replacement(peer);
@@ -814,6 +827,44 @@ mod tests {
         assert_eq!(
             manager.active_route(peer.id).await,
             Some(Route::Via(relay.id))
+        );
+    }
+
+    #[tokio::test]
+    async fn close_host_access_drops_the_live_connection_but_keeps_the_relays_claim() {
+        let routing = Arc::new(RoutingCore::new());
+        let tunnels = test_pool(HostId::from_u128(1), &routing);
+        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
+        let peer = host(2);
+        let relay = host(100);
+        let (_relay_link, _relay_rx) = register_link(&tunnels, &relay, LinkRole::Peer).await;
+        let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
+        routing.apply_direct_up(peer.clone(), direct_link).await;
+        routing.apply_claim_up(relay.id, peer.clone()).await;
+        let registry = tunnels.link_registry();
+        let registry_for_close = registry.clone();
+        tokio::spawn(async move {
+            // Stand in for the link's connect task: honor the close request.
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            registry_for_close.remove(&direct_link).await;
+        });
+        let _tunnel_channel = manager.channel_to(peer.id).await.ok();
+        let _relay_channel = tunnels.channel_via(peer.id, relay.id).await.unwrap();
+
+        manager.close_host_access(peer.id).await;
+
+        assert_eq!(manager.pool().len().await, 0);
+        assert_eq!(tunnels.active_count().await, 0);
+        assert_eq!(manager.active_route(peer.id).await, None);
+        // The relay still says the peer is online, so a fresh pairing has a
+        // route to it, and no replacement window suppresses later updates.
+        assert_eq!(
+            manager.known_routes(peer.id).await,
+            vec![Route::Via(relay.id)]
+        );
+        assert_eq!(
+            routing.apply_claim_up(relay.id, peer.clone()).await,
+            crate::routing::RouteUpdateOutcome::AlreadyKnown
         );
     }
 

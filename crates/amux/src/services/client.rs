@@ -620,7 +620,7 @@ impl ClientService {
         self.remote_agent_connections
             .send_link_close_to_host(host_id, wire::pb::LinkCloseReason::UserRevoked)
             .await;
-        self.remote_agent_connections.teardown_host(host_id).await;
+        self.remote_agent_connections.close_host_access(host_id).await;
         self.remove_peer_from_client_model(host_id).await;
         audit::trust_remove(
             host_id,

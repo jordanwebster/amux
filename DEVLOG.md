@@ -4,6 +4,31 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Forgetting a machine keeps it reachable for pairing again.**
+
+Revoking a machine used to leave the phone with no way back into it. Unpair
+tore the peer's whole routing entry out — its own links and the relay's word
+that the machine was online — and put the peer into the trust-replacement
+window that suppresses later route updates. A relay only announces a machine
+when that machine connects, so a machine that stayed connected was never
+announced again: the phone still offered it as a pairing target, but every
+attempt to pair by its printed code failed as unreachable, which reads on
+screen as a bad code.
+
+Unpair now ends access without forgetting reachability. Trusted streams,
+tunnels, links and our own routes to the peer are closed exactly as before;
+the relay's claim stands, and no replacement window is opened. A machine just
+forgotten is then in the same position as one never paired: untrusted, unable
+to call, and visible through the relay — which is the only route a fresh
+pairing has, and the same route the first pairing took.
+
+Validation: a new pairing spec pairs two cloud-only daemons, revokes, and
+pairs again by the printed code without either side reconnecting to the relay.
+The revocation specs are unchanged and still show the revoked peer's stream
+closing and its next call failing. Routing and connection unit tests cover the
+new teardown: the claim survives, and a host with nothing else holding it is
+still reported gone.
+
 2026-09-09 — **Resume the saved phone session instead of re-importing a token.**
 
 The production QA recipe now hands the phone a browser session once. Its

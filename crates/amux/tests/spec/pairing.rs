@@ -502,3 +502,45 @@ async fn pairing_confirm_secret_failures_are_indistinguishable() {
         "pairing failures: wrong, malformed, expired and expired-during-confirmation all InvalidPin; no trust write"
     );
 }
+
+/// Forgetting a machine ends trust and live access, but not the relay's word
+/// that the machine is online: the device can trust it again by the code that
+/// machine prints, over the same relay and without either side reconnecting.
+#[tokio::test]
+async fn pin_pairing_after_revocation_over_the_cloud() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("phone")
+        .cloud_only()
+        .daemon("host")
+        .cloud_only()
+        .start()
+        .await;
+    let [phone, host] = net.daemons(["phone", "host"]);
+    phone.sees(&host).await;
+
+    let invitation = host.start_qr_pairing().await;
+    phone
+        .pair(&host)
+        .with_qr(&invitation)
+        .await
+        .expect("pairing by the machine's own invitation");
+    phone.trusts(&host).await;
+    host.trusts(&phone).await;
+
+    phone.unpair(&host).await;
+    phone.does_not_trust(&host).await;
+
+    let pin = host.start_pairing().await;
+    phone
+        .pair(&host)
+        .with_cloud_pin(&pin)
+        .await
+        .expect("pairing again by the code the machine prints");
+    phone.trusts(&host).await;
+    host.trusts(&phone).await;
+    phone.can_call(&host).await;
+    println!(
+        "revocation keeps the relay's claim: a forgotten machine is reachable for pairing again, and pairs by its printed code without either side reconnecting"
+    );
+}
