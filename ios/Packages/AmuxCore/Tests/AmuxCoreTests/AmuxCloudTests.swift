@@ -404,7 +404,7 @@ final class AmuxCloudTests: XCTestCase {
         let answers = signedIn
         let cloud = service(answers)
         let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
-        await assert(.refused("that is not this account's address")) {
+        await assert(.refused("that is not this account’s address")) {
             try await cloud.requestDeletion(account.id, confirmedEmail: "bo@example.com")
         }
         XCTAssertNil(answers.request("/api/account"))

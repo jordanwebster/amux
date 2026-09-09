@@ -199,7 +199,7 @@ private struct TranscriptRowView: View {
         case .unreadable(let label):
             ActivityRow(
                 kind: "unreadable", verb: "Unreadable", subject: label, mono: true, meta: nil,
-                note: "This build does not know this row; it is kept as it arrived.")
+                note: "This build cannot read this row.")
         case .prompt, .prose, .turnEnd, .compaction:
             EmptyView()
         }
@@ -869,9 +869,7 @@ struct UnsupportedLayer: View {
                     .foregroundStyle(design.ink.color)
             }
             Explain(
-                "The agent is running and its machine can reach it. What it says "
-                + "arrives in a shape this app does not know yet, so nothing is "
-                + "shown rather than something guessed at.")
+                "Update the app to read this agent’s conversation.")
         }
         .padding(design.metrics.rowPadding)
         .frame(maxWidth: .infinity, alignment: .leading)

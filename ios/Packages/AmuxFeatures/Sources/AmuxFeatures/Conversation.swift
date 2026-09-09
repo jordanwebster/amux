@@ -312,7 +312,7 @@ public struct Conversation: View {
     private var transcript: some View {
         TranscriptContainer {
             if !subject.readable {
-                UnsupportedLayer(layer: "this agent's transcript")
+                UnsupportedLayer(layer: "this agent’s transcript")
                     .padding(.top, design.metrics.feedGap)
             } else {
                 TranscriptFeed(rows: model.rows())

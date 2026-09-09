@@ -58,6 +58,7 @@
 		DDFD9CD189F0B140F851F65D /* AccountsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AF7C50B96593352DB0BC307 /* AccountsTests.swift */; };
 		E2141E4F9E984ECACF441955 /* Sessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FF4DBFB3F554EC2761318D /* Sessions.swift */; };
 		E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */; };
+		EEEEF4C1DDA205961E7286E0 /* DebugCopy.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */; };
 		EF9507B8D384D5EAE754EFB4 /* AmuxShell in Frameworks */ = {isa = PBXBuildFile; productRef = 62675EA602BEE702494C2D3C /* AmuxShell */; };
 		F58309647B1BADB6407F626C /* DebugReports.swift in Sources */ = {isa = PBXBuildFile; fileRef = F285BF2881D10503D4252DF7 /* DebugReports.swift */; };
 		F840D37348D0746EA906D110 /* Harness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E50ACE0C6E84D336B13332 /* Harness.swift */; };
@@ -135,6 +136,7 @@
 		D5E1FE40B447768ED3E301C2 /* Instruments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Instruments.swift; sourceTree = "<group>"; };
 		D8269D1B95602732F33C12F2 /* AmuxDesign */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxDesign; path = Packages/AmuxDesign; sourceTree = SOURCE_ROOT; };
 		DCD0B049D76F4DAF62A8B46E /* AskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskTests.swift; sourceTree = "<group>"; };
+		DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DebugCopy.xcstrings; sourceTree = "<group>"; };
 		DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxPerformanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2D4F1F96B2AE8306CD589E6 /* AmuxShell */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxShell; path = Packages/AmuxShell; sourceTree = SOURCE_ROOT; };
 		E8CE78DF417F5614935595CA /* VisibleTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisibleTree.swift; sourceTree = "<group>"; };
@@ -276,6 +278,7 @@
 		93E975D8BBA6A4EE577D8738 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */,
 				6DC1FF3D962A7B46549AF24A /* frozen-frame.png */,
 			);
 			path = Resources;
@@ -454,6 +457,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				EEEEF4C1DDA205961E7286E0 /* DebugCopy.xcstrings in Resources */,
 				BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */,
 				CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */,
 			);

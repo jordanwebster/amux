@@ -233,8 +233,7 @@ final class ReportBundleTests: XCTestCase {
         guard case .failed(let why) = reports.sending else {
             return XCTFail("the report was left at \(reports.sending)")
         }
-        XCTAssertTrue(why.contains("no account is signed in"), why)
-        XCTAssertTrue(why.contains("Sign in under You"), why)
+        XCTAssertEqual(why, "Sign in to the account this report is about, then send it again.")
         // Nothing was uploaded, and nothing written was thrown away: signing
         // in and pressing Send again sends this same report.
         XCTAssertEqual(cloud.sent.count, 0)

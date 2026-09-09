@@ -108,7 +108,7 @@ public struct PairByCode: View {
     /// owed the name — otherwise a code typed for the laptop and refused by the
     /// desktop looks like a wrong code.
     private var instruction: String {
-        guard let machine = model.machine else { return "Run amux pair on the machine to get one." }
+        guard let machine = model.machine else { return "Run amux pair on the host to get one." }
         return "Run amux pair on \(machine.name) to get one."
     }
 
@@ -164,7 +164,7 @@ public struct PairByCode: View {
             // exactly what somebody guessing codes would want, so the screen
             // does not, and the digits have already gone.
             HStack(spacing: 8) {
-                Text("That code did not work. Ask the machine for a new one.")
+                Text("That code did not work. Get a new code from the host.")
                     .designFont(.monoSmall, design)
                     .foregroundStyle(design.ink.color)
                     .fixedSize(horizontal: false, vertical: true)
@@ -173,7 +173,7 @@ public struct PairByCode: View {
             .padding(.top, 10)
             .identified(
                 "pin.refused",
-                value: "That code did not work. Ask the machine for a new one.")
+                value: "That code did not work. Get a new code from the host.")
         case .checking:
             Text("Checking…")
                 .designFont(.monoSmall, design)
@@ -181,7 +181,7 @@ public struct PairByCode: View {
                 .padding(.top, 10)
                 .identified("pin.checking", value: "Checking…")
         default:
-            Text("The code expires \(PairingStore.offerWindow) after the machine prints it.")
+            Text("The code expires \(PairingStore.offerWindow) after the host prints it.")
                 .designFont(.monoSmall, design)
                 .foregroundStyle(design.inkFaint.color)
                 .fixedSize(horizontal: false, vertical: true)
@@ -305,19 +305,19 @@ public struct PairConfirmation: View {
 
     private func offer(_ peer: PendingPeer) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Trust this machine?")
+            Text("Pair with \(peer.name)?")
                 .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
                 .padding(.top, 26)
-                .identified("pair-confirm.title", value: "Trust this machine?")
-            Text("It answered the invitation. Nothing is trusted until you say so.")
+                .identified("pair-confirm.title", value: "Pair with \(peer.name)?")
+            Text("Match this fingerprint with the one printed by the host.")
                 .designFont(.body, design)
                 .foregroundStyle(design.inkMuted.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 6)
                 .padding(.bottom, 22)
             VStack(alignment: .leading, spacing: 12) {
-                field("Machine", peer.name, mono: false, id: "name")
+                field("Host", peer.name, mono: false, id: "name")
                 // The fingerprint is the reason this screen exists: it is what
                 // the person compares against the machine's own screen, and it
                 // is drawn whole rather than shortened, because a fingerprint
@@ -332,16 +332,16 @@ public struct PairConfirmation: View {
                 RoundedRectangle(cornerRadius: design.metrics.cardRadius, style: .continuous)
                     .fill(design.raised.color)
             }
-            Explain("Check it against the fingerprint \(peer.name) printed. The offer expires \(expiry(peer)).")
+            Explain("This invitation expires \(expiry(peer)).")
                 .padding(.top, 12)
                 .identified("pair-confirm.expiry", value: expiry(peer))
             Spacer(minLength: 22)
             VStack(spacing: 10) {
                 Button { actions(.confirm(peer)) } label: {
-                    ActionLabel("Trust \(peer.name)", kind: .primary, fill: true)
+                    ActionLabel("Pair", kind: .primary, fill: true)
                 }
                 .buttonStyle(.plain)
-                .identified("pair-confirm.trust", label: "Trust \(peer.name)")
+                .identified("pair-confirm.trust", label: "Pair")
                 Button { actions(.abandon(peer)) } label: {
                     ActionLabel("Not Now", kind: .outline, fill: true)
                 }
@@ -392,7 +392,7 @@ public struct PairConfirmation: View {
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
                 .identified("pair-confirm.refused", value: "That invitation did not work")
-            Explain("Ask the machine for a new one. Nothing was trusted.")
+            Explain("Get a new invitation from the host.")
             Button { actions(.cancel) } label: {
                 ActionLabel("Back to Hosts", kind: .outline)
             }

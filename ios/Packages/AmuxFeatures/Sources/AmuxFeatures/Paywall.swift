@@ -120,7 +120,7 @@ public struct Paywall: View {
     }
 
     private var explanation: String {
-        "A subscription connects this phone to your hosts. Without one, nothing is reachable."
+        "Subscribe to reach your hosts through the relay."
     }
 
     private var plans: some View {
@@ -225,11 +225,11 @@ public struct Paywall: View {
     static func honoured(_ grant: Grant) -> String {
         switch grant {
         case .purchased(.appStore):
-            "This phone is reaching your hosts. Manage it in the App Store."
+            "Manage your subscription in the App Store."
         case .purchased(.web):
-            "This phone is reaching your hosts. Manage it on amux.sh."
+            "Manage your subscription on amux.sh."
         case .granted:
-            "This phone is reaching your hosts. It was given rather than bought, so there is nothing to pay for or cancel."
+            "Relay access is included with this account."
         }
     }
 
@@ -323,7 +323,7 @@ public struct Paywall: View {
             // rather than left looking at a button that stopped working.
             note(
                 "Waiting for approval",
-                "The App Store has it. Nothing has been charged, and this phone reaches your hosts as soon as it goes through.",
+                "Your subscription starts when the App Store approves your purchase.",
                 id: "pending", value: "pending")
         // Paid for, and amux.sh has not said so yet. The purchase is kept
         // either way: the App Store still holds it, so pressing Retry — or
@@ -344,11 +344,11 @@ public struct Paywall: View {
     static func unconfirmed(_ why: PaywallStore.Unconfirmed) -> String {
         switch why {
         case .unreachable:
-            "Your subscription is paid for and kept. This phone could not reach amux.sh to add it to your account, and will try again next time the app opens."
+            "Your purchase is saved, and the app retries confirmation with amux.sh when it next opens."
         case .refused(let said):
             // Ended for us, because the reason is the account service's
             // sentence and nothing makes it finish one.
-            "Your subscription is paid for and kept, but amux.sh would not add it to your account: \(ended(said)) Try again, and get in touch if it keeps happening."
+            "Your purchase is saved, but amux.sh could not confirm it: \(ended(said))"
         }
     }
 

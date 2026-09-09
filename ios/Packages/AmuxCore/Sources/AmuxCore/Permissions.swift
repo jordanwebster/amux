@@ -88,11 +88,11 @@ public struct PermissionChoice: Equatable, Sendable, Identifiable {
     /// heard of would say an agent was somewhere it is not.
     static func claude(current: String?) -> [PermissionChoice] {
         let known = [
-            ("default", "Ask me", false),
-            ("acceptEdits", "Accept edits", false),
-            ("plan", "Plan mode", false),
+            ("default", "Ask Me", false),
+            ("acceptEdits", "Accept Edits", false),
+            ("plan", "Plan Mode", false),
             ("auto", "Auto", false),
-            ("bypassPermissions", "Bypass permissions", true),
+            ("bypassPermissions", "Bypass Permissions", true),
         ]
         var choices = known.map {
             PermissionChoice(
@@ -132,8 +132,7 @@ public struct PermissionChoice: Equatable, Sendable, Identifiable {
         var choices = codexPresets.map { preset in
             PermissionChoice(
                 id: preset.id, name: preset.name,
-                detail: "Approval \(spelled(preset.approval)) \u{00B7} "
-                    + "Sandbox \(spelled(preset.sandbox))",
+                detail: "Approval \(spelled(preset.approval)) \u{00B7} Sandbox \(spelled(preset.sandbox))",
                 selected: preset.approval == approval && preset.sandbox == sandbox,
                 stopsAsking: preset.stopsAsking)
         }

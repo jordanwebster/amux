@@ -303,8 +303,7 @@ public final class ReportStore {
         guard let capture, sending != .sending else { return }
         guard let account else {
             sending = .failed(
-                "no account is signed in on this phone, and a report is filed under the "
-                    + "account it is about. Sign in under You, then send it again.")
+                "Sign in to the account this report is about, then send it again.")
             return
         }
         sending = .sending

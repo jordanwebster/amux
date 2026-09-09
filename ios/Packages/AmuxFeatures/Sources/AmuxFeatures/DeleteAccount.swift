@@ -36,7 +36,7 @@ struct DeleteAccountCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 10) {
                 consequence("checkmark", kept: true,
-                            "Your agents keep running. Nothing on your hosts changes.")
+                            "Your agents and files stay on your hosts.")
                 consequence("xmark", kept: false, "This phone can no longer reach them.")
                 if let billing {
                     consequence("xmark", kept: false, billing)
@@ -71,8 +71,7 @@ struct DeleteAccountCard: View {
     private var billing: String? {
         switch entry.entitlement {
         case .active(.purchased(let source), .some(let renews)):
-            "Your subscription renews on \(Self.day(renews)) through \(source.place). "
-                + "Deleting this account does not cancel it."
+            "Deleting this account leaves your subscription renewing on \(Self.day(renews)) through \(source.place)."
         case .active(.purchased(let source), nil):
             "Your subscription through \(source.place) is not refunded."
         // Nothing was paid for, so there is nothing to warn about losing money
@@ -109,9 +108,7 @@ struct DeleteAccountCard: View {
                 Text("Cancel renewal first")
                     .designFont(.bodyEmphasis, design)
                     .foregroundStyle(design.ink.color)
-                Explain("Your subscription is still set to renew, and only "
-                        + "\(source.place) can stop it. Cancel renewal there, "
-                        + "come back, and delete the account.")
+                Explain("Cancel renewal through \(source.place), then return to delete this account.")
                 Button { actions(.manageBilling(manageURL)) } label: {
                     HStack(spacing: 5) {
                         Text("Cancel Renewal in \(source.place)")

@@ -163,7 +163,7 @@ final class FleetStoreTests: XCTestCase {
         XCTAssertEqual(store.exceptions, "mini offline")
 
         store.apply(.connection(ConnectionUpdate(state: .disconnected, reason: .unreachable)))
-        XCTAssertEqual(store.exceptions, "Offline · can't reach amux — check your connection")
+        XCTAssertEqual(store.exceptions, "Offline · check your connection")
 
         // Every kind the core can send has words of its own; none of them is
         // a transport error read out to somebody looking at their agents.

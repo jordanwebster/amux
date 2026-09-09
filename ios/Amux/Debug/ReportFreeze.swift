@@ -72,8 +72,7 @@ final class ReportFreeze: ReportFreezing {
         }
         guard !events.isEmpty else {
             return .failure(PartAbsent(
-                "nothing had changed the view since this app started, and "
-                    + "\(route() ?? "the page on screen") is not a screen a replay can put back"))
+                "\(route() ?? "the page on screen") has no recorded view state to replay"))
         }
         do { return .success(try Trace.lines(events)) } catch {
             return .failure(PartAbsent("the view-state recording could not be written: \(error)"))

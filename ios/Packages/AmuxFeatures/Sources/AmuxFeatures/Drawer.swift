@@ -328,8 +328,8 @@ public struct DrawerOverlay<Content: View>: View {
                 .ignoresSafeArea()
                 .onTapGesture { open = false }
                 .accessibilityAddTraits(.isButton)
-                .accessibilityLabel("Close the drawer")
-                .identified("drawer.scrim", label: "Close the drawer")
+                .accessibilityLabel("Close Drawer")
+                .identified("drawer.scrim", label: "Close Drawer")
         }
     }
 

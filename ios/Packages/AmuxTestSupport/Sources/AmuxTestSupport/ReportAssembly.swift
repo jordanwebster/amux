@@ -188,8 +188,8 @@ public enum RuntimeRecording {
             let report = object as? [String: Any]
         else {
             return Split(
-                messagesAbsent: "the runtime's recording could not be read",
-                daemonAbsent: "the runtime's recording could not be read")
+                messagesAbsent: "the runtime’s recording could not be read",
+                daemonAbsent: "the runtime’s recording could not be read")
         }
 
         var split = Split()

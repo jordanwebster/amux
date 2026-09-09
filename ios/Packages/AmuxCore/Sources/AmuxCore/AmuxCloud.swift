@@ -264,7 +264,7 @@ public actor AmuxCloudService: CloudService {
         let who = try await who(with: try await bearer(for: id))
         let typed = confirmedEmail.trimmingCharacters(in: .whitespacesAndNewlines)
         guard typed.compare(who.email ?? "", options: .caseInsensitive) == .orderedSame else {
-            throw CloudError.refused("that is not this account's address")
+            throw CloudError.refused("that is not this account’s address")
         }
         var request = URLRequest(url: endpoint.account)
         request.httpMethod = "DELETE"

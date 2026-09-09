@@ -90,8 +90,11 @@ timeout 1200 wt run ios-goldens-perturb
 ```
 
 The unfiltered manifest covers 33 reference screens and 25 additional states,
-each in light and dark. Captures use the composited app window through
-`drawHierarchy(in:afterScreenUpdates:)`, so glass is part of the comparison.
+each in light and dark. The door waits for the app's view tree, then the Mac
+captures the simulator's composited display through `simctl io screenshot`,
+checking successive frames for stability. This includes the render server's
+glass and the pinned system status bar. The in-app report capture instead uses
+`drawHierarchy(in:afterScreenUpdates:)` to freeze its own window.
 Expected, actual and difference PNGs land in `target/ios/goldens/`. The reference
 recipe pairs all 66 preserved design images in `ios/Goldens/References/` with
 the app baselines under `target/ios/goldens/reference/`. Reference comparisons support
@@ -105,6 +108,15 @@ any departure from the preserved design. Never refresh baselines to conceal
 nondeterminism. The perturbation recipe deliberately changes a visible token
 and must detect a difference. Pixel equality alone does not establish usable
 VoiceOver navigation, gestures, transitions or network behavior.
+
+## Copy and catalogues
+
+The [copy standard](IOS_COPY.md) defines wording, case, terminology and the
+catalogue review process. `wt run ios-lint` checks every Swift app/package
+literal against the English catalogue or an exact, documented non-copy
+exemption. It includes helper/model copy and debug report views. The debug
+catalogue is excluded from Release. A copy change includes its affected
+light/dark goldens and baseline explanation.
 
 ## Journeys and replay
 

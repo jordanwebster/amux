@@ -138,7 +138,7 @@ public struct ReportScreen: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         frame
-                        guidance("Drag a box around anything wrong. Each box takes a note.")
+                        guidance("Draw a box around each problem and add a note.")
                         ForEach(Array(model.draft.marks.enumerated()), id: \.offset) { at, mark in
                             markNote(at: at, mark: mark)
                         }
@@ -269,7 +269,7 @@ public struct ReportScreen: View {
                     .thumbTarget(x: 12, y: 12)
             }
             .buttonStyle(.plain)
-            .identified("report.mark.\(at).remove", label: "Remove box \(at + 1)")
+            .identified("report.mark.\(at).remove", label: "Remove Box \(at + 1)")
             .reclaimingThumbTarget(x: 12, y: 12)
         }
         .padding(13)
@@ -324,7 +324,7 @@ public struct ReportScreen: View {
             Text(why)
                 .designFont(.detail, design)
                 .foregroundStyle(design.inkMuted.color)
-            Text("Nothing you wrote has been lost. Retry sends the same report.")
+            Text("Retry sends your saved report.")
                 .designFont(.detail, design)
                 .foregroundStyle(design.inkMuted.color)
         }
@@ -338,7 +338,7 @@ public struct ReportScreen: View {
     /// It arrived. The receipt is what somebody quotes when they ask about it.
     private func sent(_ receipt: ReportReceipt) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Sent.")
+            Text("Sent")
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
             Text(receipt.id)
@@ -349,7 +349,7 @@ public struct ReportScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous).fill(design.raised.color))
-        .identified("report.sent", label: "Sent.", value: receipt.id)
+        .identified("report.sent", label: "Sent", value: receipt.id)
     }
 }
 

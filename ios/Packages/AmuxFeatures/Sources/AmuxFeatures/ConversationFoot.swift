@@ -212,6 +212,6 @@ struct EndOfRun: View {
 
     private var sentence: String {
         guard let host else { return "The process ended on its own." }
-        return "The process ended on its own. Nothing is still running on \(host)."
+        return "The process ended on \(host)."
     }
 }

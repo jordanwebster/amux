@@ -4,6 +4,31 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Catalogue iPhone copy and enforce its review.**
+
+The English catalogue now contains 461 entries, with 30 debug-only entries in
+a separate catalogue excluded from Release. The string lint inventories every
+Swift app and package source, including model helpers and report views.
+Protocol keys, assets and verbatim fixtures require exact source-scoped
+exemptions with reasons and counts. Raw strings, multiline strings, nested
+interpolation fallbacks, reused exemptions and malformed catalogues have
+failure probes. The check runs through `wt run ios-lint`.
+
+Copy consistently names hosts, uses Title Case for controls, and gives shorter
+pairing, billing and report instructions. An unsigned sign-in page no longer
+claims sign-in has finished. Purchase retry copy promises another attempt,
+not successful confirmation. Reports name the available session and host
+records without promising an app log. The copy standard and catalogue workflow
+are documented beside the iPhone development and performance guides.
+
+Validation: all 458 Swift tests, the string lint and its 12 failure probes,
+the documentation link check, Release scope inspection and all 32 changed
+golden captures pass. The billing-source and report-retention assertions remain;
+wording assertions now check the reviewed sentences. All 66 reference pairs
+are regenerated. The full manifest also reproduced the existing status-bar
+appearance flake on the strip screen; its baseline remains unchanged and the
+failing triplet is retained for the capture repair.
+
 2026-09-09 — **Document native iPhone development and report contents accurately.**
 
 The iPhone guide now explains package ownership, the Rust bridge, build and

@@ -135,6 +135,8 @@ baseline was retaken for the same reason.
 
 ## sign-in
 
+Copy review (2026-09-09): The navigation title reads “Sign In” in Title Case, as required by the copy standard. The host row says “Sign in on amux.sh”, describing where the next action happens rather than implying sign-in has already completed. The web-entitlement fact is unchanged.
+
 The hand-off. It owns almost nothing, because the signing-in happens on
 amux.sh: what an account buys, and a button that says where it is sending you.
 The host is named three times — in the first row, on the button and in the
@@ -148,6 +150,8 @@ is lying.
   separator rules in one app would read as two kinds of list.
 
 ## sign-in-failed
+
+Copy review (2026-09-09): The navigation title uses “Sign In”, matching the ordinary sign-in page.
 
 The same screen having been turned away once. What went wrong and the button
 that tries again are one block at the foot, where the hand is already: the
@@ -207,6 +211,8 @@ list's selected row continued.
 
 ## delete
 
+Copy review (2026-09-09): The first consequence says agents and files stay on the hosts. The renewal consequence is one sentence stating that deleting the account leaves the subscription renewing on its date through its billing source.
+
 Giving up an account, asked over the page it was asked from: what deleting does
 in three lines, the account's own address typed to confirm it, and Cancel
 beside Delete. The You page behind is the real one, dimmed as one thing —
@@ -236,6 +242,8 @@ neither.
 
 ## delete-blocked
 
+Copy review (2026-09-09): The renewal guidance is one sentence: cancel through the named billing source, then return to delete the account. The management action and typed confirmation remain.
+
 The same question, refused, which the design has no capture of. The account
 service will not delete an account whose subscription is still set to renew,
 and it names the system that is billing. So the card grows a block above the
@@ -245,6 +253,10 @@ coming back from the App Store is one press from finished — the deletion is
 retried rather than restarted.
 
 ## paywall
+
+Copy review (2026-09-09): In the additional `paywall-unconfirmed` state, the saved-purchase caption describes retrying confirmation with amux.sh when the app next opens. It does not promise that a later attempt will succeed.
+
+Copy review (2026-09-09): The description is one sentence: “Subscribe to reach your hosts through the relay.” Other subscription states name where to manage a purchase, distinguish included access and explain retries without promising successful confirmation.
 
 The subscription, and nothing dressed up around it: one sentence saying what it
 is, the two plans with their prices, and what is true of both. There is no list
@@ -364,6 +376,8 @@ whole suite and the command has not come back.
 - The thinking line and the differing conversation carry over from `run`.
 
 ## voices
+
+Copy review (2026-09-09): The unknown-row caption reads “This build cannot read this row.” It removes the semicolon and the explanation of how unknown rows are retained. The shorter caption also shifts the bottom-anchored transcript behind the transparent status bar. Provider output stays verbatim.
 
 Everything an agent can write, on one screen: history compacted away, a folded
 run of looks, a message sent to another agent and two that came back, prose in
@@ -705,6 +719,8 @@ it exactly where it was.
 
 ## exited
 
+Copy review (2026-09-09): The caption says the process ended on the named host, without adding a second reassurance sentence.
+
 The same conversation after the run stopped for good: the feed as it was, and
 a card at the end of it stating the exit code and that nothing is still
 running.
@@ -939,6 +955,8 @@ raised on a card directly over the box.
 
 ## plus
 
+Copy review (2026-09-09): The permissions row uses “Ask Me”, matching the provider mode control’s Title Case.
+
 The plus, opened over the conversation it belongs to: one card holding two
 tiles and a row, with the composer still under it.
 
@@ -954,7 +972,7 @@ tiles and a row, with the composer still under it.
 - **The permissions row names the mode as the layer reports it**, and says
   nothing where the layer reports none. The reference reads "Accept Edits"; the
   conversation photographed here is under Claude's default mode, so it reads
-  "Ask me", which is what that mode is called.
+  "Ask Me", which is what that mode is called.
 - **The feed goes back behind it and the pill and the composer do not.** The
   reference dims the transcript under every one of these cards and leaves the
   chrome and the box at full strength, and so does this: what has opened came
@@ -1022,6 +1040,8 @@ Model and effort, on one card over the composer whose chip opened it.
   front of it, carry over from `plus`.
 
 ## permissions-claude
+
+Copy review (2026-09-09): Mode controls use Title Case: Ask Me, Accept Edits, Plan Mode, Auto and Bypass Permissions. Their provider identifiers, order and effects are unchanged.
 
 What the agent may do without asking, in Claude's vocabulary: its five modes,
 named as Claude names them, with the one the session reports marked.
@@ -1120,6 +1140,8 @@ readable behind it.
 
 ## hosts
 
+Copy review (2026-09-09): Copy uses “host” throughout. The offline-group caption says these agents’ state is unknown until the host returns; it describes the state directly without saying the agents report it.
+
 The machines, grouped by whether this phone can reach them: two answering and
 one that stopped answering eight minutes ago, with the agents on it said once
 under the group rather than implied on every row.
@@ -1193,6 +1215,8 @@ reference for it — the reference stops at a count with a chevron.
 
 ## pin
 
+Copy review (2026-09-09): The expiry caption names the host, and the common refusal asks for a new code from the host. Wrong and expired codes still share one refusal and clear the digits.
+
 Half of a six-digit code typed against the machine that printed it: three
 digits in, the fourth box outlined, and what happens if the code goes stale
 said under the boxes.
@@ -1227,6 +1251,8 @@ said under the boxes.
 
 ## pair-confirm
 
+Copy review (2026-09-09): The headline names the host (“Pair with homelab?”), the field says “Host”, and the filled action says “Pair”. One sentence asks you to match the fingerprint with the host’s printed fingerprint; a separate caption states expiry. Pairing still requires the explicit action.
+
 Where a pairing link lands. The design left no reference for it, because the
 whole screen exists to hold the protocol's second phase open: reaching it means
 a secret authenticated and means nothing else, and the trust is written only
@@ -1243,7 +1269,7 @@ when the person presses.
 - **The offer's remaining life is a length, not a clock face.** The machine
   started the offer, so what matters is how long is left; "in 4m" reads the
   same way every other elapsed time in this app does.
-- **"Not Now" is an outline beside a filled "Trust homelab".** They are the
+- **"Not Now" is an outline beside a filled "Pair".** They are the
   same size on purpose: turning a machine away is an ordinary answer to the
   question the screen asks, not a way out of it. It is also a message rather
   than a dismissal — the machine is told, so it can release the attempt now
@@ -1274,6 +1300,8 @@ the two ids are the two lists it belongs to.
 - The differing conversation and the stale place line carry over from `stale`.
 
 ## new-agent
+
+Copy review (2026-09-09): Helper and failure copy consistently names the host. The model choice reads “Host Default”, and the typed-path control’s accessibility label uses Title Case.
 
 Starting an agent: one machine, one directory, one layer, on one screen. The
 reference's own picture is followed closely; four things differ, and each is a
@@ -1341,6 +1369,8 @@ Report, floating over the transcript just clear of the composer.
 
 ## dump
 
+Copy review (2026-09-09): The drawing instruction is shortened to “Draw a box around each problem and add a note.” The contents caption continues to name only available session and host records.
+
 The report, on the frame a screenshot froze: the picture, one box drawn round
 the row that is wrong with its own note under it, one note about the whole
 thing, and Send. Cancel goes back to what was being looked at and throws the
@@ -1366,7 +1396,7 @@ pressed, scrolled or opened, because none of it is there any more.
   drawn as filled cards.** The reference draws only the second one as a card
   and puts the box's words on the picture; both are typed into, so both are
   drawn as the same kind of thing.
-- **The drawing instruction follows the reference; the contents caption
+- **The drawing instruction is shortened; the contents caption
   names only available records.** The app cannot read back its system log,
   so the bundle declares the log absent with a reason. Session and host
   records can also be unavailable; the caption says ‘Includes this screen
@@ -1381,6 +1411,8 @@ about one run in two. Where a person's note wraps is the field's business;
 where these wrap is the fixture's.
 
 ## upload-failed
+
+Copy review (2026-09-09): The retry explanation reads “Retry sends your saved report.” The failed upload retains the frozen image and both notes.
 
 The same report, after the account service would not take it. Send reads
 Retry, what the cloud said is under the report, and everything written is still

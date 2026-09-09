@@ -132,7 +132,7 @@ public struct NewAgent: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: "Host")
             if hosts.hosts.isEmpty {
-                Explain("Pair a machine before starting an agent.")
+                Explain("Pair a host before starting an agent.")
                     .identified("new-agent.no-hosts")
             } else {
                 RowGroup(items: hosts.hosts, prominence: .subject) { host in
@@ -299,8 +299,8 @@ public struct NewAgent: View {
     /// same default where nothing was.
     private func modelLine(_ provider: NewAgentStore.Provider) -> String {
         switch provider {
-        case .claude: "host default"
-        case .codex: model.model ?? "host default"
+        case .claude: "Host Default"
+        case .codex: model.model ?? "Host Default"
         }
     }
 
@@ -317,7 +317,7 @@ public struct NewAgent: View {
     // MARK: - Starting it
 
     private var machineName: String {
-        model.machine.flatMap { hosts.host($0)?.name } ?? "the machine"
+        model.machine.flatMap { hosts.host($0)?.name } ?? "the host"
     }
 
     private var foot: some View {
@@ -428,7 +428,7 @@ private struct LayerCard: View {
                 "Model for \(provider.title)", isPresented: $picking,
                 titleVisibility: .visible
             ) {
-                Button("host default") { chooseModel(nil) }
+                Button("Host Default") { chooseModel(nil) }
                 ForEach(choices, id: \.id) { choice in
                     Button(choice.name) { chooseModel(choice.id) }
                 }
@@ -576,10 +576,10 @@ private struct DirectorySheet: View {
             }
             switch model.listing {
             case .asking:
-                Explain("Reading this machine's projects…")
+                Explain("Reading this host’s projects…")
                     .identified("new-agent.browse.reading")
             case .unavailable:
-                Explain("This machine could not list its projects.")
+                Explain("This host could not list its projects.")
                     .identified("new-agent.browse.unavailable")
             case .none, .ready:
                 if !model.found.isEmpty {
@@ -598,8 +598,8 @@ private struct DirectorySheet: View {
     /// What "no repositories" means here: only useful beside where the machine
     /// looked, which is the roots it reported.
     private var nothing: String {
-        guard model.query.isEmpty else { return "Nothing under this machine's roots matches." }
-        guard !model.roots.isEmpty else { return "This machine listed no repositories." }
+        guard model.query.isEmpty else { return "No matching repositories on this host." }
+        guard !model.roots.isEmpty else { return "This host listed no repositories." }
         return "No repositories under \(model.roots.joined(separator: ", "))."
     }
 
@@ -673,7 +673,7 @@ private struct DirectorySheet: View {
                 .buttonStyle(.plain)
                 .disabled(model.typedPath.isEmpty)
                 .identified(
-                    "new-agent.typed.use", label: "Use this path",
+                    "new-agent.typed.use", label: "Use This Path",
                     enabled: !model.typedPath.isEmpty)
             }
         }

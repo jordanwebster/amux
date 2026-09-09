@@ -1,0 +1,366 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "%@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@"
+          }
+        }
+      }
+    },
+    "%@ has no recorded view state to replay": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Amux/Debug/ReportFreeze.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ has no recorded view state to replay"
+          }
+        }
+      }
+    },
+    "%@ marked": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ marked"
+          }
+        }
+      }
+    },
+    "Box %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Box %@"
+          }
+        }
+      }
+    },
+    "Draw a box around each problem and add a note.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Draw a box around each problem and add a note."
+          }
+        }
+      }
+    },
+    "Includes this screen and the available session and host records.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Includes this screen and the available session and host records."
+          }
+        }
+      }
+    },
+    "Remove Box %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Box %@"
+          }
+        }
+      }
+    },
+    "Report": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Report"
+          }
+        }
+      }
+    },
+    "Retry sends your saved report.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retry sends your saved report."
+          }
+        }
+      }
+    },
+    "Sent": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sent"
+          }
+        }
+      }
+    },
+    "Sign in to the account this report is about, then send it again.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Reporting.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to the account this report is about, then send it again."
+          }
+        }
+      }
+    },
+    "The report was not sent.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The report was not sent."
+          }
+        }
+      }
+    },
+    "The screen could not be photographed.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The screen could not be photographed."
+          }
+        }
+      }
+    },
+    "This agent is not taking messages.": {
+      "comment": "English app copy. Used in ios/Amux/Debug/DoorHost.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This agent is not taking messages."
+          }
+        }
+      }
+    },
+    "What is wrong here?": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What is wrong here?"
+          }
+        }
+      }
+    },
+    "What went wrong?": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What went wrong?"
+          }
+        }
+      }
+    },
+    "not captured": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not captured"
+          }
+        }
+      }
+    },
+    "nothing was connected, so no daemon was asked": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "nothing was connected, so no daemon was asked"
+          }
+        }
+      }
+    },
+    "nothing was connected, so there was no recording to freeze": {
+      "comment": "English app copy. Used in ios/Amux/Debug/ReportFreeze.swift, ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "nothing was connected, so there was no recording to freeze"
+          }
+        }
+      }
+    },
+    "the app did not consider this part": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the app did not consider this part"
+          }
+        }
+      }
+    },
+    "the embedded daemon did not answer": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the embedded daemon did not answer"
+          }
+        }
+      }
+    },
+    "the page on screen": {
+      "comment": "English app copy. Used in ios/Amux/Debug/ReportFreeze.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the page on screen"
+          }
+        }
+      }
+    },
+    "the runtime answered without a recording in it": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the runtime answered without a recording in it"
+          }
+        }
+      }
+    },
+    "the runtime did not answer with a recording": {
+      "comment": "English app copy. Used in ios/Amux/Debug/ReportFreeze.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the runtime did not answer with a recording"
+          }
+        }
+      }
+    },
+    "the runtime recording was not captured": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the runtime recording was not captured"
+          }
+        }
+      }
+    },
+    "the runtime’s recording could not be read": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the runtime’s recording could not be read"
+          }
+        }
+      }
+    },
+    "the upload was stopped": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Reporting.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the upload was stopped"
+          }
+        }
+      }
+    },
+    "the view-state recording could not be written: %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Amux/Debug/ReportFreeze.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the view-state recording could not be written: %@"
+          }
+        }
+      }
+    },
+    "the view-state recording was not captured": {
+      "comment": "English app copy. Used in ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "the view-state recording was not captured"
+          }
+        }
+      }
+    },
+    "this app logs through the system, which keeps no file it can read back": {
+      "comment": "English app copy. Used in ios/Amux/Debug/DebugReports.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "this app logs through the system, which keeps no file it can read back"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

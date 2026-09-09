@@ -317,8 +317,8 @@ private struct FileHeading: View {
                     .thumbTarget(x: 8, y: 2)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("All files")
-            .identified("review.files", label: "All files")
+            .accessibilityLabel("All Files")
+            .identified("review.files", label: "All Files")
             .reclaimingThumbTarget(x: 8, y: 2)
             Spacer(minLength: 4)
             if comments > 0 { CommentCount(count: comments, size: 20) }

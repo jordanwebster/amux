@@ -72,7 +72,7 @@ run = "AMUX_EMBED_TEST=1 CARGO_TARGET_DIR=target/embed cargo test -p amux --no-d
 # registered leaf, no platform conditionals, no spinners. Pure text, so it runs
 # before anything is compiled and says which line is wrong.
 [task.ios-lint]
-run = "timeout 300 sh ios/Tools/feature-lint.sh"
+run = "timeout 300 sh -c 'sh ios/Tools/feature-lint.sh && ios/Tools/strings-lint.sh'"
 
 [task.ios-rust]
 run = "timeout 1800 python3 scripts/ios-rust.py"

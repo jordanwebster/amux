@@ -87,8 +87,8 @@ struct FactsStrip: View {
                         .thumbTarget(x: 7)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(open ? "Hide tasks" : "Show tasks")
-                .identified("facts.grow", label: open ? "Hide tasks" : "Show tasks")
+                .accessibilityLabel(open ? "Hide Tasks" : "Show Tasks")
+                .identified("facts.grow", label: open ? "Hide Tasks" : "Show Tasks")
                 .reclaimingThumbTarget(x: 7)
             }
         }

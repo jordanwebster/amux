@@ -1657,11 +1657,11 @@ public enum OfflineReason: String, Codable, Sendable, Equatable {
     /// The one line a home shows above its rows, in full.
     public var sentence: String {
         switch self {
-        case .unreachable: "Offline · can't reach amux — check your connection"
+        case .unreachable: "Offline · check your connection"
         case .rejected: "Offline · sign in again to reconnect"
-        case .timedOut: "Offline · amux isn't answering — trying again"
+        case .timedOut: "Offline · trying again"
         case .ended: "Offline · reconnecting"
-        case .stopped: "Offline · amux stopped — reopen the app"
+        case .stopped: "Offline · reopen the app"
         case .suspended: "Offline · reconnecting"
         }
     }

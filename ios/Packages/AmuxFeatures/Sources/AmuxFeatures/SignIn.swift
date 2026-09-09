@@ -90,10 +90,10 @@ public struct SignIn: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Sign in")
+            Text("Sign In")
                 .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
-                .identified("sign-in.title", value: "Sign in")
+                .identified("sign-in.title", value: "Sign In")
             Text(explanation)
                 .designFont(.body, design)
                 .foregroundStyle(design.inkMuted.color)
@@ -118,7 +118,7 @@ public struct SignIn: View {
     /// bought again here.
     private var facts: some View {
         VStack(spacing: 0) {
-            fact("arrow.up.forward.square", "Signed in on \(model.host)", id: "where")
+            fact("arrow.up.forward.square", "Sign in on \(model.host)", id: "where")
             Rectangle()
                 .fill(design.hairline.color)
                 .frame(height: design.metrics.hairline)

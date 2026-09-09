@@ -83,8 +83,8 @@ public struct HostsTab: View {
             Button { actions(.pair(model.discovered.count == 1 ? model.discovered[0].id : nil)) } label: {
                 GlassIcon(glyph: "plus", prominent: true)
             }
-            .accessibilityLabel("Pair a Machine")
-            .identified("hosts.pair", label: "Pair a Machine")
+            .accessibilityLabel("Pair a Host")
+            .identified("hosts.pair", label: "Pair a Host")
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.vertical, 10)
@@ -110,7 +110,7 @@ public struct HostsTab: View {
                 if !model.offline.isEmpty {
                     group(
                         title: "Offline", hosts: model.offline,
-                        caption: "Agents on an offline host report their state as unknown.")
+                        caption: "These agents’ state is unknown until the host returns.")
                 }
                 if !model.discovered.isEmpty { offers }
                 if model.hosts.isEmpty && model.discovered.isEmpty { empty }
@@ -131,7 +131,7 @@ public struct HostsTab: View {
     /// there is to do with an offer.
     private var offers: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionHead(title: "Not Paired")
+            SectionHead(title: "Not paired")
             RowGroup(items: model.discovered, prominence: .subject) { host in
                 offer(host)
             }
@@ -248,17 +248,17 @@ public struct HostsTab: View {
     /// is not empty: it is the one step that has not happened.
     private var empty: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("No machines yet")
+            Text("No hosts yet")
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
-            Explain("Run `amux pair` on a machine and enter the code it prints.")
+            Explain("Run `amux pair` on a host and enter the code it prints.")
             Button { actions(.pair(model.discovered.first?.id)) } label: {
-                ActionLabel("Pair a Machine", kind: .outline)
+                ActionLabel("Pair a Host", kind: .outline)
             }
             .buttonStyle(.plain)
-            .identified("hosts.empty.pair", label: "Pair a Machine")
+            .identified("hosts.empty.pair", label: "Pair a Host")
         }
-        .identified("hosts.empty", value: "No machines yet")
+        .identified("hosts.empty", value: "No hosts yet")
     }
 
     private func row(_ host: HostEntry) -> some View {
@@ -341,10 +341,10 @@ public struct HostsTab: View {
             parts.append("reachable via relay")
         } else if let gone = model.wentOffline(host.id) {
             parts.append("offline for \(since(gone))")
-            parts.append("its agents' state is unknown")
+            parts.append("its agents’ state is unknown")
         } else {
             parts.append("offline")
-            parts.append("its agents' state is unknown")
+            parts.append("its agents’ state is unknown")
         }
         return parts.joined(separator: ", ")
     }
@@ -490,7 +490,7 @@ private struct DevicesSheet: View {
             }
             SectionHead(title: "Paired Devices")
             if model.devices.isEmpty {
-                Explain("No machine holds a key to this phone.")
+                Explain("No host is paired with this phone.")
                     .identified("hosts.devices.none")
             } else {
                 RowGroup(items: model.devices, prominence: .subject) { device in

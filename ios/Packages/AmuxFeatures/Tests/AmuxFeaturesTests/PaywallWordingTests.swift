@@ -10,8 +10,8 @@ final class PaywallWordingTests: XCTestCase {
     func testAPurchaseNamesWhereItWasBoughtAndWhereItIsManaged() {
         XCTAssertEqual(Paywall.subscribed(.purchased(.appStore)), "Subscribed in the App Store")
         XCTAssertEqual(Paywall.subscribed(.purchased(.web)), "Subscribed on amux.sh")
-        XCTAssertTrue(Paywall.honoured(.purchased(.appStore)).contains("Manage it in the App Store"))
-        XCTAssertTrue(Paywall.honoured(.purchased(.web)).contains("Manage it on amux.sh"))
+        XCTAssertEqual(Paywall.honoured(.purchased(.appStore)), "Manage your subscription in the App Store.")
+        XCTAssertEqual(Paywall.honoured(.purchased(.web)), "Manage your subscription on amux.sh.")
     }
 
     /// Access that was given was bought nowhere. Calling it a subscription, or
@@ -27,6 +27,6 @@ final class PaywallWordingTests: XCTestCase {
             XCTAssertFalse(said.contains("amux.sh"))
             XCTAssertFalse(said.contains("Manage"))
         }
-        XCTAssertTrue(explanation.contains("nothing to pay for or cancel"))
+        XCTAssertEqual(explanation, "Relay access is included with this account.")
     }
 }

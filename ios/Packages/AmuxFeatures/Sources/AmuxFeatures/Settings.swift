@@ -49,8 +49,8 @@ struct ModelChip: View {
                 .thumbTarget(y: 6)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Model and effort, \(label)")
-            .identified("composer.model", label: "Model and effort", value: label)
+            .accessibilityLabel("Model and Effort, \(label)")
+            .identified("composer.model", label: "Model and Effort", value: label)
             .reclaimingThumbTarget(y: 6)
         }
     }

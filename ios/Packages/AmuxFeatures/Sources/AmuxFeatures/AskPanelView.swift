@@ -233,8 +233,8 @@ private struct PlanAsk: View {
                 .thumbTarget(y: 12)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(open ? "Fold the plan" : "Read the whole plan")
-        .identified("ask.plan.more", label: open ? "Fold the plan" : "Read the whole plan")
+        .accessibilityLabel(open ? "Fold Plan" : "Read Whole Plan")
+        .identified("ask.plan.more", label: open ? "Fold Plan" : "Read Whole Plan")
         .reclaimingThumbTarget(y: 12)
         HStack(spacing: 10) {
             Button { answer(.approvePlan) } label: {

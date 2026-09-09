@@ -282,7 +282,7 @@ public final class NewAgentStore {
             // said as a refusal rather than passed over, because the one thing
             // that must never happen here is a screen that looks as though it
             // started something it did not.
-            self.failure = "The machine did not start the agent."
+            self.failure = "The host did not start the agent."
         }
     }
 }
