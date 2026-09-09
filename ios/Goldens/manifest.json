@@ -753,6 +753,58 @@
         "light",
         "dark"
       ]
+    },
+    {
+      "id": "dictation-listening",
+      "stage": 8,
+      "screen": "typing",
+      "fixture": "dictation-listening",
+      "origin": "added_state",
+      "reason": "composer speech recognition listening state",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "dictation-permission",
+      "stage": 8,
+      "screen": "typing",
+      "fixture": "dictation-permission",
+      "origin": "added_state",
+      "reason": "composer speech recognition permission state",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "dictation-denied",
+      "stage": 8,
+      "screen": "typing",
+      "fixture": "dictation-denied",
+      "origin": "added_state",
+      "reason": "composer speech recognition denied state",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "dictation-unavailable",
+      "stage": 8,
+      "screen": "typing",
+      "fixture": "dictation-unavailable",
+      "origin": "added_state",
+      "reason": "composer speech recognition unavailable state",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
     }
   ]
 }

@@ -1273,6 +1273,11 @@
       {"literal": "\"\\(fingerprint.prefix(4))…\\(fingerprint.suffix(4))\"", "context": "return \"\\(fingerprint.prefix(4))…\\(fingerprint.suffix(4))\"", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Composer.swift": [
+      {"literal": "\"composer.dictation\"", "context": ".identified(\"composer.dictation\", label: sentence)", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"composer.dictation.settings\"", "context": ".identified(\"composer.dictation.settings\", label: \"Open Settings\")", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"stop.circle\"", "context": "Image(systemName: dictation.active ? \"stop.circle\" : \"mic\")", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"mic\"", "context": "Image(systemName: dictation.active ? \"stop.circle\" : \"mic\")", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"composer.dictate\"", "context": ".identified(\"composer.dictate\", label: dictation.active ? \"Stop Dictation\" : \"Dictate\")", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
       {"literal": "\"composer\"", "context": ".identified(\"composer\", label: placeholder, value: spoken)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"[\\(token.label)]\"", "context": "said += \"[\\(token.label)]\"", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"xmark.circle.fill\"", "context": "Image(systemName: \"xmark.circle.fill\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1280,8 +1285,6 @@
       {"literal": "\"composer.field\"", "context": ".identified(\"composer.field\", label: placeholder, value: spoken)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"plus\"", "context": "Image(systemName: \"plus\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"composer.attach\"", "context": ".identified(\"composer.attach\", label: \"Attach\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"mic\"", "context": "Image(systemName: \"mic\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
-      {"literal": "\"composer.dictate\"", "context": ".identified(\"composer.dictate\", label: \"Dictate\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"stop.fill\"", "context": "RoundButton(glyph: \"stop.fill\", filled: true)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"composer.interrupt\"", "context": ".identified(\"composer.interrupt\", label: \"Stop\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"arrow.up\"", "context": "RoundButton(glyph: \"arrow.up\", filled: written)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1862,6 +1865,14 @@
       {"literal": "\"\"\"\n        {\"msgs\":{\"format_version\":1,\"checkpoint\":{\"agents\":[]},\\\n        \"msgs\":[\"{\\\\\"kind\\\\\":\\\\\"fleet\\\\\"}\"]},\"daemon\":\"{\\\\\"hosts\\\\\":[]}\"}\n        \"\"\"", "context": "private static let snapshot = \"\"\"\n        {\"msgs\":{\"format_version\":1,\"checkpoint\":{\"agents\":[]},\\\n        \"msgs\":[\"{\\\\\"kind\\\\\":\\\\\"fleet\\\\\"}\"]},\"daemon\":\"{\\\\\"hosts\\\\\":[]}\"}\n        \"\"\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift": [
+      {"literal": "\"dictation-listening\"", "context": "Built(.typing, \"dictation-listening\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"dictation-permission\"", "context": "Built(.typing, \"dictation-permission\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"dictation-denied\"", "context": "Built(.typing, \"dictation-denied\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"dictation-unavailable\"", "context": "Built(.typing, \"dictation-unavailable\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"dictation-listening\"", "context": "Fixture(id: \"dictation-listening\", screen: .typing) { bundle in", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"dictation-permission\"", "context": "Fixture(id: \"dictation-permission\", screen: .typing) { bundle in", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"dictation-denied\"", "context": "Fixture(id: \"dictation-denied\", screen: .typing) { bundle in", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"dictation-unavailable\"", "context": "Fixture(id: \"dictation-unavailable\", screen: .typing) { bundle in", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
       {"literal": "\"that address is not recognised\"", "context": "public static let refusedSignIn = \"that address is not recognised\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"your payment method was declined\"", "context": "public static let refusedPurchase = \"your payment method was declined\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"probe\"", "context": "Built(.probe, \"probe\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},

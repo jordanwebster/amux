@@ -200,6 +200,8 @@ private struct ConversationPage: View {
     /// Whose screen this is while it is out: view state, because a drawer is
     /// something this page is doing and not somewhere the app has gone.
     @State private var open = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var dictation = SpeechDictation()
     /// The system's own pickers, asked for from the plus. They are presented
     /// here rather than from the conversation because they are the system's
     /// screens: a conversation that could raise one could not be photographed
@@ -244,7 +246,9 @@ private struct ConversationPage: View {
                 // leaves the phone. The bundle decides whether the layer will
                 // take the message now or has to hold it, because the bundle
                 // has the gate; the screen only says that the person pressed.
-                case .send: stores.send(to: agent)
+                case .send:
+                    dictation.stop()
+                    stores.send(to: agent)
                 case .interrupt: stores.interrupt(agent)
                 // Taking the held message back is a write too: the host is
                 // holding it and only the host can stop holding it. The
@@ -258,10 +262,11 @@ private struct ConversationPage: View {
                 case .attaching(.photo): pickingPhoto = true
                 case .attaching(.file): pickingFile = true
                 case .attach, .attaching(.permissions): break
-                // The system's own dictation is not wired yet. The control is
-                // on the screen it belongs to rather than arriving with the
-                // wiring, and it does not pretend to have run.
-                case .dictate: break
+                case .dictate: dictation.toggle(stores.conversation(agent))
+                case .dictationSettings:
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
                 // Picking a command is a change to the draft the conversation
                 // already made, and the draft is what a send carries: there is
                 // nothing here to do about it that sending will not do.
@@ -297,6 +302,13 @@ private struct ConversationPage: View {
         // A conversation has no bar. The feed runs to the top of the display
         // and the way out is the drawer control on its own chrome.
         .toolbar(.hidden, for: .navigationBar)
+        .onDisappear { dictation.stop() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { dictation.stop() }
+        }
+        .onChange(of: stores.conversation(agent).gate) { _, gate in
+            if ComposerState(gate: gate, tail: nil, elapsed: nil) == nil { dictation.stop() }
+        }
         // A deleted agent has no conversation to be in. Leaving is driven by
         // the host's confirmation rather than by the press, so a deletion the
         // host refused leaves the person where they were, reading why.

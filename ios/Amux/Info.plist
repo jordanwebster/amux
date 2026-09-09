@@ -33,6 +33,10 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Use the microphone to dictate into your message.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Dictate messages with speech recognition on this iPhone.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

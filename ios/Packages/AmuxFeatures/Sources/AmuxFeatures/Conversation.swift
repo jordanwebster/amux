@@ -33,6 +33,7 @@ public enum ConversationAction: Equatable, Sendable {
     case attaching(AttachChoice)
     /// Speak the message instead of typing it.
     case dictate
+    case dictationSettings
     /// A command raised by typing a slash, picked. The draft has it already;
     /// this is so a driver and a journey can see which.
     case picking(ProviderCommand)
@@ -440,7 +441,7 @@ public struct Conversation: View {
                     opened
                     ComposerBox(
                         state: composer, agent: subject.name, provider: model.provider,
-                        draft: Bindable(model).draft) { action in
+                        draft: Bindable(model).draft, dictation: model.dictation) { action in
                             // What the plus and the chip open is this screen's
                             // own state: both are about the message being
                             // written, and nothing outside has to know one is

@@ -75,6 +75,10 @@ public enum Fixtures {
         Built(.run, "run"),
         Built(.run, "host-lost"),
         Built(.typing, "typing"),
+        Built(.typing, "dictation-listening"),
+        Built(.typing, "dictation-permission"),
+        Built(.typing, "dictation-denied"),
+        Built(.typing, "dictation-unavailable"),
         Built(.typing, "tokens"),
         Built(.slashTyping, "slash-typing"),
         Built(.plus, "plus"),
@@ -207,6 +211,32 @@ public enum Fixtures {
                 doesn't read INVALID_PIN by name \u{2014} I think it might, and if it \
                 does this whole change needs a different shape.
                 """
+        },
+        Fixture(id: "dictation-listening", screen: .typing) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            let store = bundle.conversation(Scenario.focus)
+            store.draft.body = "Check the parser before the wire format."
+            store.draft.place(caret: 16)
+            store.dictation.prepare(speech: .allowed, microphone: .allowed, available: true)
+            store.dictation.began(draft: store.draft)
+        },
+        Fixture(id: "dictation-permission", screen: .typing) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            let store = bundle.conversation(Scenario.focus)
+            store.draft.body = "Check the parser before the wire format."
+            store.dictation.prepare(speech: .notAsked, microphone: .notAsked, available: true)
+        },
+        Fixture(id: "dictation-denied", screen: .typing) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            let store = bundle.conversation(Scenario.focus)
+            store.draft.body = "Check the parser before the wire format."
+            store.dictation.prepare(speech: .denied, microphone: .allowed, available: true)
+        },
+        Fixture(id: "dictation-unavailable", screen: .typing) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            let store = bundle.conversation(Scenario.focus)
+            store.draft.body = "Check the parser before the wire format."
+            store.dictation.prepare(speech: .allowed, microphone: .allowed, available: false)
         },
         // A message carrying one of each thing a message can carry, with
         // ordinary words between them. Every token is made the way the app

@@ -180,7 +180,13 @@ Simulator timing proxies do not mark those checks passed.
 
 `timeout 2400 wt run ios-accessibility` checks labels and target geometry across
 states and sizes. Also exercise VoiceOver navigation, Dynamic Type, Reduce
-Motion/Transparency, dictation and system pickers on supported phones. The
+Motion/Transparency and system pickers on supported phones. For dictation,
+place the caret inside a draft, tap Dictate, grant speech and microphone
+permission, and speak a sentence. Confirm the words appear at the caret as
+you speak, the composer says it is listening, and Stop Dictation keeps the
+draft. Check denied access offers Settings and unavailable on-device recognition
+leaves the draft intact. The simulator journey proves the denied state only;
+live speech recognition remains a physical-phone check. The
 complete `timeout 12600 wt run ios-verify` runs lint, tests, goldens, journeys,
 performance and Release scope inspection; it does not publish or push.
 

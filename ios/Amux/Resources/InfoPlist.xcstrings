@@ -1,0 +1,30 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "NSSpeechRecognitionUsageDescription": {
+      "comment": "Explains permission requested when Dictate is pressed.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dictate messages with speech recognition on this iPhone."
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription": {
+      "comment": "Explains permission requested when Dictate is pressed.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the microphone to dictate into your message."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}

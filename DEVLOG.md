@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Dictate into the iPhone composer.**
+
+Dictate now starts app-owned Speech recognition with microphone capture and
+requires recognition on the device. Partial results replace the previous
+hypothesis at the saved caret, preserving surrounding prose and attachment
+tokens. A second press stops and keeps the draft; sending, leaving the page or
+backgrounding releases the microphone. A changed draft is never overwritten
+by a later recognition result.
+
+The composer names permission preparation, listening, denied access and an
+unavailable recognizer. Denied access offers Settings. Both system permission
+explanations are generated from the project configuration and have string
+catalogue entries. The physical-phone checklist covers granting permission
+and speaking at the caret; simulator proof reaches the designed refusal only.
+
+Validation: four UIKit-free dictation unit tests, copy and feature lint, the
+writing journey, Release scope audit and driving-door smoke pass. Eight new
+composited light/dark baselines were inspected, and all twelve comparisons
+including the existing typing and working screens pass. Visual review also
+caught a late runtime startup callback replacing the first golden fixture;
+fixture and replay stores now stay isolated until an explicit real connection
+or session restoration. The writing journey regenerates its system-service
+evidence and proves denied microphone access leaves the two-line draft intact.
+
 2026-09-09 — **Start and restore the iPhone connection from the app.**
 
 The app now owns the runtime outside its debug tools. It asks the account

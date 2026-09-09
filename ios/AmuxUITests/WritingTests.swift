@@ -64,6 +64,19 @@ final class WritingTests: JourneyCase {
         record["typed"] = try waitForSpoken(
             runner, containing: Self.secondLine, "what was typed never reached the field")
 
+        // The simulator's microphone permission is revoked by the journey.
+        // Press the shipped control and inspect its own refusal, without a
+        // fixture or a replacement recognition service.
+        press(app, "composer.dictate")
+        waitFor(app, "composer.dictation.settings", "Dictate silently ignored denied microphone access")
+        record["dictationRefusal"] = element(app, "composer.dictation").label
+        record["afterDictation"] = try waitForSpoken(
+            runner, containing: Self.secondLine, "Dictate lost the draft")
+        XCTAssertEqual(record["afterDictation"] as? String, record["typed"] as? String)
+        XCTAssertEqual(record["dictationRefusal"] as? String,
+                       "Dictation needs microphone and speech access. You can allow them in Settings.")
+        photograph(app, "writing-dictation-denied")
+
         // MARK: Every kind of token, each at the caret.
         //
         // The photo library and the file browser are the system's own screens

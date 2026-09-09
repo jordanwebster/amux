@@ -25,6 +25,7 @@ struct ComposerBox: View {
     /// footer chip names and what its sheet is built from.
     let provider: ProviderFacts
     @Binding var draft: MessageDraft
+    var dictation = DictationState()
     let actions: @MainActor (ConversationAction) -> Void
 
     var body: some View {
@@ -33,6 +34,21 @@ struct ComposerBox: View {
                 WorkingLine(activity: activity)
             }
             field
+            if let sentence = dictation.sentence {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(sentence)
+                        .designFont(.caption, design)
+                        .foregroundStyle(design.inkMuted.color)
+                        .identified("composer.dictation", label: sentence)
+                    if dictation.phase == .denied {
+                        Button("Open Settings") { actions(.dictationSettings) }
+                            .designFont(.caption, design)
+                            .foregroundStyle(design.ink.color)
+                            .frame(minHeight: 44)
+                            .identified("composer.dictation.settings", label: "Open Settings")
+                    }
+                }
+            }
             footer
         }
         .padding(.horizontal, 14)
@@ -130,15 +146,15 @@ struct ComposerBox: View {
             ModelChip(provider: provider) { actions(.openSettings) }
             Spacer(minLength: 0)
             Button { actions(.dictate) } label: {
-                Image(systemName: "mic")
+                Image(systemName: dictation.active ? "stop.circle" : "mic")
                     .font(.system(size: 18, weight: .regular))
                     .foregroundStyle(design.inkMuted.color)
                     .frame(width: 44, height: 44)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Dictate")
-            .identified("composer.dictate", label: "Dictate")
+            .accessibilityLabel(dictation.active ? "Stop Dictation" : "Dictate")
+            .identified("composer.dictate", label: dictation.active ? "Stop Dictation" : "Dictate")
             primary
         }
     }

@@ -13,6 +13,7 @@
 		08A81513DFEF3EE1567A6A5E /* VisibleTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8CE78DF417F5614935595CA /* VisibleTree.swift */; };
 		0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31777DF351ACE50870B1C6A5 /* LaunchTests.swift */; };
 		0F3AC52183DBFF753C52B8CF /* States.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66609895E99B406673EEADA3 /* States.swift */; };
+		108379821A1408D28DB67B7C /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */; };
 		1A2A6C51813425F3286B3CB6 /* DoorScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979C7C4DC969977B66A65802 /* DoorScreens.swift */; };
 		1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B661BE2402BC7D004818A5 /* Workloads.swift */; };
 		1F71DC755174214F60A5E1B2 /* AccessibilityAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */; };
@@ -92,6 +93,7 @@
 		21A4FC885DCA537FD2ABD0FD /* Trace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trace.swift; sourceTree = "<group>"; };
 		25AE3ED34EF70375D2BC299C /* Report.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Report.swift; sourceTree = "<group>"; };
 		27DA3C92A79D8C1B57236EC2 /* Amux.storekit */ = {isa = PBXFileReference; path = Amux.storekit; sourceTree = "<group>"; };
+		2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 		2D67FA937AF3288820FA3464 /* Perturbation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Perturbation.swift; sourceTree = "<group>"; };
 		2DA38C20C8560FEE2BB88D9F /* Door.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Door.swift; sourceTree = "<group>"; };
 		2DE7599AB005A8225918A3EF /* Fixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixture.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 		7C9196A3EDC8707B2657D3CD /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */,
 				7841E9EA7855115C8262F599 /* Localizable.xcstrings */,
 			);
 			path = Resources;
@@ -461,6 +464,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				EEEEF4C1DDA205961E7286E0 /* DebugCopy.xcstrings in Resources */,
+				108379821A1408D28DB67B7C /* InfoPlist.xcstrings in Resources */,
 				BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */,
 				CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */,
 			);

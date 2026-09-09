@@ -86,6 +86,8 @@ targets:
         CFBundleDisplayName: Amux
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
+        NSSpeechRecognitionUsageDescription: Dictate messages with speech recognition on this iPhone.
+        NSMicrophoneUsageDescription: Use the microphone to dictate into your message.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         # Pairing links printed by the CLI (`amux://pair?payload=...`) and the

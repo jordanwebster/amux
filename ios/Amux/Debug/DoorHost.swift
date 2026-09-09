@@ -28,6 +28,9 @@ final class DoorHost {
     /// The screen the door was asked to show, or nothing while the app is
     /// running as itself.
     private(set) var screen: Screen?
+    // Runtime restoration may finish after a driver has opened a fixture.
+    // That late account change must not replace the stores being photographed.
+    @ObservationIgnored private var isolatedState = false
     private(set) var appearance: Appearance = .light
     /// How many times an appearance has been asked for. The driven tree is
     /// keyed on this, so every request builds it afresh — including one that
@@ -264,7 +267,10 @@ final class DoorHost {
         self.stores = stores
         self.composed = accounts
         self.coordinator = runtime
-        runtime.storesChanged = { [weak self] stores in self?.stores = stores }
+        runtime.storesChanged = { [weak self] stores in
+            guard let self, !self.isolatedState else { return }
+            self.stores = stores
+        }
         runtime.unsubscribed = { [weak self] agent in self?.unsubscribed.append(agent) }
     }
 
@@ -282,6 +288,7 @@ final class DoorHost {
         // A fresh bundle every time: a screen opened after another one must
         // not inherit the conversation the last one left behind — nor the
         // moment a fixture wound the clock back to.
+        isolatedState = true
         Scenario.reading = Scenario.now
         stores = StoreBundle(account: AccountId("door"), clock: { Scenario.reading })
         accounts = AccountRegistry()
@@ -394,6 +401,7 @@ final class DoorHost {
     /// against production is the production path, minus the browser nobody can
     /// drive from here.
     private func restoreSession(account: String, refresh: String) async -> DoorReply {
+        isolatedState = false
         guard let coordinator else { return .error("this app has no accounts of its own") }
         do {
             guard try await coordinator.restoreSession(account: AccountId(account), refresh: refresh) else {
@@ -407,6 +415,7 @@ final class DoorHost {
 
     /// A driver can supply credentials, but connection ownership stays with the app.
     private func start(relay: String, active user: String) async -> DoorReply {
+        isolatedState = false
         guard let url = URL(string: relay), url.host != nil,
               let composed, let coordinator else { return .error("no relay at \(relay)") }
         relayAddress = relay
@@ -960,6 +969,7 @@ final class DoorHost {
         } catch {
             return .error("\(error)")
         }
+        isolatedState = true
         stores = rebuilt
         screen = nil
         trace = []

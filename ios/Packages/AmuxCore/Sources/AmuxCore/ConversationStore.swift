@@ -29,6 +29,7 @@ public final class ConversationStore {
     /// composer, so a half-written paragraph survives a trip to the diff and
     /// back.
     public var draft = MessageDraft()
+    public var dictation = DictationState()
     /// Messages the person sent that the host has not echoed back yet.
     ///
     /// A phone on a train is often a second or more away from the machine it

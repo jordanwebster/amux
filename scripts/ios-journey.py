@@ -1357,6 +1357,8 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
     control_address = ready["control"]
 
     install(udid)
+    subprocess.run(["xcrun", "simctl", "privacy", udid, "revoke", "microphone", BUNDLE_ID],
+                   check=True, timeout=30)
     forget_cache(udid)
     forget_pairings(udid)
     pin = answer(control_address,
@@ -1367,6 +1369,7 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
 
     photographs = {
         "writing-tokens.png": "tokens.png",
+        "writing-dictation-denied.png": "dictation-denied.png",
         "writing-queued.png": "queued.png",
         "writing-overflow.png": "overflow.png",
         "writing-rename.png": "rename.png",
@@ -1392,6 +1395,24 @@ def writing(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_HOST": daemon["name"],
         })
     seen = json.loads(read.read_text())
+
+    journey.expect(seen.get("afterDictation") == seen.get("typed"),
+                   "pressing Dictate with microphone access denied changed the draft")
+    journey.expect(seen.get("dictationRefusal") ==
+                   "Dictation needs microphone and speech access. You can allow them in Settings.",
+                   f"Dictate did not explain the refusal: {seen.get('dictationRefusal')!r}")
+    (journey.directory / "system-services.md").write_text(
+        "# Writing system services\n\n"
+        "Dictation is implemented with app-owned Speech recognition and microphone capture, "
+        "requiring on-device recognition. This simulator journey presses Dictate with microphone "
+        "access denied and proves the composer's designed refusal and Open Settings control appear "
+        "while the draft stays unchanged. See dictation-denied.png.\n\n"
+        "Live audio recognition, permission grant and spoken text arriving at the caret remain "
+        "physical-phone checks in docs/IOS.md. Simulator refusal proof does not certify them.\n\n"
+        "Photo and File delivery are injected at the picker-result boundary and stored by the "
+        "real host; this proves token handling, not system picker interaction. Long Text uses "
+        "the field's paste action. Token movement uses the draft edit boundary; system picker "
+        "delivery and native token drag remain device checks.\n")
 
     # What was written, and what each thing put in it became.
     journey.expect("\n" in seen.get("typed", ""),

@@ -5580,6 +5580,126 @@
         }
       },
       "extractionState": "manual"
+    },
+    "Allow microphone and speech access to dictate. Your draft stays here.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow microphone and speech access to dictate. Your draft stays here."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Dictate messages with speech recognition on this iPhone.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dictate messages with speech recognition on this iPhone."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Dictation isn’t available right now. You can keep typing.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dictation isn’t available right now. You can keep typing."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Dictation needs microphone and speech access. You can allow them in Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dictation needs microphone and speech access. You can allow them in Settings."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Getting ready to listen. Your draft stays here.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Getting ready to listen. Your draft stays here."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Listening. Tap Stop Dictation when you’re done.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listening. Tap Stop Dictation when you’re done."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Open Settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Settings"
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Stop Dictation": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop Dictation"
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Use the microphone to dictate into your message.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the microphone to dictate into your message."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Check the parser before the wire format.": {
+      "comment": "Example draft in dictation state captures.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check the parser before the wire format."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

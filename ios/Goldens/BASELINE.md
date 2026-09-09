@@ -1420,3 +1420,19 @@ there — the picture, the box, its note and the note about the whole thing.
 There is no preserved reference for this state; it is the designed failure the
 flow needs, because a report written on a train and lost to a tunnel is a
 report nobody writes twice.
+
+## dictation-listening, dictation-permission, dictation-denied, dictation-unavailable
+
+The composer now names app-owned speech recognition above its footer. These
+states have no preserved reference: the microphone in the typing reference
+was idle. Listening changes its glyph to a stop control and says “Listening.
+Tap Stop Dictation when you’re done.” Permission preparation explains what to
+allow; denied access names both permissions and offers Open Settings; an
+unavailable recognizer says typing remains available. All keep the same
+example draft visible, use the composer's muted sentence styling, and reserve
+44 points for the Settings action. The idle typing and working layouts do not
+gain a status line. Both appearances use the existing design tokens.
+
+These composited fixtures prove layout and copy only. The writing journey
+presses the real control with microphone permission revoked to prove the
+denied state. Live microphone recognition remains a physical-phone check.
