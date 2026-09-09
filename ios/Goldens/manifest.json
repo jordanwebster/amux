@@ -547,6 +547,19 @@
       ]
     },
     {
+      "id": "paywall-unconfirmed",
+      "stage": 10,
+      "screen": "paywall",
+      "fixture": "paywall-unconfirmed",
+      "origin": "added_state",
+      "reason": "a purchase the App Store took and amux.sh has not confirmed: the design has no capture of it, and it is the one paywall state that keeps a purchase without granting a subscription",
+      "simulator": "amux-golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "profiles",
       "stage": 10,
       "screen": "profiles",

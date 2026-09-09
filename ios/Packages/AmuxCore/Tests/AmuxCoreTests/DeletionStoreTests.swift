@@ -30,6 +30,10 @@ private struct OneDeletion: CloudService, @unchecked Sendable {
 
     func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement { .none }
 
+    func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError) {
+        throw .unauthenticated
+    }
+
     func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken {
         throw .unauthenticated
     }

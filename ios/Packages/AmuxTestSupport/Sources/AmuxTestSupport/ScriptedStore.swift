@@ -44,6 +44,11 @@ public struct ScriptedStoreState: Codable, Sendable, Equatable {
         Plan(id: Plan.yearlyID, period: .yearly, price: "£79.99", saving: "2 months free"),
     ]
 
+    /// What a scripted purchase carries where the App Store would have put a
+    /// signed transaction. It is not a JWS and nothing verifies it: the only
+    /// thing that reads it is the scripted account service on the other side.
+    public static let signedTransaction = "scripted.signed.transaction"
+
     /// A store that has nothing to sell — no network, or a build the App Store
     /// has never heard of.
     public static var silent: ScriptedStoreState {
@@ -56,6 +61,8 @@ public enum StoreCall: Sendable, Equatable {
     case plans
     case buy(String)
     case restore
+    case finish(String)
+    case unfinished
 }
 
 /// The App Store, scripted. It answers exactly what the state says and records
@@ -64,6 +71,10 @@ public final class ScriptedStoreFront: StoreFront, @unchecked Sendable {
     private let lock = NSLock()
     private var state: ScriptedStoreState
     private var recorded: [StoreCall] = []
+    /// Purchases bought here and not yet finished, exactly as the real store
+    /// holds them: something is only taken off this list once whoever bought
+    /// it says it is dealt with.
+    private var holding: [SignedPurchase] = []
 
     public init(state: ScriptedStoreState = ScriptedStoreState()) {
         self.state = state
@@ -77,7 +88,10 @@ public final class ScriptedStoreFront: StoreFront, @unchecked Sendable {
     }
 
     public func reset() {
-        lock.withLock { recorded = [] }
+        lock.withLock {
+            recorded = []
+            holding = []
+        }
     }
 
     private func record(_ call: StoreCall) -> ScriptedStoreState {
@@ -101,23 +115,59 @@ public final class ScriptedStoreFront: StoreFront, @unchecked Sendable {
     public func buy(_ plan: Plan) async throws(StoreError) -> PurchaseOutcome {
         let state = record(.buy(plan.id))
         await wait(state)
-        return try Self.outcome(state.purchase)
+        return try outcome(state.purchase, of: plan.id)
     }
 
     public func restore() async throws(StoreError) -> PurchaseOutcome {
         let state = record(.restore)
         await wait(state)
-        return try Self.outcome(state.restore)
+        return try outcome(state.restore, of: Plan.yearlyID)
     }
 
-    private static func outcome(
-        _ declared: ScriptedStoreState.Outcome
+    /// What the store is still holding, and what has been finished with it.
+    ///
+    /// A driver reads this to prove the order: a purchase reaches the account
+    /// service before it is finished, and one the cloud refused is still here
+    /// afterwards to be sent again.
+    public var held: [SignedPurchase] { lock.withLock { holding } }
+
+    public func finish(_ purchase: SignedPurchase) async {
+        lock.withLock {
+            recorded.append(.finish(purchase.id))
+            holding.removeAll { $0.id == purchase.id }
+        }
+    }
+
+    public func unfinished() async -> [SignedPurchase] {
+        lock.withLock {
+            recorded.append(.unfinished)
+            return holding
+        }
+    }
+
+    /// Nothing arrives after the fact in a scripted store: an approval is
+    /// something the App Store decides, and a state a driver declares is
+    /// already the state after it decided.
+    public func approvals() -> AsyncStream<SignedPurchase> {
+        AsyncStream { $0.finish() }
+    }
+
+    private func outcome(
+        _ declared: ScriptedStoreState.Outcome, of plan: String
     ) throws(StoreError) -> PurchaseOutcome {
         switch declared {
-        case .bought: .bought
-        case .pending: .pending
-        case .cancelled: .cancelled
-        case .nothingToRestore: .nothingToRestore
+        case .bought:
+            // A stand-in for what the App Store would have signed. It never
+            // leaves the app's own doubles, and the account service that would
+            // check it is scripted too.
+            let purchase = SignedPurchase(
+                id: "scripted-transaction", productID: plan,
+                signed: ScriptedStoreState.signedTransaction)
+            lock.withLock { holding.append(purchase) }
+            return .bought(purchase)
+        case .pending: return .pending
+        case .cancelled: return .cancelled
+        case .nothingToRestore: return .nothingToRestore
         case .fails(let reason): throw StoreError.failed(reason)
         }
     }

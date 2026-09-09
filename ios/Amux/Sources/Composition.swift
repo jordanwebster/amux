@@ -93,6 +93,7 @@ final class Composition {
         #endif
         router.loads(with: self)
         rememberedFleet()
+        settleOutstandingPurchases()
     }
 
     /// What the screen catalogue calls the page on show, where it has a name
@@ -171,16 +172,25 @@ final class Composition {
             Task { await paywall.load(from: store) }
         case .buySubscription:
             Task {
-                guard await paywall.buy(store) == .bought else { return }
-                // The store says this Apple Account paid; the account service
-                // is where the subscription actually lives, so what this
-                // account may do is read back from it rather than assumed.
-                await refreshEntitlement()
+                guard case .bought(let purchase)? = await paywall.buy(store) else { return }
+                await confirm(purchase)
             }
         case .restorePurchases:
             Task {
-                guard await paywall.restore(store) == .bought else { return }
-                await refreshEntitlement()
+                guard case .bought(let purchase)? = await paywall.restore(store) else { return }
+                await confirm(purchase)
+            }
+        // A purchase that went through and has not been confirmed, offered to
+        // amux.sh again. Where there is nothing left to send — the cloud took
+        // it and it was reading the entitlement back that failed — asking
+        // again is asking what this account may now do.
+        case .retryPurchase:
+            Task {
+                if let held = paywall.holding {
+                    await confirm(held)
+                } else if !(await refreshEntitlement()) {
+                    paywall.unconfirmed(.unreachable)
+                }
             }
         // Leaving an account. It stays listed with Sign In beside it: the
         // address is the one thing a person recognises, and forgetting it
@@ -224,12 +234,56 @@ final class Composition {
     /// webhook, so this is asked of the cloud rather than worked out from the
     /// purchase: a subscription bought on the web through the CLI has to be
     /// honoured by exactly the same read.
-    private func refreshEntitlement() async {
-        guard let id = accounts.selected else { return }
-        guard let entitlement = try? await cloud.entitlement(id) else { return }
-        guard let accepted = accounts.accept(entitlement, for: id) else { return }
+    @discardableResult
+    private func refreshEntitlement() async -> Bool {
+        guard let id = accounts.selected else { return false }
+        guard let entitlement = try? await cloud.entitlement(id) else { return false }
+        guard let accepted = accounts.accept(entitlement, for: id) else { return false }
         accounts.entitlement(accepted, for: id)
         paywall.entitled(accepted)
+        return true
+    }
+
+    /// Tells amux.sh about a purchase and reads back what this account may now
+    /// do.
+    ///
+    /// Both halves matter. The post is what makes the subscription the
+    /// account's; the read is what the screen believes, and it is the same
+    /// read a subscription bought on the web arrives through — so a purchase
+    /// the cloud took but could not be read back afterwards says so rather
+    /// than showing somebody a subscription the home screen cannot use.
+    private func confirm(_ purchase: SignedPurchase) async {
+        guard let id = accounts.selected else {
+            // Nobody to record it against. The purchase is kept and the
+            // transaction unfinished, so signing in and opening the app again
+            // sends it.
+            paywall.unconfirmed(.unreachable)
+            return
+        }
+        guard await paywall.confirm(purchase, with: cloud, as: id, finishing: store) else { return }
+        if !(await refreshEntitlement()) { paywall.unconfirmed(.unreachable) }
+    }
+
+    /// Sends anything the App Store is still holding, and goes on listening
+    /// for purchases that are approved later.
+    ///
+    /// This is what makes an unconfirmed purchase temporary. A phone that lost
+    /// its network mid-purchase, an app killed before the post finished, a
+    /// child's purchase a parent approves tomorrow: each one reaches amux.sh
+    /// without anybody pressing anything, because the transaction was never
+    /// finished with the store.
+    private func settleOutstandingPurchases() {
+        Task {
+            guard let id = accounts.selected else { return }
+            if await paywall.confirmOutstanding(in: store, with: cloud, as: id) {
+                await refreshEntitlement()
+            }
+        }
+        Task {
+            for await purchase in store.approvals() {
+                await confirm(purchase)
+            }
+        }
     }
 }
 

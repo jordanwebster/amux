@@ -19,6 +19,10 @@ private struct OneAnswer: CloudService, @unchecked Sendable {
         throw .unauthenticated
     }
 
+    func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError) {
+        throw .unauthenticated
+    }
+
     func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement { entitlement }
 
     func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken {
@@ -91,6 +95,11 @@ final class SignInStoreTests: XCTestCase {
                 throw .timeout
             }
             func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement {
+                throw .timeout
+            }
+            func recordPurchase(
+                _ id: AccountId, signedTransaction: String
+            ) async throws(CloudError) {
                 throw .timeout
             }
             func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken {

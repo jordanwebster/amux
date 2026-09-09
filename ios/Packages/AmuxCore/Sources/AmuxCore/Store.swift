@@ -51,10 +51,32 @@ public struct Plan: Sendable, Equatable, Identifiable, Codable {
     public static let identifiers = [monthlyID, yearlyID]
 }
 
+/// One purchase the App Store has signed, as it crosses out of StoreKit.
+///
+/// The signature is the whole point: it is what amux.sh checks before it will
+/// believe this Apple Account paid, and it is the App Store's to make, not
+/// this app's. Nothing here is a claim the phone could have invented.
+public struct SignedPurchase: Sendable, Equatable, Codable, Identifiable {
+    /// The App Store's own identifier for this transaction, as a string. It
+    /// is what names the transaction again when it is time to finish it.
+    public var id: String
+    public var productID: String
+    /// The signed transaction itself — a JSON Web Signature the App Store
+    /// wrote, carried whole and never taken apart here.
+    public var signed: String
+
+    public init(id: String, productID: String, signed: String) {
+        self.id = id
+        self.productID = productID
+        self.signed = signed
+    }
+}
+
 /// What buying or restoring came to.
 public enum PurchaseOutcome: Sendable, Equatable {
-    /// Paid for, and the store says so now.
-    case bought
+    /// Paid for, and the store says so now. The signed transaction comes with
+    /// it, because the purchase is not somebody's until amux.sh has it.
+    case bought(SignedPurchase)
     /// The store has taken it and cannot finish it yet — a child's purchase
     /// waiting on a parent, or a bank asking for a second factor. Nothing is
     /// owed and nothing has been bought; it may land minutes or days later.
@@ -81,6 +103,19 @@ public protocol StoreFront: Sendable {
     func plans() async throws(StoreError) -> [Plan]
     func buy(_ plan: Plan) async throws(StoreError) -> PurchaseOutcome
     func restore() async throws(StoreError) -> PurchaseOutcome
+    /// Tells the store this purchase is dealt with. Called only once amux.sh
+    /// has taken the signed transaction: a transaction finished before that
+    /// is one the App Store will never offer again, and the account it was
+    /// bought for would never learn about it.
+    func finish(_ purchase: SignedPurchase) async
+    /// Everything the store is still holding — a purchase from a launch that
+    /// ended before amux.sh answered, or one bought on another device for the
+    /// same Apple Account.
+    func unfinished() async -> [SignedPurchase]
+    /// Purchases that arrive after the fact: a child's purchase a parent
+    /// approved, a bank's second factor answered, a renewal. Nothing presses
+    /// a button for these, so the app has to be listening.
+    func approvals() -> AsyncStream<SignedPurchase>
 }
 
 /// Subscribing: what is on offer, what is chosen, and how a purchase went.
@@ -96,8 +131,34 @@ public final class PaywallStore {
         /// buy, because buying again would be a second charge for the same
         /// month.
         case awaitingApproval
+        /// The store took the money and the signed transaction has gone to
+        /// amux.sh, which has not answered yet. The subscription is not this
+        /// account's until it does.
+        case confirming
+        /// Bought, and amux.sh will not confirm it. The purchase is kept and
+        /// the transaction is not finished, so it can be sent again — from
+        /// the button, or by the next launch on its own.
+        case unconfirmed(Unconfirmed)
         case failed(String)
         case bought(EntitlementSource)
+    }
+
+    /// Why a purchase that went through is not confirmed. The two read
+    /// differently because they are different situations: one is a phone that
+    /// could not get through, and the other is amux.sh saying no.
+    public enum Unconfirmed: Sendable, Equatable {
+        /// The post never got there.
+        case unreachable
+        /// amux.sh would not take the transaction, in its own words.
+        case refused(String)
+
+        /// The one word the screen and the driver name this state by.
+        public var named: String {
+            switch self {
+            case .unreachable: "unreachable"
+            case .refused: "refused"
+            }
+        }
     }
 
     public private(set) var plans: [Plan] = []
@@ -111,10 +172,19 @@ public final class PaywallStore {
     /// screen says where it came from instead of offering to sell a second.
     public private(set) var entitlement: Entitlement
 
-    public init(entitlement: Entitlement = .none, plans: [Plan] = [], phase: Phase = .ready) {
+    /// The purchase this phone is holding on behalf of amux.sh: bought, not
+    /// yet confirmed, and not yet finished with the App Store. It is what
+    /// Retry sends again.
+    public private(set) var holding: SignedPurchase?
+
+    public init(
+        entitlement: Entitlement = .none, plans: [Plan] = [], phase: Phase = .ready,
+        holding: SignedPurchase? = nil
+    ) {
         self.entitlement = entitlement
         self.plans = plans
         self.phase = phase
+        self.holding = holding
     }
 
     public var plan: Plan? {
@@ -141,8 +211,9 @@ public final class PaywallStore {
         }
     }
 
-    /// Whether the screen is waiting on the store and must not be pressed.
-    public var working: Bool { phase == .buying }
+    /// Whether the screen is waiting on somebody else and must not be
+    /// pressed: the store's own sheet, or amux.sh being told about it.
+    public var working: Bool { phase == .buying || phase == .confirming }
 
     public func choose(_ period: Plan.Period) {
         guard !working else { return }
@@ -199,13 +270,75 @@ public final class PaywallStore {
 
     private func settle(_ outcome: PurchaseOutcome) {
         switch outcome {
-        case .bought:
-            phase = .bought(.appStore)
-            entitlement = .active(source: .appStore, renews: nil)
+        // Bought is not yet subscribed. What this account may do is amux.sh's
+        // to say, and it has not been told yet; claiming the entitlement here
+        // would put somebody on a home screen that cannot reach a host.
+        case .bought(let purchase):
+            holding = purchase
+            phase = .confirming
         case .pending: phase = .awaitingApproval
         case .cancelled: phase = .ready
         case .nothingToRestore:
             phase = .failed("there is nothing on this Apple Account to restore")
+        }
+    }
+
+    /// Tells amux.sh about a purchase, and only then finishes it with the
+    /// App Store.
+    ///
+    /// That order is the whole of it. A transaction finished before the
+    /// account service has the signed copy is one the App Store will never
+    /// offer this app again, and the subscription somebody paid for would
+    /// exist nowhere but on their bank statement.
+    @discardableResult
+    public func confirm(
+        _ purchase: SignedPurchase, with cloud: any CloudService, as account: AccountId,
+        finishing store: any StoreFront
+    ) async -> Bool {
+        holding = purchase
+        phase = .confirming
+        do {
+            try await cloud.recordPurchase(account, signedTransaction: purchase.signed)
+        } catch {
+            phase = .unconfirmed(Self.unconfirmed(after: error))
+            return false
+        }
+        await store.finish(purchase)
+        holding = nil
+        return true
+    }
+
+    /// Everything the App Store is still holding, sent again.
+    ///
+    /// This is what makes an unconfirmed purchase temporary without anybody
+    /// pressing anything: a launch asks, and so does a purchase the store
+    /// approves later. Answers whether any of them was taken, because that is
+    /// what makes it worth reading the entitlement again.
+    @discardableResult
+    public func confirmOutstanding(
+        in store: any StoreFront, with cloud: any CloudService, as account: AccountId
+    ) async -> Bool {
+        var taken = false
+        for purchase in await store.unfinished() where !entitled {
+            if await confirm(purchase, with: cloud, as: account, finishing: store) { taken = true }
+        }
+        return taken
+    }
+
+    /// Says a purchase is still not confirmed, where what stopped it happened
+    /// outside this store — nobody signed in to record it against, or an
+    /// entitlement that could not be read back afterwards.
+    public func unconfirmed(_ why: Unconfirmed) {
+        phase = .unconfirmed(why)
+    }
+
+    static func unconfirmed(after error: CloudError) -> Unconfirmed {
+        switch error {
+        case .refused(let reason): .refused(reason)
+        // Everything else is a phone that did not get through, including a
+        // session that has to be renewed first — which the next launch does
+        // before it offers this purchase again.
+        case .network, .timeout, .cancelled, .unauthenticated: .unreachable
         }
     }
 

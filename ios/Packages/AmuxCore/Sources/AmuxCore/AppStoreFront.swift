@@ -52,12 +52,12 @@ public struct AppStoreFront: StoreFront {
         }
         switch result {
         case .success(let verification):
-            let transaction = try Self.verified(verification)
-            // Finished here rather than left for a later launch: an unfinished
-            // transaction is offered again on every start, which a person
-            // reads as the app asking them to pay twice.
-            await transaction.finish()
-            return .bought
+            // Not finished here. A transaction is the App Store's only copy of
+            // the receipt, and finishing it is what tells the store to stop
+            // offering it; it stays unfinished until amux.sh has the signed
+            // copy, so a purchase made over a dead network is offered again on
+            // the next launch rather than lost.
+            return .bought(try Self.purchase(verification))
         case .userCancelled: return .cancelled
         case .pending: return .pending
         @unknown default:
@@ -81,10 +81,63 @@ public struct AppStoreFront: StoreFront {
             throw StoreError.failed(error.localizedDescription)
         }
         for await entitlement in Transaction.currentEntitlements {
-            guard let transaction = try? Self.verified(entitlement) else { continue }
-            if identifiers.contains(transaction.productID) { return .bought }
+            guard let purchase = try? Self.purchase(entitlement) else { continue }
+            if identifiers.contains(purchase.productID) { return .bought(purchase) }
         }
         return .nothingToRestore
+    }
+
+    /// Tells the store a purchase is dealt with, by finding it again among the
+    /// ones it is still holding. Named rather than held onto: this front owns
+    /// no state, and the store's own list is the only place a transaction
+    /// survives a launch.
+    public func finish(_ purchase: SignedPurchase) async {
+        for await unfinished in Transaction.unfinished {
+            guard case .verified(let transaction) = unfinished else { continue }
+            guard String(transaction.id) == purchase.id else { continue }
+            await transaction.finish()
+            return
+        }
+    }
+
+    public func unfinished() async -> [SignedPurchase] {
+        var held: [SignedPurchase] = []
+        for await result in Transaction.unfinished {
+            guard let purchase = try? Self.purchase(result) else { continue }
+            if identifiers.contains(purchase.productID) { held.append(purchase) }
+        }
+        return held
+    }
+
+    /// What the store hands over after the fact: a purchase a parent approved,
+    /// a second factor answered, a renewal. StoreKit's own advice is to listen
+    /// for the life of the app, which is what makes an Ask to Buy that lands
+    /// tomorrow reach the account it was bought for.
+    public func approvals() -> AsyncStream<SignedPurchase> {
+        AsyncStream { continuation in
+            let listening = Task {
+                for await result in Transaction.updates {
+                    guard let purchase = try? Self.purchase(result) else { continue }
+                    if identifiers.contains(purchase.productID) { continuation.yield(purchase) }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in listening.cancel() }
+        }
+    }
+
+    /// The store's signature and what it is over, kept together.
+    ///
+    /// The JWS is carried whole and unparsed: amux.sh is what checks it
+    /// against Apple, and an app that read fields out of it would be
+    /// believing its own reading rather than Apple's signature.
+    private static func purchase(
+        _ result: VerificationResult<Transaction>
+    ) throws(StoreError) -> SignedPurchase {
+        let transaction = try verified(result)
+        return SignedPurchase(
+            id: String(transaction.id), productID: transaction.productID,
+            signed: result.jwsRepresentation)
     }
 
     /// What the store signed, or nothing.

@@ -4,14 +4,45 @@ import XCTest
 
 /// A store that answers one way, so every outcome a person can reach is
 /// reachable without a sandbox account or a purchase sheet.
-private struct OneStore: StoreFront {
+private final class OneStore: StoreFront, @unchecked Sendable {
     var offered: [Plan] = [
         Plan(id: Plan.monthlyID, period: .monthly, price: "£7.99"),
         Plan(id: Plan.yearlyID, period: .yearly, price: "£79.99", saving: "2 months free"),
     ]
-    var purchase: Result<PurchaseOutcome, StoreError> = .success(.bought)
+    var purchase: Result<PurchaseOutcome, StoreError> = .success(.bought(OneStore.signed))
     var restored: Result<PurchaseOutcome, StoreError> = .success(.nothingToRestore)
     var listing: StoreError?
+    /// What the store is still holding, and what has been finished with it.
+    /// A purchase finished before the cloud has it is the failure this suite
+    /// exists to catch, so both are recorded.
+    var held: [SignedPurchase] = []
+    private(set) var finished: [String] = []
+
+    static let signed = SignedPurchase(
+        id: "1000", productID: Plan.yearlyID, signed: "signed.transaction.one")
+
+    init(
+        offered: [Plan]? = nil,
+        purchase: Result<PurchaseOutcome, StoreError>? = nil,
+        restored: Result<PurchaseOutcome, StoreError>? = nil,
+        listing: StoreError? = nil,
+        held: [SignedPurchase] = []
+    ) {
+        if let offered { self.offered = offered }
+        if let purchase { self.purchase = purchase }
+        if let restored { self.restored = restored }
+        self.listing = listing
+        self.held = held
+    }
+
+    func finish(_ purchase: SignedPurchase) async {
+        finished.append(purchase.id)
+        held.removeAll { $0.id == purchase.id }
+    }
+
+    func unfinished() async -> [SignedPurchase] { held }
+
+    func approvals() -> AsyncStream<SignedPurchase> { AsyncStream { $0.finish() } }
 
     func plans() async throws(StoreError) -> [Plan] {
         if let listing { throw listing }
@@ -30,6 +61,43 @@ private struct OneStore: StoreFront {
         case .success(let outcome): return outcome
         case .failure(let error): throw error
         }
+    }
+}
+
+/// An account service that answers one way about a purchase and keeps what it
+/// was handed. Nothing else here is asked of it.
+private final class OneCloud: CloudService, @unchecked Sendable {
+    var recording: CloudError?
+    private(set) var recorded: [String] = []
+
+    init(recording: CloudError? = nil) {
+        self.recording = recording
+    }
+
+    func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError) {
+        recorded.append(signedTransaction)
+        if let recording { throw recording }
+    }
+
+    func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount {
+        throw .unauthenticated
+    }
+    func account(_ id: AccountId) async throws(CloudError) -> AccountFacts {
+        throw .unauthenticated
+    }
+    func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement { .none }
+    func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken {
+        throw .unauthenticated
+    }
+    func requestDeletion(
+        _ id: AccountId, confirmedEmail: String
+    ) async throws(CloudError) -> DeletionOutcome {
+        throw .unauthenticated
+    }
+    func uploadReport(
+        _ id: AccountId, bundle: ReportBundle
+    ) async throws(CloudError) -> ReportReceipt {
+        throw .unauthenticated
     }
 }
 
@@ -54,13 +122,96 @@ final class PaywallStoreTests: XCTestCase {
         XCTAssertEqual(model.plan?.id, Plan.monthlyID)
     }
 
-    func testBuyingLeavesTheAccountSubscribedThroughTheAppStore() async {
+    func testBuyingLeavesThePurchaseWaitingOnTheAccountService() async {
         let model = await loaded()
         let outcome = await model.buy(OneStore())
-        XCTAssertEqual(outcome, .bought)
-        XCTAssertEqual(model.phase, .bought(.appStore))
-        XCTAssertEqual(model.entitlement, .active(source: .appStore, renews: nil))
-        XCTAssertTrue(model.entitled)
+
+        // Bought is not subscribed. What this account may do is amux.sh's to
+        // say and it has not been told yet, so nothing here claims it.
+        XCTAssertEqual(outcome, .bought(OneStore.signed))
+        XCTAssertEqual(model.phase, .confirming)
+        XCTAssertEqual(model.holding, OneStore.signed)
+        XCTAssertEqual(model.entitlement, Entitlement.none)
+        XCTAssertFalse(model.entitled)
+    }
+
+    func testAConfirmedPurchaseIsFinishedWithTheStoreOnlyAfterTheCloudHasIt() async {
+        let model = await loaded()
+        let store = OneStore(held: [OneStore.signed])
+        let cloud = OneCloud()
+        guard case .bought(let purchase)? = await model.buy(store) else {
+            return XCTFail("the store was scripted to sell one")
+        }
+        let taken = await model.confirm(
+            purchase, with: cloud, as: AccountId("ada"), finishing: store)
+
+        XCTAssertTrue(taken)
+        XCTAssertEqual(cloud.recorded, [OneStore.signed.signed])
+        XCTAssertEqual(store.finished, [OneStore.signed.id])
+        XCTAssertNil(model.holding)
+    }
+
+    func testAPurchaseTheCloudCouldNotBeToldAboutIsKeptAndSaidToBeUnconfirmed() async {
+        let model = await loaded()
+        let store = OneStore(held: [OneStore.signed])
+        let cloud = OneCloud(recording: .network("offline"))
+        let taken = await model.confirm(
+            OneStore.signed, with: cloud, as: AccountId("ada"), finishing: store)
+
+        XCTAssertFalse(taken)
+        XCTAssertEqual(model.phase, .unconfirmed(.unreachable))
+        // The transaction is still the store's, which is what makes a retry
+        // — pressed, or made by the next launch — possible at all.
+        XCTAssertEqual(store.finished, [])
+        XCTAssertEqual(store.held, [OneStore.signed])
+        XCTAssertEqual(model.holding, OneStore.signed)
+    }
+
+    func testACloudThatRefusesThePurchaseReadsDifferentlyFromOneItCannotReach() async {
+        let model = await loaded()
+        let store = OneStore(held: [OneStore.signed])
+        let cloud = OneCloud(recording: .refused("that transaction is already another account's."))
+        await model.confirm(OneStore.signed, with: cloud, as: AccountId("ada"), finishing: store)
+
+        XCTAssertEqual(
+            model.phase,
+            .unconfirmed(.refused("that transaction is already another account's.")))
+        XCTAssertEqual(store.finished, [])
+    }
+
+    func testAnUnconfirmedPurchaseIsOfferedAgainByTheNextLaunchWithoutAnybodyPressing() async {
+        let model = await loaded()
+        let store = OneStore(held: [OneStore.signed])
+        let cloud = OneCloud()
+        let taken = await model.confirmOutstanding(
+            in: store, with: cloud, as: AccountId("ada"))
+
+        XCTAssertTrue(taken)
+        XCTAssertEqual(cloud.recorded, [OneStore.signed.signed])
+        XCTAssertEqual(store.finished, [OneStore.signed.id])
+    }
+
+    func testALaunchWithNothingOutstandingAsksTheCloudAboutNothing() async {
+        let model = await loaded()
+        let cloud = OneCloud()
+        let taken = await model.confirmOutstanding(
+            in: OneStore(), with: cloud, as: AccountId("ada"))
+
+        XCTAssertFalse(taken)
+        XCTAssertEqual(cloud.recorded, [])
+        XCTAssertEqual(model.phase, .ready)
+    }
+
+    func testTheScreenCannotBePressedWhileTheCloudIsBeingTold() async {
+        let model = await loaded()
+        await model.buy(OneStore())
+
+        XCTAssertEqual(model.phase, .confirming)
+        XCTAssertTrue(model.working)
+        // Buying again while one purchase is being confirmed would be a second
+        // charge for the same month.
+        let second = await model.buy(OneStore())
+        XCTAssertNil(second)
     }
 
     func testClosingTheStoresSheetLeavesTheScreenExactlyWhereItWas() async {
@@ -97,10 +248,14 @@ final class PaywallStoreTests: XCTestCase {
 
     func testRestoringFindsWhatThisAppleAccountAlreadyHas() async {
         let model = await loaded()
-        let outcome = await model.restore(OneStore(restored: .success(.bought)))
+        let outcome = await model.restore(
+            OneStore(restored: .success(.bought(OneStore.signed))))
 
-        XCTAssertEqual(outcome, .bought)
-        XCTAssertEqual(model.entitlement, .active(source: .appStore, renews: nil))
+        // Found, and carrying the signature: a restored subscription reaches
+        // the account service by exactly the same road a new one does.
+        XCTAssertEqual(outcome, .bought(OneStore.signed))
+        XCTAssertEqual(model.phase, .confirming)
+        XCTAssertEqual(model.holding, OneStore.signed)
     }
 
     func testRestoringNothingIsAnAnswerAndIsSaidAsOne() async {

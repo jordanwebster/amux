@@ -111,6 +111,7 @@ public enum Fixtures {
         Built(.paywall, "paywall-web"),
         Built(.paywall, "paywall-pending"),
         Built(.paywall, "paywall-failed"),
+        Built(.paywall, "paywall-unconfirmed"),
         Built(.hosts, "hosts"),
         Built(.hosts, "devices"),
         Built(.pin, "pin"),
@@ -549,6 +550,15 @@ public enum Fixtures {
         Fixture(id: "paywall-failed", screen: .paywall, accounts: [Fixture.unsubscribed],
                 store: ScriptedStoreState(purchase: .fails(Fixtures.refusedPurchase)),
                 paywall: .failed(Fixtures.refusedPurchase)),
+        // Paid for, and the account service has not confirmed it. The
+        // purchase is kept and the transaction is still the store's, so the
+        // screen offers it again rather than offering to sell a second one.
+        // The account is still unsubscribed here, because that is what
+        // unconfirmed means: the entitlement has not moved.
+        Fixture(id: "paywall-unconfirmed", screen: .paywall,
+                cloud: ScriptedCloudState(entitlement: .none, purchase: .offline),
+                accounts: [Fixture.unsubscribed],
+                paywall: .unconfirmed(.unreachable)),
         Fixture(id: "sign-in-failed", screen: .signIn,
                 cloud: ScriptedCloudState(signIn: .refused(Fixtures.refusedSignIn),
                                           entitlement: .none, token: nil),

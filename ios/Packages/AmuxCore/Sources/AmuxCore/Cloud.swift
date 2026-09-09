@@ -10,6 +10,14 @@ public protocol CloudService: Sendable {
     func account(_ id: AccountId) async throws(CloudError) -> AccountFacts
     func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement
     func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken
+    /// Hands over a purchase the App Store signed, so the subscription it paid
+    /// for becomes this account's.
+    ///
+    /// The app carries the signed transaction and nothing else: what the cloud
+    /// then does with it — which billing system it is reconciled against, how
+    /// a renewal is watched — is the cloud's business, and an app that knew
+    /// would be a second place for that to change.
+    func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError)
     func requestDeletion(_ id: AccountId, confirmedEmail: String) async throws(CloudError) -> DeletionOutcome
     func uploadReport(_ id: AccountId, bundle: ReportBundle) async throws(CloudError) -> ReportReceipt
 }

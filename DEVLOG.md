@@ -4,6 +4,41 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **A purchase is not a subscription until amux.sh has it.**
+
+The App Store's signed transaction now crosses out of StoreKit with the
+purchase, and the transaction is finished only after the account service has
+taken it. That order is the whole change: a transaction finished first is one
+the store will never offer again, and a subscription somebody paid for would
+exist nowhere but on their bank statement. Because it survives, an unconfirmed
+purchase is temporary — the paywall offers Retry, the next launch sends
+everything the store is still holding, and a purchase approved later (a parent
+answering Ask to Buy, a bank's second factor) takes the same road.
+
+The cloud gains one call: the signed transaction is posted to amux.sh as the
+authenticated caller and nothing else about it is read there. What the account
+may then do is read back from the same entitlement query a web subscription
+arrives through, never assumed from the store. The paywall draws three states
+around it: confirming, confirmed, and unconfirmed — paid for and kept, with a
+refusal reading differently from a phone that could not get through, and the
+plan rows withdrawn so the screen cannot be read as offering a second
+subscription.
+
+docs/CLOUD.md now records the contract: every endpoint the app uses, the
+entitlement read, the payment_required rule, and where each value lives —
+product identifiers and amux.sh URLs committed here, App Store and payment
+secrets only in the cloud service's encrypted settings, QA addresses nowhere in
+this repository.
+
+Validation: all Swift package unit suites, including new adapter coverage for
+the post accepted at 200 and 202, refused at 401, 403 payment_required and 422,
+and a network failure; new store coverage for the finish-after-acceptance
+order, the retry a launch makes on its own, and the two unconfirmed readings;
+the paywall and new paywall-unconfirmed goldens in both appearances; the
+accounts journey; ios-lint.
+
+---
+
 2026-09-09 — **Claude SDK conversations open and accept input on the iPhone.**
 
 The mobile bridge now projects the shared SDK layer's native rows, gates,

@@ -36,6 +36,8 @@ public enum ShellAction: Equatable, Sendable {
     case buySubscription
     /// Put back a subscription this Apple Account already has.
     case restorePurchases
+    /// Send a purchase amux.sh has not confirmed to it again.
+    case retryPurchase
     /// Leave an account. It stays listed with Sign In beside it.
     case signOutAccount(AccountId)
     /// Somebody asked to give up an account for good. What that costs is a
@@ -544,6 +546,7 @@ private struct PaywallPage: View {
             case .choose(let period): model.choose(period)
             case .buy: actions(.buySubscription)
             case .restore: actions(.restorePurchases)
+            case .retry: actions(.retryPurchase)
             }
         }
         // The screen draws its own header, so the bar would be a second one.

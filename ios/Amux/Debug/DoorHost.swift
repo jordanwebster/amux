@@ -545,6 +545,7 @@ final class DoorHost {
         case .account(let id): "account \(id)"
         case .entitlement(let id): "entitlement \(id)"
         case .connectToken(let id): "connectToken \(id)"
+        case .recordPurchase(let id): "recordPurchase \(id)"
         case .requestDeletion(let id, let email): "requestDeletion \(id) as \(email)"
         case .uploadReport(let id, let parts):
             "uploadReport \(id) with \(parts.joined(separator: ", "))"
@@ -557,6 +558,8 @@ final class DoorHost {
         case .plans: "plans"
         case .buy(let plan): "buy \(plan)"
         case .restore: "restore"
+        case .finish(let transaction): "finish \(transaction)"
+        case .unfinished: "unfinished"
         }
     }
 

@@ -48,6 +48,7 @@ public struct CloudEndpoint: Sendable, Equatable {
     var userinfo: URL { base.appending(path: "connect/userinfo") }
     var connect: URL { base.appending(path: "api/connect") }
     var graphQL: URL { base.appending(path: "api/graphql") }
+    var purchases: URL { base.appending(path: "api/purchases") }
     var account: URL { base.appending(path: "api/account") }
     var stripePortal: URL { base.appending(path: "api/billing/stripe/portal") }
     var reports: URL { base.appending(path: "api/reports") }
@@ -217,6 +218,27 @@ public actor AmuxCloudService: CloudService {
         let request = URLRequest(url: endpoint.connect)
         let issued: Connected = try await ask(request, as: Connected.self, for: id)
         return ConnectToken(bearer: issued.token, expiresAt: issued.expires_at)
+    }
+
+    /// Hands a signed App Store transaction to the account service.
+    ///
+    /// Nothing is read back but the fact that it was taken: what this account
+    /// may now do is the entitlement read's answer, which is the same read a
+    /// subscription bought on the web arrives through. `202` is as good as
+    /// `200` — the cloud has the transaction and will reconcile it — and the
+    /// caller finds out through that read either way.
+    public func recordPurchase(
+        _ id: AccountId, signedTransaction: String
+    ) async throws(CloudError) {
+        var request = URLRequest(url: endpoint.purchases)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONEncoder().encode(
+            Purchase(signed_transaction: signedTransaction))
+        let (data, response) = try await send(request, for: id)
+        guard (200..<300).contains(response.statusCode) else {
+            throw Self.refusal(data, response)
+        }
     }
 
     // MARK: - Leaving
@@ -491,6 +513,12 @@ private struct Connected: Decodable {
     let port: Int
     let token: String
     let expires_at: Date?
+}
+
+/// What a purchase is posted as. One field: the App Store's signed
+/// transaction, whole.
+private struct Purchase: Encodable {
+    let signed_transaction: String
 }
 
 private struct Refused: Decodable {

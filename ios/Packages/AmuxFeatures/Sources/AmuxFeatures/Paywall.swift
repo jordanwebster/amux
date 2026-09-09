@@ -8,6 +8,8 @@ public enum PaywallAction: Equatable, Sendable {
     case choose(Plan.Period)
     case buy
     case restore
+    /// Offer a purchase amux.sh has not confirmed to it again.
+    case retry
     /// Subscribed, and finished reading about it.
     case done
 }
@@ -44,6 +46,12 @@ public struct Paywall: View {
                 heading
                 if model.entitled {
                     subscribed
+                } else if settling {
+                    // A purchase already exists. Leaving two plans on screen
+                    // to be picked would be offering to buy a second one, and
+                    // the button underneath does not buy — it sends the one
+                    // that was bought to amux.sh again.
+                    EmptyView()
                 } else {
                     plans
                     terms
@@ -66,6 +74,8 @@ public struct Paywall: View {
         case .ready: model.chosen.rawValue
         case .buying: "buying"
         case .awaitingApproval: "awaiting approval"
+        case .confirming: "confirming"
+        case .unconfirmed(let why): "unconfirmed \(why.named)"
         case .failed: "failed"
         case .bought(let source): "subscribed on \(source.named)"
         }
@@ -219,7 +229,7 @@ public struct Paywall: View {
             Spacer(minLength: 0)
             VStack(spacing: 10) {
                 trouble
-                Button { actions(model.entitled ? .done : .buy) } label: {
+        Button { actions(pressing) } label: {
                     ActionLabel(title, kind: .primary, fill: true)
                 }
                 .buttonStyle(.plain)
@@ -254,15 +264,37 @@ public struct Paywall: View {
         }
     }
 
+    /// Whether a purchase has been made and is on its way to amux.sh — posted
+    /// and waiting, or waiting to be sent again.
+    private var settling: Bool {
+        model.phase == .confirming || unconfirmed
+    }
+
     /// A purchase the store has taken and cannot finish. Buying again would be
     /// a second charge for the same month, so the button stops offering it.
     private var waiting: Bool { model.phase == .awaitingApproval }
+
+    /// Whether this purchase is bought and still not this account's. The
+    /// button offers it to amux.sh again rather than offering to buy a second
+    /// one, which is the one thing that must not happen here.
+    private var unconfirmed: Bool {
+        if case .unconfirmed = model.phase { return true }
+        return false
+    }
+
+    /// What pressing the one button means, which is not always buying.
+    private var pressing: PaywallAction {
+        if model.entitled { return .done }
+        return unconfirmed ? .retry : .buy
+    }
 
     private var title: String {
         if model.entitled { return "Done" }
         switch model.phase {
         case .buying: return "Waiting for the App Store…"
         case .awaitingApproval: return "Waiting for approval"
+        case .confirming: return "Confirming with amux.sh…"
+        case .unconfirmed: return "Retry"
         default: break
         }
         guard let plan = model.plan else { return "Subscribe" }
@@ -283,8 +315,28 @@ public struct Paywall: View {
                 "Waiting for approval",
                 "The App Store has it. Nothing has been charged, and this phone reaches your hosts as soon as it goes through.",
                 id: "pending", value: "pending")
+        // Paid for, and amux.sh has not said so yet. The purchase is kept
+        // either way: the App Store still holds it, so pressing Retry — or
+        // just opening the app again — offers it once more.
+        case .unconfirmed(let why):
+            note(
+                "Your purchase is not confirmed yet",
+                Self.unconfirmed(why), id: "unconfirmed", value: why.named)
         default:
             EmptyView()
+        }
+    }
+
+    /// Why a purchase that went through is not this account's yet, and what
+    /// happens next. A phone that could not get through will try again on its
+    /// own; amux.sh saying no will not change by waiting, so that one says
+    /// where to go instead.
+    static func unconfirmed(_ why: PaywallStore.Unconfirmed) -> String {
+        switch why {
+        case .unreachable:
+            "Your subscription is paid for and kept. This phone could not reach amux.sh to add it to your account, and will try again next time the app opens."
+        case .refused(let said):
+            "Your subscription is paid for and kept, but amux.sh would not add it to your account: \(said) Try again, and get in touch if it keeps happening."
         }
     }
 

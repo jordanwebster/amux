@@ -269,6 +269,9 @@ private final class OneUpload: CloudService {
     func account(_ id: AccountId) async throws(CloudError) -> AccountFacts { throw .timeout }
     func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement { .none }
     func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken { throw .timeout }
+    func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError) {
+        throw .timeout
+    }
     func requestDeletion(
         _ id: AccountId, confirmedEmail: String
     ) async throws(CloudError) -> DeletionOutcome { .deleted }

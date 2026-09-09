@@ -16,6 +16,9 @@ private final class Answers: CloudTransport, @unchecked Sendable {
 
     private let lock = NSLock()
     private var replies: [String: Reply] = [:]
+    /// Paths the network never gets to. A phone in a lift is not a status
+    /// code, and the adapter has a branch for it that no reply can reach.
+    private var unreachable: Set<String> = []
     private(set) var asked: [URLRequest] = []
 
     init(_ replies: [String: Reply]) {
@@ -25,11 +28,18 @@ private final class Answers: CloudTransport, @unchecked Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         lock.withLock { asked.append(request) }
         let path = request.url?.path() ?? ""
+        if lock.withLock({ unreachable.contains(path) }) {
+            throw URLError(.notConnectedToInternet)
+        }
         let reply = lock.withLock { replies[path] } ?? Reply(status: 404, body: "{}")
         let response = HTTPURLResponse(
             url: request.url!, statusCode: reply.status,
             httpVersion: nil, headerFields: nil)!
         return (Data(reply.body.utf8), response)
+    }
+
+    func cannotReach(_ path: String) {
+        lock.withLock { _ = unreachable.insert(path) }
     }
 
     func plus(_ path: String, status: Int, body: String) {
@@ -191,6 +201,84 @@ final class AmuxCloudTests: XCTestCase {
         let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
         await assert(.refused("this account has no subscription")) {
             try await cloud.connectToken(account.id)
+        }
+    }
+
+    // MARK: - A purchase reaching the cloud
+
+    /// A purchase is taken either way: `200` is the cloud saying it is done,
+    /// `202` the cloud saying it has it and will reconcile it. Neither is
+    /// something the app has to tell apart, because what the account may then
+    /// do comes from the entitlement read.
+    func testASignedTransactionIsPostedAsTheAuthenticatedCallerAndTakenOnBothAnswers()
+        async throws {
+        for status in [200, 202] {
+            let answers = signedIn
+            answers.plus("/api/purchases", status: status, body: status == 200 ? "{}" : "")
+            let cloud = service(answers)
+            let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+            try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
+
+            let posted = answers.request("/api/purchases")
+            XCTAssertEqual(posted?.httpMethod, "POST")
+            XCTAssertEqual(answers.bearer("/api/purchases"), "Bearer at-1")
+            XCTAssertEqual(
+                posted?.value(forHTTPHeaderField: "Content-Type"), "application/json")
+            // The signed transaction goes over whole, unread by this app.
+            XCTAssertEqual(
+                answers.body("/api/purchases"), #"{"signed_transaction":"signed.jws.one"}"#)
+        }
+    }
+
+    func testAPurchasePostedWithAnUnusableSessionIsUnauthenticated() async throws {
+        let answers = signedIn
+        answers.plus("/api/purchases", status: 401, body: "")
+        let cloud = service(answers)
+        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        await assert(.unauthenticated) {
+            try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
+        }
+    }
+
+    /// The same refusal the home screen's gate already draws, said in the same
+    /// words: an account the cloud does not consider paid for.
+    func testAPurchaseRefusedForWantOfASubscriptionIsSaidInTheWordsTheGateUses() async throws {
+        let answers = signedIn
+        answers.plus("/api/purchases", status: 403, body: #"{"error":"payment_required"}"#)
+        let cloud = service(answers)
+        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        await assert(.refused("this account has no subscription")) {
+            try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
+        }
+    }
+
+    func testATransactionTheCloudWillNotAcceptIsRefusedInItsOwnWords() async throws {
+        let answers = signedIn
+        answers.plus(
+            "/api/purchases", status: 422,
+            body: #"{"error":"invalid_transaction","error_description":"that transaction belongs to another account"}"#)
+        let cloud = service(answers)
+        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        await assert(.refused("that transaction belongs to another account")) {
+            try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
+        }
+    }
+
+    /// A post that never arrives is not a refusal. The two read differently on
+    /// the paywall because they are different situations, and this is where
+    /// that difference is made.
+    func testAPurchaseThatNeverLeftThePhoneIsANetworkFailureRatherThanARefusal() async throws {
+        let answers = signedIn
+        let cloud = service(answers)
+        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        answers.cannotReach("/api/purchases")
+        do {
+            try await cloud.recordPurchase(account.id, signedTransaction: "signed.jws.one")
+            XCTFail("a post that cannot leave the phone must not read as taken")
+        } catch {
+            guard case .network = error else {
+                return XCTFail("expected a network failure, got \(error)")
+            }
         }
     }
 
