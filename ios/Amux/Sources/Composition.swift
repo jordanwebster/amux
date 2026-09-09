@@ -332,6 +332,10 @@ enum AppFiles {
         return "amux-ios/\(version as? String ?? "0")"
     }
 
+    static var gitSHA: String {
+        Bundle.main.object(forInfoDictionaryKey: "AmuxGitSHA") as? String ?? ""
+    }
+
     private static func directory(_ search: FileManager.SearchPathDirectory) -> URL {
         let manager = FileManager.default
         let root = manager.urls(for: search, in: .userDomainMask)[0]

@@ -133,12 +133,12 @@ public struct ReportScreen: View {
                 bar
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
-                        frame
+                        frame.disabled(model.uploadBundle != nil)
                         guidance("Draw a box around each problem and add a note.")
                         ForEach(Array(model.draft.marks.enumerated()), id: \.offset) { at, mark in
-                            markNote(at: at, mark: mark)
+                            markNote(at: at, mark: mark).disabled(model.uploadBundle != nil)
                         }
-                        note
+                        note.disabled(model.uploadBundle != nil)
                         guidance("Includes this screen and the available session and host records.")
                         if case .failed(let why) = model.sending { refusal(why) }
                         if case .sent(let receipt) = model.sending { sent(receipt) }
@@ -178,16 +178,20 @@ public struct ReportScreen: View {
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
             Spacer(minLength: 8)
-            Button { actions(.send) } label: {
-                Text(sendTitle)
-                    .designFont(.bodyEmphasis, design)
-                    .foregroundStyle(design.accent.color.opacity(sending ? 0.4 : 1))
-                    .thumbTarget(x: 5, y: 13)
+            if case .sent = model.sending {
+                Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+            } else {
+                Button { actions(.send) } label: {
+                    Text(sendTitle)
+                        .designFont(.bodyEmphasis, design)
+                        .foregroundStyle(design.accent.color.opacity(sending ? 0.4 : 1))
+                        .thumbTarget(x: 5, y: 13)
+                }
+                .buttonStyle(.plain)
+                .disabled(sending)
+                .identified("report.send", label: sendTitle, enabled: !sending)
+                .reclaimingThumbTarget(x: 5, y: 13)
             }
-            .buttonStyle(.plain)
-            .disabled(sending)
-            .identified("report.send", label: sendTitle, enabled: !sending)
-            .reclaimingThumbTarget(x: 5, y: 13)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)

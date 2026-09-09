@@ -131,12 +131,13 @@ final class ReportBundleTests: XCTestCase {
     func testTheHeaderIsWrittenInTheWordsTheReaderKnows() throws {
         let bundle = ReportAssembly.bundle(
             from: wholeCapture(), draft: ReportDraft(note: "it stays on screen"),
-            build: "amux-ios/0.1.0",
+            build: "amux-ios/0.1.0", gitSHA: String(repeating: "a", count: 40),
             createdAt: Date(timeIntervalSince1970: 1_788_395_144.348), log: noLog)
 
         let read = try header(bundle)
         XCTAssertEqual(read["schema_version"] as? Int, 2)
         XCTAssertEqual(read["build"] as? String, "amux-ios/0.1.0")
+        XCTAssertEqual(read["git_sha"] as? String, String(repeating: "a", count: 40))
         XCTAssertEqual(read["kind"] as? String, "bug")
         XCTAssertEqual(read["status"] as? String, "open")
         XCTAssertEqual(read["note"] as? String, "it stays on screen")
@@ -196,24 +197,64 @@ final class ReportBundleTests: XCTestCase {
             open: true)
         let cloud = OneUpload(.failure(.network("offline")))
 
-        await reports.send(with: cloud, as: AccountId("ada"), build: "amux-ios/0.1.0", log: noLog)
+        await reports.send(with: cloud, as: AccountId("ada"), build: "amux-ios/0.1.0", log: noLog,
+                           now: Date(timeIntervalSince1970: 1000))
 
         XCTAssertEqual(reports.sending, .failed("offline"))
         XCTAssertEqual(reports.draft.note, "it stays on screen")
         XCTAssertEqual(reports.draft.marks.count, 1)
         XCTAssertNotNil(reports.capture)
 
+        let refused = try XCTUnwrap(cloud.sent.first)
+        let refusedHeader = try header(ReportBundle(parts: refused))
+        XCTAssertEqual(refusedHeader["created_at"] as? String, "1970-01-01T00:16:40.000Z")
+
         cloud.answer = .success(ReportReceipt(id: "report-7", receivedAt: Date()))
-        await reports.send(with: cloud, as: AccountId("ada"), build: "amux-ios/0.1.0", log: noLog)
+        await reports.send(with: cloud, as: AccountId("ada"), build: "amux-ios/0.1.0", log: .success("a later log"),
+                           now: Date(timeIntervalSince1970: 2000))
 
         XCTAssertEqual(reports.sending, .sent(ReportReceipt(id: "report-7", receivedAt: cloud.at)))
         // The same report went both times, with everything that was written on
         // it: a retry is not a second, emptier report.
         XCTAssertEqual(cloud.sent.count, 2)
+        XCTAssertEqual(cloud.sent.last, refused, "retry preserves every byte, including stamp")
+        XCTAssertEqual(reports.assembled(build: "later", log: noLog)?.parts, refused)
+        await reports.send(with: cloud, as: AccountId("ada"), build: "later", log: noLog)
+        XCTAssertEqual(cloud.sent.count, 2, "sent is terminal")
+        XCTAssertEqual(reports.sending, .sent(ReportReceipt(id: "report-7", receivedAt: cloud.at)))
         XCTAssertEqual(cloud.sent.last?.map(\.name), [
             ReportAssembly.reportFile, ReportAssembly.frameFile, ReportAssembly.traceFile,
             ReportAssembly.messagesFile, ReportAssembly.daemonFile, ReportAssembly.logFile,
         ])
+    }
+
+    @MainActor
+    func testADeclaredSentReportCannotBeSentAgainEvenWithoutAnAccount() async {
+        let receipt = ReportReceipt(id: "already-sent", receivedAt: Date())
+        let reports = ReportStore(capture: wholeCapture(), sending: .sent(receipt), open: true)
+        let cloud = OneUpload(.failure(.network("offline")))
+        await reports.send(with: cloud, as: nil, build: "test", log: noLog)
+        XCTAssertEqual(reports.sending, .sent(receipt))
+        XCTAssertTrue(cloud.sent.isEmpty)
+    }
+
+    @MainActor
+    func testDismissingAReportLetsTheNextCaptureSendItsOwnBundle() async throws {
+        let reports = ReportStore(capture: wholeCapture(), open: true)
+        let cloud = OneUpload(.success(ReportReceipt(id: "sent", receivedAt: Date())))
+        await reports.send(with: cloud, as: AccountId("ada"), build: "test", log: noLog,
+                           now: Date(timeIntervalSince1970: 1000))
+        reports.dismiss()
+        XCTAssertNil(reports.uploadBundle)
+        XCTAssertTrue(reports.begin(BundleFreeze()))
+        reports.draft.note = "a different problem"
+        await reports.send(with: cloud, as: AccountId("ada"), build: "test", log: noLog,
+                           now: Date(timeIntervalSince1970: 2000))
+        XCTAssertEqual(cloud.sent.count, 2)
+        let first = try header(ReportBundle(parts: cloud.sent[0]))
+        let second = try header(ReportBundle(parts: cloud.sent[1]))
+        XCTAssertNotEqual(first["stamp"] as? String, second["stamp"] as? String)
+        XCTAssertEqual(second["note"] as? String, "a different problem")
     }
 
     /// A phone nobody has signed in on can still take a screenshot and write
@@ -275,4 +316,10 @@ private final class OneUpload: CloudService {
     func requestDeletion(
         _ id: AccountId, confirmedEmail: String
     ) async throws(CloudError) -> DeletionOutcome { .deleted }
+}
+
+
+@MainActor
+private final class BundleFreeze: ReportFreezing {
+    func freeze() -> ReportCapture? { wholeCapture() }
 }

@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Keep a report's identity across upload retries.**
+
+The first upload retains its complete bundle. A refusal and Retry now carry
+identical bytes, including the creation time and stamp, and annotations become
+read-only once submitted. Sent is terminal in the store and removes Send from
+the screen. Dismissal releases the bundle for a new capture; a late upload
+answer cannot replace that new report's state.
+
+Every app build stamps its checkout's full Git revision into the built
+Info.plist. Reporting passes it into report.json, and the journey reads the
+actual refused and accepted uploads to compare identity and verify the revision
+against the checkout used to build the app. The physical-phone checklist now
+includes real thumbnail and full-screen screenshot previews and prompt retention;
+simulator evidence explicitly labels its staged notification and app coverage.
+
+Validation: all 18 report unit tests pass, as does the complete reports journey.
+The uploaded bundles match byte for byte; the Rust report reader accepts the
+revision-bearing bundle and correctly leaves native UI replay unchecked.
+The four report/refusal light and dark composited goldens pass unchanged and
+were inspected. iOS lint and workspace formatting pass.
+
 2026-09-09 — **Verify the echo's own frame and gate accessibility.**
 
 The optimistic-echo measurement snapshots the drawn transcript synchronously

@@ -24,6 +24,7 @@ final class ReportsTests: JourneyCase {
         let code: String
         let bundle: String
         let helpBundle: String
+        let gitSHA: String
 
         init(_ environment: [String: String]) throws {
             func required(_ name: String) throws -> String {
@@ -33,6 +34,8 @@ final class ReportsTests: JourneyCase {
             code = try required("AMUX_PIN")
             bundle = try required("AMUX_BUNDLE")
             helpBundle = try required("AMUX_HELP_BUNDLE")
+            gitSHA = try required("AMUX_BUILD_GIT_SHA")
+            XCTAssertNotNil(gitSHA.range(of: "^[0-9a-f]{40}$", options: .regularExpression))
         }
     }
 
@@ -256,6 +259,9 @@ final class ReportsTests: JourneyCase {
         }
         record["noteAfterRefusal"] = said(kept, "report.note")?.value
 
+        let refused = try uploadedHeader(path: cast.bundle + "-refused")
+        record["refusedReport"] = refused
+
         try scriptCloud(["upload": "accepted", "receipt": "report-7c2"])
         press(app, "report.send")
         waitFor(app, "report.sent", "an accepted report said nothing")
@@ -264,6 +270,15 @@ final class ReportsTests: JourneyCase {
 
         let uploaded = try door(runner, .init(kind: "uploaded", path: cast.bundle))
         record["uploadedParts"] = uploaded["parts"] as? [String] ?? []
+        let accepted = try reportHeader(uploaded)
+        record["acceptedReport"] = accepted
+        XCTAssertEqual(refused["stamp"] as? String, accepted["stamp"] as? String)
+        XCTAssertEqual(refused["created_at"] as? String, accepted["created_at"] as? String)
+        XCTAssertEqual(accepted["git_sha"] as? String, cast.gitSHA)
+        XCTAssertEqual(refused["git_sha"] as? String, cast.gitSHA)
+        XCTAssertFalse(element(app, "report.send").exists, "Sent must offer no further Send")
+        record["sendOfferedAfterSent"] = element(app, "report.send").exists
+        photograph(app, "report-sent")
         // Read here rather than at the end of the journey: the report asked
         // for under Help is handed over afterwards, and what this act claims
         // is that a refusal and the retry after it were two hand-offs of one
@@ -384,6 +399,16 @@ final class ReportsTests: JourneyCase {
     }
 
     // MARK: - Reading
+
+    private func uploadedHeader(path: String) throws -> [String: Any] {
+        try reportHeader(door(runner, .init(kind: "uploaded", path: path)))
+    }
+
+    private func reportHeader(_ reply: [String: Any]) throws -> [String: Any] {
+        let json = try XCTUnwrap(reply["reportJSON"] as? String)
+        return try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    }
 
     /// Every report the account service has been handed so far, as it
     /// recorded them.

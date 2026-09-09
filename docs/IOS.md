@@ -164,7 +164,9 @@ Report a Problem under Help. The system preview remains system-owned. The
 report retains rectangles, notes and available session/host records. Its
 `report.json` declares each part present or absent with a reason; this app
 cannot read its system log back, so its log part is absent. A failed upload
-retains the same report for Retry.
+retains the same bytes, creation time and stamp for Retry. Sent is final.
+The build stamps its checkout revision into the app, and each report records
+that revision in `git_sha`.
 
 ## Performance and device qualification
 
@@ -177,6 +179,14 @@ physical-phone checklist remains required before release: measure cold start
 and reconciliation on older supported hardware, presented-frame cadence and
 hitches on ProMotion and standard displays, and thermal and battery behavior.
 Simulator timing proxies do not mark those checks passed.
+
+- [ ] On a physical iPhone running a debug build, take a system screenshot with
+  thumbnail preview enabled. Confirm the app-owned Report prompt appears and
+  opens the frozen app frame without a Share step or Photos permission.
+- [ ] Repeat with full-screen screenshot preview enabled. Return to the app and
+  confirm the same prompt and frozen frame remain available. The simulator
+  reports journey stages the screenshot notification and app coverage; it
+  cannot post a real system screenshot or qualify either preview setting.
 
 `timeout 2400 wt run ios-accessibility` checks labels and target geometry across
 states and sizes. Also exercise VoiceOver navigation, Dynamic Type, Reduce

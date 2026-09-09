@@ -197,6 +197,10 @@ public final class ReportStore {
     /// Where the report stands with the cloud.
     public private(set) var sending: ReportSending = .ready
 
+    /// The first send seals the bytes so a retry keeps the report's identity.
+    public private(set) var uploadBundle: ReportBundle?
+    private var captureID = UUID()
+
     public init() {}
 
     /// A report already in progress, as a declared state has it.
@@ -257,6 +261,8 @@ public final class ReportStore {
         capture = nil
         draft = ReportDraft()
         sending = .ready
+        uploadBundle = nil
+        captureID = UUID()
     }
 
     // MARK: - Writing it
@@ -300,20 +306,28 @@ public final class ReportStore {
         build: String, gitSHA: String = "", log: Result<String, PartAbsent>,
         now: Date = Date()
     ) async {
-        guard let capture, sending != .sending else { return }
+        guard capture != nil else { return }
+        switch sending {
+        case .sending, .sent: return
+        case .ready, .failed: break
+        }
         guard let account else {
             sending = .failed(
                 "Sign in to the account this report is about, then send it again.")
             return
         }
+        guard let bundle = assembled(build: build, gitSHA: gitSHA, log: log, now: now) else {
+            return
+        }
+        uploadBundle = bundle
+        let identity = captureID
         sending = .sending
-        let bundle = ReportAssembly.bundle(
-            from: capture, draft: draft, build: build, gitSHA: gitSHA,
-            createdAt: now, log: log)
         do {
             let receipt = try await cloud.uploadReport(account, bundle: bundle)
+            guard captureID == identity else { return }
             sending = .sent(receipt)
         } catch {
+            guard captureID == identity else { return }
             sending = .failed(Self.sentence(for: error))
         }
     }
@@ -337,6 +351,7 @@ public final class ReportStore {
         build: String, gitSHA: String = "", log: Result<String, PartAbsent>,
         now: Date = Date()
     ) -> ReportBundle? {
+        if let uploadBundle { return uploadBundle }
         guard let capture else { return nil }
         return ReportAssembly.bundle(
             from: capture, draft: draft, build: build, gitSHA: gitSHA,

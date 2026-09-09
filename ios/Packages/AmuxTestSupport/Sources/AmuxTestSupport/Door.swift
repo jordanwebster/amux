@@ -261,7 +261,7 @@ public enum DoorReply: Sendable, Equatable {
     case signposts([SignpostMark])
     case captured(path: String, width: Int, height: Int, scale: Int)
     /// A bundle was written at this path, holding these files.
-    case bundle(path: String, parts: [String])
+    case bundle(path: String, parts: [String], reportJSON: String? = nil)
     /// This phone now trusts the machine of this name.
     case paired(host: String)
     /// What the scripted cloud and the scripted store were asked, in order.
@@ -837,7 +837,7 @@ extension DoorRequest: Codable {
 extension DoorReply: Codable {
     private enum Key: String, CodingKey {
         case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
-        case host, delivered, reason, cloud, store, known, states, conversation
+        case host, delivered, reason, cloud, store, known, states, conversation, reportJSON
     }
 
     public init(from decoder: any Decoder) throws {
@@ -862,7 +862,8 @@ extension DoorReply: Codable {
         case "bundle":
             self = .bundle(
                 path: try fields.decode(String.self, forKey: .path),
-                parts: try fields.decode([String].self, forKey: .parts))
+                parts: try fields.decode([String].self, forKey: .parts),
+                reportJSON: try fields.decodeIfPresent(String.self, forKey: .reportJSON))
         case "paired":
             self = .paired(host: try fields.decode(String.self, forKey: .host))
         case "calls":
@@ -910,10 +911,11 @@ extension DoorReply: Codable {
             try fields.encode(width, forKey: .width)
             try fields.encode(height, forKey: .height)
             try fields.encode(scale, forKey: .scale)
-        case .bundle(let path, let parts):
+        case .bundle(let path, let parts, let reportJSON):
             try fields.encode("bundle", forKey: .kind)
             try fields.encode(path, forKey: .path)
             try fields.encode(parts, forKey: .parts)
+            try fields.encodeIfPresent(reportJSON, forKey: .reportJSON)
         case .paired(let host):
             try fields.encode("paired", forKey: .kind)
             try fields.encode(host, forKey: .host)

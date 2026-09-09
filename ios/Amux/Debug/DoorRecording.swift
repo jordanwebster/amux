@@ -56,7 +56,7 @@ enum DoorRecording {
         let report = ReportStore()
         guard report.begin(freezer) else { throw Failure.notPhotographed }
         report.draft = draft
-        guard let bundle = report.assembled(build: build, log: log) else {
+        guard let bundle = report.assembled(build: build, gitSHA: AppFiles.gitSHA, log: log) else {
             throw Failure.notPhotographed
         }
 

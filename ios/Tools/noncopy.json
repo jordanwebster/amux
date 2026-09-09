@@ -145,6 +145,7 @@
       {"literal": "\"removed\"", "context": "removed: ramp(\"removed\", base.removed),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "ios/Amux/Sources/Composition.swift": [
+      {"literal": "\"AmuxGitSHA\"", "context": "Bundle.main.object(forInfoDictionaryKey: \"AmuxGitSHA\") as? String ?? \"\"", "reason": "Built Info.plist key for the checkout revision; not interface copy.", "count": 1},
       {"literal": "\"signed-out\"", "context": "private let signedOut = StoreBundle(account: AccountId(\"signed-out\"))", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"-\\(Door.scriptedCloudArgument)\"", "context": ".contains(\"-\\(Door.scriptedCloudArgument)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"CFBundleShortVersionString\"", "context": "let version = Bundle.main.object(forInfoDictionaryKey: \"CFBundleShortVersionString\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},

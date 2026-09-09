@@ -945,7 +945,11 @@ final class DoorHost {
                 try data.write(to: directory.appendingPathComponent(part.name))
                 written.append(part.name)
             }
-            return .bundle(path: path, parts: written)
+            return .bundle(
+                path: path, parts: written,
+                reportJSON: bundle.part(ReportAssembly.reportFile)?.data.map {
+                    String(decoding: $0, as: UTF8.self)
+                })
         } catch {
             return .error("\(error)")
         }

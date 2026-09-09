@@ -2445,7 +2445,8 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
                 f"so what the report is a picture of is a screen a real machine filled")
 
     driving = journey.acts
-    pictures = {"screenshot-thumbnail": ("prompt",), "annotate": ("report-screen",)}
+    pictures = {"screenshot-thumbnail": ("prompt",), "annotate": ("report-screen",),
+                "send": ("report-sent",)}
     photographs = {name: journey.directory / f"{name}.png"
                    for act in driving for name in pictures.get(act, ())}
     read = journey.directory / "reports.json"
@@ -2477,6 +2478,8 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_HOST": daemon["name"],
             "AMUX_BUNDLE": str(sent),
             "AMUX_HELP_BUNDLE": str(helped),
+            "AMUX_BUILD_GIT_SHA": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], text=True, timeout=30).strip(),
         })
     seen = json.loads(read.read_text())
 
@@ -2502,7 +2505,7 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("promptAfterTappingElsewhere") is False,
                        "the offer stayed after the screen was tapped, so an accidental "
                        "screenshot costs something")
-        journey.say(f"a system screenshot brings up the app's own Report, "
+        journey.say(f"a staged screenshot notification brings up the app's own Report, "
                     f"{seen.get('promptLeftEdge')} points clear of the corner the thumbnail "
                     f"preview sits in — the app is never told that preview's frame and cannot "
                     f"attach anything to it. Anywhere else on the screen is no, and the frozen "
@@ -2512,9 +2515,9 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
         """The offer, still there once the system stops covering the app."""
         journey.expect(seen.get("promptSurvivedTheSystemPreview") is True,
                        "the offer was gone once the app came back from being covered")
-        journey.say("with the full-screen preview the system covers the app entirely. The app "
-                    "is put away and brought back, which is that and more, and the same offer "
-                    "over the same frozen frame is still there")
+        journey.say("full-screen preview coverage is staged by putting the app away and "
+                    "bringing it back; the same offer and frozen frame survive. Actual system "
+                    "screenshot previews remain a physical-phone check in docs/IOS.md")
 
     def annotate() -> None:
         """The report on the frame that was already frozen."""
@@ -2559,6 +2562,13 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
                        f"sending handed the account service {len(uploads)} reports: {uploads}")
         journey.expect(uploads[0] == uploads[1],
                        f"Retry sent a different report from the one that was refused: {uploads}")
+        refused_report = seen.get("refusedReport") or {}
+        accepted_report = seen.get("acceptedReport") or {}
+        journey.expect(bool(refused_report.get("stamp"))
+                       and refused_report == accepted_report,
+                       "the refused and accepted report headers must be identical")
+        journey.expect(seen.get("sendOfferedAfterSent") is False,
+                       "a sent report still offers Send")
         journey.say(f"the report is handed to the account service and turned down in its own "
                     f"words ({seen.get('refusalSaid')!r}); nothing written is lost and the "
                     f"button becomes Retry, which sends the same bundle again — the double was "
@@ -2606,6 +2616,8 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
     if "send" in driving:
         bundle = journey.directory / "bundle"
         shutil.copytree(sent, bundle, dirs_exist_ok=True)
+        shutil.copytree(Path(str(sent) + "-refused"), journey.directory / "refused-bundle",
+                        dirs_exist_ok=True)
         declared_parts = report_parts(journey, bundle, "the report that was sent")
         journey.expect(declared_parts["frame"] == "present"
                        and declared_parts["msgs"] == "present",
@@ -2630,6 +2642,10 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
             "calls": [call for call in seen.get("cloudCalls") or []
                       if call.startswith("uploadReport")],
             "receipt": seen.get("receipt"),
+            "stamp": header.get("stamp"),
+            "git_sha": header.get("git_sha"),
+            "refused_report": seen.get("refusedReport"),
+            "accepted_report": seen.get("acceptedReport"),
             "declared": declared_parts,
             "files": sorted(path.name for path in bundle.iterdir()),
         }, indent=2, sort_keys=True) + "\n")

@@ -43,7 +43,7 @@ extension Composition {
         Task {
             await reports.send(
                 with: cloud, as: accounts.selected, build: AppFiles.build,
-                log: AppFiles.logTail)
+                gitSHA: AppFiles.gitSHA, log: AppFiles.logTail)
         }
     }
 }

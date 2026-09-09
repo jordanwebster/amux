@@ -99,8 +99,20 @@ targets:
         # The transcript is measured against the display's full cadence; the
         # 120 Hz cap iOS applies by default would hide hitches behind it.
         CADisableMinimumFrameDurationOnPhone: true
+    postBuildScripts:
+      - name: Stamp build revision
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - "$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)"
+        script: |
+          set -eu
+          revision=$(git -C "$SRCROOT/.." rev-parse --verify HEAD)
+          /usr/bin/plutil -replace AmuxGitSHA -string "$revision" "$TARGET_BUILD_DIR/$INFOPLIST_PATH"
     settings:
       base:
+        # Git worktree metadata can live outside SRCROOT. The revision phase
+        # reads it each build and updates only the built app's Info.plist.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
         PRODUCT_BUNDLE_IDENTIFIER: sh.amux.app
         SWIFT_EMIT_LOC_STRINGS: YES
         # XcodeGen gives an iOS target iPhone and iPad by default; this app is
