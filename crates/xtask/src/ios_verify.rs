@@ -19,6 +19,7 @@ const RECIPES: &[&str] = &[
     "ios-door-smoke",
     "ios-goldens",
     "ios-journey",
+    "ios-accessibility",
     "ios-perf",
     "ios-scope-audit",
 ];
@@ -204,6 +205,23 @@ mod tests {
         ] {
             assert!(!RECIPES.contains(&excluded));
         }
+    }
+
+    #[test]
+    fn ios_verify_runs_accessibility_after_journeys_through_the_wt_entrypoint() {
+        let config = include_str!("../../../.wt.toml");
+        let selected = recipes(config).unwrap();
+        let journey = selected
+            .iter()
+            .position(|name| *name == "ios-journey")
+            .unwrap();
+        assert_eq!(selected[journey + 1], "ios-accessibility");
+        let config: toml::Value = toml::from_str(config).unwrap();
+        assert_eq!(
+            config["task"]["ios-verify"]["run"].as_str(),
+            Some("scripts/ios-verify.sh")
+        );
+        assert!(include_str!("../../../scripts/ios-verify.sh").contains("xtask -- ios-verify"));
     }
 
     #[test]

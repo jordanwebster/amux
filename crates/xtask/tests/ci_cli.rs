@@ -371,6 +371,7 @@ fn ios_verify_fixture() -> tempfile::TempDir {
         "ios-door-smoke",
         "ios-goldens",
         "ios-journey",
+        "ios-accessibility",
         "ios-perf",
         "ios-scope-audit",
     ];
@@ -424,6 +425,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
     for (fail, skip, success, last) in [
         ("", "", true, "ios-scope-audit"),
         ("mobile-check", "", false, "mobile-check"),
+        ("ios-accessibility", "", false, "ios-accessibility"),
         ("", "claude-sessions", false, "ios-journey"),
         ("", "accounts", false, "ios-journey"),
         ("", "production-startup", false, "ios-journey"),
@@ -449,7 +451,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
         if success {
             assert_eq!(
                 calls,
-                "run lint\nrun test\nrun spec\nrun mobile-check\nrun ios-lint\nrun ios-rust\nrun ios-simulator\nrun ios-build\nrun ios-loopback-smoke\nrun ios-unit\nrun ios-door-smoke\nrun ios-goldens\nrun ios-journey\nrun ios-perf\nrun ios-scope-audit\n"
+                "run lint\nrun test\nrun spec\nrun mobile-check\nrun ios-lint\nrun ios-rust\nrun ios-simulator\nrun ios-build\nrun ios-loopback-smoke\nrun ios-unit\nrun ios-door-smoke\nrun ios-goldens\nrun ios-journey\nrun ios-accessibility\nrun ios-perf\nrun ios-scope-audit\n"
             );
         }
         if !skip.is_empty() {

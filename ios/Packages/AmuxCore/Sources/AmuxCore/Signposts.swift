@@ -127,6 +127,16 @@ public enum Signposts {
         Presentation.committed { emit(signpost) }
     }
 
+    /// Reads associated state synchronously at the next emission, before its
+    /// caller can yield to another frame. The returned closure cancels a read
+    /// that is no longer needed. Observers run outside the journal's lock.
+    public static func observeNext(
+        _ signpost: Signpost, _ body: @escaping @Sendable (SignpostMark) -> Void
+    ) -> @Sendable () -> Void {
+        let id = journal.observe(signpost, body)
+        return { journal.cancel(id) }
+    }
+
     /// Every mark so far, oldest first.
     public static var marks: [SignpostMark] { journal.marks }
 
@@ -156,6 +166,7 @@ public enum Signposts {
         /// linker's finish is the other mark nobody emits, because it
         /// happened before there was anything to emit it.
         private var kept: [SignpostMark] = Journal.origin()
+        private var observers: [UUID: (Signpost, @Sendable (SignpostMark) -> Void)] = [:]
 
         private static func origin() -> [SignpostMark] {
             var marks = [SignpostMark(signpost: .processStart, sinceProcessStart: 0)]
@@ -168,10 +179,28 @@ public enum Signposts {
         var marks: [SignpostMark] { lock.withLock { kept } }
 
         func append(_ mark: SignpostMark) {
-            lock.withLock {
+            let callbacks = lock.withLock {
                 if kept.count == Self.limit { kept.removeFirst() }
                 kept.append(mark)
+                let matching = observers.filter { $0.value.0 == mark.signpost }
+                for id in matching.keys { observers.removeValue(forKey: id) }
+                return matching.values.map { $0.1 }
             }
+            for callback in callbacks { callback(mark) }
+        }
+
+        func observe(
+            _ signpost: Signpost, _ body: @escaping @Sendable (SignpostMark) -> Void
+        ) -> UUID {
+            lock.withLock {
+                let id = UUID()
+                observers[id] = (signpost, body)
+                return id
+            }
+        }
+
+        func cancel(_ id: UUID) {
+            _ = lock.withLock { observers.removeValue(forKey: id) }
         }
 
         func reset() {

@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Verify the echo's own frame and gate accessibility.**
+
+The optimistic-echo measurement snapshots the drawn transcript synchronously
+inside the commit callback that emits its timing mark. Only a snapshot carrying
+the sent prompt can produce a timing sample; a row in a later frame cannot
+rescue the measurement. A performance-suite regression delays the row until
+the following commit and verifies that the original measurement still fails.
+
+Whole iOS verification now runs the full accessibility sweep after journeys,
+enforcing names and 44 pt targets. The command tests cover the order and prove
+that an audit failure stops verification before performance. Journey-level
+accessibility recordings retain their existing diagnostic role.
+
+The newly enforced sweep caught the dictation refusal's Open Settings button
+exposing only its 16 pt text height to accessibility. Its existing 44 pt layout
+now belongs to the label's hit area, so the whole reserved space is tappable.
+
+Validation: verifier unit and CLI tests pass, including the failing-audit case.
+Five echo samples pass at a 6.6 ms median and 13.7 ms worst against the 17 ms
+simulator budget, with the delayed-row regression passing. The accessibility
+sweep reports zero faults across 504 controls in 63 states. iOS lint and both
+dictation-denied composited goldens pass; the inspected images are unchanged.
+
 2026-09-09 — **Dictate into the iPhone composer.**
 
 Dictate now starts app-owned Speech recognition with microphone capture and

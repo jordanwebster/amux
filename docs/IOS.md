@@ -188,7 +188,8 @@ draft. Check denied access offers Settings and unavailable on-device recognition
 leaves the draft intact. The simulator journey proves the denied state only;
 live speech recognition remains a physical-phone check. The
 complete `timeout 12600 wt run ios-verify` runs lint, tests, goldens, journeys,
-performance and Release scope inspection; it does not publish or push.
+the full `ios-accessibility` audit, performance and Release scope inspection;
+it does not publish or push.
 
 ## Claude sessions
 

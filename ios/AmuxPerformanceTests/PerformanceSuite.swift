@@ -180,20 +180,14 @@ final class PerformanceSuite: XCTestCase {
         // they stop, and the app's own send is what runs after it: the
         // command is built, handed to the runtime, and the row goes up.
         Signposts.reset()
+        let frame = EchoFrame()
+        let cancel = Signposts.observeNext(.echoCommitted) { frame.record($0, drawn: drawn) }
+        defer { cancel() }
         XCTAssertTrue(harness.stores.send(to: agent), "the send never happened")
         try await harness.wait(for: .echoCommitted)
 
         let tapped = try XCTUnwrap(Signposts.first(.sendTapped))
-        let committed = try XCTUnwrap(Signposts.first(.echoCommitted))
-        var carried = false
-        for _ in 0..<10 {
-            carried = drawn.transcriptRows.contains {
-                $0.identifier == "transcript.prompt" && $0.label == text
-            }
-            if carried { break }
-            await harness.settle()
-        }
-        XCTAssertTrue(carried, "the echo was marked on a page the sent row never reached")
+        let committed = try frame.committed(carrying: text)
         return MetricSample(
             metric: .echoFrames,
             value: (committed - tapped) * 1_000,
@@ -202,6 +196,35 @@ final class PerformanceSuite: XCTestCase {
             // is 8.3, so the budget met here stands in for the phone's.
             proxy: true,
             workload: .conversation1000)
+    }
+
+    @MainActor
+    func testEchoMeasurementRejectsARowDelayedByOneCommit() async throws {
+        let harness = try Harness()
+        defer { harness.stop() }
+        Signposts.reset()
+        let drawn = DrawnElements()
+        let frame = EchoFrame()
+        let text = "one commit too late"
+        let cancel = Signposts.observeNext(.echoCommitted) { frame.record($0, drawn: drawn) }
+        defer { cancel() }
+        Signposts.emitWhenDrawn(.echoCommitted)
+        try await harness.wait(for: .echoCommitted)
+        XCTAssertThrowsError(try frame.committed(carrying: text))
+
+        let cancelLater = Signposts.observeNext(.transcriptCommit) { _ in
+            drawn.record([IdentifiedElement(
+                identifier: "transcript.prompt", label: text,
+                frame: CGRect(x: 0, y: 0, width: 200, height: 44))])
+        }
+        defer { cancelLater() }
+        Signposts.emitWhenDrawn(.transcriptCommit)
+        try await harness.wait(for: .transcriptCommit)
+        XCTAssertEqual(drawn.transcriptRows.first?.label, text)
+        XCTAssertThrowsError(try frame.committed(carrying: text)) { error in
+            XCTAssertEqual(
+                String(describing: error), "the marked echo frame did not carry the sent row")
+        }
     }
 
     // MARK: - Streaming scroll

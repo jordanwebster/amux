@@ -41,11 +41,14 @@ struct ComposerBox: View {
                         .foregroundStyle(design.inkMuted.color)
                         .identified("composer.dictation", label: sentence)
                     if dictation.phase == .denied {
-                        Button("Open Settings") { actions(.dictationSettings) }
-                            .designFont(.caption, design)
-                            .foregroundStyle(design.ink.color)
-                            .frame(minHeight: 44)
-                            .identified("composer.dictation.settings", label: "Open Settings")
+                        Button { actions(.dictationSettings) } label: {
+                            Text("Open Settings")
+                                .designFont(.caption, design)
+                                .foregroundStyle(design.ink.color)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .identified("composer.dictation.settings", label: "Open Settings")
                     }
                 }
             }

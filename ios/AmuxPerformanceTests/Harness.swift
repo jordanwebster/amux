@@ -165,3 +165,31 @@ final class DrawnElements: @unchecked Sendable {
         return elements.filter { $0.identifier.hasPrefix("transcript.") }
     }
 }
+
+/// The row evidence and timestamp belong to one commit, even if the test
+/// resumes after later frames have changed the drawn tree.
+final class EchoFrame: @unchecked Sendable {
+    private let lock = NSLock()
+    private var captured: (SignpostMark, [IdentifiedElement])?
+
+    func record(_ mark: SignpostMark, drawn: DrawnElements) {
+        let rows = drawn.transcriptRows
+        lock.withLock {
+            if captured == nil { captured = (mark, rows) }
+        }
+    }
+
+    func committed(carrying text: String) throws -> Double {
+        try lock.withLock {
+            guard let (mark, rows) = captured else {
+                throw StalledMeasurement(why: "the echo commit was not captured")
+            }
+            guard rows.contains(where: {
+                $0.identifier == "transcript.prompt" && $0.label == text
+            }) else {
+                throw StalledMeasurement(why: "the marked echo frame did not carry the sent row")
+            }
+            return mark.sinceProcessStart
+        }
+    }
+}
