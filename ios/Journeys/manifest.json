@@ -110,7 +110,7 @@
       "id": "production-startup",
       "stage": 13,
       "topology": "e2e-tests/topologies/accounts.json",
-      "claim": "Signing in through the scripted account service starts the application's own runtime at the relay its connect token names, with no door connection credentials. After pairing, Hosts shows the real daemon and home shows its agent. Relaunching restores the selected account and draws the fleet saved by that connection before the account service answers or any runtime starts, then the remembered profile reconnects."
+      "claim": "Signing in through the scripted account service starts the application's own runtime at the relay its connect token names, with no door connection credentials. After pairing, Hosts shows the real daemon and home shows its agent. Reinstalling the same build moves the app container while preserving its files. Relaunching restores the selected account and draws the fleet saved by that connection before the account service answers or any runtime starts, then the remembered profile reconnects."
     }
   ]
 }

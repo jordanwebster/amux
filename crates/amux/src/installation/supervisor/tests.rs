@@ -5,6 +5,7 @@ use super::*;
 
 fn options(root: InstallationRoot, listeners: Listeners) -> InstallationOptions {
     InstallationOptions {
+        relocation: Default::default(),
         root,
         listeners,
         credentials: CredentialSource::ProfileFiles,
@@ -623,4 +624,131 @@ async fn deletion_that_wins_startup_cannot_be_undone_by_the_late_start() {
             .exists()
     );
     installation.shutdown(ShutdownReason::UserRequested).await;
+}
+
+#[tokio::test]
+async fn mobile_profiles_relocation_refuses_foreign_paths_before_rewriting_any_config() {
+    for field in [
+        "other_profile",
+        "outside",
+        "installation_config",
+        "socket_path",
+        "state_path",
+    ] {
+        let (installation, root) = installation().await;
+        let first = create(&installation, "personal").await;
+        let second = create(&installation, "work").await;
+        let old = installation.root().to_owned();
+        installation.shutdown(ShutdownReason::UserRequested).await;
+        let moved = crate::test_fixtures::short_installation_root();
+        std::fs::remove_dir(moved.path()).unwrap();
+        std::fs::rename(root.path(), moved.path()).unwrap();
+        let paths = ProfilePaths::allocated(moved.path(), first.record.id);
+        let path = paths.config_path.unwrap();
+        let mut profile: ProfileConfig =
+            serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        match field {
+            "other_profile" => {
+                profile.data_dir = ProfilePaths::allocated(&old, second.record.id).data_dir
+            }
+            "outside" => profile.data_dir = old.parent().unwrap().join("escaped"),
+            "installation_config" => {
+                profile.installation_config = old.parent().unwrap().join("config.yaml")
+            }
+            "socket_path" => profile.socket_path = old.join("escaped.sock"),
+            "state_path" => profile.state_path = old.join("escaped.yaml"),
+            _ => unreachable!(),
+        }
+        replace_yaml(&path, &profile).unwrap();
+        let config_path = moved.path().join("config.yaml");
+        let before = std::fs::read(&config_path).unwrap();
+        let peer_path = ProfilePaths::allocated(moved.path(), second.record.id)
+            .config_path
+            .unwrap();
+        let peer_before = std::fs::read(&peer_path).unwrap();
+        let mut options = options(
+            InstallationRoot::OnDisk(moved.path().into()),
+            Listeners::InProcessOnly,
+        );
+        options.relocation = RelocationPolicy::Rebase;
+        let error = Installation::open(options)
+            .await
+            .err()
+            .expect("escape was accepted");
+        assert!(
+            matches!(
+                error,
+                InstallationError::Config(ConfigError::Disagreement { .. })
+            ),
+            "{field}: {error}"
+        );
+        assert_eq!(std::fs::read(config_path).unwrap(), before);
+        assert_eq!(std::fs::read(peer_path).unwrap(), peer_before);
+    }
+}
+
+#[tokio::test]
+async fn mobile_profiles_desktop_refuses_a_moved_installation() {
+    let (installation, root) = installation().await;
+    create(&installation, "personal").await;
+    installation.shutdown(ShutdownReason::UserRequested).await;
+    let moved = crate::test_fixtures::short_installation_root();
+    std::fs::remove_dir(moved.path()).unwrap();
+    std::fs::rename(root.path(), moved.path()).unwrap();
+    let error = Installation::open(options(
+        InstallationRoot::OnDisk(moved.path().into()),
+        Listeners::InProcessOnly,
+    ))
+    .await
+    .err()
+    .expect("desktop accepted relocation");
+    assert!(
+        matches!(
+            error,
+            InstallationError::Config(ConfigError::Disagreement { field: "root", .. })
+        ),
+        "{error}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mobile_profiles_relocation_refuses_symlinks() {
+    for file in [
+        "config.yaml",
+        "data",
+        "data/device.key",
+        "data/trust.json",
+        "state/state.yaml",
+    ] {
+        let (installation, root) = installation().await;
+        let profile = create(&installation, "personal").await;
+        installation.shutdown(ShutdownReason::UserRequested).await;
+        let moved = crate::test_fixtures::short_installation_root();
+        std::fs::remove_dir(moved.path()).unwrap();
+        std::fs::rename(root.path(), moved.path()).unwrap();
+        let directory = moved
+            .path()
+            .join("profiles")
+            .join(profile.record.id.to_string());
+        let path = directory.join(file);
+        let target = directory.join("redirected");
+        if path.exists() {
+            std::fs::rename(&path, &target).unwrap();
+        }
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        let mut options = options(
+            InstallationRoot::OnDisk(moved.path().into()),
+            Listeners::InProcessOnly,
+        );
+        options.relocation = RelocationPolicy::Rebase;
+        let error = Installation::open(options)
+            .await
+            .err()
+            .expect("symlink was accepted");
+        assert!(
+            matches!(error, InstallationError::InvalidPath(_)),
+            "{file}: {error}"
+        );
+    }
 }

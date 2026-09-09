@@ -32,7 +32,7 @@ pub(crate) use operation::OperationGate;
 pub use supervisor::{
     AgentResumeResult, AgentResumeStatus, CredentialSource, Installation, InstallationOptions,
     Intent, OperationId, ProfileEvent, ProfileResumeResult, ProfileStatus, ProfileSuspendResult,
-    ProfileWatch, ResumeReport, SuspendReason, SuspendReport,
+    ProfileWatch, RelocationPolicy, ResumeReport, SuspendReason, SuspendReport,
 };
 
 pub use crate::profile::runtime::{InstallationSettings, Listeners};

@@ -4,6 +4,28 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Preserve phone accounts when the app container moves.**
+
+The mobile runtime opts into installation path rebasing when iOS moves its
+storage container. Startup validates every profile against the exact namespace
+recorded in the old installation before replacing the installation and profile
+YAML files. Profile IDs, keys, trust and cached fleets remain in place. Desktop
+callers refuse relocation by default, and symlinks or paths outside a profile's
+allocated namespace still fail startup.
+
+The two-account Rust test moves a paired installation and reopens both accounts,
+checking their original profile IDs, device keys, identities and isolated trust.
+Negative tests cover cross-account and external paths, foreign installation
+references, moved desktop roots and symlinks. The production-startup journey
+reinstalls the same simulator build between pairing and restored launch, checks
+that the container moved, reads the saved account and fleet before startup, and
+requires a fresh relay dial and successful reconciliation.
+
+Validation: all seven mobile-profile tests and the reinstall journey pass.
+The 14 installation-supervisor and seven split-configuration tests pass, as do
+workspace formatting, Rust lint and iOS lint. The four journey captures were
+inspected; the restored connection records two relay dial attempts.
+
 2026-09-09 — **Keep a report's identity across upload retries.**
 
 The first upload retains its complete bundle. A refusal and Retry now carry

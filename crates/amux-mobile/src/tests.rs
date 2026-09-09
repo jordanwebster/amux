@@ -2691,6 +2691,77 @@ async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
     }
 
     drop(running);
+    let profile_files = |root: &std::path::Path| {
+        let mut files = std::collections::BTreeMap::new();
+        for entry in std::fs::read_dir(root.join("data/installation/profiles")).unwrap() {
+            let entry = entry.unwrap();
+            if !entry.file_type().unwrap().is_dir() {
+                continue;
+            }
+            for file in ["data/device.key", "data/trust.json", "data/host_id"] {
+                let path = entry.path().join(file);
+                files.insert((entry.file_name(), file), std::fs::read(path).unwrap());
+            }
+        }
+        files
+    };
+    let saved = profile_files(root.path());
+    assert_eq!(saved.len(), 6, "both profile namespaces must survive");
+    let cached = ["personal", "work"]
+        .map(|account| std::fs::read(cache_path(&root.path().join("cache"), account)).unwrap());
+    let moved = test_root();
+    std::fs::remove_dir(moved.path()).unwrap();
+    std::fs::rename(root.path(), moved.path()).unwrap();
+    for (index, account) in ["personal", "work"].into_iter().enumerate() {
+        assert_eq!(
+            std::fs::read(cache_path(&moved.path().join("cache"), account)).unwrap(),
+            cached[index]
+        );
+    }
+    while receive.try_recv().is_ok() {}
+    let reopened_from = mark(&events);
+    let reopened = Running {
+        handle: start(
+            &accounts_config(
+                moved.path(),
+                format!("http://{}", net.relay_addr()),
+                &[
+                    ("personal", json!({ "Static": personal_token })),
+                    ("work", json!({ "Static": work_token })),
+                ],
+                "personal",
+            ),
+            &events,
+        ),
+        _events: &events,
+    };
+    assert!(!reopened.handle.is_null());
+    for (account, identity, host, agent) in [
+        ("personal", personal_identity, "workstation", "fix-login"),
+        ("work", work_identity, "laptop", "write-docs"),
+    ] {
+        let from = if account == "personal" {
+            reopened_from
+        } else {
+            mark(&events)
+        };
+        if account == "work" {
+            select_account(&mut receive, reopened.handle, account).await;
+        }
+        let devices = seen(&mut receive, &events, from, reopened.handle, |event| {
+            event["Devices"]["identity"] == identity
+        })
+        .await;
+        let trusted = devices["Devices"]["devices"].as_array().unwrap();
+        assert_eq!(trusted.len(), 1, "{devices}");
+        assert_eq!(trusted[0]["name"], host);
+        seen(&mut receive, &events, from, reopened.handle, |event| {
+            agent_names(event) == [agent] && event["Fleet"]["reconciled"] == true
+        })
+        .await;
+    }
+    assert_eq!(profile_files(moved.path()), saved);
+    drop(reopened);
     net.shutdown().await;
 }
 

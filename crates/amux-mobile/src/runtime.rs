@@ -219,6 +219,7 @@ impl MobileRuntime {
             Arc::new(Mutex::new(HashMap::new()));
         let looked_up = providers.clone();
         let installation = Installation::open(InstallationOptions {
+            relocation: amux::RelocationPolicy::Rebase,
             root: InstallationRoot::OnDisk(config.installation_root()),
             settings: config.installation_settings(),
             listeners: Listeners::InProcessOnly,

@@ -159,6 +159,7 @@ opening looks like this (the installation and credential types are exported by
 
 ```rust
 let installation = Installation::open(InstallationOptions {
+    relocation: RelocationPolicy::Refuse,
     root: InstallationRoot::OnDisk(root),
     settings,
     listeners: Listeners::InProcessOnly,

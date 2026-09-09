@@ -2011,14 +2011,32 @@ def production_startup(journey: Journey, udid: str, ready: dict) -> None:
     agent = next(agent for agent in ready["agents"] if agent["name"] == "fix-login")
     user = next(user for user in ready["users"] if user["label"] == "personal")
     files = {name: journey.directory / name for name in (
-        "production-startup.json", "startup-home.png", "startup-hosts.png", "startup-remembered.png")}
-    perform(journey, udid, "AmuxUITests/ProductionStartupTests", files, telling={
+        "startup-paired.json", "startup-restored.json", "startup-home.png", "startup-hosts.png",
+        "startup-remembered.png", "startup-reconnected.png")}
+    telling = {
         "AMUX_RELAY": f"http://{ready['relay']}", "AMUX_TOKEN": user["token"],
         "AMUX_USER": "personal", "AMUX_CONTROL": ready["control"],
         "AMUX_DOOR_PORT": str(free_port()), "AMUX_AGENT": agent["agent_id"],
         "AMUX_HOST": "laptop", "AMUX_HOST_ID": host["host_id"],
-    })
-    seen = json.loads(files["production-startup.json"].read_text())
+    }
+    perform(journey, udid, "AmuxUITests/ProductionStartupTests/testSignInStartsTheApp",
+            {name: files[name] for name in ("startup-paired.json", "startup-home.png", "startup-hosts.png")},
+            telling=telling)
+    previous = container(udid)
+    # Install the same build as an update, retaining the account, keys and fleet.
+    # The normal journey install helper deliberately clears accounts.
+    ios_simulators.run("xcrun", "simctl", "install", udid, str(APPLICATION), timeout=300)
+    current = container(udid)
+    journey.expect(previous != current, "simulator reinstall did not move the app data container")
+    relocation = {"previous": str(previous), "current": str(current)}
+    (journey.directory / "container-relocation.json").write_text(json.dumps(relocation, indent=2) + "\n")
+    perform(journey, udid, "AmuxUITests/ProductionStartupTests/testRestoredLaunchDrawsTheRememberedAccount",
+            {name: files[name] for name in ("startup-restored.json", "startup-remembered.png", "startup-reconnected.png")},
+            telling=telling)
+    seen = json.loads(files["startup-paired.json"].read_text()) | json.loads(files["startup-restored.json"].read_text())
+    seen["relocation"] = relocation
+    files["production-startup.json"] = journey.directory / "production-startup.json"
+    files["production-startup.json"].write_text(json.dumps(seen, indent=2, sort_keys=True) + "\n")
     connected = seen["connected"]["bridge"]
     journey.expect(connected["started"] and "laptop" in connected["hosts"]
                    and "fix-login" in connected["agents"],
@@ -2037,9 +2055,11 @@ def production_startup(journey: Journey, udid: str, ready: dict) -> None:
     forbidden = {"-amux-relay", "-amux-token", "-amux-user", "-amux-pair"}
     journey.expect(not forbidden.intersection(seen["launchArguments"]),
                    "startup was supplied a door connection")
-    journey.expect(seen["reconciled"]["bridge"]["reconciled"], "the saved profile did not reconnect")
+    reconnected = seen["reconciled"]["bridge"]
+    journey.expect(reconnected["reconciled"] and reconnected["started"]
+                   and reconnected["relayAttempts"] > 0, "the saved profile did not reconnect")
     journey.say("sign-in asked the scripted cloud for its relay, reached laptop and fix-login, "
-                "then a relaunch drew the saved account and fleet before starting a runtime")
+                "then a reinstall moved its container; relaunch drew the saved account and fleet before reconnecting")
     evidence = Path(".autopilot/evidence/production-startup")
     if evidence.parent.is_dir():
         evidence.mkdir(parents=True, exist_ok=True)

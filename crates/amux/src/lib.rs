@@ -81,8 +81,8 @@ pub use embedded_relay::{
 pub use installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
-    ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
-    SuspendReason, SuspendReport,
+    ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, RelocationPolicy,
+    ResumeReport, SuspendReason, SuspendReport,
 };
 pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};

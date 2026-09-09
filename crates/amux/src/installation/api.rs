@@ -21,6 +21,7 @@ impl CredentialProvider for NoCredentials {
 
 fn options(root: &std::path::Path) -> InstallationOptions {
     InstallationOptions {
+        relocation: Default::default(),
         root: InstallationRoot::OnDisk(root.into()),
         settings: InstallationSettings {
             repository_roots: Vec::new(),

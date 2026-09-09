@@ -462,6 +462,7 @@ impl WatchProbe {
 
 fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
     InstallationOptions {
+        relocation: Default::default(),
         root,
         listeners: Listeners::Sockets,
         credentials: CredentialSource::ProfileFiles,

@@ -1264,6 +1264,7 @@ mod attach {
     async fn embedded_client() -> (amux::Installation, Client, tempfile::TempDir) {
         let root = amux::test_fixtures::short_installation_root();
         let installation = amux::Installation::open(amux::InstallationOptions {
+            relocation: Default::default(),
             root: amux::InstallationRoot::OnDisk(root.path().into()),
             settings: amux::InstallationSettings {
                 repository_roots: Vec::new(),

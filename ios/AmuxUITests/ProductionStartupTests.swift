@@ -3,7 +3,7 @@ import XCTest
 
 final class ProductionStartupTests: JourneyCase {
     @MainActor
-    func testSignInStartsTheAppAndRelaunchDrawsTheRememberedAccount() throws {
+    func testSignInStartsTheApp() throws {
         let runner = try Runner()
         let relay = try XCTUnwrap(URLComponents(string: runner.relay))
         let environment = ProcessInfo.processInfo.environment
@@ -21,7 +21,7 @@ final class ProductionStartupTests: JourneyCase {
         }
         app.launchArguments = try arguments(script)
         record["launchArguments"] = app.launchArguments.filter { $0.hasPrefix("-amux-") }
-        defer { try? write("production-startup.json") }
+        defer { try? write("startup-paired.json") }
         app.launch()
         waitFor(app, "home.empty.action", "the unsigned home did not offer sign-in")
         press(app, "home.empty.action")
@@ -50,7 +50,24 @@ final class ProductionStartupTests: JourneyCase {
         XCTAssertLessThanOrEqual(credentials.count, 4,
                                  "redrawing the root must not construct another runtime coordinator")
         app.terminate()
+    }
 
+    @MainActor
+    func testRestoredLaunchDrawsTheRememberedAccount() throws {
+        let runner = try Runner()
+        let relay = try XCTUnwrap(URLComponents(string: runner.relay))
+        let script: [String: Any] = [
+            "account": runner.user, "email": "ada@example.com", "displayName": "Ada",
+            "entitlement": "active", "source": "granted", "token": runner.token,
+            "relayHost": try XCTUnwrap(relay.host), "relayPort": try XCTUnwrap(relay.port),
+        ]
+        let app = XCUIApplication()
+        func arguments(_ state: [String: Any]) throws -> [String] {
+            let json = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+            return ["-amux-door-port", runner.doorPort, "-amux-scripted-cloud",
+                    "-amux-cloud-script", String(decoding: json, as: UTF8.self)]
+        }
+        defer { try? write("startup-restored.json") }
         // Hold the service's answer, so the only possible source of these rows is
         // the account and fleet the first launch saved. No fixture seeds either.
         app.launchArguments = try arguments(script.merging(["latencyMillis": 60_000]) { _, new in new })
@@ -74,6 +91,11 @@ final class ProductionStartupTests: JourneyCase {
         app.activate()
         try door(runner, .init(kind: "awaitReconciled", seconds: 60))
         waitFor(app, "home.row.\(runner.agent)", "the restored profile did not reconcile with its host")
-        record["reconciled"] = try door(runner, .init(kind: "bridge"))
+        let reconciled = try door(runner, .init(kind: "bridge"))
+        record["reconciled"] = reconciled
+        let bridge = try XCTUnwrap(reconciled["bridge"] as? [String: Any])
+        XCTAssertEqual(bridge["started"] as? Bool, true)
+        XCTAssertGreaterThan(bridge["relayAttempts"] as? Int ?? 0, 0)
+        photograph(app, "startup-reconnected")
     }
 }

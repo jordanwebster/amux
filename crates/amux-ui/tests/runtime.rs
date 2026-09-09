@@ -65,6 +65,7 @@ async fn create_test_agent(client: &amux::Client, working_dir: &Path) -> amux::A
 async fn installation_client() -> (amux::Installation, amux::Client, PathBuf, tempfile::TempDir) {
     let disk_root = amux::test_fixtures::short_installation_root();
     let installation = amux::Installation::open(amux::InstallationOptions {
+        relocation: Default::default(),
         root: amux::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: amux::InstallationSettings {
             repository_roots: Vec::new(),
@@ -796,6 +797,7 @@ fn socket_connector(socket: &Path) -> amux_ui::Connector {
 async fn socketed_installation() -> (amux::Installation, tempfile::TempDir) {
     let disk_root = amux::test_fixtures::short_installation_root();
     let installation = amux::Installation::open(amux::InstallationOptions {
+        relocation: Default::default(),
         root: amux::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: amux::InstallationSettings {
             repository_roots: Vec::new(),

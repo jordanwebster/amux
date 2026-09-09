@@ -448,6 +448,7 @@ async fn owned_installation(
 
 fn installation_options(config: &Config, listeners: Listeners) -> InstallationOptions {
     InstallationOptions {
+        relocation: Default::default(),
         root: InstallationRoot::OnDisk(config.state_path.parent().unwrap().join("installation")),
         settings: InstallationSettings {
             repository_roots: Vec::new(),
