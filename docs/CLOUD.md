@@ -287,9 +287,13 @@ verification list.
   `.wt/amux`, started by `wt run daemon` — on a profile the recipe creates for
   the run and destroys afterwards, signed in as the same account by completing
   the CLI's device-code flow in the browser session it already holds. The
-  phone then trusts that machine by the invitation it printed, opens a
+  phone then trusts that machine by the code it printed, opens a
   conversation with a real Claude session running on it, asks one question and
-  reads the answer back.
+  reads the answer back. It pairs by that code and not by scanning the
+  machine's QR invitation, which every journey here does too: over the
+  production relay the scanned invitation is refused before the daemon ever
+  sees it, and the recipe's evidence names that as a limitation of the run
+  rather than a result, because why it happens is still being investigated.
 
   What it proves that nothing else does: the production handshake. Every other
   journey runs against a relay started beside it with credentials a harness

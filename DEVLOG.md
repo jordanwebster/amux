@@ -72,23 +72,25 @@ the relay.
 
 What the run found, which is the point of running it:
 
-- The account service's GraphQL endpoint answers `me: null` to a request
-  carrying a bearer token and no cookie. The phone has no cookie. So the
-  entitlement read — the one gate the app was rewritten to use — comes back as
-  no access on a phone whose account the same service is issuing relay
-  credentials for. The recipe reports it as the defect it is and keeps going,
-  because the rest of the journey is what says whether the relay let the phone
-  in regardless.
+- The account service's GraphQL endpoint answered `me: null` to a request
+  carrying a bearer token and no cookie. The phone has no cookie, so the
+  entitlement read — the one gate the app was rewritten to use — came back as
+  no access on a phone whose account the same service was issuing relay
+  credentials for. That is fixed in the service and deployed, and the recipe
+  now reads the account as entitled and agrees with the credential it is
+  issued.
 - Pairing by the QR invitation is refused over the production relay, while
   pairing by the code the machine prints goes through. The daemon never sees
-  the QR attempt at all, so it is refused before it arrives.
+  the QR attempt at all, so it is refused before it arrives. The recipe pairs
+  by the code, as every journey here does, and says in its evidence that the
+  scanned invitation is a limitation of the run and not a result.
 
-Neither is fixable from this repository: both are the deployed service's side.
-Everything else in the sentence holds. The phone signs in from a session it
-was handed, reaches the production relay on the credential the account service
-minted and at the address it named, is admitted by a machine here on the code
-that machine printed, is given a fleet of one machine and one agent, and asks
-a real Claude session a question and reads its answer back.
+The sentence holds end to end. The phone signs in from a session it was
+handed, reads what the account may do and agrees with the credential it is
+given, reaches the production relay at the address that credential names, is
+admitted by a machine here on the code that machine printed, is given a fleet
+of one machine and one agent, and asks a real Claude session a question and
+reads its answer back.
 
 2026-09-09 — **The app is the one already on the App Store.**
 

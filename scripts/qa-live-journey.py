@@ -492,6 +492,13 @@ def main() -> None:
             journal.stop(f"the phone never trusted the machine: {complaint}")
         journal.say(f"the phone authenticated {paired[0]['host']!r} over the production "
                     "relay by the code that machine printed, and wrote the trust")
+        journal.say(
+            "a limitation, not a result: pairing here is by the code the machine "
+            "prints, which is how every journey in this repository pairs. Scanning "
+            "the machine's QR code, with the same account and the same machine "
+            "minutes apart, was refused over the production relay and never "
+            "reached the daemon at all. Why is under investigation and is not "
+            "claimed either way here.")
 
         bridge = replies(answers, "bridge")
         if not bridge:
