@@ -267,11 +267,42 @@ verification list.
   than ticking a box: what a build proved last time says nothing about the
   products, the bundle id or the provider configuration this one ships with.
   The web route to the same entitlement is a different question and is
-  covered by `wt run qa-cloud-signin`.
+  covered by `wt run qa-cloud-signin` and `wt run qa-live-journey`.
 
-**The accounts.** Each recipe has its own variable — `AMUX_QA_EMAIL` for the
-sign-in, `AMUX_QA_DEVICE_EMAIL` for the sandbox purchase — and they name
-different accounts, because only one of them is a sandbox account. When the
+- `wt run qa-live-journey` — the whole product once, against the real one. It
+  signs the QA account into `https://amux.sh`, hands the simulator app that
+  session and nothing else, and then stands back: the app asks the account
+  service who the account is and what it may do, asks it for a relay
+  credential, and dials the relay that credential names. On the other side is
+  this checkout's own daemon — its socket, state and identity under
+  `.wt/amux`, started by `wt run daemon` — on a profile the recipe creates for
+  the run and destroys afterwards, signed in as the same account by completing
+  the CLI's device-code flow in the browser session it already holds. The
+  phone then trusts that machine by the invitation it printed, opens a
+  conversation with a real Claude session running on it, asks one question and
+  reads the answer back.
+
+  What it proves that nothing else does: the production handshake. Every other
+  journey runs against a relay started beside it with credentials a harness
+  minted, so the audience, port and client identifier the relay compares with
+  its own configuration, and the RSA signature it validates, are never
+  exercised until here. A mismatch there fails silently — the phone simply
+  never arrives — so a failure is reported with what the phone's runtime and
+  the daemon logged rather than as a timeout.
+
+  It reaches a real account and spends real money on a real agent, so it is a
+  person's act and never a gate. The entitlement it proves is the web one: an
+  account entitled through amux.sh reaching a machine and an agent. It says
+  nothing about the App Store route, which needs a phone in somebody's hand.
+  If `/api/connect` answers `403 payment_required`, the dedicated account's
+  entitlement has lapsed — it was granted once by hand through the QA coupon
+  path and nothing renews it. That is an operator's to restore; the recipe
+  says so and stops, because an entitlement row written by hand is a
+  projection the next provider sync overwrites.
+
+**The accounts.** Two variables name two accounts — `AMUX_QA_EMAIL` for the
+sign-in and the live journey, `AMUX_QA_DEVICE_EMAIL` for the sandbox purchase
+— because only one of them is a sandbox account. When the
 environment already sets a variable, that value is used and nothing overwrites
 it; otherwise the recipe reads `.autopilot/qa-account.env` at the repository
 root, an operator-written file that sets those variables and nothing else.

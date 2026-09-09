@@ -10,6 +10,11 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
     public var entitlement: Entitlement
     /// The relay credential to hand back, or nothing to refuse.
     public var token: String?
+    /// Where that credential says the relay is. A scripted launch is handed
+    /// its relay by whoever is driving it and never dials this, so it is only
+    /// the address the answer carries.
+    public var relayHost: String
+    public var relayPort: Int
     public var deletion: DeletionOutcome
     /// What the account service does with a signed purchase handed to it.
     public var purchase: PurchaseRecording
@@ -21,6 +26,8 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
         signIn: SignInOutcome = .succeeds(Self.ada),
         entitlement: Entitlement = .active(grant: .purchased(.web), renews: nil),
         token: String? = "scripted-connect-token",
+        relayHost: String = "relay.example",
+        relayPort: Int = 443,
         deletion: DeletionOutcome = .deleted,
         purchase: PurchaseRecording = .accepted,
         upload: UploadOutcome = .accepted(id: "report-1"),
@@ -29,6 +36,8 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
         self.signIn = signIn
         self.entitlement = entitlement
         self.token = token
+        self.relayHost = relayHost
+        self.relayPort = relayPort
         self.deletion = deletion
         self.purchase = purchase
         self.upload = upload
@@ -184,7 +193,9 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         let state = record(.connectToken(id))
         await wait(state)
         guard let token = state.token else { throw CloudError.unauthenticated }
-        return ConnectToken(bearer: token, expiresAt: Scenario.now.addingTimeInterval(3600))
+        return ConnectToken(
+            bearer: token, host: state.relayHost, port: state.relayPort,
+            expiresAt: Scenario.now.addingTimeInterval(3600))
     }
 
     public func recordPurchase(

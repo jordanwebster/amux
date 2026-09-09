@@ -46,6 +46,20 @@ public enum DoorRequest: Sendable, Equatable {
     case late(account: String)
     /// Start the shared runtime against a relay with a credential.
     case connect(relay: String, token: String, user: String)
+    /// Put an account on this phone from a session somebody signed in
+    /// elsewhere, and reach whatever the account service says that account may
+    /// reach.
+    ///
+    /// The other way in. `connect` is handed a relay and a credential and
+    /// believes both, which is what a test relay on this Mac needs. This is
+    /// handed only a refresh token — the one thing a browser sign-in leaves
+    /// behind — and everything after it is the app's own production path: the
+    /// account service says who the account is and what it may do, mints the
+    /// relay credential, and names the relay to dial. Nothing here decides
+    /// where to go or what the account is entitled to, so a run of this
+    /// exercises the credential the relay will really validate rather than one
+    /// a harness minted.
+    case restoreSession(account: String, refresh: String)
     /// Wait until the fleet has been confirmed by a host, or give up after
     /// this many seconds. A connection is asynchronous, so a driver that read
     /// the screen straight after `connect` would read the moment before it.
@@ -159,6 +173,15 @@ public enum DoorRequest: Sendable, Equatable {
     /// against a base — a branch or a commit, or the working tree itself when
     /// the base is empty. The host computes the diff; the phone draws it.
     case requestChanges(agent: String, base: String)
+    /// Wait until the fleet names this agent, or give up after this many
+    /// seconds.
+    ///
+    /// A machine that has just admitted this phone has not finished saying
+    /// what it is running: trust is written, and the account of the machine
+    /// follows it over the same link. A driver that opened a conversation in
+    /// that gap would be telling the runtime to watch an agent it has never
+    /// heard of, and nothing would arrive.
+    case awaitAgent(agent: String, seconds: Double)
     /// Open an agent's conversation without going to it, which is what tells
     /// the runtime this client is watching that agent.
     ///
@@ -174,6 +197,15 @@ public enum DoorRequest: Sendable, Equatable {
     /// straight after a reconnection would be asking about the gap rather than
     /// about the send.
     case awaitSendable(agent: String, seconds: Double)
+    /// Wait until an agent has answered with something that says this, or give
+    /// up after this many seconds.
+    ///
+    /// A driver that read the transcript straight after sending would read the
+    /// message it had just sent. Waiting on the words rather than on a count
+    /// is what lets a driver wait for a real agent, which takes as long as it
+    /// takes and says a great many things on the way; the words must be ones
+    /// the message did not already carry, or the send's own row answers it.
+    case awaitReply(agent: String, saying: String, seconds: Double)
     /// Try to send a message to an agent, exactly as pressing send will.
     ///
     /// The answer says whether it left the phone. A refusal is not an error:
@@ -509,7 +541,7 @@ public struct VisibleFrame: Codable, Sendable, Equatable {
 extension DoorRequest: Codable {
     private enum Key: String, CodingKey {
         case kind, screen, fixture, cloud, store, relay, token, user, appearance, size, path
-        case account
+        case account, refresh, saying
         case identifier, text, seconds, qr, agent, base, prose, from, to
         case attachment, name, mime, base64, host, pin
         case note, marks
@@ -541,6 +573,10 @@ extension DoorRequest: Codable {
                 relay: try fields.decode(String.self, forKey: .relay),
                 token: try fields.decode(String.self, forKey: .token),
                 user: try fields.decode(String.self, forKey: .user))
+        case "restoreSession":
+            self = .restoreSession(
+                account: try fields.decode(String.self, forKey: .account),
+                refresh: try fields.decode(String.self, forKey: .refresh))
         case "awaitReconciled":
             self = .awaitReconciled(seconds: try fields.decode(Double.self, forKey: .seconds))
         case "awaitOffline":
@@ -605,6 +641,15 @@ extension DoorRequest: Codable {
                 base: try fields.decode(String.self, forKey: .base))
         case "watch":
             self = .watch(agent: try fields.decode(String.self, forKey: .agent))
+        case "awaitReply":
+            self = .awaitReply(
+                agent: try fields.decode(String.self, forKey: .agent),
+                saying: try fields.decode(String.self, forKey: .saying),
+                seconds: try fields.decode(Double.self, forKey: .seconds))
+        case "awaitAgent":
+            self = .awaitAgent(
+                agent: try fields.decode(String.self, forKey: .agent),
+                seconds: try fields.decode(Double.self, forKey: .seconds))
         case "awaitSendable":
             self = .awaitSendable(
                 agent: try fields.decode(String.self, forKey: .agent),
@@ -663,6 +708,10 @@ extension DoorRequest: Codable {
             try fields.encode(relay, forKey: .relay)
             try fields.encode(token, forKey: .token)
             try fields.encode(user, forKey: .user)
+        case .restoreSession(let account, let refresh):
+            try fields.encode("restoreSession", forKey: .kind)
+            try fields.encode(account, forKey: .account)
+            try fields.encode(refresh, forKey: .refresh)
         case .awaitReconciled(let seconds):
             try fields.encode("awaitReconciled", forKey: .kind)
             try fields.encode(seconds, forKey: .seconds)
@@ -745,9 +794,18 @@ extension DoorRequest: Codable {
         case .watch(let agent):
             try fields.encode("watch", forKey: .kind)
             try fields.encode(agent, forKey: .agent)
+        case .awaitAgent(let agent, let seconds):
+            try fields.encode("awaitAgent", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(seconds, forKey: .seconds)
         case .awaitSendable(let agent, let seconds):
             try fields.encode("awaitSendable", forKey: .kind)
             try fields.encode(agent, forKey: .agent)
+            try fields.encode(seconds, forKey: .seconds)
+        case .awaitReply(let agent, let saying, let seconds):
+            try fields.encode("awaitReply", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(saying, forKey: .saying)
             try fields.encode(seconds, forKey: .seconds)
         case .send(let agent, let text):
             try fields.encode("send", forKey: .kind)

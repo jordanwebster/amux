@@ -33,7 +33,9 @@ struct RootView: View {
                 // What a driver queries is what is on screen, and until it
                 // opens a screen by name that is the app itself.
                 .onAppear {
-                    DoorHost.shared.adopt(composition.stores, accounts: composition.accounts)
+                    DoorHost.shared.adopt(
+                        composition.stores, accounts: composition.accounts,
+                        cloud: composition.cloud)
                     DoorHost.shared.connectAsLaunchAsks()
                     // A link the launch carried goes through the same door the
                     // system's own links go through, before anything else has

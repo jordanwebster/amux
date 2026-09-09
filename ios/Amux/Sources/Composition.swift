@@ -40,8 +40,10 @@ final class Composition {
     let reports: ReportStore?
     let freezer: (any ReportFreezing)?
     /// The account service. Every screen sees it as `CloudService` and none of
-    /// them knows there is HTTP behind it.
-    private let cloud: any CloudService
+    /// them knows there is HTTP behind it. A debug build's driving door is
+    /// handed the same one, so a launch driven against the real service is
+    /// driven against the service the app itself is using.
+    let cloud: any CloudService
     /// The App Store. The paywall sees it as `StoreFront` and does not know
     /// StoreKit is behind it.
     private let store: any StoreFront

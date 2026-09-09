@@ -118,16 +118,30 @@ public enum EntitlementSource: String, Sendable, Equatable, Codable {
     case web
 }
 
-/// A relay credential. The bridge asks for one when it needs it and the app
-/// answers; nothing caches it beyond its expiry.
+/// A relay credential, and the relay it is good at. The bridge asks for one
+/// when it needs it and the app answers; nothing caches it beyond its expiry.
+///
+/// The address travels with the credential because it is the account service
+/// that decides which relay an account reaches — an app holding a relay
+/// address of its own would keep dialling one machine after the service had
+/// moved the account to another, and the credential names a port and an
+/// audience the relay compares with its own configuration.
 public struct ConnectToken: Sendable, Equatable, Codable {
     public var bearer: String
+    public var host: String
+    public var port: Int
     public var expiresAt: Date?
 
-    public init(bearer: String, expiresAt: Date? = nil) {
+    public init(bearer: String, host: String, port: Int, expiresAt: Date? = nil) {
         self.bearer = bearer
+        self.host = host
+        self.port = port
         self.expiresAt = expiresAt
     }
+
+    /// Where the relay is, as the runtime is told to reach it. Always TLS: the
+    /// account service only ever names a relay on the public internet.
+    public var relay: URL? { URL(string: "https://\(host):\(port)") }
 }
 
 /// Deletion can be refused while money is still moving, and the refusal has to

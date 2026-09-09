@@ -4,6 +4,59 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **The phone, the production relay and a real agent, once.**
+
+A new recipe, `wt run qa-live-journey`, runs the whole product against the
+real one. It signs a QA account into `https://amux.sh` with that account's own
+password, hands the simulator app the session it got, and then stands back.
+The app asks the account service who the account is and what it may do, asks
+it for a relay credential, and dials the relay that credential names — no
+relay address and no token comes from the harness. On the other side is this
+checkout's own daemon on a profile made for the run and destroyed after it,
+signed in as the same account by completing the CLI's device-code flow in the
+browser session the recipe already holds. The phone trusts that machine by the
+code it printed, opens a conversation with a real Claude session, asks one
+question and reads the answer back.
+
+Three things had to be built for it. A relay credential now carries the relay
+it was minted for: the account service already answered with a host and a
+port and the app threw them away, which left the app with no way to reach a
+relay it had not been told about. The driving door takes a session — an
+account and a refresh token, nothing else — and everything after that is the
+app's own production path, including the rotating credential the runtime asks
+for and the app answers out of the same account service every screen reads.
+And the door learned to wait for two moments a live run cannot skip: for the
+fleet to name an agent, because trust and the machine's account of what it is
+running arrive separately and a conversation opened in that gap subscribes to
+nothing; and for an agent to say something, because a driver that read the
+transcript straight after sending would read the message it had just sent.
+
+The run creates its agent on the SDK driver, which is the driver the app's own
+New Agent creates. A terminal-driven Claude is read through a keymap matched
+to the installed Claude version, and its send gate stayed unavailable for four
+minutes here — a second thing to be wrong about a run whose question is about
+the relay.
+
+What the run found, which is the point of running it:
+
+- The account service's GraphQL endpoint answers `me: null` to a request
+  carrying a bearer token and no cookie. The phone has no cookie. So the
+  entitlement read — the one gate the app was rewritten to use — comes back as
+  no access on a phone whose account the same service is issuing relay
+  credentials for. The recipe reports it as the defect it is and keeps going,
+  because the rest of the journey is what says whether the relay let the phone
+  in regardless.
+- Pairing by the QR invitation is refused over the production relay, while
+  pairing by the code the machine prints goes through. The daemon never sees
+  the QR attempt at all, so it is refused before it arrives.
+
+Neither is fixable from this repository: both are the deployed service's side.
+Everything else in the sentence holds. The phone signs in from a session it
+was handed, reaches the production relay on the credential the account service
+minted and at the address it named, is admitted by a machine here on the code
+that machine printed, is given a fleet of one machine and one agent, and asks
+a real Claude session a question and reads its answer back.
+
 2026-09-09 — **The app is the one already on the App Store.**
 
 The bundle identifier is now `sh.amux.app`, which is the identifier of the

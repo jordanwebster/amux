@@ -29,6 +29,8 @@ final class DoorTests: XCTestCase {
             .late(account: "work"),
             .connect(relay: "http://127.0.0.1:8080", token: "bearer", user: "ada"),
             .addAccount(user: "work", token: "another-bearer"),
+            .restoreSession(
+                account: "9f1c1f8e-0000-4000-8000-000000000003", refresh: "a-refresh-token"),
             .awaitReconciled(seconds: 90),
             .awaitOffline(seconds: 30),
             .bridge,
@@ -53,7 +55,10 @@ final class DoorTests: XCTestCase {
             .pairByCode(host: "9f1c1f8e-0000-4000-8000-000000000002", pin: "419507"),
             .revoke(host: "9f1c1f8e-0000-4000-8000-000000000002"),
             .send(agent: "6f1c1f8e-0000-4000-8000-000000000001", text: "carry on"),
+            .awaitAgent(agent: "6f1c1f8e-0000-4000-8000-000000000001", seconds: 120),
             .awaitSendable(agent: "6f1c1f8e-0000-4000-8000-000000000001", seconds: 30),
+            .awaitReply(
+                agent: "6f1c1f8e-0000-4000-8000-000000000001", saying: "Paris", seconds: 240),
             .watch(agent: "6f1c1f8e-0000-4000-8000-000000000001"),
             .requestChanges(agent: "6f1c1f8e-0000-4000-8000-000000000001", base: "HEAD~1"),
             .requestChanges(agent: "6f1c1f8e-0000-4000-8000-000000000001", base: ""),

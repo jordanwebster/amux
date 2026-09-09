@@ -71,6 +71,10 @@ final class DoorHost {
     /// fixture. A connection signs one in here, because that is where every
     /// screen reads whether this phone can reach anything.
     private var composed: AccountRegistry?
+    /// The account service the app itself is using. In an ordinary launch that
+    /// is the real one at amux.sh, which is what makes it possible to drive a
+    /// launch against production rather than against a script.
+    @ObservationIgnored private var composedCloud: (any CloudService)?
 
     /// What the screen on show has named, in the order it draws it. SwiftUI
     /// builds its accessibility tree only for an attached accessibility
@@ -104,6 +108,11 @@ final class DoorHost {
     struct Credential {
         let user: String
         let token: String
+        /// Whether the relay credential is refreshed by asking the account
+        /// service. A cloud credential is good for an hour and the runtime
+        /// asks for the next one itself; a harness that minted the token has
+        /// nobody to ask.
+        var live: Bool = false
     }
 
     /// Every conversation this app has told the runtime to stop streaming, in
@@ -153,6 +162,8 @@ final class DoorHost {
             return connect(relay: relay, token: token, user: user)
         case .addAccount(let user, let token):
             return addAccount(user: user, token: token)
+        case .restoreSession(let account, let refresh):
+            return await restoreSession(account: account, refresh: refresh)
         case .late(let account): return deliverLate(to: account)
         case .awaitReconciled(let seconds):
             return await awaitReconciled(within: seconds)
@@ -229,8 +240,12 @@ final class DoorHost {
             guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
             stores.openConversation(identity)
             return .ack
+        case .awaitAgent(let agent, let seconds):
+            return await awaitAgent(agent, within: seconds)
         case .awaitSendable(let agent, let seconds):
             return await awaitSendable(of: agent, within: seconds)
+        case .awaitReply(let agent, let saying, let seconds):
+            return await awaitReply(of: agent, saying: saying, within: seconds)
         case .requestChanges(let agent, let base): return requestChanges(of: agent, against: base)
         // Answered here so the driver has an acknowledgement in hand before
         // the process goes; the server exits once the reply is written.
@@ -246,10 +261,11 @@ final class DoorHost {
     /// that is on it. When nothing has been opened by name, that is the app's
     /// own home — filled from this phone's remembered fleet — so the door reads
     /// and connects to the same bundle rather than a spare one nobody can see.
-    func adopt(_ stores: StoreBundle, accounts: AccountRegistry) {
+    func adopt(_ stores: StoreBundle, accounts: AccountRegistry, cloud: any CloudService) {
         guard screen == nil else { return }
         self.stores = stores
         self.composed = accounts
+        self.composedCloud = cloud
     }
 
     private func open(screen name: String, fixture: String?) -> DoorReply {
@@ -368,9 +384,54 @@ final class DoorHost {
         return start(relay: relay, active: onScreen)
     }
 
+    /// Puts an account on this phone from a session that was signed in outside
+    /// it, and reaches whatever the account service says that account reaches.
+    ///
+    /// Only the refresh token comes from the driver. Who the account is, what
+    /// it may do, the relay credential and the relay's address are all read
+    /// from the account service the app itself is using — so a run of this
+    /// against production is the production path, minus the browser nobody can
+    /// drive from here.
+    private func restoreSession(account: String, refresh: String) async -> DoorReply {
+        guard let composed else { return .error("this app has no accounts of its own") }
+        guard let service = composedCloud as? AmuxCloudService else {
+            return .error("this launch is not using the real account service")
+        }
+        let id = AccountId(account)
+        await service.restore(id, refresh: refresh)
+        let facts: AccountFacts
+        do {
+            facts = try await service.account(id)
+        } catch {
+            return .error("the account service would not say who this account is: \(error)")
+        }
+        guard facts.id == id else {
+            return .error("the session belongs to another account than the one named")
+        }
+        composed.add(
+            SignedInAccount(id: facts.id, email: facts.email, displayName: facts.displayName),
+            entitlement: facts.entitlement)
+        let credential: ConnectToken
+        do {
+            credential = try await service.connectToken(id)
+        } catch {
+            return .error("the account service issued no relay credential: \(error)")
+        }
+        guard let relay = credential.relay else {
+            return .error("the relay credential named no address to dial")
+        }
+        credentials.removeAll { $0.user == account }
+        credentials.append(Credential(user: account, token: credential.bearer, live: true))
+        return start(relay: relay.absoluteString, active: account, called: "QA phone")
+    }
+
     /// Starts the runtime for every account this phone has been given, reading
     /// the one named.
-    private func start(relay: String, active user: String) -> DoorReply {
+    ///
+    /// `called` is what this device calls itself on the relay, where that is
+    /// not the account's own name — an account signed in from a session is
+    /// known by its identifier, and a fleet full of identifiers is unreadable.
+    private func start(relay: String, active user: String, called name: String? = nil) -> DoorReply {
         guard let url = URL(string: relay), url.host != nil else {
             return .error("no relay at \(relay)")
         }
@@ -426,22 +487,33 @@ final class DoorHost {
         try? directories.createDirectory(at: data, withIntermediateDirectories: true)
         try? directories.createDirectory(at: cache, withIntermediateDirectories: true)
         let configuration = BridgeConfiguration(
-            dataDirectory: data, cacheDirectory: cache, deviceName: user,
+            dataDirectory: data, cacheDirectory: cache, deviceName: name ?? user,
             relay: BridgeConfiguration.Relay(
                 url: relay,
                 // A test relay on this machine has no certificate anybody
                 // could trust, so a loopback URL is spoken to in the clear.
                 tls: url.scheme == "https" ? .system : .plainLoopback),
             accounts: credentials.map {
-                BridgeConfiguration.Account(id: $0.user, token: .fixed($0.token))
+                BridgeConfiguration.Account(
+                    id: $0.user, token: $0.live ? .callback : .fixed($0.token))
             },
             active: user,
             logPath: data.appendingPathComponent("door.log"))
-        guard let client = try? BridgeClient(configuration: configuration) else {
+        // Where a rotating credential comes from: the runtime asks, and the
+        // app answers out of the same account service the screens read. That
+        // is the whole of the app's part in staying connected, and it is the
+        // only part a driver must not stand in for — a token this door minted
+        // would prove nothing about the one the relay validates.
+        let service = composedCloud as? AmuxCloudService
+        guard let client = try? BridgeClient(configuration: configuration, tokenProvider: {
+            _, account in
+            guard let service else { return nil }
+            return try? await service.connectToken(AccountId(account))
+        }) else {
             return .error("the runtime did not start")
         }
         bridge = client
-        deviceName = user
+        deviceName = name ?? user
         wire(stores, to: client)
         for agent in stores.conversations.keys { client.dispatch(.subscribe(agent: agent)) }
         pump = Task { @MainActor [weak self] in
@@ -723,6 +795,59 @@ final class DoorHost {
         return .error(
             "the conversation with \(agent) would still not take a message after \(seconds)s: "
             + "\(gate.map(String.init(describing:)) ?? "no conversation is open")")
+    }
+
+    /// Waits for the fleet to name an agent.
+    ///
+    /// Trust and the machine's account of what it is running arrive
+    /// separately, so this is the moment a driver has to wait for before it
+    /// can open anything: a conversation opened for an agent the runtime has
+    /// never heard of subscribes to nothing.
+    private func awaitAgent(_ agent: String, within seconds: Double) async -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if stores.fleet.rows.contains(where: { $0.id == identity }) { return .ack }
+            await DoorFrames.next()
+        }
+        return .error(
+            "no fleet naming \(agent) arrived in \(seconds)s; the phone was given "
+            + "\(stores.fleet.rows.map(\.name).sorted())")
+    }
+
+    /// Waits for an agent to say something, and answers with the conversation
+    /// it said it in.
+    ///
+    /// What a driver waiting on a real agent needs. The words are looked for
+    /// anywhere in a row rather than in one field of it, because which field
+    /// carries an answer is the layer's business — a Claude session and a
+    /// Codex one spell the same sentence differently — and a driver asking
+    /// whether the answer arrived on the phone is asking about the row it
+    /// arrived in, whatever shape that row has.
+    private func awaitReply(
+        of agent: String, saying words: String, within seconds: Double
+    ) async -> DoorReply {
+        guard bridge != nil else { return .error("nothing has been connected") }
+        guard let identity = AgentId(agent) else { return .error("no agent named \(agent)") }
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let conversation = stores.conversations[identity],
+               conversation.entries.contains(where: { Self.entry($0, says: words) }) {
+                return .conversation(ConversationReading(conversation))
+            }
+            await DoorFrames.next()
+        }
+        let drawn = stores.conversations[identity]?.entries.count
+        return .error(
+            "nothing the agent said in \(seconds)s contained \(words); the conversation with "
+            + "\(agent) holds \(drawn.map(String.init) ?? "no") entries")
+    }
+
+    private static func entry(_ entry: FeedEntry, says words: String) -> Bool {
+        guard let json = try? AmuxJSON.encoder.encode(entry.row) else { return false }
+        return String(decoding: json, as: UTF8.self)
+            .range(of: words, options: .caseInsensitive) != nil
     }
 
     /// Asks the host for an agent's changes. The host computes the diff and

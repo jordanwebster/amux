@@ -194,6 +194,26 @@ final class AmuxCloudTests: XCTestCase {
         XCTAssertEqual(answers.bearer("/api/connect"), "Bearer at-1")
     }
 
+    /// Which relay to dial is the account service's answer, and it arrives
+    /// beside the credential. An app holding an address of its own would keep
+    /// dialling one machine after the service had moved the account to
+    /// another, and the credential names a port the relay checks against its
+    /// own configuration.
+    func testTheCredentialCarriesTheRelayItWasMintedFor() async throws {
+        let answers = signedIn
+        answers.plus("/api/connect", status: 200, body: """
+            {"host":"relay.amux.test","port":9001,"token":"relay-jwt",
+             "expires_at":"2023-11-14T23:13:20Z"}
+            """)
+        let cloud = service(answers)
+        let account = try await cloud.signIn(presenting: Handed.returning(code: "code-1"))
+        let token = try await cloud.connectToken(account.id)
+
+        XCTAssertEqual(token.host, "relay.amux.test")
+        XCTAssertEqual(token.port, 9001)
+        XCTAssertEqual(token.relay, URL(string: "https://relay.amux.test:9001"))
+    }
+
     func testAnAccountWithNothingBoughtIsRefusedInTheWordsTheGateUses() async throws {
         let answers = signedIn
         answers.plus("/api/connect", status: 403, body: #"{"error":"payment_required"}"#)

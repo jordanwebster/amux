@@ -222,7 +222,9 @@ public actor AmuxCloudService: CloudService {
     public func connectToken(_ id: AccountId) async throws(CloudError) -> ConnectToken {
         let request = URLRequest(url: endpoint.connect)
         let issued: Connected = try await ask(request, as: Connected.self, for: id)
-        return ConnectToken(bearer: issued.token, expiresAt: issued.expires_at)
+        return ConnectToken(
+            bearer: issued.token, host: issued.host, port: issued.port,
+            expiresAt: issued.expires_at)
     }
 
     /// Hands a signed App Store transaction to the account service.
