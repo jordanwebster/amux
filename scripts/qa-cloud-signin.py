@@ -242,6 +242,23 @@ def ask(browser: Browser, url: str, token: str, method: str = "GET",
     return browser.send(prepared)[::2]
 
 
+def tier(token: str) -> str:
+    """What the access token itself says this account may do.
+
+    amux.sh recomputes this claim from the account's entitlements every time a
+    token is issued, so it is a second opinion arrived at without the
+    subscription cache the entitlement read consults. When the two disagree,
+    the account holds something that is not a provider subscription."""
+    parts = token.split(".")
+    if len(parts) < 2:
+        return "unreadable"
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    try:
+        return json.loads(base64.urlsafe_b64decode(payload)).get("tier") or "absent"
+    except (ValueError, AttributeError):
+        return "unreadable"
+
+
 def entitlement(answer: str) -> str:
     """The same read the app makes, said in a sentence."""
     try:
@@ -271,6 +288,8 @@ def main() -> None:
     print("signed in: amux.sh issued an access token"
           + (" and a refresh token" if issued.get("refresh_token") else
              " and no refresh token"))
+
+    print(f"tier: the access token claims {tier(token)}")
 
     status, body = ask(browser, f"{BASE}/connect/userinfo", token)
     if status != 200:
