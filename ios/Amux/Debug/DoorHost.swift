@@ -334,10 +334,11 @@ final class DoorHost {
 
     /// Puts the app into an appearance.
     ///
-    /// The appearance is the window's interface style and nothing else: the
+    /// The appearance is applied to the window's interface style: the
     /// design's colours are dynamic system colours and the glass is a system
     /// material, and both read the trait collection rather than SwiftUI's
-    /// colour scheme.
+    /// colour scheme. DrivenRoot also declares the matching appearance
+    /// preference so its hosting controller updates the system status bar.
     ///
     /// The screen is then built afresh, a frame later. Both halves matter. A
     /// material already on screen cross-fades to the new appearance over a

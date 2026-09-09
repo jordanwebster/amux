@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Keep golden status bars in the requested appearance.**
+
+The debug fixture root declares the same appearance preference as its window,
+so the SwiftUI hosting controller updates system status text when switching
+from dark to light. Overriding only the window could leave white status text
+on a light permission sheet or facts strip. The production root is unchanged.
+
+The full golden gate passes all 116 captures across 33 reference screens and
+25 added states, including both appearances and the small-display states.
+No baseline PNG or comparison tolerance changes. All 66 design reference
+pairs regenerate; the nine golden-tool tests and iOS source/string lint pass.
+
 2026-09-09 — **Catalogue iPhone copy and enforce its review.**
 
 The English catalogue now contains 461 entries, with 30 debug-only entries in

@@ -216,6 +216,11 @@ struct DrivenRoot<Content: View>: View {
         Group {
             if let screen = host.screen {
                 DoorScreens.view(for: screen, host: host)
+                    // The hosting controller owns system status-bar style.
+                    // Give it the same preference as the window's traits;
+                    // overriding only the window can leave white status text
+                    // on the next light fixture.
+                    .preferredColorScheme(host.appearance == .dark ? .dark : .light)
             } else {
                 content
             }
@@ -225,14 +230,6 @@ struct DrivenRoot<Content: View>: View {
         // blinks on a timer of its own draws its resting state so two runs
         // take the same picture.
         .environment(\.photographed, host.screen != nil)
-        // The appearance is not set here. It is the window's interface style
-        // and nothing else, because the design's colours are dynamic system
-        // colours and the glass is a system material, and both of those read
-        // the trait collection rather than SwiftUI's colour scheme. Overriding
-        // the environment as well gave the two sources a frame to disagree in,
-        // and a capture taken in that frame showed white plates over a
-        // near-black ground.
-        //
         // Built afresh on every appearance request rather than moved into the
         // new one: a material already on screen cross-fades over a length of
         // time nobody publishes, and a still of that fade is a picture of
