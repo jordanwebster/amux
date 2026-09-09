@@ -79,11 +79,31 @@ pub fn parse_qr_pairing_payload_for_cloud(
     Ok(payload)
 }
 
+/// Whether a pairing invitation names the cloud this device is on.
+///
+/// The two ends write the same origin down separately — one from the account
+/// a machine is signed in to, one from the account this device is signed in
+/// to — so they can disagree in spelling while naming the same place:
+/// `https://amux.sh/` and `https://amux.sh:443` are one service. Comparing
+/// the origins rather than the text keeps a legitimate invitation from being
+/// refused over a trailing slash. Anything that is not an origin at all is
+/// compared as it was written, so a malformed value never widens the match.
+pub fn same_cloud(left: &str, right: &str) -> bool {
+    use crate::installation::CloudServiceId;
+    match (
+        CloudServiceId::canonicalize(left),
+        CloudServiceId::canonicalize(right),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
 pub fn validate_qr_payload_cloud_url(
     payload_cloud_url: &str,
     configured_cloud_url: &str,
 ) -> Result<(), QrPairingError> {
-    if payload_cloud_url == configured_cloud_url {
+    if same_cloud(payload_cloud_url, configured_cloud_url) {
         Ok(())
     } else {
         Err(QrPairingError::CloudUrlMismatch {
@@ -170,6 +190,12 @@ mod tests {
                 ..
             })
         ));
+        // Two spellings of one origin are one cloud: an invitation issued by
+        // a machine that writes its service one way is not refused by a
+        // device that writes the same service another way.
+        assert!(validate_qr_payload_cloud_url("https://amux.sh/", "https://amux.sh").is_ok());
+        assert!(validate_qr_payload_cloud_url("https://amux.sh:443", "https://amux.sh").is_ok());
+        assert!(validate_qr_payload_cloud_url("https://amux.sh", "https://other.sh").is_err());
         assert!(matches!(
             validate_qr_payload_cloud_url("https://a", "https://b"),
             Err(QrPairingError::CloudUrlMismatch { .. })

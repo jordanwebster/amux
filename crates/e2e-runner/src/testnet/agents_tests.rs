@@ -66,8 +66,7 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             .as_str()
             .unwrap()
             .to_owned();
-        let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, &format!("http://{}", ready.relay))
-            .unwrap();
+        let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, client.cloud_url()).unwrap();
         client
             .admin()
             .pair_qr_cloud_peer(qr.host_id, qr.secret)

@@ -67,7 +67,7 @@ async fn exercise() {
             .await;
         let qr = amux::parse_qr_pairing_payload_for_cloud(
             qr["qr"].as_str().unwrap(),
-            &format!("http://{}", ready.relay),
+            client.cloud_url(),
         )
         .unwrap();
         wait_for(

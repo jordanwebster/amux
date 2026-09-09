@@ -427,12 +427,12 @@ impl EmbeddedBuilder {
             .map_err(|e| ServerError::State(e.to_string()))?;
         let relay_task = match self.relay {
             Some(relay) => {
-                // The cloud an embedded runtime is on is the relay it was
-                // opened with. Nothing else tells it: there is no
-                // configuration file behind an embedded device, and a pairing
-                // link it is asked to authenticate names the cloud it was
-                // issued for and is refused when that is not this one.
-                runtime.set_cloud_url(relay.endpoint.url()).await;
+                // The cloud an embedded runtime is on is the account service
+                // it was opened for, which the embedder names because nothing
+                // else can: there is no configuration file behind an embedded
+                // device, and a pairing link it is asked to authenticate
+                // names that service and is refused when it is not this one.
+                runtime.set_cloud_url(relay.cloud.clone()).await;
                 Some(relay.spawn(runtime.services.link_connector_ctx()))
             }
             None => None,

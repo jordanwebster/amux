@@ -9,6 +9,7 @@ use crate::services::{DeviceRuntimeSecurity, StartedUserServices, start_user_ser
 use crate::trust::TrustStore;
 
 pub struct UserClient {
+    cloud_url: String,
     client: crate::Client,
     admin: crate::ProfileAdmin,
     _connection: crate::transport::InProcessConnection,
@@ -28,6 +29,13 @@ impl std::ops::Deref for UserClient {
 impl UserClient {
     pub fn admin(&self) -> crate::ProfileAdmin {
         self.admin.clone()
+    }
+
+    /// The account service this client is on, which a pairing invitation it
+    /// accepts has to name. Not the relay: a relay is a route to a cloud, not
+    /// the cloud's name.
+    pub fn cloud_url(&self) -> &str {
+        &self.cloud_url
     }
 }
 
@@ -55,8 +63,8 @@ pub async fn connect_user(relay: SocketAddr, token: String) -> anyhow::Result<Us
         state.config.data_dir = root.path().to_owned();
         state.config.state_path = root.path().join("state.yaml");
         state.config.socket_path = root.path().join("amux.sock");
-        state.config.cloud_url = format!("http://{relay}");
     }
+    let cloud_url = state.read().await.config.cloud_url.clone();
     let services = start_user_services(
         state,
         None,
@@ -75,6 +83,7 @@ pub async fn connect_user(relay: SocketAddr, token: String) -> anyhow::Result<Us
     let (channel, server, connection) = services.open_managed_in_process_client_channel();
     let admin = crate::ProfileAdmin::for_test(services.client.clone());
     Ok(UserClient {
+        cloud_url,
         client: crate::Client::from_client_service_channel(channel),
         admin,
         _connection: connection,

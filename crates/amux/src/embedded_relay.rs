@@ -57,13 +57,13 @@ impl RelayEndpoint {
         })
     }
 
-    /// The cloud this endpoint is, written the way a configuration and a
-    /// pairing link write it.
+    /// This endpoint written as a URL: where the connection is dialled.
     ///
-    /// An embedded runtime has no cloud of its own beyond the relay it was
-    /// opened with, and a pairing link names the cloud it was issued for — so
-    /// the two are compared as strings and this is the one string this side
-    /// has to offer.
+    /// A relay address is not the name of a cloud. One service hands
+    /// different devices different relay hosts, so two devices on the same
+    /// account routinely dial different addresses — which is why a pairing
+    /// invitation names the account service instead, and why nothing here is
+    /// compared against one.
     pub fn url(&self) -> String {
         #[cfg(feature = "debug-tools")]
         if let Some(address) = self.plain {
@@ -139,6 +139,13 @@ impl DisconnectReason {
 
 pub struct EmbeddedRelay {
     pub endpoint: RelayEndpoint,
+    /// The account service this relay carries traffic for, as an origin.
+    ///
+    /// Separate from the endpoint because they answer different questions:
+    /// the endpoint is where to dial, this is which cloud the account is on.
+    /// A pairing invitation names the latter, and both ends can only agree
+    /// on it if the embedder says which service it signed the account in to.
+    pub cloud: String,
     /// Supplies routing tokens, not account access tokens.
     pub credentials: Arc<dyn CredentialProvider>,
     pub connection: watch::Sender<RelayConnection>,

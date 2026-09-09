@@ -4,6 +4,43 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Pair by a machine's QR invitation over the production cloud.**
+
+A phone refused every scanned invitation before anything left it, so the
+machine never saw an attempt and nothing was wrong at the relay. An invitation
+names the account service the machine is signed in to, and the phone compared
+that against the string it had recorded as its own cloud — which was the relay
+address it had been sent to, because an embedded runtime is opened with a
+relay and had nothing else to record. Those two can never be equal in
+production: one service hands different devices different relay hosts. Pairing
+by the printed code was unaffected, because a code carries no cloud to
+compare.
+
+The application now tells the runtime which account service each of its
+accounts signed in to, and that is what an invitation is compared against.
+Relay address and account service are separate values on an embedded relay:
+one is where to dial, the other is which cloud the account is on. The two
+services are compared as origins, so one spelling of a service is not refused
+against another.
+
+What a machine's QR carries is the link, not the offer inside it, and the
+driving door had only ever been handed the offer by a harness that had one. It
+now reads a link through the app's own reader first, which is the step a scan
+takes, so a run driven against a real machine goes the way a person does.
+
+The testnet had been overwriting the invitation's service with the test
+relay's address before encoding it, so both ends compared a value no machine
+ever produced and the comparison always passed. That rewrite is gone from the
+mobile suite and the journey harness, and a test asserts the two values differ
+so the coverage cannot quietly collapse again.
+
+Validation: the Rust suite, including the phone's QR pairing, the refusal of
+an invitation from another cloud, and the spelling-tolerant comparison. The
+accounts journey pairs on the invitation the machine actually issued. The live
+production recipe now pairs both ways in one run — by the machine's invitation
+on a phone that trusts nobody, then by the printed code after forgetting it —
+and the limitation it used to record is gone.
+
 2026-09-09 — **Recover when the phone runtime fails during startup.**
 
 The coordinator releases a bridge whose worker reports a stopped connection or

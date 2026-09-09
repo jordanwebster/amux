@@ -36,8 +36,7 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
             .as_str()
             .unwrap()
             .to_owned();
-        let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, &format!("http://{}", ready.relay))
-            .unwrap();
+        let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, client.cloud_url()).unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 match client
@@ -242,8 +241,7 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
             .as_str()
             .unwrap()
             .to_owned();
-        let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, &format!("http://{}", ready.relay))
-            .unwrap();
+        let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, client.cloud_url()).unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 match client

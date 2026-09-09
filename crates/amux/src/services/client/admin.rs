@@ -613,11 +613,17 @@ impl ProfileAdmin {
         };
         let local_name = {
             let state = self.service.server_state.read().await;
-            if request
+            // An invitation names the cloud it was issued for. Pairing a
+            // device on some other service to this one would put the two
+            // halves of the exchange on clouds that cannot route to each
+            // other, so an invitation from elsewhere is refused here rather
+            // than failing obscurely at the relay.
+            let cloud = &state.config.cloud_url;
+            let from_elsewhere = request
                 .cloud_url
                 .as_ref()
-                .is_some_and(|url| *url != state.config.cloud_url)
-            {
+                .is_some_and(|named| !crate::pairing::qr::same_cloud(named, cloud));
+            if from_elsewhere {
                 return Err(invalid());
             }
             state.host_name().to_string()

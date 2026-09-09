@@ -630,12 +630,11 @@ async fn apply(
             }
         }
         Control::StartQrPairing { daemon: name } => {
-            let mut start = daemon(&name)?
+            let start = daemon(&name)?
                 .pairing_admin()
                 .await
                 .start_qr_pairing()
                 .await?;
-            start.cloud_url = format!("http://{}", net.relay_addr());
             let amux::PairingSecret::QrSecret(secret) = &start.secret else {
                 bail!("QR pairing returned a PIN");
             };
@@ -1135,8 +1134,12 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .to_owned();
+            // Against the cloud the accepting device is on, not the relay it
+            // reaches that cloud over: an invitation names a service, and a
+            // testnet device is on the one a fresh configuration names.
             let qr =
-                amux::parse_qr_pairing_payload_for_cloud(&qr, &format!("http://{relay}")).unwrap();
+                amux::parse_qr_pairing_payload_for_cloud(&qr, &amux::Config::default().cloud_url)
+                    .unwrap();
             assert_eq!(qr.host_id, a.host_id());
             c.pairing_admin()
                 .await

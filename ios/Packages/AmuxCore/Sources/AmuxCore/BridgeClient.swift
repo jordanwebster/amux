@@ -30,10 +30,14 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     /// stores it, hands it back on every token request, and never reads it.
     public struct Account: Codable, Sendable, Equatable {
         public var id: String
+        /// The account service this account was signed in to. The runtime
+        /// pairs only with machines whose invitation names the same one.
+        public var service: String
         public var token: Token
 
-        public init(id: String, token: Token) {
+        public init(id: String, service: String, token: Token) {
             self.id = id
+            self.service = service
             self.token = token
         }
     }

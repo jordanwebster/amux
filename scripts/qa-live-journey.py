@@ -273,6 +273,46 @@ def pairing_code(journal: Journal, profile: str) -> str:
     return digits
 
 
+def pairing_invitation(journal: Journal, profile: str) -> tuple[str, subprocess.Popen]:
+    """The invitation the machine shows, held open while the phone scans it.
+
+    The same offer the machine's own screen puts on a QR code, printed as the
+    link behind it because nothing here can point a camera at a screen. Unlike
+    a code, an invitation names the machine and the account service it is on,
+    so this is the only pairing route where the two ends have to agree about
+    which cloud they are on — which is the whole reason it is run against the
+    production one. The command holds the offer open for as long as it runs,
+    so it is left running and stopped by the caller."""
+    offered = subprocess.Popen(
+        ["amux", "--profile", profile, "pair", "--qr", "--link"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    deadline = time.time() + 60
+    link = ""
+    while time.time() < deadline and not link:
+        line = offered.stdout.readline()
+        if not line:
+            break
+        found = re.search(r"Pairing link: (\S+)", line)
+        if found:
+            link = found.group(1)
+    if not link:
+        offered.terminate()
+        journal.stop("the machine would not show a pairing invitation")
+    journal.say("the machine is showing the invitation its own screen shows, the one "
+                "a phone scans")
+    return link, offered
+
+
+def stop_offering(offered: subprocess.Popen, profile: str) -> None:
+    """Ends the invitation, so the machine can hold a different offer out."""
+    offered.terminate()
+    try:
+        offered.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        offered.kill()
+    amux("--profile", profile, "pair", "--cancel")
+
+
 def start_the_agent(journal: Journal, profile: str) -> str:
     """Starts a real Claude session on that profile and answers its identifier.
 
@@ -426,17 +466,22 @@ def main() -> None:
 
     named = f"qa-live-{uuid.uuid4().hex[:8]}"
     profile = make_profile(journal, named)
+    offered: subprocess.Popen | None = None
     try:
         sign_the_daemon_in(journal, browser, profile)
         profile_reaches_the_relay(journal, profile)
         agent = start_the_agent(journal, profile)
-        machine, code = machine_identity(profile), pairing_code(journal, profile)
+        machine = machine_identity(profile)
 
         journeys.install(udid)
         journeys.forget_cache(udid)
         journeys.forget_pairings(udid)
         journal.say("the app is installed on the pinned simulator with nothing "
                     "remembered and nobody trusted")
+
+        # Held out last, because an invitation lasts five minutes and
+        # installing an app takes some of them.
+        invitation, offered = pairing_invitation(journal, profile)
 
         answers = speak(journal, udid, [
             # Everything after this line is the app's own production path. It
@@ -445,7 +490,10 @@ def main() -> None:
             {"kind": "restoreSession", "account": account, "refresh": refresh},
             {"kind": "awaitReconciled", "seconds": 120},
             {"kind": "accounts"},
-            {"kind": "pairByCode", "host": machine, "pin": code},
+            # By the machine's own invitation, which names the account service
+            # both ends are on. A phone that disagreed about that would refuse
+            # this before it ever reached the machine.
+            {"kind": "pair", "qr": invitation},
             # Read twice: once the moment the trust is written, so a phone that
             # never got a fleet says so, and once after the conversation is
             # ready, which is what a working run reports.
@@ -491,14 +539,8 @@ def main() -> None:
             journal.say(logs(journal, udid, account))
             journal.stop(f"the phone never trusted the machine: {complaint}")
         journal.say(f"the phone authenticated {paired[0]['host']!r} over the production "
-                    "relay by the code that machine printed, and wrote the trust")
-        journal.say(
-            "a limitation, not a result: pairing here is by the code the machine "
-            "prints, which is how every journey in this repository pairs. Scanning "
-            "the machine's QR code, with the same account and the same machine "
-            "minutes apart, was refused over the production relay and never "
-            "reached the daemon at all. Why is under investigation and is not "
-            "claimed either way here.")
+                    "relay by scanning that machine's own invitation, and wrote the "
+                    "trust")
 
         bridge = replies(answers, "bridge")
         if not bridge:
@@ -529,18 +571,43 @@ def main() -> None:
             f"back: {len(answered[-1]['conversation']['entries'])} rows in the "
             f"conversation, one of them saying {ANSWER!r}")
 
+        # The other way into the same machine, in the same run: a phone that
+        # cannot see the screen types the six digits instead. Second because
+        # a machine holds one offer at a time, and the invitation had to be
+        # the one a phone that trusted nobody arrived at.
+        stop_offering(offered, profile)
+        code = pairing_code(journal, profile)
+        again = speak(journal, udid, [
+            {"kind": "restoreSession", "account": account, "refresh": refresh},
+            {"kind": "awaitReconciled", "seconds": 120},
+            {"kind": "revoke", "host": machine},
+            {"kind": "pairByCode", "host": machine, "pin": code},
+            {"kind": "bridge"},
+        ], seconds=600)
+        recoded = replies(again, "paired")
+        if not recoded:
+            journal.say(logs(journal, udid, account))
+            journal.stop("the phone forgot the machine and could not trust it again by "
+                         f"the code it printed: {refusal(again)}")
+        journal.say(f"the phone then forgot {recoded[0]['host']!r} and trusted it again "
+                    "over the production relay by the code that machine printed")
+
         journal.say(
             "what this proves: an account entitled on the web — a subscription "
             "bought there, or access granted there, whichever this account holds "
             "— reaches a machine and a real agent through the production account "
             "service and the production relay, on the credential that service "
-            "minted and the address it named. The App Store purchase route is a "
+            "minted and the address it named — by both of the ways a person "
+            "pairs, the machine's invitation and the code it prints. The App "
+            "Store purchase route is a "
             "different one and is not claimed here; a sandbox purchase needs a "
             "phone in somebody's hand.")
         if wrong:
             journal.stop("; ".join(wrong))
         journal.say("passed")
     finally:
+        if offered and offered.poll() is None:
+            offered.terminate()
         remove_profile(journal, profile)
 
 

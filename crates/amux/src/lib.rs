@@ -79,16 +79,16 @@ pub use embedded_relay::{
     DisconnectReason, EmbeddedRelay, RelayConnection, RelayEndpoint, RelayRetry,
 };
 pub use installation::{
-    BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
-    InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
-    ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, RelocationPolicy,
-    ResumeReport, SuspendReason, SuspendReport,
+    BindError, BindRequest, BindTarget, CloudServiceId, CredentialSource, Installation,
+    InstallationError, InstallationOptions, InstallationRoot, InstallationSettings, Listeners,
+    OperationId, ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch,
+    RelocationPolicy, ResumeReport, SuspendReason, SuspendReport,
 };
 pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
     QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
-    parse_qr_pairing_payload_for_cloud, validate_qr_payload_cloud_url,
+    parse_qr_pairing_payload_for_cloud, same_cloud, validate_qr_payload_cloud_url,
 };
 pub use pairing::ssh::{
     SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_initiator,

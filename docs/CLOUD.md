@@ -287,13 +287,14 @@ verification list.
   `.wt/amux`, started by `wt run daemon` — on a profile the recipe creates for
   the run and destroys afterwards, signed in as the same account by completing
   the CLI's device-code flow in the browser session it already holds. The
-  phone then trusts that machine by the code it printed, opens a
-  conversation with a real Claude session running on it, asks one question and
-  reads the answer back. It pairs by that code and not by scanning the
-  machine's QR invitation, which every journey here does too: over the
-  production relay the scanned invitation is refused before the daemon ever
-  sees it, and the recipe's evidence names that as a limitation of the run
-  rather than a result, because why it happens is still being investigated.
+  phone then trusts that machine both ways a person can — by scanning the QR
+  invitation the machine shows, and, after forgetting it again, by the six
+  digits the machine prints — opens a conversation with a real Claude session
+  running on it, asks one question and reads the answer back.
+
+  Pairing by the invitation is here because it is the only route where the two
+  ends have to agree about which cloud they are on, and for a while they could
+  not. See *Which cloud a pairing invitation names* below.
 
   What it proves that nothing else does: the production handshake. Every other
   journey runs against a relay started beside it with credentials a harness
@@ -338,3 +339,32 @@ When there is no address, no keychain entry, or the login form cannot be
 driven, a recipe says which of those it is — naming the variable and the file
 when the address is what is missing — and exits non-zero. Neither ever passes
 quietly on work it did not do.
+
+## Which cloud a pairing invitation names
+
+A machine's pairing invitation — the QR code it shows, and the pairing link
+behind it — carries the account service that machine is signed in to, and a
+phone refuses an invitation from any other one: two devices on unrelated
+clouds would otherwise try to complete a handshake neither cloud can route.
+Both ends therefore have to write down the same service.
+
+They did not. A phone wrote down the **relay address** it had been sent to,
+because an embedded runtime is opened with a relay rather than told where its
+cloud is, and the relay was the only string it had. A machine wrote down the
+**account service** it is bound to. In production those can never be equal —
+the service is `https://amux.sh` and the relay is a host and port that service
+picks per device — so every scanned invitation was refused, by the phone,
+before anything left it. Nothing was wrong at the relay, and the daemon logged
+no attempt because none was made. Pairing by the printed code was unaffected:
+a code says nothing about a cloud, so that route sends no service to compare.
+
+The testnet hid it. The harness overwrote the invitation's service with the
+test relay's address before encoding it, so both ends compared a value no
+machine had produced and the comparison always succeeded. That rewrite is
+gone: a journey now pairs on the invitation the machine actually issued.
+
+What each end writes down now: a phone is told which account service each of
+its accounts was signed in to — the app knows, because it is the service it
+signed in against — and that is what it compares. The two are compared as
+origins rather than as text, so one service written `https://amux.sh/` and the
+same service written `https://amux.sh:443` are one cloud.

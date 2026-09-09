@@ -91,8 +91,11 @@ fn accounts_config(
         "data_dir": root.join("data"), "cache_dir":root.join("cache"),
         "log_path":root.join("mobile.log"), "device_name":"phone",
         "relay":{"url":url,"tls":"PlainLoopback"},
+        // The service a testnet daemon's configuration names, which is the
+        // default one: pairing compares the two ends' clouds, and nothing
+        // rewrites either side's answer.
         "accounts": accounts.iter()
-            .map(|(id, token)| json!({"id": id, "token": token}))
+            .map(|(id, token)| json!({"id": id, "service": "https://amux.sh", "token": token}))
             .collect::<Vec<_>>(),
         "active": active
     })
@@ -1355,8 +1358,15 @@ async fn mobile_pairing_over_the_relay_admits_the_hosts_agents_to_the_fleet() {
     );
 
     // What the phone reads off a screen the host is showing.
-    let mut start_pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
-    start_pairing.cloud_url = format!("http://{}", net.relay_addr());
+    let start_pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
+    assert_ne!(
+        start_pairing.cloud_url,
+        format!("http://{}", net.relay_addr()),
+        "the invitation names the account service the machine is on, not the relay \
+         it is reachable over. A test where those are the same string cannot tell \
+         whether pairing compares the right one, which is how a phone that could \
+         never pair by invitation in production went unnoticed."
+    );
     let amux::PairingSecret::QrSecret(secret) = &start_pairing.secret else {
         panic!("QR pairing returned a PIN")
     };
@@ -1819,18 +1829,14 @@ async fn mobile_pairing_by_link_authenticates_against_the_relay_this_phone_is_on
     .await;
 
     // The invitation the machine prints, for the relay it is reachable over.
-    let mut offer = host.pairing_admin().await.start_qr_pairing().await.unwrap();
-    offer.cloud_url = format!("http://{}", net.relay_addr());
+    let offer = host.pairing_admin().await.start_qr_pairing().await.unwrap();
     let amux::PairingSecret::QrSecret(secret) = &offer.secret else {
         panic!("QR pairing returned a PIN")
     };
     let payload = amux::encode_qr_pairing_payload(&offer, secret).unwrap();
 
     // An invitation for some other cloud is refused without reaching anybody.
-    let elsewhere = payload.replace(
-        &format!("http://{}", net.relay_addr()),
-        "https://somewhere.else",
-    );
+    let elsewhere = payload.replace(&offer.cloud_url, "https://somewhere.else");
     let wrong = answered(
         &mut receive,
         dispatch(json!({"command": "begin_pair_link", "payload": elsewhere})),
@@ -2506,9 +2512,8 @@ async fn seed_agent(host: &amux::testnet::Daemon, id: u128, name: &str) -> amux:
 
 /// Pair the account currently on screen with a machine, the way a person
 /// pointing a phone at a screen does.
-async fn pair_with(handle: *mut Handle, net: &TestNet, host: &amux::testnet::Daemon) -> Value {
-    let mut start_pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
-    start_pairing.cloud_url = format!("http://{}", net.relay_addr());
+async fn pair_with(handle: *mut Handle, host: &amux::testnet::Daemon) -> Value {
+    let start_pairing = host.pairing_admin().await.start_qr_pairing().await.unwrap();
     let amux::PairingSecret::QrSecret(secret) = &start_pairing.secret else {
         panic!("QR pairing returned a PIN")
     };
@@ -2612,7 +2617,7 @@ async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
     assert_eq!(agent_names(&empty), Vec::<String>::new(), "{empty}");
 
     let personal_from = mark(&events);
-    let paired = pair_with(handle, &net, &workstation).await;
+    let paired = pair_with(handle, &workstation).await;
     assert_eq!(paired["host"], "workstation", "{paired}");
     let personal_fleet = seen(&mut receive, &events, personal_from, handle, |e| {
         agent_names(e) == ["fix-login"]
@@ -2652,7 +2657,7 @@ async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
     );
 
     let laptop_from = mark(&events);
-    let paired = pair_with(handle, &net, &laptop).await;
+    let paired = pair_with(handle, &laptop).await;
     assert_eq!(paired["host"], "laptop", "{paired}");
     let work_fleet = seen(&mut receive, &events, laptop_from, handle, |e| {
         agent_names(e) == ["write-docs"]
@@ -2913,7 +2918,7 @@ async fn mobile_profiles_the_remembered_fleet_belongs_to_the_account_that_saw_it
 
     // Each account pairs with a machine of its own and remembers what it saw.
     let from = mark(&events);
-    pair_with(handle, &net, &workstation).await;
+    pair_with(handle, &workstation).await;
     seen(&mut receive, &events, from, handle, |e| {
         agent_names(e) == ["fix-login"] && host_names(e) == ["workstation"]
     })
@@ -2921,7 +2926,7 @@ async fn mobile_profiles_the_remembered_fleet_belongs_to_the_account_that_saw_it
 
     let from = mark(&events);
     select_account(&mut receive, handle, "work").await;
-    pair_with(handle, &net, &laptop).await;
+    pair_with(handle, &laptop).await;
     seen(&mut receive, &events, from, handle, |e| {
         agent_names(e) == ["write-docs"] && host_names(e) == ["laptop"]
     })
@@ -3028,7 +3033,7 @@ async fn mobile_profiles_report_what_is_waiting_on_the_account_that_is_not_on_sc
         e["Connection"]["state"] == "connected"
     })
     .await;
-    let paired = pair_with(handle, &net, &laptop).await;
+    let paired = pair_with(handle, &laptop).await;
     assert_eq!(paired["host"], "laptop", "{paired}");
 
     // The agent asks for something, so there is something to be waiting for.

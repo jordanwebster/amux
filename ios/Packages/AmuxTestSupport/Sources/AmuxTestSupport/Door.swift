@@ -151,6 +151,9 @@ public enum DoorRequest: Sendable, Equatable {
     /// machine answered with — and skips only the person in the middle of
     /// them. A driver proving what a paired phone shows gets the trust the
     /// product's own path writes, not a shortcut around it.
+    ///
+    /// Either the link a machine's QR encodes or the offer inside it: a
+    /// driver pointed at a real machine has the former and nothing else.
     case pair(qr: String)
     /// Pair with one machine by the six-digit code it printed, over the relay
     /// this app is already connected to.

@@ -37,7 +37,8 @@ final class Harness {
             dataDirectory: data, cacheDirectory: cache, deviceName: "performance",
             relay: BridgeConfiguration.Relay(
                 url: "https://127.0.0.1:1", tls: .system),
-            accounts: [BridgeConfiguration.Account(id: "performance", token: .fixed("measured"))],
+            accounts: [BridgeConfiguration.Account(id: "performance", service: "https://amux.sh",
+                                        token: .fixed("measured"))],
             active: "performance",
             logPath: data.appendingPathComponent("perf.log")))
         stores = StoreBundle(account: AccountId("performance"), clock: { Workloads.now })

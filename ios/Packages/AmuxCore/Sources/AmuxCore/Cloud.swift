@@ -6,6 +6,13 @@ import Foundation
 /// the production adapter and the scripted double are the same shape, and a
 /// screen cannot tell which one it is holding.
 public protocol CloudService: Sendable {
+    /// Which account service this is, as an origin.
+    ///
+    /// The runtime needs it to judge a pairing invitation: a machine's
+    /// invitation names the service that machine's account is on, and this
+    /// phone pairs only with machines on the same one. It belongs here
+    /// because this is the object that actually reached that service.
+    var service: URL { get }
     func signIn(presenting: any WebAuthPresenter) async throws(CloudError) -> SignedInAccount
     func account(_ id: AccountId) async throws(CloudError) -> AccountFacts
     func entitlement(_ id: AccountId) async throws(CloudError) -> Entitlement
@@ -20,6 +27,11 @@ public protocol CloudService: Sendable {
     func recordPurchase(_ id: AccountId, signedTransaction: String) async throws(CloudError)
     func requestDeletion(_ id: AccountId, confirmedEmail: String) async throws(CloudError) -> DeletionOutcome
     func uploadReport(_ id: AccountId, bundle: ReportBundle) async throws(CloudError) -> ReportReceipt
+}
+
+public extension CloudService {
+    /// A double that says nothing about where it is stands for the real one.
+    var service: URL { CloudEndpoint.production.base }
 }
 
 /// Sign-in happens on the web, in a browser the app does not own and cannot

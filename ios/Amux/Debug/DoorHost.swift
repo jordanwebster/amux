@@ -2,6 +2,7 @@ import AmuxCore
 import AmuxDesign
 import AmuxFeatures
 import AmuxMobile
+import AmuxShell
 import Foundation
 import Observation
 import SwiftUI
@@ -546,8 +547,17 @@ final class DoorHost {
     /// claimed. What a driver skips here is the screen, not the handshake.
     private func pair(with qr: String) async -> DoorReply {
         guard bridge != nil else { return .error("nothing has been connected") }
+        // What a machine's QR actually carries is the link, not the offer
+        // inside it, so a driver handing over what the machine showed goes
+        // through the app's own reader first — the same step a scan takes.
+        // The offer itself is accepted as it is, for callers that already
+        // hold one.
+        let offer = URL(string: qr).flatMap(DeepLink.init).flatMap {
+            guard case .pair(let invitation) = $0 else { return String?.none }
+            return invitation.payload
+        } ?? qr
         stores.pairing.open()
-        guard stores.pair(link: qr) else {
+        guard stores.pair(link: offer) else {
             return .error("there was no runtime to authenticate the pairing with")
         }
         let authenticated = await pairingSettles(within: 60)
