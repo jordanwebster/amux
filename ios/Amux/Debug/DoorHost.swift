@@ -842,7 +842,8 @@ final class DoorHost {
             relayRetries: relay().shortened,
             discovered: discovered(),
             watching: watching(),
-            releasedStreams: unsubscribed.map(\.description).sorted())
+            releasedStreams: unsubscribed.map(\.description).sorted(),
+            failure: coordinator?.failure)
     }
 
     /// The agents the runtime is holding a stream for, read off its own model
@@ -913,7 +914,7 @@ final class DoorHost {
         do {
             let parts = try DoorRecording.write(
                 directory,
-                freezer: ReportFreeze(),
+                freezer: ReportFreeze(runtimeFailure: { [weak self] in self?.coordinator?.failure }),
                 draft: ReportDraft(note: note, marks: marks),
                 build: AppFiles.build,
                 log: AppFiles.logTail)

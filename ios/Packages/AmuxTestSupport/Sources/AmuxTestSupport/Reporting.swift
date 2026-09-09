@@ -81,6 +81,8 @@ public struct ReportCapture: Sendable, Equatable {
     /// catalogue gives it. Written into the report so a reader knows what they
     /// are looking at before they open the picture.
     public var route: String?
+    /// Diagnostic frozen with the frame, even when the worker cannot record.
+    public var runtimeFailure: String?
 
     public init(
         frame: FrozenFrame,
@@ -88,7 +90,8 @@ public struct ReportCapture: Sendable, Equatable {
         snapshotAbsent: String? = nil,
         trace: String? = nil,
         traceAbsent: String? = nil,
-        route: String? = nil
+        route: String? = nil,
+        runtimeFailure: String? = nil
     ) {
         self.frame = frame
         self.snapshot = snapshot
@@ -96,6 +99,7 @@ public struct ReportCapture: Sendable, Equatable {
         self.trace = trace
         self.traceAbsent = traceAbsent
         self.route = route
+        self.runtimeFailure = runtimeFailure
     }
 }
 

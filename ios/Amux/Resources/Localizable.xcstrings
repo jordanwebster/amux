@@ -1,6 +1,18 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "The mobile runtime stopped": {
+      "comment": "Fallback diagnostic for a stopped runtime that supplied no detail. Used by reports and the driving door.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The mobile runtime stopped"
+          }
+        }
+      }
+    },
     " ago": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
       "extractionState": "manual",
@@ -2281,14 +2293,14 @@
         }
       }
     },
-    "Offline · reopen the app": {
+    "Offline · amux could not start": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/Events.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Offline · reopen the app"
+            "value": "Offline · amux could not start"
           }
         }
       }

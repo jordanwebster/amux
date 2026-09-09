@@ -1661,7 +1661,7 @@ public enum OfflineReason: String, Codable, Sendable, Equatable {
         case .rejected: "Offline · sign in again to reconnect"
         case .timedOut: "Offline · trying again"
         case .ended: "Offline · reconnecting"
-        case .stopped: "Offline · reopen the app"
+        case .stopped: "Offline · amux could not start"
         case .suspended: "Offline · reconnecting"
         }
     }

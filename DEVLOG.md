@@ -4,6 +4,29 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Recover when the phone runtime fails during startup.**
+
+The coordinator releases a bridge whose worker reports a stopped connection or
+an invariant before initialization finishes. The driving door then reports that
+the runtime has not started, while retaining the diagnostic. Remembered agents
+stay readable and the home says “Offline · amux could not start”. Retry Now
+fetches the account's connect token and initializes a fresh runtime. Ordinary
+transport failures still retry through their live worker.
+
+Reports freeze the diagnostic with the frame and retain it in report.json even
+when no runtime recording can be obtained. The app and driving-door capture
+paths use the same diagnostic source. Rust installation checks are unchanged.
+
+Validation: the UIKit-free coordinator tests cover a combined fatal batch, a
+startup invariant alone, a stopped disconnect alone, preserved cached rows,
+fresh credentials on retry and ordinary transport retries. All iOS unit suites
+and the production startup journey pass, including restoration after container
+relocation. Focused report and door tests, iOS lint and the app build pass.
+Composited light and dark captures of a real installation failure show the
+designed sentence above the cached agent; its report retains the diagnostic
+with the runtime recording correctly declared absent. The simulator's original
+installation configuration was restored after capture.
+
 2026-09-09 — **Preserve phone accounts when the app container moves.**
 
 The mobile runtime opts into installation path rebasing when iOS moves its

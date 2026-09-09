@@ -101,6 +101,7 @@ public enum ReportAssembly {
             declarations["trace_kind"] = "native_view"
         }
 
+        let detail = [capture.route, capture.runtimeFailure].compactMap { $0 }
         let header: [String: Any] = [
             "schema_version": schemaVersion,
             "build": build,
@@ -114,7 +115,7 @@ public enum ReportAssembly {
             // question in front of the answer.
             "kind": "bug",
             "status": "open",
-            "detail": capture.route as Any? ?? NSNull(),
+            "detail": detail.isEmpty ? NSNull() : detail.joined(separator: "\n") as Any,
             "note": draft.note,
             "marks": draft.marks.map {
                 ["x": $0.x, "y": $0.y, "width": $0.width, "height": $0.height, "note": $0.note]

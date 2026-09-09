@@ -21,6 +21,7 @@ public final class RuntimeCoordinator {
     public private(set) var runtime: (any AppRuntime)?
     public private(set) var runtimeAccount: AccountId?
     public private(set) var lastBatch: [AccountId: [Event]] = [:]
+    /// Diagnostic detail for the driving door and reports, never screen copy.
     public private(set) var failure: String?
     public let deviceName: String
     public var storesChanged: (@MainActor (StoreBundle) -> Void)?
@@ -33,6 +34,8 @@ public final class RuntimeCoordinator {
     private let allowPlainLoopback: Bool
     private let factory: Factory
     private var configured: BridgeConfiguration?
+    private var initialized = false
+    private var invariant: String?
     private var wired: StoreBundle?
     private var pump: Task<Void, Never>?
     private var starting: Task<Void, Never>?
@@ -169,16 +172,22 @@ public final class RuntimeCoordinator {
             return true
         } catch {
             guard expected == generation else { return false }
-            stopRuntime()
-            failure = "Your hosts could not be reached. Try again when you’re connected."
-            // Keep remembered rows readable; the existing offline state offers Retry Now.
-            registry.stores?.apply(.connection(.init(state: .disconnected, reason: .unreachable)))
-            registry.stores?.dispatch = { [weak self] command in
-                guard command == .retryNow else { return nil }
-                self?.start()
-                return OpId(UUID().uuidString)
-            }
+            fail(detail: String(describing: error), reason: .unreachable)
             return false
+        }
+    }
+
+    private func fail(detail: String, reason: OfflineReason) {
+        stopRuntime()
+        failure = detail
+        guard let stores = registry.stores else { return }
+        stores.apply(.connection(.init(state: .disconnected, reason: reason)))
+        wired = stores
+        stores.dispatch = { [weak self, weak stores] command in
+            guard let self, let stores, self.registry.stores === stores,
+                  command == .retryNow else { return nil }
+            self.start()
+            return OpId(UUID().uuidString)
         }
     }
 
@@ -234,6 +243,7 @@ public final class RuntimeCoordinator {
     private func receive(_ batch: [Event]) {
         guard var answering = runtimeAccount else { return }
         var pending: [Event] = []
+        var failed = false
         func deliver() {
             guard !pending.isEmpty else { return }
             lastBatch[answering] = pending
@@ -241,6 +251,18 @@ public final class RuntimeCoordinator {
             pending = []
         }
         for event in batch {
+            switch event {
+            case .invariant(let detail):
+                invariant = detail
+                if !initialized { failed = true }
+            case .connection(let update):
+                if update.state == .disconnected && update.reason == .stopped {
+                    failed = true
+                } else {
+                    initialized = true
+                }
+            default: break
+            }
             if case .opResult(let result) = event,
                case .selected(let account) = result.outcome {
                 // A coalesced batch can straddle a switch. Its prefix still belongs
@@ -253,6 +275,11 @@ public final class RuntimeCoordinator {
             pending.append(event)
         }
         deliver()
+        if failed {
+            // The C handle exists before installation startup finishes. A dead
+            // worker cannot service Retry Now; release it and retry from credentials.
+            fail(detail: invariant ?? "The mobile runtime stopped", reason: .stopped)
+        }
     }
 
     public func setActive(_ active: Bool) {
@@ -276,5 +303,7 @@ public final class RuntimeCoordinator {
         runtime = nil
         runtimeAccount = nil
         configured = nil
+        initialized = false
+        invariant = nil
     }
 }

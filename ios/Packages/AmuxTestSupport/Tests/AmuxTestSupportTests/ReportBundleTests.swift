@@ -32,6 +32,18 @@ private func parts(_ bundle: ReportBundle) throws -> [String: Any] {
 }
 
 final class ReportBundleTests: XCTestCase {
+    func testAStartupDiagnosticSurvivesWithoutARuntimeRecording() throws {
+        var capture = wholeCapture()
+        capture.snapshot = nil
+        capture.runtimeFailure = "installation profile path disagrees with its namespace"
+        let bundle = ReportAssembly.bundle(
+            from: capture, draft: ReportDraft(), build: "amux-ios/test", log: noLog)
+        XCTAssertEqual(try header(bundle)["detail"] as? String,
+                       "run\ninstallation profile path disagrees with its namespace")
+        XCTAssertFalse(try XCTUnwrap(bundle.part(ReportAssembly.messagesFile)).present)
+        XCTAssertFalse(try XCTUnwrap(bundle.part(ReportAssembly.daemonFile)).present)
+    }
+
     /// Every part the layout names is declared, and each declaration matches a
     /// file that is actually here. The account service refuses a bundle whose
     /// declarations and whose files disagree, so this is the whole contract.

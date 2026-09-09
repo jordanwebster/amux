@@ -50,6 +50,94 @@ final class RuntimeCoordinatorTests: XCTestCase {
     private let bo = SignedInAccount(id: AccountId("bo"), email: "bo@example.com")
     private var root: URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
 
+    func testStartupWorkerFailureReleasesTheHandleAndRetryStartsFromCredentials() async throws {
+        let diagnostic = "installation profile path disagrees with its namespace"
+        for terminal in [
+            [Event.invariant(detail: diagnostic), .connection(.init(state: .disconnected, reason: .stopped))],
+            [.invariant(detail: diagnostic)],
+            [.connection(.init(state: .disconnected, reason: .stopped))],
+        ] {
+            let directory = root
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let registry = AccountRegistry()
+            registry.add(ada)
+            let stores = try XCTUnwrap(registry.stores)
+            let cloud = RelayCloud()
+            var clients: [ScriptedRuntime] = []
+            var configurations: [BridgeConfiguration] = []
+            let coordinator = RuntimeCoordinator(
+                registry: registry, cloud: cloud, support: directory, cache: directory, deviceName: "Phone",
+                factory: { config, _ in
+                    configurations.append(config)
+                    let client = ScriptedRuntime()
+                    clients.append(client)
+                    if clients.count == 1 {
+                        client.replies.yield([Made.fleet([
+                            Made.card(1, name: "Remembered agent", minutesAgo: 1, now: Date()),
+                        ], reconciled: false)])
+                        client.replies.yield(terminal)
+                    }
+                    return client
+                })
+            defer { coordinator.stop() }
+            _ = await coordinator.reconnect()
+            for _ in 0..<1000 where coordinator.failure == nil { await Task.yield() }
+            XCTAssertNil(coordinator.runtime, "a dead worker must report started=false")
+            XCTAssertNil(coordinator.runtimeAccount)
+            XCTAssertTrue(try XCTUnwrap(clients.first).stopped)
+            XCTAssertEqual(coordinator.failure, terminal.count == 1 && terminal.first == .connection(
+                .init(state: .disconnected, reason: .stopped)) ? "The mobile runtime stopped" : diagnostic)
+            XCTAssertEqual(stores.fleet.rows.map(\.name), ["Remembered agent"])
+            XCTAssertFalse(stores.fleet.reconciled)
+            XCTAssertEqual(stores.fleet.exceptions, "Offline · amux could not start")
+            XCTAssertEqual(stores.hosts.connection.reason, .stopped)
+            XCTAssertNil(stores.watch)
+            XCTAssertNil(stores.store)
+
+            await cloud.use("retry.example")
+            let callsBefore = await cloud.calls.count
+            XCTAssertNotNil(stores.dispatch?(.retryNow))
+            for _ in 0..<1000 where clients.count < 2 { await Task.yield() }
+            XCTAssertEqual(clients.count, 2)
+            XCTAssertTrue(coordinator.runtime === clients.last)
+            XCTAssertEqual(configurations.last?.relay.url, "https://retry.example:443")
+            let callsAfter = await cloud.calls.count
+            XCTAssertGreaterThan(callsAfter, callsBefore)
+            XCTAssertFalse(clients[0].commands.contains(.retryNow))
+            XCTAssertNil(coordinator.failure)
+            clients.last?.replies.yield([.connection(.init(state: .connected))])
+            for _ in 0..<1000 where stores.fleet.connection.state != .connected { await Task.yield() }
+            XCTAssertNil(stores.fleet.exceptions)
+        }
+    }
+
+    func testAnInitializedWorkerKeepsTransportRetryButStoppedRemovesIt() async throws {
+        let directory = root
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = AccountRegistry()
+        registry.add(ada)
+        let client = ScriptedRuntime()
+        let coordinator = RuntimeCoordinator(
+            registry: registry, cloud: RelayCloud(), support: directory, cache: directory,
+            deviceName: "Phone", factory: { _, _ in client })
+        defer { coordinator.stop() }
+        _ = await coordinator.reconnect()
+        client.replies.yield([
+            .connection(.init(state: .connected)),
+            .invariant(detail: "fleet cache write failed"),
+            .connection(.init(state: .disconnected, reason: .unreachable)),
+        ])
+        for _ in 0..<1000 where registry.stores?.fleet.connection.reason != .unreachable { await Task.yield() }
+        XCTAssertTrue(coordinator.runtime === client)
+        XCTAssertNil(coordinator.failure)
+        XCTAssertNotNil(registry.stores?.dispatch?(.retryNow))
+        XCTAssertEqual(client.commands.last, .retryNow)
+        client.replies.yield([.connection(.init(state: .disconnected, reason: .stopped))])
+        for _ in 0..<1000 where coordinator.runtime != nil { await Task.yield() }
+        XCTAssertNil(coordinator.runtime)
+        XCTAssertEqual(coordinator.failure, "fleet cache write failed")
+    }
+
     func testServiceChoosesRelayCallbacksAnswerItAndSwitchCreditsEachSideOfTheBatch() async throws {
         let directory = root
         defer { try? FileManager.default.removeItem(at: directory) }

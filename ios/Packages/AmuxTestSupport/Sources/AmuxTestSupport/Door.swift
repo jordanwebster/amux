@@ -434,6 +434,8 @@ public struct BridgeState: Codable, Sendable, Equatable {
     public let build: String
     /// Whether a connection has been started at all.
     public let started: Bool
+    /// Startup or terminal worker diagnostic, kept separate from visible copy.
+    public let failure: String?
     /// The connection's own word for where it is.
     public let connection: String
     /// Whether the fleet has been confirmed by a host rather than remembered.
@@ -486,10 +488,11 @@ public struct BridgeState: Codable, Sendable, Equatable {
         build: String, started: Bool, connection: String, reconciled: Bool,
         reconciliations: Int = 0, hosts: [String], agents: [String], relayAttempts: UInt64,
         relayRetries: UInt64, discovered: [String], watching: [String] = [],
-        releasedStreams: [String] = []
+        releasedStreams: [String] = [], failure: String? = nil
     ) {
         self.build = build
         self.started = started
+        self.failure = failure
         self.connection = connection
         self.reconciled = reconciled
         self.reconciliations = reconciliations

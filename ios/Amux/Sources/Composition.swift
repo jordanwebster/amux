@@ -93,7 +93,8 @@ final class Composition {
         // which one it is of.
         freezer = ReportFreeze(
             route: { router.top?.name ?? router.tab.rawValue },
-            screen: { Self.catalogueName(for: router) })
+            screen: { Self.catalogueName(for: router) },
+            runtimeFailure: { [runtime] in runtime.failure })
         #endif
         router.loads(with: self)
         rememberedFleet()

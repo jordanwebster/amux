@@ -29,20 +29,23 @@ final class ReportFreeze: ReportFreezing {
     /// what decides whether a bundle can be replayed to the page its picture
     /// was taken on.
     private let screen: () -> String?
+    private let runtimeFailure: () -> String?
 
     init(
         window: @escaping () -> UIWindow? = { ReportFreeze.foreground },
         route: @escaping () -> String? = { DoorHost.shared.screen?.rawValue },
-        screen: @escaping () -> String? = { DoorHost.shared.screen?.rawValue }
+        screen: @escaping () -> String? = { DoorHost.shared.screen?.rawValue },
+        runtimeFailure: @escaping () -> String? = { nil }
     ) {
         self.window = window
         self.route = route
         self.screen = screen
+        self.runtimeFailure = runtimeFailure
     }
 
     func freeze() -> ReportCapture? {
         guard let window = window(), let frame = Self.photograph(window) else { return nil }
-        var capture = ReportCapture(frame: frame, route: route())
+        var capture = ReportCapture(frame: frame, route: route(), runtimeFailure: runtimeFailure())
         switch Self.recording() {
         case .success(let json): capture.snapshot = json
         case .failure(let absent): capture.snapshotAbsent = absent.why

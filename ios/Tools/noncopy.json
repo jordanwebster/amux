@@ -2076,7 +2076,7 @@
       {"literal": "\"bug\"", "context": "\"kind\": \"bug\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"status\"", "context": "\"status\": \"open\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"open\"", "context": "\"status\": \"open\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"detail\"", "context": "\"detail\": capture.route as Any? ?? NSNull(),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"detail\"", "context": "\"detail\": detail.isEmpty ? NSNull() : detail.joined(separator: \"\\n\") as Any,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"note\"", "context": "\"note\": draft.note,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"marks\"", "context": "\"marks\": draft.marks.map {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"x\"", "context": "[\"x\": $0.x, \"y\": $0.y, \"width\": $0.width, \"height\": $0.height, \"note\": $0.note]", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
