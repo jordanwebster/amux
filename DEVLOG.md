@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Describe the limits of iPhone report screenshots.**
+
+The debugging guide now explains that the app freezes its frame after the
+system screenshot notification, so the pictures may differ with no guaranteed
+maximum delay. It describes the retained app-owned prompt without promising a
+position beside the system preview. Matching source comments reflect the same
+constraint. Report capture and prompt layout are unchanged; iOS lint passes.
+
 2026-09-09 — **Keep golden status bars in the requested appearance.**
 
 The debug fixture root declares the same appearance preference as its window,

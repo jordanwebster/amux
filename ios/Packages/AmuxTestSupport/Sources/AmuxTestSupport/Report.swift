@@ -6,12 +6,9 @@ import SwiftUI
 /// The offer to report what is on screen, after the system has taken a
 /// screenshot of it.
 ///
-/// It floats over whatever screen the person was on, because that is what they
-/// photographed. It is the app's own control and not the system's: iOS hands
-/// the app a notification once its screenshot is already taken and saved, and
-/// puts its own preview up beside it. So this sits next to that preview rather
-/// than under it — inset from the leading edge by more than the preview is
-/// wide, since the app is not told where the preview is and cannot ask.
+/// It floats over the app screen whose frame was frozen after screenshot
+/// notification. The system owns its preview and may cover the app entirely;
+/// the report store retains this offer and its frame until the person returns.
 ///
 /// One tap either way. Taking it opens the report on the frame that was frozen
 /// when the offer appeared; anywhere else on the screen puts the offer away
@@ -43,7 +40,7 @@ public struct ReportPrompt: View {
     }
 }
 
-/// The offer, placed where the system's own screenshot preview is not.
+/// The offer over the app's content, retained while system UI covers the app.
 ///
 /// Written as a modifier so every surface that can be photographed carries it
 /// the same way: the shell puts it over the whole app, and a capture of the
@@ -79,10 +76,9 @@ public struct ReportOffer: ViewModifier {
                         .onTapGesture(perform: dismiss)
                         .accessibilityHidden(true)
                     ReportPrompt(take: take)
-                        // Clear of the system's preview, which sits in the
-                        // corner and is about 100 pt across at its widest
-                        // setting. The app is never told the preview's frame,
-                        // so the gap is stated here rather than measured.
+                        // Leave room near the corner for a system thumbnail.
+                        // This is only a layout inset: iOS does not expose its
+                        // preview's geometry and can cover the whole app.
                         .padding(.leading, 108)
                         // Above the composer and the tab bar, both of which
                         // live against the bottom of whatever screen has them.
