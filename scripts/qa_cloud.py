@@ -108,8 +108,28 @@ def keychain_holds(for_address: str) -> bool:
         capture_output=True, text=True, timeout=60).returncode == 0
 
 
+def through(opener, prepared) -> tuple[int, str, str]:
+    """One request, answered rather than raised.
+
+    A refusal is an answer here: a recipe that reads a 401 or a 403 needs the
+    status and the body, and an exception would lose both."""
+    prepared.add_header("User-Agent", "amux-qa")
+    try:
+        answer = opener.open(prepared, timeout=60)
+    except error.HTTPError as refused:
+        answer = refused
+    except error.URLError as unreachable:
+        fail(f"{BASE} could not be reached: {unreachable.reason}")
+    body = answer.read().decode("utf-8", "replace")
+    return answer.status, answer.headers.get("Location", ""), body
+
+
 class Browser:
     """A cookie jar and a redirect that stops rather than following.
+
+    This is the sign-in and the pages that hang off it — the login form, the
+    device-code page — and nothing else. The API asks go through `ask`, which
+    has no jar, because the phone has no jar.
 
     The sign-in ends at `amux://callback`, which no HTTP client can follow, so
     every redirect is read here and the hand-off is recognised by its scheme —
@@ -130,20 +150,23 @@ class Browser:
             headers={"Content-Type": "application/x-www-form-urlencoded"}))
 
     def send(self, prepared) -> tuple[int, str, str]:
-        prepared.add_header("User-Agent", "amux-qa")
-        try:
-            answer = self.opener.open(prepared, timeout=60)
-        except error.HTTPError as refused:
-            answer = refused
-        except error.URLError as unreachable:
-            fail(f"{BASE} could not be reached: {unreachable.reason}")
-        body = answer.read().decode("utf-8", "replace")
-        return answer.status, answer.headers.get("Location", ""), body
+        return through(self.opener, prepared)
 
 
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, *arguments):
         return None
+
+
+# Every API ask goes through this, and it has no cookie jar on purpose.
+#
+# The phone has never loaded a page on amux.sh. It holds an access token and
+# nothing else, and that is the whole question these recipes ask: does the
+# token work. Asking through the browser's opener would send the sign-in
+# cookie alongside the token, and amux.sh would answer the cookie — which is
+# how /api/graphql went to production reading `me: null` for every bearer
+# while this recipe reported it green.
+API = request.build_opener(NoRedirect())
 
 
 def verifier_and_challenge() -> tuple[str, str]:
@@ -254,13 +277,14 @@ def signed_in(who: str, secret: str) -> tuple[Browser, dict]:
     return browser, redeem(browser, code, verifier)
 
 
-def ask(browser: Browser, url: str, token: str, method: str = "GET",
+def ask(url: str, token: str, method: str = "GET",
         body: str | None = None) -> tuple[int, str]:
+    """An API request carrying the access token and nothing else."""
     prepared = request.Request(
         url, data=body.encode() if body else None, method=method,
         headers={"Authorization": f"Bearer {token}"}
         | ({"Content-Type": "application/json"} if body else {}))
-    return browser.send(prepared)[::2]
+    return through(API, prepared)[::2]
 
 
 def tier(token: str) -> str:
@@ -325,10 +349,9 @@ def entitlement(answer: str) -> str:
             f"{source}")
 
 
-def read_entitlement(browser: Browser, token: str) -> tuple[bool, str]:
+def read_entitlement(token: str) -> tuple[bool, str]:
     """Whether this account may act, and the answer in words."""
-    status, body = ask(browser, f"{BASE}/api/graphql", token, "POST",
-                       ENTITLEMENT_QUERY)
+    status, body = ask(f"{BASE}/api/graphql", token, "POST", ENTITLEMENT_QUERY)
     if status != 200:
         fail(f"the entitlement read answered {status}")
     try:
@@ -338,11 +361,11 @@ def read_entitlement(browser: Browser, token: str) -> tuple[bool, str]:
     return pro, entitlement(body)
 
 
-def connect(browser: Browser, token: str) -> tuple[bool, str]:
+def connect(token: str) -> tuple[bool, str]:
     """Whether the relay will issue this account a credential, and the answer
     in words. A refusal that is the subscription gate is not a failure: it is
     the second gate the phone draws."""
-    status, body = ask(browser, f"{BASE}/api/connect", token)
+    status, body = ask(f"{BASE}/api/connect", token)
     if status == 200:
         issued = json.loads(body)
         return True, (f"a relay credential was issued for "

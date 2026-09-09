@@ -398,13 +398,13 @@ def main() -> None:
         journal.stop("amux.sh issued no refresh token, so there is no session to hand "
                      "the phone")
 
-    status, body = qa_cloud.ask(browser, f"{BASE}/connect/userinfo", access)
+    status, body = qa_cloud.ask(f"{BASE}/connect/userinfo", access)
     if status != 200:
         journal.stop(f"amux.sh would not say who this account is: {status}")
     account = json.loads(body)["sub"]
     journal.keep(account)
 
-    entitled, said = qa_cloud.read_entitlement(browser, access)
+    entitled, said = qa_cloud.read_entitlement(access)
     journal.say(f"the account service says this account is {said}")
     if not entitled:
         journal.stop(
@@ -414,7 +414,7 @@ def main() -> None:
             "that has lapsed is for an operator to restore, never for this "
             "recipe to write."
         )
-    issued_credential, connect_said = qa_cloud.connect(browser, access)
+    issued_credential, connect_said = qa_cloud.connect(access)
     if not issued_credential:
         journal.stop(f"the relay refused this account a credential: {connect_said}")
     journal.say("the relay will issue this account a credential, so the phone has a "

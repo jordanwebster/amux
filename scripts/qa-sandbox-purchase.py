@@ -302,8 +302,8 @@ def watch(who: str, secret: str, minutes: int) -> None:
     print(f"signed {masked(who)} in at {BASE}; "
           f"the access token claims {qa_cloud.tier(token)}", flush=True)
     while True:
-        _, said = qa_cloud.read_entitlement(browser, token)
-        issued_credential, connect_said = qa_cloud.connect(browser, token)
+        _, said = qa_cloud.read_entitlement(token)
+        issued_credential, connect_said = qa_cloud.connect(token)
         print(f"entitlement: {said}", flush=True)
         print(f"connect: {connect_said}", flush=True)
         if issued_credential:
@@ -331,7 +331,7 @@ def post_transaction(who: str, secret: str, transaction: Path) -> None:
     token = issued["access_token"]
     print(f"signed {masked(who)} in at {BASE}", flush=True)
     status, body = qa_cloud.ask(
-        browser, f"{BASE}/api/purchases", token, "POST",
+        f"{BASE}/api/purchases", token, "POST",
         json.dumps({"signed_transaction": signed}))
     if status == 200:
         print("purchases: taken, and the account's subscription came back "
@@ -347,9 +347,9 @@ def post_transaction(who: str, secret: str, transaction: Path) -> None:
             pass
         fail(f"the account service refused the transaction with {status}"
              + (f": {said}" if said else ""))
-    _, said = qa_cloud.read_entitlement(browser, token)
+    _, said = qa_cloud.read_entitlement(token)
     print(f"entitlement: {said}")
-    _, connect_said = qa_cloud.connect(browser, token)
+    _, connect_said = qa_cloud.connect(token)
     print(f"connect: {connect_said}")
 
 

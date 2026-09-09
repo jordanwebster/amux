@@ -4,6 +4,39 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **GraphQL answers the phone's credential, not only the browser's.**
+
+The live journey exposed a service defect nothing local could have caught.
+`https://amux.sh/api/graphql` was mapped without naming an authentication
+scheme, so it only ever saw the principal the default scheme put on the
+request — the web dashboard's Identity sign-in cookie. The phone has no
+cookie. It holds the access token `GET /api/connect` accepts and nothing else,
+and every one of its entitlement reads came back `me: null`. The two gates
+then disagreed about the same account: the relay issuing a credential while
+the read the app gates on said there was no access.
+
+Fixed in the account service (amuxcloud, revision 1791c93, deployed): the
+endpoint names a scheme that picks per request. A caller carrying the sign-in
+cookie is a browser and is read as one; anything else falls to the bearer.
+Choosing one scheme rather than merging both keeps a request that somehow
+carried two accounts' credentials from being answered as a mixture of them,
+and leaves the dashboard's path exactly what it was. The policy names the
+scheme without demanding a caller, because the dashboard queries GraphQL
+before anybody has signed in and an anonymous query must still get its answer.
+Nothing a bearer can now reach is anything that user's cookie could not: the
+admin gate is a user-id check either way, and reading `access` is still
+refused to anyone but the account itself.
+
+The QA recipes carried the same blind spot. `qa-cloud-signin` asked its API
+questions through the opener that holds the sign-in cookie jar, so amux.sh
+answered the cookie and the recipe reported green against an endpoint no phone
+could use. Every API ask now goes through a client with no jar at all; the jar
+is used for the sign-in and the device-code pages and nowhere else. The
+recipe's output says so, and the same blind spot in the server's own tests —
+an authenticated test client that sent a cookie and a bearer together — is
+closed by bearer-only and cookie-only clients, one of which issues a token
+carrying only the `sub` claim a real token carries.
+
 2026-09-09 — **The phone, the production relay and a real agent, once.**
 
 A new recipe, `wt run qa-live-journey`, runs the whole product against the

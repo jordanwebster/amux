@@ -44,16 +44,22 @@ def main() -> None:
     secret = qa_cloud.password(who)
     print(f"signing {masked(who)} in at {BASE} as client {CLIENT_ID}")
 
-    browser, issued = qa_cloud.signed_in(who, secret)
+    # The cookie jar the sign-in fills is dropped here. Every question below
+    # carries the access token and nothing else, which is the position the
+    # phone is in: it has never loaded a page on amux.sh.
+    _, issued = qa_cloud.signed_in(who, secret)
     del secret
     token = issued["access_token"]
     print("signed in: amux.sh issued an access token"
           + (" and a refresh token" if issued.get("refresh_token") else
              " and no refresh token"))
 
+    print("asking: every question below carries the access token and no "
+          "cookie, the way the phone asks")
+
     print(f"tier: the access token claims {qa_cloud.tier(token)}")
 
-    status, body = qa_cloud.ask(browser, f"{BASE}/connect/userinfo", token)
+    status, body = qa_cloud.ask(f"{BASE}/connect/userinfo", token)
     if status != 200:
         fail(f"amux.sh would not say who this account is: {status}")
     who_it_is = json.loads(body)
@@ -64,10 +70,10 @@ def main() -> None:
           + ("the same address that signed in" if same
              else "a DIFFERENT address from the one that signed in"))
 
-    entitled, said = qa_cloud.read_entitlement(browser, token)
+    entitled, said = qa_cloud.read_entitlement(token)
     print(f"entitlement: {said}")
 
-    issued, connect_said = qa_cloud.connect(browser, token)
+    issued, connect_said = qa_cloud.connect(token)
     print(f"connect: {connect_said}")
 
     # Both gates read the same table through the same call, so they cannot

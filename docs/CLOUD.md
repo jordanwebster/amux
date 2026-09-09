@@ -38,6 +38,15 @@ sign-in happen once rather than hourly.
 Every one but `/connect/authorize` and `/connect/token` is sent with
 `Authorization: Bearer <access token>`, refreshed a minute before it expires.
 
+That token is the whole credential. The phone has no browser session with
+amux.sh and sends no cookie, and `/api/graphql` accepts exactly the token
+`/api/connect` accepts — the same scheme, the same `api` scope, the same
+principal behind both. It did not always: GraphQL was mapped without naming a
+scheme, so it only ever read the web dashboard's sign-in cookie and answered
+`me: null` to any client that had only a token. The two gates then disagreed
+about the same account, the relay issuing a credential while the read said
+there was no access.
+
 ## The access read
 
 One query, against `/api/graphql`:
