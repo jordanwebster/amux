@@ -978,22 +978,127 @@ mod tests {
             .iter()
             .filter(|screen| matches!(screen.origin, GoldenOrigin::Reference { .. }))
             .collect();
+        let required_references = [
+            "agent-delete",
+            "ask-permission",
+            "ask-question",
+            "comment",
+            "delete",
+            "diff",
+            "dump",
+            "exited",
+            "first-run",
+            "first-run-paid",
+            "home",
+            "home-quiet",
+            "hosts",
+            "new-agent",
+            "offline",
+            "overflow",
+            "paywall",
+            "pin",
+            "plan",
+            "plus",
+            "profiles",
+            "queued",
+            "review-cta",
+            "run",
+            "run-live",
+            "settings",
+            "shake",
+            "sign-in",
+            "slash-typing",
+            "typing",
+            "voices",
+            "working",
+            "you",
+        ];
+        let reference_ids: std::collections::BTreeSet<_> =
+            references.iter().map(|screen| screen.id.as_str()).collect();
+        assert_eq!(reference_ids, required_references.into_iter().collect());
         assert_eq!(
             references.len(),
-            33,
-            "the design's catalogue has 33 in-scope screens"
+            required_references.len(),
+            "no duplicate references"
         );
+        for id in [
+            "probe",
+            "drawer",
+            "finished",
+            "stale",
+            "codex-approval",
+            "rename",
+            "permissions-claude",
+            "permissions-codex",
+            "send-refused",
+            "strip",
+            "tokens",
+            "devices",
+            "pair-confirm",
+            "delete-blocked",
+            "paywall-unconfirmed",
+            "sign-in-failed",
+            "you-granted",
+            "upload-failed",
+            "ax-conversation",
+            "ax-composer",
+            "reduced-glass",
+            "ax-home",
+            "unreadable-agent",
+            "small-home",
+            "small-conversation",
+        ] {
+            assert!(
+                matches!(
+                    manifest.screen(id).map(|screen| &screen.origin),
+                    Some(GoldenOrigin::AddedState { .. })
+                ),
+                "missing added state: {id}"
+            );
+        }
+        let baseline_notes = std::fs::read_to_string("../../ios/Goldens/BASELINE.md").unwrap();
+        for screen in &references {
+            assert!(
+                baseline_notes
+                    .lines()
+                    .any(|line| line == format!("## {}", screen.id)),
+                "{} has no baseline explanation",
+                screen.id
+            );
+            let GoldenOrigin::Reference { capture } = &screen.origin else {
+                unreachable!()
+            };
+            for appearance in &screen.appearances {
+                assert!(
+                    Path::new(&format!(
+                        "../../ios/Goldens/References/{capture}.only.{appearance}.png"
+                    ))
+                    .is_file(),
+                    "missing preserved reference for {}.{appearance}",
+                    screen.id
+                );
+            }
+        }
         assert!(
             manifest.screen("notification").is_none(),
             "notifications are out of scope"
         );
         assert!(manifest.screen("probe").is_some(), "the probe is owed");
         for screen in &manifest.screens {
-            assert!(
-                !screen.appearances.is_empty(),
-                "{} owes at least one appearance",
+            assert_eq!(
+                screen.appearances,
+                [Appearance::Light, Appearance::Dark],
+                "{} requires both appearances exactly once",
                 screen.id
             );
+            for appearance in &screen.appearances {
+                assert!(
+                    Path::new(&format!("../../ios/Goldens/{}.{appearance}.png", screen.id))
+                        .is_file(),
+                    "missing baseline for {}.{appearance}",
+                    screen.id
+                );
+            }
             assert!(
                 screen.simulator == "amux-golden" || screen.simulator == "amux-small",
                 "{} names an unpinned simulator",

@@ -3,7 +3,7 @@ use std::path::Path;
 mod ci;
 mod door;
 mod golden;
-mod ios_verify;
+use xtask::ios_verify;
 mod replay;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

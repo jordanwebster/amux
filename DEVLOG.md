@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Verify the complete iPhone golden catalogue.**
+
+The unfiltered golden run passes all 116 captures: 33 reference screens and
+25 additional states, each in light and dark, including the accessibility
+and small-display cases. No baseline image changes were needed. Every
+reference screen has a baseline explanation, and the reference recipe
+produces all 66 pairs from the committed design captures.
+
+The manifest test now requires the named reference and added screens,
+both appearances exactly once, every baseline, every preserved reference,
+and a baseline-note section for each reference screen. Baseline documentation
+points to the committed references and describes inactive-account attention
+as a fixture choice rather than a missing runtime integration. The verifier
+module now lives in an xtask library target, so the documented
+`--lib ios_verify` test selection executes its tests instead of selecting none.
+
 2026-09-09 — **Keep reporting out of the shipped iPhone app.**
 
 The Release audit found report views and capture models linked through the

@@ -6,14 +6,16 @@ capture departs from it and why.
 
 A departure is not a defect only if it is written down here. The captures under
 `ios/Goldens/` are the app; the design references under
-`notes/ios-intake/design-reference/design/captures/` are the drawing that was
+`ios/Goldens/References/` are the drawing that was
 approved. Where the two disagree, this file says which is right.
 
 Establishing a state's baseline includes declaring the state built, in
 `Fixtures.built`. One screen draws several states and each is written and
-locked on its own, so until a state is named there the app answers
-"unimplemented" when it is asked for — which is what keeps a check of
-everything built so far from failing on work nobody has started.
+locked on its own. A state not named there answers "unimplemented" and fails
+the full golden run. All 58 manifest screens have light and dark baselines;
+the 33 reference screens also have their 66 preserved design captures. Run
+`wt run ios-goldens` to compare every state, and `wt run ios-goldens-reference`
+to pair reference screens with the approved drawings.
 
 ## Departures every screen shares
 
@@ -163,12 +165,11 @@ on screen marked, one signed out and offering to sign back in, and Add Account
 under them. An account is a lens over the agent list, so the control that
 changes it belongs on the thing it is a lens over.
 
-- **No count beside the inactive account.** The reference puts a "1" on the
-  account that is not on screen. Nothing in this build subscribes to another
-  account's fleet, so there is no count to draw — and a number this phone
-  cannot see is not one it may invent, because it would send somebody to look
-  at nothing. The badge renders from a store fact and appears the moment
-  something populates it.
+- **No count beside the inactive account in this fixture.** The reference
+  puts a "1" on the account that is not on screen. This fixture supplies no
+  attention for that account. The live app subscribes to inactive accounts'
+  fleets and draws their attention badge from those facts; the accounts
+  journey exercises attention in the inactive account.
 - **No disc beside the title.** The home draws one only when there is an
   account problem to point at; on a working phone the title is a title. That is
   the home screen's own rule and this is the home screen.
