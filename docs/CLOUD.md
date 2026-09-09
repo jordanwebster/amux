@@ -206,6 +206,20 @@ verification list.
   variable the honest preflight result is that the address source is missing,
   naming the variable and the file.
 
+  **It is a person's act, before every release.** No credential turns this
+  into something a machine performs unattended. Installing a
+  development-signed build on a phone, signing that phone into a sandbox
+  Apple Account and tapping through a purchase is a human sequence, and the
+  Simulator cannot stand in for it at any price. So the App Store route to an
+  entitlement — a purchase the store signed, recognised at amux.sh, turning
+  `payment_required` into a credential — is unproven on a machine that has
+  only run the simulator, and stays unproven until somebody runs this recipe
+  on a phone. Run it before each release, and read what it printed rather
+  than ticking a box: what a build proved last time says nothing about the
+  products, the bundle id or the provider configuration this one ships with.
+  The web route to the same entitlement is a different question and is
+  covered by `wt run qa-cloud-signin`.
+
 **The accounts.** Each recipe has its own variable — `AMUX_QA_EMAIL` for the
 sign-in, `AMUX_QA_DEVICE_EMAIL` for the sandbox purchase — and they name
 different accounts, because only one of them is a sandbox account. When the

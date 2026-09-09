@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **The App Store route to an entitlement is a person's act.**
+
+`docs/CLOUD.md` now says plainly what `wt run qa-sandbox-purchase` is: a
+sequence a person performs on a phone before each release, not automation
+waiting on a credential. Installing a development-signed build, signing that
+phone into a sandbox Apple Account and tapping through a purchase has no
+unattended equivalent, so on a machine that has only run the simulator the App
+Store route to an entitlement — a purchase the store signed, recognised at
+amux.sh, turning `payment_required` into a credential — is unproven and stays
+unproven. Written down so nobody spends another afternoon looking for the
+automated road that does not exist. The web route to the same entitlement is a
+separate question, answered by `wt run qa-cloud-signin`.
+
 2026-09-09 — **A QA recipe for a sandbox purchase on a real phone.**
 
 `wt run qa-sandbox-purchase` carries an App Store sandbox purchase from a
