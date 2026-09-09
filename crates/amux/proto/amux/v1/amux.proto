@@ -1057,7 +1057,6 @@ message BeginPairRequest {
     string pin = 2;
     bytes qr_secret = 3;
   }
-  optional string cloud_url = 4;
 }
 
 message PendingPairResponse {

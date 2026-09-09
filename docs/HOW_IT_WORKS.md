@@ -103,9 +103,9 @@ underneath is just plumbing; nothing about it is trusted.
 ## What a relay can see and do
 
 When two of your devices can't reach each other directly, a relay passes
-their messages along. The relay can be the amux cloud, or any always-on
-device you've paired (a home server works fine) — relaying is built into
-every node.
+their messages along. The amux cloud assigns a relay when a device connects.
+Any always-on device you've paired can also relay (a home server works fine)
+— relaying is built into every node.
 
 The cloud relay sees encrypted tunnel traffic plus metadata such as device
 names, account identity, online status, delivery addresses and traffic timing.

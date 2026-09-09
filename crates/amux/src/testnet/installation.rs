@@ -83,7 +83,7 @@ struct InstallationInner {
     profiles: BTreeMap<String, (ProfileId, Arc<DaemonInner>)>,
     identity: Arc<IdentityServer>,
     fixtures: Fixtures,
-    cloud_addr: Option<SocketAddr>,
+    relay_addr: Option<SocketAddr>,
     root: PathBuf,
     persistent: bool,
     // Keep the root alive until the last handle and all runtimes are gone.
@@ -174,7 +174,7 @@ impl InstallationHandle {
                 &self.inner.name,
                 InstallationRoot::OnDisk(self.inner.root.clone()),
             ),
-            fixture_factory(self.inner.fixtures.clone(), self.inner.cloud_addr),
+            fixture_factory(self.inner.fixtures.clone(), self.inner.relay_addr),
         )
         .await
         .expect("reopen installation");
@@ -484,7 +484,7 @@ fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
 
 fn fixture_factory(
     fixtures: Fixtures,
-    cloud_addr: Option<SocketAddr>,
+    relay_addr: Option<SocketAddr>,
 ) -> Arc<dyn Fn(ProfileId) -> RuntimeFixtures + Send + Sync> {
     Arc::new(move |id| {
         let mut fixtures = fixtures.lock().unwrap();
@@ -521,7 +521,7 @@ fn fixture_factory(
             tracked_tcp: Some(fixture.tracked_tcp.clone()),
             artifact_clock: Some(fixture.clock.clone()),
             cloud: None,
-            cloud_transport: cloud_addr.map(|addr| {
+            cloud_transport: relay_addr.map(|addr| {
                 tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
                     .unwrap()
                     .connect_lazy()
@@ -616,7 +616,7 @@ pub(super) async fn start(
         current: RwLock::new(Some(Arc::new(installation))),
         identity,
         fixtures,
-        cloud_addr: cloud.map(|cloud| cloud.relay_addr()),
+        relay_addr: cloud.map(|cloud| cloud.relay_addr()),
         root,
         persistent: spec.persistent,
         _disk_root: Some(disk_root),

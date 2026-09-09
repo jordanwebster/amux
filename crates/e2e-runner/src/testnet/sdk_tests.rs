@@ -66,11 +66,8 @@ async fn exercise() {
         let qr = control
             .ack(json!({"StartQrPairing":{"daemon":"laptop"}}))
             .await;
-        let qr = amux::parse_qr_pairing_payload_for_cloud(
-            qr["qr"].as_str().unwrap(),
-            client.cloud_url(),
-        )
-        .unwrap();
+        let qr = amux::parse_qr_pairing_payload(qr["qr"].as_str().unwrap()).unwrap();
+        assert_eq!(qr.cloud_url, client.cloud_url());
         wait_for(
             &mut runtime,
             "relay host discovery before pairing",

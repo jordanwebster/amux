@@ -692,7 +692,7 @@ impl TestNetBuilder {
                             sub,
                         })
                         .collect(),
-                    cloud.as_ref().map(|relay| relay.relay_addr()),
+                    cloud.as_ref().map(|cloud| cloud.relay_addr()),
                 )
                 .await,
             );

@@ -10,10 +10,9 @@ final class DeepLinkTests: XCTestCase {
     /// to how the host writes an invitation breaks here rather than on a
     /// phone that cannot read a QR code any more.
     private let link = URL(string: """
-        amux://pair?payload=eyJob3N0X2lkIjoiM2ExZjlkMmMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwi\
-        Y2xvdWRfdXJsIjoiaHR0cHM6Ly9yZWxheS5hbXV4LnNoIiwic2VjcmV0IjpbMSwyLDMsNCw1LDYsNyw4LDksMTAs\
-        MTEsMTIsMTMsMTQsMTUsMTYsMTcsMTgsMTksMjAsMjEsMjIsMjMsMjQsMjUsMjYsMjcsMjgsMjksMzAsMzEsMzJd\
-        fQ
+        amux://pair?payload=eyJob3N0X2lkIjoiM2ExZjlkMmMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwiY2xvdWRfdXJsIjoiaHR0\
+        cHM6Ly9hbXV4LnNoIiwic2VjcmV0IjpbMSwyLDMsNCw1LDYsNyw4LDksMTAsMTEsMTIsMTMsMTQsMTUsMTYsMTcs\
+        MTgsMTksMjAsMjEsMjIsMjMsMjQsMjUsMjYsMjcsMjgsMjksMzAsMzEsMzJdfQ
         """)!
 
     func testAPairingLinkReadsAsTheOfferTheHostWrote() throws {
@@ -22,7 +21,7 @@ final class DeepLinkTests: XCTestCase {
             return XCTFail("expected a pairing invitation, got \(parsed)")
         }
         XCTAssertEqual(invitation.host, HostId("3a1f9d2c-0000-4000-8000-000000000001"))
-        XCTAssertEqual(invitation.cloudURL, "https://relay.amux.sh")
+        XCTAssertEqual(invitation.cloudURL, "https://amux.sh")
         XCTAssertEqual(invitation.secret, Array(UInt8(1)...UInt8(32)))
     }
 

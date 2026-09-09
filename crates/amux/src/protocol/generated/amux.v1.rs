@@ -1918,8 +1918,6 @@ pub struct PairQrCloudPeerResponse {
 pub struct BeginPairRequest {
     #[prost(bytes = "vec", tag = "1")]
     pub host_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(string, optional, tag = "4")]
-    pub cloud_url: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(oneof = "begin_pair_request::Secret", tags = "2, 3")]
     pub secret: ::core::option::Option<begin_pair_request::Secret>,
 }

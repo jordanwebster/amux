@@ -147,11 +147,11 @@ layer** — a peer that could never dial (an SSH-pairing responder, a device
 behind NAT) can still call back over the link its peer established. What
 remains asymmetric is only dialing itself.
 
-## The cloud
+## The cloud relay
 
-The cloud is a well-connected, multi-tenant relay — and nothing else. It
-forwards frames between one user's devices, advertises their adjacency
-(scoped per user), and admits links by JWT. It is **adjacent but
+The configured cloud authenticates accounts and assigns relay credentials.
+Its multi-tenant relay forwards frames between one user's devices, advertises
+their adjacency (scoped per user), and admits links by JWT. It is **adjacent but
 untrusted**: it has no pinned key, so it can never terminate a tunnel into
 anyone's trusted services — it cannot create agents, read traffic, or
 impersonate a device. A self-hosted relay is just an ordinary always-on

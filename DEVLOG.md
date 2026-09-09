@@ -4,9 +4,41 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Use the authenticated cloud route for both pairing methods.**
+
+QR and printed-code pairing now share the same route check. A host on another
+cloud cannot be reached through the authenticated relay, and both methods
+return the same sentence explaining that both devices must be online and
+signed in to the same cloud account. The QR-only URL guard, its normalization
+helpers and its extra request field are deleted. Invitations still carry the
+machine's configured cloud and cannot redirect the phone.
+
+The audit across `crates/`, `ios/` and `docs/` found no remaining relay-to-cloud
+identity writer after the earlier attachment fix. It removes the runtime
+comment claiming embedded devices have no configured cloud, corrects relay
+address names in testnet and wording that equated cloud and relay in the
+protocol and user docs, and replaces relay-address examples in Rust and Swift invitations.
+The superseded pairing explanation in this log and `docs/CLOUD.md` is rewritten:
+`attach_relay` overwrote `cloud_url`; configuration owns that value, and the
+phone defaults to `https://amux.sh` without an app override.
+
+Retained deliberately: installation `CloudServiceId` normalization validates
+configured origins and prevents duplicate `(service, subject)` bindings;
+account API/JWKS endpoint derivation and binding configuration writers never
+read relay addresses. Testnet's cloud owns its identity and credentials while
+its relay carries traffic; connector fixtures and routing link roles still
+name that transport. Test clients retain their loaded cloud for configuration
+assertions. Historical report fixtures retain the configuration captured at
+the time, rather than rewriting replay input.
+
+Validation: 98 targeted pairing tests pass; full `wt test` passes 2,373 tests
+with one existing ignored test. `wt run spec` passes 102 host and 360 reducer
+specifications. The cross-cloud capture shows identical failures and unchanged
+trust files. All 24 Swift shell tests and `wt run ios-lint` pass.
+
 2026-09-09 — **Test networks configure a cloud that assigns a separate relay.**
 
-The testnet cloud now owns its identity URL and token issuance separately from the relay that carries device traffic. Topologies and readiness publish `cloud_url` alongside the assigned relay address. Daemons and Rust clients write and load their cloud configuration before starting; daemon restart reads the existing file. Installation binding fixtures establish one cloud identity before any device starts. The runner returns host-produced invitations unchanged and validates them against the topology's configured cloud.
+The testnet cloud now owns its identity URL and token issuance separately from the relay that carries device traffic. Topologies and readiness publish `cloud_url` alongside the assigned relay address. Daemons and Rust clients write and load their cloud configuration before starting; daemon restart reads the existing file. Installation binding fixtures establish one cloud identity before any device starts. The runner returns host-produced invitations unchanged; its tests assert that they name the topology's configured cloud.
 
 Phone topologies explicitly name `https://amux.sh`, matching the default in the phone's installation profile files. The journey runner reports that cloud and its independent loopback relay and refuses a topology that does not match the phone configuration. No mobile override or runtime cloud writer is added. Custom-cloud Rust regressions pair by QR and printed code through the relay and drive the shared UI client from readiness configuration.
 
@@ -16,7 +48,7 @@ Validation: all 20 targeted testnet tests pass; full `wt test` passes 2,372 test
 
 2026-09-09 — **Configuration owns the cloud; a relay supplies only a route.**
 
-The cloud is the well-known account service configured by `cloud_url`, defaulting to `https://amux.sh`. Attaching or replacing an embedded relay no longer changes it, and the relay carries no cloud identity. The phone uses that default with no app override; its account JSON carries only an identifier and credentials. Installation binding still derives configuration from the bound account service, or the default for an unbound profile. Pairing compares an invitation with the configured cloud while reaching the host through the independently addressed relay. Core tests cover both default and custom configuration through attachment and replacement; mobile tests accept the daemon-issued `https://amux.sh` invitation over loopback and refuse another cloud; Swift tests pin the account JSON shape.
+The cloud is the well-known account service configured by `cloud_url`, defaulting to `https://amux.sh`. Attaching or replacing an embedded relay no longer changes it, and the relay carries no cloud identity. The phone uses that default with no app override; its account JSON carries only an identifier and credentials. Installation binding still derives configuration from the bound account service, or the default for an unbound profile. Pairing reaches the host through the configured cloud's independently addressed relay. Core tests cover both default and custom configuration through attachment and replacement; mobile tests accept the daemon-issued `https://amux.sh` invitation over loopback and refuse another cloud; Swift tests pin the account JSON shape.
 
 Validation: full `wt test` and `wt run spec` pass, as do the focused embedded configuration and mobile pairing tests, all 315 AmuxCore simulator tests, `wt run ios-lint`, and the real relay-to-host `hosts` UI journey.
 
@@ -168,40 +200,32 @@ the saved session instead.
 
 2026-09-09 — **Pair by a machine's QR invitation over the production cloud.**
 
-A phone refused every scanned invitation before anything left it, so the
-machine never saw an attempt and nothing was wrong at the relay. An invitation
-names the account service the machine is signed in to, and the phone compared
-that against the string it had recorded as its own cloud — which was the relay
-address it had been sent to, because an embedded runtime is opened with a
-relay and had nothing else to record. Those two can never be equal in
-production: one service hands different devices different relay hosts. Pairing
-by the printed code was unaffected, because a code carries no cloud to
-compare.
+The phone refused valid invitations before sending an attempt because
+`attach_relay` overwrote its configured `cloud_url` with the relay address.
+The machine's invitation correctly named its configured cloud. The cloud is
+the account service, defaulting to `https://amux.sh`; it assigns the relay
+that carries traffic. Configuration is the only writer of cloud identity.
+The phone loads its profile configuration and uses that default without an
+app override. A relay attachment supplies only a route and credentials.
 
-The application now tells the runtime which account service each of its
-accounts signed in to, and that is what an invitation is compared against.
-Relay address and account service are separate values on an embedded relay:
-one is where to dial, the other is which cloud the account is on. The two
-services are compared as origins, so one spelling of a service is not refused
-against another.
+The QR-only comparison exposed the overwrite while printed-code pairing
+escaped it. Both pairing methods now rely on the same authenticated cloud
+relay route, with a legible failure when that route is unavailable. The
+invitation still names the machine's configured cloud and never changes the
+phone's configuration. Installation binding retains cloud-origin
+normalization for account identity; pairing has no URL comparison to normalize.
 
-What a machine's QR carries is the link, not the offer inside it, and the
-driving door had only ever been handed the offer by a harness that had one. It
-now reads a link through the app's own reader first, which is the step a scan
-takes, so a run driven against a real machine goes the way a person does.
+The driving door reads the machine's pairing link through the app's own
+reader, as a scan does. Testnet returns the invitation unchanged instead of
+rewriting its cloud to the relay address. The mobile regression uses a host
+on a second test cloud to prove refusal, then authenticates and confirms the
+original machine's invitation over a relay with a different address.
 
-The testnet had been overwriting the invitation's service with the test
-relay's address before encoding it, so both ends compared a value no machine
-ever produced and the comparison always passed. That rewrite is gone from the
-mobile suite and the journey harness, and a test asserts the two values differ
-so the coverage cannot quietly collapse again.
-
-Validation: the Rust suite, including the phone's QR pairing, the refusal of
-an invitation from another cloud, and the spelling-tolerant comparison. The
-accounts journey pairs on the invitation the machine actually issued. The live
-production recipe now pairs both ways in one run — by the machine's invitation
-on a phone that trusts nobody, then by the printed code after forgetting it —
-and the limitation it used to record is gone.
+Validation: the Rust pairing tests cover machine-issued invitations, distinct
+cloud and relay addresses, and QR and printed-code refusal across separate
+clouds without trust writes. The accounts journey pairs on the machine's
+invitation. The production QA recipe exercises both methods but remains a
+manual check against the live service.
 
 2026-09-09 — **Recover when the phone runtime fails during startup.**
 

@@ -1976,7 +1976,7 @@ mod tests {
             },
             ttl_seconds: 300,
             tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            cloud_url: "https://amux.sh".to_string(),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
         let PairingSecret::QrSecret(secret) = &pairing.secret else {
@@ -2000,7 +2000,7 @@ mod tests {
         assert!(value.get("pubkey").is_none());
         assert!(value.get("name").is_none());
         assert_eq!(parsed.host_id, uuid::Uuid::from_u128(1));
-        assert_eq!(parsed.cloud_url, "https://relay.example");
+        assert_eq!(parsed.cloud_url, "https://amux.sh");
         assert_eq!(parsed.secret, vec![9; 32]);
         assert!(qr.lines().count() > 4);
     }

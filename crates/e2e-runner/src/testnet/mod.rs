@@ -1146,7 +1146,7 @@ mod tests {
                 .to_owned();
             // Validate the host-produced invitation against this topology
             // before passing its secret to the accepting device.
-            let qr = amux::parse_qr_pairing_payload_for_cloud(&qr, &cloud_url).unwrap();
+            let qr = amux::parse_qr_pairing_payload(&qr).unwrap();
             assert_eq!(qr.cloud_url, cloud_url);
             assert_eq!(qr.host_id, a.host_id());
             c.pairing_admin()

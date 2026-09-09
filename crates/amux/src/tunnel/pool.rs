@@ -46,6 +46,10 @@ const PAIRING_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TunnelPoolError {
+    #[error(
+        "Pairing could not reach this host. Check that both devices are online and signed in to the same cloud account."
+    )]
+    CloudPairingUnavailable,
     #[error("host {host_id} is not reachable")]
     NotFound { host_id: HostId },
     #[error("no live link to host {host_id}")]

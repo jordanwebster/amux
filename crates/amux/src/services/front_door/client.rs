@@ -53,7 +53,6 @@ impl ProfileAdminClient {
         self.begin_pair(wire::BeginPairRequest {
             host_id: host.as_bytes().to_vec(),
             secret: Some(wire::begin_pair_request::Secret::Pin(pin.to_string())),
-            cloud_url: None,
         })
         .await
     }
@@ -68,7 +67,6 @@ impl ProfileAdminClient {
             secret: Some(wire::begin_pair_request::Secret::QrSecret(
                 payload.secret.clone(),
             )),
-            cloud_url: Some(payload.cloud_url.clone()),
         })
         .await
     }

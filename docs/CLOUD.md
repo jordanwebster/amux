@@ -302,9 +302,9 @@ verification list.
   digits the machine prints — opens a conversation with a real Claude session
   running on it, asks one question and reads the answer back.
 
-  Pairing by the invitation is here because it is the only route where the two
-  ends have to agree about which cloud they are on, and for a while they could
-  not. See *Which cloud a pairing invitation names* below.
+  Both pairing methods use the account's assigned relay. The invitation also
+  carries the machine's configured cloud; the printed code carries no cloud.
+  See *Which cloud a pairing invitation names* below.
 
   What it proves that nothing else does: the production handshake. Every other
   journey runs against a relay started beside it with credentials a harness
@@ -352,29 +352,36 @@ quietly on work it did not do.
 
 ## Which cloud a pairing invitation names
 
-A machine's pairing invitation — the QR code it shows, and the pairing link
-behind it — carries the account service that machine is signed in to, and a
-phone refuses an invitation from any other one: two devices on unrelated
-clouds would otherwise try to complete a handshake neither cloud can route.
-Both ends therefore have to write down the same service.
+An invitation carries the machine's configured `cloud_url`, its host identity
+and a one-shot secret. The cloud is the account service, normally
+`https://amux.sh`. It assigns a relay host and port through `/api/connect`;
+that address is only where device traffic goes.
 
-They did not. A phone wrote down the **relay address** it had been sent to,
-because an embedded runtime is opened with a relay rather than told where its
-cloud is, and the relay was the only string it had. A machine wrote down the
-**account service** it is bound to. In production those can never be equal —
-the service is `https://amux.sh` and the relay is a host and port that service
-picks per device — so every scanned invitation was refused, by the phone,
-before anything left it. Nothing was wrong at the relay, and the daemon logged
-no attempt because none was made. Pairing by the printed code was unaffected:
-a code says nothing about a cloud, so that route sends no service to compare.
+Configuration is the only writer of `cloud_url`. The phone loads its
+installation profile configuration, defaulting to `https://amux.sh`; signing
+in or attaching a relay supplies credentials and a route. Installation account
+binding sets the configured service through its existing configuration path.
+An invitation never changes the receiving device's configuration or relay.
 
-The testnet hid it. The harness overwrote the invitation's service with the
-test relay's address before encoding it, so both ends compared a value no
-machine had produced and the comparison always succeeded. That rewrite is
-gone: a journey now pairs on the invitation the machine actually issued.
+The phone previously refused valid invitations because `attach_relay` wrote
+the relay address into `cloud_url`, overwriting the configured cloud. The
+QR-only comparison then rejected the machine's invitation before sending an
+attempt. Pairing by the printed code escaped that faulty comparison because
+six digits carry no cloud. The fix removes the relay's configuration write.
+Testnet also keeps its configured cloud separate from its assigned loopback
+relay and returns each machine's invitation unchanged.
 
-What each end writes down now: a phone is told which account service each of
-its accounts was signed in to — the app knows, because it is the service it
-signed in against — and that is what it compares. The two are compared as
-origins rather than as text, so one service written `https://amux.sh/` and the
-same service written `https://amux.sh:443` are one cloud.
+Both QR and printed-code pairing now use the same authenticated cloud-relay
+route check, with no separate comparison of invitation URLs. A cloud cannot
+route to a host on another cloud or another account; knowing its host identity
+and secret does not supply that route. If the host cannot be reached, both
+paths report: “Pairing could not reach this host. Check that both devices are
+online and signed in to the same cloud account.” The phone keeps its single
+pairing-failure state and clears typed digits. Incorrect and expired secrets
+remain indistinguishable, and neither path writes trust before confirmation.
+
+Cloud-origin normalization remains in installation account binding, where
+`(service, subject)` identifies an account. It validates the configured origin
+and prevents equivalent spellings from creating duplicate bindings. Pairing
+needs no URL normalization: the configured cloud supplies its route, and the
+secret authenticates the host at the other end.

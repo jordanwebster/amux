@@ -1780,8 +1780,8 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
     net.shutdown().await;
 }
 
-/// Pairing checks the configured cloud while reaching the host through a
-/// separate relay route. The phone uses the default cloud, https://amux.sh.
+/// Pairing uses the configured cloud's relay route. The phone defaults to
+/// https://amux.sh and cannot reach a host on another cloud.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mobile_pairing_by_link_authenticates_against_the_configured_cloud() {
     let net = TestNet::builder()
@@ -1841,17 +1841,38 @@ async fn mobile_pairing_by_link_authenticates_against_the_configured_cloud() {
     assert_ne!(offer.cloud_url, format!("http://{}", net.relay_addr()));
     let payload = amux::encode_qr_pairing_payload(&offer, secret).unwrap();
 
-    // An invitation for some other cloud is refused without reaching anybody.
-    let elsewhere = payload.replace(&offer.cloud_url, "https://somewhere.else");
+    // A second cloud issues a real invitation for a host our relay cannot reach.
+    let other_net = TestNet::builder()
+        .cloud_url("https://somewhere.else")
+        .daemon("other-host")
+        .cloud_only()
+        .start()
+        .await;
+    let other_host = other_net.daemon("other-host");
+    let other_offer = other_host
+        .pairing_admin()
+        .await
+        .start_qr_pairing()
+        .await
+        .unwrap();
+    let amux::PairingSecret::QrSecret(other_secret) = &other_offer.secret else {
+        panic!("QR pairing returned a PIN")
+    };
+    let elsewhere = amux::encode_qr_pairing_payload(&other_offer, other_secret).unwrap();
     let wrong = answered(
         &mut receive,
         dispatch(json!({"command": "begin_pair_link", "payload": elsewhere})),
     )
     .await;
-    assert_eq!(
-        wrong,
-        json!({"outcome": "pairing_refused"}),
-        "an invitation issued for another cloud was authenticated anyway"
+    assert_eq!(wrong, json!({"outcome": "pairing_refused"}));
+    assert!(
+        other_host
+            .pairing_admin()
+            .await
+            .list_peers()
+            .await
+            .unwrap()
+            .is_empty()
     );
 
     // And the invitation for this one authenticates and stops there, with the
@@ -1887,6 +1908,7 @@ async fn mobile_pairing_by_link_authenticates_against_the_configured_cloud() {
 
     drop(running);
     net.shutdown().await;
+    other_net.shutdown().await;
 }
 
 /// A phone that always has the same token. The relay's own credentials, not an

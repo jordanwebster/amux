@@ -1895,9 +1895,7 @@ impl ClientService {
             .await
             .map_err(|error| {
                 audit::pairing_failure(method, &error);
-                tonic::Status::unavailable(format!(
-                    "cloud pairing target {peer_host_id} is not reachable: {error}"
-                ))
+                tonic::Status::unavailable(error.to_string())
             })?;
         let mut pairing_client = wire::pairing_service_client::PairingServiceClient::new(channel);
         let peer = pair_initiator(&mut pairing_client, &local_identity, &local_name, secret)
@@ -2593,7 +2591,8 @@ fn remote_tunnel_status(
     let message = format!("{method} remote dispatch to host {host_id} failed: {error}");
     match error {
         TunnelPoolError::NotFound { .. } => protocol_status(ProtocolError::Unreachable { message }),
-        TunnelPoolError::LinkUnavailable { .. }
+        TunnelPoolError::CloudPairingUnavailable
+        | TunnelPoolError::LinkUnavailable { .. }
         | TunnelPoolError::Identity(_)
         | TunnelPoolError::Tls(_) => tonic::Status::unavailable(message),
         TunnelPoolError::InvalidDestination { .. }

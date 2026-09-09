@@ -8,6 +8,7 @@ const QR_SECRET_LEN: usize = 32;
 /// What the QR code carries: `{host_id, cloud_url, secret}`. The secret is
 /// a one-shot 256-bit SPAKE2 input — it never crosses the wire, so the QR
 /// needs no pubkey; SPAKE2 provides mutual authentication from possession.
+/// `cloud_url` records the machine's configured cloud, never a relay address.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct QrPairingPayload {
     pub host_id: HostId,
@@ -26,13 +27,6 @@ pub enum QrPairingError {
         field: &'static str,
         expected: usize,
         actual: usize,
-    },
-    #[error(
-        "QR payload cloud_url {payload_cloud_url:?} does not match configured cloud_url {configured_cloud_url:?}"
-    )]
-    CloudUrlMismatch {
-        payload_cloud_url: String,
-        configured_cloud_url: String,
     },
 }
 
@@ -70,49 +64,6 @@ pub fn parse_qr_pairing_payload(payload: &str) -> Result<QrPairingPayload, QrPai
     })
 }
 
-pub fn parse_qr_pairing_payload_for_cloud(
-    payload: &str,
-    configured_cloud_url: &str,
-) -> Result<QrPairingPayload, QrPairingError> {
-    let payload = parse_qr_pairing_payload(payload)?;
-    validate_qr_payload_cloud_url(&payload.cloud_url, configured_cloud_url)?;
-    Ok(payload)
-}
-
-/// Whether a pairing invitation names the cloud this device is on.
-///
-/// The two ends write the same origin down separately — one from the account
-/// a machine is signed in to, one from the account this device is signed in
-/// to — so they can disagree in spelling while naming the same place:
-/// `https://amux.sh/` and `https://amux.sh:443` are one service. Comparing
-/// the origins rather than the text keeps a legitimate invitation from being
-/// refused over a trailing slash. Anything that is not an origin at all is
-/// compared as it was written, so a malformed value never widens the match.
-pub fn same_cloud(left: &str, right: &str) -> bool {
-    use crate::installation::CloudServiceId;
-    match (
-        CloudServiceId::canonicalize(left),
-        CloudServiceId::canonicalize(right),
-    ) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => left == right,
-    }
-}
-
-pub fn validate_qr_payload_cloud_url(
-    payload_cloud_url: &str,
-    configured_cloud_url: &str,
-) -> Result<(), QrPairingError> {
-    if same_cloud(payload_cloud_url, configured_cloud_url) {
-        Ok(())
-    } else {
-        Err(QrPairingError::CloudUrlMismatch {
-            payload_cloud_url: payload_cloud_url.to_string(),
-            configured_cloud_url: configured_cloud_url.to_string(),
-        })
-    }
-}
-
 fn validate_qr_payload_bytes(field: &'static str, bytes: &[u8]) -> Result<(), QrPairingError> {
     if bytes.len() == QR_SECRET_LEN {
         Ok(())
@@ -141,15 +92,15 @@ mod tests {
             },
             ttl_seconds: 300,
             tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            cloud_url: "https://amux.sh".to_string(),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
 
         let payload = encode_qr_pairing_payload(&pairing, &[9; 32]).unwrap();
-        let parsed = parse_qr_pairing_payload_for_cloud(&payload, "https://relay.example").unwrap();
+        let parsed = parse_qr_pairing_payload(&payload).unwrap();
 
         assert_eq!(parsed.host_id, HostId::from_u128(1));
-        assert_eq!(parsed.cloud_url, "https://relay.example");
+        assert_eq!(parsed.cloud_url, "https://amux.sh");
         assert_eq!(parsed.secret, vec![9; 32]);
     }
 
@@ -163,7 +114,7 @@ mod tests {
             },
             ttl_seconds: 300,
             tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            cloud_url: "https://amux.sh".to_string(),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
 
@@ -175,10 +126,10 @@ mod tests {
     }
 
     #[test]
-    fn qr_pairing_payload_validates_shape_and_cloud_url() {
+    fn qr_pairing_payload_validates_secret_length() {
         let payload = serde_json::json!({
             "host_id": "00000000-0000-0000-0000-000000000001",
-            "cloud_url": "https://relay.example",
+            "cloud_url": "https://amux.sh",
             "secret": [9],
         })
         .to_string();
@@ -189,16 +140,6 @@ mod tests {
                 field: "secret",
                 ..
             })
-        ));
-        // Two spellings of one origin are one cloud: an invitation issued by
-        // a machine that writes its service one way is not refused by a
-        // device that writes the same service another way.
-        assert!(validate_qr_payload_cloud_url("https://amux.sh/", "https://amux.sh").is_ok());
-        assert!(validate_qr_payload_cloud_url("https://amux.sh:443", "https://amux.sh").is_ok());
-        assert!(validate_qr_payload_cloud_url("https://amux.sh", "https://other.sh").is_err());
-        assert!(matches!(
-            validate_qr_payload_cloud_url("https://a", "https://b"),
-            Err(QrPairingError::CloudUrlMismatch { .. })
         ));
     }
 }

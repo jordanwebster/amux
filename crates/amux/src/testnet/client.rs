@@ -31,8 +31,7 @@ impl UserClient {
         self.admin.clone()
     }
 
-    /// The cloud from this client's configuration, which accepted pairing
-    /// invitations must name. The test relay supplies only the route.
+    /// The cloud read from this client's configuration.
     pub fn cloud_url(&self) -> &str {
         &self.cloud_url
     }

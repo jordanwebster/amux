@@ -120,7 +120,7 @@ public enum EntitlementSource: String, Sendable, Equatable, Codable {
     case web
 }
 
-/// A relay credential, and the relay it is good at. The bridge asks for one
+/// A relay credential issued by the configured cloud, and the relay it is good at. The bridge asks for one
 /// when it needs it and the app answers; nothing caches it beyond its expiry.
 ///
 /// The address travels with the credential because it is the account service

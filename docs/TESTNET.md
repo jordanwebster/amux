@@ -70,8 +70,8 @@ Each user entry has `label`, `user_id` (UUID) and `token`. Each daemon entry
 has `name`, `host_id` (UUID) and `fingerprint` (64 hexadecimal SHA-256 digits
 of its public key). Each agent entry has `name`, `daemon` and `agent_id`
 (UUID). Both socket addresses use `127.0.0.1` with an ephemeral port. Tokens
-belong only to this isolated relay instance. Diagnostic output goes to
-stderr, leaving stdout available for a driver to parse.
+are issued by this isolated test cloud and accepted by its assigned relay.
+Diagnostic output goes to stderr, leaving stdout available for a driver to parse.
 
 The cloud owns its identity URL, issues per-user credentials, and assigns a
 relay. The relay authenticates those credentials and carries device traffic;

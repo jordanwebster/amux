@@ -544,3 +544,58 @@ async fn pin_pairing_after_revocation_over_the_cloud() {
         "revocation keeps the relay's claim: a forgotten machine is reachable for pairing again, and pairs by its printed code without either side reconnecting"
     );
 }
+
+/// A cloud URL in an invitation cannot supply a route. Both secret formats
+/// require the host to be reachable through this device's authenticated relay.
+#[tokio::test]
+async fn pairing_on_another_cloud_fails_at_the_same_route_boundary_for_pin_and_qr() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("phone")
+        .cloud_only()
+        .start()
+        .await;
+    let elsewhere = TestNet::builder()
+        .cloud_url("https://other-cloud.example")
+        .daemon("host")
+        .cloud_only()
+        .start()
+        .await;
+    let phone = net.daemon("phone");
+    let host = elsewhere.daemon("host");
+    let client = phone.pairing_admin().await;
+    let responder = host.pairing_admin().await;
+    let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
+    let pin = host.start_pairing().await;
+    let pin_error = client
+        .begin_pair_pin(host.host_id(), &pin)
+        .await
+        .unwrap_err();
+    responder.cancel_pairing().await.unwrap();
+    let offer = responder.start_qr_pairing().await.unwrap();
+    assert_eq!(offer.cloud_url, elsewhere.cloud_url());
+    assert_ne!(offer.cloud_url, net.cloud_url());
+    let amux::PairingSecret::QrSecret(secret) = &offer.secret else {
+        panic!("expected QR secret")
+    };
+    let qr =
+        amux::parse_qr_pairing_payload(&amux::encode_qr_pairing_payload(&offer, secret).unwrap())
+            .unwrap();
+    let qr_error = client.begin_pair_qr(&qr).await.unwrap_err();
+    assert!(matches!(pin_error, amux::PairingError::Transport(_)));
+    assert!(matches!(qr_error, amux::PairingError::Transport(_)));
+    assert_eq!(pin_error.to_string(), qr_error.to_string());
+    assert!(pin_error.to_string().contains(
+        "Pairing could not reach this host. Check that both devices are online and signed in to the same cloud account."
+    ));
+    assert_eq!(
+        before,
+        (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk())
+    );
+    host.pair_mode_active().await;
+    println!(
+        "printed code: {pin_error}\nQR invitation: {qr_error}\nBoth trust stores unchanged; host offer still active."
+    );
+    net.shutdown().await;
+    elsewhere.shutdown().await;
+}

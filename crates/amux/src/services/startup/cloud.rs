@@ -1,6 +1,6 @@
 //! Cloud relay connection with automatic reconnection.
 //!
-//! Manages the outbound TLS connection from a local server to a cloud relay.
+//! Asks the configured cloud for relay credentials, then connects to that relay.
 //! Handles exponential backoff on retriable errors and stops on auth failures.
 
 use std::sync::Arc;

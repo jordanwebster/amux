@@ -88,7 +88,6 @@ pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
     QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
-    parse_qr_pairing_payload_for_cloud, same_cloud, validate_qr_payload_cloud_url,
 };
 pub use pairing::ssh::{
     SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_initiator,

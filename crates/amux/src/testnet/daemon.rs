@@ -136,7 +136,7 @@ impl DaemonRuntime {
 /// this link; the harness has no duplicate socket it can sever as a shortcut.
 pub(super) fn tracked_cloud_channel(addr: SocketAddr, tracked: TrackedTcpConnections) -> Channel {
     Endpoint::from_shared(format!("http://{addr}"))
-        .expect("testnet cloud endpoint URI")
+        .expect("testnet relay endpoint URI")
         .connect_with_connector_lazy(tower::service_fn(move |_uri: Uri| {
             let tracked = tracked.clone();
             async move {
@@ -155,7 +155,7 @@ pub(super) fn tracked_cloud_channel(addr: SocketAddr, tracked: TrackedTcpConnect
 
 fn cloud_channel(addr: SocketAddr) -> Channel {
     Endpoint::from_shared(format!("http://{addr}"))
-        .expect("testnet cloud endpoint URI")
+        .expect("testnet relay endpoint URI")
         .connect_lazy()
 }
 
@@ -1135,7 +1135,7 @@ impl Daemon {
             "the JWT ttl must fit within the assertion timeout"
         );
         let net = self.net.upgrade().expect("testnet already dropped");
-        let cloud_relay = net
+        let cloud = net
             .cloud
             .as_ref()
             .expect("this testnet was built without .cloud()");
@@ -1154,18 +1154,18 @@ impl Daemon {
         );
         eventually(
             &assertion,
-            async || !self.has_direct_route_to(cloud_relay.relay.host_id).await,
+            async || !self.has_direct_route_to(cloud.relay.host_id).await,
             self.failure_dump(),
         )
         .await;
 
         let token = format!("jwt-initial-{}", uuid::Uuid::new_v4().simple());
         let expires_at = std::time::SystemTime::now() + ttl;
-        cloud_relay.register_token(&token, attachment.user_id, ttl);
+        cloud.register_token(&token, attachment.user_id, ttl);
         let auth = LinkConnectorAuth::new(
             LinkConnectorToken { token, expires_at },
             Arc::new(RegistryTokenRefresher {
-                tokens: cloud_relay.token_registry(),
+                tokens: cloud.token_registry(),
                 user_id: attachment.user_id,
             }),
         );
@@ -1182,7 +1182,7 @@ impl Daemon {
         );
         eventually(
             &assertion,
-            async || self.knows_host(cloud_relay.relay.host_id).await,
+            async || self.knows_host(cloud.relay.host_id).await,
             self.failure_dump(),
         )
         .await;
@@ -1456,13 +1456,13 @@ impl RouteAssertion<'_> {
 
     /// The route goes through the testnet cloud relay.
     pub async fn via_cloud(self) {
-        let cloud_id = self
+        let relay_id = self
             .from
             .net
             .upgrade()
             .and_then(|net| net.cloud.as_ref().map(|cloud| cloud.relay.host_id))
             .expect("topology has no cloud relay");
-        self.via_host(cloud_id, "cloud").await;
+        self.via_host(relay_id, "cloud relay").await;
     }
 
     async fn via_host(self, relay_id: HostId, relay_name: &str) {

@@ -202,12 +202,8 @@ pub(crate) struct ProfileRuntime {
     in_process_connection: InProcessConnection,
     background_tasks: Vec<JoinHandle<()>>,
     cloud_connector: Mutex<Option<CloudConnector>>,
-    /// The relay loop of an embedded device, when its embedder brought one.
-    ///
-    /// A device with no configuration file and no cloud of its own is opened
-    /// with the relay it is to use, so this is that connection rather than
-    /// the connector a configured profile discovers for itself. It is held
-    /// with the profile so that stopping the profile stops the link.
+    /// The embedder obtains relay credentials from the configured cloud through
+    /// its own account API. Stopping the profile must also stop this link.
     relay_task: Mutex<Option<JoinHandle<()>>>,
     status: RuntimeStatus,
     #[cfg(unix)]

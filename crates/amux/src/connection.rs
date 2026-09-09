@@ -340,7 +340,7 @@ impl ConnectionManager {
                 return Ok(relay);
             }
         }
-        Err(TunnelPoolError::NotFound { host_id: peer })
+        Err(TunnelPoolError::CloudPairingUnavailable)
     }
 
     pub(crate) fn routing(&self) -> &Arc<RoutingCore> {
@@ -601,7 +601,7 @@ mod tests {
 
         let error = manager.cloud_pairing_channel_to(peer.id).await.unwrap_err();
 
-        assert!(matches!(error, TunnelPoolError::NotFound { host_id } if host_id == peer.id));
+        assert!(matches!(error, TunnelPoolError::CloudPairingUnavailable));
     }
 
     #[tokio::test]
@@ -615,7 +615,7 @@ mod tests {
 
         let error = manager.cloud_pairing_channel_to(peer.id).await.unwrap_err();
 
-        assert!(matches!(error, TunnelPoolError::NotFound { host_id } if host_id == peer.id));
+        assert!(matches!(error, TunnelPoolError::CloudPairingUnavailable));
     }
 
     /// The dial-error storage IS `HostEntry.last_dial_error`: a failed
