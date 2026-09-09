@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Home journey follows reviewed copy and persisted accounts.**
+
+The relay-loss journey still expected the longer connection and timeout copy
+that the string review replaced, plus the former stopped-runtime instruction.
+Its exact sentence list now matches the app's catalogue and startup-recovery
+state. It continues to require a disconnected bridge and every remembered row
+in its original order; unknown or raw transport messages still fail.
+
+The unsigned empty-home act also clears the account seeded by earlier acts,
+alongside its cached fleet. Account persistence correctly retains that account
+between launches, so removing only the fleet no longer establishes an unsigned
+phone. The journey now explicitly requires the signed-out home and Sign In.
+
+Validation: `wt run ios-journey` passes all 13 journeys on the pinned simulator,
+including the complete home journey and production account restoration.
+
+---
+
 2026-09-09 — **Bridge smoke probes use the current account configuration.**
 
 The standalone simulator probes now supply an account list, selected account

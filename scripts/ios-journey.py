@@ -178,6 +178,10 @@ def forget_cache(udid: str) -> None:
     shutil.rmtree(container(udid) / "Library/Caches/amux", ignore_errors=True)
 
 
+def forget_accounts(udid: str) -> None:
+    (container(udid) / "Library/Application Support/amux/accounts.json").unlink(missing_ok=True)
+
+
 def forget_pairings(udid: str) -> None:
     """Gives the phone a new identity, trusting nobody.
 
@@ -380,7 +384,7 @@ def install(udid: str) -> None:
     ios_simulators.run("xcrun", "simctl", "install", udid, str(APPLICATION), timeout=300)
     # Each journey starts with a declared set of accounts. Relaunches within a
     # journey keep this file and exercise the same persistence as an installed app.
-    (container(udid) / "Library/Application Support/amux/accounts.json").unlink(missing_ok=True)
+    forget_accounts(udid)
 
 
 # MARK: - Reading a screen
@@ -712,11 +716,11 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     # kind of failure this is; the sentence is the app's, so what stands above
     # a person's agents is never a transport error read out loud.
     worded = {
-        "Offline · can't reach amux — check your connection",
+        "Offline · check your connection",
         "Offline · sign in again to reconnect",
-        "Offline · amux isn't answering — trying again",
+        "Offline · trying again",
         "Offline · reconnecting",
-        "Offline · amux stopped — reopen the app",
+        "Offline · amux could not start",
     }
     journey.expect(line is not None and (line.get("value") or "") in worded,
                    f"the offline exceptions line is not one of the sentences the app writes: "
@@ -793,6 +797,9 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
 
     # MARK: Four — a phone that remembers nothing.
     forget_cache(udid)
+    # Cached rows and the account registry persist independently. This launch
+    # is unsigned, so it must forget the account seeded by the preceding acts too.
+    forget_accounts(udid)
     empty = journey.directory / "empty.png"
     answers = speak(journey, "nothing-remembered", [
         {"kind": "settle"},
@@ -804,10 +811,14 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     nothing, = [answer["state"] for answer in answers if answer["kind"] == "state"]
     journey.expect(not rows(nothing), f"a phone that remembers nothing drew {len(rows(nothing))} "
                                       f"rows")
+    journey.expect((named(nothing, "home") or {}).get("value") == "signed-out",
+                   "the unsigned empty-home launch retained a usable account")
     for element in ("home.empty.title", "home.empty.explain", "home.empty.action"):
         journey.expect(named(nothing, element) is not None,
                        f"the empty home is missing {element}: "
                        f"{[e['identifier'] for e in nothing['elements']]}")
+    journey.expect(named(nothing, "home.empty.action").get("label") == "Sign In",
+                   "the unsigned empty home did not offer Sign In")
     journey.say(f"a phone that remembers nothing shows the home empty: "
                 f"{named(nothing, 'home.empty.title')['value']!r}, "
                 f"{named(nothing, 'home.empty.action')['label']!r}")
