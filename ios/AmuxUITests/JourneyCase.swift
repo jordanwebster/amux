@@ -505,8 +505,15 @@ class JourneyCase: XCTestCase {
     /// journey asserts on this as well as on the test passing, so a failure
     /// afterwards can be read against what was actually on screen.
     func write(_ name: String) throws {
+        try write(name, record)
+    }
+
+    /// One part of what was read, on its own. For a list whose order is the
+    /// whole point: a reader looking for it should not have to find it among
+    /// everything else the run said.
+    func write(_ name: String, _ what: Any) throws {
         let data = try JSONSerialization.data(
-            withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
+            withJSONObject: what, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: Self.inContainer(name))
     }
 }

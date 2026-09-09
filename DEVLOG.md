@@ -4,6 +4,32 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **The accounts journey proves a purchase reaches the account service.**
+
+The subscribe act now drives every state a purchase can rest in. A purchase
+amux.sh is never told about is kept, said in words, and offered again — with
+the transaction still the store's, which the act checks by reading that
+nothing was finished. One amux.sh refuses reads differently, because waiting
+will not change it. Sent again and taken, the entitlement is read back and
+only then is the transaction finished. Restoring on a phone with nothing
+bought takes the same road, and a purchase the store approves by itself
+reaches the account service with nobody pressing anything.
+
+The order is asserted from the doubles' own call lists rather than from the
+screen: a purchase read back from the account service and one taken on the
+store's word look identical on a paywall. Both lists are written beside the
+journey record as scripted-calls.json, where the order is the whole point.
+
+The scripted App Store can now approve a purchase it was holding, which is the
+only way to reach a state nobody presses a button for. A note on the paywall
+reports the words it says as well as the state it is in, so two readings of
+one state can be told apart.
+
+Validation: the accounts journey whole, and its subscribe act alone; all Swift
+package unit suites; the paywall goldens.
+
+---
+
 2026-09-09 — **A QA account signs into the real amux.sh from this Mac.**
 
 `wt run qa-cloud-signin` performs, with no app and no simulator, the same

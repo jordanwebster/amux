@@ -75,6 +75,10 @@ public final class ScriptedStoreFront: StoreFront, @unchecked Sendable {
     /// holds them: something is only taken off this list once whoever bought
     /// it says it is dealt with.
     private var holding: [SignedPurchase] = []
+    /// Whoever is listening for purchases that arrive after the fact. Kept so
+    /// a driver can make one arrive, which is the only way a state nobody
+    /// presses a button to reach can be reached at all.
+    private var listeners: [AsyncStream<SignedPurchase>.Continuation] = []
 
     public init(state: ScriptedStoreState = ScriptedStoreState()) {
         self.state = state
@@ -145,11 +149,24 @@ public final class ScriptedStoreFront: StoreFront, @unchecked Sendable {
         }
     }
 
-    /// Nothing arrives after the fact in a scripted store: an approval is
-    /// something the App Store decides, and a state a driver declares is
-    /// already the state after it decided.
     public func approvals() -> AsyncStream<SignedPurchase> {
-        AsyncStream { $0.finish() }
+        AsyncStream { continuation in
+            lock.withLock { listeners.append(continuation) }
+        }
+    }
+
+    /// The App Store approving a purchase it had taken and could not finish —
+    /// a parent answering, a bank's second factor. Nothing on the phone
+    /// presses anything for this, which is what makes it worth driving.
+    public func approve(_ plan: String = Plan.yearlyID) {
+        let purchase = SignedPurchase(
+            id: "scripted-approval", productID: plan,
+            signed: ScriptedStoreState.signedTransaction)
+        let listening = lock.withLock { () -> [AsyncStream<SignedPurchase>.Continuation] in
+            holding.append(purchase)
+            return listeners
+        }
+        for listener in listening { listener.yield(purchase) }
     }
 
     private func outcome(
@@ -186,6 +203,9 @@ public struct StoreScript: Codable, Sendable, Equatable {
     public var restore = "nothingToRestore"
     /// What the store said when it failed.
     public var reason = "the App Store could not complete this purchase"
+    /// Whether the store approves a purchase it was holding, the moment this
+    /// script is applied. Nothing on the phone presses anything for it.
+    public var approve = false
     public var latencyMillis = 0
 
     public init() {}
@@ -196,6 +216,7 @@ public struct StoreScript: Codable, Sendable, Equatable {
         purchase = try fields.decodeIfPresent(String.self, forKey: .purchase) ?? purchase
         restore = try fields.decodeIfPresent(String.self, forKey: .restore) ?? restore
         reason = try fields.decodeIfPresent(String.self, forKey: .reason) ?? reason
+        approve = try fields.decodeIfPresent(Bool.self, forKey: .approve) ?? approve
         latencyMillis = try fields.decodeIfPresent(Int.self, forKey: .latencyMillis)
             ?? latencyMillis
     }

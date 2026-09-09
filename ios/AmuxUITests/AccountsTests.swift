@@ -146,9 +146,13 @@ final class AccountsTests: JourneyCase {
         // What the two doubles were asked, in order. A screen that read the
         // account service back after a purchase rather than believing the
         // store is only provable here.
-        let calls = try door(runner, .init(kind: "calls"))
-        record["cloudCalls"] = calls["cloud"] as? [String] ?? []
-        record["storeCalls"] = calls["store"] as? [String] ?? []
+        record["cloudCalls"] = try cloudCalls()
+        record["storeCalls"] = try storeCalls()
+        // The same two lists on their own, so the order they are in is
+        // readable without hunting through everything else the phone said.
+        try write("scripted-calls.json", [
+            "cloud": try cloudCalls(), "store": try storeCalls(),
+        ])
     }
 
     // MARK: - The acts
@@ -252,21 +256,82 @@ final class AccountsTests: JourneyCase {
         record["restoreSaid"] = try waitForValue(
             runner, "paywall.failed", "there is nothing on this Apple Account to restore")
 
-        // And the one that goes through, on the plan chosen by hand. The App
-        // Store says this Apple Account paid; what the account may do is read
-        // back from the account service, which is where a subscription
-        // actually lives.
+        // The plan chosen by hand, which is what the rest of this act buys.
         press(app, "paywall.monthly")
         record["chosenPlan"] = try says("paywall.monthly")
+
+        // Bought, and the account service never heard about it. The purchase
+        // is kept — the App Store is still holding the transaction, which is
+        // what a finish would throw away — and the screen says so and offers
+        // to send it again.
         try scriptStore(["purchase": "bought"])
-        try scriptCloud(["entitlement": "active", "source": "appStore"])
+        try scriptCloud(["recordPurchase": "network"])
         press(app, "paywall.buy")
-        waitFor(app, "paywall.subscribed", "a purchase that went through said nothing")
+        record["afterAPostThatNeverArrived"] = try waitForValue(
+            runner, "paywall", "unconfirmed unreachable")
+        record["unreachableSaid"] = try says("paywall.unconfirmed")
+        record["unreachableExplained"] = try called("paywall.unconfirmed")
+        record["offersWhileUnconfirmed"] = try called("paywall.buy")
+        record["storeCallsWhileUnconfirmed"] = try storeCalls()
+
+        // The account service refusing reads differently from a phone that
+        // could not get through: one will not change by waiting and the other
+        // will.
+        let refusedPost = "that transaction belongs to another account"
+        try scriptCloud(["recordPurchase": "refused", "purchaseReason": refusedPost])
+        press(app, "paywall.buy")
+        record["afterAPostThatWasRefused"] = try waitForValue(
+            runner, "paywall", "unconfirmed refused")
+        record["refusedPostSaid"] = try says("paywall.unconfirmed")
+        record["refusedPostExplained"] = try called("paywall.unconfirmed")
+
+        // Sent again, and taken. What the account may do is read back from the
+        // account service afterwards, which is where a subscription actually
+        // lives — the store's word for it is never enough.
+        try scriptCloud([
+            "recordPurchase": "accepted", "entitlement": "active", "source": "appStore",
+        ])
+        press(app, "paywall.buy")
+        waitFor(app, "paywall.subscribed", "retrying the purchase said nothing")
         record["subscribedSource"] = try says("paywall.subscribed")
         record["offersAfterBuying"] = try called("paywall.buy")
+        record["cloudCallsAfterBuying"] = try cloudCalls()
+        record["storeCallsAfterBuying"] = try storeCalls()
         press(app, "paywall.buy")
         record["gateAfterBuying"] = try waitForValue(runner, "home", "ready")
         record["entitlementAfterBuying"] = try accountsKnown()
+
+        // The same account on a phone with nothing bought, which is what
+        // Restore Purchases is for. The account service, asked afresh, says
+        // nothing is bought; the App Store says otherwise; and putting it back
+        // goes through the account service rather than around it.
+        try signIn(as: Who.personal, entitlement: "none")
+        pressTab(app, "Agents")
+        press(app, "home.empty.action")
+        waitFor(app, "paywall", "Subscribe did not lead to the paywall")
+        try scriptStore(["restore": "bought"])
+        try scriptCloud([
+            "recordPurchase": "accepted", "entitlement": "active", "source": "appStore",
+        ])
+        press(app, "paywall.restore")
+        waitFor(app, "paywall.subscribed", "a restored subscription said nothing")
+        record["restoredSource"] = try says("paywall.subscribed")
+        record["cloudCallsAfterRestoring"] = try cloudCalls()
+        record["storeCallsAfterRestoring"] = try storeCalls()
+        press(app, "paywall.buy")
+        waitFor(app, "home", "Done did not come back from the paywall")
+
+        // And one the store approves after the fact — a parent answering, a
+        // bank's second factor. Nothing here presses anything: the call the
+        // phone makes of the account service is the whole proof.
+        let beforeApproval = try cloudCalls()
+        try scriptStore(["approve": true])
+        XCTAssertTrue(
+            waitUntil { ((try? self.cloudCalls()) ?? []).count > beforeApproval.count },
+            "a purchase the store approved never reached the account service")
+        record["cloudCallsAfterApproval"] = try cloudCalls()
+        record["callsAddedByTheApproval"] = Array(
+            (try cloudCalls()).dropFirst(beforeApproval.count))
     }
 
     /// A second account on the same phone, subscribed somewhere else entirely.
@@ -550,6 +615,18 @@ final class AccountsTests: JourneyCase {
     /// What the screen calls one named thing, which is what VoiceOver reads.
     private func called(_ identifier: String) throws -> String? {
         said(try declared(runner), identifier)?.label
+    }
+
+    /// Every call the phone has made of the scripted account service, in
+    /// order. What a screen believed is only provable here: a purchase read
+    /// back from the account service and one taken on the store's word look
+    /// identical on screen.
+    private func cloudCalls() throws -> [String] {
+        try door(runner, .init(kind: "calls"))["cloud"] as? [String] ?? []
+    }
+
+    private func storeCalls() throws -> [String] {
+        try door(runner, .init(kind: "calls"))["store"] as? [String] ?? []
     }
 
     /// What the account service will answer from here on. Everything unsaid

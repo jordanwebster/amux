@@ -336,8 +336,19 @@ public struct Paywall: View {
         case .unreachable:
             "Your subscription is paid for and kept. This phone could not reach amux.sh to add it to your account, and will try again next time the app opens."
         case .refused(let said):
-            "Your subscription is paid for and kept, but amux.sh would not add it to your account: \(said) Try again, and get in touch if it keeps happening."
+            // Ended for us, because the reason is the account service's
+            // sentence and nothing makes it finish one.
+            "Your subscription is paid for and kept, but amux.sh would not add it to your account: \(ended(said)) Try again, and get in touch if it keeps happening."
         }
+    }
+
+    /// Somebody else's words, finished. A reason that already ends in a stop
+    /// keeps it; one that does not is given one, so it does not run into the
+    /// sentence after it.
+    static func ended(_ said: String) -> String {
+        let trimmed = said.trimmingCharacters(in: .whitespaces)
+        guard let last = trimmed.last, !".!?".contains(last) else { return trimmed }
+        return trimmed + "."
     }
 
     private func note(_ headline: String, _ detail: String, id: String, value: String) -> some View {
@@ -349,6 +360,9 @@ public struct Paywall: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .identified("paywall.\(id)", value: value)
+        // The words as well as the state, because two states can be the same
+        // state and still have to say different things — a purchase amux.sh
+        // could not be told about and one it refused are both unconfirmed.
+        .identified("paywall.\(id)", label: detail, value: value)
     }
 }

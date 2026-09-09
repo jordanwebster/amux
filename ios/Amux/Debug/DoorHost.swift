@@ -142,6 +142,9 @@ final class DoorHost {
             return .ack
         case .store(let script):
             store.scripted = script.state
+            // Applied after the state, because approving is something the
+            // store does now rather than something it will answer later.
+            if script.approve { store.approve() }
             return .ack
         case .calls:
             return .calls(cloud: cloud.calls.map(Self.said), store: store.calls.map(Self.said))

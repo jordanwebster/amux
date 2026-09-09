@@ -2021,11 +2021,13 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
     driving = journey.acts
     port = free_port()
     read = journey.directory / "accounts.json"
+    calls = journey.directory / "scripted-calls.json"
     photographs = {name: journey.directory / f"{name}.png"
                    for act in driving for name in pictures.get(act, ())}
     perform(
         journey, udid, "AmuxUITests/AccountsTests",
-        {"accounts.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        {"accounts.json": read, "scripted-calls.json": calls,
+         **{f"{name}.png": path for name, path in photographs.items()}},
         telling={
             "AMUX_ACTS": ",".join(driving) if journey.filtered else "",
             "AMUX_RELAY": f"http://{ready['relay']}",
@@ -2115,6 +2117,27 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(
             seen.get("restoreSaid") == "there is nothing on this Apple Account to restore",
             f"restoring with nothing to restore said {seen.get('restoreSaid')!r}")
+
+        # Bought and not confirmed. The purchase is kept, said in words, and
+        # offered again — and the transaction is still the store's, because
+        # finishing it is what would make a retry impossible.
+        journey.expect(seen.get("afterAPostThatNeverArrived") == "unconfirmed unreachable",
+                       f"a purchase the account service never heard about left the paywall at "
+                       f"{seen.get('afterAPostThatNeverArrived')!r}")
+        journey.expect(seen.get("offersWhileUnconfirmed") == "Retry",
+                       f"an unconfirmed purchase offers {seen.get('offersWhileUnconfirmed')!r}")
+        journey.expect("finish" not in " ".join(seen.get("storeCallsWhileUnconfirmed") or []),
+                       f"a purchase the account service had not taken was finished with the "
+                       f"store anyway: {seen.get('storeCallsWhileUnconfirmed')}")
+        journey.expect(seen.get("afterAPostThatWasRefused") == "unconfirmed refused",
+                       f"a refused purchase left the paywall at "
+                       f"{seen.get('afterAPostThatWasRefused')!r}")
+        journey.expect(
+            bool(seen.get("unreachableExplained")) and bool(seen.get("refusedPostExplained"))
+            and seen.get("unreachableExplained") != seen.get("refusedPostExplained"),
+            f"a phone that could not get through and an account service that refused read the "
+            f"same: {seen.get('unreachableExplained')!r}")
+
         journey.expect(seen.get("subscribedSource") == "App Store"
                        and seen.get("offersAfterBuying") == "Done",
                        f"a purchase that went through said {seen.get('subscribedSource')!r}")
@@ -2129,6 +2152,33 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect("entitlement personal" in (seen.get("cloudCalls") or []),
                        f"the phone believed the store rather than the account service: "
                        f"{seen.get('cloudCalls')}")
+
+        def sent_then_read(what: str, made: list) -> None:
+            """The signed transaction reaches the account service, and only
+            then is this account's entitlement read back. The other order
+            would be a phone believing the store."""
+            posted = made.index("recordPurchase personal") if \
+                "recordPurchase personal" in made else -1
+            afterwards = [at for at, call in enumerate(made)
+                          if call == "entitlement personal" and at > posted]
+            journey.expect(posted >= 0 and bool(afterwards),
+                           f"after {what} the phone said {made}, which does not carry the "
+                           f"purchase to the account service and then read the entitlement back")
+
+        sent_then_read("a purchase", seen.get("cloudCallsAfterBuying") or [])
+        sent_then_read("a restore", seen.get("cloudCallsAfterRestoring") or [])
+        journey.expect(
+            "finish scripted-transaction" in (seen.get("storeCallsAfterBuying") or []),
+            f"the transaction was never finished with the store once the account service had "
+            f"it: {seen.get('storeCallsAfterBuying')}")
+        journey.expect(seen.get("restoredSource") == "App Store",
+                       f"a restored subscription said {seen.get('restoredSource')!r}")
+        # Approved after the fact, with nobody pressing anything.
+        journey.expect(
+            any(call.startswith("recordPurchase")
+                for call in seen.get("callsAddedByTheApproval") or []),
+            f"a purchase the store approved by itself reached the account service as "
+            f"{seen.get('callsAddedByTheApproval')}")
         journey.say(f"both subscriptions are pressed at the App Store — {', '.join(bought)} — and "
                     f"every answer it can give is on screen: a sheet closed without buying leaves "
                     f"the same plan chosen, a refusal says what the store said, one left waiting "
@@ -2136,6 +2186,14 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                     f"restoring nothing says so. The one that goes through is read back from the "
                     f"account service rather than believed — the phone asks it what this account "
                     f"may do — and the home opens")
+        journey.say("a purchase is not a subscription until amux.sh has it. One the account "
+                    "service never heard about is kept, said in words, and offered again with "
+                    "the transaction still the store's; one it refuses reads differently, "
+                    "because waiting will not change it. Sent again and taken, the entitlement "
+                    "is read back and only then is the transaction finished. Restoring on a "
+                    "phone with nothing bought takes the same road, and a purchase the store "
+                    "approves by itself reaches the account service with nobody pressing "
+                    "anything")
 
     def second_account() -> None:
         """A second account, subscribed somewhere else."""
