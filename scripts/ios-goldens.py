@@ -19,7 +19,7 @@ import ios_simulators
 MANIFEST = Path("ios/Goldens/manifest.json")
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
-BUNDLE_ID = "sh.amux.Amux"
+BUNDLE_ID = "sh.amux.app"
 
 
 def selected(arguments: list[str]) -> list[dict]:

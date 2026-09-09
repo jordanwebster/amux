@@ -45,7 +45,7 @@ CAPTURE = OUTPUT / "door-capture.png"
 # are what `wt run ios-replay` rebuilds a screen from.
 BUNDLE = OUTPUT / "bundle"
 SIMULATOR = "amux-golden"
-BUNDLE_ID = "sh.amux.Amux"
+BUNDLE_ID = "sh.amux.app"
 TOPOLOGY = "e2e-tests/topologies/two-hosts.json"
 # What the bridge built with the driving tools answers when asked what it is.
 # The shipping library answers the version alone and does not contain this

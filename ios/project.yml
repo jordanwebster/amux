@@ -92,14 +92,14 @@ targets:
         # callback the web sign-in returns to. Arriving here pairs with nobody
         # and signs nobody in; the app asks first.
         CFBundleURLTypes:
-          - CFBundleURLName: sh.amux.Amux
+          - CFBundleURLName: sh.amux.app
             CFBundleURLSchemes: [amux]
         # The transcript is measured against the display's full cadence; the
         # 120 Hz cap iOS applies by default would hide hitches behind it.
         CADisableMinimumFrameDurationOnPhone: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: sh.amux.Amux
+        PRODUCT_BUNDLE_IDENTIFIER: sh.amux.app
         SWIFT_EMIT_LOC_STRINGS: YES
         # XcodeGen gives an iOS target iPhone and iPad by default; this app is
         # designed for the phone only.

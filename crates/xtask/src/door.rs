@@ -478,7 +478,7 @@ fn wait_for_port(ready: &Path, timeout: Duration) -> Result<u16, DoorError> {
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(2);
     let mut simulator = "amux-golden".to_string();
-    let mut bundle_id = "sh.amux.Amux".to_string();
+    let mut bundle_id = "sh.amux.app".to_string();
     let mut timeout = Duration::from_secs(120);
     let mut install_from: Option<PathBuf> = None;
     let mut requests: Vec<Value> = Vec::new();

@@ -68,7 +68,7 @@ public struct SignpostMark: Sendable, Equatable, Codable {
 /// and reading them back in-process is what lets a test assert a number
 /// instead of a person reading a trace.
 public enum Signposts {
-    public static let subsystem = "sh.amux.Amux"
+    public static let subsystem = "sh.amux.app"
 
     private static let log = OSLog(subsystem: subsystem, category: "performance")
     private static let journal = Journal()

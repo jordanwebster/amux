@@ -575,7 +575,7 @@ fn value(arguments: &[String], name: &str) -> Option<String> {
 
 fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let simulator = value(arguments, "--simulator").unwrap_or_else(|| "amux-golden".into());
-    let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.Amux".into());
+    let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.app".into());
     let update = arguments.iter().any(|argument| argument == "--update");
     let built_only = arguments.iter().any(|argument| argument == "--built");
     // Locking a baseline is a deliberate act about a screen somebody just
@@ -664,7 +664,7 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 /// of them came back different with a difference image beside it.
 fn perturb_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let simulator = value(arguments, "--simulator").unwrap_or_else(|| "amux-golden".into());
-    let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.Amux".into());
+    let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.app".into());
     let token = value(arguments, "--token").unwrap_or_else(|| PERTURBED_TOKEN.into());
     let mut ids: Vec<String> = Vec::new();
     let mut skip_next = false;

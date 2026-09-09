@@ -54,7 +54,7 @@ DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
 OUTPUT = Path("target/ios/journeys")
 SIMULATOR = "amux-golden"
-BUNDLE_ID = "sh.amux.Amux"
+BUNDLE_ID = "sh.amux.app"
 # One Fleet event the bridge itself produced, kept beside the projection it
 # came from. A remembered fleet is written by copying its card, so the shape a
 # journey seeds cannot drift away from the shape the library writes.

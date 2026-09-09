@@ -606,7 +606,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a";
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.Amux;
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG AMUX_DEBUG_TOOLS";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -626,7 +626,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a";
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.Amux;
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = AMUX_DEBUG_TOOLS;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -661,7 +661,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.Amux;
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				TARGETED_DEVICE_FAMILY = 1;

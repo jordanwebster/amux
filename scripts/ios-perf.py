@@ -33,7 +33,7 @@ CONFIGURATION = "Measured"
 PRODUCTS = DERIVED_DATA / f"Build/Products/{CONFIGURATION}-iphonesimulator"
 OUTPUT = Path("target/ios/perf")
 SIMULATOR = "amux-golden"
-BUNDLE_ID = "sh.amux.Amux"
+BUNDLE_ID = "sh.amux.app"
 # The definitions pin five samples per metric with the state reset between
 # them; a cold start is reset by terminating the app and launching it again.
 COLD_LAUNCHES = 5

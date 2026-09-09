@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **The app is the one already on the App Store.**
+
+The bundle identifier is now `sh.amux.app`, which is the identifier of the
+app already published. This build is that app's next version, not a second
+listing: a differently-identified app would reach none of the existing users,
+and — because App Store products belong to an app record — StoreKit would
+find no `amux_pro_monthly` or `amux_pro_yearly` to sell, so the paywall would
+have nothing on it. The product identifiers in the app already match the
+published app's, which is the evidence that one continuous app was always
+the intent.
+
+Renamed everywhere the app is launched, queried or signposted: the project
+and its URL type, the Info.plist, the signpost subsystem, the golden, perf,
+journey and door harnesses, and the xtask defaults. The two test targets keep
+their own identifiers, and the UI test runner is still addressed as
+`sh.amux.AmuxUITests.xctrunner`. No golden image moved, which is what one
+would expect: an identifier is not visible in a capture.
+
 2026-09-09 — **The phone gates on what an account may do.**
 
 The app now asks `me { access }` and gates on `pro` alone. Nothing infers
