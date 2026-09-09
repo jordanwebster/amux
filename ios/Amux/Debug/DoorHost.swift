@@ -843,6 +843,7 @@ final class DoorHost {
             started: bridge != nil,
             connection: stores.fleet.connection.state.rawValue,
             reconciled: stores.fleet.reconciled,
+            reconciliations: stores.fleet.reconciliations,
             hosts: stores.hosts.hosts.map(\.name).sorted(),
             agents: stores.fleet.rows.map(\.name).sorted(),
             relayAttempts: relay().attempts,

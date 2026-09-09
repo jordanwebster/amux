@@ -400,6 +400,13 @@ public struct BridgeState: Codable, Sendable, Equatable {
     public let connection: String
     /// Whether the fleet has been confirmed by a host rather than remembered.
     public let reconciled: Bool
+    /// How many confirmed fleets have arrived since this app started.
+    ///
+    /// The flag above never goes back to false, so it cannot say whether the
+    /// app reconciled again after an outage or after being picked up: it was
+    /// already true. This has to move for that to have happened, so it is what
+    /// a driver times a recovery against.
+    public let reconciliations: Int
     /// The machines the fleet names, by name. A machine appears here once this
     /// device is paired with it; before that the fleet is confirmed and empty.
     public let hosts: [String]
@@ -439,13 +446,15 @@ public struct BridgeState: Codable, Sendable, Equatable {
 
     public init(
         build: String, started: Bool, connection: String, reconciled: Bool,
-        hosts: [String], agents: [String], relayAttempts: UInt64, relayRetries: UInt64,
-        discovered: [String], watching: [String] = [], releasedStreams: [String] = []
+        reconciliations: Int = 0, hosts: [String], agents: [String], relayAttempts: UInt64,
+        relayRetries: UInt64, discovered: [String], watching: [String] = [],
+        releasedStreams: [String] = []
     ) {
         self.build = build
         self.started = started
         self.connection = connection
         self.reconciled = reconciled
+        self.reconciliations = reconciliations
         self.hosts = hosts
         self.agents = agents
         self.relayAttempts = relayAttempts

@@ -15,6 +15,15 @@ public final class FleetStore {
     public private(set) var sections: [FleetSection] = []
     /// The core's own word: this fleet is confirmed rather than remembered.
     public private(set) var reconciled = false
+    /// How many confirmed fleets have arrived since the app started.
+    ///
+    /// `reconciled` above is sticky: once a fleet has been confirmed it stays
+    /// confirmed, through an outage and through the app being put away, because
+    /// what it describes is the rows on screen and they are still confirmed
+    /// rows. So it cannot answer whether the app reconciled *again* after being
+    /// picked up — it was already true before it was put down. This moves once
+    /// per confirmation, which is the question a lifecycle audit is asking.
+    public private(set) var reconciliations = 0
     public private(set) var epoch: UInt64 = 0
     public private(set) var hosts: [HostId: HostEntry] = [:]
     public private(set) var connection = ConnectionUpdate(state: .connecting)
@@ -71,6 +80,7 @@ public final class FleetStore {
             cards = Dictionary(fleet.agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             let wasReconciled = reconciled
             reconciled = fleet.reconciled
+            if fleet.reconciled { reconciliations += 1 }
             reconcileOrder()
             rebuild()
             if !wasReconciled && reconciled { Signposts.emit(.reconciled) }

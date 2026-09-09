@@ -20,6 +20,27 @@ final class FleetStoreTests: XCTestCase {
         XCTAssertEqual(store.rows.map(\.confirmed), [false, false])
     }
 
+    /// A phone that was picked up and never heard from a host again would
+    /// still say it was reconciled, because it was — before it was put down.
+    /// Only a count can say a fleet arrived since, so only a count can be
+    /// timed.
+    func testEachConfirmedFleetMovesTheCountThatTheFlagCannot() {
+        let store = FleetStore(now: now)
+        let cards = [Made.card(1, name: "alpha", attention: .idle, minutesAgo: 2, now: now)]
+        XCTAssertEqual(store.reconciliations, 0)
+
+        store.apply(Made.fleet(cards, reconciled: false))
+        XCTAssertEqual(store.reconciliations, 0, "a remembered fleet confirms nothing")
+
+        store.apply(Made.fleet(cards, reconciled: true))
+        XCTAssertTrue(store.reconciled)
+        XCTAssertEqual(store.reconciliations, 1)
+
+        store.apply(Made.fleet(cards, reconciled: true))
+        XCTAssertEqual(store.reconciliations, 2, "the second confirmation is a second arrival")
+        XCTAssertTrue(store.reconciled, "and the flag it could have been read from has not moved")
+    }
+
     func testSyncConfirmsTheRowsWithoutRegroupingThem() {
         let store = FleetStore(now: now)
         let cached = [

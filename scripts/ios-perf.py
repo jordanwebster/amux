@@ -403,6 +403,12 @@ def lifecycle(udid: str, perf: Path, output: Path) -> None:
                 flush=True)
 
             for cycle in range(CYCLES):
+                # Read before the app goes away, because a suspended app cannot
+                # answer its door. The fleet has just been shown not to move on
+                # its own over a minute of sitting still, so a confirmation
+                # arriving in the moment between this and the app being put
+                # behind another one is not something that happens.
+                confirmations = door.ask({"kind": "bridge"})["bridge"]["reconciliations"]
                 subprocess.run(
                     ["xcrun", "simctl", "launch", udid, ELSEWHERE],
                     check=True, text=True, capture_output=True, timeout=300)
@@ -429,15 +435,31 @@ def lifecycle(udid: str, perf: Path, output: Path) -> None:
                 sample("connectionsPerHost", float(max(
                     (links for name, links in back.items() if name in machines),
                     default=0)), "count")
+                # And now the other half of the pinned row: reconciled, not
+                # merely connected. The app's `reconciled` flag cannot answer
+                # this — it was already true when the phone was put away and
+                # stays true through the outage — so what is waited on is a
+                # confirmation arriving after the pickup, which moves the count
+                # read above. Timed from the pickup, as the connection is.
                 state = door.ask({"kind": "bridge"})["bridge"]
+                while (state["reconciliations"] <= confirmations
+                        and time.monotonic() - picked < 30):
+                    time.sleep(0.05)
+                    state = door.ask({"kind": "bridge"})["bridge"]
+                reconciliation = (time.monotonic() - picked) * 1_000
+                sample("reconciliationMs", reconciliation, "ms")
                 audit["cycles"].append({
                     "whileAway": away, "whenBack": back,
                     "recoveryMs": round(recovery, 1),
+                    "reconciliationMs": round(reconciliation, 1),
+                    "confirmationsBefore": confirmations,
+                    "confirmationsAfter": state["reconciliations"],
                     "connection": state["connection"], "reconciled": state["reconciled"],
                 })
                 print(
                     f"cycle {cycle + 1}: away the relay held {away}, back it holds {back} "
-                    f"after {recovery:.0f} ms, {state['connection']}",
+                    f"after {recovery:.0f} ms, {state['connection']}, reconciled again after "
+                    f"{reconciliation:.0f} ms",
                     flush=True)
         finally:
             for identifier in (BUNDLE_ID, ELSEWHERE):
@@ -728,6 +750,7 @@ def lifecycle_line(output: Path) -> str:
     away = max(phone(one["whileAway"]) for one in cycles)
     back = min(phone(one["whenBack"]) for one in cycles)
     recovery = max(one["recoveryMs"] for one in cycles)
+    confirmed = max(one.get("reconciliationMs", 0) for one in cycles)
     dials = seen["whenIdle"]["dialsAfter"]
     return (
         f"{len(machines)} machines holding at most "
@@ -736,7 +759,8 @@ def lifecycle_line(output: Path) -> str:
         f"{phone(reached)} with the app in front, unchanged over {seen['idle']}s idle "
         f"and after {dials} dial{'' if dials == 1 else 's'} in all; put away for "
         f"{seen['away']}s the phone held {away}, and picked up again it held {back} "
-        f"within {recovery:.0f} ms, worst of {len(cycles)} cycles (the whole audit, "
+        f"within {recovery:.0f} ms and had a fresh confirmation of the fleet within "
+        f"{confirmed:.0f} ms, worst of {len(cycles)} cycles (the whole audit, "
         f"host by host, is in `{LIFECYCLE}`)")
 
 

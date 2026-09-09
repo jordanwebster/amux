@@ -12478,3 +12478,22 @@ committed.
 
 Green: `wt run ios-unit` (432 tests), `wt test -- ios_verify`,
 `AMUX_PERF_MACHINE=macos-26 wt run ios-perf -- --baseline`.
+
+## A phone that never heard from a host again still said it was reconciled
+
+Half the pinned lifecycle requirement — the fleet confirmed again within a
+second of the phone being picked up — was never timed. The audit read the app's
+`reconciled` flag once after the pickup, and that flag is sticky: it was
+already true when the phone was put down, and it describes rows that are still
+confirmed rows. A build that reconnected and then heard nothing from any host
+would have recorded a pass.
+
+The app now counts confirmed fleets rather than only remembering that one
+arrived, and reports the count through the driving door. The audit reads it
+before the phone is put away and waits for it to move after the pickup, timing
+that from the pickup as it already times the connection. The interval is
+recorded per cycle, printed in the report, and judged against the same 1,000 ms
+the definitions pin for reconciliation.
+
+Green: `wt run ios-perf -- --only lifecycle` — five cycles, the count moving
+once per pickup, a fresh confirmation within 267 ms at worst; `wt run ios-unit`.

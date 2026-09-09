@@ -52,7 +52,7 @@ recipe measures and which the physical-phone checklist holds.
 | Streaming scroll | Hitch time ratio ≤ 5 ms per second (display-link missed-frame accounting, labelled a proxy for `XCTHitchMetric` on a device); main-thread CPU ≤ 60% of one core averaged over the stream; footprint ≤ 250 MB |
 | Idle | After a 2 s settle with no stream, zero transcript commits and zero display-link ticks requested over 5 s |
 | Cadence readiness | `capped` false, `disableMinimumFrameDurationOnPhone` true, preferred range upper bound equal to the display maximum; the simulator's 60 is recorded as a proxy |
-| Lifecycle | Foreground: exactly one relay connection per host and no request while idle for 60 s; background 30 s: zero connections; foreground again: one connection within 2 s and `reconciled` within 1,000 ms |
+| Lifecycle | Foreground: exactly one relay connection per host and no request while idle for 60 s; background 30 s: zero connections; foreground again: one connection within 2 s, and a fresh confirmation of the fleet within 1,000 ms — an arrival counted after the pickup, not the app's `reconciled` flag, which was already true when the phone was put away |
 | Samples and tolerance | 5 samples per metric, simulator state reset between samples, one suite at a time; the median must meet the budget and must not exceed the recorded baseline by more than 15% (time, hitch, CPU) or 10% (footprint) |
 | Not measured here | Cold start on a phone, presented-frame rates on ProMotion, thermal and battery behaviour on the oldest supported phone; these are the physical-phone checklist, which is satisfied by a recorded measurement and not by a tick |
 
