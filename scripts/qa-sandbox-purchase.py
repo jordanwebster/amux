@@ -302,7 +302,7 @@ def watch(who: str, secret: str, minutes: int) -> None:
     print(f"signed {masked(who)} in at {BASE}; "
           f"the access token claims {qa_cloud.tier(token)}", flush=True)
     while True:
-        said = qa_cloud.read_entitlement(browser, token)
+        _, said = qa_cloud.read_entitlement(browser, token)
         issued_credential, connect_said = qa_cloud.connect(browser, token)
         print(f"entitlement: {said}", flush=True)
         print(f"connect: {connect_said}", flush=True)
@@ -347,7 +347,8 @@ def post_transaction(who: str, secret: str, transaction: Path) -> None:
             pass
         fail(f"the account service refused the transaction with {status}"
              + (f": {said}" if said else ""))
-    print(f"entitlement: {qa_cloud.read_entitlement(browser, token)}")
+    _, said = qa_cloud.read_entitlement(browser, token)
+    print(f"entitlement: {said}")
     _, connect_said = qa_cloud.connect(browser, token)
     print(f"connect: {connect_said}")
 

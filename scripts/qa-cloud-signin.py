@@ -64,10 +64,20 @@ def main() -> None:
           + ("the same address that signed in" if same
              else "a DIFFERENT address from the one that signed in"))
 
-    print(f"entitlement: {qa_cloud.read_entitlement(browser, token)}")
+    entitled, said = qa_cloud.read_entitlement(browser, token)
+    print(f"entitlement: {said}")
 
-    _, said = qa_cloud.connect(browser, token)
-    print(f"connect: {said}")
+    issued, connect_said = qa_cloud.connect(browser, token)
+    print(f"connect: {connect_said}")
+
+    # Both gates read the same table through the same call, so they cannot
+    # honestly differ. If they ever do, the phone is about to draw a paywall
+    # for an account the relay lets in, or offer a home to one it refuses.
+    if entitled != issued:
+        fail("the entitlement read and the connect endpoint disagree about "
+             "this account, which is the defect this recipe exists to catch")
+    print("agreement: the entitlement read and the connect endpoint say the "
+          "same thing about this account")
 
 
 if __name__ == "__main__":

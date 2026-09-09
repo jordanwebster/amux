@@ -267,9 +267,10 @@ def tier(token: str) -> str:
     """What the access token itself says this account may do.
 
     amux.sh recomputes this claim from the account's entitlements every time a
-    token is issued, so it is a second opinion arrived at without the
-    subscription cache the entitlement read consults. When the two disagree,
-    the account holds something that is not a provider subscription."""
+    token is issued. The entitlement read and the connect endpoint now answer
+    from that same table too, so all three agreeing is what this recipe
+    expects; a disagreement is a defect rather than a fact about the
+    account."""
     parts = token.split(".")
     if len(parts) < 2:
         return "unreadable"
@@ -281,30 +282,60 @@ def tier(token: str) -> str:
 
 
 ENTITLEMENT_QUERY = (
-    '{"query":"{ me { subscription '
-    '{ status provider willRenew entitledUntil } } }"}')
+    '{"query":"{ me { access { pro until grant { __typename '
+    '... on Purchased { status provider willRenew entitledUntil } '
+    '... on Granted { reason } } } } }"}')
+
+GRANTS = {
+    "COMPLIMENTARY": "given as a gift",
+    "EMPLOYEE": "given because they work there",
+    "BETA": "given for the beta",
+    "REFERRAL": "given through a referral",
+    "ADMIN": "given by an administrator",
+}
 
 
 def entitlement(answer: str) -> str:
-    """The same read the app makes, said in a sentence."""
+    """The same read the app makes, said in a sentence.
+
+    One question, asked of the entitlements table: may this account act. What
+    paid for it, if anything did, is nested inside the answer as the
+    explanation rather than offered as a second thing to gate on."""
     try:
-        subscription = json.loads(answer)["data"]["me"]["subscription"]
+        access = json.loads(answer)["data"]["me"]["access"]
+        pro = access["pro"]
     except (KeyError, TypeError, ValueError):
         return "amux.sh answered in a shape this recipe does not know"
-    if not subscription:
-        return "no subscription: this account is entitled to nothing"
-    where = "the App Store" if subscription.get("provider") == "REVENUE_CAT" else "the web"
-    renewal = "renewing" if subscription.get("willRenew") else "not renewing"
-    return (f"entitled until {subscription.get('entitledUntil')}, bought on "
-            f"{where}, {renewal} (status {subscription.get('status')})")
+    grant = access.get("grant") or {}
+    kind = grant.get("__typename")
+    if kind == "Purchased":
+        where = "the App Store" if grant.get("provider") == "REVENUE_CAT" else "the web"
+        renewal = "renewing" if grant.get("willRenew") else "not renewing"
+        source = (f"bought on {where}, {renewal} (status "
+                  f"{grant.get('status')}, paid up to "
+                  f"{grant.get('entitledUntil')})")
+    elif kind == "Granted":
+        source = GRANTS.get(grant.get("reason"), "given rather than bought")
+    else:
+        source = "from nothing this account has ever been given or has bought"
+    if not pro:
+        return f"not entitled: access {source} is over"
+    ends = access.get("until")
+    return (f"entitled {'until ' + ends if ends else 'with no end date'}, "
+            f"{source}")
 
 
-def read_entitlement(browser: Browser, token: str) -> str:
+def read_entitlement(browser: Browser, token: str) -> tuple[bool, str]:
+    """Whether this account may act, and the answer in words."""
     status, body = ask(browser, f"{BASE}/api/graphql", token, "POST",
                        ENTITLEMENT_QUERY)
     if status != 200:
         fail(f"the entitlement read answered {status}")
-    return entitlement(body)
+    try:
+        pro = bool(json.loads(body)["data"]["me"]["access"]["pro"])
+    except (KeyError, TypeError, ValueError):
+        pro = False
+    return pro, entitlement(body)
 
 
 def connect(browser: Browser, token: str) -> tuple[bool, str]:
@@ -318,7 +349,7 @@ def connect(browser: Browser, token: str) -> tuple[bool, str]:
                       f"{issued.get('host')}:{issued.get('port')}, expiring "
                       f"{issued.get('expires_at')}")
     if status == 403 and "payment_required" in body:
-        return False, ("refused with payment_required — this account has no "
-                       "subscription, so the phone would show the second gate")
+        return False, ("refused with payment_required — this account may not "
+                       "act, so the phone would show the second gate")
     fail(f"the connect endpoint answered {status}, which is neither a "
          f"credential nor the subscription gate")

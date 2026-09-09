@@ -38,24 +38,51 @@ sign-in happen once rather than hourly.
 Every one but `/connect/authorize` and `/connect/token` is sent with
 `Authorization: Bearer <access token>`, refreshed a minute before it expires.
 
-## The entitlement read
+## The access read
 
 One query, against `/api/graphql`:
 
 ```graphql
-{ me { subscription { status provider willRenew entitledUntil } } }
+{ me { access {
+    pro
+    until
+    grant {
+      __typename
+      ... on Purchased { status provider willRenew entitledUntil trialEndsAt }
+      ... on Granted { reason }
+    }
+} } }
 ```
 
-No subscription at all is `none`. Otherwise `entitledUntil` decides: past it
-the entitlement is *lapsed* and says when it ended; before it the entitlement
-is *active*, renewing on `entitledUntil` when `willRenew` and on no date when
-it does not — a subscription that was cancelled but has not run out is still
-paid for. `provider` says where it was bought, which is the one thing a screen
-shows about it: `REVENUE_CAT` is the App Store and anything else is the web.
+`pro` is the only thing anything gates on, and it is never null. `until` is
+when access runs out, absent when it does not run out at all. `grant` explains
+where the access came from, and an account can be entitled without ever having
+bought anything — a gift, a beta, an employee, a referral, an administrator's
+grant — so the explanation is a choice between two shapes rather than a
+subscription that might be missing.
 
-This read is the single source of truth for what an account may do. A
-subscription bought on the web through the CLI and one bought in the App Store
-on this phone arrive through exactly the same answer.
+`Purchased` says what was bought and how it is going: `provider` is the one
+thing a screen shows about the source (`REVENUE_CAT` is the App Store,
+anything else is the web), `entitledUntil` is when the paid period runs out,
+and `willRenew` is whether it will be charged again. That date is not always
+`until`: somebody who is both paying and holding an open-ended grant keeps
+access after the billing stops, and the two fields answer the two questions
+separately. `status` distinguishes a subscription that has ended from one that
+has not, which matters in the seconds between a purchase landing and the
+access behind it being projected — the paid period is live and `pro` is not
+yet true, and the screen for that says Pro is switching on rather than
+offering a subscription the person already has.
+
+`Granted` says why access was given. A client has to handle it: it is a state
+with a name, not a subscription that failed to arrive.
+
+**This read and the relay's own gate answer from the same place.** `pro` and
+`GET /api/connect` are one call into the account service, so the phone and the
+relay cannot come to different conclusions about the same account. What this
+read is *not* is a report of how somebody pays; that lives inside `grant`,
+underneath the answer, precisely so nothing gates on it by mistake. A
+subscription bought on the web through the CLI, one bought in the App Store on
+this phone, and access given by hand all arrive through the same `pro`.
 
 ## A purchase reaching the cloud
 

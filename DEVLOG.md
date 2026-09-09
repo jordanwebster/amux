@@ -4,6 +4,37 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **One question about what an account may do.**
+
+The cloud read the phone treats as its single source of truth asked how an
+account *pays*, not what it *may do*. Those are different questions, and for
+any account entitled by a route other than a purchase — a gift, a beta, an
+employee, a referral, an administrator's grant — they had different answers:
+the entitlements table said yes, the provider-subscription cache said nothing,
+and the app read that nothing as "not subscribed". The relay let such an
+account straight in while the phone would have drawn it a paywall.
+
+`me { subscription }` is retired. `me { access }` answers the one question,
+with `pro` a non-null boolean nobody can mistake for an absence, and the
+billing record nested inside `grant` as the explanation of access rather than
+offered beside it as a second thing to gate on. `Granted` is a case a client
+must handle to compile, so the state that shipped broken now has a name. The
+fourth guarantee is not in the schema: `access` is served by the same account
+service call `GET /api/connect` gates on, so the two cannot drift apart again.
+
+Reviewed, merged and deployed as amuxcloud revision `4a58071`; three findings
+from that review were fixed before it shipped — a grant on top of a live
+subscription hid the way to stop paying, a slow entitlement projection left a
+new subscriber looking at "Subscription ended", and the same delay offered a
+subscription to somebody who had just bought one.
+
+`wt run qa-cloud-signin` now asks the new question and fails if the two gates
+disagree. Against the real service it reports the QA account as entitled with
+no end date, given as a gift, and the relay issuing it a credential — where
+the same recipe reported "entitled to nothing" beside an issued credential
+this morning. The phone still asks the old question; moving it over is the
+next piece of work.
+
 2026-09-09 — **The App Store route to an entitlement is a person's act.**
 
 `docs/CLOUD.md` now says plainly what `wt run qa-sandbox-purchase` is: a
