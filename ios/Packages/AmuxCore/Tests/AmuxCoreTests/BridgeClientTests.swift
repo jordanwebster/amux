@@ -16,8 +16,8 @@ final class BridgeClientTests: XCTestCase {
             deviceName: "iPhone",
             relay: .init(url: "https://relay.example", tls: .system),
             accounts: [
-                .init(id: "personal", service: "https://amux.sh", token: .fixed("bearer")),
-                .init(id: "work", service: "https://amux.sh", token: .callback),
+                .init(id: "personal", token: .fixed("bearer")),
+                .init(id: "work", token: .callback),
             ],
             active: "work",
             logPath: URL(fileURLWithPath: "/tmp/amux.log"))
@@ -31,8 +31,8 @@ final class BridgeClientTests: XCTestCase {
         XCTAssertNil(relay["token"], "a token belongs to an account, not to the relay")
         let accounts = try XCTUnwrap(json["accounts"] as? [[String: Any]])
         XCTAssertEqual(accounts.map { $0["id"] as? String }, ["personal", "work"])
-        XCTAssertEqual(accounts.map { $0["service"] as? String }, ["https://amux.sh", "https://amux.sh"],
-                       "the bridge pairs by the service each account is on, so it has to be told it")
+        XCTAssertTrue(accounts.allSatisfy { Set($0.keys) == ["id", "token"] },
+                      "accounts supply credentials; the runtime configuration owns the cloud")
         XCTAssertEqual((accounts[0]["token"] as? [String: Any])?["Static"] as? String, "bearer")
         XCTAssertEqual(accounts[1]["token"] as? String, "Callback")
         XCTAssertEqual(json["active"] as? String, "work")
@@ -65,7 +65,7 @@ final class BridgeClientTests: XCTestCase {
             cacheDirectory: root.appendingPathComponent("cache"),
             deviceName: "unit-test",
             relay: .init(url: "https://127.0.0.1:1", tls: .system),
-            accounts: [.init(id: "unit-test", service: "https://amux.sh", token: .fixed("unused"))],
+            accounts: [.init(id: "unit-test", token: .fixed("unused"))],
             active: "unit-test",
             logPath: root.appendingPathComponent("amux.log")))
         defer { client.stop() }

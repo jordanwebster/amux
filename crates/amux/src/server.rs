@@ -425,18 +425,10 @@ impl EmbeddedBuilder {
         let runtime = crate::profile::runtime::start(options)
             .await
             .map_err(|e| ServerError::State(e.to_string()))?;
-        let relay_task = match self.relay {
-            Some(relay) => {
-                // The cloud an embedded runtime is on is the account service
-                // it was opened for, which the embedder names because nothing
-                // else can: there is no configuration file behind an embedded
-                // device, and a pairing link it is asked to authenticate
-                // names that service and is refused when it is not this one.
-                runtime.set_cloud_url(relay.cloud.clone()).await;
-                Some(relay.spawn(runtime.services.link_connector_ctx()))
-            }
-            None => None,
-        };
+        // Relay attachment changes the route; the cloud remains the one in config.
+        let relay_task = self
+            .relay
+            .map(|relay| relay.spawn(runtime.services.link_connector_ctx()));
         Ok(EmbeddedRuntime {
             runtime: Some(runtime),
             relay_task,
@@ -636,6 +628,66 @@ mod tests {
         assert!(task.is_some());
         if let Some(task) = task {
             task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn embedded_relay_preserves_the_configured_cloud() {
+        struct UnusedCredentials;
+        #[async_trait::async_trait]
+        impl crate::CredentialProvider for UnusedCredentials {
+            async fn access_token(&self) -> Result<crate::AccessToken, crate::AuthError> {
+                std::future::pending().await
+            }
+            fn invalidate(&self, _: &crate::AccessToken) {}
+        }
+        let relay = || {
+            let (connection, _) = tokio::sync::watch::channel(crate::RelayConnection::Connecting);
+            crate::EmbeddedRelay {
+                endpoint: crate::RelayEndpoint::system("https://127.0.0.1:1").unwrap(),
+                credentials: std::sync::Arc::new(UnusedCredentials),
+                connection,
+                retry: Default::default(),
+            }
+        };
+        for cloud in [
+            Config::default().cloud_url,
+            "https://configured.example".into(),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let embedded = Server::builder()
+                .config(Config {
+                    path: None,
+                    data_dir: dir.path().join("data"),
+                    state_path: dir.path().join("state.yaml"),
+                    socket_path: dir.path().join("amux.sock"),
+                    cloud_url: cloud.clone(),
+                    prevent_idle_sleep: Some(false),
+                    ..Config::default()
+                })
+                .embedded()
+                .relay(relay())
+                .open()
+                .await
+                .unwrap();
+            let runtime = embedded.runtime.as_ref().unwrap();
+            assert_eq!(
+                embedded.admin().start_qr_pairing().await.unwrap().cloud_url,
+                cloud
+            );
+            embedded.admin().cancel_pairing().await.unwrap();
+            runtime.attach_relay(relay()).await;
+            assert_eq!(
+                embedded.admin().start_qr_pairing().await.unwrap().cloud_url,
+                cloud
+            );
+            embedded.admin().cancel_pairing().await.unwrap();
+            runtime.attach_relay(relay()).await;
+            assert_eq!(
+                embedded.admin().start_qr_pairing().await.unwrap().cloud_url,
+                cloud
+            );
+            embedded.shutdown().await;
         }
     }
 

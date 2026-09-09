@@ -47,25 +47,7 @@ pub struct StartConfig {
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
     pub id: String,
-    /// The account service this account was signed in to, as an origin.
-    ///
-    /// A machine's pairing invitation names the service its own account is
-    /// on, and this phone refuses an invitation from anywhere else. The
-    /// application is the only side that knows it — the relay address says
-    /// nothing about it, because one service hands different devices
-    /// different relays.
-    pub service: String,
     pub token: TokenSource,
-}
-
-impl AccountConfig {
-    /// This account's service as an origin, so two spellings of one place
-    /// cannot read as two clouds when a pairing invitation is compared.
-    fn canonical_service(&self) -> Result<String, String> {
-        amux::CloudServiceId::canonicalize(&self.service)
-            .map(|service| service.to_string())
-            .map_err(|error| format!("account '{}' service: {error}", self.id))
-    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -133,7 +115,6 @@ impl StartConfig {
             if account.id.is_empty() || !seen.insert(account.id.as_str()) {
                 return Err("account identifiers must be nonempty and distinct".into());
             }
-            account.canonical_service()?;
         }
         if !seen.contains(self.active.as_str()) {
             return Err("the active account must be one of the accounts".into());
@@ -301,7 +282,6 @@ impl MobileRuntime {
                     id,
                     EmbeddedRelay {
                         endpoint: config.endpoint()?,
-                        cloud: account.canonical_service()?,
                         credentials: provider,
                         connection,
                         retry: retry.clone(),

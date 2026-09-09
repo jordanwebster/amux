@@ -83,10 +83,6 @@ extension URLSession: CloudTransport {
 /// an app with a password box would be asking to be trusted with the one
 /// secret it is designed never to hold.
 public actor AmuxCloudService: CloudService {
-    /// The service this adapter was built against, so a build pointed
-    /// somewhere else pairs against that place and not the production one.
-    public nonisolated var service: URL { endpoint.base }
-
     private let endpoint: CloudEndpoint
     private let transport: any CloudTransport
     private let savedSessions: (any CloudSessionStore)?

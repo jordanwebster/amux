@@ -31,9 +31,8 @@ impl UserClient {
         self.admin.clone()
     }
 
-    /// The account service this client is on, which a pairing invitation it
-    /// accepts has to name. Not the relay: a relay is a route to a cloud, not
-    /// the cloud's name.
+    /// The cloud from this client's configuration, which accepted pairing
+    /// invitations must name. The test relay supplies only the route.
     pub fn cloud_url(&self) -> &str {
         &self.cloud_url
     }

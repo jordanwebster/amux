@@ -207,7 +207,7 @@ public final class RuntimeCoordinator {
             dataDirectory: support, cacheDirectory: cache, deviceName: deviceName,
             relay: .init(url: address.url!.absoluteString, tls: plain ? .plainLoopback : .system),
             accounts: registry.accounts.filter(\.signedIn).map {
-                .init(id: $0.id.value, service: cloud.service.absoluteString,
+                .init(id: $0.id.value,
                       token: overrideTokens[$0.id.value].map { .fixed($0) } ?? .callback)
             }, active: account.value, logPath: support.appendingPathComponent("runtime.log"))
     }

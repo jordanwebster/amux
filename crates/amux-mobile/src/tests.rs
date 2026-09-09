@@ -91,11 +91,8 @@ fn accounts_config(
         "data_dir": root.join("data"), "cache_dir":root.join("cache"),
         "log_path":root.join("mobile.log"), "device_name":"phone",
         "relay":{"url":url,"tls":"PlainLoopback"},
-        // The service a testnet daemon's configuration names, which is the
-        // default one: pairing compares the two ends' clouds, and nothing
-        // rewrites either side's answer.
         "accounts": accounts.iter()
-            .map(|(id, token)| json!({"id": id, "service": "https://amux.sh", "token": token}))
+            .map(|(id, token)| json!({"id": id, "token": token}))
             .collect::<Vec<_>>(),
         "active": active
     })
@@ -498,6 +495,19 @@ fn mobile_lifecycle_rejects_invalid_endpoints_and_config() {
             .endpoint()
             .is_ok()
     );
+    let mut override_cloud = config(
+        root.path(),
+        "http://127.0.0.1:1234".into(),
+        json!("Callback"),
+    );
+    override_cloud["accounts"][0]["service"] = json!("https://elsewhere.example");
+    assert!(start(&override_cloud, &events).is_null());
+    override_cloud["accounts"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("service");
+    override_cloud["cloud_url"] = json!("https://elsewhere.example");
+    assert!(start(&override_cloud, &events).is_null());
     unsafe {
         assert!(amux_mobile_start(std::ptr::null(), capture, std::ptr::null_mut()).is_null());
         amux_mobile_stop(std::ptr::null_mut());
@@ -1770,16 +1780,10 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
     net.shutdown().await;
 }
 
-/// Pairing by the link a machine printed, which names the cloud it was issued
-/// for.
-///
-/// The machine refuses an invitation issued for a different cloud than the one
-/// this device is on — that is the point of the link carrying it — so a phone
-/// has to know which cloud it is on. An embedded runtime has no configuration
-/// file to read it from: the cloud it is on is the relay it was opened with,
-/// and this is what proves the two agree.
+/// Pairing checks the configured cloud while reaching the host through a
+/// separate relay route. The phone uses the default cloud, https://amux.sh.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn mobile_pairing_by_link_authenticates_against_the_relay_this_phone_is_on() {
+async fn mobile_pairing_by_link_authenticates_against_the_configured_cloud() {
     let net = TestNet::builder()
         .cloud()
         .daemon("workstation")
@@ -1828,11 +1832,13 @@ async fn mobile_pairing_by_link_authenticates_against_the_relay_this_phone_is_on
     })
     .await;
 
-    // The invitation the machine prints, for the relay it is reachable over.
+    // Use the invitation the daemon actually issued for its configured cloud.
     let offer = host.pairing_admin().await.start_qr_pairing().await.unwrap();
     let amux::PairingSecret::QrSecret(secret) = &offer.secret else {
         panic!("QR pairing returned a PIN")
     };
+    assert_eq!(offer.cloud_url, "https://amux.sh");
+    assert_ne!(offer.cloud_url, format!("http://{}", net.relay_addr()));
     let payload = amux::encode_qr_pairing_payload(&offer, secret).unwrap();
 
     // An invitation for some other cloud is refused without reaching anybody.
@@ -1873,7 +1879,11 @@ async fn mobile_pairing_by_link_authenticates_against_the_relay_this_phone_is_on
         1,
         "confirming a link wrote no trust"
     );
-    println!("link pairing: {pending}, {confirmed}");
+    println!(
+        "configured cloud: {}; relay route: http://{}; other cloud: {wrong}; link pairing: {pending}, {confirmed}",
+        offer.cloud_url,
+        net.relay_addr()
+    );
 
     drop(running);
     net.shutdown().await;

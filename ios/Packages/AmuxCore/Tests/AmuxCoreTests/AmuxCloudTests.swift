@@ -136,11 +136,8 @@ final class AmuxCloudTests: XCTestCase {
         XCTAssertEqual(registry.selectedAccount?.account.email, "ada@example.com")
         XCTAssertEqual(registry.gate, .ready)
         XCTAssertEqual(configured?.relay, .init(url: "https://chosen.example:7443", tls: .system))
-        // The service this app signed in against, not the production one: a
-        // pairing invitation is judged against this, and a phone told the
-        // wrong cloud refuses every machine on the right one.
         XCTAssertEqual(
-            configured?.accounts, [.init(id: "ada", service: "https://amux.test", token: .callback)])
+            configured?.accounts, [.init(id: "ada", token: .callback)])
         XCTAssertTrue(answers.body("/connect/token").contains("refresh_token=rt-imported"))
     }
 

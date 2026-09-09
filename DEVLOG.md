@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Configuration owns the cloud; a relay supplies only a route.**
+
+The cloud is the well-known account service configured by `cloud_url`, defaulting to `https://amux.sh`. Attaching or replacing an embedded relay no longer changes it, and the relay carries no cloud identity. The phone uses that default with no app override; its account JSON carries only an identifier and credentials. Installation binding still derives configuration from the bound account service, or the default for an unbound profile. Pairing compares an invitation with the configured cloud while reaching the host through the independently addressed relay. Core tests cover both default and custom configuration through attachment and replacement; mobile tests accept the daemon-issued `https://amux.sh` invitation over loopback and refuse another cloud; Swift tests pin the account JSON shape.
+
+Validation: full `wt test` and `wt run spec` pass, as do the focused embedded configuration and mobile pairing tests, all 315 AmuxCore simulator tests, `wt run ios-lint`, and the real relay-to-host `hosts` UI journey.
+
+---
+
 2026-09-09 — **Subscription access text is included in the string catalogue.**
 
 The existing switching-on subscription state, heading and retry explanation are now registered in the app's string catalogue. The non-copy exemption for the stable `unconfirmed` UI identifier follows its current source line. The displayed wording and behaviour are unchanged. Validation: `wt run ios-lint` passes.

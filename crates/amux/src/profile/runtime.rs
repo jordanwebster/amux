@@ -427,25 +427,9 @@ impl ProfileRuntime {
         self.status.subscribe()
     }
 
-    /// Records which cloud this runtime is on.
-    ///
-    /// An embedded runtime is opened with a relay and an account rather than
-    /// told to find them, so nothing in the configuration file knows which
-    /// service that account is on. It matters beyond bookkeeping: a pairing
-    /// link names the cloud it was issued for, and a device compares that
-    /// against this before it will authenticate one.
-    pub(crate) async fn set_cloud_url(&self, cloud_url: String) {
-        self.state.write().await.config.cloud_url = cloud_url;
-    }
-
-    /// Attach an embedder's own relay to this profile.
-    ///
-    /// The cloud this profile is on becomes the account service the relay was
-    /// opened for — not the relay's address, which is a route rather than a
-    /// name and differs between devices on the same account. One profile
-    /// holds one relay; attaching a second replaces the first.
+    /// Attach an embedder's relay route without changing the configured cloud.
+    /// One profile holds one relay; attaching a second replaces the first.
     pub(crate) async fn attach_relay(&self, relay: crate::EmbeddedRelay) {
-        self.set_cloud_url(relay.cloud.clone()).await;
         let task = relay.spawn(self.services.link_connector_ctx());
         if let Some(previous) = self.relay_task.lock().await.replace(task) {
             previous.abort();
