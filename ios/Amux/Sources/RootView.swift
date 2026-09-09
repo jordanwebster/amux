@@ -9,7 +9,8 @@ import SwiftUI
 /// performance suite asked to time; anything else, and any build a person
 /// installs, is the app itself.
 struct RootView: View {
-    @State private var composition = Composition()
+    @StateObject private var lifetime = CompositionLifetime()
+    private var composition: Composition { lifetime.value }
     @Environment(\.scenePhase) private var phase
 
     var body: some View {
@@ -20,7 +21,7 @@ struct RootView: View {
             // to freeze leaves every machine this phone was watching holding a
             // connection nobody is reading.
             .onChange(of: phase) { _, now in
-                BridgeClient.running?.setActive(now != .background)
+                composition.runtime.setActive(now != .background)
             }
     }
 
@@ -35,7 +36,7 @@ struct RootView: View {
                 .onAppear {
                     DoorHost.shared.adopt(
                         composition.stores, accounts: composition.accounts,
-                        cloud: composition.cloud)
+                        runtime: composition.runtime)
                     DoorHost.shared.connectAsLaunchAsks()
                     // A link the launch carried goes through the same door the
                     // system's own links go through, before anything else has
@@ -76,4 +77,12 @@ struct RootView: View {
         .preferredColorScheme(composition.appearance?.colorScheme)
         .onOpenURL { composition.router.open($0) }
     }
+}
+
+/// StateObject defers construction until SwiftUI installs the root. A State
+/// initial value is evaluated again when the root is rebuilt, which would
+/// start another runtime and another purchase listener on every redraw.
+@MainActor
+private final class CompositionLifetime: ObservableObject {
+    let value = Composition()
 }

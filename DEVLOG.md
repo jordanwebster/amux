@@ -4,6 +4,32 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-09 — **Start and restore the iPhone connection from the app.**
+
+The app now owns the runtime outside its debug tools. It asks the account
+service for the relay credential, dials the address that credential names with
+system TLS, wires the selected account’s stores, credits event batches across
+account switches, and releases the connection when backgrounded or signed out.
+Debug launch credentials and imported QA sessions use that same coordinator.
+One installation in Application Support holds the account profiles, and Caches
+holds each account’s last fleet. The phone uses its own device name.
+
+Account names, entitlement grants and selection survive launch. Refresh tokens
+remain inside the account service and persist in the device Keychain, including
+rotations. A restored home reads the selected account’s fleet before startup
+awaits the cloud. A lazy root lifetime prevents redraws from starting extra
+runtimes and purchase listeners; scripted testnet credentials carry no expiry
+instead of an already-expired fixture date.
+
+Validation: 466 Swift unit tests, the production-startup journey, source and
+string lint, the existing unpaired cold-cache and full accounts journeys, and
+the verifier’s required-journey and CLI tests pass. The new
+journey signs in without door connection credentials, reaches a real host and
+agent, and relaunches into cached rows with no runtime or dial attempts yet.
+It also bounds credential requests so a startup loop cannot pass unnoticed.
+Additional regression testing exposed absolute profile paths surviving an app
+container move; relocation support remains unfinished and is tracked separately.
+
 2026-09-09 — **Describe the limits of iPhone report screenshots.**
 
 The debugging guide now explains that the app freezes its frame after the

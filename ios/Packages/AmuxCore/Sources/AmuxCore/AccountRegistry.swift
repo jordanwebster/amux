@@ -6,7 +6,7 @@ import Observation
 /// A signed-out account stays listed. Forgetting it the moment its token
 /// expires would lose the only thing the user recognises — their own address —
 /// and make signing back in look like adding a stranger.
-public struct AccountEntry: Sendable, Equatable, Identifiable {
+public struct AccountEntry: Sendable, Equatable, Identifiable, Codable {
     public var account: SignedInAccount
     public var signedIn: Bool
     public var entitlement: Entitlement
@@ -86,7 +86,39 @@ public final class AccountRegistry {
     /// refused by `deliver` as the late answers they are.
     public var switching: (@MainActor (AccountId) -> Void)?
 
-    public init() {}
+    /// Connection ownership follows sign-in and removal as well as selection.
+    public var changed: (@MainActor () -> Void)?
+    @ObservationIgnored private let file: URL?
+    public private(set) var persistenceFailed = false
+
+    private struct Remembered: Codable {
+        var accounts: [AccountEntry]
+        var selected: AccountId?
+    }
+
+    public init(file: URL? = nil) {
+        self.file = file
+        guard let file, let data = try? Data(contentsOf: file),
+              let saved = try? AmuxJSON.decoder.decode(Remembered.self, from: data) else { return }
+        accounts = saved.accounts
+        selected = saved.selected.flatMap { id in accounts.contains { $0.id == id } ? id : nil }
+        if let selected, accounts.contains(where: { $0.id == selected && $0.signedIn }) {
+            stores = StoreBundle(account: selected)
+        }
+    }
+
+    private func persist() {
+        guard let file else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try AmuxJSON.encoder.encode(Remembered(accounts: accounts, selected: selected))
+                .write(to: file, options: .atomic)
+            persistenceFailed = false
+        } catch {
+            persistenceFailed = true
+        }
+    }
 
     public var selectedAccount: AccountEntry? {
         accounts.first { $0.id == selected }
@@ -113,7 +145,13 @@ public final class AccountRegistry {
         } else {
             accounts.append(AccountEntry(account: account, entitlement: entitlement))
         }
-        if selected == nil { select(account.id) }
+        if selected == nil {
+            select(account.id)
+        } else {
+            if selected == account.id, stores == nil { stores = StoreBundle(account: account.id) }
+            persist()
+            changed?()
+        }
     }
 
     /// Signing out keeps the account listed with Sign In beside it, and takes
@@ -123,14 +161,18 @@ public final class AccountRegistry {
         accounts[index].signedIn = false
         accounts[index].entitlement = .none
         if selected == id { stores = nil }
+        persist()
+        changed?()
     }
 
     public func forget(_ id: AccountId) {
         accounts.removeAll { $0.id == id }
         if selected == id {
             selected = accounts.first?.id
-            stores = selected.map { StoreBundle(account: $0) }
+            stores = selectedAccount?.signedIn == true ? selected.map { StoreBundle(account: $0) } : nil
         }
+        persist()
+        changed?()
     }
 
     /// Puts a whole set of accounts back, as a launch that remembered them or
@@ -144,20 +186,27 @@ public final class AccountRegistry {
         accounts = entries
         let chosen = wanted ?? entries.first(where: \.signedIn)?.id ?? entries.first?.id
         selected = chosen
-        stores = chosen.map { StoreBundle(account: $0) }
+        stores = selectedAccount?.signedIn == true ? chosen.map { StoreBundle(account: $0) } : nil
+        persist()
+        changed?()
     }
 
     public func select(_ id: AccountId) {
         guard accounts.contains(where: { $0.id == id }) else { return }
         guard selected != id else { return }
         selected = id
-        stores = StoreBundle(account: id)
+        stores = selectedAccount?.signedIn == true ? StoreBundle(account: id) : nil
+        persist()
         switching?(id)
+        changed?()
     }
 
     public func entitlement(_ entitlement: Entitlement, for id: AccountId) {
-        guard let index = accounts.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = accounts.firstIndex(where: { $0.id == id }),
+              accounts[index].entitlement != entitlement else { return }
         accounts[index].entitlement = entitlement
+        persist()
+        changed?()
     }
 
     /// How many agents on an account that is not on screen are waiting.

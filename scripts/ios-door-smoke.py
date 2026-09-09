@@ -128,7 +128,7 @@ def forget_pairings(udid: str) -> None:
     # Nothing to forget before the first install.
     if found.returncode != 0:
         return
-    shutil.rmtree(Path(found.stdout.strip()) / "tmp/door-data", ignore_errors=True)
+    shutil.rmtree(Path(found.stdout.strip()) / "Library/Application Support/amux", ignore_errors=True)
 
 
 def speak(plan: list[tuple[dict, str]]) -> list[dict]:
@@ -138,7 +138,7 @@ def speak(plan: list[tuple[dict, str]]) -> list[dict]:
     requests = OUTPUT / "requests.json"
     requests.write_text(json.dumps([request for request, _ in plan], indent=2))
     spoken = subprocess.run([
-        "cargo", "run", "-q", "-p", "xtask", "--", "door",
+        str(Path("target/debug/xtask").resolve()), "door",
         "--simulator", SIMULATOR,
         "--bundle-id", BUNDLE_ID,
         "--install", str(APPLICATION),

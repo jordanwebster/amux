@@ -385,7 +385,7 @@ fn ios_verify_fixture() -> tempfile::TempDir {
 echo "$*" >> calls
 [ "$2" != "$FAIL_RECIPE" ] || exit 1
 if [ "$2" = ios-journey ]; then
-    for id in home-coldstart home conversation asks review writing claude-sessions hosts-lifecycle hosts accounts reports accessibility; do
+    for id in home-coldstart home conversation asks review writing claude-sessions hosts-lifecycle hosts accounts production-startup reports accessibility; do
         [ "$id" = "$SKIP_JOURNEY" ] || echo "$id: passed"
     done
 fi
@@ -426,6 +426,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
         ("mobile-check", "", false, "mobile-check"),
         ("", "claude-sessions", false, "ios-journey"),
         ("", "accounts", false, "ios-journey"),
+        ("", "production-startup", false, "ios-journey"),
     ] {
         std::fs::write(dir.path().join("calls"), "").unwrap();
         let output = ios_verify_command(dir.path())

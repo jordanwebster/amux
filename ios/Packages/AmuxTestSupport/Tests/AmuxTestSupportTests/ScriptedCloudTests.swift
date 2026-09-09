@@ -17,6 +17,7 @@ final class ScriptedCloudTests: XCTestCase {
         let entitlement = try await cloud.entitlement(ada)
         XCTAssertEqual(entitlement, .active(grant: .purchased(.appStore), renews: Scenario.now))
         let token = try await cloud.connectToken(ada)
+        XCTAssertNil(token.expiresAt, "testnet credentials must not expire against the frozen fixture clock")
         XCTAssertEqual(token.bearer, "connect-me")
         let facts = try await cloud.account(ada)
         XCTAssertEqual(facts.entitlement, .active(grant: .purchased(.appStore), renews: Scenario.now))

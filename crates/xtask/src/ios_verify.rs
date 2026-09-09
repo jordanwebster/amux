@@ -34,6 +34,7 @@ const REQUIRED_JOURNEYS: &[&str] = &[
     "hosts-lifecycle",
     "hosts",
     "accounts",
+    "production-startup",
     "reports",
     "accessibility",
 ];

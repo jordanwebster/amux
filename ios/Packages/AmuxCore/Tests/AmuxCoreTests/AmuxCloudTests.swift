@@ -113,6 +113,60 @@ final class AmuxCloudTests: XCTestCase {
         ])
     }
 
+    @MainActor
+    func testSessionImportStartsCoordinatorUsingTheServicesAccountAndRelay() async throws {
+        let answers = signedIn
+        answers.plus("/api/graphql", status: 200, body: """
+            {"data":{"me":{"access":{"pro":true,"until":null,"grant":null}}}}
+            """)
+        answers.plus("/api/connect", status: 200, body: """
+            {"token":"live-credential","host":"chosen.example","port":7443}
+            """)
+        let cloud = service(answers)
+        let registry = AccountRegistry()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var configured: BridgeConfiguration?
+        let coordinator = RuntimeCoordinator(
+            registry: registry, cloud: cloud, support: directory, cache: directory, deviceName: "Phone",
+            factory: { configuration, _ in configured = configuration; return ScriptedRuntime() })
+        defer { coordinator.stop() }
+        let started = try await coordinator.restoreSession(account: AccountId("ada"), refresh: "rt-imported")
+        XCTAssertTrue(started)
+        XCTAssertEqual(registry.selectedAccount?.account.email, "ada@example.com")
+        XCTAssertEqual(registry.gate, .ready)
+        XCTAssertEqual(configured?.relay, .init(url: "https://chosen.example:7443", tls: .system))
+        XCTAssertEqual(configured?.accounts, [.init(id: "ada", token: .callback)])
+        XCTAssertTrue(answers.body("/connect/token").contains("refresh_token=rt-imported"))
+    }
+
+    func testRefreshSessionSurvivesServiceRecreationAndRotationAndIsForgotten() async throws {
+        let saved = MemorySessions()
+        let answers = signedIn
+        let first = AmuxCloudService(endpoint: endpoint, transport: answers, savedSessions: saved)
+        let account = try await first.signIn(presenting: Handed.returning(code: "first"))
+        XCTAssertEqual(saved.read(account.id), "rt-1")
+        answers.plus("/connect/token", status: 200, body: """
+            {"access_token":"at-2","refresh_token":"rt-2","expires_in":3600}
+            """)
+        answers.plus("/api/connect", status: 200, body: """
+            {"token":"relay-token","host":"relay.example","port":443}
+            """)
+        let restored = AmuxCloudService(endpoint: endpoint, transport: answers, savedSessions: saved)
+        _ = try await restored.connectToken(account.id)
+        XCTAssertEqual(saved.read(account.id), "rt-2")
+        XCTAssertTrue(answers.asked.contains { request in
+            String(data: request.httpBody ?? Data(), encoding: .utf8)?.contains("refresh_token=rt-1") == true
+        })
+        try await restored.forgetSession(account.id)
+        XCTAssertNil(saved.read(account.id))
+        let signedOut = AmuxCloudService(endpoint: endpoint, transport: answers, savedSessions: saved)
+        do {
+            _ = try await signedOut.account(account.id)
+            XCTFail("a forgotten session must require sign-in")
+        } catch { XCTAssertEqual(error, .unauthenticated) }
+    }
+
     func testSignInHandsOffWithPkceAndRedeemsTheCodeItComesBackWith() async throws {
         let answers = signedIn
         let presenter = Handed.returning(code: "code-1")
@@ -497,4 +551,11 @@ final class AmuxCloudTests: XCTestCase {
             XCTFail("expected \(expected), got \(error)", file: file, line: line)
         }
     }
+}
+
+private final class MemorySessions: CloudSessionStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var tokens: [AccountId: String] = [:]
+    func read(_ account: AccountId) -> String? { lock.withLock { tokens[account] } }
+    func write(_ token: String?, for account: AccountId) { lock.withLock { tokens[account] = token } }
 }

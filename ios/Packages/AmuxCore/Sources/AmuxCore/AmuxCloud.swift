@@ -85,6 +85,7 @@ extension URLSession: CloudTransport {
 public actor AmuxCloudService: CloudService {
     private let endpoint: CloudEndpoint
     private let transport: any CloudTransport
+    private let savedSessions: (any CloudSessionStore)?
     private let now: @Sendable () -> Date
     /// What this phone holds for each account it has signed in. The access
     /// token is short-lived and the refresh token is what survives; both stay
@@ -100,17 +101,20 @@ public actor AmuxCloudService: CloudService {
     public init(
         endpoint: CloudEndpoint = .production,
         transport: any CloudTransport = URLSession.shared,
+        savedSessions: (any CloudSessionStore)? = nil,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.endpoint = endpoint
         self.transport = transport
         self.now = now
+        self.savedSessions = savedSessions
     }
 
     /// Restores a session this phone kept from a previous launch, so a cold
     /// start does not send somebody back to a browser for an account they
     /// signed into last week.
-    public func restore(_ account: AccountId, refresh: String) {
+    public func restore(_ account: AccountId, refresh: String) throws {
+        try savedSessions?.write(refresh, for: account)
         sessions[account] = Session(access: "", refresh: refresh, expiresAt: .distantPast)
     }
 
@@ -118,6 +122,16 @@ public actor AmuxCloudService: CloudService {
     /// launches. Nothing else may read it.
     public func refreshToken(of account: AccountId) -> String? {
         sessions[account]?.refresh
+    }
+
+    public func forgetSession(_ account: AccountId) throws {
+        sessions.removeValue(forKey: account)
+        try savedSessions?.write(nil, for: account)
+    }
+
+    private func save(_ token: String?, for account: AccountId) throws(CloudError) {
+        do { try savedSessions?.write(token, for: account) }
+        catch { throw .refused("This phone could not remember the sign-in. Please try again.") }
     }
 
     // MARK: - Signing in
@@ -138,6 +152,7 @@ public actor AmuxCloudService: CloudService {
         ])
         let who = try await who(with: issued.access_token)
         let id = AccountId(who.sub)
+        try save(issued.refresh_token, for: id)
         sessions[id] = Session(
             access: issued.access_token, refresh: issued.refresh_token,
             expiresAt: now().addingTimeInterval(TimeInterval(issued.expires_in ?? 3600)))
@@ -270,7 +285,10 @@ public actor AmuxCloudService: CloudService {
         request.httpMethod = "DELETE"
         let (data, response) = try await send(request, for: id)
         switch response.statusCode {
-        case 200..<300: return .deleted
+        case 200..<300:
+            sessions.removeValue(forKey: id)
+            try save(nil, for: id)
+            return .deleted
         case 401: throw CloudError.unauthenticated
         // Money is still moving. The account service names the provider that
         // is billing, and the person is sent to the one place that can stop
@@ -361,6 +379,9 @@ public actor AmuxCloudService: CloudService {
     /// built can be expired by the time it arrives, and the failure that
     /// causes is one nobody can act on.
     private func bearer(for id: AccountId) async throws(CloudError) -> String {
+        if sessions[id] == nil, let refresh = savedSessions?.read(id) {
+            sessions[id] = Session(access: "", refresh: refresh, expiresAt: .distantPast)
+        }
         guard let session = sessions[id] else { throw CloudError.unauthenticated }
         if !session.access.isEmpty, session.expiresAt > now().addingTimeInterval(60) {
             return session.access
@@ -371,6 +392,8 @@ public actor AmuxCloudService: CloudService {
             "refresh_token": refresh,
             "client_id": endpoint.clientID,
         ])
+        guard sessions[id]?.refresh == refresh else { throw .unauthenticated }
+        try save(issued.refresh_token ?? refresh, for: id)
         sessions[id] = Session(
             access: issued.access_token,
             // The account service rotates refresh tokens one use at a time, so

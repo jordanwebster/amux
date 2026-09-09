@@ -27,6 +27,9 @@ public final class StoreBundle {
     /// themselves because the two outlive each other: a transcript is kept
     /// after somebody leaves and the stream that filled it is not.
     private var streaming: Set<AgentId> = []
+    /// Reconnecting resumes only conversations still being read, not every
+    /// transcript kept in memory after somebody left it.
+    public var streamingAgents: Set<AgentId> { streaming }
     /// Batches applied, in the order they arrived.
     public private(set) var applied = 0
 

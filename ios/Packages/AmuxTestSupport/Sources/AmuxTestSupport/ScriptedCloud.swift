@@ -10,9 +10,8 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
     public var entitlement: Entitlement
     /// The relay credential to hand back, or nothing to refuse.
     public var token: String?
-    /// Where that credential says the relay is. A scripted launch is handed
-    /// its relay by whoever is driving it and never dials this, so it is only
-    /// the address the answer carries.
+    /// Where that credential says the relay is. App startup dials this address
+    /// through the same coordinator used with the production account service.
     public var relayHost: String
     public var relayPort: Int
     public var deletion: DeletionOutcome
@@ -193,9 +192,9 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         let state = record(.connectToken(id))
         await wait(state)
         guard let token = state.token else { throw CloudError.unauthenticated }
-        return ConnectToken(
-            bearer: token, host: state.relayHost, port: state.relayPort,
-            expiresAt: Scenario.now.addingTimeInterval(3600))
+        // Testnet credentials do not expire. Giving one the fixture clock’s
+        // date would make it already expired against the runtime’s real clock.
+        return ConnectToken(bearer: token, host: state.relayHost, port: state.relayPort)
     }
 
     public func recordPurchase(
@@ -290,6 +289,8 @@ public struct CloudScript: Codable, Sendable, Equatable {
     /// The relay credential to hand back. Nothing refuses to issue one, which
     /// is what an account with no subscription is answered with.
     public var token: String? = "scripted-connect-token"
+    public var relayHost = "relay.example"
+    public var relayPort = 443
     /// `deleted` or `blockedByRenewal`.
     public var deletion = "deleted"
     /// What the account service does with a signed purchase: `accepted`,
@@ -335,6 +336,8 @@ public struct CloudScript: Codable, Sendable, Equatable {
         // absent is a cloud nobody asked about.
         token = fields.contains(.token)
             ? try fields.decodeIfPresent(String.self, forKey: .token) : token
+        relayHost = try said(.relayHost, relayHost)
+        relayPort = try fields.decodeIfPresent(Int.self, forKey: .relayPort) ?? relayPort
         deletion = try said(.deletion, deletion)
         recordPurchase = try said(.recordPurchase, recordPurchase)
         purchaseReason = try said(.purchaseReason, purchaseReason)
@@ -349,7 +352,8 @@ public struct CloudScript: Codable, Sendable, Equatable {
     /// The state the double reads, which is the one thing this describes.
     public var state: ScriptedCloudState {
         ScriptedCloudState(
-            signIn: outcome, entitlement: entitled, token: token, deletion: deleting,
+            signIn: outcome, entitlement: entitled, token: token,
+            relayHost: relayHost, relayPort: relayPort, deletion: deleting,
             purchase: recording, upload: uploading, latency: .milliseconds(latencyMillis))
     }
 

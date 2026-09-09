@@ -18,6 +18,13 @@ import UIKit
 final class DoorHost {
     static let shared = DoorHost()
 
+    private init() {
+        if let json = Self.said("amux-cloud-script"),
+           let script = try? AmuxJSON.decoder.decode(CloudScript.self, from: Data(json.utf8)) {
+            cloud.scripted = script.state
+        }
+    }
+
     /// The screen the door was asked to show, or nothing while the app is
     /// running as itself.
     private(set) var screen: Screen?
@@ -71,11 +78,6 @@ final class DoorHost {
     /// fixture. A connection signs one in here, because that is where every
     /// screen reads whether this phone can reach anything.
     private var composed: AccountRegistry?
-    /// The account service the app itself is using. In an ordinary launch that
-    /// is the real one at amux.sh, which is what makes it possible to drive a
-    /// launch against production rather than against a script.
-    @ObservationIgnored private var composedCloud: (any CloudService)?
-
     /// What the screen on show has named, in the order it draws it. SwiftUI
     /// builds its accessibility tree only for an attached accessibility
     /// client, so a query from inside the process reads what the screen
@@ -93,26 +95,22 @@ final class DoorHost {
     /// in it, and nothing outside it could answer it.
     let webAuth = ScriptedWebAuth()
 
-    @ObservationIgnored private var bridge: BridgeClient?
+    @ObservationIgnored private var coordinator: RuntimeCoordinator?
+    private var bridge: BridgeClient? { coordinator?.runtime as? BridgeClient }
     /// The relay this phone was told to reach, and the credential each account
     /// reaches it with, in the order they were signed in.
     @ObservationIgnored private var relayAddress: String?
     @ObservationIgnored private var credentials: [Credential] = []
     /// Which account's profile the runtime is reading. It follows the screen
     /// only once the runtime says it has switched.
-    @ObservationIgnored private var runtimeAccount: AccountId?
+    private var runtimeAccount: AccountId? { coordinator?.runtimeAccount }
     /// The last batch each account's connection produced, for playing one back
     /// as the late answer it would have been.
-    @ObservationIgnored private var lastBatch: [AccountId: [Event]] = [:]
+    private var lastBatch: [AccountId: [Event]] { coordinator?.lastBatch ?? [:] }
 
     struct Credential {
         let user: String
         let token: String
-        /// Whether the relay credential is refreshed by asking the account
-        /// service. A cloud credential is good for an hour and the runtime
-        /// asks for the next one itself; a harness that minted the token has
-        /// nobody to ask.
-        var live: Bool = false
     }
 
     /// Every conversation this app has told the runtime to stop streaming, in
@@ -120,11 +118,10 @@ final class DoorHost {
     /// reached the runtime reads this: the runtime's own account says which
     /// streams are open, and this says who asked for that.
     @ObservationIgnored private var unsubscribed: [AgentId] = []
-    @ObservationIgnored private var pump: Task<Void, Never>?
     /// What this device called itself when it connected. The shared model
     /// lists this device alongside the ones it found, and a driver asking
     /// what is on the other side does not mean this one.
-    @ObservationIgnored private var deviceName = ""
+    private var deviceName: String { coordinator?.deviceName ?? "" }
 
     /// What has been done to the view, in order, since the app started.
     ///
@@ -159,9 +156,9 @@ final class DoorHost {
             return .calls(cloud: cloud.calls.map(Self.said), store: store.calls.map(Self.said))
         case .accounts: return .accounts(accountsState())
         case .connect(let relay, let token, let user):
-            return connect(relay: relay, token: token, user: user)
+            return await connect(relay: relay, token: token, user: user)
         case .addAccount(let user, let token):
-            return addAccount(user: user, token: token)
+            return await addAccount(user: user, token: token)
         case .restoreSession(let account, let refresh):
             return await restoreSession(account: account, refresh: refresh)
         case .late(let account): return deliverLate(to: account)
@@ -261,11 +258,14 @@ final class DoorHost {
     /// that is on it. When nothing has been opened by name, that is the app's
     /// own home — filled from this phone's remembered fleet — so the door reads
     /// and connects to the same bundle rather than a spare one nobody can see.
-    func adopt(_ stores: StoreBundle, accounts: AccountRegistry, cloud: any CloudService) {
+    func adopt(_ stores: StoreBundle, accounts: AccountRegistry,
+               runtime: RuntimeCoordinator) {
         guard screen == nil else { return }
         self.stores = stores
         self.composed = accounts
-        self.composedCloud = cloud
+        self.coordinator = runtime
+        runtime.storesChanged = { [weak self] stores in self?.stores = stores }
+        runtime.unsubscribed = { [weak self] agent in self?.unsubscribed.append(agent) }
     }
 
     private func open(screen name: String, fixture: String?) -> DoorReply {
@@ -364,9 +364,9 @@ final class DoorHost {
         trace.append(.route(screen.rawValue))
     }
 
-    private func connect(relay: String, token: String, user: String) -> DoorReply {
+    private func connect(relay: String, token: String, user: String) async -> DoorReply {
         credentials = [Credential(user: user, token: token)]
-        return start(relay: relay, active: user)
+        return await start(relay: relay, active: user)
     }
 
     /// Signs another account in on this phone, with a relay credential of its
@@ -377,12 +377,12 @@ final class DoorHost {
     /// person who has just signed in somewhere else is still looking at what
     /// they were looking at, and moving them would be the app deciding for
     /// them.
-    private func addAccount(user: String, token: String) -> DoorReply {
+    private func addAccount(user: String, token: String) async -> DoorReply {
         guard let relay = relayAddress else { return .error("nothing has been connected") }
         credentials.removeAll { $0.user == user }
         credentials.append(Credential(user: user, token: token))
         let onScreen = composed?.selected?.value ?? runtimeAccount?.value ?? user
-        return start(relay: relay, active: onScreen)
+        return await start(relay: relay, active: onScreen)
     }
 
     /// Puts an account on this phone from a session that was signed in outside
@@ -394,197 +394,35 @@ final class DoorHost {
     /// against production is the production path, minus the browser nobody can
     /// drive from here.
     private func restoreSession(account: String, refresh: String) async -> DoorReply {
-        guard let composed else { return .error("this app has no accounts of its own") }
-        guard let service = composedCloud as? AmuxCloudService else {
-            return .error("this launch is not using the real account service")
-        }
-        let id = AccountId(account)
-        await service.restore(id, refresh: refresh)
-        let facts: AccountFacts
+        guard let coordinator else { return .error("this app has no accounts of its own") }
         do {
-            facts = try await service.account(id)
+            guard try await coordinator.restoreSession(account: AccountId(account), refresh: refresh) else {
+                return .error("the runtime did not start from the restored session")
+            }
+            return .ack
         } catch {
-            return .error("the account service would not say who this account is: \(error)")
+            return .error("the restored sign-in could not reach its account: \(error)")
         }
-        guard facts.id == id else {
-            return .error("the session belongs to another account than the one named")
-        }
-        composed.add(
-            SignedInAccount(id: facts.id, email: facts.email, displayName: facts.displayName),
-            entitlement: facts.entitlement)
-        let credential: ConnectToken
-        do {
-            credential = try await service.connectToken(id)
-        } catch {
-            return .error("the account service issued no relay credential: \(error)")
-        }
-        guard let relay = credential.relay else {
-            return .error("the relay credential named no address to dial")
-        }
-        credentials.removeAll { $0.user == account }
-        credentials.append(Credential(user: account, token: credential.bearer, live: true))
-        return start(relay: relay.absoluteString, active: account, called: "QA phone")
     }
 
-    /// Starts the runtime for every account this phone has been given, reading
-    /// the one named.
-    ///
-    /// `called` is what this device calls itself on the relay, where that is
-    /// not the account's own name — an account signed in from a session is
-    /// known by its identifier, and a fleet full of identifiers is unreadable.
-    private func start(relay: String, active user: String, called name: String? = nil) -> DoorReply {
-        guard let url = URL(string: relay), url.host != nil else {
-            return .error("no relay at \(relay)")
-        }
-        guard credentials.contains(where: { $0.user == user }) else {
-            return .error("no credential for \(user)")
-        }
-        stop()
+    /// A driver can supply credentials, but connection ownership stays with the app.
+    private func start(relay: String, active user: String) async -> DoorReply {
+        guard let url = URL(string: relay), url.host != nil,
+              let composed, let coordinator else { return .error("no relay at \(relay)") }
         relayAddress = relay
-        // A phone the driver handed a relay credential is a signed-in phone,
-        // and the app's own account is where the screens read that from. The
-        // one line a home is allowed above its rows says which of the things
-        // that can be wrong is wrong; without this it would report a sign-in
-        // that never failed instead of the connection that did, and a driver
-        // reading the screen would be reading a state the harness invented.
-        // An account somebody has already signed in on the screen is left
-        // exactly as the screen left it: what it is entitled to came from the
-        // account service, and a credential is not a second opinion about it.
-        if let composed {
-            for credential in credentials
-            where !composed.accounts.contains(where: { $0.id == AccountId(credential.user) }) {
-                composed.add(
-                    SignedInAccount(
-                        id: AccountId(credential.user),
-                        email: "\(credential.user)@example.com",
-                        displayName: credential.user),
-                    entitlement: .active(grant: .purchased(.appStore), renews: nil))
-            }
-            // The account this connection is for is the account on screen:
-            // a driver that connected as somebody else and left the screen on
-            // the last one would be showing one account's name over another
-            // account's machines. Selected before the seam below is installed,
-            // so this is not mistaken for somebody pressing the switcher.
-            composed.select(AccountId(user))
-            // Signing in is what gives an account its own stores, so the ones
-            // this connection fills are the ones the screens are now reading.
-            if let signedIn = composed.stores { stores = signedIn }
-            // Pressing an account in the switcher is what re-points the
-            // runtime. The screen has no way to reach it, and this is where
-            // the runtime is.
-            composed.switching = { [weak self] id in self?.switched(to: id) }
+        for credential in credentials
+        where !composed.accounts.contains(where: { $0.id == AccountId(credential.user) }) {
+            composed.add(
+                SignedInAccount(id: AccountId(credential.user),
+                                email: "\(credential.user)@example.com", displayName: credential.user),
+                entitlement: .active(grant: .purchased(.appStore), renews: nil))
         }
-        runtimeAccount = AccountId(user)
-        let directories = FileManager.default
-        // One installation directory, holding a profile per account. Trust and
-        // this phone's identity are an account's own — a machine admits a
-        // device, and which device that is differs between the accounts on one
-        // phone — and the profile is what keeps them apart, so one account's
-        // pairings can never decide what the other one sees.
-        let data = directories.temporaryDirectory
-            .appendingPathComponent("door-data", isDirectory: true)
-            .appendingPathComponent(user, isDirectory: true)
-        let cache = directories.temporaryDirectory.appendingPathComponent("door-cache", isDirectory: true)
-        try? directories.createDirectory(at: data, withIntermediateDirectories: true)
-        try? directories.createDirectory(at: cache, withIntermediateDirectories: true)
-        let configuration = BridgeConfiguration(
-            dataDirectory: data, cacheDirectory: cache, deviceName: name ?? user,
-            relay: BridgeConfiguration.Relay(
-                url: relay,
-                // A test relay on this machine has no certificate anybody
-                // could trust, so a loopback URL is spoken to in the clear.
-                tls: url.scheme == "https" ? .system : .plainLoopback),
-            accounts: credentials.map {
-                BridgeConfiguration.Account(
-                    id: $0.user, token: $0.live ? .callback : .fixed($0.token))
-            },
-            active: user,
-            logPath: data.appendingPathComponent("door.log"))
-        // Where a rotating credential comes from: the runtime asks, and the
-        // app answers out of the same account service the screens read. That
-        // is the whole of the app's part in staying connected, and it is the
-        // only part a driver must not stand in for — a token this door minted
-        // would prove nothing about the one the relay validates.
-        let service = composedCloud as? AmuxCloudService
-        guard let client = try? BridgeClient(configuration: configuration, tokenProvider: {
-            _, account in
-            guard let service else { return nil }
-            return try? await service.connectToken(AccountId(account))
-        }) else {
+        composed.select(AccountId(user))
+        let tokens = Dictionary(uniqueKeysWithValues: credentials.map { ($0.user, $0.token) })
+        guard await coordinator.override(relay: url, tokens: tokens) else {
             return .error("the runtime did not start")
         }
-        bridge = client
-        deviceName = name ?? user
-        wire(stores, to: client)
-        for agent in stores.conversations.keys { client.dispatch(.subscribe(agent: agent)) }
-        pump = Task { @MainActor [weak self] in
-            for await batch in client.events {
-                self?.receive(batch)
-            }
-        }
         return .ack
-    }
-
-    /// Points one account's stores at the runtime.
-    ///
-    /// Called again for the account switched to, because its stores are new:
-    /// the registry replaces them so that nothing of the account left behind
-    /// can still be on screen, and a bundle nobody wired would draw a live
-    /// account with no way to reach it.
-    private func wire(_ stores: StoreBundle, to client: BridgeClient) {
-        // Opening a conversation is what tells the runtime this client is
-        // watching that agent. Without this the transcript for an agent
-        // somebody opened would never be projected, and the screen would sit
-        // empty beside a live connection.
-        stores.watch = { [weak client] agent in client?.dispatch(.subscribe(agent: agent)) }
-        stores.unwatch = { [weak client, weak self] agent in
-            self?.unsubscribed.append(agent)
-            client?.dispatch(.unsubscribe(agent: agent))
-        }
-        // What a screen decides reaches the machine through the same runtime
-        // the feed arrives on. Answering an ask is a tap, so the connection
-        // has to be reachable from the shell and not only from here.
-        stores.dispatch = { [weak client] command in client?.dispatch(command) }
-        // Picked bytes take their own path to the same connection: a
-        // photograph is not JSON and does not belong in a command.
-        stores.store = { [weak client] picked, bytes in client?.attach(picked, bytes: bytes) }
-    }
-
-    /// One batch from the runtime, credited to the account it answers for.
-    ///
-    /// That is the account the runtime is reading, which is not always the one
-    /// on screen: a switch happens on the screen at once and in the runtime a
-    /// moment later, and everything projected in between is about the account
-    /// just left. The registry is what refuses those, so they go to it named
-    /// as what they are rather than being applied to whatever is on screen.
-    private func receive(_ batch: [Event]) {
-        guard let composed, let answering = runtimeAccount else {
-            stores.apply(batch)
-            return
-        }
-        lastBatch[answering] = batch
-        composed.deliver(batch, for: answering)
-        for event in batch {
-            guard case .opResult(let result) = event,
-                case .selected(let account) = result.outcome
-            else { continue }
-            runtimeAccount = AccountId(account)
-        }
-        if let live = composed.stores, live !== stores {
-            stores = live
-            if let bridge { wire(live, to: bridge) }
-        }
-    }
-
-    /// The account on screen changed. Tell the runtime, and read the stores
-    /// the registry made for it.
-    private func switched(to account: AccountId) {
-        guard let bridge, let composed else { return }
-        if let live = composed.stores, live !== stores {
-            stores = live
-            wire(live, to: bridge)
-        }
-        bridge.dispatch(.selectAccount(account.value))
     }
 
     /// Delivers again, under the name of the account it answered for, the last
@@ -668,17 +506,20 @@ final class DoorHost {
     /// happens against a real relay and a real machine rather than a fixture.
     /// A launch that says nothing about a relay is a launch of the app as
     /// itself and nothing here happens.
+    @ObservationIgnored private var connectedAsLaunchAsked = false
+
     func connectAsLaunchAsks() {
-        guard bridge == nil,
+        guard !connectedAsLaunchAsked,
             let relay = Self.said(Door.relayArgument),
             let token = Self.said(Door.tokenArgument),
             let user = Self.said(Door.userArgument)
         else { return }
-        guard case .ack = connect(relay: relay, token: token, user: user) else {
-            fatalError("the launch was told to connect to \(relay) and could not")
-        }
-        guard let payload = Self.said(Door.pairArgument) else { return }
+        connectedAsLaunchAsked = true
         Task { @MainActor in
+            guard case .ack = await connect(relay: relay, token: token, user: user) else {
+                fatalError("the launch was told to connect to \(relay) and could not")
+            }
+            guard let payload = Self.said(Door.pairArgument) else { return }
             if case .error(let complaint) = await pair(with: payload) {
                 fatalError("the launch was told to pair and could not: \(complaint)")
             }
@@ -1177,10 +1018,7 @@ final class DoorHost {
     }
 
     private func stop() {
-        pump?.cancel()
-        pump = nil
-        bridge?.stop()
-        bridge = nil
+        coordinator?.stop()
     }
 
     /// Waits for the screen to stop changing.

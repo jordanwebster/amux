@@ -16,20 +16,7 @@
       {"literal": "\"no state named \\(wanted)\"", "context": "guard let fixture = Fixtures.named(wanted) else { return .error(\"no state named \\(wanted)\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"door\"", "context": "stores = StoreBundle(account: AccountId(\"door\"), clock: { Scenario.reading })", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"nothing has been connected\"", "context": "guard let relay = relayAddress else { return .error(\"nothing has been connected\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"this app has no accounts of its own\"", "context": "guard let composed else { return .error(\"this app has no accounts of its own\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 2},
-      {"literal": "\"this launch is not using the real account service\"", "context": "return .error(\"this launch is not using the real account service\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"the account service would not say who this account is: \\(error)\"", "context": "return .error(\"the account service would not say who this account is: \\(error)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"the session belongs to another account than the one named\"", "context": "return .error(\"the session belongs to another account than the one named\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"the account service issued no relay credential: \\(error)\"", "context": "return .error(\"the account service issued no relay credential: \\(error)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"the relay credential named no address to dial\"", "context": "return .error(\"the relay credential named no address to dial\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"QA phone\"", "context": "return start(relay: relay.absoluteString, active: account, called: \"QA phone\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"no relay at \\(relay)\"", "context": "return .error(\"no relay at \\(relay)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"no credential for \\(user)\"", "context": "return .error(\"no credential for \\(user)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"\\(credential.user)@example.com\"", "context": "email: \"\\(credential.user)@example.com\",", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"door-data\"", "context": ".appendingPathComponent(\"door-data\", isDirectory: true)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"door-cache\"", "context": "let cache = directories.temporaryDirectory.appendingPathComponent(\"door-cache\", isDirectory: true)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"https\"", "context": "tls: url.scheme == \"https\" ? .system : .plainLoopback),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"door.log\"", "context": "logPath: data.appendingPathComponent(\"door.log\"))", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"this app has no accounts of its own\"", "context": "guard let composed else { return .error(\"this app has no accounts of its own\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"the runtime did not start\"", "context": "return .error(\"the runtime did not start\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"nothing has ever answered for \\(account)\"", "context": "return .error(\"nothing has ever answered for \\(account)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"signIn\"", "context": "case .signIn: \"signIn\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -114,7 +101,13 @@
       {"literal": "\"\\(identifier) holds nothing that can be moved\"", "context": "else { return .error(\"\\(identifier) holds nothing that can be moved\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"the attachment carried no bytes\"", "context": "return .error(\"the attachment carried no bytes\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"no attachment kind named \\(kind)\"", "context": "return .error(\"no attachment kind named \\(kind)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"the attachment did not leave the phone\"", "context": "else { return .error(\"the attachment did not leave the phone\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
+      {"literal": "\"the attachment did not leave the phone\"", "context": "else { return .error(\"the attachment did not leave the phone\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"amux-cloud-script\"", "context": "if let json = Self.said(\"amux-cloud-script\"),", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"the runtime did not start from the restored session\"", "context": "return .error(\"the runtime did not start from the restored session\")", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"no relay at \\(relay)\"", "context": "let composed, let coordinator else { return .error(\"no relay at \\(relay)\") }", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"\\(credential.user)@example.com\"", "context": "email: \"\\(credential.user)@example.com\", displayName: credential.user),", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"this app has no accounts of its own\"", "context": "guard let coordinator else { return .error(\"this app has no accounts of its own\") }", "reason": "Debug session-import diagnostic or relay address syntax; not app interface copy.", "count": 1},
+      {"literal": "\"the restored sign-in could not reach its account: \\(error)\"", "context": "return .error(\"the restored sign-in could not reach its account: \\(error)\")", "reason": "Debug session-import diagnostic or relay address syntax; not app interface copy.", "count": 1}
     ],
     "ios/Amux/Debug/DoorRecording.swift": [
       {"literal": "\"the screen could not be photographed, so there is no report\"", "context": "case .notPhotographed: \"the screen could not be photographed, so there is no report\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -157,7 +150,8 @@
       {"literal": "\"CFBundleShortVersionString\"", "context": "let version = Bundle.main.object(forInfoDictionaryKey: \"CFBundleShortVersionString\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"0\"", "context": "return \"amux-ios/\\(version as? String ?? \"0\")\"", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"amux-ios/\\(version as? String ?? \"0\")\"", "context": "return \"amux-ios/\\(version as? String ?? \"0\")\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"amux\"", "context": ".appendingPathComponent(\"amux\", isDirectory: true)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"amux\"", "context": ".appendingPathComponent(\"amux\", isDirectory: true)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"accounts.json\"", "context": "let accounts = AccountRegistry(file: AppFiles.support.appendingPathComponent(\"accounts.json\"))", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1}
     ],
     "ios/Packages/AmuxCore/Sources/AmuxCore/AgentWrites.swift": [
       {"literal": "\"command\"", "context": "\"command\": .string(\"set_model\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -445,6 +439,9 @@
     ],
     "ios/Packages/AmuxCore/Sources/AmuxCore/Cloud.swift": [
       {"literal": "\"https://\\(host):\\(port)\"", "context": "public var relay: URL? { URL(string: \"https://\\(host):\\(port)\") }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+    ],
+    "ios/Packages/AmuxCore/Sources/AmuxCore/CloudSessionStore.swift": [
+      {"literal": "\"sh.amux.app.refresh\"", "context": "public init(service: String = \"sh.amux.app.refresh\") {", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1}
     ],
     "ios/Packages/AmuxCore/Sources/AmuxCore/Coding.swift": [
       {"literal": "\"not an RFC 3339 timestamp: \\(text)\"", "context": "debugDescription: \"not an RFC 3339 timestamp: \\(text)\"))", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1},
@@ -752,6 +749,18 @@
       {"literal": "\"\\(path):\\(side.rawValue):\\(line):\\(startLine)\"", "context": "public var id: String { \"\\(path):\\(side.rawValue):\\(line):\\(startLine)\" }", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"\\(line)\"", "context": "startLine == line ? \"\\(line)\" : \"\\(startLine)\\u{2013}\\(line)\"", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"s\"", "context": "return \"\\(count) line\\(count == 1 ? \"\" : \"s\") in \\(file.path)\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+    ],
+    "ios/Packages/AmuxCore/Sources/AmuxCore/RuntimeCoordinator.swift": [
+      {"literal": "\"localhost\"", "context": "let loopback = host == \"localhost\" || host == \"::1\" || host == \"[::1]\"", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\"::1\"", "context": "let loopback = host == \"localhost\" || host == \"::1\" || host == \"[::1]\"", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\"[::1]\"", "context": "let loopback = host == \"localhost\" || host == \"::1\" || host == \"[::1]\"", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\"https\"", "context": "guard plain || relay.scheme == \"https\" else { throw BridgeError.didNotStart }", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\"http\"", "context": "address.scheme = \"http\"", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\"localhost\"", "context": "if host == \"localhost\" { address.host = \"127.0.0.1\" }", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\"127.0.0.1\"", "context": "if host == \"localhost\" { address.host = \"127.0.0.1\" }", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\"runtime.log\"", "context": "}, active: account.value, logPath: support.appendingPathComponent(\"runtime.log\"))", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\".\"", "context": "let octets = host.split(separator: \".\", omittingEmptySubsequences: false)", "reason": "Debug session-import diagnostic or relay address syntax; not app interface copy.", "count": 1},
+      {"literal": "\"127\"", "context": "|| octets.count == 4 && octets.first == \"127\" && octets.allSatisfy { UInt8($0) != nil }", "reason": "Debug session-import diagnostic or relay address syntax; not app interface copy.", "count": 1}
     ],
     "ios/Packages/AmuxCore/Sources/AmuxCore/Signposts.swift": [
       {"literal": "\"sh.amux.app\"", "context": "public static let subsystem = \"sh.amux.app\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -2232,7 +2241,8 @@
       {"literal": "\"refused\"", "context": "case \"refused\": .refused(purchaseReason)", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"network\"", "context": "case \"network\": .offline", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"refused\"", "context": "case \"refused\": .refused(uploadReason)", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"blockedByRenewal\"", "context": "guard deletion == \"blockedByRenewal\", let url = URL(string: manageURL) else {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+      {"literal": "\"blockedByRenewal\"", "context": "guard deletion == \"blockedByRenewal\", let url = URL(string: manageURL) else {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"relay.example\"", "context": "public var relayHost = \"relay.example\"", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedStore.swift": [
       {"literal": "\"£7.99\"", "context": "Plan(id: Plan.monthlyID, period: .monthly, price: \"£7.99\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},

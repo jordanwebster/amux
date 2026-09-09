@@ -334,7 +334,7 @@ def speak(journal: Journal, udid: str, requests: list[dict], seconds: int) -> li
         plan.write_text(json.dumps(requests))
         plan.chmod(0o600)
         spoken = subprocess.run([
-            "cargo", "run", "-q", "-p", "xtask", "--", "door",
+            str(Path("target/debug/xtask").resolve()), "door",
             "--simulator", journeys.SIMULATOR,
             "--bundle-id", journeys.BUNDLE_ID,
             "--timeout", str(seconds),
@@ -355,7 +355,7 @@ def logs(journal: Journal, udid: str, account: str) -> str:
     came back from the relay, and the daemon's holds the other side of the same
     minute, so both are read rather than guessed at."""
     written = []
-    phone = (journeys.container(udid) / "tmp/door-data" / account / "door.log")
+    phone = (journeys.container(udid) / "Library/Application Support/amux/runtime.log")
     if phone.is_file():
         written.append("what the phone's runtime logged:\n"
                        + tail(phone))

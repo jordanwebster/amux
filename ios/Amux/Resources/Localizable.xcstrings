@@ -5532,6 +5532,54 @@
           }
         }
       }
+    },
+    "The relay has no address": {
+      "comment": "Sign-in persistence or runtime connection failure.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The relay has no address"
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "This phone could not forget the sign-in": {
+      "comment": "Sign-in persistence or runtime connection failure.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone could not forget the sign-in"
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "This phone could not remember the sign-in. Please try again.": {
+      "comment": "Sign-in persistence or runtime connection failure.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone could not remember the sign-in. Please try again."
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "Your hosts could not be reached. Try again when you’re connected.": {
+      "comment": "Sign-in persistence or runtime connection failure.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your hosts could not be reached. Try again when you’re connected."
+          }
+        }
+      },
+      "extractionState": "manual"
     }
   },
   "version": "1.0"

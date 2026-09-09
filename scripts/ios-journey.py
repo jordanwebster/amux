@@ -153,27 +153,29 @@ def invented(name: str) -> str:
 
 
 def seed_cache(udid: str, fleet: dict) -> list[Path]:
-    """Leaves a remembered fleet where a launch will find it.
+    """Seed a declared remembered account and its fleet for the cold-start workloads.
 
-    Two copies, because two things read a cache directory and they are not the
-    same directory: the application reads its own, and a connection opened
-    through the door reads the one the door hands the runtime. A journey about
-    a cold start needs the rows to be the same on both sides of the connection,
-    so it writes the same file to both.
+    Live startup journeys do not use this helper: their first connection writes
+    the account and cache that the next launch reads.
     """
     data = container(udid)
-    written = []
-    for cache in (data / "Library/Caches/amux", data / "tmp/door-cache"):
-        cache.mkdir(parents=True, exist_ok=True)
-        (cache / "fleet.json").write_text(json.dumps(fleet))
-        written.append(cache / "fleet.json")
-    return written
+    support = data / "Library/Application Support/amux"
+    support.mkdir(parents=True, exist_ok=True)
+    account = "journey-phone"
+    (support / "accounts.json").write_text(json.dumps({
+        "accounts": [{"account": {"id": account, "email": "phone@example.com"},
+                      "signedIn": True, "entitlement": {"active": {"grant": {"granted": {}}}}}],
+        "selected": account,
+    }))
+    cache = data / "Library/Caches/amux/fleet"
+    cache.mkdir(parents=True, exist_ok=True)
+    path = cache / f"{account}.json"
+    path.write_text(json.dumps(fleet))
+    return [path]
 
 
 def forget_cache(udid: str) -> None:
-    data = container(udid)
-    for cache in (data / "Library/Caches/amux", data / "tmp/door-cache"):
-        shutil.rmtree(cache, ignore_errors=True)
+    shutil.rmtree(container(udid) / "Library/Caches/amux", ignore_errors=True)
 
 
 def forget_pairings(udid: str) -> None:
@@ -185,7 +187,7 @@ def forget_pairings(udid: str) -> None:
     started. A journey that asserts what a paired phone shows has to say which
     machines those are, and the only way to say it is to begin with none.
     """
-    shutil.rmtree(container(udid) / "tmp/door-data", ignore_errors=True)
+    shutil.rmtree(container(udid) / "Library/Application Support/amux", ignore_errors=True)
 
 
 def scratch_repository(name: str, committed: dict[str, str], edited: dict[str, str]) -> Path:
@@ -239,7 +241,7 @@ def speak(journey: Journey, launch: str, requests: list[dict]) -> list[dict]:
     plan = journey.directory / f"requests-{launch}.json"
     plan.write_text(json.dumps(requests, indent=2))
     spoken = subprocess.run([
-        "cargo", "run", "-q", "-p", "xtask", "--", "door",
+        str(Path("target/debug/xtask").resolve()), "door",
         "--simulator", SIMULATOR,
         "--bundle-id", BUNDLE_ID,
         "--timeout", "300",
@@ -376,6 +378,9 @@ def perform(
 def install(udid: str) -> None:
     """Puts the build under test on the simulator, once per journey."""
     ios_simulators.run("xcrun", "simctl", "install", udid, str(APPLICATION), timeout=300)
+    # Each journey starts with a declared set of accounts. Relaunches within a
+    # journey keep this file and exercise the same persistence as an installed app.
+    (container(udid) / "Library/Application Support/amux/accounts.json").unlink(missing_ok=True)
 
 
 # MARK: - Reading a screen
@@ -428,9 +433,10 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
         agent["id"] = invented(agent["name"])
     install(udid)
     forget_cache(udid)
+    forget_pairings(udid)
     seeded = seed_cache(udid, remembered_fleet(remembered, machines))
     journey.say(f"seeded {len(remembered)} remembered agents into "
-                + ", ".join(str(path.parent.name) + "/fleet.json" for path in seeded))
+                + ", ".join(f"{path.parent.name}/{path.name}" for path in seeded))
 
     token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
     running = {daemon["name"] for daemon in ready["daemons"]}
@@ -508,14 +514,10 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
     placed = [row["identifier"] for row in remembered_rows]
     journey.expect(surviving == [row for row in placed if row in surviving],
                    f"the sync moved the list: it was {placed} and is now {surviving}")
-    # Pinned rather than assumed: with this phone unpaired the confirmation
-    # empties the list, so the three assertions above hold over nothing. The
-    # day a row survives its machine's answer, this fails and says so, and the
-    # journey's claim gets rewritten around what it can then show.
+    # This fixture intentionally trusts neither host. A surviving row would
+    # mean stale inventory was retained without an authenticated host behind it.
     journey.expect(not surviving,
-                   f"rows survived the confirmation: {surviving}. Either pairing from the "
-                   f"phone now exists and what this journey claims is out of date, or the "
-                   f"fleet kept rows no machine vouched for")
+                   f"the unpaired fleet kept rows no machine vouched for: {surviving}")
     reconciled = next((mark for mark in last_marks if mark["signpost"] == "reconciled"), None)
     connected_at = next((mark for mark in last_marks
                          if mark["signpost"] == "streamConnected"), None)
@@ -525,17 +527,8 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
     journey.say(f"the fleet was confirmed "
                 f"{(reconciled['sinceProcessStart'] - connected_at['sinceProcessStart']) * 1000:.0f} "
                 f"ms after the stream connected")
-    # Said plainly, because it is the one thing this journey cannot yet show:
-    # confirming a remembered row against the machine that owns it needs this
-    # phone to be paired with that machine, and pairing from the phone is not
-    # built. The daemons the phone reached are not paired with it, so the
-    # remembered rows are dropped as the fleet is confirmed rather than going
-    # solid one at a time. That a row confirms on its own machine's answer is
-    # proven where it happens: the shared library's cache tests and the fleet
-    # store's own tests.
-    journey.say(f"after connecting: reached {', '.join(sorted(connected['discovered']))}, "
-                f"fleet confirmed, {len(surviving)} rows left — this phone is not paired with "
-                f"either machine, so the machines disown what it remembered")
+    journey.say("this unpaired phone reconciled to an empty fleet; the home journey "
+                "separately proves paired rows being confirmed in place")
     for capture in (cached, confirmed):
         journey.expect(capture.is_file() and capture.stat().st_size > 0,
                        f"{capture} was not written")
@@ -1988,6 +1981,53 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
     forget_pairings(udid)
 
 
+def production_startup(journey: Journey, udid: str, ready: dict) -> None:
+    """A cloud sign-in starts the app's runtime; a relaunch reads its own saved fleet."""
+    install(udid)
+    forget_cache(udid)
+    forget_pairings(udid)
+    host = next(host for host in ready["daemons"] if host["name"] == "laptop")
+    agent = next(agent for agent in ready["agents"] if agent["name"] == "fix-login")
+    user = next(user for user in ready["users"] if user["label"] == "personal")
+    files = {name: journey.directory / name for name in (
+        "production-startup.json", "startup-home.png", "startup-hosts.png", "startup-remembered.png")}
+    perform(journey, udid, "AmuxUITests/ProductionStartupTests", files, telling={
+        "AMUX_RELAY": f"http://{ready['relay']}", "AMUX_TOKEN": user["token"],
+        "AMUX_USER": "personal", "AMUX_CONTROL": ready["control"],
+        "AMUX_DOOR_PORT": str(free_port()), "AMUX_AGENT": agent["agent_id"],
+        "AMUX_HOST": "laptop", "AMUX_HOST_ID": host["host_id"],
+    })
+    seen = json.loads(files["production-startup.json"].read_text())
+    connected = seen["connected"]["bridge"]
+    journey.expect(connected["started"] and "laptop" in connected["hosts"]
+                   and "fix-login" in connected["agents"],
+                   f"the app's own startup did not reach its host and agent: {connected}")
+    calls = seen["calls"]["cloud"]
+    journey.expect("signIn" in calls and "connectToken personal" in calls,
+                   f"the app did not ask its account service for a connection: {calls}")
+    journey.expect(sum(call.startswith("connectToken ") for call in calls) <= 4,
+                   "redrawing the app restarted its coordinator or repeatedly asked for a token")
+    before = seen["beforeReconciliation"]["bridge"]
+    journey.expect(not before["started"] and not before["reconciled"]
+                   and "fix-login" in before["agents"],
+                   f"the relaunch did not draw remembered rows before any runtime: {before}")
+    journey.expect(seen["restoredAccounts"]["known"]["selected"] == "personal",
+                   "the remembered account was not selected")
+    forbidden = {"-amux-relay", "-amux-token", "-amux-user", "-amux-pair"}
+    journey.expect(not forbidden.intersection(seen["launchArguments"]),
+                   "startup was supplied a door connection")
+    journey.expect(seen["reconciled"]["bridge"]["reconciled"], "the saved profile did not reconnect")
+    journey.say("sign-in asked the scripted cloud for its relay, reached laptop and fix-login, "
+                "then a relaunch drew the saved account and fleet before starting a runtime")
+    evidence = Path(".autopilot/evidence/production-startup")
+    if evidence.parent.is_dir():
+        evidence.mkdir(parents=True, exist_ok=True)
+        for source in files.values():
+            shutil.copyfile(source, evidence / source.name)
+        journey.write()
+        shutil.copyfile(journey.directory / "journey.txt", evidence / "journey.txt")
+
+
 def accounts(journey: Journey, udid: str, ready: dict) -> None:
     """Signing in, paying, switching between two accounts and giving one up.
 
@@ -2881,7 +2921,7 @@ def prepare_writing() -> None:
 JOURNEYS = {"home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
             "writing": writing, "claude-sessions": claude_sessions, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts,
-            "accounts": accounts, "reports": reports, "accessibility": accessibility}
+            "production-startup": production_startup, "accounts": accounts, "reports": reports, "accessibility": accessibility}
 # What has to exist before the daemons start: the runner resolves an
 # agent's working directory when it loads the topology.
 PREPARE = {"asks": prepare_asks, "review": prepare_review, "writing": prepare_writing,

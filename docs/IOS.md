@@ -24,6 +24,20 @@ and fills from remembered state while the host reconciles. See the
 [bridge contract](../crates/amux-mobile/README.md) for ownership, shutdown,
 token refresh and the generated C interface.
 
+App startup restores the selected account and its cached fleet before asking
+the account service for a connect token. The runtime dials the relay named by
+that token, using system TLS. Only debug builds allow plaintext for loopback
+relays. One installation in Application Support holds a profile per account;
+fleet files live under Caches. Account names, grants and selection survive
+launch in the registry, while refresh tokens stay in the device Keychain.
+Switching accounts re-points the connection and its stores; signing out drops
+access, and backgrounding releases the relay connection.
+
+Saved profile configurations currently contain absolute paths. Moving the app’s
+data container, as an update or simulator reinstall can do, can prevent the
+embedded installation from reopening. Same-container relaunch is tested;
+retaining profiles across a moved container still needs relocation support.
+
 Core models and feature actions remain reusable for a separate future Mac UI.
 The shell belongs to iPhone; there is no Mac, Catalyst or iPad target. Debug
 support is compiled directly into Debug and Measured, with its sources and
@@ -122,7 +136,8 @@ light/dark goldens and baseline explanation.
 
 `timeout 2400 wt run ios-journey -- NAME` runs a group from
 `ios/Journeys/manifest.json`; omit NAME to run every group. Groups include home,
-conversation, asks, review, writing, hosts, claude-sessions, accounts and reports.
+conversation, asks, review, writing, hosts, claude-sessions, accounts,
+production-startup and reports.
 The recipe starts declared topologies, runs accessibility-driven XCUITests,
 collects screenshots, recordings, test results and host observations under
 `target/ios/journeys/`, and tears its processes down.
@@ -132,7 +147,10 @@ with provider scripting on the host. Testnet substitutes registered bearer
 tokens for production JWT validation. Account journeys inject the scripted
 cloud boundary; StoreKit configuration drives purchase UI. These establish
 app contracts, not production OAuth, billing or live provider qualification.
-There is no amuxcloud server or container dependency here.
+There is no amuxcloud server or container dependency here. The production-startup
+journey supplies only the scripted cloud at launch: sign-in starts the real
+runtime, and a relaunch must draw that connection’s saved fleet before the
+cloud answers again.
 
 For a captured debug report, begin with [the debugging guide](DEBUGGING.md).
 Run `timeout 1800 wt run ios-replay -- /path/to/report` to rebuild stores from

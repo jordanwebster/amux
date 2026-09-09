@@ -4,6 +4,7 @@ import AmuxFeatures
 import AmuxShell
 import Foundation
 import Observation
+import UIKit
 
 /// Everything the app is made of, assembled in one place.
 ///
@@ -13,7 +14,8 @@ import Observation
 @MainActor
 @Observable
 final class Composition {
-    let accounts = AccountRegistry()
+    let accounts = AccountRegistry(file: AppFiles.support.appendingPathComponent("accounts.json"))
+    let runtime: RuntimeCoordinator
     let router: Router
     /// The one sign-in this phone has in flight. It outlives the page that
     /// shows it, so a person who leaves the screen while the browser is up
@@ -67,14 +69,22 @@ final class Composition {
         #if AMUX_DEBUG_TOOLS
         let scripted = ProcessInfo.processInfo.arguments
             .contains("-\(Door.scriptedCloudArgument)")
-        cloud = scripted ? DoorHost.shared.cloud : AmuxCloudService()
+        cloud = scripted ? DoorHost.shared.cloud : AmuxCloudService(savedSessions: KeychainCloudSessions())
         store = scripted ? DoorHost.shared.store : AppStoreFront()
         webAuth = scripted ? DoorHost.shared.webAuth : WebSignIn()
         #else
-        cloud = AmuxCloudService()
+        cloud = AmuxCloudService(savedSessions: KeychainCloudSessions())
         store = AppStoreFront()
         webAuth = WebSignIn()
         #endif
+        #if AMUX_DEBUG_TOOLS
+        let allowLoopback = true
+        #else
+        let allowLoopback = false
+        #endif
+        runtime = RuntimeCoordinator(
+            registry: accounts, cloud: cloud, support: AppFiles.support, cache: AppFiles.cache,
+            deviceName: UIDevice.current.name, allowPlainLoopback: allowLoopback)
         #if AMUX_DEBUG_TOOLS
         reports = ReportStore()
         // The page the person is on goes into the report, so whoever opens the
@@ -87,6 +97,7 @@ final class Composition {
         #endif
         router.loads(with: self)
         rememberedFleet()
+        runtime.start()
         settleOutstandingPurchases()
     }
 
@@ -123,7 +134,7 @@ final class Composition {
     /// nothing to remember, and changing which account is on screen reads that
     /// account's own rows rather than leaving the last one's up.
     private func rememberedFleet() {
-        guard let account = accounts.selected else { return }
+        guard let account = accounts.selected, accounts.selectedAccount?.signedIn == true else { return }
         stores.apply(Bridge.cachedFleet(in: AppFiles.cache, for: account))
     }
 
@@ -191,6 +202,9 @@ final class Composition {
         // would make signing back in look like adding a stranger.
         case .signOutAccount(let id):
             accounts.signOut(id)
+            if let service = cloud as? AmuxCloudService {
+                Task { try? await service.forgetSession(id) }
+            }
         case .wear(let wanted):
             appearance = wanted
         // Giving up an account for good. What it costs is asked first, over

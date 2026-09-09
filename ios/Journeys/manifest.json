@@ -4,7 +4,7 @@
       "id": "home-coldstart",
       "stage": 5,
       "topology": "e2e-tests/topologies/two-hosts.json",
-      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering and nothing spinning, and a real connection to two real hosts confirms it. Today that confirmation leaves the list empty: pairing from the phone is not built, so neither machine vouches for anything this phone remembered. That a row goes solid when its own host answers, without the list moving, is proven where it happens — in the shared library's cache tests and the fleet store's — and becomes a claim about the screen here once a paired phone can be driven through this journey."
+      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering and nothing spinning, and a real connection to two hosts reconciles it. This launch is paired with neither machine, so neither host confirms the remembered agents and reconciliation leaves the list empty. The home journey separately proves a paired phone’s cached rows going solid in place as their hosts answer."
     },
     {
       "id": "home",
@@ -105,6 +105,12 @@
         "failures"
       ],
       "claim": "Everything a person mainly does with this app, done again with the accessibility settings on: VoiceOver running on the device and the whole app drawn at the largest text size a reader can ask for, against two machines the runner is really running. The app itself says it is in a VoiceOver session and says what size it is drawn at, so neither is taken on trust. At that size the fleet still lists its agents and every action it offers has a name to read out; a conversation still reads, and the patch its machine froze still gives up a range to a finger held on one line and dragged onto the next; a permission is refused and a plan approved with the panel's own controls, and the sheet that asks what should change is got out of without answering it; a token pasted into the message stands in the sentence as one character and one backspace takes the whole of it, and the card that renames the agent is opened and cancelled; the machines are listed; and a machine taken away while somebody is reading one of its agents says the same thing in light and in dark. What each screen drew, and how far the actions it is for sit from the bottom of the window, is written out beside the photographs."
+    },
+    {
+      "id": "production-startup",
+      "stage": 13,
+      "topology": "e2e-tests/topologies/accounts.json",
+      "claim": "Signing in through the scripted account service starts the application's own runtime at the relay its connect token names, with no door connection credentials. After pairing, Hosts shows the real daemon and home shows its agent. Relaunching restores the selected account and draws the fleet saved by that connection before the account service answers or any runtime starts, then the remembered profile reconnects."
     }
   ]
 }

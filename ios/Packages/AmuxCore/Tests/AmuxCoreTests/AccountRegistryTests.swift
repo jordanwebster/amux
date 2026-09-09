@@ -8,6 +8,45 @@ final class AccountRegistryTests: XCTestCase {
     private let ada = SignedInAccount(id: AccountId("ada"), email: "ada@example.com")
     private let bo = SignedInAccount(id: AccountId("bo"), email: "bo@example.com")
 
+    func testAccountsGrantsAndSelectionSurviveLaunchWithoutSecrets() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("accounts.json")
+        let registry = AccountRegistry(file: file)
+        registry.add(ada, entitlement: .active(grant: .granted, renews: nil))
+        registry.add(bo, entitlement: .lapsed(grant: .purchased(.web), endedAt: now))
+        registry.select(bo.id)
+        let restored = AccountRegistry(file: file)
+        XCTAssertEqual(restored.accounts, registry.accounts)
+        XCTAssertEqual(restored.selected, bo.id)
+        XCTAssertEqual(restored.stores?.account, bo.id)
+        XCTAssertFalse(registry.persistenceFailed)
+        let saved = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertFalse(saved.contains("token"))
+
+        restored.signOut(bo.id)
+        let signedOut = AccountRegistry(file: file)
+        XCTAssertEqual(signedOut.selected, bo.id)
+        XCTAssertNil(signedOut.stores)
+        XCTAssertEqual(signedOut.gate, .signedOut)
+        signedOut.forget(bo.id)
+        let remaining = AccountRegistry(file: file)
+        XCTAssertEqual(remaining.accounts.map(\.id), [ada.id])
+        XCTAssertEqual(remaining.selected, ada.id)
+        XCTAssertEqual(remaining.gate, .ready)
+    }
+
+    func testSigningBackIntoSelectedAccountRecreatesItsStoresAndNotifiesRuntime() {
+        let registry = AccountRegistry()
+        registry.add(ada)
+        registry.signOut(ada.id)
+        var changes = 0
+        registry.changed = { changes += 1 }
+        registry.add(ada, entitlement: .active(grant: .granted, renews: nil))
+        XCTAssertEqual(registry.stores?.account, ada.id)
+        XCTAssertEqual(changes, 1)
+    }
+
     func testTheFirstAccountAddedIsTheSelectedOne() {
         let registry = AccountRegistry()
         registry.add(ada)
