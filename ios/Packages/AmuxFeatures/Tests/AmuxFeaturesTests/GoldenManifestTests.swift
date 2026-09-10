@@ -30,6 +30,17 @@ final class GoldenManifestTests: XCTestCase {
         return try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: url))
     }
 
+    private func baselineHeadings() throws -> Set<String> {
+        var ios = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        for _ in 0..<4 { ios.deleteLastPathComponent() }
+        let baseline = ios.appendingPathComponent("Goldens/BASELINE.md")
+        let contents = try String(contentsOf: baseline, encoding: .utf8)
+        return Set(contents.split(separator: "\n").compactMap { line in
+            guard line.hasPrefix("## ") else { return nil }
+            return line.dropFirst(3).trimmingCharacters(in: .whitespaces)
+        })
+    }
+
     func testEveryCatalogueScreenIsOwedAGolden() throws {
         let entries = try manifest().screens
         let drawn = Set(entries.map(\.screen))
@@ -86,5 +97,14 @@ final class GoldenManifestTests: XCTestCase {
     func testNoTwoEntriesShareAnIdentity() throws {
         let ids = try manifest().screens.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count)
+    }
+
+    func testEveryManifestStateHasItsOwnBaselineEntry() throws {
+        let headings = try baselineHeadings()
+        for entry in try manifest().screens {
+            XCTAssertTrue(
+                headings.contains(entry.id),
+                "\(entry.id) has no matching ## heading in ios/Goldens/BASELINE.md")
+        }
     }
 }

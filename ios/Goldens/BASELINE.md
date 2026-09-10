@@ -209,6 +209,18 @@ list's selected row continued.
 - **The accounts are this app's own scenario.** Ada, her work account and a
   side project she signed out of, rather than the drawing's names.
 
+## you-granted
+
+The same page for an account whose Pro access was granted rather than bought.
+The row is headed Pro, its summary reads “Active · Included”, and there is no
+store or billing source to manage. Everything else on the page remains the
+same: the known accounts, this phone's identity, its paired devices,
+Appearance and Help.
+
+There is no preserved reference for this entitlement state. The design
+catalogue pictures a bought subscription, so this capture locks the different
+words without pretending a granted entitlement has a subscription behind it.
+
 ## delete
 
 Copy review (2026-09-09): The first consequence says agents and files stay on the hosts. The renewal consequence is one sentence stating that deleting the account leaves the subscription renewing on its date through its billing source.
@@ -254,8 +266,6 @@ retried rather than restarted.
 
 ## paywall
 
-Copy review (2026-09-09): In the additional `paywall-unconfirmed` state, the saved-purchase caption describes retrying confirmation with amux.sh when the app next opens. It does not promise that a later attempt will succeed.
-
 Copy review (2026-09-09): The description is one sentence: “Subscribe to reach your hosts through the relay.” Other subscription states name where to manage a purchase, distinguish included access and explain retries without promising successful confirmation.
 
 The subscription, and nothing dressed up around it: one sentence saying what it
@@ -276,6 +286,17 @@ own: the account that already pays, which says where the subscription came from
 instead of selling a second one; the purchase the store has taken and cannot
 finish, which stops offering to buy so nobody is charged twice; and the one the
 store refused, which says what the store said.
+
+## paywall-unconfirmed
+
+The paywall after the App Store accepted a purchase but amux.sh could not
+confirm the entitlement. The account remains unsubscribed, the purchase stays
+saved, and Retry replaces the plan choices so the screen does not offer to
+charge for the same access again.
+
+There is no preserved reference for this failure state. Its caption says the
+app retries confirmation with amux.sh when it next opens; it does not promise
+that a later attempt will succeed.
 
 ## drawer
 
@@ -1444,18 +1465,39 @@ There is no preserved reference for this state; it is the designed failure the
 flow needs, because a report written on a train and lost to a tunnel is a
 report nobody writes twice.
 
-## dictation-listening, dictation-permission, dictation-denied, dictation-unavailable
+## dictation-listening
 
-The composer now names app-owned speech recognition above its footer. These
-states have no preserved reference: the microphone in the typing reference
-was idle. Listening changes its glyph to a stop control and says “Listening.
-Tap Stop Dictation when you’re done.” Permission preparation explains what to
-allow; denied access names both permissions and offers Open Settings; an
-unavailable recognizer says typing remains available. All keep the same
-example draft visible, use the composer's muted sentence styling, and reserve
-44 points for the Settings action. The idle typing and working layouts do not
-gain a status line. Both appearances use the existing design tokens.
+The composer while app-owned speech recognition is listening. It keeps the
+example draft visible, changes the microphone glyph to a stop control and says
+“Listening. Tap Stop Dictation when you’re done.” in the composer's muted
+sentence styling. There is no preserved reference because the microphone in
+the typing reference is idle.
 
-These composited fixtures prove layout and copy only. The writing journey
-presses the real control with microphone permission revoked to prove the
-denied state. Live microphone recognition remains a physical-phone check.
+This composited fixture proves layout and copy only. Live microphone
+recognition remains a physical-phone check.
+
+## dictation-permission
+
+The same composer before speech and microphone access have been requested. A
+status line explains which permissions to allow while leaving the draft and
+the rest of the footer in place. The idle typing and working layouts do not
+gain this line. There is no preserved reference for the permission-preparation
+state.
+
+## dictation-denied
+
+The composer after speech recognition access was denied. Its status names the
+speech and microphone permissions and offers an Open Settings action with a
+44-point target, while typing and the existing draft remain available. There
+is no preserved reference for the refusal state.
+
+The writing journey presses the real control with microphone permission
+revoked to prove this state beyond the composited layout capture.
+
+## dictation-unavailable
+
+The composer when both permissions are allowed but the speech recognizer is
+unavailable. The muted status says typing remains available, and the example
+draft, microphone control and footer keep their places. There is no preserved
+reference for this availability failure. Both appearances use the existing
+design tokens.

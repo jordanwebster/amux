@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Document every captured golden state.**
+
+The golden baseline account now gives each of the 62 manifest states its own
+heading. The granted-access and unconfirmed-purchase captures are described
+beside their parent screens, and the four dictation states are documented
+separately instead of sharing one entry. No PNG baseline changed.
+
+The manifest unit suite reads the checked-out baseline account and fails when
+any state lacks an exact matching heading, so adding a capture cannot leave its
+documentation behind.
+
+---
+
 2026-09-10 — **A release may cut a second build of an unreleased version.**
 
 `wt run release --version` refused any version that was not strictly above the
