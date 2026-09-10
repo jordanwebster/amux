@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Measure the Rust suite before optimizing its slowest tests.**
+
+On the M2 Max with both test simulators shut down, a ten-second CPU sample
+confirmed an idle machine and process monitoring found no competing build or
+test. The complete `wt test` passed 2,374 Rust tests and 34 Python tests in
+191.27 seconds; `wt run spec` passed 462 tests in 16.04 seconds. Per-test
+libtest timing was enabled at execution, without changing compiler settings.
+
+The fleet and chat viewport sweeps took 39.77 and 32.86 seconds; the two
+25-frame GIF tests took 24.10 and 23.04 seconds concurrently. These costs are
+rendering and encoding work. The mobile retry test spent 8.14 seconds on a
+real backoff timeline. The unused userinfo-timeout fault and opt-in live-Claude
+interrupt wait do not explain the measured suite. No test or product code
+changes accompany this baseline.
+
+---
+
 2026-09-10 — **Use portable working directories in startup service tests.**
 
 The startup tests now create echo agents in the platform's temporary directory,
