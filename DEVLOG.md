@@ -1,3 +1,13 @@
+2026-09-11 — **Add local-network discovery primitives.** The core now exposes
+untrusted host advertisements, found/lost events, a current found-host index,
+and a deterministic scripted discovery bus. Desktop discovery publishes and
+browses `_amux._udp.local.` through `mdns-sd`, keeping only protocol version and
+host ID in TXT while the listener port lives in SRV. Withdrawal sends a DNS-SD
+goodbye, explicit queries replace the standing browser, and a monotonic pause
+over thirty seconds triggers a fresh query after wake. Focused discovery tests
+cover TXT round trips, fan-out, address replacement and wake detection; workspace
+lint passes.
+
 2026-09-06 — **Integrate fast provider tests with current main.** Keep the
 existing-shell subprocess fixture and main's separate five-second initialization
 budget; the bounded-output close assertion retains its one-second deadline.

@@ -23,6 +23,7 @@ mod client;
 mod config;
 mod connection;
 mod debug;
+pub mod discovery;
 mod dispatcher;
 #[path = "agents/envelope.rs"]
 pub mod envelope;
