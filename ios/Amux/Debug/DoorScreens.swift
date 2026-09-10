@@ -196,7 +196,6 @@ enum DoorScreens {
         // open and this is the one arm either way.
         case .newAgent:
             NewAgent(model: host.stores.newAgent, hosts: host.stores.hosts) { _ in }
-        default: EmptyView()
         }
     }
 }

@@ -1057,8 +1057,6 @@ final class DoorHost {
 
     /// Waits for the screen to stop changing.
     ///
-    /// Waits for the screen to stop changing.
-    ///
     /// Three frames for a state change to land, be laid out and be drawn, and
     /// then the screen is drawn repeatedly until two passes agree. A fixed
     /// count of frames does not work: switching appearance re-resolves every

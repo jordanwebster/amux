@@ -14001,3 +14001,24 @@ run was told.
 Green: `wt run ios-unit`, `wt run ios-lint`, `wt run ios-goldens -- send-refused`
 (both captures unchanged: that state has no later dispatch, so the host's own
 sentence is still what is drawn).
+
+## A capture named for the head, taken at the head
+
+conversation-head.png was photographed straight after the walk to the bottom of
+the turn, so it held the same frame as conversation-row-kinds.png — byte for
+byte, in every copy of the evidence. The journey now scrolls back to the
+beginning first and photographs there, and says in its report which rows were on
+screen at each end, so a run where the two pictures hold the same feed fails
+instead of shipping one under the other's name.
+
+The report's changes line read the tally three times: the chip draws its two
+numbers as separate texts and the system publishes the element that combines
+them as well, and the record gathered all of them. It now keeps the combined
+one, which is the chip as it is read out, and the journey fails if the chip is
+on screen with no tally readable on it.
+
+Two sentences in the debug build's own code: a dead `default` arm in the screen
+switch that warned on every build, and a doc comment written twice.
+
+Green: `wt run ios-journey -- conversation` — passed, with the head and the end
+of the turn photographed at their own ends and the chip reading '+154 −23' once.

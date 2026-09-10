@@ -941,8 +941,18 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
                    f"{end}")
     journey.say(f"conversation-row-kinds.png was taken at the end of the turn, with "
                 f"{', '.join(shown)} on screen")
+    # And the head photographed at the head. The two pictures are the same feed
+    # from its two ends, so a run where they hold the same rows means one of
+    # them is the other under a name that says the opposite.
+    head = seen.get("head") or []
+    journey.expect(bool(head) and head != end,
+                   f"conversation-head.png was not taken at the top of the feed: {head}")
+    journey.say(f"conversation-head.png was taken at the top of the same feed, with "
+                f"{', '.join(head)} on screen")
     journey.expect(bool(seen.get("fold")),
                    "the folded run of reads did not list what it did when it was pressed")
+    journey.expect(bool(seen.get("changes")),
+                   "the changes chip was on screen with no tally readable on it")
     journey.say(f"the run of reads was folded, and opening it listed "
                 f"{', '.join(seen['fold'])}; the changes the host computed put "
                 f"{' '.join(seen.get('changes', []))} on the chip and it led to the changes")

@@ -146,6 +146,12 @@ final class ConversationTests: XCTestCase {
             XCTAssertTrue(transcript.contains(kind),
                           "the transcript never drew \(kind); it drew \(transcript.sorted())")
         }
+        // The beginning of the feed, photographed at the beginning. Walking
+        // it left the screen wherever the walk stopped, so it is scrolled back
+        // first: a picture named for the head has to be taken at the head, and
+        // the end of the turn is a different picture taken below.
+        record["head"] = toTheHead(app)
+        photograph(app, "conversation-head")
         // The end of the turn, photographed where it is. The refusals, the
         // failure, the interruption and the provider's error all sit below the
         // fold of a feed this long, so a photograph taken where the feed opens
@@ -153,7 +159,6 @@ final class ConversationTests: XCTestCase {
         // which of them were.
         record["endOfTurn"] = toTheEnd(app)
         photograph(app, "conversation-row-kinds")
-        photograph(app, "conversation-head")
 
         // MARK: A folded run, opened.
         //
@@ -179,8 +184,13 @@ final class ConversationTests: XCTestCase {
         let chip = element(app, "conversation.changes")
         XCTAssertTrue(chip.waitForExistence(timeout: waiting),
                       "the host answered with no changes to review")
-        record["changes"] = app.staticTexts.allElementsBoundByIndex
-            .map { $0.label }.filter { $0.hasPrefix("+") || $0.hasPrefix("\u{2212}") }
+        // The chip's own tally, once. The two numbers are drawn as separate
+        // texts and the system publishes the element that combines them as
+        // well, so reading every text that starts with a sign gathers the same
+        // tally three times; the combined one is the chip as it is read out.
+        record["changes"] = app.staticTexts.allElementsBoundByIndex.map { $0.label }
+            .filter { $0.hasPrefix("+") && $0.contains("\u{2212}") }
+            .prefix(1).map { $0 }
         press(app, "conversation.changes")
         // Where the chip leads. The diff itself is a later screen; what is
         // claimed here is that a real diff, computed by the host that holds
@@ -839,6 +849,22 @@ final class ConversationTests: XCTestCase {
         var unchanged = 0
         for _ in 0..<60 {
             app.swipeUp(velocity: .fast)
+            let now = transcriptRows(app)
+            unchanged = now == last ? unchanged + 1 : 0
+            last = now
+            if unchanged >= 3 { break }
+        }
+        return last
+    }
+
+    /// Scrolls back to the beginning of the feed and answers with what is on
+    /// screen there. The counterpart of `toTheEnd`, for the rows a
+    /// conversation opens with rather than the ones it finished on.
+    private func toTheHead(_ app: XCUIApplication) -> [String] {
+        var last: [String] = []
+        var unchanged = 0
+        for _ in 0..<60 {
+            app.swipeDown(velocity: .fast)
             let now = transcriptRows(app)
             unchanged = now == last ? unchanged + 1 : 0
             last = now
