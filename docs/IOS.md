@@ -33,10 +33,10 @@ launch in the registry, while refresh tokens stay in the device Keychain.
 Switching accounts re-points the connection and its stores; signing out drops
 access, and backgrounding releases the relay connection.
 
-Saved profile configurations currently contain absolute paths. Moving the app’s
-data container, as an update or simulator reinstall can do, can prevent the
-embedded installation from reopening. Same-container relaunch is tested;
-retaining profiles across a moved container still needs relocation support.
+When an update or simulator reinstall moves the app’s data container, the mobile
+runtime rebases saved profile paths within the installation before reopening
+it. Foreign paths and symlinks are refused. The production-startup journey
+checks a changed container, retained account and fleet, and a fresh connection.
 
 Core models and feature actions remain reusable for a separate future Mac UI.
 The shell belongs to iPhone; there is no Mac, Catalyst or iPad target. Debug
@@ -115,7 +115,7 @@ timeout 900 wt run ios-goldens-reference
 timeout 1200 wt run ios-goldens-perturb
 ```
 
-The unfiltered manifest covers 33 reference screens and 25 additional states,
+The unfiltered manifest covers 33 reference screens and 29 additional states,
 each in light and dark. The door waits for the app's view tree, then the Mac
 captures the simulator's composited display through `simctl io screenshot`,
 checking successive frames for stability. This includes the render server's

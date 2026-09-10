@@ -4,6 +4,17 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Document restored app containers and the complete golden catalogue.**
+
+The iPhone guide now describes the mobile runtime's existing profile-path
+relocation and the production-startup journey that proves restoration after
+a simulator reinstall. Its previous warning predated that repair. The guide
+and baseline notes also count all 62 screens, including the four dictation
+states, for 124 light and dark captures. Checked against the runtime relocation
+policy, journey assertions and golden manifest; no behavior or baseline changes.
+
+---
+
 2026-09-10 — **Clear a composer through the driving door from any caret.**
 
 The debug clear command selects the native field's whole document before

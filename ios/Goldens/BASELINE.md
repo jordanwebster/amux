@@ -12,7 +12,7 @@ approved. Where the two disagree, this file says which is right.
 Establishing a state's baseline includes declaring the state built, in
 `Fixtures.built`. One screen draws several states and each is written and
 locked on its own. A state not named there answers "unimplemented" and fails
-the full golden run. All 58 manifest screens have light and dark baselines;
+the full golden run. All 62 manifest screens have light and dark baselines;
 the 33 reference screens also have their 66 preserved design captures. Run
 `wt run ios-goldens` to compare every state, and `wt run ios-goldens-reference`
 to pair reference screens with the approved drawings.
