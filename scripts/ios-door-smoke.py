@@ -41,6 +41,8 @@ DEBUG_ONLY = [
 ]
 OUTPUT = Path("target/ios/door")
 CAPTURE = OUTPUT / "door-capture.png"
+COMPOSER_CAPTURE = OUTPUT / "composer-short-replacement.png"
+REPLACEMENT = "Check the reconnect path before you squash it."
 # Where the app is asked to write its report bundle. The two recordings in it
 # are what `wt run ios-replay` rebuilds a screen from.
 BUNDLE = OUTPUT / "bundle"
@@ -80,6 +82,21 @@ def exchange(relay: str, token: str) -> list[tuple[dict, str]]:
         ({"kind": "open", "screen": "home", "fixture": "home-accessibility"}, "ack"),
         ({"kind": "query"}, "state"),
         ({"kind": "open", "screen": "home", "fixture": "home"}, "ack"),
+        ({"kind": "query"}, "state"),
+        # This fixture starts with a populated draft and its caret at zero.
+        # Clear must delete through the native field before typing replaces it.
+        ({"kind": "open", "screen": "typing", "fixture": "typing"}, "ack"),
+        ({"kind": "settle"}, "ack"),
+        ({"kind": "query"}, "state"),
+        ({"kind": "clear", "identifier": "composer.field"}, "ack"),
+        ({"kind": "settle"}, "ack"),
+        ({"kind": "query"}, "state"),
+        ({"kind": "type", "identifier": "composer.field", "text": REPLACEMENT}, "ack"),
+        ({"kind": "settle"}, "ack"),
+        ({"kind": "query"}, "state"),
+        ({"kind": "capture", "path": str(COMPOSER_CAPTURE)}, "captured"),
+        ({"kind": "clear", "identifier": "composer.field"}, "ack"),
+        ({"kind": "settle"}, "ack"),
         ({"kind": "query"}, "state"),
         ({"kind": "open", "screen": "probe", "fixture": "probe"}, "ack"),
         ({"kind": "appearance", "appearance": "light"}, "ack"),
@@ -134,6 +151,7 @@ def forget_pairings(udid: str) -> None:
 def speak(plan: list[tuple[dict, str]]) -> list[dict]:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     CAPTURE.unlink(missing_ok=True)
+    COMPOSER_CAPTURE.unlink(missing_ok=True)
     shutil.rmtree(BUNDLE, ignore_errors=True)
     requests = OUTPUT / "requests.json"
     requests.write_text(json.dumps([request for request, _ in plan], indent=2))
@@ -149,6 +167,7 @@ def speak(plan: list[tuple[dict, str]]) -> list[dict]:
         "--allow-errors",
     ], check=True, text=True, capture_output=True, timeout=900)
     print(spoken.stdout, flush=True)
+    (OUTPUT / "replies.json").write_text(spoken.stdout)
     return json.loads(spoken.stdout)
 
 
@@ -180,13 +199,25 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
         f"{ordinary['typeSize']} for the one after it",
         flush=True)
 
+    composer = [state for state in states if state["screen"] == "typing"]
+    values = [[element.get("value") for element in state["elements"]
+               if element["identifier"] == "composer.field"] for state in composer]
+    if len(values) != 4 or len(values[0]) != 1 or not values[0][0]:
+        raise SystemExit(f"the typing fixture did not open a populated composer: {values}")
+    if values[1:] != [[""], [REPLACEMENT], [""]]:
+        raise SystemExit(f"clear and replacement did not reach the composer exactly: {values}")
+    if not COMPOSER_CAPTURE.is_file() or COMPOSER_CAPTURE.stat().st_size == 0:
+        raise SystemExit(f"{COMPOSER_CAPTURE} was not written")
+    print(f"composer: populated → empty → {REPLACEMENT!r} → empty", flush=True)
+
     visible = states[-1]
     if visible["screen"] != "probe":
         raise SystemExit(f"the door was showing {visible['screen']}, not probe")
     identifiers = [element["identifier"] for element in visible["elements"]]
     if "probe.title" not in identifiers:
         raise SystemExit(f"the probe screen's title was not on screen; saw {identifiers}")
-    captured = next(reply for reply in replies if reply["kind"] == "captured")
+    captured = next(reply for reply in replies
+                    if reply["kind"] == "captured" and reply["path"] == str(CAPTURE))
     if not CAPTURE.is_file() or CAPTURE.stat().st_size == 0:
         raise SystemExit(f"{CAPTURE} was not written")
     print(

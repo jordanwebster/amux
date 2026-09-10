@@ -1169,28 +1169,25 @@ final class DoorHost {
         return .ack
     }
 
-    /// Empties a named field, one character at a time through the field's own
-    /// delete.
-    ///
-    /// Not by writing an empty string into it: a field's text is drawn from a
-    /// draft the field itself keeps, and setting that from outside skips
-    /// whatever the field does as characters leave — which for the composer is
-    /// the whole of how a token comes apart. Deleting is what a finger does.
+    /// Selects the whole field and deletes through its native editing path,
+    /// so the delegate updates the draft and removes its attachment tokens.
     private func clear(_ identifier: String) -> DoorReply {
         guard let window = DoorWindow.current else { return .error("no window on screen") }
         guard element(named: identifier, in: window) != nil else {
             return .error("no element named \(identifier)")
         }
-        guard let input = writable(named: identifier, in: window) else {
+        guard let input = writable(named: identifier, in: window) as? (any UITextInput & UIResponder) else {
             return .error("\(identifier) does not take text")
         }
         if !input.isFirstResponder { _ = input.becomeFirstResponder() }
-        // Bounded, because a field that answers "still has text" after every
-        // delete would otherwise hang the driver rather than fail it.
-        var deletions = 0
-        while input.hasText && deletions < 4096 {
+        if input.hasText {
+            // Backspace alone cannot reach text after the caret. Native text
+            // positions also keep Unicode and attachment boundaries intact.
+            guard let all = input.textRange(from: input.beginningOfDocument, to: input.endOfDocument) else {
+                return .error("\(identifier) could not select its text")
+            }
+            input.selectedTextRange = all
             input.deleteBackward()
-            deletions += 1
         }
         guard !input.hasText else { return .error("\(identifier) would not empty") }
         return .ack

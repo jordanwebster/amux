@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Clear a composer through the driving door from any caret.**
+
+The debug clear command selects the native field's whole document before
+deleting. Backspacing from the existing caret left text after it untouched;
+the populated typing fixture starts at zero and could never empty. One native
+deletion now updates both the text view and its draft, including attachment
+tokens, without a character limit or string slicing.
+
+Validation: app-hosted tests pass with carets at the beginning, middle and end
+of both typing and attachment fixtures, plus a Unicode replacement and repeated
+clears. `wt run ios-door-smoke` opens the unchanged typing fixture, clears it,
+types the exact short replacement, queries its text and captures the window.
+The smoke also passes relay teardown and release exclusion checks. iOS feature
+and copy lint pass.
+
+---
+
 2026-09-10 — **Place the opening transcript tail after layout.**
 
 A conversation now follows its actual content size, viewport and safe-area

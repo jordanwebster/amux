@@ -34,6 +34,7 @@
 		6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BF809F88F54D264E26E1F0B /* DrawerTests.swift */; };
 		71EF8392260DD101E76C1D32 /* AskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD0B049D76F4DAF62A8B46E /* AskTests.swift */; };
 		7D4CF562DADA4EB7723324CD /* ReviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC486A7A07178E55789AE94C /* ReviewTests.swift */; };
+		7DD03CB11455B60BDC9037F5 /* DoorClearTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F786377F0001A4D4CC64B7DE /* DoorClearTests.swift */; };
 		82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */; };
 		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
 		894FA032EAF19BFC5E92664F /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4FC885DCA537FD2ABD0FD /* Trace.swift */; };
@@ -158,6 +159,7 @@
 		F001566356B6645AB41CE39B /* Budgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Budgets.swift; sourceTree = "<group>"; };
 		F285BF2881D10503D4252DF7 /* DebugReports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugReports.swift; sourceTree = "<group>"; };
 		F5B661BE2402BC7D004818A5 /* Workloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workloads.swift; sourceTree = "<group>"; };
+		F786377F0001A4D4CC64B7DE /* DoorClearTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorClearTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -295,6 +297,7 @@
 			isa = PBXGroup;
 			children = (
 				C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */,
+				F786377F0001A4D4CC64B7DE /* DoorClearTests.swift */,
 			);
 			path = AmuxAppTests;
 			sourceTree = "<group>";
@@ -550,6 +553,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				EBAE1EC4295F9EBBA0AF2D66 /* CloudSessionStoreTests.swift in Sources */,
+				7DD03CB11455B60BDC9037F5 /* DoorClearTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
