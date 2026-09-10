@@ -76,6 +76,12 @@ targets:
       - path: Packages/AmuxCore/Sources/Instrumentation
       - path: Amux/Resources
         buildPhase: resources
+      # The app icon. One 1024x1024 image; the catalog compiler derives every
+      # size iOS and the App Store ask for, and writes CFBundleIconName into
+      # the built Info.plist. Without it the App Store rejects the upload.
+      # ios/Icon/RenderAppIcon.swift draws it — `wt run icon` redraws it.
+      - path: Amux/Assets.xcassets
+        buildPhase: resources
       # The two subscriptions, as the App Store would describe them, so a
       # purchase can be driven on the simulator without a sandbox account.
       # Named by the scheme rather than compiled in: it is a debugger setting,
@@ -86,6 +92,12 @@ targets:
       path: Amux/Info.plist
       properties:
         CFBundleDisplayName: Amux
+        # Named here rather than left to the asset catalog compiler, which
+        # writes it inside CFBundleIcons instead of at the top level where the
+        # App Store looks: an upload without a top-level CFBundleIconName is
+        # rejected with code 90713. The value is the icon set's name in
+        # Amux/Assets.xcassets.
+        CFBundleIconName: AppIcon
         # Both numbers come from the build settings below, so a release can
         # archive with the version it is about to cut without editing a file
         # first. docs/RELEASE.md owns how each is derived.
@@ -127,6 +139,7 @@ targets:
         MARKETING_VERSION: "1.0.31"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_EMIT_LOC_STRINGS: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # XcodeGen gives an iOS target iPhone and iPad by default; this app is
         # designed for the phone only.
         TARGETED_DEVICE_FAMILY: "1"

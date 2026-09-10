@@ -4,6 +4,36 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **The app has an icon, and Apple validates the build.**
+
+There was no asset catalog anywhere under `ios/`. Every check this app has
+runs on the simulator, and the simulator shows an app with no icon quite
+happily, so the gap first appeared at Apple's validation servers: code 90022
+for no 120×120 image and 90713 for a missing `CFBundleIconName`.
+
+The icon is drawn rather than stored. `ios/Icon/RenderAppIcon.swift` renders
+one 1024×1024 PNG with CoreGraphics and `wt run icon` runs it; the catalog
+compiler derives every other size. The mark is what the app is — three
+channels coming in and one bright channel carrying them out — in the design
+system's accent teal on the dark end of its neutral ramp, so the icon and the
+first screen it opens are the same two colours. Drawing it as code means the
+committed image is always exactly what a readable file says, and a hue or a
+stroke can be changed without a design tool.
+
+`CFBundleIconName` is declared in `ios/project.yml` rather than left to the
+catalog compiler, which writes its own copy nested inside `CFBundleIcons`
+where Apple does not look. The canvas has no alpha channel, which the App
+Store also rejects. `scripts/tests/icon_test.py` checks the set exists, that
+every image it names is present, the size, the absence of alpha, that the
+catalog is compiled into the app and that both build settings are there — so
+none of it can regress into an upload.
+
+`xcrun altool --validate-app` on the exported `.ipa` now answers *VERIFY
+SUCCEEDED with no errors*. Nothing was uploaded and no build number was
+spent.
+
+---
+
 2026-09-10 — **The release export signs by hand, and the Team ID is the certificate's OU.**
 
 `wt run release -- --rehearse` now archives *and* exports a signed `.ipa` on

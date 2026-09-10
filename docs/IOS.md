@@ -144,6 +144,37 @@ exemption. It includes helper/model copy and debug report views. The debug
 catalogue is excluded from Release. A copy change includes its affected
 light/dark goldens and baseline explanation.
 
+## The app icon
+
+The icon is drawn, not stored: `ios/Icon/RenderAppIcon.swift` is a
+CoreGraphics script that writes
+`ios/Amux/Assets.xcassets/AppIcon.appiconset/AppIcon.png`, and `wt run icon`
+runs it. The PNG is committed — a build never invokes the script — so the
+recipe only has to run when the drawing changes.
+
+One 1024×1024 image is the whole icon. The asset catalog compiler derives
+every size iOS and the App Store ask for, so there is nothing to keep in
+step by hand.
+
+The mark is what the app is: three channels coming in and one bright channel
+carrying them out, in the design system's accent teal on the dark end of its
+neutral ramp, so the icon and the first screen it opens are the same two
+colours. It is drawn in the dark appearance in both, because an icon is seen
+against a wallpaper rather than a page.
+
+Two rules the App Store enforces, both checked by `scripts/tests/icon_test.py`
+so neither can regress into an upload:
+
+- **No alpha channel.** An icon with one is rejected outright, and a
+  transparent pixel on a home screen has nothing to show through to. The
+  renderer opens its canvas with `noneSkipLast` for exactly this.
+- **A top-level `CFBundleIconName`.** `ios/project.yml` declares it. The
+  catalog compiler writes its own copy nested inside `CFBundleIcons`, which
+  is not where Apple looks; without the declared one the upload fails with
+  code 90713, and without a 120×120 image with code 90022. Neither failure
+  appears before validation — a simulator build shows an app with no icon
+  quite happily.
+
 ## Journeys and replay
 
 `timeout 2400 wt run ios-journey -- NAME` runs a group from
