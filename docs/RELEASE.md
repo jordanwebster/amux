@@ -50,10 +50,10 @@ listing rather than a restart.
 **The build number** (`CFBundleVersion`) is a single integer that identifies
 one binary forever. It lives beside the marketing version as
 `CURRENT_PROJECT_VERSION`, read by the bundle as
-`$(CURRENT_PROJECT_VERSION)`, and is derived the same way: one above the
-highest number anything knows of — the tags, or the project itself.
-`--build N` raises it deliberately. The recipe refuses to reuse a number and
-refuses to go backwards.
+`$(CURRENT_PROJECT_VERSION)`, and comes from one place only: one above the
+highest number the `ios-v*` tags record. `--build N` raises it deliberately.
+The recipe refuses to reuse a number and refuses to go backwards, and — while
+no tag records a number at all — refuses to invent the first one.
 
 That rule is not tidiness. A build number, once an upload has used it, is
 consumed permanently for this app: App Store Connect binds it to that binary
@@ -68,10 +68,24 @@ identity make every report that mentions it ambiguous.
 One consequence of shipping as the next version of an existing listing:
 App Store Connect already holds build numbers this repository never issued,
 from the app's earlier Expo builds. The tag ledger below knows nothing about
-them. Before the *first* upload ever happens, read the highest build number
-App Store Connect holds for this app and seed the first release tag above it;
-after that the ledger is complete, because every number this repository
-issues comes from a tag.
+them, and today it is empty. So the first number is *named*, not derived —
+and the recipe enforces that rather than leaving it to memory. With no
+`ios-v*` tag to count from, `wt run release` refuses:
+
+```
+no ios-v* tag records a build number, so there is nothing to count from and a
+first number will not be guessed. Read the highest build App Store Connect
+holds for this app (xcrun altool --list-builds, or the TestFlight tab) and
+pass --build N above it; every later release counts from the tags
+```
+
+Do exactly that: read the highest build number App Store Connect holds for
+`sh.amux.app`, and run the first release with `--build N` above it. That run's
+tag seeds the ledger, and every release after it counts from the tags with no
+flag at all. A rehearsal is the one exception — it issues no number, spends
+none and records none, so with an empty ledger it archives under the build
+number in the project and says so, rather than stopping a signing check that
+proves nothing about numbering.
 
 ## The tag
 
@@ -84,10 +98,15 @@ Putting the build number in the tag name is what makes the tags a ledger:
 the highest number ever issued can be read from `git tag` alone, with no
 network and no state file to lose.
 
-The tag is annotated, cut on the release commit — the commit that writes the
-two numbers — and cut *before* the archive is built, so the archive that
-gets exported is the one the tag names. `wt run release` never pushes it;
-pushing tags stays a human act.
+The tag is annotated and cut on the release commit — the commit that writes
+the two numbers — and both come *last*, after Apple has validated the exported
+build. The numbers are written into the working tree before the archive, so
+the binary carries them and the commit records exactly the tree that was
+archived; nothing is recorded until validation has answered. A commit and an
+annotated tag are the only things a run leaves behind that a `git checkout`
+cannot undo, which is why they wait for Apple. See
+[When a release stops partway](#when-a-release-stops-partway).
+`wt run release` never pushes the tag; pushing tags stays a human act.
 
 ## Release notes
 
@@ -188,8 +207,11 @@ API key. The last three are produced once and then reused; the
 
 The Rust bridge first: the Release configuration links the `ios-arm64` slice
 of `target/ios/AmuxMobile.xcframework`, so `wt run ios-rust` builds the
-device slice before anything is archived. Then the project is generated from
-`ios/project.yml`, as every other iOS recipe does.
+device slice before anything is archived. The recipe also depends on
+`ios-scope-audit`, so a bundle carrying a debug surface or an excluded
+platform stops the release before an archive exists rather than after Apple
+has one. Then the project is generated from `ios/project.yml`, as every other
+iOS recipe does.
 
 Archive:
 
@@ -268,7 +290,7 @@ build, and is visible to nobody.
 ## One command
 
 ```
-wt run release              # bump, tag, archive, export and validate
+wt run release              # bump, archive, export, validate, commit, tag
 wt run release -- --preflight   # check every input, do nothing
 wt run release -- --rehearse    # archive, export and validate with the
                                 # would-be numbers; write nothing, tag nothing
@@ -294,6 +316,46 @@ promising it: `git status --porcelain` is read before the run and again after
 it, and a rehearsal that left any path changed names those paths and fails
 instead of printing the claim.
 Neither mode, and not the full run either, ever pushes or uploads.
+
+## When a release stops partway
+
+A release does the reversible work first and the permanent work last, so
+there are only two states to recover from and each has one command.
+
+**The numbers are written but nothing is committed.** Anything that fails in
+the archive, the export or the validation leaves this. `wt run release` says
+so and stops; `git status` shows three modified tracked files and no new
+commit, and `git tag --list 'ios-v*'` is unchanged. Undo the numbers:
+
+```
+git checkout ios/project.yml ios/Amux/Info.plist ios/Amux.xcodeproj/project.pbxproj
+```
+
+Then fix what failed and run the release again. Nothing was spent: the build
+number was never tagged and Apple never accepted a binary carrying it, so the
+same number is still free.
+
+**The commit was made but the tag is missing.** Only a failing `git tag`
+leaves this — the name already exists, most often, because a previous attempt
+tagged it. The commit is on the branch and is not pushed. Either tag that
+commit by hand, taking the message from the notes the run wrote beside the
+`.ipa`:
+
+```
+git tag -a ios-v<version>-b<build> -F target/ios/release/ios-v<version>-b<build>/ReleaseNotes.txt
+```
+
+or undo the commit and run the release again with a build number above the
+one already tagged:
+
+```
+git reset --hard HEAD~1        # nothing was pushed
+wt run release -- --build <N>
+```
+
+Never delete an existing `ios-v*` tag to make room. A tag is the ledger of a
+number that may already have reached Apple, and removing it is how a number
+gets issued twice.
 
 ## Where it stops
 

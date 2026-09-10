@@ -2,8 +2,9 @@
 """Take the iPhone app from a clean checkout to a signed, exported .ipa.
 
 Everything a release needs is here and nothing beyond it: this script bumps
-the two version numbers, cuts the tag that records them, archives the app
-against the distribution configuration and exports it. It never pushes and
+the two version numbers, archives the app against the distribution
+configuration, exports it, has Apple validate it, and only then commits the
+numbers and cuts the tag that records them. It never pushes and
 never uploads: Apple sees the build only as a validation, which spends no
 build number and shows the build to nobody. docs/RELEASE.md explains why each
 rule is what it is; this is the rule enforced.
@@ -15,8 +16,8 @@ Three ways to run it:
   --rehearse    archive, export and validate with the numbers the next
                 release would use, writing nothing to the tree and cutting no
                 tag, so it can be run as often as you like.
-  (neither)     write the numbers, commit them, cut the tag, archive,
-                export and validate.
+  (neither)     write the numbers, archive, export and validate, and only
+                then commit the numbers and cut the tag.
 
 The Team ID comes from the untracked ios/Signing.local.xcconfig and the App
 Store Connect key from this Mac's login keychain; neither is ever written to a
@@ -122,8 +123,29 @@ def next_build(tags: list[str], current: int, override: int = 0) -> int:
 
     A build number identifies one binary forever. App Store Connect keeps it
     even for a build that was rejected or deleted, so a number is spent the
-    moment it is used and no number may ever be reused or lowered."""
-    highest = max([build for _, build in released(tags)] + [current])
+    moment it is used and no number may ever be reused or lowered.
+
+    The tags are the ledger, and an empty ledger is not the same as a ledger
+    that starts at one. This app is the next version of a listing that already
+    holds build numbers from its earlier Expo builds, which no tag here
+    records, so with no tag to read the number is refused rather than derived
+    from the project — a derived 2 against an App Store already holding 60 is
+    an upload rejected, or worse, accepted at a number that then blocks every
+    number below it. The first number is read out of App Store Connect and
+    named with --build; from then on the tags are complete."""
+    issued = [build for _, build in released(tags)]
+    if not issued:
+        if override:
+            # Nothing to compare against: this is the seed, and only App Store
+            # Connect knows whether it clears the numbers already up there.
+            return override
+        raise Refusal(
+            "no ios-v* tag records a build number, so there is nothing to "
+            "count from and a first number will not be guessed. Read the "
+            "highest build App Store Connect holds for this app "
+            "(xcrun altool --list-builds, or the TestFlight tab) and pass "
+            "--build N above it; every later release counts from the tags")
+    highest = max(issued + [current])
     if override:
         if override <= highest:
             raise Refusal(
@@ -199,7 +221,11 @@ def usable(profiles: list[dict], name: str) -> dict:
 
     An expired profile is not a profile: an export signed with one is rejected
     the same way an absent one is, so it is reported as absent."""
-    now = datetime.datetime.now()
+    # plistlib decodes a plist date to a naive datetime that is UTC, so the
+    # comparison is against UTC with the zone dropped again. Comparing it with
+    # local time reads a profile as good for however many hours this Mac is
+    # behind UTC after it has actually expired.
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     for profile in profiles:
         expires = profile.get("ExpirationDate")
         if profile.get("Name") == name and expires and expires > now:
@@ -462,9 +488,16 @@ def validate(package: Path, facts: dict) -> None:
     ], check=True, timeout=1800)
 
 
-def release(version: str, build: int, message: str) -> None:
-    """The permanent half: the numbers, the commit and the tag."""
-    write_numbers(version, build)
+def commit_and_tag(version: str, build: int, message: str) -> None:
+    """The permanent half, run only after Apple has accepted the build.
+
+    The numbers reach the tree before the archive, so the binary carries them
+    and the commit records exactly the tree that was archived. Nothing is
+    recorded until validation has answered: a run that dies in the archive,
+    the export or the validation leaves modified tracked files, which one
+    `git checkout` undoes, where a commit and an annotated tag naming a build
+    Apple rejected would have to be unpicked by hand. docs/RELEASE.md holds
+    the recovery for each place a run can stop."""
     subprocess.run(["git", "add", str(SPEC), "ios/Amux/Info.plist",
                     "ios/Amux.xcodeproj/project.pbxproj"],
                    check=True, timeout=120)
@@ -500,6 +533,19 @@ def main() -> int:
     except Refusal as refused:
         version, build = "", 0
         numbering = Check("the next version and build number", False, str(refused))
+    if not numbering.held and arguments.rehearse:
+        # A rehearsal issues nothing: it never commits, never tags and never
+        # uploads, so a build number it archives under is spent nowhere. It
+        # may therefore stand in the project's own number and go on proving
+        # the signing path while the first real number is still unread. A
+        # release and a preflight keep the refusal.
+        here, build = project_numbers(SPEC.read_text())
+        version = next_version(tags(), here, arguments.version)
+        numbering = Check(
+            "the next version and build number", True,
+            f"{version} ({build}) — the build number is the project's own, "
+            "because no tag records one yet and a rehearsal issues none. A "
+            "release refuses here until --build seeds the ledger")
     checks.append(numbering)
 
     print("wt run release, on this Mac:")
@@ -525,15 +571,30 @@ def main() -> int:
         return 1
 
     message = notes(version, arguments.notes_file)
+    # The numbers first, because the commit that records them has to be the
+    # tree that was archived; the commit and the tag themselves come last.
     if not arguments.rehearse:
-        release(version, build, message)
-    archive(version, build, facts)
-    exported = export(version, build, facts)
-    written = exported.parent / "ReleaseNotes.txt"
-    written.write_text(message + "\n")
-    print(f"exported {exported}")
-    print(f"release notes beside it in {written}")
-    validate(exported, facts)
+        write_numbers(version, build)
+    try:
+        archive(version, build, facts)
+        exported = export(version, build, facts)
+        written = exported.parent / "ReleaseNotes.txt"
+        written.write_text(message + "\n")
+        print(f"exported {exported}")
+        print(f"release notes beside it in {written}")
+        validate(exported, facts)
+    except subprocess.CalledProcessError as failed:
+        step = failed.cmd[0] if failed.cmd else "the release"
+        if arguments.rehearse:
+            print(f"{step} failed; the rehearsal wrote nothing", file=sys.stderr)
+        else:
+            print(f"{step} failed, so nothing was committed and no tag was "
+                  f"cut. {version} ({build}) is written into the tree and "
+                  "nowhere else; docs/RELEASE.md says how to undo that",
+                  file=sys.stderr)
+        return 1
+    if not arguments.rehearse:
+        commit_and_tag(version, build, message)
     if arguments.rehearse:
         # The claim is measured, not asserted: a rehearsal regenerates the
         # project and drives Xcode, either of which could leave a tracked file

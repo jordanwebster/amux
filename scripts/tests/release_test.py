@@ -11,6 +11,7 @@ import importlib.util
 import os
 from pathlib import Path
 import plistlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -39,19 +40,42 @@ def checkout():
             os.chdir(was)
 
 
+@contextlib.contextmanager
+def working_directory(where: Path):
+    """Run inside `where`, whatever directory the tests were started from."""
+    was = os.getcwd()
+    os.chdir(where)
+    try:
+        yield where
+    finally:
+        os.chdir(was)
+
+
 class TheBuildNumber(unittest.TestCase):
     def test_it_is_one_above_every_number_ever_issued(self):
         tags = ["ios-v1.0.32-b41", "ios-v1.0.33-b42", "ios-v1.0.31-b7"]
         self.assertEqual(43, recipe.next_build(tags, current=1))
 
-    def test_a_repository_with_no_release_tag_carries_on_from_the_project(self):
-        self.assertEqual(2, recipe.next_build([], current=1))
+    def test_a_repository_with_no_release_tag_refuses_to_guess_one(self):
+        # App Store Connect already holds build numbers from this listing's
+        # earlier Expo builds, and no tag here records them. Counting from the
+        # project would offer 2 against an App Store sitting far above it.
+        with self.assertRaises(recipe.Refusal) as refused:
+            recipe.next_build([], current=1)
+        self.assertIn("--build", str(refused.exception))
+        self.assertIn("App Store Connect", str(refused.exception))
+
+    def test_the_first_number_is_named_rather_than_derived(self):
+        # The seed: read the highest number up there, pass it in. There is no
+        # local ledger to check it against, which is the point.
+        self.assertEqual(61, recipe.next_build([], current=1, override=61))
 
     def test_tags_that_are_not_the_apps_are_not_build_numbers(self):
         # Plain vX.Y.Z tags belong to the command-line release, which versions
         # separately. Reading one as a build number would move the app's
-        # ledger by an unrelated act.
-        self.assertEqual(2, recipe.next_build(["v0.6.0", "v10.2.3"], current=1))
+        # ledger by an unrelated act, so they leave the ledger empty.
+        with self.assertRaises(recipe.Refusal):
+            recipe.next_build(["v0.6.0", "v10.2.3"], current=1)
 
     def test_it_refuses_to_reuse_a_number(self):
         with self.assertRaises(recipe.Refusal) as refused:
@@ -291,10 +315,13 @@ class TheDistributionCertificate(unittest.TestCase):
 
 
 class TheProvisioningProfile(unittest.TestCase):
-    def profile(self, name, days):
+    def profile(self, name, days=0, hours=0):
+        # plistlib decodes a plist date to a naive datetime holding UTC, so a
+        # fixture is built the same way a real profile reads.
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         return {"Name": name,
-                "ExpirationDate": datetime.datetime.now()
-                + datetime.timedelta(days=days)}
+                "ExpirationDate": now + datetime.timedelta(days=days,
+                                                           hours=hours)}
 
     def test_the_export_names_one_per_bundle_id(self):
         with checkout() as root:
@@ -316,6 +343,16 @@ class TheProvisioningProfile(unittest.TestCase):
         profiles = [self.profile("amux App Store", -1)]
         self.assertEqual({}, recipe.usable(profiles, "amux App Store"))
 
+    def test_the_last_hours_of_a_profile_are_read_in_utc(self):
+        # The failure this rules out: comparing a UTC expiry with local time
+        # reads a profile as good for as many hours as this Mac is behind
+        # UTC after it has actually expired, and the export then fails in
+        # Xcode instead of in the preflight that exists to catch it.
+        self.assertEqual("amux App Store", recipe.usable(
+            [self.profile("amux App Store", hours=2)], "amux App Store")["Name"])
+        self.assertEqual({}, recipe.usable(
+            [self.profile("amux App Store", hours=-2)], "amux App Store"))
+
     def test_a_profile_with_no_expiry_is_not_trusted(self):
         self.assertEqual({}, recipe.usable([{"Name": "amux App Store"}],
                                            "amux App Store"))
@@ -335,6 +372,93 @@ class TheLastStep(unittest.TestCase):
         source = (SCRIPTS / "release.py").read_text()
         self.assertIn('"--api-key", facts["key"]', source)
         self.assertIn('"--api-issuer", facts["issuer"]', source)
+
+
+class TheOrderOfARelease(unittest.TestCase):
+    """Nothing permanent is recorded until Apple has accepted the build.
+
+    A commit and an annotated tag are the only things a run leaves that a
+    `git checkout` cannot undo, so they come after the archive, the export and
+    the validation. Every step is stubbed here: what is under test is the
+    order they are called in and what a failure leaves behind."""
+
+    def drive(self, breaks="", argv=("release.py",),
+              real_numbers=False) -> tuple[int, list[str]]:
+        """Run main() with every real step replaced by a recorder.
+
+        `breaks` names a step that fails the way xcodebuild or altool does;
+        `real_numbers` lets the run choose its own numbers from this
+        checkout's spec and tags instead of being handed a pair."""
+        called = []
+
+        def step(name, result=None):
+            def record(*arguments, **keywords):
+                called.append(name)
+                if name == breaks:
+                    raise subprocess.CalledProcessError(65, [name])
+                return result
+            return record
+
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "Amux.ipa"
+            package.write_bytes(b"")
+            facts = {"clean": True, "tree": "", "team": "ABCDE12345",
+                     "key": "KEY", "issuer": "ISSUER",
+                     "key_path": Path(directory) / "AuthKey_KEY.p8"}
+            patches = {
+                "inputs": lambda: ([recipe.Check("a clean tree", True, "clean")],
+                                   facts),
+                "notes": lambda *_: "amux 1.0.32",
+                "tree": lambda: "",
+                "write_numbers": step("write_numbers"),
+                "archive": step("archive"),
+                "export": step("export", package),
+                "validate": step("validate"),
+                "commit_and_tag": step("commit_and_tag"),
+            }
+            if not real_numbers:
+                patches["numbers"] = lambda *_: ("1.0.32", 41)
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(working_directory(ROOT))
+                for name, replacement in patches.items():
+                    stack.enter_context(
+                        unittest.mock.patch.object(recipe, name, replacement))
+                stack.enter_context(
+                    unittest.mock.patch.object(sys, "argv", list(argv)))
+                return recipe.main(), called
+
+    def test_the_tag_is_cut_after_apple_has_answered(self):
+        code, called = self.drive()
+        self.assertEqual(0, code)
+        self.assertEqual(["write_numbers", "archive", "export", "validate",
+                          "commit_and_tag"], called)
+
+    def test_a_validation_failure_leaves_no_commit_and_no_tag(self):
+        # The state this ordering exists for: the numbers are in the working
+        # tree, where one git checkout undoes them, and nothing else happened.
+        code, called = self.drive(breaks="validate")
+        self.assertEqual(1, code)
+        self.assertNotIn("commit_and_tag", called)
+
+    def test_a_failed_archive_stops_before_the_export(self):
+        code, called = self.drive(breaks="archive")
+        self.assertEqual(1, code)
+        self.assertEqual(["write_numbers", "archive"], called)
+
+    def test_a_rehearsal_writes_nothing_and_records_nothing(self):
+        code, called = self.drive(argv=("release.py", "--rehearse"))
+        self.assertEqual(0, code)
+        self.assertEqual(["archive", "export", "validate"], called)
+
+    def test_a_rehearsal_runs_though_no_tag_records_a_build_number(self):
+        # This checkout has issued no ios-v* tag, so a release refuses its
+        # first build number. A rehearsal issues nothing and spends nothing,
+        # so it stands in the project's own number and proves the signing
+        # path anyway — the numbers here are the checkout's real ones.
+        code, called = self.drive(argv=("release.py", "--rehearse"),
+                                  real_numbers=True)
+        self.assertEqual(0, code)
+        self.assertEqual(["archive", "export", "validate"], called)
 
 
 class WhatItNeverDoes(unittest.TestCase):

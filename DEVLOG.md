@@ -4,6 +4,31 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **A release records nothing until Apple has accepted the build.**
+
+`wt run release` wrote the two numbers, committed them and cut the annotated
+tag before it archived anything, so a failure in the archive, the export or
+the validation left a release commit and a permanent tag naming a binary Apple
+never accepted. The run now writes the numbers, archives, exports and
+validates, and commits and tags only after Apple has answered; a failure
+before that leaves three modified tracked files and nothing else. The release
+guide gained a recovery section naming the command for each state a stopped
+run can leave.
+
+Three related rules came with it. The build number is no longer derived when
+no `ios-v*` tag exists: the App Store listing already holds build numbers from
+the app's earlier Expo builds that no tag here records, so the first number is
+read from App Store Connect and passed as `--build N`, and the run says so
+instead of offering 2. A rehearsal, which issues and spends nothing, still
+archives under the project's own number. The release recipe now depends on the
+scope audit, so no archive is produced from a bundle carrying a debug surface.
+And an installed provisioning profile's expiry, which `plistlib` decodes as
+naive UTC, is compared against UTC rather than local time — previously a
+profile read as usable for as many hours as this Mac sits behind UTC after it
+had actually expired.
+
+---
+
 2026-09-10 — **Document every captured golden state.**
 
 The golden baseline account now gives each of the 62 manifest states its own

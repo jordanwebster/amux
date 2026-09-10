@@ -165,11 +165,13 @@ run = "scripts/ios-verify.sh"
 # Version, tag, archive and export the iPhone app, and stop there: nothing in
 # this recipe uploads, submits or pushes. --preflight reports its inputs and
 # stops; --rehearse archives and exports the would-be release without writing
-# the tree or cutting a tag. docs/RELEASE.md holds the contract, including the
-# one-time App Store Connect setup behind it.
+# the tree or cutting a tag. The scope audit runs first, so no archive is ever
+# produced from a bundle carrying a debug surface or an excluded platform.
+# docs/RELEASE.md holds the contract, including the one-time App Store Connect
+# setup behind it.
 [task.release]
 run = 'timeout 5400 python3 -B scripts/release.py "$@"'
-needs = ["ios-rust"]
+needs = ["ios-rust", "ios-scope-audit"]
 
 # Signs a QA account into the real amux.sh from this Mac, with no app, the
 # same way the phone does, and reports what that account is entitled to and
