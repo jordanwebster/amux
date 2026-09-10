@@ -99,15 +99,24 @@ class TheSigningFile(unittest.TestCase):
             self.assertIn(str(recipe.SIGNING_FILE), check.detail)
             self.assertIn("DEVELOPMENT_TEAM", check.detail)
 
-    def test_a_half_written_file_names_the_setting_it_lacks(self):
+    def test_a_file_without_the_team_id_names_it(self):
         with checkout() as root:
             written = root / recipe.SIGNING_FILE
             written.parent.mkdir(parents=True, exist_ok=True)
-            written.write_text("// signing\nDEVELOPMENT_TEAM = ABCDE12345\n")
+            written.write_text("// signing\nCODE_SIGN_STYLE = Automatic\n")
             settings, check = recipe.signing_check()
-            self.assertEqual(settings["DEVELOPMENT_TEAM"], "ABCDE12345")
+            self.assertEqual(settings["CODE_SIGN_STYLE"], "Automatic")
             self.assertFalse(check.held)
-            self.assertIn("PRODUCT_BUNDLE_IDENTIFIER", check.detail)
+            self.assertIn("DEVELOPMENT_TEAM", check.detail)
+
+    def test_the_bundle_id_comes_from_the_project_and_not_this_file(self):
+        # The app's identity is committed, because this build is the next
+        # version of the listing already on the App Store. A local file that
+        # could change it would sign a different app, and its subscriptions
+        # would not exist.
+        spec = (SCRIPTS.parent / "ios/project.yml").read_text()
+        self.assertIn(f"PRODUCT_BUNDLE_IDENTIFIER: {recipe.BUNDLE_ID}", spec)
+        self.assertNotIn("PRODUCT_BUNDLE_IDENTIFIER", recipe.REQUIRED_SETTINGS)
 
     def test_the_repository_ignores_the_signing_file(self):
         # Checked against this checkout's own rules, not a temporary one: the

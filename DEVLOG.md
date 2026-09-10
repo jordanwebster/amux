@@ -4,6 +4,31 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **How the iPhone app ships, and the one-time Apple setup behind it.**
+
+`docs/RELEASE.md` settles the shape of releasing this app without Expo: where
+the marketing version and the build number are written, why a build number is
+permanent and what a reused one costs, the `ios-v<version>-b<build>` tag that
+doubles as the ledger of every number issued, the archive and `-exportArchive`
+invocations with the export options they take, and where release notes come
+from. It states plainly that the recipe stops at validation and never uploads,
+and ends with a checklist an operator can follow from an App Store Connect
+account to a working App Store Connect API key, a private key on disk, three
+identifiers in the login keychain and a distribution certificate. No key, key
+id, issuer id or Team ID appears in it.
+
+Writing that contract exposed a stale one. `ios/Signing.local.xcconfig` used to
+carry the bundle identifier as well as the Team ID, from when the app had no
+committed identity of its own. It has one now — `sh.amux.app`, the listing
+already on the App Store, whose subscriptions the app sells — so a local file
+that could override it is a way to sign a different app and find no products.
+The sandbox-purchase recipe now requires only `DEVELOPMENT_TEAM`, builds the
+committed identifier, and a test keeps the identifier it names in step with
+`ios/project.yml`.
+
+Green: `python3 -m unittest discover -s scripts/tests -p qa_sandbox_purchase_test.py`
+(15 tests).
+
 2026-09-10 — **Bound workspace tests and document deterministic setup.**
 
 The workspace test recipe now allows 150 seconds instead of 900, for both

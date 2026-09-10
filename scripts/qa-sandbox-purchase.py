@@ -47,11 +47,17 @@ qa_cloud.PROGRAM = "qa-sandbox-purchase"
 ADDRESS_VARIABLE = "AMUX_QA_DEVICE_EMAIL"
 # The end-to-end account. Named here so it can be refused, never used.
 OTHER_ACCOUNT_VARIABLE = "AMUX_QA_EMAIL"
-# Team ID and bundle id, written by whoever owns this Mac's signing identity.
+# The Team ID, written by whoever owns this Mac's signing identity.
 # Untracked: a Team ID is not a secret but it is not this repository's either,
 # and a committed one would build somebody else's app.
 SIGNING_FILE = Path("ios/Signing.local.xcconfig")
-REQUIRED_SETTINGS = ("DEVELOPMENT_TEAM", "PRODUCT_BUNDLE_IDENTIFIER")
+REQUIRED_SETTINGS = ("DEVELOPMENT_TEAM",)
+# The app's identity, committed in ios/project.yml because it is the same
+# everywhere: this build is the next version of the listing already on the
+# App Store, and the subscriptions belong to that listing. A local override
+# would sign a different app and find no products; the test beside this
+# recipe checks the two spellings still agree.
+BUNDLE_ID = "sh.amux.app"
 DERIVED_DATA = Path("target/ios/DeviceDerivedData")
 PRODUCTS = ("amux_pro_monthly", "amux_pro_yearly")
 # How long the watch waits for a purchase the person is making by hand.
@@ -194,18 +200,17 @@ def signing_check() -> tuple[dict[str, str], Check]:
             "identity and must never be committed")
     return settings, Check(
         "a Team ID and signing", True,
-        f"{SIGNING_FILE} supplies a Team ID and the bundle id to build as")
+        f"{SIGNING_FILE} supplies the Team ID to build under")
 
 
-def store_check(settings: dict[str, str], confirmed: bool) -> Check:
+def store_check(confirmed: bool) -> Check:
     """A fact this Mac cannot check. App Store Connect and the billing
     provider are asked with credentials nothing here holds, so the person
     running the recipe says whether it holds and the recipe says so plainly."""
-    bundle = settings.get("PRODUCT_BUNDLE_IDENTIFIER", "the bundle id")
     return Check(
         "both products in App Store Connect and known to the billing provider",
         confirmed,
-        f"{bundle} must carry {' and '.join(PRODUCTS)} as subscriptions in "
+        f"{BUNDLE_ID} must carry {' and '.join(PRODUCTS)} as subscriptions in "
         "App Store Connect, and the billing provider must know that bundle "
         "id, or the purchase signs and nothing recognises it. Not checkable "
         "from this Mac"
@@ -241,7 +246,7 @@ def preflight(confirmed: bool, for_transaction_file: bool
         return who, phone, settings, checks
     phone, found = phone_check()
     settings, signing = signing_check()
-    checks += [found, signing, store_check(settings, confirmed),
+    checks += [found, signing, store_check(confirmed),
                sandbox_account_check(who, confirmed)]
     return who, phone, settings, checks
 
@@ -278,7 +283,6 @@ def build_and_install(phone: dict, settings: dict[str, str]) -> None:
         "CODE_SIGNING_ALLOWED=YES",
         "CODE_SIGN_STYLE=Automatic",
         f"DEVELOPMENT_TEAM={settings['DEVELOPMENT_TEAM']}",
-        f"PRODUCT_BUNDLE_IDENTIFIER={settings['PRODUCT_BUNDLE_IDENTIFIER']}",
     ], check=True, timeout=2400)
     application = DERIVED_DATA / "Build/Products/Debug-iphoneos/Amux.app"
     if not application.is_dir():

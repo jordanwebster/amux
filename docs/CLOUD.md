@@ -248,9 +248,11 @@ verification list.
   touching neither StoreKit, the store nor amux.sh. Without it, anything
   missing is named and the run exits non-zero. Four facts are checked here —
   the account's address, its keychain password, a phone reachable over `xcrun
-  devicectl`, and a Team ID and bundle id in `ios/Signing.local.xcconfig`, an
-  untracked file `.gitignore` covers because this repository builds
-  simulator-only and holds no signing identity. Two more cannot be checked
+  devicectl`, and a Team ID in `ios/Signing.local.xcconfig`, an untracked file
+  `.gitignore` covers because this repository builds simulator-only and holds
+  no signing identity. The bundle id is not in that file: it is committed, so
+  a phone build signs the same app the App Store knows. `docs/RELEASE.md`
+  owns that file's full contract. Two more cannot be checked
   from a Mac at all and are printed as facts to confirm: that the bundle id
   carries both subscription products in App Store Connect and is known to the
   billing provider, and that the phone's sandbox Apple Account is this

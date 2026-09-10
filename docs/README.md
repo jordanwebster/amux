@@ -53,6 +53,10 @@ subject; when two overlap, the owner named here wins.
   tokens, callback ownership and the debug loopback boundary.
 - `CI.md` — native iOS verification recipes, pinned runner and commit-specific
   CI status.
+- [RELEASE.md](RELEASE.md) — shipping the iPhone app without Expo: the
+  marketing version and build number, the release tag, the signing
+  contract, archive, export and validation, and the one-time App Store
+  Connect setup only a person can do.
 - [TESTNET.md](TESTNET.md) — isolated relay and daemon topologies, readiness and the
   runner's loopback control protocol, provider scripts and the offline smoke
   recipe.
