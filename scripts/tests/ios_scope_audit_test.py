@@ -11,11 +11,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 audit = importlib.import_module("ios-scope-audit")
 
 
-def png(path: Path, width: int, height: int) -> Path:
-    """A PNG whose IHDR says the given size. No pixels: only the header is read."""
+def png(path: Path, width: int, height: int, *, cgbi: bool = False) -> Path:
+    """A PNG whose IHDR says the given size. No pixels: only the header is read.
+
+    With `cgbi`, IHDR sits behind the proprietary chunk Apple's packaging puts
+    at the front of every PNG in a device bundle — the shape the audit meets on
+    an exported .ipa, where a fixed offset would read garbage."""
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + b"\0\0\0\0"
     header = struct.pack(">II", width, height) + bytes([8, 2, 0, 0, 0])
-    chunk = struct.pack(">I", len(header)) + b"IHDR" + header + b"\0\0\0\0"
-    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk)
+    lead = chunk(b"CgBI", bytes(4)) if cgbi else b""
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + lead + chunk(b"IHDR", header))
     return path
 
 
@@ -32,6 +38,13 @@ class TheAppIcon(unittest.TestCase):
 
     def test_a_bundle_with_a_named_120_icon_passes(self):
         self.assertEqual(audit.icon_violations(self.info, self.bundle), [])
+
+    def test_the_size_is_read_past_apples_own_leading_chunk(self):
+        png(self.bundle / "AppIcon60x60@2x.png", 120, 120, cgbi=True)
+        self.assertEqual(audit.icon_violations(self.info, self.bundle), [])
+        png(self.bundle / "AppIcon60x60@2x.png", 180, 180, cgbi=True)
+        self.assertIn("iPhone app icon is 180x180, not 120x120",
+                      audit.icon_violations(self.info, self.bundle))
 
     def test_a_missing_top_level_icon_name_is_refused(self):
         # Code 90713. The catalog compiler's own copy, nested inside

@@ -48,15 +48,22 @@ def binary_violations(symbols: str, strings: str) -> list[str]:
 
 
 def png_size(path: Path) -> tuple[int, int]:
-    """A PNG's pixel width and height, read from its IHDR chunk.
+    """A PNG's pixel width and height, read out of its IHDR chunk.
 
-    An image library would be a dependency this repository does not otherwise
-    need for two numbers at a fixed offset."""
+    The chunks are walked rather than read from a fixed offset, because the
+    PNGs Apple's packaging writes into a device bundle carry a proprietary
+    `CgBI` chunk ahead of IHDR. An image library would be a dependency this
+    repository does not otherwise need for two integers."""
     raw = path.read_bytes()
     if raw[:8] != b"\x89PNG\r\n\x1a\n":
         raise AssertionError(f"{path} is not a PNG")
-    width, height = struct.unpack(">II", raw[16:24])
-    return width, height
+    at = 8
+    while at + 8 <= len(raw):
+        length, kind = struct.unpack(">I4s", raw[at:at + 8])
+        if kind == b"IHDR":
+            return struct.unpack(">II", raw[at + 8:at + 16])
+        at += 12 + length
+    raise AssertionError(f"{path} has no IHDR chunk")
 
 
 def icon_violations(info: dict, bundle: Path) -> list[str]:
