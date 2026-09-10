@@ -229,6 +229,22 @@ class TheProvisioningProfile(unittest.TestCase):
                                            "amux App Store"))
 
 
+class TheLastStep(unittest.TestCase):
+    def test_the_run_ends_by_asking_apple(self):
+        # Validation is the recipe's last step rather than something run by
+        # hand afterwards, so that one command is the whole release.
+        source = (SCRIPTS / "release.py").read_text()
+        self.assertIn("--validate-app", source)
+        self.assertIn("validate(exported, facts)", source)
+
+    def test_validation_is_authenticated_by_the_key_and_nothing_else(self):
+        # No Apple Account, no password, no 2FA: the two identifiers come
+        # from the keychain and altool finds the .p8 itself.
+        source = (SCRIPTS / "release.py").read_text()
+        self.assertIn('"--api-key", facts["key"]', source)
+        self.assertIn('"--api-issuer", facts["issuer"]', source)
+
+
 class WhatItNeverDoes(unittest.TestCase):
     def test_no_upload_verb_is_anywhere_in_the_recipe(self):
         # The boundary the recipe promises: it stops at a local export. An

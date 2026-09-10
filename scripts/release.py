@@ -4,18 +4,19 @@
 Everything a release needs is here and nothing beyond it: this script bumps
 the two version numbers, cuts the tag that records them, archives the app
 against the distribution configuration and exports it. It never pushes and
-never uploads. docs/RELEASE.md explains why each rule is what it is; this is
-the rule enforced.
+never uploads: Apple sees the build only as a validation, which spends no
+build number and shows the build to nobody. docs/RELEASE.md explains why each
+rule is what it is; this is the rule enforced.
 
 Three ways to run it:
 
   --preflight   report every input a release needs and stop, reaching Apple
                 for nothing.
-  --rehearse    archive and export with the numbers the next release would
-                use, writing nothing to the tree and cutting no tag, so it
-                can be run as often as you like.
-  (neither)     write the numbers, commit them, cut the tag, archive and
-                export.
+  --rehearse    archive, export and validate with the numbers the next
+                release would use, writing nothing to the tree and cutting no
+                tag, so it can be run as often as you like.
+  (neither)     write the numbers, commit them, cut the tag, archive,
+                export and validate.
 
 The Team ID comes from the untracked ios/Signing.local.xcconfig and the App
 Store Connect key from this Mac's login keychain; neither is ever written to a
@@ -402,6 +403,27 @@ def export(version: str, build: int, facts: dict) -> Path:
     return exported[0]
 
 
+def validate(package: Path, facts: dict) -> None:
+    """Apple's own answer on the build, which is where this recipe stops.
+
+    Validation is the whole check an upload performs — the signature, the
+    entitlements, the icon, the identifiers, the deployment target — run
+    against Apple's real servers. What it does not do is deliver: no build
+    number is spent and nothing becomes visible to the team. That boundary is
+    why it is safe as the last step of every run, including a rehearsal that
+    happens as often as anybody likes.
+
+    altool finds the private key itself; ~/.appstoreconnect/private_keys is
+    one of the directories it searches, so only the two identifiers are
+    passed and neither is ever written to a file."""
+    print("validating with Apple", flush=True)
+    subprocess.run([
+        "xcrun", "altool", "--validate-app",
+        "-f", str(package), "-t", "ios",
+        "--api-key", facts["key"], "--api-issuer", facts["issuer"],
+    ], check=True, timeout=1800)
+
+
 def release(version: str, build: int, message: str) -> None:
     """The permanent half: the numbers, the commit and the tag."""
     write_numbers(version, build)
@@ -473,6 +495,7 @@ def main() -> int:
     written.write_text(message + "\n")
     print(f"exported {exported}")
     print(f"release notes beside it in {written}")
+    validate(exported, facts)
     if arguments.rehearse:
         print("rehearsal: nothing was written to the tree and no tag was cut")
     print("nothing was uploaded and nothing was pushed")

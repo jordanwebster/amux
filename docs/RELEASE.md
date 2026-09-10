@@ -8,11 +8,13 @@ anything.** Promoting the recipe to an upload is a separate, deliberate
 change; see [Where it stops](#where-it-stops).
 
 The app is the next version of the listing already on the App Store, not a
-new one: bundle identifier `sh.amux.app`, App Store Apple ID `6760197635`.
-The bundle identifier is what signing and the App Store record agree on; the
-Apple ID is what an upload names the app by, and the two are asked for in
-different places. Both are committed — the bundle identifier in
-`ios/project.yml`, from which XcodeGen writes `ios/Amux/Info.plist`.
+new one. Its bundle identifier, `sh.amux.app`, is what signing and the App
+Store record agree on, and it is committed in `ios/project.yml`, from which
+XcodeGen writes `ios/Amux/Info.plist`. The listing's numeric Apple ID is not
+recorded here: nothing this recipe runs asks for it, and an upload — the one
+step that would — is not something this recipe does. Read it back from the
+App Store Connect record when it is wanted:
+`xcrun altool --list-apps --api-key <key id> --api-issuer <issuer id>`.
 
 ## The two numbers
 
@@ -257,16 +259,16 @@ build, and is visible to nobody.
 ## One command
 
 ```
-wt run release              # bump, tag, archive and export
+wt run release              # bump, tag, archive, export and validate
 wt run release -- --preflight   # check every input, do nothing
-wt run release -- --rehearse    # archive and export with the would-be
-                                # numbers; write nothing, tag nothing
+wt run release -- --rehearse    # archive, export and validate with the
+                                # would-be numbers; write nothing, tag nothing
 ```
 
-Validation is the step that belongs at the end of all three, and it is not
-wired in yet: it needs an `.ipa`, and no Mac here can sign one until the
-signing access above is in place. The command it will run is the `altool`
-invocation above.
+Validation is the last step of both runs that build anything, so `wt run
+release` is the whole release and there is no `altool` command to remember
+afterwards. A rehearsal ends the same way, which is what makes it a real
+proof rather than a dry run: Apple answers on the actual signed binary.
 
 `--preflight` checks what the run needs — the signing file, the key and both
 identifiers in the keychain, the private key on disk, the export options, the
@@ -276,7 +278,9 @@ number — names anything missing and exits non-zero if anything is. It reports 
 on it: an uncommitted file is not something a person produces once, and a
 rehearsal does not care. A real release does, and refuses. `--rehearse` goes all the way to
 a validated `.ipa` using the numbers the next release *would* use, but writes
-nothing to the tree and cuts no tag, so it can be run as often as you like.
+nothing to the tree and cuts no tag, so it can be run as often as you like —
+validation spends no build number, so running it a hundred times costs
+nothing but the wait.
 Neither mode, and not the full run either, ever pushes or uploads.
 
 ## Where it stops

@@ -4,6 +4,28 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **The release command ends by asking Apple, and Apple says yes.**
+
+`wt run release` now runs `xcrun altool --validate-app` on the exported
+`.ipa` as its last step, so a release is one command with no `altool`
+invocation to remember afterwards. `--rehearse` ends the same way, which is
+what makes a rehearsal a proof rather than a dry run: Apple answers on the
+actual signed binary, checking the signature, the entitlements, the icon, the
+identifiers and the deployment target exactly as an upload would.
+
+It still never uploads. Validation spends no build number, creates no
+TestFlight build and is visible to nobody, which is why it is safe as the
+last step of a rehearsal anybody can run a hundred times. The whole chain —
+derive the numbers, generate the project, archive, export, validate — runs
+with no person at the keyboard and no 2FA prompt anywhere: the App Store
+Connect key authenticates every step that reaches Apple.
+
+The listing's numeric Apple ID came out of the release guide. Nothing the
+recipe runs asks for it, and the one step that would is the step this
+recipe does not do; it reads back from `altool --list-apps` when wanted.
+
+---
+
 2026-09-10 — **The app has an icon, and Apple validates the build.**
 
 There was no asset catalog anywhere under `ios/`. Every check this app has
