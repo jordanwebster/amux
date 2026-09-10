@@ -562,13 +562,13 @@ public enum Fixtures {
                 cloud: ScriptedCloudState(upload: .offline),
                 report: Fixture.Reporting(
                     // The note is written on two lines rather than left to wrap.
-            // A vertical text field settles a few points wider or narrower
-            // depending on how much of the page is scrollable, and this state
-            // is almost exactly one screen tall, so a note left to find its
-            // own wrap point broke on a different word on about one run in
-            // two. Where a person's note wraps is the field's business; where
-            // this one wraps is the fixture's.
-            note: "Queued message stays on screen\nafter sending",
+                    // A vertical text field settles a few points wider or narrower
+                    // depending on how much of the page is scrollable, and this state
+                    // is almost exactly one screen tall, so a note left to find its
+                    // own wrap point broke on a different word on about one run in
+                    // two. Where a person's note wraps is the field's business; where
+                    // this one wraps is the fixture's.
+                    note: "Queued message stays on screen\nafter sending",
                     marks: [ReportMark(
                         x: 24, y: 236, width: 354, height: 30,
                         note: "this row never leaves once the\nmessage has gone")],

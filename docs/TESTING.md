@@ -29,10 +29,12 @@ unification and compile a second dependency graph.
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
-The workspace test recipe allows 150 seconds for Cargo's test preparation and
-the selected harnesses. The prerequisite workspace build runs before this
-deadline. The budget leaves room for a slower runner while catching a return
-of the long runtime tail; it is an overall deadline, not a per-test limit.
+Local `wt test` and `wt run testnet-smoke` use `scripts/workspace-test.sh`,
+which allows 150 seconds for Cargo's test preparation and the selected
+harnesses. The prerequisite workspace build runs before this deadline. It is
+an overall deadline, not a per-test limit. GitHub's workspace test job runs
+`cargo test` directly under its own 30-minute job timeout; it does not use
+this script's 150-second budget.
 
 ## Recorded PTY tests
 

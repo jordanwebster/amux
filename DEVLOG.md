@@ -4,6 +4,25 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **The documentation follows the current fixtures and recipes.**
+
+The drawer is documented as an added state with no preserved reference, and
+the live, queued and expanded-strip baselines explain their retakes after the
+composer's moving segment gained its own row. The live fixture's description
+now agrees with its working send gate. Subscription policy documents the
+function that opens streams, and the upload-failure fixture's comment follows
+its own indentation.
+
+The testing guide distinguishes the local 150-second workspace-test budget
+from GitHub's 30-minute workspace test job. The cloud guide spells out debug
+report multipart names, schema version, receipt and rejection statuses.
+`ios-perf` refuses the obsolete `--probe` option with the supported `--only`
+groups, covered by a command-line regression test.
+
+Recipe tests, Rust lint, iOS lint and the driving-door smoke check pass.
+
+---
+
 2026-09-10 — **The conversation is back behind the accessibility-size composer.**
 
 The capture that locks the composer at the largest text size used to have a

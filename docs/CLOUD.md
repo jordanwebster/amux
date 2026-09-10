@@ -152,6 +152,32 @@ What the app does with each answer:
 | `502` | Unconfirmed and refused, in the cloud's own words: it could not reach the billing provider, so nothing was recorded. |
 | no answer at all | Unconfirmed and unreachable: paid for, kept, and tried again. |
 
+## Uploading a debug report
+
+`POST /api/reports` takes `multipart/form-data` with
+`Authorization: Bearer <access token>`. Each section's `name` and `filename`
+are the file it carries: `report.json`, `frame.png`, `trace.jsonl`,
+`msgs.jsonl`, `daemon.json` or `log.txt`.
+
+`report.json` is required and uses `schema_version: 2`. Its `parts` declares
+the frame, trace, messages, daemon state and log as present or absent with a
+reason. Present files are sent as their named sections; absent files are
+omitted, with their reasons kept in `report.json`. The declaration and the
+uploaded files must agree.
+
+A successful upload returns `201 Created` with a JSON receipt containing
+`id` (the report UUID), `received_at` (an ISO 8601 timestamp), and `parts`
+(the presence status of each part).
+
+| Answer | Meaning |
+| --- | --- |
+| `401` | The request is unauthenticated. |
+| `413` | The bundle exceeds the size limit. |
+| `422` | `report.json` fails validation, including its schema version or parts declaration. |
+
+Capture and upload are available only in debug builds. An upload failure
+keeps the report draft available for retry.
+
 ## Which read answers which question
 
 The app asks two questions and never mixes them up.

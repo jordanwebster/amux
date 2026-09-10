@@ -836,10 +836,12 @@ def main() -> None:
     record_baseline = "--baseline" in arguments
     unknown = [
         argument for argument in arguments
-        if argument not in ["--probe", "--baseline", "--machine", "--describe", "--self-test"]
+        if argument not in ["--baseline", "--machine", "--describe", "--self-test"]
     ]
     if unknown:
-        raise SystemExit(f"unknown argument: {' '.join(unknown)}")
+        raise SystemExit(
+            f"unknown argument: {' '.join(unknown)}; "
+            f"select measurements with --only: {', '.join(SECTIONS)}")
     # A baseline file names every measurement the machine is judged against.
     # Recording one from a run that took a third of them would quietly drop the
     # rest, and the next whole run would have nothing to be compared to.

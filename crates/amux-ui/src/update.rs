@@ -61,10 +61,6 @@ enum StreamWanted {
     UserRequested,
 }
 
-/// Subscription policy: open the structured stream for an agent whose kind
-/// has a layer this build folds, and none is already live. Emits at most one effect;
-/// re-upserts are idempotent. Retryable closes (transport loss) reopen on
-/// the next inventory event; terminal closes (deleted, exited) do not.
 /// Let go of a stream this build was holding only because somebody asked for
 /// it.
 ///
@@ -89,6 +85,10 @@ fn release_stream(model: &mut Model, agent_id: amux::AgentId) -> Option<Effect> 
     Some(Effect::CloseStream { agent: agent_id })
 }
 
+/// Subscription policy: open the structured stream for an agent whose kind
+/// has a layer this build folds, and none is already live. Emits at most one effect;
+/// re-upserts are idempotent. Retryable closes (transport loss) reopen on
+/// the next inventory event; terminal closes (deleted, exited) do not.
 fn ensure_stream(
     model: &mut Model,
     agent_id: amux::AgentId,

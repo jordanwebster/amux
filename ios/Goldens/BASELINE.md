@@ -283,8 +283,8 @@ The fleet as a panel over the screen it was opened from: two groups, a name and
 one line each, the conversation you are in marked, and Hosts, You and how many
 machines are reachable along the foot.
 
-The design's preserved capture of this screen is filed under the name
-`offline`, which is the same state under the catalogue's own name. Three things about the picture are worth knowing:
+This is an added state with no preserved design reference. Three things about
+the picture are worth knowing:
 
 - **What is behind the panel is the conversation it was opened from.** It is
   the real one, filled from the same state as `run`, rather than a stand-in:
@@ -368,11 +368,12 @@ whole suite and the command has not come back.
   row whose trailing edge reads `running`, and so does this: a tool with no
   result yet is what "still working" looks like in the transcript, and the app
   says it in the layer's own words rather than animating something.
-- **The gate says ready, so the box does.** The fleet on this screen has the
-  agent working and the transcript's last row is still open, but the layer's
-  own send gate is the one thing that decides whether a message would go now,
-  and here it says it would. So this is `run`'s box with `run-live`'s feed
-  above it; `working` is where the gate is closed and the box says so.
+- **The gate says working, so the box does.** The transcript's last command
+  is still open, and the shared send gate holds a new message until the turn
+  ends. The composer names the activity and keeps interrupt available.
+- **The moving segment sits below the activity.** Both baselines were retaken
+  when the segment moved onto its own row across the composer, leaving the
+  activity text above it instead of alongside it.
 - The thinking line and the differing conversation carry over from `run`.
 
 ## voices
@@ -662,6 +663,10 @@ it has been doing it, a segment travelling under it, and a button that stops it.
 A message waiting for the turn to end, on the strip above the composer, with
 everything else that is true about the turn beside it.
 
+Both captures were retaken when the composer's travelling segment moved onto
+its own row beneath the activity. The queued message remains in the strip
+above that box.
+
 - **One strip, four facts, in the order they are read.** The count and the task
   being worked on, the number of agents this one started, and the message
   waiting to go. A row appears only while its fact is true, so `working` — the
@@ -700,6 +705,10 @@ everything else that is true about the turn beside it.
 
 The same strip opened: the provider's whole list, with the line that summarises
 it exactly where it was.
+
+The light and dark baselines were retaken with the travelling segment on a
+separate row under the composer's activity text. The expanded list still
+opens above the composer.
 
 - **Not in the design's captures.** The design pictures the folded strip and
   says the open one grows in place rather than flying a panel out of it. What
