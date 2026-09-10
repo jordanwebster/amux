@@ -145,7 +145,11 @@ async fn until(
     predicate: impl Fn(&Value) -> bool,
 ) -> Value {
     let mut seen = Vec::new();
-    tokio::time::timeout(Duration::from_secs(20), async {
+    // A callback can require two account runtimes to discover, pair and fold
+    // real relay traffic. Loaded hosted macOS runners exhausted 20 seconds
+    // while still delivering those events. Keep a 90-second failure ceiling
+    // with the received events in the diagnostic; readiness itself is recv().
+    tokio::time::timeout(Duration::from_secs(90), async {
         loop {
             let event = events.recv().await.expect("callback channel closed");
             seen.push(event.clone());
@@ -2019,6 +2023,9 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
     // One press during the four-second wait dials immediately; observing
     // another 900ms must not produce a second attempt.
     runtime.retry.now();
+    // Advancing a timer does not run a spawned dial or complete its socket IO.
+    // The failed dial publishes Disconnected after incrementing the counter.
+    disconnected(&mut relay).await;
     advance(Duration::from_millis(900)).await;
     let after_one = runtime.retry.attempts();
     assert_eq!(
@@ -2042,6 +2049,7 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
         runtime.retry.now();
         advance(Duration::from_millis(50)).await;
     }
+    disconnected(&mut relay).await;
     advance(Duration::from_millis(500)).await;
     let after_ten = runtime.retry.attempts();
     assert_eq!(
@@ -3144,8 +3152,11 @@ async fn mobile_profiles_report_what_is_waiting_on_the_account_that_is_not_on_sc
 
     // Now nobody is looking at that account. What it has waiting is still
     // read, and it is the same number.
+    let switched = mark(&events);
     select_account(&mut receive, handle, "personal").await;
-    let attention = until(&mut receive, handle, "", |e| {
+    // Selection and attention are independent projections. The selection
+    // acknowledgement may consume an attention event that arrived first.
+    let attention = seen(&mut receive, &events, switched, handle, |e| {
         e["Attention"]["account"] == "work" && e["Attention"]["waiting"] == json!(1)
     })
     .await;

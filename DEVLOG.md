@@ -4,6 +4,26 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Wait for mobile events before checking their effects.**
+
+The Retry Now test waits for the failed dial's relay notification before
+reading attempt counters. Advancing Tokio time alone did not ensure the
+spawned socket task ran on a loaded runner. The single-press and ten-press
+assertions still require exactly one attempt and one shortened wait each,
+with the full subsequent observation windows intact.
+
+The inactive-account test remembers events from before selecting another
+account, so an attention update delivered before the selection acknowledgement
+is still available. Callback waits retain their event-driven receive loop and
+received-event failure diagnostic, with a 90-second ceiling to accommodate
+the hosted macOS runner that exhausted 20 seconds during discovery and folding.
+
+Temporary mutations verify that ignoring Retry Now, removing its cooldown,
+and suppressing inactive-account attention each fail the corresponding test.
+The restored code passes the focused tests, `wt test`, formatting and lint.
+
+---
+
 2026-09-10 — **Keep mobile snapshots identical on Windows.**
 
 The queue and ask JSON snapshots now require LF on checkout, like the schema
