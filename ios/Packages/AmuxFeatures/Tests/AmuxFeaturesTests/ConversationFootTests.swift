@@ -24,20 +24,23 @@ final class ConversationFootTests: XCTestCase {
             hostReachable: hostReachable, age: age, ended: ended)
     }
 
-    private func refusal(_ message: String) -> [OpResult] {
+    private func failure(_ message: String) -> OpFailure {
         let json = Data("""
             {"error":"general","message":"\(message)",\
             "auth_required":false,"subscription_required":false}
             """.utf8)
-        let failure = try! AmuxJSON.decoder.decode(OpFailure.self, from: json)
-        return [OpResult(op: OpId(UUID()), outcome: .failed(failure))]
+        return try! AmuxJSON.decoder.decode(OpFailure.self, from: json)
+    }
+
+    private func refusal(_ message: String, op: OpId = OpId(UUID())) -> OpResult {
+        OpResult(op: op, outcome: .failed(failure(message)))
     }
 
     /// The ordinary case, which is most conversations: the layer is taking
     /// messages and nothing is written along the bottom of the screen.
     func testAConversationThatTakesMessagesSaysNothing() {
         XCTAssertNil(ConversationFootState(
-            gate: .claudePty(.ready), results: [], subject: subject()))
+            gate: .claudePty(.ready), refusal: nil, subject: subject()))
     }
 
     /// A gate that is waiting on the reader or working belongs to the ask
@@ -46,7 +49,7 @@ final class ConversationFootTests: XCTestCase {
     func testTheStatesOtherSurfacesOwnAreNotReportedHere() {
         for gate in [ClaudePtySendGate.needsYou, .working, .unavailable, .exited] {
             XCTAssertNil(
-                ConversationFootState(gate: .claudePty(gate), results: [], subject: subject()),
+                ConversationFootState(gate: .claudePty(gate), refusal: nil, subject: subject()),
                 "\(gate) should be left to the surface that owns it")
         }
     }
@@ -60,7 +63,7 @@ final class ConversationFootTests: XCTestCase {
         ]
         for gate in gates {
             guard case .refused(let headline, let reason)? =
-                ConversationFootState(gate: gate, results: [], subject: subject())
+                ConversationFootState(gate: gate, refusal: nil, subject: subject())
             else {
                 XCTFail("\(gate) should refuse")
                 continue
@@ -76,7 +79,7 @@ final class ConversationFootTests: XCTestCase {
     func testARefusedSendShowsTheCoresOwnSentence() {
         guard case .refused(let headline, let reason)? = ConversationFootState(
             gate: .claudePty(.replaying),
-            results: refusal("the session is replaying history"),
+            refusal: failure("the session is replaying history"),
             subject: subject())
         else { return XCTFail("a refused send should be reported") }
 
@@ -92,28 +95,61 @@ final class ConversationFootTests: XCTestCase {
         let mine = bundle.conversation(agent)
         let other = AgentId(UUID(uuidString: "00000000-0000-0000-0000-0000000000B2")!)
         let theirs = bundle.conversation(other)
-        let result = refusal("that layer is replaying history")[0]
+        let result = refusal("that layer is replaying history")
         theirs.dispatched(result.op)
 
         bundle.apply([.opResult(result)])
 
         guard case .refused(let headline, let reason)? = ConversationFootState(
-            gate: .claudePty(.replaying), results: mine.results, subject: subject())
+            gate: .claudePty(.replaying), refusal: mine.refusal, subject: subject())
         else { return XCTFail("a replaying gate should refuse") }
         XCTAssertEqual(headline, "Cannot send")
         XCTAssertEqual(reason, "This session is replaying what it missed.")
 
         guard case .refused(_, let theirReason)? = ConversationFootState(
-            gate: .claudePty(.replaying), results: theirs.results, subject: subject())
+            gate: .claudePty(.replaying), refusal: theirs.refusal, subject: subject())
         else { return XCTFail("the agent that was refused should say so") }
         XCTAssertEqual(theirReason, "that layer is replaying history")
+    }
+
+    /// A reader is refused, sends again, and is refused again. The panel is
+    /// about the message in flight at each step: the host's first sentence,
+    /// then this build's own wording while the second message is genuinely on
+    /// its way, then the host's second sentence. It never captions a message
+    /// in flight with an earlier message's reason.
+    func testTheDrawnRefusalFollowsTheMessageInFlight() {
+        let store = ConversationStore(agent: agent)
+        let first = OpId(UUID(uuidString: "00000000-0000-0000-0000-0000000000C1")!)
+        let second = OpId(UUID(uuidString: "00000000-0000-0000-0000-0000000000C2")!)
+
+        store.dispatched(first)
+        store.apply(.opResult(refusal("the session is replaying history", op: first)))
+        guard case .refused(let headline, let reason)? = ConversationFootState(
+            gate: .claudePty(.replaying), refusal: store.refusal, subject: subject())
+        else { return XCTFail("a refused send should be reported") }
+        XCTAssertEqual(headline, "Not sent")
+        XCTAssertEqual(reason, "the session is replaying history")
+
+        store.dispatched(second)
+        guard case .refused(let pendingHeadline, let pendingReason)? = ConversationFootState(
+            gate: .claudePty(.sendInFlight), refusal: store.refusal, subject: subject())
+        else { return XCTFail("a send in flight should be reported") }
+        XCTAssertEqual(pendingHeadline, "Cannot send")
+        XCTAssertEqual(pendingReason, "The last message has not been acknowledged yet.")
+
+        store.apply(.opResult(refusal("that layer is still replaying", op: second)))
+        guard case .refused(let againHeadline, let againReason)? = ConversationFootState(
+            gate: .claudePty(.replaying), refusal: store.refusal, subject: subject())
+        else { return XCTFail("the second refusal should be reported") }
+        XCTAssertEqual(againHeadline, "Not sent")
+        XCTAssertEqual(againReason, "that layer is still replaying")
     }
 
     /// The host went away mid-turn. The panel names it, says what is happening
     /// and how old the screen above it is.
     func testALostHostIsNamedWithHowOldTheScreenIs() {
         guard case .unreachable(let host, let since)? = ConversationFootState(
-            gate: .claudePty(.unknown), results: [], subject: subject(hostReachable: false))
+            gate: .claudePty(.unknown), refusal: nil, subject: subject(hostReachable: false))
         else { return XCTFail("a lost host should be reported") }
 
         XCTAssertEqual(host, "Studio")
@@ -125,7 +161,7 @@ final class ConversationFootTests: XCTestCase {
     /// starting a new agent rather than a button here.
     func testAnEndedRunOffersNothing() {
         XCTAssertNil(ConversationFootState(
-            gate: .claudePty(.exited), results: refusal("the session has exited"),
+            gate: .claudePty(.exited), refusal: failure("the session has exited"),
             subject: subject(ended: ConversationSubject.Ended(code: 1))))
     }
 
@@ -144,7 +180,7 @@ final class ConversationFootTests: XCTestCase {
 
         XCTAssertTrue(subject.hostReachable)
         XCTAssertNil(subject.ended)
-        XCTAssertNil(ConversationFootState(gate: .unavailable, results: [], subject: subject))
+        XCTAssertNil(ConversationFootState(gate: .unavailable, refusal: nil, subject: subject))
     }
 
     /// The exit code comes off the card the host filled in rather than being

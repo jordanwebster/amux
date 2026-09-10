@@ -13982,3 +13982,22 @@ the definitions pin for reconciliation.
 
 Green: `wt run ios-perf -- --only lifecycle` — five cycles, the count moving
 once per pickup, a fresh confirmation within 267 ms at worst; `wt run ios-unit`.
+
+## The sentence under the composer follows the message in flight
+
+A refused send left the host's reason under the box, and it stayed there. Send
+again and the panel still captioned the message on its way with the previous
+message's reason — narrower than the cross-agent version of this bug, since the
+sentence was at least about this agent, but the same untrue claim about what is
+happening now.
+
+A conversation now exposes the one refusal it is entitled to draw: the answer
+to the operation it dispatched last. Dispatching supersedes whatever was there,
+so a second message in flight falls back to this build's own wording for the
+gate, and only an answer to the newest dispatch replaces it. The whole ledger
+of answers is still remembered, because a report has to be able to say what a
+run was told.
+
+Green: `wt run ios-unit`, `wt run ios-lint`, `wt run ios-goldens -- send-refused`
+(both captures unchanged: that state has no later dispatch, so the host's own
+sentence is still what is drawn).

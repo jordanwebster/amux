@@ -58,6 +58,16 @@ public final class ConversationStore {
     /// drawing it here would put a host's sentence about one agent under
     /// another agent's name.
     public private(set) var results: [OpResult] = []
+    /// The refusal this conversation is entitled to draw under its composer:
+    /// the host's own sentence about the message that is being sent now.
+    ///
+    /// A remembered failure is not that. Once another message has been
+    /// dispatched, the older refusal is about something the reader has already
+    /// moved past, and leaving it under the box would caption a message in
+    /// flight with an earlier message's reason. So a dispatch supersedes it
+    /// and only an answer to the newest dispatch replaces it; `results` still
+    /// remembers every answer, for a report to say what a run was told.
+    public private(set) var refusal: OpFailure?
     /// Set once the host has confirmed this agent is gone.
     ///
     /// The confirmation and not the press: pressing Delete asks, and a screen
@@ -77,6 +87,10 @@ public final class ConversationStore {
     /// result carrying the same identifier is not claimed twice.
     private var pendingOps: Set<OpId> = []
 
+    /// The last operation this conversation dispatched. What the foot may
+    /// quote is whatever answers this one.
+    private var latestDispatch: OpId?
+
     /// How many answers a conversation remembers. Only the newest is ever
     /// drawn; the rest are kept so a report can say what a run was told.
     /// Unbounded, this would grow for as long as the app runs.
@@ -91,6 +105,8 @@ public final class ConversationStore {
     /// identifier the bridge answered with.
     public func dispatched(_ op: OpId) {
         pendingOps.insert(op)
+        latestDispatch = op
+        refusal = nil
     }
 
     /// The person has sent. Called the instant the tap is handled, before
@@ -181,6 +197,13 @@ public final class ConversationStore {
             if case .attachmentStored(let attachment) = result.outcome,
                let token = Bridge.token(for: attachment) {
                 draft.insert(token)
+            }
+            if result.op == latestDispatch {
+                if case .failed(let failure) = result.outcome {
+                    refusal = failure
+                } else {
+                    refusal = nil
+                }
             }
             results.append(result)
             if results.count > Self.remembered {

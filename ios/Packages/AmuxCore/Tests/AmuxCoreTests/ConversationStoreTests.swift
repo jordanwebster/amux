@@ -185,6 +185,56 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(store.results.count, 1)
     }
 
+    /// Sending again supersedes the last refusal.
+    ///
+    /// The sentence under the composer is about the message that is in flight.
+    /// A reader who is refused, changes the message and sends again is looking
+    /// at a second message going; the first message's reason has nothing to
+    /// say about it, and is remembered rather than drawn.
+    func testANewSendSupersedesTheLastRefusal() {
+        let store = ConversationStore(agent: agent)
+        let first = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA13")!)
+        let second = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA14")!)
+
+        store.dispatched(first)
+        store.apply(refusal("the session is replaying history", op: first))
+        XCTAssertEqual(store.refusal?.message, "the session is replaying history")
+
+        store.dispatched(second)
+        XCTAssertNil(store.refusal, "an in-flight message wears the last one's refusal")
+
+        store.apply(refusal("that layer is still replaying", op: second))
+        XCTAssertEqual(store.refusal?.message, "that layer is still replaying")
+        XCTAssertEqual(store.results.count, 2, "both answers are still remembered")
+    }
+
+    /// Two sends are out and the older one is answered first. What it says is
+    /// not about the message still in flight, so it is kept and not drawn.
+    func testAnAnswerToAnOlderSendIsNotDrawn() {
+        let store = ConversationStore(agent: agent)
+        let first = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA15")!)
+        let second = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA16")!)
+        store.dispatched(first)
+        store.dispatched(second)
+
+        store.apply(refusal("the first one was refused", op: first))
+
+        XCTAssertNil(store.refusal)
+        XCTAssertEqual(store.results.count, 1)
+    }
+
+    /// An operation that succeeded leaves nothing to say. The refusal that was
+    /// on screen belonged to a message the host has now taken.
+    func testASuccessfulAnswerClearsTheRefusal() {
+        let store = ConversationStore(agent: agent)
+        let op = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA17")!)
+        store.dispatched(op)
+        store.apply(refusal("refused", op: op))
+        store.dispatched(op)
+        store.apply(.opResult(OpResult(op: op, outcome: .inputSent)))
+        XCTAssertNil(store.refusal)
+    }
+
     /// A long-lived conversation sends many times. What it remembers is
     /// bounded, and the newest answer — the only one ever drawn — is kept.
     func testWhatAConversationRemembersIsBounded() {

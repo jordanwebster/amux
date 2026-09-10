@@ -25,7 +25,13 @@ public enum ConversationFootState: Equatable {
     case refused(headline: String, reason: String)
 
     /// Nothing to say, which is most conversations.
-    public init?(gate: SendGate, results: [OpResult], subject: ConversationSubject) {
+    ///
+    /// `refusal` is the host's answer to the message being sent now, and never
+    /// an older one: a reader who sends again while the first refusal is still
+    /// on screen is watching a second message go, and captioning it with the
+    /// first message's reason would be the phone saying something untrue about
+    /// what is in flight.
+    public init?(gate: SendGate, refusal: OpFailure?, subject: ConversationSubject) {
         // An ended run offers nothing. It has already said what happened, in
         // the feed, where the last thing that happened belongs.
         if subject.ended != nil { return nil }
@@ -37,13 +43,10 @@ public enum ConversationFootState: Equatable {
         // The core's own words whenever the core has spoken. A refusal
         // rewritten on the phone is a second opinion about something only the
         // host knows.
-        let refusal = results.last.flatMap { result -> String? in
-            guard case .failed(let failure) = result.outcome else { return nil }
-            return failure.message
-        }
+        let reason = refusal?.message
         self = .refused(
-            headline: refusal == nil ? "Cannot send" : "Not sent",
-            reason: refusal ?? sentence)
+            headline: reason == nil ? "Cannot send" : "Not sent",
+            reason: reason ?? sentence)
     }
 
     /// What this build says about a gate nobody has tried to send through.

@@ -745,7 +745,7 @@ final class DoorHost {
         let subject = ConversationSubject(agent: identity, in: stores.fleet)
         guard conversation.gate.accepts else {
             let state = ConversationFootState(
-                gate: conversation.gate, results: conversation.results, subject: subject)
+                gate: conversation.gate, refusal: conversation.refusal, subject: subject)
             return .sendAttempt(
                 delivered: false,
                 reason: state?.detail ?? "This agent is not taking messages.")
@@ -787,7 +787,7 @@ final class DoorHost {
         let subject = ConversationSubject(agent: identity, in: stores.fleet)
         guard conversation.gate.accepts else {
             let state = ConversationFootState(
-                gate: conversation.gate, results: conversation.results, subject: subject)
+                gate: conversation.gate, refusal: conversation.refusal, subject: subject)
             return .sendAttempt(
                 delivered: false,
                 reason: state?.detail ?? "This agent is not taking messages.")

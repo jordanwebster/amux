@@ -415,7 +415,7 @@ public struct Conversation: View {
                     changes: changes, review: { leaving(.openChanges) },
                     later: { deferred = true })
             } else if let state = ConversationFootState(
-                gate: model.gate, results: model.results, subject: subject) {
+                gate: model.gate, refusal: model.refusal, subject: subject) {
                 ConversationFoot(state: state) { actions(.retry) }
             } else if let composer = ComposerState(
                 gate: model.gate, tail: model.tailRow, elapsed: subject.working) {
