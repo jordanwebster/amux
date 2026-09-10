@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Match nightly Rust formatting for host revocation.**
+
+Wrap the remote connection close call as nightly rustfmt requires. This only
+changes whitespace; host revocation behavior stays the same. Verified with
+`cargo +nightly fmt --all -- --check`.
+
+---
+
 2026-09-10 — **Document restored app containers and the complete golden catalogue.**
 
 The iPhone guide now describes the mobile runtime's existing profile-path
