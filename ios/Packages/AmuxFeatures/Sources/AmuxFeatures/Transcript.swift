@@ -159,7 +159,9 @@ private struct TranscriptRowView: View {
         case .edit(let path, let added, let removed):
             EditRow(path: path, added: added, removed: removed)
         case .wrote(let path, let meta):
-            ActivityRow(kind: "wrote", verb: "Wrote", subject: path, mono: true, meta: meta)
+            ActivityRow(
+                kind: "wrote", verb: "Wrote", subject: path, mono: true, meta: meta,
+                truncation: .head)
         case .ran(let command, let meta, let output):
             RanRow(command: command, meta: meta, output: output)
         case .tool(let name, let detail, let meta):
@@ -792,6 +794,150 @@ private struct AgentMessageRow: View {
     }
 }
 
+/// One line of a rail row: a verb, the thing it acted on, and what the layer
+/// said about that on the trailing edge.
+///
+/// A stack's own answer to a line that does not fit is a layout priority, and
+/// whichever text carries it keeps the width it wants while the other is
+/// squeezed to an ellipsis. Neither text here can afford to be the one that
+/// loses everything. The meta is whatever the tool printed — a write comes
+/// back as a whole sentence, "File created successfully at: …" — and with the
+/// width going to it first the path the row exists to name disappears. Giving
+/// the path the width instead breaks the other direction: a long command would
+/// push off the "exit 1" that says how it went.
+///
+/// So the subject is served first, and the meta gives up its width until it is
+/// down to a third of the contested line; below that the two truncate
+/// together. A short meta is therefore never squeezed by a long subject, and a
+/// long meta never costs the subject more than two thirds of the line.
+struct RowLine: Layout {
+    /// Which of the line's three texts a subview is. The line is not a list of
+    /// interchangeable views: what each one is decides what happens to it when
+    /// the width runs out.
+    enum Role: Int {
+        case verb, subject, meta
+    }
+
+    struct RoleKey: LayoutValueKey {
+        static let defaultValue = Role.verb
+    }
+
+    /// The most of a contested line the trailing meta may hold.
+    static let metaShare: CGFloat = 1.0 / 3.0
+    /// Between the verb and the subject, matching the stack this replaced.
+    private let spacing: CGFloat = 8
+    /// The clear space between the subject and the meta, so that two texts
+    /// that both run long still read as two texts.
+    private let gap: CGFloat = 20
+    /// The clear space a line with nothing on its trailing edge keeps there
+    /// anyway, so a subject that runs long stops short of the margin rather
+    /// than against it.
+    private let trailing: CGFloat = 12
+
+    /// How a line too narrow for both divides between them.
+    ///
+    /// `content` is what is left once the verb and the gap have been taken
+    /// out. Both returned widths are what the text is given to draw in, which
+    /// is what decides whether it truncates.
+    static func split(
+        content: CGFloat, subject: CGFloat, meta: CGFloat
+    ) -> (subject: CGFloat, meta: CGFloat) {
+        guard content > 0 else { return (0, 0) }
+        guard subject + meta > content else { return (subject, meta) }
+        let allowed = max(content - subject, content * metaShare)
+        let meta = min(meta, allowed)
+        return (min(subject, content - meta), meta)
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+    ) -> CGSize {
+        let widths = widths(subviews, within: proposal.width)
+        let line = widths.values.reduce(0, +) + fixed(subviews)
+        let heights = heights(subviews, widths: widths)
+        return CGSize(
+            width: proposal.width.map { $0.isFinite ? $0 : line } ?? line,
+            height: heights.ascent + heights.descent)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+    ) {
+        let widths = widths(subviews, within: bounds.width)
+        let heights = heights(subviews, widths: widths)
+        var leading = bounds.minX
+        for (index, subview) in subviews.enumerated() {
+            guard let width = widths[index] else { continue }
+            let role = subview[RoleKey.self]
+            // The meta hangs off the trailing edge the way the stack's spacer
+            // used to put it there; everything else runs from the leading one.
+            let x = role == .meta ? bounds.maxX - width : leading
+            if role != .meta { leading = x + width + spacing }
+            let size = ProposedViewSize(width: width, height: nil)
+            let baseline = subview.dimensions(in: size)[.firstTextBaseline]
+            subview.place(
+                at: CGPoint(x: x, y: bounds.minY + heights.ascent - baseline),
+                anchor: .topLeading, proposal: size)
+        }
+    }
+
+    /// What each subview is given to draw in, by its index.
+    private func widths(_ subviews: Subviews, within available: CGFloat?) -> [Int: CGFloat] {
+        var ideal: [Role: (index: Int, width: CGFloat)] = [:]
+        for (index, subview) in subviews.enumerated() {
+            ideal[subview[RoleKey.self]] = (index, subview.sizeThatFits(.unspecified).width)
+        }
+        var widths = ideal.values.reduce(into: [Int: CGFloat]()) { $0[$1.index] = $1.width }
+        guard let available, available.isFinite else { return widths }
+        let verb = ideal[.verb]?.width ?? 0
+        switch (ideal[.subject], ideal[.meta]) {
+        case let (.some(subject), .some(meta)):
+            let content = max(0, available - verb - spacing - gap)
+            let share = Self.split(content: content, subject: subject.width, meta: meta.width)
+            widths[subject.index] = share.subject
+            widths[meta.index] = share.meta
+        case let (.some(subject), .none):
+            widths[subject.index] = min(
+                subject.width, max(0, available - verb - spacing - trailing))
+        case let (.none, .some(meta)):
+            widths[meta.index] = min(meta.width, max(0, available - verb - gap))
+        case (.none, .none):
+            break
+        }
+        return widths
+    }
+
+    /// The width the line spends on space rather than on text.
+    private func fixed(_ subviews: Subviews) -> CGFloat {
+        let roles = Set(subviews.map { $0[RoleKey.self] })
+        return (roles.contains(.subject) ? spacing : 0)
+            + (roles.contains(.meta) ? gap : trailing)
+    }
+
+    /// Where the shared baseline sits, and how far below it the line reaches.
+    private func heights(
+        _ subviews: Subviews, widths: [Int: CGFloat]
+    ) -> (ascent: CGFloat, descent: CGFloat) {
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        for (index, subview) in subviews.enumerated() {
+            let size = ProposedViewSize(width: widths[index], height: nil)
+            let dimensions = subview.dimensions(in: size)
+            let baseline = dimensions[.firstTextBaseline]
+            ascent = max(ascent, baseline)
+            descent = max(descent, dimensions.height - baseline)
+        }
+        return (ascent, descent)
+    }
+}
+
+extension View {
+    /// Says which of a row line's three texts this one is.
+    func rowLine(_ role: RowLine.Role) -> some View {
+        layoutValue(key: RowLine.RoleKey.self, value: role)
+    }
+}
+
 /// The shape every rail row that is not special shares: a verb, the one thing
 /// it acted on, whatever the layer said about it on the trailing edge, and a
 /// second line when there is a reason worth stating.
@@ -807,28 +953,33 @@ private struct ActivityRow: View {
     let mono: Bool
     let meta: String?
     var note: String?
+    /// Which end of the subject is worth keeping when it is too long for the
+    /// line. A command is read from its front; a path is identified by its
+    /// last component, so a written file drops its leading directories rather
+    /// than the name of the file it wrote.
+    var truncation: Text.TruncationMode = .middle
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            RowLine {
                 Text(verb)
                     .designFont(.body, design)
                     .foregroundStyle(design.ink.color)
-                    .fixedSize()
+                    .rowLine(.verb)
                 if let subject {
                     Text(subject)
                         .designFont(mono ? .mono : .body, design)
                         .foregroundStyle(mono ? design.inkMuted.color : design.ink.color)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(truncation)
+                        .rowLine(.subject)
                 }
-                Spacer(minLength: 4)
                 if let meta {
                     Text(meta)
                         .designFont(.mono, design)
                         .foregroundStyle(design.inkFaint.color)
                         .lineLimit(1)
-                        .layoutPriority(1)
+                        .rowLine(.meta)
                 }
             }
             if let note {

@@ -4,6 +4,33 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **A written file's path keeps the line its meta was taking.**
+
+A Wrote row draws the path the agent wrote and, on the trailing edge,
+whatever the tool printed about it. Claude prints a whole sentence — "File
+created successfully at: /work/notes.md" — and the row handed the width to
+that sentence first, so the path the row exists to name was squeezed to a
+single slash.
+
+The line is now laid out by its own layout rather than by a stack and a
+layout priority. The subject is served first and the meta gives up width
+until it is down to a third of the contested line; below that the two
+truncate together. That keeps both failure modes off the screen: a sentence
+can no longer take the path's width, and a command that fills the line still
+cannot push off the "exit 1" that says how it ended. A written path also
+truncates from its front now, because a path is identified by its last
+component and a directory prefix is not worth the file's own name.
+
+The arithmetic is a plain function over measured widths, so the rows are
+pinned by measuring the real strings in the real faces at the width the
+transcript has on a 393-point display, rather than only by eye in a capture.
+One locked capture moved with it: the `voices` screen's written row now reads
+`…i/src/pairing_copy.rs` where it read `crates/amu…ing_copy.rs`. Every other
+row on that screen, and all 122 other captures, are byte-identical — the new
+layout reproduces the old spacing exactly where nothing was contested.
+
+---
+
 2026-09-10 — **The release command ends by asking Apple, and Apple says yes.**
 
 `wt run release` now runs `xcrun altool --validate-app` on the exported

@@ -415,6 +415,13 @@ and failures that a good morning never shows.
   provider-error row is marked on its mark and nowhere else. Colouring the words
   as well would make a page with three failures on it mostly coloured, which
   reads the same as a page with no colour at all.
+- **A written path is shortened from its front, not its middle.** The row reads
+  `Wrote …i/src/pairing_copy.rs`, where it used to read
+  `Wrote crates/amu…ing_copy.rs`. Both the reference and the earlier capture
+  spend half the width on the leading directories, and a path is identified by
+  the file at the end of it: two writes into different `src` directories look
+  alike from the front and never from the back. The trailing `38 lines` and
+  every other row on the screen are where they were.
 
 ## ask-permission
 
