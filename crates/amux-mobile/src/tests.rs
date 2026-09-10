@@ -2045,12 +2045,16 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
     // because nothing looked like it happened.
     advance(Duration::from_millis(1200)).await;
     let before_ten = runtime.retry.attempts();
+    // Keep one paused clock across the whole burst and the observation that
+    // follows. Repeatedly resuming here would let a loaded runner's wall time
+    // count toward the cooldown between presses.
+    tokio::time::pause();
     for _ in 0..10 {
         runtime.retry.now();
-        advance(Duration::from_millis(50)).await;
+        tokio::time::advance(Duration::from_millis(50)).await;
     }
     disconnected(&mut relay).await;
-    advance(Duration::from_millis(500)).await;
+    tokio::time::advance(Duration::from_millis(500)).await;
     let after_ten = runtime.retry.attempts();
     assert_eq!(
         after_ten,
@@ -2063,6 +2067,7 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
         2,
         "ten presses cut short more than one wait"
     );
+    tokio::time::resume();
 
     // And the connection is still what recovers: with the relay back, the
     // phone reconnects on its own schedule.

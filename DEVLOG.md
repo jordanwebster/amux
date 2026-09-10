@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **Keep Retry Now burst timing virtual until it is observed.**
+
+The Retry Now burst test now pauses Tokio's clock once before all ten presses
+and resumes it only after the failed dial and exact counters have been
+observed. Its earlier per-step pause and resume let wall-clock scheduling on a
+loaded runner consume the one-second cooldown, so a second press could be
+honoured even though the test advanced only half a second during the burst.
+
+The test still requires exactly one additional attempt and exactly one
+additional shortened wait. Temporary mutations that ignore the press and
+remove the cooldown make those exact assertions fail. The Windows failure that
+motivated this change cancelled the macOS matrix job before the separate
+profile-wait repair received a completed hosted-macOS observation.
+
+---
+
 2026-09-10 — **A release records nothing until Apple has accepted the build.**
 
 `wt run release` wrote the two numbers, committed them and cut the annotated
