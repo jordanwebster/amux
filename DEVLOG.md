@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Run the complete viewport sweeps concurrently.**
+
+The fleet sweep now exposes twenty width ranges to the Rust test harness; the
+chat sweep exposes twenty-four. Every one of the 12,000 fleet renders and
+38,400 chat renders still runs, including text capture and every layout
+assertion. The model fixtures are folded once per harness. Each chat case
+clones its own view so mutable paint caches stay local to that test.
+
+On the same idle M2 Max, fleet goldens fall from 39.79 to 6.20 seconds and chat
+goldens from 32.89 to 4.86 seconds. All 178 tests in the two harnesses pass;
+the increase from 136 is the partitioned sweeps. No golden changes or live
+provider tests are involved. The reduction removes serial rendering work,
+without changing a timeout or reducing the viewport matrix.
+
+The complete `wt test` passes 2,416 Rust and 34 Python tests in 100.63 seconds;
+its Rust harnesses total 97.64 seconds, down from 158.59. The command also needs
+less compilation than the baseline, so the whole command reduction is not all
+test execution. All 462 specifications, `wt lint` and `wt run fmt-check` pass.
+
+---
+
 2026-09-10 — **Measure the Rust suite before optimizing its slowest tests.**
 
 On the M2 Max with both test simulators shut down, a ten-second CPU sample

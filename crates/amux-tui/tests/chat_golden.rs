@@ -2135,80 +2135,132 @@ fn chat_frames_are_stable_across_runs() {
 /// viable size the frame stays inside the viewport: the composer's growth
 /// is clamped so the footer and the bottom border survive at every
 /// height (the feed gives way first).
-#[test]
-fn chat_rendering_never_panics_at_any_viewport_size() {
-    /// The renderer's layout minimums (below them: the too-small notice).
-    const MIN_WIDTH: u16 = 24;
-    const MIN_HEIGHT: u16 = 10;
-    let model = fold(idle_msgs());
-    let working = working_model();
-    let mut view = chat_view();
-    {
-        let chat = view.chat.as_mut().expect("chat open");
-        chat.composer_mut().insert_str("draft\nwith lines");
-        chat.set_scroll(amux_tui::chat::FeedScroll::Paused {
-            top_line: 2,
-            entry_watermark: 0,
-        });
-    }
-    // Panel, reader, and read-only states join the sweep: their bottom
-    // blocks clamp (tail kept, body rows give way) so the footer and
-    // border survive every height.
-    let ask = fold(edit_ask_msgs());
-    let questions = fold(tabbed_question_msgs());
-    let plan = fold(plan_ask_msgs());
-    let readonly = fold({
-        let mut msgs = readonly_msgs();
-        msgs.push(batch(
-            "2026-08-12T09:02:10Z",
-            20,
-            vec![edit_hook("harness.rs", "a\n", "b\n")],
-        ));
-        msgs
-    });
-    let mut docked_plan_view = reconciled_view(&plan);
-    press(&mut docked_plan_view, &plan, KeyCode::Esc);
-    let mut help_view = chat_view();
-    help_view.chat.as_mut().expect("chat open").set_help(true);
-    let states: Vec<(&Model, ViewState, &str)> = vec![
-        (&model, view.clone(), IDLE_NOW),
-        (&working, view, WORKING_NOW),
-        (&ask, reconciled_view(&ask), WORKING_NOW),
-        (&questions, reconciled_view(&questions), WORKING_NOW),
-        (&plan, reconciled_view(&plan), WORKING_NOW),
-        (&plan, docked_plan_view, WORKING_NOW),
-        (&readonly, reconciled_view(&readonly), IDLE_NOW),
-        (&model, help_view, IDLE_NOW),
-    ];
+mod chat_rendering_never_panics_at_any_viewport_size {
+    use super::*;
 
-    for width in 1..=120u16 {
-        for height in 1..=40u16 {
-            for (model, view, now) in &states {
-                let rendered = render_frame_at(model, view, width, height, now);
-                if width >= MIN_WIDTH && height >= MIN_HEIGHT {
-                    // The chat is full-screen now: instead of a border
-                    // surviving at the last row, every row of every size
-                    // is filled edge to edge and none of them opens with
-                    // chrome. A reader's rule and the hairline chaining
-                    // consecutive actions may start a row; a corner or a
-                    // junction is what a frame around the page would be.
-                    let lines: Vec<&str> = rendered.lines().collect();
-                    assert_eq!(lines.len(), height as usize);
-                    for (row, line) in lines.iter().enumerate() {
-                        assert_eq!(
-                            line.chars().count(),
-                            width as usize,
-                            "row {row} is not filled at {width}x{height}"
-                        );
-                        let first = line.chars().next().expect("a filled row");
-                        assert!(
-                            !"┌┐└┘├┤┬┴┼".contains(first),
-                            "row {row} opens with chrome at {width}x{height}: {line:?}"
-                        );
+    type State = (Model, ViewState, &'static str);
+
+    fn states() -> Vec<State> {
+        let model = fold(idle_msgs());
+        let working = working_model();
+        let mut view = chat_view();
+        {
+            let chat = view.chat.as_mut().expect("chat open");
+            chat.composer_mut().insert_str("draft\nwith lines");
+            chat.set_scroll(amux_tui::chat::FeedScroll::Paused {
+                top_line: 2,
+                entry_watermark: 0,
+            });
+        }
+        // Panel, reader, and read-only states join the sweep: their bottom
+        // blocks clamp (tail kept, body rows give way) so the footer and
+        // border survive every height.
+        let ask = fold(edit_ask_msgs());
+        let questions = fold(tabbed_question_msgs());
+        let plan = fold(plan_ask_msgs());
+        let readonly = fold({
+            let mut msgs = readonly_msgs();
+            msgs.push(batch(
+                "2026-08-12T09:02:10Z",
+                20,
+                vec![edit_hook("harness.rs", "a\n", "b\n")],
+            ));
+            msgs
+        });
+        let mut docked_plan_view = reconciled_view(&plan);
+        press(&mut docked_plan_view, &plan, KeyCode::Esc);
+        let mut help_view = chat_view();
+        help_view.chat.as_mut().expect("chat open").set_help(true);
+        vec![
+            (model.clone(), view.clone(), IDLE_NOW),
+            (working, view, WORKING_NOW),
+            (ask.clone(), reconciled_view(&ask), WORKING_NOW),
+            (questions.clone(), reconciled_view(&questions), WORKING_NOW),
+            (plan.clone(), reconciled_view(&plan), WORKING_NOW),
+            (plan, docked_plan_view, WORKING_NOW),
+            (readonly.clone(), reconciled_view(&readonly), IDLE_NOW),
+            (model, help_view, IDLE_NOW),
+        ]
+    }
+
+    fn check_widths(first: u16, last: u16) {
+        const MIN_WIDTH: u16 = 24;
+        const MIN_HEIGHT: u16 = 10;
+        static STATES: std::sync::OnceLock<std::sync::Mutex<Vec<State>>> =
+            std::sync::OnceLock::new();
+        // Views have mutable paint caches; each case gets its own copy while
+        // the provider rows are parsed and folded only once for the harness.
+        let states = STATES
+            .get_or_init(|| std::sync::Mutex::new(states()))
+            .lock()
+            .expect("viewport fixtures")
+            .clone();
+        for width in first..=last {
+            for height in 1..=40u16 {
+                for (model, view, now) in &states {
+                    let rendered = render_frame_at(model, view, width, height, now);
+                    if width >= MIN_WIDTH && height >= MIN_HEIGHT {
+                        // The chat is full-screen now: instead of a border
+                        // surviving at the last row, every row of every size
+                        // is filled edge to edge and none of them opens with
+                        // chrome. A reader's rule and the hairline chaining
+                        // consecutive actions may start a row; a corner or a
+                        // junction is what a frame around the page would be.
+                        let lines: Vec<&str> = rendered.lines().collect();
+                        assert_eq!(lines.len(), height as usize);
+                        for (row, line) in lines.iter().enumerate() {
+                            assert_eq!(
+                                line.chars().count(),
+                                width as usize,
+                                "row {row} is not filled at {width}x{height}"
+                            );
+                            let first = line.chars().next().expect("a filled row");
+                            assert!(
+                                !"┌┐└┘├┤┬┴┼".contains(first),
+                                "row {row} opens with chrome at {width}x{height}: {line:?}"
+                            );
+                        }
                     }
                 }
             }
         }
+    }
+
+    // Each width range still exercises every height and all eight states.
+    macro_rules! widths {
+        ($($name:ident: $first:literal..=$last:literal),+ $(,)?) => {
+            $(#[test]
+            fn $name() {
+                check_widths($first, $last);
+            })+
+        };
+    }
+
+    widths! {
+        widths_001_005: 1..=5,
+        widths_006_010: 6..=10,
+        widths_011_015: 11..=15,
+        widths_016_020: 16..=20,
+        widths_021_025: 21..=25,
+        widths_026_030: 26..=30,
+        widths_031_035: 31..=35,
+        widths_036_040: 36..=40,
+        widths_041_045: 41..=45,
+        widths_046_050: 46..=50,
+        widths_051_055: 51..=55,
+        widths_056_060: 56..=60,
+        widths_061_065: 61..=65,
+        widths_066_070: 66..=70,
+        widths_071_075: 71..=75,
+        widths_076_080: 76..=80,
+        widths_081_085: 81..=85,
+        widths_086_090: 86..=90,
+        widths_091_095: 91..=95,
+        widths_096_100: 96..=100,
+        widths_101_105: 101..=105,
+        widths_106_110: 106..=110,
+        widths_111_115: 111..=115,
+        widths_116_120: 116..=120,
     }
 }
 

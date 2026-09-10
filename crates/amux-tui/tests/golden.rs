@@ -534,14 +534,51 @@ fn fleet_too_narrow() {
 /// No viewport size may panic the renderer: sweep the fleet across every
 /// width and height a terminal could plausibly report. (Regression: widths
 /// below the layout minimum underflowed the right-info column arithmetic.)
-#[test]
-fn rendering_never_panics_at_any_viewport_size() {
-    let model = fleet_model();
-    let view = view_default();
-    for width in 1..=200u16 {
-        for height in 1..=60u16 {
-            let _ = render_frame_at(&model, &view, width, height);
+mod rendering_never_panics_at_any_viewport_size {
+    use super::*;
+
+    fn check_widths(first: u16, last: u16) {
+        static MODEL: std::sync::OnceLock<Model> = std::sync::OnceLock::new();
+        let model = MODEL.get_or_init(fleet_model);
+        let view = view_default();
+        for width in first..=last {
+            for height in 1..=60u16 {
+                let _ = render_frame_at(model, &view, width, height);
+            }
         }
+    }
+
+    // Independent width ranges let libtest distribute the full viewport matrix.
+    macro_rules! widths {
+        ($($name:ident: $first:literal..=$last:literal),+ $(,)?) => {
+            $(#[test]
+            fn $name() {
+                check_widths($first, $last);
+            })+
+        };
+    }
+
+    widths! {
+        widths_001_010: 1..=10,
+        widths_011_020: 11..=20,
+        widths_021_030: 21..=30,
+        widths_031_040: 31..=40,
+        widths_041_050: 41..=50,
+        widths_051_060: 51..=60,
+        widths_061_070: 61..=70,
+        widths_071_080: 71..=80,
+        widths_081_090: 81..=90,
+        widths_091_100: 91..=100,
+        widths_101_110: 101..=110,
+        widths_111_120: 111..=120,
+        widths_121_130: 121..=130,
+        widths_131_140: 131..=140,
+        widths_141_150: 141..=150,
+        widths_151_160: 151..=160,
+        widths_161_170: 161..=170,
+        widths_171_180: 171..=180,
+        widths_181_190: 181..=190,
+        widths_191_200: 191..=200,
     }
 }
 
