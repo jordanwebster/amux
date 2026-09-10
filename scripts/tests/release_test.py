@@ -14,6 +14,7 @@ import plistlib
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -79,15 +80,106 @@ class TheMarketingVersion(unittest.TestCase):
         self.assertEqual("1.1.1", recipe.next_version(
             ["ios-v1.0.32-b41"], current="1.1.0"))
 
-    def test_it_refuses_a_version_that_does_not_move_forward(self):
+    def test_it_refuses_a_version_below_the_highest_known_one(self):
         with self.assertRaises(recipe.Refusal) as refused:
             recipe.next_version(["ios-v1.0.32-b41"], current="1.0.31",
-                                override="1.0.32")
-        self.assertIn("1.0.32", str(refused.exception))
+                                override="1.0.30")
+        self.assertIn("1.0.30", str(refused.exception))
+
+    def test_another_build_may_be_cut_under_the_version_already_here(self):
+        # The App Store refuses a version that is not above the last version
+        # it released, and refuses a reused build number. It does not refuse a
+        # second build of a version nobody has released yet — which is exactly
+        # what a first upload rejected by review needs.
+        self.assertEqual("1.0.31", recipe.next_version(
+            [], current="1.0.31", override="1.0.31"))
+        self.assertEqual("1.0.32", recipe.next_version(
+            ["ios-v1.0.32-b41"], current="1.0.31", override="1.0.32"))
 
     def test_a_minor_release_is_named_by_hand(self):
         self.assertEqual("1.1.0", recipe.next_version(
             ["ios-v1.0.32-b41"], current="1.0.31", override="1.1.0"))
+
+
+class TheNumbersReachingTheProject(unittest.TestCase):
+    """Writing both numbers is what a tag then promises the binary carries."""
+
+    def spec(self, root: Path, text: str) -> Path:
+        written = root / recipe.SPEC
+        written.parent.mkdir(parents=True, exist_ok=True)
+        written.write_text(text)
+        return written
+
+    @contextlib.contextmanager
+    def project(self, text):
+        """A checkout whose spec is `text`, with project generation stubbed.
+
+        Generating the Xcode project is Xcode's business and needs the whole
+        app; what is under test is the two substitutions."""
+        with checkout() as root:
+            written = self.spec(root, text)
+            with unittest.mock.patch.object(recipe.ios_project, "generate"):
+                yield written
+
+    def test_both_numbers_are_substituted(self):
+        with self.project('    settings:\n'
+                          '      MARKETING_VERSION: "1.0.31"\n'
+                          '      CURRENT_PROJECT_VERSION: "1"\n') as written:
+            recipe.write_numbers("1.2.3", 44)
+            self.assertIn('MARKETING_VERSION: "1.2.3"', written.read_text())
+            self.assertIn('CURRENT_PROJECT_VERSION: "44"', written.read_text())
+            self.assertEqual(("1.2.3", 44),
+                             recipe.project_numbers(written.read_text()))
+
+    def test_a_spec_neither_substitution_matches_is_refused(self):
+        # The failure this rules out: a renamed or restructured setting leaves
+        # the text untouched, the write succeeds, and the release tags numbers
+        # the built app does not carry.
+        text = "targets:\n  Amux:\n    type: application\n"
+        with self.project(text) as written:
+            with self.assertRaises(recipe.Refusal) as refused:
+                recipe.write_numbers("1.2.3", 44)
+            self.assertIn("MARKETING_VERSION", str(refused.exception))
+            self.assertIn("CURRENT_PROJECT_VERSION", str(refused.exception))
+            self.assertEqual(text, written.read_text())
+
+    def test_half_a_spec_is_refused_too(self):
+        with self.project('      MARKETING_VERSION: "1.0.31"\n') as written:
+            with self.assertRaises(recipe.Refusal) as refused:
+                recipe.write_numbers("1.2.3", 44)
+            self.assertIn("CURRENT_PROJECT_VERSION", str(refused.exception))
+            self.assertNotIn("1.2.3", written.read_text())
+
+    def test_the_committed_spec_is_one_the_substitutions_match(self):
+        with self.project((ROOT / recipe.SPEC).read_text()) as written:
+            recipe.write_numbers("9.9.9", 999)
+            self.assertEqual(("9.9.9", 999),
+                             recipe.project_numbers(written.read_text()))
+
+
+class TheRehearsal(unittest.TestCase):
+    """The claim that a rehearsal wrote nothing is measured, not asserted.
+
+    A rehearsal regenerates the Xcode project and drives a full archive and
+    export; either could leave a tracked file changed, and a promise nobody
+    checked is exactly how that would go unnoticed."""
+
+    def test_a_tree_in_the_state_it_started_in_has_changed_nothing(self):
+        self.assertEqual([], recipe.tree_changes("", ""))
+        self.assertEqual([], recipe.tree_changes(" M notes/scratch.md\n",
+                                                 " M notes/scratch.md\n"))
+
+    def test_a_file_the_run_wrote_is_named(self):
+        self.assertEqual([" M ios/project.yml"], recipe.tree_changes(
+            "", " M ios/project.yml\n"))
+        self.assertEqual(["?? ios/Amux/Generated.swift"], recipe.tree_changes(
+            " M notes/scratch.md\n",
+            " M notes/scratch.md\n?? ios/Amux/Generated.swift\n"))
+
+    def test_the_claim_and_the_refusal_both_come_from_that_comparison(self):
+        source = (SCRIPTS / "release.py").read_text()
+        self.assertIn("changed = tree_changes(facts[\"tree\"], tree())", source)
+        self.assertIn("rehearsal changed the tree, which it must not", source)
 
 
 class TheTag(unittest.TestCase):

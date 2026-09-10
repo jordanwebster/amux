@@ -30,9 +30,18 @@ can be passed to `xcodebuild` instead.
 
 `wt run release` derives the next version by bumping the patch component of
 the highest version it knows — the one in the project, or a higher one in the
-tags; `--version X.Y.Z` names a minor or major release instead. It refuses
-any version that does not move strictly forward, because the App Store
-rejects a version string that does not.
+tags; `--version X.Y.Z` names a different one instead. The only version it
+refuses is one *below* the highest it knows, because a version can never move
+backwards.
+
+`--version` may name the version already here, and that is not a mistake: the
+App Store rejects a version string that is not above the version it last
+**released**, and it rejects a build number that has been used before. It does
+not object to several builds carrying one marketing version while that version
+is unreleased — which is exactly what happens when the first attempt at a
+version is rejected in review, or when a validation finds something to fix. So
+`--version 1.0.32 --build 3` is a legitimate second attempt at 1.0.32; what is
+spent by each attempt is the build number, never the version.
 
 The project carries `1.0.31`, which is the version live on the App Store
 today, so the next release is `1.0.32` and is the next version of that
@@ -280,7 +289,10 @@ rehearsal does not care. A real release does, and refuses. `--rehearse` goes all
 a validated `.ipa` using the numbers the next release *would* use, but writes
 nothing to the tree and cuts no tag, so it can be run as often as you like —
 validation spends no build number, so running it a hundred times costs
-nothing but the wait.
+nothing but the wait. It proves the "writes nothing" half rather than
+promising it: `git status --porcelain` is read before the run and again after
+it, and a rehearsal that left any path changed names those paths and fails
+instead of printing the claim.
 Neither mode, and not the full run either, ever pushes or uploads.
 
 ## Where it stops

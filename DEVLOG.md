@@ -4,6 +4,31 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **A release may cut a second build of an unreleased version.**
+
+`wt run release --version` refused any version that was not strictly above the
+highest one in the tags or the project, so every attempt at a release spent a
+marketing version. That is not the App Store's rule: it rejects a version
+string that is not above the last version actually released, and rejects a
+reused build number, but accepts several builds under one unreleased version —
+which is what a build rejected in review needs. The recipe now refuses only a
+version below the highest it knows, and the release guide states the real
+constraint instead of "strictly forward".
+
+Writing the numbers is no longer able to fail silently: both substitutions into
+`ios/project.yml` must match, or the run refuses rather than tagging numbers
+the built app does not carry. A rehearsal's promise that it wrote nothing is
+now measured — `git status --porcelain` before and after, naming the changed
+paths and failing instead of printing the claim.
+
+The Release scope audit now opens the bundle's resources as well as its
+symbols, refusing a build carrying `frozen-frame.png` or any AmuxTestSupport
+resource; the code that reads those files was already excluded, but the files
+could still arrive through a copy phase. The 91 recipe tests, the scope audit
+and a full archive-export-validate rehearsal pass.
+
+---
+
 2026-09-10 — **Wait for profile fixture ports to become available on restart.**
 
 The installation test fixture now awaits the same bounded TCP rebind used by

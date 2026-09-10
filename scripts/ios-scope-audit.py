@@ -28,6 +28,12 @@ FORBIDDEN_APIS = (
     "DNSServiceBrowse", "NSNetServiceBrowser",
 )
 FORBIDDEN_ROWS = ("Live Activity", "Live Activities", "Mute", "Notifications")
+# Resources that only the driving and capture tools need. Code that reads them
+# is caught by the symbol list above, but a resource can be carried into the
+# bundle on its own — a stray copy phase, or a package whose test-support
+# target became a dependency of the app — and then it ships as dead weight
+# that says the app was built with the door open.
+FORBIDDEN_RESOURCES = ("frozen-frame.png", "AmuxTestSupport")
 
 
 def run(argv, *, timeout=120, check=True):
@@ -88,9 +94,22 @@ def icon_violations(info: dict, bundle: Path) -> list[str]:
     return failures
 
 
+def resource_violations(bundle: Path) -> list[str]:
+    """Refuse a bundle carrying a file only the debug tools have a use for."""
+    failures = []
+    for path in sorted(bundle.rglob("*")):
+        name = path.name
+        for excluded in FORBIDDEN_RESOURCES:
+            if name == excluded or excluded in name:
+                failures.append("excluded resource in the bundle: "
+                                f"{path.relative_to(bundle)}")
+                break
+    return failures
+
+
 def bundle_violations(info: dict, entitlements: dict, settings: dict,
                       bundle: Path) -> list[str]:
-    failures = icon_violations(info, bundle)
+    failures = icon_violations(info, bundle) + resource_violations(bundle)
     if "aps-environment" in entitlements:
         failures.append("push entitlement: aps-environment")
     if "NSBonjourServices" in info:
@@ -208,7 +227,7 @@ def main() -> None:
     failures += graph_violations(graphs + rust_graph)
     detector_probe()
     lines = [f"Release app: {APP}",
-             "Inspected: Info.plist, the app icon, entitlements, build destinations, executable symbols,",
+             "Inspected: Info.plist, the app icon, bundle resources, entitlements, build destinations, executable symbols,",
              "compiled strings and the complete Swift package and locked Rust dependency graphs.",
              "Detector rejected a compiler-built test executable carrying a debug export."]
     if failures:
@@ -216,6 +235,7 @@ def main() -> None:
     else:
         lines += [f"PASS: icon {info['CFBundleIconName']} named at the top level of Info.plist "
                   f"and a {'x'.join(map(str, png_size(APP / 'AppIcon60x60@2x.png')))} iPhone icon in the bundle.",
+                  "PASS: no frozen-frame or test-support resource in the bundle.",
                   "PASS: no push authorization, Live Activity, Mute or Notifications row;",
                   "no Bonjour declaration or network browser; iPhone destinations only;",
                   "no amuxcloud or React Native package; no driving or report-capture code.",

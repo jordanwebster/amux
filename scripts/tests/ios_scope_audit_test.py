@@ -90,6 +90,42 @@ class ScopeAuditTests(unittest.TestCase):
                 self.assertTrue(audit.bundle_violations(info, {}, settings | {flag: "YES"}, bundle))
         self.assertTrue(audit.bundle_violations(info, {}, settings | {"SUPPORTED_PLATFORMS": "macosx"}, bundle))
 
+    def test_debug_only_resources_in_the_bundle_are_rejected(self):
+        # Symbols catch the code that reads these files; nothing else catches
+        # the files themselves arriving through a copy phase or a package that
+        # became a dependency of the app.
+        bundle = Path(tempfile.mkdtemp())
+        png(bundle / "AppIcon60x60@2x.png", 120, 120)
+        (bundle / "AmuxDesign_AmuxDesign.bundle").mkdir()
+        (bundle / "en.lproj").mkdir()
+        self.assertEqual(audit.resource_violations(bundle), [])
+
+        frozen = bundle / "AmuxDesign_AmuxDesign.bundle" / "frozen-frame.png"
+        png(frozen, 10, 10)
+        self.assertIn("excluded resource in the bundle: "
+                      "AmuxDesign_AmuxDesign.bundle/frozen-frame.png",
+                      audit.resource_violations(bundle))
+        frozen.unlink()
+
+        (bundle / "AmuxTestSupport_AmuxTestSupport.bundle").mkdir()
+        self.assertIn("excluded resource in the bundle: "
+                      "AmuxTestSupport_AmuxTestSupport.bundle",
+                      audit.resource_violations(bundle))
+
+    def test_the_whole_bundle_check_carries_the_resource_verdict(self):
+        bundle = Path(tempfile.mkdtemp())
+        png(bundle / "AppIcon60x60@2x.png", 120, 120)
+        info = {"UIDeviceFamily": [1], "CFBundleIconName": "AppIcon"}
+        settings = {"TARGETED_DEVICE_FAMILY": "1",
+                    "SUPPORTED_PLATFORMS": "iphoneos iphonesimulator",
+                    "SUPPORTS_MACCATALYST": "NO",
+                    "SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD": "NO",
+                    "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD": "NO"}
+        self.assertEqual(audit.bundle_violations(info, {}, settings, bundle), [])
+        png(bundle / "frozen-frame.png", 10, 10)
+        self.assertIn("excluded resource in the bundle: frozen-frame.png",
+                      audit.bundle_violations(info, {}, settings, bundle))
+
     def test_transitive_cloud_and_legacy_dependencies_are_rejected(self):
         clean = {"name": "AmuxTestSupport", "dependencies": [{"name": "AmuxCore"}]}
         self.assertEqual(audit.graph_violations([clean]), [])

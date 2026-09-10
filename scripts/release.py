@@ -88,7 +88,15 @@ def next_version(tags: list[str], current: str, override: str = "") -> str:
 
     The highest known one is the greater of what the project carries and what
     the tags record, so a version raised by hand in the project is honoured
-    and a tag is never overtaken by accident."""
+    and a tag is never overtaken by accident.
+
+    `--version` may name that highest version again rather than a higher one.
+    A marketing version carries as many builds as it needs while it is
+    unreleased — App Store Connect only refuses a version that is not above
+    the last version the App Store actually released, and refuses a build
+    number that has been used before. It is the build number, not the version,
+    that is spent by every attempt. What is never allowed is going backwards,
+    so a lower version is refused."""
     issued = [version for version, _ in released(tags)]
     here = tuple(int(part) for part in current.split("."))
     if len(here) != 3:
@@ -98,11 +106,12 @@ def next_version(tags: list[str], current: str, override: str = "") -> str:
             raise Refusal(f"--version {override} is not a three-part version")
         wanted = tuple(int(part) for part in override.split("."))
         highest = max(issued + [here])
-        if wanted <= highest:
+        if wanted < highest:
             raise Refusal(
-                f"--version {override} is not above {'.'.join(str(p) for p in highest)}, "
-                "which is already released or already in the project. The App "
-                "Store refuses a version string that does not move forward")
+                f"--version {override} is below {'.'.join(str(p) for p in highest)}, "
+                "which the project already carries or a tag already records. A "
+                "version may take another build while it is unreleased, but it "
+                "can never move backwards")
         return override
     major, minor, patch = max(issued + [here])
     return f"{major}.{minor}.{patch + 1}"
@@ -226,13 +235,29 @@ class Check:
         return f"  [{'present' if self.held else 'MISSING'}] {self.what}: {self.detail}"
 
 
+def tree() -> str:
+    """Every path git considers changed, as one block of text."""
+    return subprocess.run(["git", "status", "--porcelain"],
+                          capture_output=True, text=True, timeout=120).stdout
+
+
+def tree_changes(before: str, after: str) -> list[str]:
+    """The paths a run left changed that it did not find changed.
+
+    Compared line by line rather than as whole text, so a tree that was
+    already dirty before the run — which a rehearsal allows — does not read as
+    a change the run made. A porcelain line begins with its status columns, so
+    the lines are not stripped."""
+    return sorted({line for line in after.splitlines() if line.strip()}
+                  - {line for line in before.splitlines() if line.strip()})
+
+
 def inputs() -> tuple[list[Check], dict]:
     """Everything the run needs, asked without doing any of it."""
     checks, facts = [], {}
 
-    dirty = subprocess.run(["git", "status", "--porcelain"],
-                           capture_output=True, text=True, timeout=120).stdout.strip()
-    facts["clean"] = not dirty
+    dirty = tree().strip()
+    facts["clean"], facts["tree"] = not dirty, dirty
     # Reported rather than demanded: the tree's state changes minute to minute
     # and is not something a person has to produce once. A real release
     # refuses on it; a preflight or a rehearsal says so and carries on.
@@ -329,9 +354,22 @@ def notes(version: str, notes_file: str) -> str:
 
 
 def write_numbers(version: str, build: int) -> None:
+    """Put both numbers into the spec, or refuse to have written nothing.
+
+    Two substitutions against a file this script does not own: a spec that
+    renamed or restructured either setting would leave the text untouched and
+    the release would then tag numbers the built app does not carry. So a
+    substitution that matched nothing is a refusal, not a silent no-op."""
     spec = SPEC.read_text()
-    spec = MARKETING.sub(rf'\g<1>"{version}"', spec, count=1)
-    spec = BUILD.sub(rf'\g<1>"{build}"', spec, count=1)
+    spec, marketing = MARKETING.subn(rf'\g<1>"{version}"', spec, count=1)
+    spec, current = BUILD.subn(rf'\g<1>"{build}"', spec, count=1)
+    if not marketing or not current:
+        missing = " and ".join(
+            name for name, wrote in (("MARKETING_VERSION", marketing),
+                                     ("CURRENT_PROJECT_VERSION", current))
+            if not wrote)
+        raise Refusal(f"{SPEC} has no {missing} line this script can write; "
+                      "the numbers would not have reached the built app")
     SPEC.write_text(spec)
     # The project is generated and committed, so the numbers reach
     # ios/Amux.xcodeproj in the same commit that raises them.
@@ -497,7 +535,16 @@ def main() -> int:
     print(f"release notes beside it in {written}")
     validate(exported, facts)
     if arguments.rehearse:
-        print("rehearsal: nothing was written to the tree and no tag was cut")
+        # The claim is measured, not asserted: a rehearsal regenerates the
+        # project and drives Xcode, either of which could leave a tracked file
+        # changed, and a promise nobody checked is how that goes unnoticed.
+        changed = tree_changes(facts["tree"], tree())
+        if changed:
+            print("rehearsal changed the tree, which it must not: "
+                  + "; ".join(changed), file=sys.stderr)
+            return 1
+        print("rehearsal: git status --porcelain is what it was before the "
+              "run, so nothing was written to the tree, and no tag was cut")
     print("nothing was uploaded and nothing was pushed")
     return 0
 
