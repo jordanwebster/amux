@@ -170,6 +170,8 @@ jobs:
         with:
           components: clippy
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - name: Install nightly rustfmt
+        run: rustup toolchain install nightly --profile minimal --component rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Install build tools
         run: |

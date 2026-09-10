@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Check nightly Rust formatting during whole verification.**
+
+`wt run fmt-check` runs the same nightly rustfmt check as CI under a five-minute
+deadline. Whole iOS verification runs it before lint and tests, so local green
+verification cannot miss a formatting failure. The iOS runner installs nightly
+rustfmt alongside its stable build toolchain. An xtask test pins the command
+and its position before compilation.
+
+---
+
 2026-09-10 — **Match nightly Rust formatting for host revocation.**
 
 Wrap the remote connection close call as nightly rustfmt requires. This only

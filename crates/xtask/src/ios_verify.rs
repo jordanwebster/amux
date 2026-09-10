@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 // Ordering matters: build the bridge and app before simulator checks. Destructive
 // baseline updates and deliberate-failure probes are separate developer commands.
 const RECIPES: &[&str] = &[
+    "fmt-check",
     "lint",
     "test",
     "spec",
@@ -222,6 +223,17 @@ mod tests {
             Some("scripts/ios-verify.sh")
         );
         assert!(include_str!("../../../scripts/ios-verify.sh").contains("xtask -- ios-verify"));
+    }
+
+    #[test]
+    fn ios_verify_checks_nightly_formatting_before_compilation() {
+        let config = include_str!("../../../.wt.toml");
+        assert_eq!(recipes(config).unwrap()[0], "fmt-check");
+        let config: toml::Value = toml::from_str(config).unwrap();
+        assert_eq!(
+            config["task"]["fmt-check"]["run"].as_str(),
+            Some("timeout 300 cargo +nightly fmt --all -- --check")
+        );
     }
 
     #[test]

@@ -45,6 +45,9 @@ run = "timeout 60 python3 -m unittest discover -s scripts/tests -p '*_test.py' -
 [task.lint]
 run = "cargo clippy --workspace --all-targets -- -D warnings"
 
+[task.fmt-check]
+run = "timeout 300 cargo +nightly fmt --all -- --check"
+
 # Selected by target name across the workspace rather than by package:
 # a `-p` selection unifies dependency features differently from the
 # workspace build and would compile a second copy of every shared crate.
