@@ -24,6 +24,7 @@ file this repository tracks.
 
 from pathlib import Path
 import argparse
+import datetime
 import plistlib
 import re
 import shutil
@@ -39,6 +40,12 @@ TEAM_SETTING = "DEVELOPMENT_TEAM"
 KEYCHAIN_SERVICE = "amux-appstoreconnect"
 KEY_DIRECTORY = Path.home() / ".appstoreconnect/private_keys"
 EXPORT_OPTIONS = Path("ios/ExportOptions.plist")
+# Where Xcode looks for provisioning profiles. The export names the profile it
+# wants, so the profile has to be sitting here before a release runs.
+PROFILES = Path.home() / "Library/MobileDevice/Provisioning Profiles"
+# The certificate type an App Store build is signed with. A full identity name
+# is "Apple Distribution: <person> (<Team ID>)".
+DISTRIBUTION = "Apple Distribution"
 RELEASE_DIRECTORY = Path("target/ios/release")
 DERIVED_DATA = Path("target/ios/ReleaseDerivedData")
 ARCHIVE = RELEASE_DIRECTORY / "Amux.xcarchive"
@@ -152,6 +159,64 @@ def team() -> str:
     return ""
 
 
+def identities() -> list[str]:
+    """Every code-signing identity in this Mac's keychains, by name."""
+    found = subprocess.run(["security", "find-identity", "-v", "-p", "codesigning"],
+                           capture_output=True, text=True, timeout=60)
+    return re.findall(r'"([^"]+)"', found.stdout)
+
+
+def distribution_identity(names: list[str], identity: str) -> str:
+    """The distribution certificate this team signs releases with.
+
+    Matched on the Team ID in the name's parentheses, which is what tells two
+    accounts' certificates apart when both are in one keychain."""
+    for name in names:
+        if name.startswith(f"{DISTRIBUTION}: ") and name.endswith(f"({identity})"):
+            return name
+    return ""
+
+
+def wanted_profiles() -> dict:
+    """The profiles the export options name, keyed by bundle id."""
+    if not EXPORT_OPTIONS.exists():
+        return {}
+    return plistlib.loads(EXPORT_OPTIONS.read_bytes()).get("provisioningProfiles", {})
+
+
+def usable(profiles: list[dict], name: str) -> dict:
+    """The profile with that name that has not expired.
+
+    An expired profile is not a profile: an export signed with one is rejected
+    the same way an absent one is, so it is reported as absent."""
+    now = datetime.datetime.now()
+    for profile in profiles:
+        expires = profile.get("ExpirationDate")
+        if profile.get("Name") == name and expires and expires > now:
+            return profile
+    return {}
+
+
+def installed_profiles() -> list[dict]:
+    """Every provisioning profile on this Mac, decoded.
+
+    A profile is a signed message wrapping a plist, so it is decoded rather
+    than read; one that will not decode is not one Xcode could use either."""
+    found = []
+    if not PROFILES.is_dir():
+        return found
+    for path in sorted(PROFILES.glob("*.mobileprovision")):
+        decoded = subprocess.run(["security", "cms", "-D", "-i", str(path)],
+                                 capture_output=True, timeout=60)
+        if decoded.returncode != 0:
+            continue
+        try:
+            found.append(plistlib.loads(decoded.stdout))
+        except Exception:
+            continue
+    return found
+
+
 class Check:
     def __init__(self, what: str, held: bool, detail: str) -> None:
         self.what, self.held, self.detail = what, held, detail
@@ -210,6 +275,29 @@ def inputs() -> tuple[list[Check], dict]:
     checks.append(Check("the export options", EXPORT_OPTIONS.exists(),
                         f"{EXPORT_OPTIONS}" if EXPORT_OPTIONS.exists()
                         else f"{EXPORT_OPTIONS} is not here"))
+
+    # The export signs by hand, so the certificate and the profile are inputs
+    # a person produces once, exactly like the key. Checking them here is what
+    # turns "the export failed somewhere in Xcode" into one named missing
+    # piece.
+    signer = distribution_identity(identities(), identity) if identity else ""
+    facts["certificate"] = signer
+    checks.append(Check(
+        f"an {DISTRIBUTION} certificate", bool(signer),
+        "in this Mac's login keychain, with its private key" if signer else
+        f"no {DISTRIBUTION} certificate for this Team ID has its private key "
+        "in the login keychain. docs/RELEASE.md has the one-time setup that "
+        "creates one and imports it"))
+
+    here = installed_profiles()
+    for bundle, name in sorted(wanted_profiles().items()):
+        held = bool(usable(here, name))
+        checks.append(Check(
+            f"the {name!r} provisioning profile", held,
+            f"installed for {bundle} and unexpired" if held else
+            f"no unexpired profile named {name!r} in {PROFILES}. The export "
+            f"names it for {bundle}, so it has to be there first; "
+            "docs/RELEASE.md says how it is made"))
     return checks, facts
 
 

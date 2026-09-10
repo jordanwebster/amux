@@ -4,6 +4,43 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **The release export signs by hand, and the Team ID is the certificate's OU.**
+
+`wt run release -- --rehearse` now archives *and* exports a signed `.ipa` on
+this Mac. Two things had to change.
+
+The archive was failing with *No Account for Team*, which reads like a missing
+Apple Account and is not. `ios/Signing.local.xcconfig` held the ten characters
+from the parentheses of a Development certificate's common name — the
+individual's identifier, not the Team ID. The Team ID is the `OU` on every
+certificate in the account. Same shape, same plausibility, entirely different
+value; `docs/RELEASE.md` now says so where somebody about to make the same
+copy will read it.
+
+With that corrected the archive signed, and the *export* then failed:
+automatic signing answers *Cloud signing permission error* and then claims no
+profile exists for `sh.amux.app`, with an active matching profile installed.
+Xcode's cloud signing does not work from a script against this account, so
+`ios/ExportOptions.plist` is now `signingStyle: manual`, naming the
+certificate *type* `Apple Distribution` (a full identity name would carry the
+Team ID into a committed file — `teamID`, inserted at run time, picks which
+one) and the profile `amux App Store` for `sh.amux.app`.
+
+Signing by hand makes the certificate and the profile standing inputs rather
+than things a run can create, so `--preflight` now checks for both: an Apple
+Distribution identity whose name ends in this Team ID, and an unexpired
+installed profile under each name the export options ask for. An expired
+profile is reported as absent, because exporting with one fails the same way.
+Tests cover the identity match, the expiry rule and the shape of the committed
+export options.
+
+The chain has been run to Apple's validation servers by hand and rejected for
+one reason: the app has no icon (`CFBundleIconName` missing, no 120×120
+asset). That is a real gap in the product, not the pipeline, and is now
+scheduled separately.
+
+---
+
 2026-09-10 — **One command releases the iPhone app, and stops before Apple.**
 
 `wt run release` derives the next marketing version and build number, writes

@@ -6,6 +6,7 @@ once a build reaches Apple. No test here builds, signs, exports or uploads.
 """
 
 import contextlib
+import datetime
 import importlib.util
 import os
 from pathlib import Path
@@ -160,6 +161,72 @@ class TheExportOptions(unittest.TestCase):
             written = recipe.export_options("ABCDE12345")
             self.assertEqual(
                 "ABCDE12345", plistlib.loads(written.read_bytes())["teamID"])
+
+
+    def test_it_signs_by_hand_because_cloud_signing_cannot(self):
+        # Xcode's cloud signing refuses to fetch a profile for this account
+        # from a script, so the export names what it signs with.
+        options = plistlib.loads((ROOT / recipe.EXPORT_OPTIONS).read_bytes())
+        self.assertEqual("manual", options["signingStyle"])
+        self.assertEqual("sh.amux.app",
+                         next(iter(options["provisioningProfiles"])))
+
+    def test_the_named_certificate_carries_no_account_identifier(self):
+        # A full identity name ends in "(<Team ID>)" and this file is
+        # committed, so the type is named and teamID picks the identity.
+        options = plistlib.loads((ROOT / recipe.EXPORT_OPTIONS).read_bytes())
+        self.assertEqual(recipe.DISTRIBUTION, options["signingCertificate"])
+        self.assertNotIn("(", options["signingCertificate"])
+
+
+class TheDistributionCertificate(unittest.TestCase):
+    def test_it_is_the_one_belonging_to_this_team(self):
+        # Two accounts' certificates can sit in one keychain and only the
+        # Team ID in the parentheses tells them apart.
+        found = recipe.distribution_identity([
+            "Apple Development: Jordan Webster (AAAAAAAAAA)",
+            "Apple Distribution: Someone Else (BBBBBBBBBB)",
+            "Apple Distribution: Jordan Webster (CCCCCCCCCC)",
+        ], "CCCCCCCCCC")
+        self.assertEqual("Apple Distribution: Jordan Webster (CCCCCCCCCC)", found)
+
+    def test_a_development_identity_is_not_one(self):
+        self.assertEqual("", recipe.distribution_identity(
+            ["Apple Development: Jordan Webster (CCCCCCCCCC)"], "CCCCCCCCCC"))
+
+    def test_an_empty_keychain_leaves_no_certificate(self):
+        self.assertEqual("", recipe.distribution_identity([], "CCCCCCCCCC"))
+
+
+class TheProvisioningProfile(unittest.TestCase):
+    def profile(self, name, days):
+        return {"Name": name,
+                "ExpirationDate": datetime.datetime.now()
+                + datetime.timedelta(days=days)}
+
+    def test_the_export_names_one_per_bundle_id(self):
+        with checkout() as root:
+            (root / "ios").mkdir()
+            (root / recipe.EXPORT_OPTIONS).write_bytes(
+                (ROOT / recipe.EXPORT_OPTIONS).read_bytes())
+            self.assertEqual({"sh.amux.app": "amux App Store"},
+                             recipe.wanted_profiles())
+
+    def test_the_one_with_that_name_is_chosen(self):
+        profiles = [self.profile("something else", 30),
+                    self.profile("amux App Store", 30)]
+        self.assertEqual("amux App Store",
+                         recipe.usable(profiles, "amux App Store")["Name"])
+
+    def test_an_expired_profile_counts_as_absent(self):
+        # Exporting with an expired profile fails the same way exporting
+        # without one does, so the run should name the same missing piece.
+        profiles = [self.profile("amux App Store", -1)]
+        self.assertEqual({}, recipe.usable(profiles, "amux App Store"))
+
+    def test_a_profile_with_no_expiry_is_not_trusted(self):
+        self.assertEqual({}, recipe.usable([{"Name": "amux App Store"}],
+                                           "amux App Store"))
 
 
 class WhatItNeverDoes(unittest.TestCase):

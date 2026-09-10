@@ -130,12 +130,48 @@ one assignment it expects and passes it on the command line. When the file is
 absent or the assignment is missing, the recipe says exactly which piece is
 missing and exits non-zero.
 
+**The Team ID is the certificate's `OU`, not the name in its parentheses.**
+An identity reads `Apple Distribution: <person> (<ten characters>)`, and the
+string in the parentheses is *usually* the Team ID but is the individual's
+identifier on a personal Development certificate — a different value, ten
+characters long, that looks exactly as plausible. Writing that one into
+`ios/Signing.local.xcconfig` costs an afternoon: every credential is valid,
+every flag is right, and `xcodebuild` stops with *No Account for Team "…".
+Add a new account in Accounts settings*, which reads like a missing Apple
+Account rather than a wrong ten characters. Take the Team ID from
+developer.apple.com under **Membership details**, or read the `OU` field of
+any certificate in the account:
+
+```
+security find-certificate -c "Apple Distribution" -p | \
+  openssl x509 -noout -subject
+```
+
+**The export signs by hand.** `ios/ExportOptions.plist` sets
+`signingStyle: manual` and names both the certificate type
+(`Apple Distribution`) and the profile (`amux App Store`, for
+`sh.amux.app`). Automatic signing is what Xcode does in the IDE, and it does
+not work here: the export answers *Cloud signing permission error* and then
+*No profiles for `sh.amux.app` were found*, with an active matching profile
+sitting installed. Signing by hand means **the certificate and the profile
+must already exist on the Mac before an export** — nothing creates them
+mid-run. It also means two names are pinned: rename the profile in Apple's
+portal and the export stops. The certificate type is named rather than one
+certificate's full name, because a full name ends in the Team ID and that
+file is committed.
+
+**The certificate expires.** The one on this Mac runs to **10 September
+2027**. When it does, the export fails to find an identity: make a new Apple
+Distribution certificate, install it, and make a new `amux App Store` profile
+tied to it — the profile is bound to the certificate and does not survive it.
+Keeping the same two names means nothing in this repository changes.
+
 So: **a simulator build needs nothing** — no team, no certificate, no
 profile. **A distribution archive needs** the Team ID above, an Apple
 Distribution certificate in the login keychain, an App Store provisioning
-profile for `sh.amux.app`, and the App Store Connect API key. The last three
-are produced once and then reused; the [checklist](#one-time-operator-setup)
-at the end is how they come to exist.
+profile named `amux App Store` for `sh.amux.app`, and the App Store Connect
+API key. The last three are produced once and then reused; the
+[checklist](#one-time-operator-setup) at the end is how they come to exist.
 
 ## The commands
 
@@ -185,19 +221,22 @@ that identifies a team. Its keys:
 | --- | --- | --- |
 | `method` | `app-store-connect` | the App Store distribution shape; the export is still local |
 | `destination` | `export` | write the `.ipa` here. `upload` is what this recipe never does |
-| `signingStyle` | `automatic` | the certificate and profile are chosen and, if needed, created |
+| `signingStyle` | `manual` | the export names what it signs with. Automatic signing fails here — see [Signing](#signing) |
+| `signingCertificate` | `Apple Distribution` | the certificate *type*; `teamID` picks which identity in the keychain. A full name would carry the Team ID into a committed file |
+| `provisioningProfiles` | `sh.amux.app` → `amux App Store` | the profile by name. It has to be installed already |
 | `manageAppVersionAndBuildNumber` | `false` | Xcode may otherwise rewrite the build number at export. The number this repository chose and tagged is the number that ships |
 | `uploadSymbols` | `true` | symbols travel with the archive so crash reports are readable |
 
-`-allowProvisioningUpdates` is what takes a person out of the loop. Without
-it, a missing or expired App Store provisioning profile, or a certificate
-that has to be regenerated, is a task somebody performs in a browser or in
-Xcode's Accounts pane before the build can proceed — with 2FA, on a schedule
-nobody controls. With it, and with the API key passed by the three
-`-authenticationKey*` flags, `xcodebuild` talks to the Apple Developer
-website itself: it creates and refreshes the app ID, the certificate and the
-profile as the build needs them. The key replaces an interactive Apple
-Account entirely, which is what lets a release run unattended.
+The API key, passed by the three `-authenticationKey*` flags, is what takes a
+person out of the loop: `xcodebuild` authenticates to the Apple Developer
+website with it instead of an Apple Account, so no password and no 2FA prompt
+appears in a release. `-allowProvisioningUpdates` lets it register and
+refresh what it can — the app ID, and the development profile the archive
+signs with — rather than stopping to ask. It does *not* extend to the
+distribution profile: Xcode's cloud signing refuses that from a script here,
+which is why the export signs by hand against a profile made once. The
+distribution certificate and the `amux App Store` profile are therefore
+standing inputs, and `wt run release -- --preflight` reports them as such.
 
 Validate, the last step:
 
@@ -230,9 +269,10 @@ signing access above is in place. The command it will run is the `altool`
 invocation above.
 
 `--preflight` checks what the run needs — the signing file, the key and both
-identifiers in the keychain, the private key on disk, the export options, and
-a derivable version and build number — names anything missing and exits
-non-zero if anything is. It reports the tree's state too, but does not fail
+identifiers in the keychain, the private key on disk, the export options, the
+Apple Distribution certificate in the login keychain, an unexpired profile
+under each name the export options ask for, and a derivable version and build
+number — names anything missing and exits non-zero if anything is. It reports the tree's state too, but does not fail
 on it: an uncommitted file is not something a person produces once, and a
 rehearsal does not care. A real release does, and refuses. `--rehearse` goes all the way to
 a validated `.ipa` using the numbers the next release *would* use, but writes
@@ -275,13 +315,12 @@ arrangement that is on this Mac today; follow it to reproduce it on another.
   read, and the release will fail partway through with an authorization
   error.
 - Enable **Access to Certificates, Identifiers & Profiles** on the key. This
-  is a separate grant from the role, and without it the key can still read
-  and upload while `xcodebuild` cannot create the certificate or the
-  provisioning profile a build needs. The failure names neither the key nor
-  the missing access — the archive stops with *No Account for Team "…". Add a
-  new account in Accounts settings* and *No profiles for `sh.amux.app` were
-  found* — so it is worth getting right at creation time. A key that already
-  exists without the access cannot be changed; make another one.
+  is a separate grant from the role, and it is what lets the key create the
+  distribution certificate and the provisioning profile in step 5 instead of
+  a person clicking through the portal. A key that already exists without the
+  access cannot be changed; make another one. Confirm a key has it by asking
+  for the list it gates: `GET /v1/certificates` answers 200 with the access
+  and 403 without.
 - **Download the `.p8` file now.** It can be downloaded exactly once. Apple
   never shows it again, and there is no recovery: a lost key is replaced by
   revoking it and creating another. This is the only irreversible step in the
@@ -315,7 +354,9 @@ security add-generic-password -s amux-appstoreconnect -a team-id   -w <Team ID>
 
 Read one back with
 `security find-generic-password -s amux-appstoreconnect -a key-id -w`. The
-Team ID is on developer.apple.com under **Membership details**.
+Team ID is on developer.apple.com under **Membership details** — and see the
+warning in [Signing](#signing) before copying one out of a certificate name,
+because the string in an identity's parentheses is not always it.
 
 **4. Write the local signing file.**
 
@@ -328,31 +369,46 @@ printf 'DEVELOPMENT_TEAM = %s\n' \
 `.gitignore` already covers it. Confirm with
 `git check-ignore -q ios/Signing.local.xcconfig`.
 
-**5. The distribution certificate — try not to make one by hand.** Run
-`wt run release -- --rehearse`. With `-allowProvisioningUpdates` and a key
-that carries the access from step 1, `xcodebuild` creates the certificate and
-the provisioning profile itself and puts them in the login keychain. A Mac
-that has only an Apple Development identity is the normal starting point, and
-this is the step that fills the gap.
+**5. Make the distribution certificate and the App Store profile.** Both,
+once. The export signs by hand, so neither appears on its own during a run —
+a Mac that has only an Apple Development identity is the normal starting
+point and this is the step that fills the gap.
 
-If the archive stops with *No Account for Team* while `xcrun altool
---list-apps` with the same key still lists the app, the key authenticates but
-has no access to Certificates, Identifiers & Profiles. Make a new key with
-that access rather than looking for the fault in the build.
+On developer.apple.com: **Certificates, Identifiers & Profiles →
+Certificates → +**, choose **Apple Distribution**, and upload a certificate
+signing request produced by **Keychain Access → Certificate Assistant →
+Request a Certificate From a Certificate Authority** (saved to disk).
+Download the resulting `.cer` and double-click it to install it, with its
+private key, into the login keychain. Then **Profiles → +**, choose **App
+Store Connect** distribution, select `sh.amux.app` and that certificate, and
+name the profile exactly **`amux App Store`** — `ios/ExportOptions.plist`
+asks for that name. Download it and double-click it to install it into
+`~/Library/MobileDevice/Provisioning Profiles`.
 
-Only if that fails: on developer.apple.com, **Certificates, Identifiers &
-Profiles → Certificates → +**, choose **Apple Distribution**, upload a
-certificate signing request produced by **Keychain Access → Certificate
-Assistant → Request a Certificate From a Certificate Authority** (saved to
-disk), download the resulting `.cer` and double-click it to install it into
-the login keychain. A team may hold a limited number of distribution
-certificates at a time; revoking an old one you can no longer find the
-private key for is normal and breaks nothing that is already on the App
-Store.
+The same two things can be created through the App Store Connect API with the
+key from step 1, which is how the pair on this Mac was made; the private key
+still has to be generated locally and the signed certificate imported by
+hand, so the browser is not much slower.
 
-**6. Check it.** `wt run release -- --preflight` reports every input and
-names anything missing. Nothing in this step reaches Apple beyond
-authenticating.
+A team may hold a limited number of distribution certificates at a time.
+Revoking an old one whose private key you can no longer find is normal and
+breaks nothing already on the App Store — Apple re-signs submitted builds
+during processing, so a shipped app does not depend on the certificate that
+signed it staying valid.
+
+Confirm both landed:
+
+```
+security find-identity -v -p codesigning        # names an Apple Distribution identity
+ls ~/Library/MobileDevice/Provisioning\ Profiles/
+```
+
+**6. Check it.** `wt run release -- --preflight` reports every input —
+including the certificate and the profile from step 5, by name — and says
+which one is missing. Nothing in this step reaches Apple beyond
+authenticating. Then `wt run release -- --rehearse` archives and exports for
+real, writing nothing to the tree and cutting no tag, which is the proof that
+the arrangement works end to end.
 
 None of the values above — the key, its id, the issuer id or the Team ID —
 appear in any committed file, and none of them should be pasted into one.
