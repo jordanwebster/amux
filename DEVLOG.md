@@ -26,31 +26,35 @@ recipe does not do; it reads back from `altool --list-apps` when wanted.
 
 ---
 
-2026-09-10 — **The app has an icon, and Apple validates the build.**
+2026-09-10 — **The app carries the icon it already ships with.**
 
 There was no asset catalog anywhere under `ios/`. Every check this app has
 runs on the simulator, and the simulator shows an app with no icon quite
 happily, so the gap first appeared at Apple's validation servers: code 90022
-for no 120×120 image and 90713 for a missing `CFBundleIconName`.
+for no 120x120 image and 90713 for a missing `CFBundleIconName`.
 
-The icon is drawn rather than stored. `ios/Icon/RenderAppIcon.swift` renders
-one 1024×1024 PNG with CoreGraphics and `wt run icon` runs it; the catalog
-compiler derives every other size. The mark is what the app is — three
-channels coming in and one bright channel carrying them out — in the design
-system's accent teal on the dark end of its neutral ramp, so the icon and the
-first screen it opens are the same two colours. Drawing it as code means the
-committed image is always exactly what a readable file says, and a hue or a
-stroke can be changed without a design tool.
+The icon is not new work. The 1024x1024 artwork already published on the App
+Store is copied into
+`ios/Amux/Assets.xcassets/AppIcon.appiconset/AppIcon.png` byte for byte, and
+that committed file is the only copy a build sees — nothing designs, draws,
+scales or regenerates it, and no script reads it from another checkout. One
+image is the whole set; the catalog compiler derives every size iOS and the
+App Store ask for.
 
 `CFBundleIconName` is declared in `ios/project.yml` rather than left to the
 catalog compiler, which writes its own copy nested inside `CFBundleIcons`
-where Apple does not look. The canvas has no alpha channel, which the App
-Store also rejects. `scripts/tests/icon_test.py` checks the set exists, that
-every image it names is present, the size, the absence of alpha, that the
-catalog is compiled into the app and that both build settings are there — so
-none of it can regress into an upload.
+where Apple does not look.
 
-`xcrun altool --validate-app` on the exported `.ipa` now answers *VERIFY
+Two checks stand on either side of the build. `scripts/tests/icon_test.py`
+reads the sources: the set exists, every image it names is present, the size
+is 1024x1024, there is no alpha channel (which the App Store also rejects),
+the catalog is in the app target and the Info.plist key is declared. The
+release scope audit reads the result, refusing a built bundle whose
+Info.plist has no top-level `CFBundleIconName` or that carries no 120x120
+`AppIcon60x60@2x.png` — the two things Apple actually complained about, now
+caught before an export rather than after one.
+
+`xcrun altool --validate-app` on the exported `.ipa` answers *VERIFY
 SUCCEEDED with no errors*. Nothing was uploaded and no build number was
 spent.
 

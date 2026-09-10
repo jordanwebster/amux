@@ -167,12 +167,6 @@ run = "scripts/ios-verify.sh"
 # stops; --rehearse archives and exports the would-be release without writing
 # the tree or cutting a tag. docs/RELEASE.md holds the contract, including the
 # one-time App Store Connect setup behind it.
-# Redraws the app icon from ios/Icon/RenderAppIcon.swift. The PNG it writes
-# is committed, so this only has to run when the drawing changes; a build
-# never invokes it.
-[task.icon]
-run = 'timeout 300 swift ios/Icon/RenderAppIcon.swift ios/Amux/Assets.xcassets/AppIcon.appiconset/AppIcon.png'
-
 [task.release]
 run = 'timeout 5400 python3 -B scripts/release.py "$@"'
 needs = ["ios-rust"]

@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import plistlib
 import re
+import struct
 import subprocess
 import tomllib
 
@@ -46,8 +47,43 @@ def binary_violations(symbols: str, strings: str) -> list[str]:
     return failures
 
 
-def bundle_violations(info: dict, entitlements: dict, settings: dict) -> list[str]:
+def png_size(path: Path) -> tuple[int, int]:
+    """A PNG's pixel width and height, read from its IHDR chunk.
+
+    An image library would be a dependency this repository does not otherwise
+    need for two numbers at a fixed offset."""
+    raw = path.read_bytes()
+    if raw[:8] != b"\x89PNG\r\n\x1a\n":
+        raise AssertionError(f"{path} is not a PNG")
+    width, height = struct.unpack(">II", raw[16:24])
+    return width, height
+
+
+def icon_violations(info: dict, bundle: Path) -> list[str]:
+    """Refuse a bundle the App Store would reject for having no icon.
+
+    Apple rejects an upload with code 90713 unless `CFBundleIconName` sits at
+    the top level of Info.plist — the catalog compiler writes its own copy
+    nested inside `CFBundleIcons`, which is not the one read — and with code
+    90022 unless the bundle carries an iPhone app icon of exactly 120x120.
+    Neither shows up in a simulator run: an app with no icon launches
+    perfectly well. So the built bundle is inspected here, where a release
+    stops on it instead of a validation server doing so."""
     failures = []
+    if not info.get("CFBundleIconName"):
+        failures.append("no top-level CFBundleIconName in Info.plist")
+    iphone_icon = bundle / "AppIcon60x60@2x.png"
+    if not iphone_icon.is_file():
+        failures.append("no 120x120 iPhone app icon: AppIcon60x60@2x.png is absent")
+    elif png_size(iphone_icon) != (120, 120):
+        failures.append("iPhone app icon is "
+                        f"{'x'.join(map(str, png_size(iphone_icon)))}, not 120x120")
+    return failures
+
+
+def bundle_violations(info: dict, entitlements: dict, settings: dict,
+                      bundle: Path) -> list[str]:
+    failures = icon_violations(info, bundle)
     if "aps-environment" in entitlements:
         failures.append("push entitlement: aps-environment")
     if "NSBonjourServices" in info:
@@ -136,7 +172,7 @@ def main() -> None:
             path = Path(settings["SRCROOT"]) / path
         grants |= plistlib.loads(path.read_bytes())
     (OUTPUT / "entitlements.json").write_text(json.dumps(grants, indent=2))
-    failures = bundle_violations(info, grants, settings)
+    failures = bundle_violations(info, grants, settings, APP)
     symbols, strings = inspect_binary(APP / info["CFBundleExecutable"])
     (OUTPUT / "symbols.txt").write_text(symbols)
     # Include compiled localization resources: a row may no longer be a literal
@@ -165,13 +201,15 @@ def main() -> None:
     failures += graph_violations(graphs + rust_graph)
     detector_probe()
     lines = [f"Release app: {APP}",
-             "Inspected: Info.plist, entitlements, build destinations, executable symbols,",
+             "Inspected: Info.plist, the app icon, entitlements, build destinations, executable symbols,",
              "compiled strings and the complete Swift package and locked Rust dependency graphs.",
              "Detector rejected a compiler-built test executable carrying a debug export."]
     if failures:
         lines += ["FAIL: " + failure for failure in failures]
     else:
-        lines += ["PASS: no push authorization, Live Activity, Mute or Notifications row;",
+        lines += [f"PASS: icon {info['CFBundleIconName']} named at the top level of Info.plist "
+                  f"and a {'x'.join(map(str, png_size(APP / 'AppIcon60x60@2x.png')))} iPhone icon in the bundle.",
+                  "PASS: no push authorization, Live Activity, Mute or Notifications row;",
                   "no Bonjour declaration or network browser; iPhone destinations only;",
                   "no amuxcloud or React Native package; no driving or report-capture code.",
                   "PASS: in-app attention copy and Contact Support remain."]

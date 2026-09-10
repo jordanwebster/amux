@@ -146,34 +146,37 @@ light/dark goldens and baseline explanation.
 
 ## The app icon
 
-The icon is drawn, not stored: `ios/Icon/RenderAppIcon.swift` is a
-CoreGraphics script that writes
-`ios/Amux/Assets.xcassets/AppIcon.appiconset/AppIcon.png`, and `wt run icon`
-runs it. The PNG is committed — a build never invokes the script — so the
-recipe only has to run when the drawing changes.
+The icon is the one already published on the App Store, copied into this
+repository as
+`ios/Amux/Assets.xcassets/AppIcon.appiconset/AppIcon.png`. Nothing in the
+build designs, draws, scales or regenerates it, and no script reads the
+artwork from anywhere else — the committed PNG is the only copy a build sees,
+so the app that ships from here carries the same mark as the app already on
+the store.
 
-One 1024×1024 image is the whole icon. The asset catalog compiler derives
-every size iOS and the App Store ask for, so there is nothing to keep in
-step by hand.
+One 1024×1024 image is the whole set. The asset catalog compiler derives
+every size iOS and the App Store ask for, so there is nothing to keep in step
+by hand. Replacing the icon means replacing that one file.
 
-The mark is what the app is: three channels coming in and one bright channel
-carrying them out, in the design system's accent teal on the dark end of its
-neutral ramp, so the icon and the first screen it opens are the same two
-colours. It is drawn in the dark appearance in both, because an icon is seen
-against a wallpaper rather than a page.
-
-Two rules the App Store enforces, both checked by `scripts/tests/icon_test.py`
-so neither can regress into an upload:
+Three rules the App Store enforces, none of which shows up before a
+validation, because a simulator build shows an app with no icon quite
+happily:
 
 - **No alpha channel.** An icon with one is rejected outright, and a
-  transparent pixel on a home screen has nothing to show through to. The
-  renderer opens its canvas with `noneSkipLast` for exactly this.
+  transparent pixel on a home screen has nothing to show through to.
+- **A 120×120 iPhone icon in the bundle.** The catalog compiler writes
+  `AppIcon60x60@2x.png`; an upload without it fails with code 90022.
 - **A top-level `CFBundleIconName`.** `ios/project.yml` declares it. The
   catalog compiler writes its own copy nested inside `CFBundleIcons`, which
   is not where Apple looks; without the declared one the upload fails with
-  code 90713, and without a 120×120 image with code 90022. Neither failure
-  appears before validation — a simulator build shows an app with no icon
-  quite happily.
+  code 90713.
+
+`scripts/tests/icon_test.py` checks the sources: the set is there, every image
+it names is present, the size is right, there is no alpha, the catalog is
+compiled into the app target and the Info.plist key is declared.
+`wt run ios-scope-audit` proves the other side, opening the built bundle and
+refusing a build whose Info.plist has no top-level `CFBundleIconName` or that
+carries no 120×120 `AppIcon60x60@2x.png`.
 
 ## Journeys and replay
 

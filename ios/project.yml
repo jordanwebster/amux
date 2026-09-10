@@ -79,7 +79,9 @@ targets:
       # The app icon. One 1024x1024 image; the catalog compiler derives every
       # size iOS and the App Store ask for, and writes CFBundleIconName into
       # the built Info.plist. Without it the App Store rejects the upload.
-      # ios/Icon/RenderAppIcon.swift draws it — `wt run icon` redraws it.
+      # The artwork is the one already published on the App Store, copied
+      # into this repository byte for byte: nothing here designs, scales or
+      # regenerates it.
       - path: Amux/Assets.xcassets
         buildPhase: resources
       # The two subscriptions, as the App Store would describe them, so a

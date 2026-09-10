@@ -5,7 +5,12 @@ missing 120x120 image and 90713 for a missing `CFBundleIconName` — and
 nothing in a simulator build notices, because the simulator shows an app
 without an icon quite happily. The first time the gap appears is at
 validation, after an archive, an export and a signing round trip. So it is
-checked here instead, from the sources the icon is compiled out of.
+checked here instead, from the sources the icon is compiled out of, and again
+in the release scope audit, from the bundle a build produces.
+
+The artwork itself is the published App Store icon, copied into this
+repository. Nothing generates it, so these checks describe a committed file
+rather than a step that has to be re-run.
 """
 
 import json
@@ -17,7 +22,6 @@ ROOT = Path(__file__).resolve().parents[2]
 CATALOG = ROOT / "ios/Amux/Assets.xcassets"
 ICON = CATALOG / "AppIcon.appiconset"
 SPEC = ROOT / "ios/project.yml"
-DRAWING = ROOT / "ios/Icon/RenderAppIcon.swift"
 
 
 def png_header(path: Path) -> tuple[int, int, int, int]:
@@ -63,12 +67,6 @@ class TheIconSet(unittest.TestCase):
         _, _, depth, colour = png_header(ICON / "AppIcon.png")
         self.assertEqual(8, depth)
         self.assertEqual(2, colour, "the icon carries an alpha channel")
-
-    def test_the_drawing_it_comes_from_is_here(self):
-        # The PNG is committed, but it is generated: `wt run icon` redraws it.
-        # A committed image whose source had been deleted could not be changed
-        # by anybody who came later.
-        self.assertTrue(DRAWING.is_file())
 
 
 class TheProject(unittest.TestCase):
