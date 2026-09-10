@@ -931,11 +931,11 @@ impl Inner {
 
                 listeners: self.listeners,
                 #[cfg(testnet)]
-                fixtures: self
-                    .fixtures
-                    .as_ref()
-                    .map(|factory| factory(id))
-                    .unwrap_or_default(),
+                fixtures: if let Some(factory) = &self.fixtures {
+                    factory(id).await
+                } else {
+                    Default::default()
+                },
             };
             let config_path = paths.config_path.as_ref().unwrap();
             if config_path.exists() {
@@ -1293,4 +1293,4 @@ mod tests;
 #[cfg(testnet)]
 mod testnet;
 #[cfg(testnet)]
-use testnet::RuntimeFixtureFactory;
+pub(crate) use testnet::RuntimeFixtureFactory;

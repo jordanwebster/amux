@@ -2,8 +2,11 @@
 
 use super::*;
 
-pub(super) type RuntimeFixtureFactory =
-    Arc<dyn Fn(ProfileId) -> runtime::RuntimeFixtures + Send + Sync>;
+pub(crate) type RuntimeFixtureFactory = Arc<
+    dyn Fn(ProfileId) -> futures_util::future::BoxFuture<'static, runtime::RuntimeFixtures>
+        + Send
+        + Sync,
+>;
 
 impl Installation {
     pub(crate) async fn hold_update_preparation_for_test(

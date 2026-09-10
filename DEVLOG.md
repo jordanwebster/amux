@@ -4,6 +4,23 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Wait for profile fixture ports to become available on restart.**
+
+The installation test fixture now awaits the same bounded TCP rebind used by
+relay and standalone-daemon restarts. Its one-shot bind could fail with
+`AddrInUse` after shutdown. The test-only factory yields while the address is
+occupied, without holding the fixture registry lock, and preserves the stored
+address. A port that remains occupied still fails after five seconds.
+
+A controlled occupied-port regression fails on the previous binding path and
+passes with the repair. It checks same-address reconnection, exclusive listener
+ownership and an unlocked registry during the wait. A second regression proves
+that persistent contention exhausts the deadline instead of changing ports.
+Both regressions, all 31 profile specifications and the 81 recipe tests pass.
+The lifecycle assertions and production listener behavior are unchanged.
+
+---
+
 2026-09-10 — **Reset local view state when opening a screen fixture.**
 
 The debug driver now gives each fixture's view the identity of its fresh store

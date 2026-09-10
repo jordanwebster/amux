@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::daemon::{CloudAttachment, DaemonInner, TestArtifactClock};
 use super::{Daemon, NetInner};
+use crate::installation::supervisor::RuntimeFixtureFactory;
 use crate::installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
@@ -39,6 +40,9 @@ struct FixturePlan {
     cloud_only: VecDeque<bool>,
 }
 type Fixtures = Arc<Mutex<FixturePlan>>;
+
+#[cfg(test)]
+mod tests;
 
 pub(crate) struct ProfileOwner {
     installation: Weak<InstallationInner>,
@@ -482,51 +486,51 @@ fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
     }
 }
 
-fn fixture_factory(
-    fixtures: Fixtures,
-    relay_addr: Option<SocketAddr>,
-) -> Arc<dyn Fn(ProfileId) -> RuntimeFixtures + Send + Sync> {
+fn fixture_factory(fixtures: Fixtures, relay_addr: Option<SocketAddr>) -> RuntimeFixtureFactory {
     Arc::new(move |id| {
-        let mut fixtures = fixtures.lock().unwrap();
-        let cloud_only = if let Some(fixture) = fixtures.profiles.get(&id) {
-            fixture.tcp_addr.is_none()
-        } else {
-            fixtures.cloud_only.pop_front().unwrap_or(false)
-        };
-        let listener = if cloud_only {
-            None
-        } else {
-            let addr = fixtures
+        let fixtures = fixtures.clone();
+        Box::pin(async move {
+            let addr = {
+                let mut fixtures = fixtures.lock().unwrap();
+                if let Some(fixture) = fixtures.profiles.get(&id) {
+                    fixture.tcp_addr
+                } else if fixtures.cloud_only.pop_front().unwrap_or(false) {
+                    None
+                } else {
+                    Some("127.0.0.1:0".parse().unwrap())
+                }
+            };
+            // A stopped runtime's port can remain occupied briefly. Use the
+            // daemon/relay restart bound, yielding without the fixture lock so
+            // socket teardown can finish on the same runtime.
+            let listener = if let Some(addr) = addr {
+                Some(super::net::bind_addr_with_retries(addr).await)
+            } else {
+                None
+            };
+            let mut fixtures = fixtures.lock().unwrap();
+            let fixture = fixtures
                 .profiles
-                .get(&id)
-                .and_then(|fixture| fixture.tcp_addr)
-                .unwrap_or_else(|| "127.0.0.1:0".parse().unwrap());
-            let listener =
-                std::net::TcpListener::bind(addr).expect("bind profile fixture LAN listener");
-            listener.set_nonblocking(true).unwrap();
-            Some(listener)
-        };
-        let fixture = fixtures
-            .profiles
-            .entry(id)
-            .or_insert_with(|| ProfileFixture {
-                tcp_addr: listener
-                    .as_ref()
-                    .map(|listener| listener.local_addr().unwrap()),
-                tracked_tcp: Default::default(),
-                clock: Arc::new(TestArtifactClock::new()),
-            });
-        RuntimeFixtures {
-            listener: listener.map(|listener| tokio::net::TcpListener::from_std(listener).unwrap()),
-            tracked_tcp: Some(fixture.tracked_tcp.clone()),
-            artifact_clock: Some(fixture.clock.clone()),
-            cloud: None,
-            cloud_transport: relay_addr.map(|addr| {
-                tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
-                    .unwrap()
-                    .connect_lazy()
-            }),
-        }
+                .entry(id)
+                .or_insert_with(|| ProfileFixture {
+                    tcp_addr: listener
+                        .as_ref()
+                        .map(|listener| listener.local_addr().unwrap()),
+                    tracked_tcp: Default::default(),
+                    clock: Arc::new(TestArtifactClock::new()),
+                });
+            RuntimeFixtures {
+                listener,
+                tracked_tcp: Some(fixture.tracked_tcp.clone()),
+                artifact_clock: Some(fixture.clock.clone()),
+                cloud: None,
+                cloud_transport: relay_addr.map(|addr| {
+                    tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
+                        .unwrap()
+                        .connect_lazy()
+                }),
+            }
+        })
     })
 }
 
