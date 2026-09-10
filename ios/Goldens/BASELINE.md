@@ -870,13 +870,20 @@ from the conversation behind it. There is no design reference at this size.
 - **The box grows to hold what is written, and keeps every word of it.** Four
   lines of a half-written sentence wrap inside the box rather than being cut to
   a line and an ellipsis.
-- **There is nothing behind it.** A feed long enough to scroll rests in one of
-  two places at this size — the box grows with the reader, the feed is held
-  clear of whatever height it settles on, and which of the two heights the
-  scroll view hears about first decides where the bottom is. It was a hundred
-  points at worst and one row of text showing through the glass at best. A
-  conversation at this size is what `ax-conversation` locks; this capture is of
-  the box, and a capture that cannot be taken twice locks nothing.
+- **The conversation behind the box is where it stopped.** A feed long enough
+  to scroll shows through the glass above the composer, and it shows the same
+  rows every time the capture is taken.
+
+The feed was emptied out of this fixture on 2026-09-08 because the capture
+alternated between two scroll offsets about a hundred points apart, and the
+baselines were retaken on 2026-09-10 with it back. The cause was in the
+transcript's own scrolling, not in the composer: the container fixed where the
+feed opened before the tall composer had reported its final height and bottom
+inset, and never looked again, so "the bottom" had two answers. It now places
+the tail from the content, container and inset heights it has actually
+observed, until the reader scrolls for themselves. Measured on this exact draft
+and transcript: 17 of 20 captures opened at the wrong offset with the old
+container, and 20 of 20 matched with the repaired one.
 
 ## unreadable-agent
 

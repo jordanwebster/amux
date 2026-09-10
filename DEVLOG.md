@@ -4,6 +4,33 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **The conversation is back behind the accessibility-size composer.**
+
+The capture that locks the composer at the largest text size used to have a
+long conversation showing through the glass above it. In September that
+conversation was taken out of the fixture, because the capture would not
+repeat: it opened at one of two scroll offsets about a hundred points apart,
+tossing independently in light and dark, and emptying the feed removed the
+variable.
+
+The cause was in the transcript's scrolling, not in the composer. The old
+container decided where the feed opened before the tall composer had reported
+its final height and bottom inset, and never looked again, so "the bottom" had
+two answers. The container now places the tail from the content, container and
+inset heights it has actually observed, and leaves the reader in charge once
+they scroll. Measured against the exact draft and conversation this capture
+uses: 17 of 20 openings landed wrong under the old container, and 20 of 20
+matched under the repaired one.
+
+So the fixture opens the conversation again, both baselines were retaken, and
+`wt run ios-goldens -- ax-composer` was run five times running against them,
+green in both appearances each time. One retaking hazard worth knowing: the
+first capture after a fresh install rendered the light transcript about a
+quarter of a point off from every subsequent run. Retake from a warm install,
+or retake twice and keep the second.
+
+---
+
 2026-09-10 — **A written file's path keeps the line its meta was taking.**
 
 A Wrote row draws the path the agent wrote and, on the trailing edge,
