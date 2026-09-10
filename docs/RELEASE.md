@@ -218,11 +218,16 @@ build, and is visible to nobody.
 ## One command
 
 ```
-wt run release              # bump, tag, archive, export, validate
+wt run release              # bump, tag, archive and export
 wt run release -- --preflight   # check every input, do nothing
-wt run release -- --rehearse    # archive, export and validate with the
-                                # would-be numbers; write nothing, tag nothing
+wt run release -- --rehearse    # archive and export with the would-be
+                                # numbers; write nothing, tag nothing
 ```
+
+Validation is the step that belongs at the end of all three, and it is not
+wired in yet: it needs an `.ipa`, and no Mac here can sign one until the
+signing access above is in place. The command it will run is the `altool`
+invocation above.
 
 `--preflight` checks what the run needs — the signing file, the key and both
 identifiers in the keychain, the private key on disk, the export options, and
@@ -269,6 +274,14 @@ arrangement that is on this Mac today; follow it to reproduce it on another.
   TestFlight and app metadata require. **Developer is not enough** — it can
   read, and the release will fail partway through with an authorization
   error.
+- Enable **Access to Certificates, Identifiers & Profiles** on the key. This
+  is a separate grant from the role, and without it the key can still read
+  and upload while `xcodebuild` cannot create the certificate or the
+  provisioning profile a build needs. The failure names neither the key nor
+  the missing access — the archive stops with *No Account for Team "…". Add a
+  new account in Accounts settings* and *No profiles for `sh.amux.app` were
+  found* — so it is worth getting right at creation time. A key that already
+  exists without the access cannot be changed; make another one.
 - **Download the `.p8` file now.** It can be downloaded exactly once. Apple
   never shows it again, and there is no recovery: a lost key is replaced by
   revoking it and creating another. This is the only irreversible step in the
@@ -316,11 +329,16 @@ printf 'DEVELOPMENT_TEAM = %s\n' \
 `git check-ignore -q ios/Signing.local.xcconfig`.
 
 **5. The distribution certificate — try not to make one by hand.** Run
-`wt run release -- --rehearse`. With `-allowProvisioningUpdates` and the API
-key, `xcodebuild` creates the Apple Distribution certificate and the App
-Store provisioning profile itself and puts them in the login keychain. A Mac
+`wt run release -- --rehearse`. With `-allowProvisioningUpdates` and a key
+that carries the access from step 1, `xcodebuild` creates the certificate and
+the provisioning profile itself and puts them in the login keychain. A Mac
 that has only an Apple Development identity is the normal starting point, and
 this is the step that fills the gap.
+
+If the archive stops with *No Account for Team* while `xcrun altool
+--list-apps` with the same key still lists the app, the key authenticates but
+has no access to Certificates, Identifiers & Profiles. Make a new key with
+that access rather than looking for the fault in the build.
 
 Only if that fails: on developer.apple.com, **Certificates, Identifiers &
 Profiles → Certificates → +**, choose **Apple Distribution**, upload a
