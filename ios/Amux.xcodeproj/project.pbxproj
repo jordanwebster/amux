@@ -715,12 +715,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = Amux/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.31;
 				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a";
 				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
 				SDKROOT = iphoneos;
@@ -739,6 +741,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = Amux/Info.plist;
@@ -746,6 +749,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.31;
 				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a";
 				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
 				SDKROOT = iphoneos;
@@ -784,6 +788,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				EXCLUDED_SOURCE_FILE_NAMES = "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*";
 				INFOPLIST_FILE = Amux/Info.plist;
@@ -791,6 +796,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.31;
 				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;

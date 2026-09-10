@@ -4,6 +4,33 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **One command releases the iPhone app, and stops before Apple.**
+
+`wt run release` derives the next marketing version and build number, writes
+them into `ios/project.yml`, commits, cuts an annotated `ios-v<version>-b<build>`
+tag, archives the app against the Release configuration with
+`-allowProvisioningUpdates` and the App Store Connect key, and exports a signed
+`.ipa` with the committed export options. It never pushes and never uploads.
+
+Both numbers moved out of the Info.plist and into the app target's
+`MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` settings, which the committed
+plist now reads as variables. That is what makes `--rehearse` possible: it
+archives and exports with the numbers the next release *would* carry, passing
+them to `xcodebuild` instead of writing them, so nothing in the tree changes
+and no tag is cut. `--preflight` reports the Team ID, the key's identifiers,
+the private key, the export options and the derived numbers, and stops. The
+version now reads 1.0.31 — the version live on the App Store — so the next
+release is the next version of that listing.
+
+Build numbers only ever go up: the tag names carry them, so `git tag` alone is
+the ledger, and the recipe refuses to reuse or lower one. `ios/ExportOptions.plist`
+is committed without a Team ID and copied with one inserted at run time, and
+`manageAppVersionAndBuildNumber` is false so Xcode cannot rewrite the number
+that was tagged.
+
+Green: `wt run release -- --preflight` (every input present, 1.0.32 build 2);
+`python3 -m unittest discover -s scripts/tests` (57 tests).
+
 2026-09-10 — **How the iPhone app ships, and the one-time Apple setup behind it.**
 
 `docs/RELEASE.md` settles the shape of releasing this app without Expo: where

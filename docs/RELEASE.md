@@ -19,25 +19,29 @@ different places. Both are committed — the bundle identifier in
 A build carries two numbers, and they are not interchangeable.
 
 **The marketing version** (`CFBundleShortVersionString`) is what a person
-sees in the App Store: `1.0.32`. It lives in one place, `ios/project.yml`
-under the app target's `info.properties`, and XcodeGen copies it into
-`ios/Amux/Info.plist` when the project is generated. Both files are
-committed, so a release commit shows the change in the diff. The release
-derives the next one by bumping the patch component of the version already
-there; `--version X.Y.Z` overrides that for a minor or major release. It
-refuses any version that is not strictly greater than the last one released,
-because the App Store rejects a version string that does not move forward.
+sees in the App Store: `1.0.32`. It lives in one place — the app target's
+`MARKETING_VERSION` build setting in `ios/project.yml` — and the committed
+`ios/Amux/Info.plist` reads it from there as `$(MARKETING_VERSION)`. Writing
+it as a build setting rather than a literal is what lets a rehearsal archive
+the version a release *would* cut without editing a tracked file: the number
+can be passed to `xcodebuild` instead.
 
-The version in `ios/project.yml` today is `0.1.0` with build `1`. That is a
-placeholder from before the app's identity was settled, and it is *below* the
-live listing's `1.0.31`. The first real release sets the train to `1.0.32` —
-above the shipped version — and seeds the build number as described next.
-Until that first run, do not read those two values as a release history.
+`wt run release` derives the next version by bumping the patch component of
+the highest version it knows — the one in the project, or a higher one in the
+tags; `--version X.Y.Z` names a minor or major release instead. It refuses
+any version that does not move strictly forward, because the App Store
+rejects a version string that does not.
+
+The project carries `1.0.31`, which is the version live on the App Store
+today, so the next release is `1.0.32` and is the next version of that
+listing rather than a restart.
 
 **The build number** (`CFBundleVersion`) is a single integer that identifies
-one binary forever. It lives beside the marketing version in
-`ios/project.yml` and is derived from the release tags: the highest build
-number any tag records, plus one. The recipe refuses to reuse a number and
+one binary forever. It lives beside the marketing version as
+`CURRENT_PROJECT_VERSION`, read by the bundle as
+`$(CURRENT_PROJECT_VERSION)`, and is derived the same way: one above the
+highest number anything knows of — the tags, or the project itself.
+`--build N` raises it deliberately. The recipe refuses to reuse a number and
 refuses to go backwards.
 
 That rule is not tidiness. A build number, once an upload has used it, is
@@ -152,8 +156,13 @@ xcodebuild archive \
   -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_<KEY ID>.p8" \
   -authenticationKeyID <key id> -authenticationKeyIssuerID <issuer id> \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic \
-  DEVELOPMENT_TEAM=<from ios/Signing.local.xcconfig>
+  DEVELOPMENT_TEAM=<from ios/Signing.local.xcconfig> \
+  MARKETING_VERSION=<version> CURRENT_PROJECT_VERSION=<build>
 ```
+
+The two numbers are passed rather than assumed: a full release has already
+written them into `ios/project.yml`, and a rehearsal has not written them
+anywhere, so passing them is what makes both runs archive the same way.
 
 Export:
 
@@ -215,9 +224,12 @@ wt run release -- --rehearse    # archive, export and validate with the
                                 # would-be numbers; write nothing, tag nothing
 ```
 
-`--preflight` checks what the run needs — a clean tree, the signing file, the
-key and both identifiers in the keychain, a derivable version and build
-number — names anything missing and exits. `--rehearse` goes all the way to
+`--preflight` checks what the run needs — the signing file, the key and both
+identifiers in the keychain, the private key on disk, the export options, and
+a derivable version and build number — names anything missing and exits
+non-zero if anything is. It reports the tree's state too, but does not fail
+on it: an uncommitted file is not something a person produces once, and a
+rehearsal does not care. A real release does, and refuses. `--rehearse` goes all the way to
 a validated `.ipa` using the numbers the next release *would* use, but writes
 nothing to the tree and cuts no tag, so it can be run as often as you like.
 Neither mode, and not the full run either, ever pushes or uploads.

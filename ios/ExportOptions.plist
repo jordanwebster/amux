@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The App Store distribution shape. The export itself stays local:
+	     `destination` is `export`, and nothing here uploads. -->
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<!-- Xcode may otherwise rewrite the build number while exporting. The
+	     number this repository derived, wrote and tagged is the number that
+	     ships; see docs/RELEASE.md. -->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+	<key>uploadSymbols</key>
+	<true/>
+	<!-- teamID is deliberately absent: it identifies a team and this file is
+	     committed. `wt run release` copies this file and inserts the Team ID
+	     from the untracked ios/Signing.local.xcconfig. -->
+</dict>
+</plist>
