@@ -1,8 +1,10 @@
 //! Deterministic raster captures of named `amux-tui` fixtures.
 
+use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use amux_tui::chat::{FeedScroll, handle_chat_mouse};
 use amux_tui::clipboard::ClipboardContent;
@@ -198,10 +200,20 @@ struct Fonts {
 }
 
 impl Fonts {
-    fn load() -> Result<Self, ShotError> {
-        fn parse(bytes: &'static [u8], face: &str) -> Result<Font, ShotError> {
+    fn shared() -> Result<&'static Self, ShotError> {
+        // Every capture uses the same embedded faces. Parsing them for each
+        // animation frame dominates the raster work and cannot change a pixel.
+        static FONTS: OnceLock<Result<Fonts, String>> = OnceLock::new();
+        FONTS
+            .get_or_init(Self::load)
+            .as_ref()
+            .map_err(|error| ShotError::Font(error.clone()))
+    }
+
+    fn load() -> Result<Self, String> {
+        fn parse(bytes: &'static [u8], face: &str) -> Result<Font, String> {
             Font::from_bytes(bytes, FontSettings::default())
-                .map_err(|error| ShotError::Font(format!("{face}: {error}")))
+                .map_err(|error| format!("{face}: {error}"))
         }
 
         Ok(Self {
@@ -286,7 +298,8 @@ pub fn record_scroll(
     encoder
         .set_repeat(Repeat::Infinite)
         .map_err(|error| ShotError::Encode(error.to_string()))?;
-    write_gif_frame(&mut encoder, initial_raster, FRAME_DELAY_CENTISECONDS)?;
+    let mut frames = GifFrames::default();
+    frames.write(&mut encoder, initial_raster, FRAME_DELAY_CENTISECONDS)?;
 
     let initial_scroll = fixture
         .view
@@ -324,7 +337,7 @@ pub fn record_scroll(
         let scroll = RecordedScrollState::from(chat.scroll());
         let buffer = render_fixture_buffer(&fixture, theme)?;
         let raster = rasterize(&buffer, theme)?;
-        write_gif_frame(&mut encoder, raster, FRAME_DELAY_CENTISECONDS)?;
+        frames.write(&mut encoder, raster, FRAME_DELAY_CENTISECONDS)?;
         events.push(ScrollEventRecord {
             frame: index + 1,
             event: kind,
@@ -386,13 +399,14 @@ fn record_script(
     encoder
         .set_repeat(Repeat::Infinite)
         .map_err(|error| ShotError::Encode(error.to_string()))?;
-    write_gif_frame(&mut encoder, initial, FRAME_DELAY_CENTISECONDS)?;
+    let mut frames = GifFrames::default();
+    frames.write(&mut encoder, initial, FRAME_DELAY_CENTISECONDS)?;
 
     let mut events = Vec::with_capacity(script.len());
     for (index, step) in script.iter().enumerate() {
         apply_step(&mut fixture, step);
         let raster = rasterize(&render_fixture_buffer(&fixture, theme)?, theme)?;
-        write_gif_frame(&mut encoder, raster, FRAME_DELAY_CENTISECONDS)?;
+        frames.write(&mut encoder, raster, FRAME_DELAY_CENTISECONDS)?;
         events.push(KeyEventRecord {
             frame: index + 1,
             input: step.label(),
@@ -579,20 +593,43 @@ fn update_key_event_log(out: &Path, recording: KeyRecording) -> Result<(), ShotE
     Ok(())
 }
 
-fn write_gif_frame<W: Write>(
-    encoder: &mut GifEncoder<W>,
-    raster: Raster,
-    delay: u16,
-) -> Result<(), ShotError> {
-    let width = u16::try_from(raster.width)
-        .map_err(|_| ShotError::Encode("GIF width exceeds u16".to_string()))?;
-    let height = u16::try_from(raster.height)
-        .map_err(|_| ShotError::Encode("GIF height exceeds u16".to_string()))?;
-    let mut frame = GifFrame::from_rgb_speed(width, height, &raster.pixels, 10);
-    frame.delay = delay;
-    encoder
-        .write_frame(&frame)
-        .map_err(|error| ShotError::Encode(error.to_string()))
+#[derive(Default)]
+struct GifFrames {
+    recent: VecDeque<(Raster, GifFrame<'static>)>,
+}
+
+impl GifFrames {
+    fn write<W: Write>(
+        &mut self,
+        encoder: &mut GifEncoder<W>,
+        raster: Raster,
+        delay: u16,
+    ) -> Result<(), ShotError> {
+        // Scrolling back down and returning from a sheet revisit exact frames.
+        // Reuse their expensive quantization only after comparing every RGB
+        // byte, and still emit each frame with its own delay. Bound retained
+        // raster/index data to about 65 MiB at the fixed capture viewport.
+        const CAPACITY: usize = 16;
+        if let Some(index) = self.recent.iter().position(|(pixels, _)| *pixels == raster) {
+            let cached = self.recent.remove(index).unwrap();
+            self.recent.push_back(cached);
+        } else {
+            let width = u16::try_from(raster.width)
+                .map_err(|_| ShotError::Encode("GIF width exceeds u16".to_string()))?;
+            let height = u16::try_from(raster.height)
+                .map_err(|_| ShotError::Encode("GIF height exceeds u16".to_string()))?;
+            let frame = GifFrame::from_rgb_speed(width, height, &raster.pixels, 10);
+            if self.recent.len() == CAPACITY {
+                self.recent.pop_front();
+            }
+            self.recent.push_back((raster, frame));
+        }
+        let (_, frame) = self.recent.back_mut().unwrap();
+        frame.delay = delay;
+        encoder
+            .write_frame(frame)
+            .map_err(|error| ShotError::Encode(error.to_string()))
+    }
 }
 
 fn update_scroll_event_log(out: &Path, recording: ScrollRecording) -> Result<(), ShotError> {
@@ -645,7 +682,7 @@ fn protocol_name(protocol: StructuredProtocol) -> &'static str {
 /// Rasterize every cell, including its foreground, background, bold, italic,
 /// and dim attributes, with the embedded JetBrains Mono faces.
 pub fn rasterize(buffer: &Buffer, theme: Theme) -> Result<Raster, ShotError> {
-    let fonts = Fonts::load()?;
+    let fonts = Fonts::shared()?;
     let width = u32::from(buffer.area.width) * CELL_WIDTH;
     let height = u32::from(buffer.area.height) * CELL_HEIGHT;
     let mut raster = Raster {
@@ -657,7 +694,7 @@ pub fn rasterize(buffer: &Buffer, theme: Theme) -> Result<Raster, ShotError> {
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
             let cell = &buffer[(x, y)];
-            paint_cell(&mut raster, &fonts, cell, theme, x, y);
+            paint_cell(&mut raster, fonts, cell, theme, x, y);
         }
     }
     Ok(raster)
@@ -1120,7 +1157,7 @@ mod tests {
 
     #[test]
     fn every_tui_chrome_glyph_has_a_vendored_face_in_every_style() {
-        let fonts = Fonts::load().unwrap();
+        let fonts = Fonts::shared().unwrap();
         let modifiers = [
             Modifier::empty(),
             Modifier::BOLD,
@@ -1175,6 +1212,37 @@ mod tests {
             serde_json::from_slice(&fs::read(directory.path().join("manifest.json")).unwrap())
                 .unwrap();
         assert_eq!(manifest.entries.len(), 2, "each render appends a row");
+    }
+
+    #[test]
+    fn reused_gif_frames_match_fresh_encoding_with_changed_pixels_and_delays() {
+        let mut cached = super::GifFrames::default();
+        let mut actual = super::GifEncoder::new(Vec::new(), 32, 16, &[]).unwrap();
+        let mut expected = super::GifEncoder::new(Vec::new(), 32, 16, &[]).unwrap();
+        // More than 256 colors exercises quantization; seventeen unique frames
+        // exceed the cache capacity before revisiting retained and evicted ones.
+        for (index, seed) in (0..17u8).chain([16, 8, 0, 16]).enumerate() {
+            let pixels = (0..512u16)
+                .flat_map(|pixel| [pixel as u8, (pixel / 2) as u8, seed])
+                .collect::<Vec<_>>();
+            let delay = index as u16 + 1;
+            let mut frame = super::GifFrame::from_rgb_speed(32, 16, &pixels, 10);
+            frame.delay = delay;
+            expected.write_frame(&frame).unwrap();
+            cached
+                .write(
+                    &mut actual,
+                    super::Raster {
+                        width: 32,
+                        height: 16,
+                        pixels,
+                    },
+                    delay,
+                )
+                .unwrap();
+            assert!(cached.recent.len() <= 16);
+        }
+        assert_eq!(actual.into_inner().unwrap(), expected.into_inner().unwrap());
     }
 
     /// The wheel works the same over a session driven by stream-JSON, so

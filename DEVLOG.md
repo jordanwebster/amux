@@ -4,6 +4,30 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Reuse font parsing and identical GIF palettes across captures.**
+
+The rasterizer parses its five embedded font faces once per process. GIF
+recordings retain up to sixteen quantized frames and reuse one only when the
+dimensions and every RGB byte match. Every event still renders and rasterizes
+its frame, and every frame is written in order with its original delay. The
+bounded cache retains about 65 MiB of raster and index data at the capture
+viewport. A regression test compares its complete GIF bytes with fresh
+encoding across changed pixels, delays and cache eviction.
+
+On the same idle M2 Max, the GIF library harness falls from 24.10 to 10.94
+seconds; all eleven existing tests and the new encoding test pass. The PNG,
+both complete 25-frame scroll GIFs and their manifests remain byte-identical.
+No frame, assertion, fixture row or golden baseline is removed.
+
+The full `wt test` passes 2,417 Rust and 34 Python tests in 85.44 seconds.
+Its Rust harness runtime totals 83.89 seconds, down from 97.64 after the
+viewport change; build and test preparation account for another 0.40 seconds.
+All 462 specifications, `wt lint` and `wt run fmt-check` pass. An earlier
+library run exposed an intermittent stale-socket fixture failure; the full
+run passed, and fixture isolation remains a separate required repair.
+
+---
+
 2026-09-10 — **Run the complete viewport sweeps concurrently.**
 
 The fleet sweep now exposes twenty width ranges to the Rust test harness; the
