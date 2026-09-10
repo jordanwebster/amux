@@ -4,6 +4,40 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Advance retry test time and terminate recorded SDK output.**
+
+The mobile retry test advances all 7.6 seconds of controlled backoff and
+cooldown time with Tokio's clock, running time normally during real socket
+IO and waiting for failed-dial notifications during setup. It retains every
+press, attempt-count assertion and real-relay recovery. SDK replay waits on
+write-progress notifications and closes exhausted output streams so simulated
+exits release both drains immediately. All twenty-five SDK registry cases now
+run as separate tests; registry equality checks coverage, and a paused-clock
+regression requires both drains to consume zero virtual time.
+
+Independent lifecycle, cache-inventory and relocation cases also run as
+separate tests. Every case retains its installation, IO and assertions. The
+six tenant absence windows and two forwarding windows overlap before pairing;
+each still observes its original full duration.
+
+On the same idle M2 Max, mobile retry falls from 8.14 to 0.51 seconds, its
+harness from 9.29 to 4.18, and SDK replay from 6.24 to 0.24. Compared with the
+preceding run, the lifecycle loop falls from 4.89 to at most 2.40 seconds per
+case, foreign-path relocation from 3.56 to at most 0.93, symlink relocation
+from 2.43 to at most 0.59, and tenant isolation from 4.57 to 2.84. Protocol and
+amux library harness totals remain about 9.58 and 8.74 seconds; these case
+splits do not establish a harness-level saving.
+
+The complete `wt test` passes 2,456 Rust and 34 Python tests in 75.16 seconds,
+with one existing ignored test. Rust harness wall times total 73.03 seconds,
+down from 83.89 after the GIF changes; build/test preparation is a separate
+0.21 + 0.61 seconds. All 465 specs, twenty retry/socket repetitions, `wt lint`
+and `wt run fmt-check` pass. No test, assertion, fixture, real network absence
+window, golden or compiler setting is removed or relaxed. Live-only Claude
+interrupt and unused userinfo timeout fixtures remain outside ordinary suite
+runtime. Further runtime assessment and final build-overhead measurements
+remain unfinished.
+
 2026-09-10 — **Isolate the closed Unix socket fixture from concurrent forks.**
 
 The stale-socket replacement test now creates its fixture in a child running

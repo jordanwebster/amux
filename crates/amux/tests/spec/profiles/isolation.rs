@@ -197,19 +197,28 @@ async fn separate_tenants_exchange_no_presence_claims_routes_frames_or_candidate
     let pb = phone.profile("work");
     a.can_call(&pa).await;
     b.can_call(&pb).await;
-    for (from, to) in [
-        (&a, &b),
-        (&a, &pb),
-        (&b, &a),
-        (&b, &pa),
-        (&pa, &b),
-        (&pb, &a),
-    ] {
-        from.cloud_isolated_from(to).await;
-        from.does_not_trust(to).await;
-    }
-    a.cloud_cannot_forward_to(&b, &pa).await;
-    b.cloud_cannot_forward_to(&a, &pb).await;
+    // Observe every independent tenant boundary for the full absence window
+    // at once, before pairing changes the authority between these profiles.
+    futures_util::future::join_all(
+        [
+            (&a, &b),
+            (&a, &pb),
+            (&b, &a),
+            (&b, &pa),
+            (&pa, &b),
+            (&pb, &a),
+        ]
+        .into_iter()
+        .map(|(from, to)| async move {
+            from.cloud_isolated_from(to).await;
+            from.does_not_trust(to).await;
+        }),
+    )
+    .await;
+    tokio::join!(
+        a.cloud_cannot_forward_to(&b, &pa),
+        b.cloud_cannot_forward_to(&a, &pb),
+    );
     let pin = b.start_pairing().await;
     a.pair(&b).with_pin(&pin).await.unwrap();
     a.can_call(&b).await;

@@ -626,15 +626,27 @@ async fn deletion_that_wins_startup_cannot_be_undone_by_the_late_start() {
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
-#[tokio::test]
-async fn mobile_profiles_relocation_refuses_foreign_paths_before_rewriting_any_config() {
-    for field in [
-        "other_profile",
-        "outside",
-        "installation_config",
-        "socket_path",
-        "state_path",
-    ] {
+mod mobile_profiles_relocation_refuses_foreign_paths_before_rewriting_any_config {
+    use super::*;
+
+    macro_rules! fields {
+        ($($field:ident),+ $(,)?) => {$(
+            #[tokio::test]
+            async fn $field() {
+                check(stringify!($field)).await;
+            }
+        )+};
+    }
+
+    fields!(
+        other_profile,
+        outside,
+        installation_config,
+        socket_path,
+        state_path
+    );
+
+    async fn check(field: &str) {
         let (installation, root) = installation().await;
         let first = create(&installation, "personal").await;
         let second = create(&installation, "work").await;
@@ -712,15 +724,27 @@ async fn mobile_profiles_desktop_refuses_a_moved_installation() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn mobile_profiles_relocation_refuses_symlinks() {
-    for file in [
-        "config.yaml",
-        "data",
-        "data/device.key",
-        "data/trust.json",
-        "state/state.yaml",
-    ] {
+mod mobile_profiles_relocation_refuses_symlinks {
+    use super::*;
+
+    macro_rules! paths {
+        ($($name:ident => $path:literal),+ $(,)?) => {$(
+            #[tokio::test]
+            async fn $name() {
+                check($path).await;
+            }
+        )+};
+    }
+
+    paths!(
+        config => "config.yaml",
+        data => "data",
+        device_key => "data/device.key",
+        trust => "data/trust.json",
+        state => "state/state.yaml",
+    );
+
+    async fn check(file: &str) {
         let (installation, root) = installation().await;
         let profile = create(&installation, "personal").await;
         installation.shutdown(ShutdownReason::UserRequested).await;

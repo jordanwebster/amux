@@ -1050,9 +1050,21 @@ fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing() {
-    for scenario in ["delete_one", "delete_all", "unpair"] {
+mod mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing {
+    use super::*;
+
+    macro_rules! scenarios {
+        ($($scenario:ident),+ $(,)?) => {$(
+            #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+            async fn $scenario() {
+                check(stringify!($scenario)).await;
+            }
+        )+};
+    }
+
+    scenarios!(delete_one, delete_all, unpair);
+
+    async fn check(scenario: &str) {
         let net = TestNet::builder()
             .cloud()
             .daemon("inventory-host")
@@ -1933,8 +1945,31 @@ impl amux::CredentialProvider for StaticToken {
 /// finishes a four-second sleep. Without the second, the control is a way to
 /// turn an unreachable relay into a tight reconnect loop, which is the whole
 /// reason the backoff exists.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
+    // Jump only explicit test delays. Resume time while real socket IO is
+    // pending so Tokio cannot auto-advance through unrelated network timers.
+    async fn advance(duration: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(duration).await;
+        tokio::time::resume();
+    }
+
+    async fn disconnected(relay: &mut tokio::sync::watch::Receiver<amux::RelayConnection>) {
+        tokio::time::timeout(Duration::from_secs(20), async {
+            loop {
+                relay.changed().await.unwrap();
+                if matches!(
+                    *relay.borrow_and_update(),
+                    amux::RelayConnection::Disconnected { .. }
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("the relay never reported the failed attempt");
+    }
     let net = TestNet::builder()
         .cloud()
         .daemon("workstation")
@@ -1967,7 +2002,12 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
     // Take the relay away and let the backoff climb to its four-second cap:
     // 250ms, 500ms, 1s and 2s of waiting, plus four failed dials.
     net.cloud_offline().await;
-    tokio::time::sleep(Duration::from_millis(4500)).await;
+    disconnected(&mut relay).await;
+    for millis in [250, 500, 1000, 2000] {
+        advance(Duration::from_millis(millis)).await;
+        disconnected(&mut relay).await;
+    }
+    advance(Duration::from_millis(750)).await;
     let settled = runtime.retry.attempts();
 
     assert_eq!(
@@ -1976,10 +2016,10 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
         "a wait was cut short before anything had asked"
     );
 
-    // One press. The connection was four seconds into a wait; it dials inside
-    // one, which is the difference the control exists to make.
+    // One press during the four-second wait dials immediately; observing
+    // another 900ms must not produce a second attempt.
     runtime.retry.now();
-    tokio::time::sleep(Duration::from_millis(900)).await;
+    advance(Duration::from_millis(900)).await;
     let after_one = runtime.retry.attempts();
     assert_eq!(
         after_one,
@@ -1996,13 +2036,13 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
     // Ten presses in a second, once the cooldown from the first has passed.
     // Exactly one of them is listened to; the rest are somebody pressing again
     // because nothing looked like it happened.
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    advance(Duration::from_millis(1200)).await;
     let before_ten = runtime.retry.attempts();
     for _ in 0..10 {
         runtime.retry.now();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        advance(Duration::from_millis(50)).await;
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    advance(Duration::from_millis(500)).await;
     let after_ten = runtime.retry.attempts();
     assert_eq!(
         after_ten,

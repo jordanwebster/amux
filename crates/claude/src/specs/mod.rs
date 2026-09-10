@@ -19,7 +19,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures_core::Stream;
-use replay_support::{ReplayAdvance, SpecEntry, StrictReplay};
+use replay_support::{SpecEntry, StrictReplay};
 use semver::Version;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 
@@ -1087,11 +1087,13 @@ pub async fn execute(spec: &SpecEntry, source: SpecSource) -> Result<RunReport, 
             }
             let controller = replay.controller;
             let driver = tokio::spawn(async move {
-                while let ReplayAdvance::Advanced { .. } | ReplayAdvance::BlockedOnWrite =
-                    controller.advance_one().await
-                {
-                    tokio::task::yield_now().await;
-                }
+                controller.drive().await;
+                // The recording has no more output. Deliver EOF so a drain
+                // observes the simulated exit without waiting for live quiet.
+                controller
+                    .close_reads()
+                    .await
+                    .expect("close recorded output");
             });
             (Sessions::recorded(transports), Some(driver))
         }

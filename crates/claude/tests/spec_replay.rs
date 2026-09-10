@@ -13,10 +13,68 @@ use semver::Version;
 
 const SPEC_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[tokio::test]
-async fn every_registered_sdk_specification_replays_strictly() {
-    for entry in sdk_registry() {
-        replay(entry.name).await;
+mod sdk_replays {
+    use super::*;
+
+    macro_rules! scenarios {
+        ($($name:ident => $entry:literal),+ $(,)?) => {
+            const SCENARIOS: &[&str] = &[$($entry),+];
+            $(
+                #[tokio::test]
+                async fn $name() {
+                    replay($entry).await;
+                }
+            )+
+        };
+    }
+
+    scenarios!(
+        session_text_turn => "session/text_turn",
+        session_streamed_turn => "session/streamed_turn",
+        session_multi_turn => "session/multi_turn",
+        commands_compacted => "commands/compacted",
+        commands_cleared => "commands/cleared",
+        control_permission_mode_and_model => "control/permission_mode_and_model",
+        control_session_introspection => "control/session_introspection",
+        control_session_maintenance => "control/session_maintenance",
+        control_connected_mcp_servers => "control/connected_mcp_servers",
+        tools_permission_callback => "tools/permission_callback",
+        tools_question_asked => "tools/question_asked",
+        tools_plan_reviewed => "tools/plan_reviewed",
+        tools_in_process_mcp => "tools/in_process_mcp",
+        tools_elicitation_accepted => "tools/elicitation_accepted",
+        tools_hook_lifecycle => "tools/hook_lifecycle",
+        options_configured_turn => "options/configured_turn",
+        options_every_hook_event => "options/every_hook_event",
+        configured_effortful_turn => "configured/effortful_turn",
+        agents_subagent_task => "agents/subagent_task",
+        history_resumed => "history/resumed",
+        history_forked => "history/forked",
+        history_resumed_at => "history/resumed_at",
+        results_max_turns => "results/max_turns",
+        results_max_budget => "results/max_budget",
+        results_interrupted => "results/interrupted",
+    );
+
+    #[test]
+    fn every_registered_scenario_has_a_test() {
+        assert!(!SCENARIOS.is_empty());
+        assert_eq!(
+            SCENARIOS.iter().copied().collect::<BTreeSet<_>>(),
+            sdk_registry()
+                .iter()
+                .map(|entry| entry.name)
+                .collect::<BTreeSet<_>>(),
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn recorded_drains_observe_eof_without_waiting_for_live_quiet() {
+        let started = tokio::time::Instant::now();
+        for entry in ["agents/subagent_task", "tools/hook_lifecycle"] {
+            replay(entry).await;
+        }
+        assert_eq!(started.elapsed(), Duration::ZERO);
     }
 }
 
