@@ -4,6 +4,40 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Run independent replay prefixes concurrently and wake host checks on events.**
+
+Both long UI differential sweeps now run as eight libtest cases, sharing each
+immutable sequence corpus once. Every prefix still deserializes the complete
+recorded prefix and folds from an empty model, comparing the live model, its
+JSON and every invariant. The recorded conversation's behavioral assertions
+remain in their original test. Testnet host-presence assertions and stored
+peer readiness wake on existing host subscriptions instead of 50 ms polling;
+registration precedes the first check, and assertion deadlines remain intact.
+
+A full run exposed a hook-replay isolation defect: concurrent setups overwrote
+a global observation log. The claim now reads its own session's existing log.
+A controlled regression opens another unfinished setup while the first replay
+is pending; it fails the original hook-ordering assertion with the old code
+and passes with the fix. All hook ordering and strict replay assertions remain.
+
+On the same idle M2 Max, UI specs fall from 6.19 to 1.95 seconds (1.98 in the
+separate spec invocation). Protocol remains about 9.45 seconds versus 9.58;
+that small variation is not evidence of a harness-level notification saving.
+The complete `wt test` passes 2,472 Rust and 34 Python tests in 72.00 seconds,
+with the existing one ignored test. Harness runtimes total 68.62 seconds versus
+73.03 before these changes and 158.59 before the throughput work. Preparation
+is separate: 0.31 seconds for the prerequisite build and 1.59 for test setup,
+including a rebuilt example harness. All 480 specs pass in 11.24 seconds;
+`wt lint` and `wt run fmt-check` pass.
+
+Every harness is below the chosen 12-second measurement bound. The largest
+remaining workload is GIF quantization at 10.95 seconds, followed by protocol
+at 9.45 and the amux library at 8.56. This retains all 50,400 viewport renders,
+all GIF frames and byte-equivalence checks, real persisted network operations,
+and full network absence windows. The live-only Claude interrupt and unused
+userinfo timeout fixture remain unchanged. External wt dependency sweeping
+and the CLI's commit-triggered relink are measured separately from test runtime.
+
 2026-09-10 — **Advance retry test time and terminate recorded SDK output.**
 
 The mobile retry test advances all 7.6 seconds of controlled backoff and

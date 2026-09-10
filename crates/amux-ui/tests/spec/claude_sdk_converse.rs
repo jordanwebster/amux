@@ -199,9 +199,13 @@ fn recorded_conversations_send_stream_use_tools_interrupt_and_return_to_input_re
     }
 }
 
+crate::wire_free::differential_partitions!(
+    live_conversation_prefixes,
+    vec![("live", sequence("live"))]
+);
+
 #[test]
 fn live_conversation_replays_streaming_interruption_asks_and_family_messages() {
-    crate::wire_free::assert_differential_sequence("live", sequence("live"));
     let mut model = fold(claude_sdk_base(AGENT));
     let mut prompts = 0;
     let mut results = 0;

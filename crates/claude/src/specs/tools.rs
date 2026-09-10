@@ -285,10 +285,6 @@ async fn in_process_mcp(session: &mut SpecSession) {
     );
 }
 
-/// The hook log is shared between the session's callbacks and the claims made
-/// about them, so it has to outlive the setup that installs it.
-static HOOK_LOG: Mutex<Option<Arc<Mutex<Vec<String>>>>> = Mutex::new(None);
-
 pub(super) static HOOK_LIFECYCLE: SpecDef = SpecDef {
     name: "tools/hook_lifecycle",
     fixture: "hook_lifecycle",
@@ -298,7 +294,6 @@ pub(super) static HOOK_LIFECYCLE: SpecDef = SpecDef {
 
 fn hooks_setup() -> SessionSetup {
     let log = Arc::new(Mutex::new(Vec::new()));
-    *HOOK_LOG.lock().expect("the hook log slot is not poisoned") = Some(log.clone());
 
     let mut setup = SessionSetup::new(
         HAIKU,
@@ -335,9 +330,8 @@ async fn hook_lifecycle(session: &mut SpecSession) {
         "hooks that allow the turn do not stop it finishing"
     );
 
-    let fired = HOOK_LOG
-        .lock()
-        .expect("the hook log slot is not poisoned")
+    let fired = session
+        .hook_log
         .as_ref()
         .expect("the setup installed a hook log")
         .lock()
@@ -345,7 +339,8 @@ async fn hook_lifecycle(session: &mut SpecSession) {
         .clone();
     expect!(
         fired == ["UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"],
-        "each hook fires once, at the point in the turn it names: {fired:?}"
+        "each hook fires once, at the point in the turn it names: {:?}",
+        fired
     );
     expect!(
         turn.tools_used() == ["Write"],

@@ -76,6 +76,37 @@ mod sdk_replays {
         }
         assert_eq!(started.elapsed(), Duration::ZERO);
     }
+
+    #[tokio::test]
+    async fn another_hook_setup_cannot_replace_an_in_flight_sessions_observations() {
+        let mut first = Box::pin(replay("tools/hook_lifecycle"));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(first.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+
+        // Open another setup before the first session's spawned callbacks
+        // run. Reject its transport declaration so its empty log cannot
+        // coincidentally match the first session's completed hook sequence.
+        let entry = sdk_registry()
+            .iter()
+            .find(|entry| entry.name == "tools/hook_lifecycle")
+            .unwrap();
+        let recording = load_recording(&fixtures_root().join(entry.recording)).unwrap();
+        let error = run(
+            entry,
+            SpecSource::Recorded {
+                replay: strict_replay(&recording, ReplayOptions::default()),
+                transport_order: Vec::new(),
+                session_ids: recording.manifest.session_ids,
+            },
+        )
+        .await
+        .expect_err("the second setup has no declared transport");
+        assert!(error.claim.contains("recording has 0 transports"));
+        first.await;
+    }
 }
 
 #[cfg(feature = "pty")]

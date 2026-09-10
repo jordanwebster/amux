@@ -28,24 +28,84 @@ use crate::harness::*;
 /// Codex projection-agreement one. Registering a sequence with the harness is
 /// therefore the cheapest way to put a new state under that control; nothing
 /// else in the suite needs to opt in.
-#[test]
-fn differential_fold_matches_live_state_after_every_msg() {
-    let sequences = all_sequences();
-    assert!(!sequences.is_empty(), "chapters must register sequences");
-    for (name, msgs) in sequences {
-        assert_differential_sequence(name, msgs);
-    }
+macro_rules! differential_partitions {
+    ($name:ident, $sequences:expr) => {
+        mod $name {
+            use super::*;
+
+            fn check(part: usize) {
+                static SEQUENCES: std::sync::OnceLock<Vec<(&'static str, Vec<Msg>)>> =
+                    std::sync::OnceLock::new();
+                let sequences = SEQUENCES.get_or_init(|| $sequences);
+                assert!(!sequences.is_empty(), "chapters must register sequences");
+                for (name, msgs) in sequences {
+                    crate::wire_free::assert_differential_partition(name, msgs, part, 8);
+                }
+            }
+
+            #[test]
+            fn prefixes_0() {
+                check(0);
+            }
+            #[test]
+            fn prefixes_1() {
+                check(1);
+            }
+            #[test]
+            fn prefixes_2() {
+                check(2);
+            }
+            #[test]
+            fn prefixes_3() {
+                check(3);
+            }
+            #[test]
+            fn prefixes_4() {
+                check(4);
+            }
+            #[test]
+            fn prefixes_5() {
+                check(5);
+            }
+            #[test]
+            fn prefixes_6() {
+                check(6);
+            }
+            #[test]
+            fn prefixes_7() {
+                check(7);
+            }
+        }
+    };
 }
 
+pub(crate) use differential_partitions;
+
+differential_partitions!(
+    differential_fold_matches_live_state_after_every_msg,
+    all_sequences()
+);
+
 pub(crate) fn assert_differential_sequence(name: &str, msgs: Vec<Msg>) {
+    assert_differential_partition(name, &msgs, 0, 1);
+}
+
+pub(crate) fn assert_differential_partition(name: &str, msgs: &[Msg], part: usize, parts: usize) {
     let mut live = Model::default();
     let mut recording: Vec<String> = Vec::new();
-    for (index, msg) in msgs.into_iter().enumerate() {
+    for (index, msg) in msgs.iter().enumerate() {
         recording.push(
             serde_json::to_string(&msg)
                 .unwrap_or_else(|error| panic!("{name}[{index}] failed to serialize: {error}")),
         );
-        update(&mut live, msg);
+        update(&mut live, msg.clone());
+
+        // Interleave short and long prefixes across harness workers. Each
+        // worker still builds the live model incrementally; the selected
+        // prefix always deserializes and folds from an empty model.
+        if index % parts != part {
+            continue;
+        }
 
         let mut folded = Model::default();
         for (line_index, line) in recording.iter().enumerate() {

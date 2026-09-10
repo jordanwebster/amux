@@ -248,13 +248,16 @@ async fn wait_for_stored_direct_peers(runtime: &DaemonRuntime) {
         })
         .unwrap_or_default();
     let deadline = tokio::time::Instant::now() + RESTART_DIRECT_LINK_GRACE;
+    let mut changes = runtime.services.routing.subscribe_hosts().await;
     for peer in peers {
-        while tokio::time::Instant::now() < deadline {
-            if runtime.services.routing.host_entry(peer).await.is_some() {
-                break;
+        let _ = tokio::time::timeout_at(deadline, async {
+            while runtime.services.routing.host_entry(peer).await.is_none() {
+                if changes.recv().await.is_none() {
+                    return;
+                }
             }
-            tokio::time::sleep(super::assertions::POLL_INTERVAL).await;
-        }
+        })
+        .await;
     }
 }
 
@@ -505,16 +508,9 @@ impl Daemon {
     pub async fn sees(&self, other: &Daemon) {
         let assertion = format!("'{}' sees '{}' online", self.name(), other.name());
         let other_id = other.host_id();
-        eventually(
-            &assertion,
-            async || {
-                self.host_table()
-                    .await
-                    .iter()
-                    .any(|host| host.id == other_id && host.online)
-            },
-            self.failure_dump(),
-        )
+        self.expect_host_table(&assertion, |hosts| {
+            hosts.iter().any(|host| host.id == other_id && host.online)
+        })
         .await;
     }
 
@@ -523,17 +519,9 @@ impl Daemon {
     pub async fn cannot_see(&self, other: &Daemon) {
         let assertion = format!("'{}' cannot see '{}' online", self.name(), other.name());
         let other_id = other.host_id();
-        eventually(
-            &assertion,
-            async || {
-                !self
-                    .host_table()
-                    .await
-                    .iter()
-                    .any(|host| host.id == other_id && host.online)
-            },
-            self.failure_dump(),
-        )
+        self.expect_host_table(&assertion, |hosts| {
+            !hosts.iter().any(|host| host.id == other_id && host.online)
+        })
         .await;
     }
 
@@ -547,13 +535,37 @@ impl Daemon {
             other.name()
         );
         let other_id = other.host_id();
+        self.expect_host_table(&assertion, |hosts| {
+            hosts.iter().any(|host| host.id == other_id && !host.online)
+        })
+        .await;
+    }
+
+    async fn expect_host_table(&self, assertion: &str, check: impl Fn(&[HostEntry]) -> bool) {
         eventually(
-            &assertion,
+            assertion,
             async || {
-                self.host_table()
-                    .await
-                    .iter()
-                    .any(|host| host.id == other_id && !host.online)
+                // Register with the snapshot so a change between the first
+                // check and the receive cannot strand the assertion. Release
+                // the service handle before receiving so it does not keep a
+                // stopped runtime's event source alive.
+                let (hosts, mut changes) = {
+                    let Some(parts) = self.try_parts().await else {
+                        return check(&[]);
+                    };
+                    parts.client.subscribe_hosts_with_snapshot().await
+                };
+                if check(&hosts) {
+                    return true;
+                }
+                while changes.recv().await.is_some() {
+                    if check(&self.host_table().await) {
+                        return true;
+                    }
+                }
+                // A stopped runtime closes its subscription. Retry against
+                // the current runtime so assertions can span its replacement.
+                false
             },
             self.failure_dump(),
         )
