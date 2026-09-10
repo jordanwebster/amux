@@ -101,6 +101,8 @@ timeout 120 target/debug/xtask door --simulator amux-golden \
 The door exchanges newline-delimited JSON on loopback. `query` returns the
 screen, accessibility identifiers, labels, values, frames and enabled states;
 `open` accepts a named screen and optional fixture. Unknown states fail.
+Each fixture opens with fresh stores and view-local state, including its own
+initial panel, even when it uses the same screen as the preceding fixture.
 `tap` and `type` address controls by identifier. Named fixtures set stores
 without a network and establish appearance, not protocol correctness.
 `connect` instead supplies the test relay, token and user for real journeys.

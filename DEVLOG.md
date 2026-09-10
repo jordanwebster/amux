@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Reset local view state when opening a screen fixture.**
+
+The debug driver now gives each fixture's view the identity of its fresh store
+bundle. Replacing the stores alone left SwiftUI's local conversation state
+alive: opening the attachment menu after a permissions fixture could keep the
+permissions panel on screen while the driver reported `plus`.
+
+The door smoke switches six times between permission, attachment and model
+fixtures without changing appearance, and checks the rendered panel identifiers.
+It fails on the previous app and passes with the fix. The complete smoke also
+passes its relay connection, report capture, teardown and release-exclusion
+checks. The iOS lints, 81 recipe tests and formatting check pass.
+All 124 golden captures pass with the existing baselines and tolerances.
+
+---
+
 2026-09-10 — **Wait for mobile events before checking their effects.**
 
 The Retry Now test waits for the failed dial's relay notification before

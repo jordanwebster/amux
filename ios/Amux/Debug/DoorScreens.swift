@@ -216,6 +216,10 @@ struct DrivenRoot<Content: View>: View {
         Group {
             if let screen = host.screen {
                 DoorScreens.view(for: screen, host: host)
+                    // Opening a fixture replaces its stores and must also
+                    // discard view-local state, such as the previous
+                    // conversation's open panel, even for the same screen.
+                    .id(ObjectIdentifier(host.stores))
                     // The hosting controller owns system status-bar style.
                     // Give it the same preference as the window's traits;
                     // overriding only the window can leave white status text

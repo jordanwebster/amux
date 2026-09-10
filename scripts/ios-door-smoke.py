@@ -43,6 +43,16 @@ OUTPUT = Path("target/ios/door")
 CAPTURE = OUTPUT / "door-capture.png"
 COMPOSER_CAPTURE = OUTPUT / "composer-short-replacement.png"
 REPLACEMENT = "Check the reconnect path before you squash it."
+# Consecutive fixtures share the Conversation view type. Each must install its
+# own local panel state even when no appearance request rebuilds the view.
+PANELS = [
+    ("settings", "permissions-claude", "permissions"),
+    ("plus", "plus", "plus"),
+    ("settings", "permissions-codex", "permissions"),
+    ("settings", "settings", "settings"),
+    ("settings", "permissions-claude", "permissions"),
+    ("plus", "plus", "plus"),
+]
 # Where the app is asked to write its report bundle. The two recordings in it
 # are what `wt run ios-replay` rebuilds a screen from.
 BUNDLE = OUTPUT / "bundle"
@@ -83,6 +93,15 @@ def exchange(relay: str, token: str) -> list[tuple[dict, str]]:
         ({"kind": "query"}, "state"),
         ({"kind": "open", "screen": "home", "fixture": "home"}, "ack"),
         ({"kind": "query"}, "state"),
+        *[
+            step
+            for screen, fixture, _ in PANELS
+            for step in [
+                ({"kind": "open", "screen": screen, "fixture": fixture}, "ack"),
+                ({"kind": "settle"}, "ack"),
+                ({"kind": "query"}, "state"),
+            ]
+        ],
         # This fixture starts with a populated draft and its caret at zero.
         # Clear must delete through the native field before typing replaces it.
         ({"kind": "open", "screen": "typing", "fixture": "typing"}, "ack"),
@@ -198,6 +217,18 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
         f"text size: {enlarged['typeSize']} for the state that asks for it, "
         f"{ordinary['typeSize']} for the one after it",
         flush=True)
+
+    panels = [state for state in states if state["screen"] in {"plus", "settings"}]
+    if len(panels) != len(PANELS):
+        raise SystemExit(f"expected {len(PANELS)} panel states, received {len(panels)}")
+    for (screen, fixture, expected), state in zip(PANELS, panels):
+        identifiers = {element["identifier"] for element in state["elements"]}
+        shown = identifiers & {"plus", "permissions", "settings"}
+        if state["screen"] != screen or shown != {expected}:
+            raise SystemExit(
+                f"opening {fixture} must show only {expected}; "
+                f"screen is {state['screen']}, panels are {sorted(shown)}")
+    print("fixture panels: " + " → ".join(fixture for _, fixture, _ in PANELS), flush=True)
 
     composer = [state for state in states if state["screen"] == "typing"]
     values = [[element.get("value") for element in state["elements"]
