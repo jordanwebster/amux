@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Isolate the closed Unix socket fixture from concurrent forks.**
+
+The stale-socket replacement test now creates its fixture in a child running
+only that test, waits for the child to exit, and verifies that the socket path
+refuses connections before testing replacement. A listener created and dropped
+in the parent can remain reachable through a concurrent subprocess fork until
+exec, even with close-on-exec set. A pipe-controlled fork reproduces that race
+without sleeps; child exit makes the same path refuse connections.
+
+All original replacement assertions remain. Twenty targeted repetitions and
+the complete `wt test` pass, including concurrent subprocess tests. `wt run
+spec`, `wt lint` and `wt run fmt-check` also pass. Production socket binding
+behavior is unchanged.
+
 2026-09-10 — **Reuse font parsing and identical GIF palettes across captures.**
 
 The rasterizer parses its five embedded font faces once per process. GIF
