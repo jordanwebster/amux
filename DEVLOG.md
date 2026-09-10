@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Bound workspace tests and document deterministic setup.**
+
+The workspace test recipe now allows 150 seconds instead of 900, for both
+the full suite and explicitly selected targets. The measured full command
+takes 72.00 seconds, including 68.62 seconds in Rust harnesses and 1.59 seconds
+of Cargo test preparation. The new deadline leaves about twice that command's
+time for runner and scheduling variation, while remaining below the original
+158.59-second harness runtime alone. The prerequisite workspace compilation
+stays outside the test deadline. This runner allowance is a budget decision,
+not a new GitHub performance measurement.
+
+The testing guide now requires driven clocks for simulated delays and
+timeouts, notifications for readiness, independent tests for independent
+scenarios, and explicit gates for live provider suites. Real IO and complete
+network absence windows retain their observation boundaries. Fixture sharing
+keeps mutable sessions and observation logs private to each test.
+
+Verification: all 34 recipe checks pass, the workspace passes 2,472 Rust tests
+within the new deadline with one existing ignored test, and `wt lint` passes.
+Command captures confirm the same deadline for full and selected-target runs.
+
 2026-09-10 — **Keep report source identity after measuring build overhead.**
 
 The first build after the runtime changes costs 6.00 seconds wall time and

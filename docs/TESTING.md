@@ -29,6 +29,11 @@ unification and compile a second dependency graph.
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
+The workspace test recipe allows 150 seconds for Cargo's test preparation and
+the selected harnesses. The prerequisite workspace build runs before this
+deadline. The budget leaves room for a slower runner while catching a return
+of the long runtime tail; it is an overall deadline, not a per-test limit.
+
 ## Recorded PTY tests
 
 Each recorded Claude PTY scenario is a separate test. The standard Rust test
@@ -44,6 +49,41 @@ Recorded readiness waits for output notifications, and keyboard delays advance
 the replay clock. Completing a replay closes its recorded output streams before waiting
 for the simulated process to exit. Live terminal settling waits do not apply
 to recorded sessions; shutdown timeouts are failures.
+
+## Clocks, readiness and independent cases
+
+Tests do not sleep in real time. Backoff, cooldowns and keyboard delays use a
+clock the test drives. A simulated timeout is a duration the test advances,
+not a quiet interval it waits out. Keep the full duration and all boundary
+assertions when moving a scenario onto a controlled clock.
+
+Readiness waits on notifications, never polling. Register the subscription
+before inspecting the current state so a change between inspection and waiting
+cannot be lost. Keep a bounded failure deadline and report the observed state
+when it expires. Completing recorded output closes the stream before the
+simulated process exits; no live settling delay belongs in a replay.
+
+Real sockets and child processes still need to make progress. Run their IO on
+real time, and advance controlled time only for the simulated behavior under
+test. An assertion that a real peer sends nothing must observe its complete
+declared absence window; a scheduling yield does not prove absence.
+
+Each independent scenario is one test, so the harness can run it concurrently.
+Share immutable fixture construction once per harness when it is expensive;
+each test owns its mutable session, output and observation state. Partition
+large viewport or replay sweeps without dropping any size, frame, prefix or
+assertion. A serial loop over the whole corpus conceals the work from the
+harness and prevents it from scheduling the cases independently.
+
+## Live suites are opt-in
+
+Live provider suites have explicit names: `claude_pty_live`, `claude_sdk_live`
+and `codex_live`. Their Cargo targets use `test = false` and `harness = false`;
+they run only when selected explicitly, and print usage without contacting a
+provider when no scenario is supplied. Keep those gates when adding live
+coverage. Ordinary workspace tests use recorded or scripted sessions and need
+no provider credentials. A live suite runs under its own bounded recipe;
+its network settling time does not belong in an offline replay.
 
 ## Output when diagnosing failures
 
