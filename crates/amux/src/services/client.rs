@@ -1325,25 +1325,29 @@ fn peer_entry_to_wire(host_id: Uuid, entry: &TrustEntry) -> wire::PeerEntry {
         reachabilities: entry
             .reachabilities
             .iter()
-            .map(peer_reachability_to_wire)
+            .flat_map(peer_reachabilities_to_wire)
             .collect(),
     }
 }
 
-fn peer_reachability_to_wire(reachability: &Reachability) -> wire::PeerReachability {
-    let target = match reachability {
-        Reachability::Cloud => wire::peer_reachability::Kind::Cloud(wire::Empty {}),
+fn peer_reachabilities_to_wire(reachability: &Reachability) -> Vec<wire::PeerReachability> {
+    let targets = match reachability {
+        Reachability::Cloud => vec![wire::peer_reachability::Kind::Cloud(wire::Empty {})],
         Reachability::Ssh { target, profile } => {
-            wire::peer_reachability::Kind::SshTarget(wire::SshTarget {
+            vec![wire::peer_reachability::Kind::SshTarget(wire::SshTarget {
                 target: target.clone(),
                 profile_id: profile.to_string(),
-            })
+            })]
         }
-        Reachability::DirectTcp { addr } => {
-            wire::peer_reachability::Kind::DirectTcpAddr(addr.to_string())
-        }
+        Reachability::Direct { addrs } => addrs
+            .iter()
+            .map(|addr| wire::peer_reachability::Kind::DirectTcpAddr(addr.to_string()))
+            .collect(),
     };
-    wire::PeerReachability { kind: Some(target) }
+    targets
+        .into_iter()
+        .map(|target| wire::PeerReachability { kind: Some(target) })
+        .collect()
 }
 
 pub(crate) fn client_agent_event_to_wire(
@@ -1503,7 +1507,7 @@ fn pair_peer_reachability_from_wire(
                     "PairPeerRequest.direct_tcp_addr is invalid: {error}"
                 ))
             })?;
-            Ok(Some(Reachability::DirectTcp { addr }))
+            Ok(Some(Reachability::Direct { addrs: vec![addr] }))
         }
         None => Ok(None),
     }
@@ -1512,7 +1516,7 @@ fn pair_peer_reachability_from_wire(
 fn pair_peer_audit_method(reachability: &Option<Reachability>) -> &'static str {
     match reachability {
         Some(Reachability::Ssh { .. }) => "ssh",
-        Some(Reachability::DirectTcp { .. }) => "direct_pin",
+        Some(Reachability::Direct { .. }) => "direct_pin",
         Some(Reachability::Cloud) => "cloud",
         None => "manual",
     }
@@ -2561,6 +2565,7 @@ mod tests {
             name: name.to_string(),
             paired_at: Utc::now(),
             reachabilities: Vec::new(),
+            signed_in: None,
         }
     }
 
@@ -5561,7 +5566,7 @@ mod tests {
             .await
             .unwrap();
 
-        let expected = Reachability::DirectTcp { addr };
+        let expected = Reachability::Direct { addrs: vec![addr] };
         let live = trust_store.read().unwrap();
         let live_entry = live.entry(peer.host_id).unwrap();
         assert_eq!(live_entry.pubkey.as_slice(), peer.public_key());

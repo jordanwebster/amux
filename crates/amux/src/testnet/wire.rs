@@ -452,6 +452,7 @@ fn trust_entry(name: &str, pubkey: Vec<u8>) -> TrustEntry {
         name: name.to_string(),
         paired_at: chrono::Utc::now(),
         reachabilities: Vec::new(),
+        signed_in: None,
     }
 }
 

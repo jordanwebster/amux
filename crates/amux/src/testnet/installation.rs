@@ -19,6 +19,7 @@ use crate::test_fixtures::IdentityServer;
 pub(super) struct InstallationSpec {
     pub name: String,
     pub persistent: bool,
+    pub embedded: bool,
     pub profiles: Vec<ProfileSpec>,
 }
 
@@ -88,6 +89,7 @@ struct InstallationInner {
     discovery: ScriptedDiscovery,
     root: PathBuf,
     persistent: bool,
+    embedded: bool,
     // Keep the root alive until the last handle and all runtimes are gone.
     _disk_root: Option<tempfile::TempDir>,
     lifecycle: tokio::sync::Mutex<()>,
@@ -175,6 +177,7 @@ impl InstallationHandle {
             options(
                 &self.inner.name,
                 InstallationRoot::OnDisk(self.inner.root.clone()),
+                self.inner.embedded,
             ),
             fixture_factory(
                 self.inner.fixtures.clone(),
@@ -262,6 +265,7 @@ impl InstallationHandle {
         Installation::open(options(
             &self.inner.name,
             InstallationRoot::OnDisk(self.inner.root.clone()),
+            self.inner.embedded,
         ))
         .await
     }
@@ -466,10 +470,14 @@ impl WatchProbe {
     }
 }
 
-fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
+fn options(name: &str, root: InstallationRoot, embedded: bool) -> InstallationOptions {
     InstallationOptions {
         root,
-        listeners: Listeners::Sockets,
+        listeners: if embedded {
+            Listeners::InProcessOnly
+        } else {
+            Listeners::Sockets
+        },
         credentials: CredentialSource::ProfileFiles,
         identity_http: reqwest::Client::new(),
         settings: InstallationSettings {
@@ -553,7 +561,7 @@ pub(super) async fn start(
             .collect(),
     }));
     let installation = Installation::open_for_test(
-        options(&spec.name, root),
+        options(&spec.name, root, spec.embedded),
         fixture_factory(
             fixtures.clone(),
             cloud.map(|cloud| cloud.addr),
@@ -630,6 +638,7 @@ pub(super) async fn start(
         discovery,
         root,
         persistent: spec.persistent,
+        embedded: spec.embedded,
         _disk_root: Some(disk_root),
         lifecycle: tokio::sync::Mutex::new(()),
     });

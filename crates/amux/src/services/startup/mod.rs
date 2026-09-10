@@ -718,6 +718,31 @@ impl DerefMut for StartedUserServices {
 }
 
 impl StartedUserServices {
+    pub(crate) fn configure_reachability(
+        &self,
+        data_dir: PathBuf,
+        discovery: Arc<dyn crate::discovery::Discovery>,
+        found_hosts: Arc<crate::discovery::FoundHosts>,
+    ) {
+        self.reachability_links
+            .configure(data_dir, discovery, found_hosts);
+    }
+
+    pub(crate) fn spawn_dial_on_found(
+        &self,
+        events: tokio::sync::broadcast::Receiver<crate::discovery::DiscoveryEvent>,
+    ) -> JoinHandle<()> {
+        self.reachability_links.spawn_dial_on_found(events)
+    }
+
+    pub(crate) async fn close_direct_links(&self) {
+        self.reachability_links.close_direct_links().await;
+    }
+
+    pub(crate) fn resume_direct_links(&self) -> Vec<JoinHandle<()>> {
+        self.reachability_links.resume_direct_links()
+    }
+
     #[cfg(test)]
     pub(crate) fn open_in_process_client_channel(&self) -> (Channel, JoinHandle<()>) {
         let (client_transport, server_transport) = in_process_transport_pair();
@@ -1070,6 +1095,7 @@ mod tests {
             name: format!("peer-{}", peer.host_id),
             paired_at: chrono::Utc::now(),
             reachabilities,
+            signed_in: None,
         }
     }
 
@@ -1510,7 +1536,7 @@ mod tests {
                     .entry(responder_identity.host_id)
                     .unwrap()
                     .reachabilities,
-                vec![Reachability::DirectTcp { addr }]
+                vec![Reachability::Direct { addrs: vec![addr] }]
             );
         }
         {
@@ -1537,7 +1563,10 @@ mod tests {
         let mut trust_a = TrustStore::default();
         trust_a.insert_for_test(
             identity_b.host_id,
-            trust_entry(&identity_b, vec![Reachability::DirectTcp { addr }]),
+            trust_entry(
+                &identity_b,
+                vec![Reachability::Direct { addrs: vec![addr] }],
+            ),
         );
         let mut trust_b = TrustStore::default();
         trust_b.insert_for_test(identity_a.host_id, trust_entry(&identity_a, Vec::new()));
@@ -1602,12 +1631,22 @@ mod tests {
         let mut trust_a = TrustStore::default();
         trust_a.insert_for_test(
             identity_b.host_id,
-            trust_entry(&identity_b, vec![Reachability::DirectTcp { addr: addr_b }]),
+            trust_entry(
+                &identity_b,
+                vec![Reachability::Direct {
+                    addrs: vec![addr_b],
+                }],
+            ),
         );
         let mut trust_b = TrustStore::default();
         trust_b.insert_for_test(
             identity_a.host_id,
-            trust_entry(&identity_a, vec![Reachability::DirectTcp { addr: addr_a }]),
+            trust_entry(
+                &identity_a,
+                vec![Reachability::Direct {
+                    addrs: vec![addr_a],
+                }],
+            ),
         );
 
         let mut host_a =

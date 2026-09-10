@@ -1,3 +1,14 @@
+2026-09-11 — **Dial discovered peers and refresh direct addresses.** Profiles
+now treat discovery as the first source of direct connection candidates and
+their persisted address set as fallback. A successful device-authenticated
+dial replaces stale stored addresses, and a dropped link triggers a fresh
+query. Desktop runtimes dial on startup; embedded runtimes close direct links
+on host suspend and redial on resume while cloud links retain their separate
+lifecycle. The trust format now stores direct address sets and the peer's
+optional signed-in fact, deliberately rejects the old single-address format,
+and reports the failing `trust.json` path. Specs cover discovery-triggered
+dials, stale-address replacement, embedded lifecycle, and restart recovery.
+
 2026-09-11 — **Add local-network discovery primitives.** The core now exposes
 untrusted host advertisements, found/lost events, a current found-host index,
 and a deterministic scripted discovery bus. Desktop discovery publishes and

@@ -74,7 +74,7 @@ use crate::trust::{Reachability, TrustEntry, TrustStore};
 /// How a pre-paired fixture pair reaches each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Via {
-    /// Direct TCP: the first daemon stores a `DirectTcp` reachability for
+    /// Direct TCP: the first daemon stores a direct reachability for
     /// the second (mirroring real PIN pairing over TCP, where only the
     /// initiator learns an address).
     Direct,
@@ -243,17 +243,17 @@ impl TestNet {
     }
 
     /// Brings the direct link between two already-paired daemons (back) up
-    /// from the `DirectTcp` reachability stored at pairing time.
+    /// from the direct reachability stored at pairing time.
     pub async fn establish_direct(&self, a: &Daemon, b: &Daemon) {
         let mut attempt = None;
-        if let Some(reachability) = a.direct_tcp_reachability_to(b.host_id()).await {
+        if let Some(reachability) = a.direct_reachability_to(b.host_id()).await {
             attempt = Some((a, b, reachability));
-        } else if let Some(reachability) = b.direct_tcp_reachability_to(a.host_id()).await {
+        } else if let Some(reachability) = b.direct_reachability_to(a.host_id()).await {
             attempt = Some((b, a, reachability));
         }
         let Some((from, to, reachability)) = attempt else {
             panic!(
-                "establish_direct('{}', '{}'): neither trust store holds a DirectTcp \
+                "establish_direct('{}', '{}'): neither trust store holds a direct \
                  reachability; pair them Via::Direct first",
                 a.name(),
                 b.name()
@@ -397,7 +397,9 @@ pub struct TestNetBuilder {
     selecting_profile: bool,
     daemons: Vec<DaemonSpec>,
     pairs: Vec<(String, String, Via)>,
+    stale_direct_pairs: std::collections::HashSet<(String, String)>,
     trusted: Vec<(String, String)>,
+    undiscoverable: std::collections::HashSet<String>,
 }
 
 impl TestNetBuilder {
@@ -410,6 +412,7 @@ impl TestNetBuilder {
         self.installations.push(installation::InstallationSpec {
             name,
             persistent: false,
+            embedded: false,
             profiles: Vec::new(),
         });
         self.selecting_profile = true;
@@ -444,6 +447,16 @@ impl TestNetBuilder {
             .last_mut()
             .expect(".persistent() must follow .installation()")
             .persistent = true;
+        self
+    }
+
+    /// Runs the selected installation with in-process-only host integration,
+    /// matching the lifecycle policy used by the phone bridge.
+    pub fn embedded(mut self) -> Self {
+        self.installations
+            .last_mut()
+            .expect(".embedded() must follow .installation()")
+            .embedded = true;
         self
     }
 
@@ -526,7 +539,22 @@ impl TestNetBuilder {
     /// Pairing-as-fixture: seeds both trust stores (pubkey, name, and the
     /// reachability implied by `via`) before the daemons start.
     pub fn paired(mut self, a: impl Into<String>, b: impl Into<String>, via: Via) -> Self {
-        self.pairs.push((a.into(), b.into(), via));
+        let a = a.into();
+        let b = b.into();
+        if via == Via::Cloud {
+            self.undiscoverable.insert(a.clone());
+            self.undiscoverable.insert(b.clone());
+        }
+        self.pairs.push((a, b, via));
+        self
+    }
+
+    /// Seeds a deliberately stale stored address while retaining ordinary
+    /// discovery, so a spec can prove that a fresh Found address wins.
+    pub fn paired_with_stale_direct(mut self, a: impl Into<String>, b: impl Into<String>) -> Self {
+        let pair = (a.into(), b.into());
+        self.stale_direct_pairs.insert(pair.clone());
+        self.pairs.push((pair.0, pair.1, Via::Direct));
         self
     }
 
@@ -536,6 +564,24 @@ impl TestNetBuilder {
     /// learned through the routing graph (e.g. a chain of links).
     pub fn trusted(mut self, a: impl Into<String>, b: impl Into<String>) -> Self {
         self.trusted.push((a.into(), b.into()));
+        self
+    }
+
+    /// Seeds trust while placing both daemons outside this test LAN's
+    /// discovery domain. Stored direct fixtures can still connect them.
+    pub fn trusted_without_discovery(mut self, a: impl Into<String>, b: impl Into<String>) -> Self {
+        let a = a.into();
+        let b = b.into();
+        self.undiscoverable.insert(a.clone());
+        self.undiscoverable.insert(b.clone());
+        self.trusted.push((a, b));
+        self
+    }
+
+    /// Places one daemon outside the scripted LAN discovery domain without
+    /// changing its trust or stored reachabilities.
+    pub fn outside_discovery(mut self, name: impl Into<String>) -> Self {
+        self.undiscoverable.insert(name.into());
         self
     }
 
@@ -615,15 +661,25 @@ impl TestNetBuilder {
             let host_id_b = preps[ib].identity.host_id;
             let (reach_a_to_b, reach_b_to_a) = match via {
                 Via::Direct => {
-                    let addr_b = preps[ib].tcp_addr.unwrap_or_else(|| {
+                    let actual_addr_b = preps[ib].tcp_addr.unwrap_or_else(|| {
                         panic!(
                             "paired('{a}', '{b}', Via::Direct) requires '{b}' to expose a \
                              direct-TCP listener, but it is cloud_only"
                         )
                     });
+                    let addr_b = if self.stale_direct_pairs.contains(&(a.clone(), b.clone())) {
+                        "127.0.0.1:9".parse().unwrap()
+                    } else {
+                        actual_addr_b
+                    };
                     // Mirrors real PIN pairing over TCP: only the initiator
                     // stores the peer's address.
-                    (vec![Reachability::DirectTcp { addr: addr_b }], Vec::new())
+                    (
+                        vec![Reachability::Direct {
+                            addrs: vec![addr_b],
+                        }],
+                        Vec::new(),
+                    )
                 }
                 Via::Cloud => {
                     assert!(
@@ -650,6 +706,12 @@ impl TestNetBuilder {
             let entry_a = trust_entry(&preps[ia].identity, a, Vec::new());
             preps[ia].trust.insert_for_test(host_id_b, entry_b);
             preps[ib].trust.insert_for_test(host_id_a, entry_a);
+        }
+
+        for name in &self.undiscoverable {
+            if let Some(index) = self.daemons.iter().position(|spec| &spec.name == name) {
+                discovery.suppress(preps[index].identity.host_id);
+            }
         }
 
         let mut daemon_inners = Vec::with_capacity(preps.len());
@@ -724,6 +786,12 @@ impl TestNetBuilder {
                         .await;
                 daemon_inners.extend(installation.daemon_inners());
                 installations.push(installation);
+            }
+        }
+
+        for name in &self.undiscoverable {
+            if let Some(inner) = daemon_inners.iter().find(|inner| &inner.name == name) {
+                discovery.suppress(inner.host_id);
             }
         }
 
@@ -826,6 +894,7 @@ fn trust_entry(peer: &DeviceIdentity, name: &str, reachabilities: Vec<Reachabili
         name: name.to_string(),
         paired_at: chrono::Utc::now(),
         reachabilities,
+        signed_in: None,
     }
 }
 

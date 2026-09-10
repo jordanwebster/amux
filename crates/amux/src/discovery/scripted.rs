@@ -1,4 +1,5 @@
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
 
@@ -7,8 +8,14 @@ use crate::HostId;
 
 /// A deterministic discovery bus for tests and platform adapters.
 pub struct ScriptedDiscovery {
-    events: broadcast::Sender<DiscoveryEvent>,
+    bus: Arc<ScriptedBus>,
     advertised: Mutex<Option<HostId>>,
+}
+
+struct ScriptedBus {
+    events: broadcast::Sender<DiscoveryEvent>,
+    active: Mutex<HashMap<HostId, Advertisement>>,
+    suppressed: Mutex<std::collections::HashSet<HostId>>,
 }
 
 impl ScriptedDiscovery {
@@ -18,12 +25,35 @@ impl ScriptedDiscovery {
 
     /// Emits a resolved service to every current browser.
     pub fn announce(&self, advert: Advertisement) {
-        let _ = self.events.send(DiscoveryEvent::Found(advert));
+        if self
+            .bus
+            .suppressed
+            .lock()
+            .unwrap()
+            .contains(&advert.host_id)
+        {
+            return;
+        }
+        self.bus
+            .active
+            .lock()
+            .unwrap()
+            .insert(advert.host_id, advert.clone());
+        let _ = self.bus.events.send(DiscoveryEvent::Found(advert));
     }
 
     /// Emits a goodbye or expiry to every current browser.
     pub fn withdraw_host(&self, host_id: HostId) {
-        let _ = self.events.send(DiscoveryEvent::Lost { host_id });
+        self.bus.active.lock().unwrap().remove(&host_id);
+        let _ = self.bus.events.send(DiscoveryEvent::Lost { host_id });
+    }
+
+    #[cfg(testnet)]
+    pub(crate) fn suppress(&self, host_id: HostId) {
+        self.bus.suppressed.lock().unwrap().insert(host_id);
+        if self.bus.active.lock().unwrap().remove(&host_id).is_some() {
+            let _ = self.bus.events.send(DiscoveryEvent::Lost { host_id });
+        }
     }
 }
 
@@ -31,7 +61,11 @@ impl Default for ScriptedDiscovery {
     fn default() -> Self {
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         Self {
-            events,
+            bus: Arc::new(ScriptedBus {
+                events,
+                active: Mutex::new(HashMap::new()),
+                suppressed: Mutex::new(std::collections::HashSet::new()),
+            }),
             advertised: Mutex::new(None),
         }
     }
@@ -40,7 +74,7 @@ impl Default for ScriptedDiscovery {
 impl Clone for ScriptedDiscovery {
     fn clone(&self) -> Self {
         Self {
-            events: self.events.clone(),
+            bus: self.bus.clone(),
             advertised: Mutex::new(None),
         }
     }
@@ -63,8 +97,20 @@ impl Discovery for ScriptedDiscovery {
     }
 
     fn browse(&self) -> broadcast::Receiver<DiscoveryEvent> {
-        self.events.subscribe()
+        self.bus.events.subscribe()
     }
 
-    fn requery(&self) {}
+    fn requery(&self) {
+        let active = self
+            .bus
+            .active
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for advert in active {
+            let _ = self.bus.events.send(DiscoveryEvent::Found(advert));
+        }
+    }
 }

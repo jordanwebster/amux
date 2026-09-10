@@ -396,6 +396,7 @@ mod tests {
                 name: "peer".to_string(),
                 paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         trust_store

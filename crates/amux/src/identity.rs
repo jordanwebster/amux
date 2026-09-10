@@ -43,6 +43,12 @@ pub(crate) enum IdentityError {
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("failed to parse {path}: {source}")]
+    JsonFile {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
     #[error("{field} must be {expected} bytes, got {actual}")]
     InvalidLength {
         field: &'static str,
@@ -652,6 +658,7 @@ mod tests {
                 name: "peer".to_string(),
                 paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         store

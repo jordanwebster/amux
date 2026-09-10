@@ -22,6 +22,8 @@ async fn direct_beats_cloud_when_both_are_available() {
         .daemon("laptop")
         .daemon("desktop")
         .paired("laptop", "desktop", Via::Direct)
+        .outside_discovery("laptop")
+        .outside_discovery("desktop")
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -67,6 +69,8 @@ async fn a_dying_direct_link_fails_over_to_the_cloud_route() {
         .daemon("laptop")
         .daemon("desktop")
         .paired("laptop", "desktop", Via::Direct)
+        .outside_discovery("laptop")
+        .outside_discovery("desktop")
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -95,6 +99,8 @@ async fn a_recovering_direct_link_wins_back_and_breaks_in_flight_cloud_streams()
         .daemon("laptop")
         .daemon("desktop")
         .paired("laptop", "desktop", Via::Direct)
+        .outside_discovery("laptop")
+        .outside_discovery("desktop")
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -167,7 +173,7 @@ async fn cloud_only_peers_lose_each_other_in_an_outage_and_recover() {
 
 /// A daemon restart re-establishes direct links from the reachabilities in
 /// its own trust store — no nudge from the network: the restarted dialer
-/// re-dials its stored `DirectTcp` address on startup.
+/// re-dials its stored direct address on startup.
 /// (docs/ARCHITECTURE.md "Identity and the trust store")
 #[tokio::test]
 async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
@@ -179,7 +185,7 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
 
-    // The laptop is the side that stores the DirectTcp reachability (the
+    // The laptop is the side that stores the direct reachability (the
     // pairing initiator); its restart must bring the link back by itself.
     laptop.restart().await;
 
@@ -243,7 +249,7 @@ async fn endpoints_call_each_other_through_a_chain_regardless_of_dial_direction(
         .daemon("c")
         .paired("a", "b", Via::Direct)
         .paired("b", "c", Via::Direct)
-        .trusted("a", "c")
+        .trusted_without_discovery("a", "c")
         .start()
         .await;
     let [a, b, c] = net.daemons(["a", "b", "c"]);
@@ -270,9 +276,9 @@ async fn presence_reaches_exactly_two_hops_along_a_chain() {
         .paired("a", "b", Via::Direct)
         .paired("b", "c", Via::Direct)
         .paired("c", "d", Via::Direct)
-        .trusted("a", "c") // call authority for the two-hop calls below;
-        .trusted("b", "d") // presence needs no trust at all
-        .trusted("a", "d")
+        .trusted_without_discovery("a", "c") // call authority for the two-hop calls below;
+        .trusted_without_discovery("b", "d") // presence needs no trust at all
+        .trusted_without_discovery("a", "d")
         .start()
         .await;
     let [a, b, c, d] = net.daemons(["a", "b", "c", "d"]);

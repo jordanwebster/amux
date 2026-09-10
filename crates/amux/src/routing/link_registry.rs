@@ -201,6 +201,33 @@ impl LinkRegistry {
         closing.into_iter().map(|(link, _)| link).collect()
     }
 
+    /// Requests closure of every device-to-device link and waits until each
+    /// has left the registry. Cloud relay links remain available.
+    pub(crate) async fn close_peer_links(&self) -> Vec<LinkId> {
+        let closing = {
+            let state = self.state.read().await;
+            state
+                .writers
+                .iter()
+                .filter(|(_, writer)| writer.role == LinkRole::Peer)
+                .map(|(link, writer)| {
+                    let _ = writer.close_tx.try_send(LinkCloseRequest::TrustReplaced);
+                    (*link, writer.closed.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        for (link, closed) in &closing {
+            loop {
+                let notified = closed.notified();
+                if !self.state.read().await.writers.contains_key(link) {
+                    break;
+                }
+                notified.await;
+            }
+        }
+        closing.into_iter().map(|(link, _)| link).collect()
+    }
+
     /// The writer for one specific link.
     pub(crate) async fn outgoing_tx(&self, link: &LinkId) -> Result<LinkOutputTx, LinkUnavailable> {
         self.state

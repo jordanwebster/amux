@@ -221,7 +221,7 @@ pub(crate) async fn start_daemon_runtime(
 }
 
 /// Waits (bounded by [`RESTART_DIRECT_LINK_GRACE`]) for every peer with a
-/// stored `DirectTcp` reachability to become routable again. Best effort:
+/// stored direct reachability to become routable again. Best effort:
 /// offline peers simply exhaust the grace window.
 async fn wait_for_stored_direct_peers(runtime: &DaemonRuntime) {
     let peers: Vec<HostId> = runtime
@@ -234,7 +234,7 @@ async fn wait_for_stored_direct_peers(runtime: &DaemonRuntime) {
                     entry
                         .reachabilities
                         .iter()
-                        .any(|reachability| matches!(reachability, Reachability::DirectTcp { .. }))
+                        .any(|reachability| matches!(reachability, Reachability::Direct { .. }))
                 })
                 .map(|(host_id, _)| host_id)
                 .collect()
@@ -283,6 +283,12 @@ impl RuntimeGuard<'_> {
 }
 
 impl Daemon {
+    pub fn direct_addr(&self) -> SocketAddr {
+        self.inner
+            .tcp_addr
+            .expect("daemon does not expose a direct listener")
+    }
+
     pub(crate) async fn runtime(&self) -> RuntimeGuard<'_> {
         if let Some(owner) = &self.inner.installation {
             RuntimeGuard::Profile(owner.runtime().await)
@@ -390,6 +396,7 @@ impl Daemon {
                 name: other.name().into(),
                 paired_at: Utc::now(),
                 reachabilities: vec![],
+                signed_in: None,
             },
         );
         let channel = crate::transport::trusted_device_channel_tracked(
@@ -846,6 +853,7 @@ impl Daemon {
         );
         let runtime = self.inner.runtime.lock().await.take();
         if let Some(runtime) = runtime {
+            sever_registry(&self.inner.tracked_tcp);
             runtime.stop().await;
         }
         self.wait_until_peers_see_us_down().await;
@@ -1175,7 +1183,7 @@ impl Daemon {
 
     /// Looks up a stored direct-TCP reachability for `peer` in this daemon's
     /// trust store.
-    pub(crate) async fn direct_tcp_reachability_to(&self, peer: HostId) -> Option<Reachability> {
+    pub(crate) async fn direct_reachability_to(&self, peer: HostId) -> Option<Reachability> {
         let parts = self.try_parts().await?;
         let store = parts.trust.read().ok()?;
         store
@@ -1183,8 +1191,16 @@ impl Daemon {
             .reachabilities
             .iter()
             .find_map(|reachability| {
-                matches!(reachability, Reachability::DirectTcp { .. }).then(|| reachability.clone())
+                matches!(reachability, Reachability::Direct { .. }).then(|| reachability.clone())
             })
+    }
+
+    /// Returns the direct address set currently persisted for `peer`.
+    pub async fn stored_direct_addrs_to(&self, peer: HostId) -> Vec<SocketAddr> {
+        match self.direct_reachability_to(peer).await {
+            Some(Reachability::Direct { addrs }) => addrs,
+            _ => Vec::new(),
+        }
     }
 
     /// Spawns a one-shot direct-link establishment attempt toward `peer`,

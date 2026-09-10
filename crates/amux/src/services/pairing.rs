@@ -1916,6 +1916,7 @@ mod tests {
                 name: "old".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         let before = trust_store.read().unwrap().clone();
@@ -2145,6 +2146,7 @@ mod tests {
                 name: "other".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
 
@@ -2211,6 +2213,7 @@ mod tests {
                 name: "old".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         let bad_data_dir = dir.path().join("not-a-directory");
@@ -2275,6 +2278,7 @@ mod tests {
                 name: "old".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         pair_mode
@@ -2319,6 +2323,7 @@ mod tests {
                 name: "old".to_string(),
                 paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         let routing = Arc::new(RoutingCore::new());

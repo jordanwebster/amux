@@ -284,7 +284,7 @@ impl PairAttempt<'_> {
         self.from
             .spawn_direct_link(
                 self.to.host_id(),
-                crate::trust::Reachability::DirectTcp { addr },
+                crate::trust::Reachability::Direct { addrs: vec![addr] },
             )
             .await;
         Ok(())

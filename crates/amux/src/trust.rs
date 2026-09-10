@@ -22,8 +22,8 @@ pub(crate) enum Reachability {
         target: String,
         profile: crate::installation::ProfileId,
     },
-    DirectTcp {
-        addr: SocketAddr,
+    Direct {
+        addrs: Vec<SocketAddr>,
     },
 }
 
@@ -34,6 +34,8 @@ pub(crate) struct TrustEntry {
     pub(crate) name: String,
     pub(crate) paired_at: DateTime<Utc>,
     pub(crate) reachabilities: Vec<Reachability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) signed_in: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -152,6 +154,7 @@ impl TrustStore {
                         name,
                         paired_at,
                         reachabilities: reachability.into_iter().collect(),
+                        signed_in: None,
                     },
                 );
                 Ok(TrustStorePairingUpdate::Inserted)
@@ -188,6 +191,7 @@ impl TrustStore {
                 entry.name = name;
                 entry.paired_at = paired_at;
                 entry.reachabilities = reachability.into_iter().collect();
+                entry.signed_in = None;
                 Ok(TrustStorePairingUpdate::ReplacedPubkey)
             }
             None => {
@@ -199,6 +203,7 @@ impl TrustStore {
                         name,
                         paired_at,
                         reachabilities: reachability.into_iter().collect(),
+                        signed_in: None,
                     },
                 );
                 Ok(TrustStorePairingUpdate::Inserted)
@@ -209,6 +214,17 @@ impl TrustStore {
     pub(crate) fn remove(&mut self, host_id: HostId) -> Option<TrustEntry> {
         self.replacement_pending.remove(&host_id);
         self.entries.remove(&host_id)
+    }
+
+    pub(crate) fn replace_direct_addrs(&mut self, host_id: HostId, addrs: Vec<SocketAddr>) -> bool {
+        let Some(entry) = self.entries.get_mut(&host_id) else {
+            return false;
+        };
+        entry
+            .reachabilities
+            .retain(|reachability| !matches!(reachability, Reachability::Direct { .. }));
+        entry.reachabilities.push(Reachability::Direct { addrs });
+        true
     }
 
     fn other_host_for_pubkey(&self, host_id: HostId, pubkey: &[u8]) -> Option<HostId> {
@@ -260,12 +276,33 @@ impl<'de> Deserialize<'de> for TrustStore {
 fn load_trust_store_from_path(path: &Path) -> Result<TrustStore, IdentityError> {
     ensure_private_file_mode(path)?;
     let bytes = fs::read(path)?;
-    let store = serde_json::from_slice::<TrustStore>(&bytes)?;
+    let store =
+        serde_json::from_slice::<TrustStore>(&bytes).map_err(|source| IdentityError::JsonFile {
+            path: path.to_path_buf(),
+            source,
+        })?;
     store.validate()?;
     Ok(store)
 }
 
 fn append_reachability(reachabilities: &mut Vec<Reachability>, reachability: Reachability) {
+    if let Reachability::Direct { addrs } = reachability {
+        if let Some(Reachability::Direct {
+            addrs: stored_addrs,
+        }) = reachabilities
+            .iter_mut()
+            .find(|reachability| matches!(reachability, Reachability::Direct { .. }))
+        {
+            for addr in addrs {
+                if !stored_addrs.contains(&addr) {
+                    stored_addrs.push(addr);
+                }
+            }
+        } else {
+            reachabilities.push(Reachability::Direct { addrs });
+        }
+        return;
+    }
     if !reachabilities.contains(&reachability) {
         reachabilities.push(reachability);
     }
@@ -320,11 +357,12 @@ mod tests {
                 name: "second".to_string(),
                 paired_at: DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
                 reachabilities: vec![
-                    Reachability::DirectTcp {
-                        addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                    Reachability::Direct {
+                        addrs: vec![SocketAddr::from_str("127.0.0.1:9000").unwrap()],
                     },
                     Reachability::Cloud,
                 ],
+                signed_in: None,
             },
         );
 
@@ -441,8 +479,8 @@ mod tests {
                     peer,
                     vec![8; 32],
                     "new".to_string(),
-                    Reachability::DirectTcp {
-                        addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                    Reachability::Direct {
+                        addrs: vec![SocketAddr::from_str("127.0.0.1:9000").unwrap()],
                     },
                     DateTime::<Utc>::from_timestamp(300, 0).unwrap(),
                 )
@@ -463,8 +501,8 @@ mod tests {
                     peer,
                     vec![8; 32],
                     "new".to_string(),
-                    Reachability::DirectTcp {
-                        addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                    Reachability::Direct {
+                        addrs: vec![SocketAddr::from_str("127.0.0.1:9000").unwrap()],
                     },
                     DateTime::<Utc>::from_timestamp(300, 0).unwrap(),
                 )
@@ -477,8 +515,8 @@ mod tests {
         assert_eq!(entry.pubkey, vec![8; 32]);
         assert_eq!(
             entry.reachabilities,
-            vec![Reachability::DirectTcp {
-                addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+            vec![Reachability::Direct {
+                addrs: vec![SocketAddr::from_str("127.0.0.1:9000").unwrap()],
             }]
         );
     }
@@ -534,6 +572,7 @@ mod tests {
                     target: "workstation".to_string(),
                     profile: crate::installation::ProfileId(uuid::Uuid::from_u128(42)),
                 }],
+                signed_in: None,
             },
         );
 
@@ -560,6 +599,7 @@ mod tests {
                 name: "peer".to_string(),
                 paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
 

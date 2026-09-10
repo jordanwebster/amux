@@ -734,6 +734,7 @@ mod tests {
                 name: format!("peer-{}", peer.host_id),
                 paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         trust_store

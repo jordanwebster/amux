@@ -18,7 +18,9 @@ use crate::HostId;
 use crate::auth::CredentialProvider;
 use crate::client::Client;
 use crate::config::{ConfigError, InstallationConfig, ProfileConfig, check_path};
-use crate::profile::runtime::{self, ProfileRuntime, ProfileRuntimeOptions, RuntimeConfig};
+use crate::profile::runtime::{
+    self, DirectDialPolicy, ProfileRuntime, ProfileRuntimeOptions, RuntimeConfig,
+};
 use crate::profile::status::RuntimeStatus;
 use crate::server::ShutdownReason;
 
@@ -718,16 +720,20 @@ impl Inner {
                 .collect::<Vec<_>>()
         };
         futures_util::future::join_all(slots.into_iter().map(|(id, slot)| async move {
-            let runtime = slot.runtime.lock().await;
-            if let Some(runtime) = runtime.as_ref() {
+            let mut runtime = slot.runtime.lock().await;
+            if let Some(runtime) = runtime.as_mut() {
                 if suspended {
+                    runtime.suspend_direct_links().await;
                     runtime.stop_cloud().await;
-                } else if self.cloud_eligible(id) {
-                    let store = slot.credentials.lock().unwrap().clone();
-                    if let Some(store) = store {
-                        store.refresh_after_host_resume().await;
+                } else {
+                    runtime.resume_direct_links();
+                    if self.cloud_eligible(id) {
+                        let store = slot.credentials.lock().unwrap().clone();
+                        if let Some(store) = store {
+                            store.refresh_after_host_resume().await;
+                        }
+                        let _ = runtime.start_cloud().await;
                     }
-                    let _ = runtime.start_cloud().await;
                 }
             }
         }))
@@ -839,6 +845,11 @@ impl Inner {
                 shared: self.settings.clone(),
                 credentials,
                 discovery,
+                dial: if self.listeners.has_sockets() {
+                    DirectDialPolicy::OnStart
+                } else {
+                    DirectDialPolicy::WhileForeground
+                },
 
                 listeners: self.listeners,
                 #[cfg(testnet)]

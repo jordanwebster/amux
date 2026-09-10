@@ -15,7 +15,7 @@ use super::status::{Observed, RuntimeStatus};
 use crate::auth::CredentialProvider;
 use crate::client::Client;
 use crate::config::{ClaudeSettings, Config, ConfigError, Keybinds, LanConfig, UiSettings};
-use crate::discovery::{Advertisement, Discovery, DiscoveryError};
+use crate::discovery::{Advertisement, Discovery, DiscoveryError, FoundHosts};
 use crate::identity;
 use crate::protocol::wire;
 use crate::server::ShutdownReason;
@@ -82,6 +82,13 @@ impl Listeners {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DirectDialPolicy {
+    Never,
+    OnStart,
+    WhileForeground,
+}
+
 #[cfg(testnet)]
 #[derive(Clone)]
 pub(crate) enum CloudFixtureAuth {
@@ -106,6 +113,7 @@ pub(crate) struct ProfileRuntimeOptions {
     pub(crate) shared: Arc<InstallationSettings>,
     pub(crate) credentials: Option<Arc<dyn CredentialProvider>>,
     pub(crate) discovery: Arc<dyn Discovery>,
+    pub(crate) dial: DirectDialPolicy,
 
     pub(crate) listeners: Listeners,
     #[cfg(testnet)]
@@ -152,6 +160,7 @@ impl ProfileRuntimeOptions {
             shared: Arc::new(shared),
             credentials,
             discovery,
+            dial: DirectDialPolicy::OnStart,
 
             listeners,
             #[cfg(testnet)]
@@ -211,6 +220,8 @@ pub(crate) struct ProfileRuntime {
     pub(crate) trust: crate::trust::SharedTrustStore,
     #[cfg(testnet)]
     test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
+    #[cfg(testnet)]
+    tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
     #[cfg(test_fixtures)]
     pub(crate) test_cloud_transport: Option<tonic::transport::Channel>,
     client: Client,
@@ -218,6 +229,7 @@ pub(crate) struct ProfileRuntime {
     pub(crate) client_channel: tonic::transport::Channel,
     in_process_connection: InProcessConnection,
     discovery: Arc<dyn Discovery>,
+    dial: DirectDialPolicy,
     background_tasks: Vec<JoinHandle<()>>,
     cloud_connector: Mutex<Option<CloudConnector>>,
     status: RuntimeStatus,
@@ -316,8 +328,8 @@ async fn build(
     let mut bound = BoundListeners::bind(&options).await?;
     let mut lan_listener = bound.tcp_listener.take();
     #[cfg(testnet)]
-    if lan_listener.is_none() && options.config.lan.listen {
-        lan_listener = options.fixtures.listener.take();
+    if let Some(fixture_listener) = options.fixtures.listener.take() {
+        lan_listener = Some(fixture_listener);
     }
     let lan_addr = lan_listener
         .as_ref()
@@ -366,6 +378,13 @@ async fn build(
     }
     .map_err(|error| ProfileStartError::State(error.to_string()))?;
 
+    let found_hosts = Arc::new(FoundHosts::default());
+    services.configure_reachability(
+        options.paths.data_dir.clone(),
+        discovery.clone(),
+        found_hosts,
+    );
+
     #[cfg(unix)]
     let unix_accept_task = bound.unix_listener.take().map(|listener| {
         let task = services.serve_client_service_on_unix_listener(listener);
@@ -401,21 +420,21 @@ async fn build(
     let mut background_tasks = vec![crate::agents::spawn_artifact_sweeper(
         services.artifact_owners.clone(),
     )];
-    if options.listeners.has_sockets() {
+    if options.dial != DirectDialPolicy::Never {
+        let events = discovery.browse();
+        background_tasks.push(services.spawn_dial_on_found(events));
         background_tasks.extend(services.spawn_reachability_links());
-        if let Some(task) = crate::server::spawn_periodic_update_check(
+        discovery.requery();
+    }
+    if options.listeners.has_sockets()
+        && let Some(task) = crate::server::spawn_periodic_update_check(
             reporters.update.clone(),
             options.shared.update_manifest_url.clone(),
             env!("CARGO_PKG_VERSION").to_string(),
             Duration::from_secs(3600),
-        ) {
-            background_tasks.push(task);
-        }
-    }
-
-    #[cfg(testnet)]
-    if options.listeners == Listeners::InProcessOnly && options.fixtures.tracked_tcp.is_some() {
-        background_tasks.extend(services.spawn_reachability_links());
+        )
+    {
+        background_tasks.push(task);
     }
 
     let (client_channel, client_task, in_process_connection) =
@@ -436,6 +455,8 @@ async fn build(
         #[cfg(testnet)]
         test_cloud: options.fixtures.cloud,
         #[cfg(testnet)]
+        tracked_tcp: options.fixtures.tracked_tcp,
+        #[cfg(testnet)]
         test_cloud_transport: options.fixtures.cloud_transport,
         #[cfg(all(test_fixtures, not(testnet)))]
         test_cloud_transport: None,
@@ -444,6 +465,7 @@ async fn build(
         client_channel,
         in_process_connection,
         discovery,
+        dial: options.dial,
         background_tasks,
         cloud_connector: Mutex::new(None),
         status,
@@ -457,6 +479,19 @@ async fn build(
 impl ProfileRuntime {
     pub(crate) fn client(&self) -> Client {
         self.client.clone()
+    }
+
+    pub(crate) async fn suspend_direct_links(&self) {
+        if self.dial == DirectDialPolicy::WhileForeground {
+            self.services.close_direct_links().await;
+        }
+    }
+
+    pub(crate) fn resume_direct_links(&mut self) {
+        if self.dial == DirectDialPolicy::WhileForeground {
+            self.background_tasks
+                .extend(self.services.resume_direct_links());
+        }
     }
 
     #[cfg(testnet)]
@@ -598,7 +633,15 @@ impl ProfileRuntime {
 
     pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
         self.discovery.withdraw();
+        #[cfg(testnet)]
+        if let Some(connections) = &self.tracked_tcp {
+            let connections = std::mem::take(&mut *connections.lock().unwrap());
+            for connection in connections {
+                let _ = connection.shutdown(std::net::Shutdown::Both);
+            }
+        }
         self.stop_accepting_local_clients().await;
+        self.services.close_direct_links().await;
         self.stop_cloud().await;
 
         if let Some(host) = &self.agent_host {
@@ -805,6 +848,7 @@ mod tests {
             }),
             credentials: None,
             discovery: Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            dial: DirectDialPolicy::Never,
 
             listeners,
             #[cfg(testnet)]
@@ -830,6 +874,36 @@ mod tests {
         assert!(weak_state.upgrade().is_some());
         runtime.stop(ShutdownReason::UserRequested).await;
         assert!(weak_state.upgrade().is_none());
+    }
+
+    #[tokio::test]
+    async fn profile_reports_legacy_direct_tcp_trust_file_by_name() {
+        let root = tempdir().unwrap();
+        let runtime_options = options(root.path(), Listeners::InProcessOnly);
+        std::fs::create_dir_all(&runtime_options.paths.data_dir).unwrap();
+        let peer = crate::HostId::from_u128(2);
+        let json = format!(
+            r#"{{
+  "{peer}": {{
+    "pubkey": [{}],
+    "name": "old peer",
+    "paired_at": "1970-01-01T00:00:00Z",
+    "reachabilities": [{{ "type": "direct_tcp", "addr": "127.0.0.1:9000" }}]
+  }}
+}}"#,
+            std::iter::repeat_n("7", 32).collect::<Vec<_>>().join(", ")
+        );
+        crate::identity::create_private_file(
+            &runtime_options.paths.data_dir.join("trust.json"),
+            json.as_bytes(),
+        )
+        .unwrap();
+
+        let error = match start(runtime_options).await {
+            Ok(_) => panic!("legacy direct_tcp trust unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("trust.json"), "{error}");
     }
 
     struct StaticCredentials;

@@ -641,6 +641,7 @@ mod tests {
                 name: "trusted".to_string(),
                 paired_at: DateTime::<Utc>::from_timestamp(1, 0).unwrap(),
                 reachabilities: vec![Reachability::Cloud],
+                signed_in: None,
             },
         );
         trust_store

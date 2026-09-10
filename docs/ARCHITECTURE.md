@@ -294,7 +294,7 @@ using two accounts pair once per account; a key pinned by one profile grants
 no authority in another profile on the same installation.
 
 The trust store (`trust.rs`) maps
-`host_id → { pubkey, name, paired_at, reachabilities }`. It is the entire
+`host_id → { pubkey, name, paired_at, reachabilities, signed_in }`. It is the entire
 trust model: a pinned pubkey is what lets a peer's mTLS handshake
 terminate into the trusted services. Entries are added only by successful
 pairing and removed by local revocation (`amux unpair`) or profile deletion.
@@ -303,19 +303,21 @@ trust. The store is local-only — never sent
 to the cloud, never synchronized between devices.
 
 `reachabilities` is not trust; it is the list of **dialer-responsibility
-markers** this device learned as an initiator: `Cloud`, `DirectTcp { addr }`
-(the listener address it dialed), or `Ssh { target, profile }` (the SSH
+markers** this device learned as an initiator: `Cloud`, `Direct { addrs }`
+(the listener addresses that have worked), or `Ssh { target, profile }` (the SSH
 destination and remote profile UUID). SSH pairing exchanges that UUID alongside
 the device identity, so reconnecting runs `amux relay --profile <UUID>` even
 after a remote rename or default-selection change. Re-establishment is always
-the dialer's job: on startup the `ReachabilityLinkConnector`
-(`services/reachability.rs`) walks the
-store and dials every `DirectTcp`/`Ssh` entry; `Cloud` entries need no
-action because the cloud connector brings up that link separately. The
+the dialer's job: the `ReachabilityLinkConnector` (`services/reachability.rs`)
+dials freshly discovered addresses before stored ones and replaces the stored
+set with the address that succeeds. It runs on startup for desktop profiles and
+while the host is in the foreground for embedded profiles. `Ssh` entries are
+dialed from storage; `Cloud` entries need no action because the cloud connector
+brings up that link separately. The
 acceptor side of a pairing records no reachability it didn't dial — an
 accepted socket's source port is not a reusable address. A trusted peer
-with an empty list is a peer we trust but have no stored way to reach;
-it shows up offline until it dials us.
+with an empty list is dialed as soon as discovery finds it. Without a current
+advertisement or another route it remains offline.
 
 ## Servers and connection admission
 

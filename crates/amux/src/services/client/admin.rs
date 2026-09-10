@@ -304,6 +304,7 @@ impl ProfileAdmin {
                 "turn on the LAN listener in your config, or use cloud / SSH pairing",
             ));
         }
+        self.service.reachability_links.requery();
         let (method, ttl, secret) = if let Some(demo) = request.demo {
             if demo.ttl_seconds == 0 || demo.ttl_seconds > DEMO_PAIR_MODE_MAX_TTL.as_secs() {
                 return Err(tonic::Status::invalid_argument(format!(
