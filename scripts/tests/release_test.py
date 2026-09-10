@@ -8,6 +8,7 @@ once a build reaches Apple. No test here builds, signs, exports or uploads.
 import contextlib
 import datetime
 import importlib.util
+import io
 import os
 from pathlib import Path
 import plistlib
@@ -420,6 +421,10 @@ class TheOrderOfARelease(unittest.TestCase):
                 patches["numbers"] = lambda *_: ("1.0.32", 41)
             with contextlib.ExitStack() as stack:
                 stack.enter_context(working_directory(ROOT))
+                # The run reports itself to the console; a test suite is not
+                # its reader, and its stderr would land inside unittest's own.
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
                 for name, replacement in patches.items():
                     stack.enter_context(
                         unittest.mock.patch.object(recipe, name, replacement))
