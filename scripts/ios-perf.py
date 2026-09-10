@@ -11,6 +11,7 @@ ios/AmuxPerformanceTests.
 from pathlib import Path
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,8 @@ DERIVED_DATA = Path("target/ios/DerivedData")
 CONFIGURATION = "Measured"
 PRODUCTS = DERIVED_DATA / f"Build/Products/{CONFIGURATION}-iphonesimulator"
 OUTPUT = Path("target/ios/perf")
+BUILD_RESULT = OUTPUT / "build-for-testing.xcresult"
+RELEASE_RESULT = OUTPUT / "release-build.xcresult"
 SIMULATOR = "amux-golden"
 BUNDLE_ID = "sh.amux.app"
 # The definitions pin five samples per metric with the state reset between
@@ -151,6 +154,11 @@ def container(udid: str) -> Path:
 
 def build(udid: str) -> None:
     ios_project.generate()
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    # Quiet successful builds stay quiet, while a failed build leaves the
+    # complete Xcode diagnostics in the artifact CI already uploads.
+    shutil.rmtree(BUILD_RESULT, ignore_errors=True)
+    shutil.rmtree(RELEASE_RESULT, ignore_errors=True)
     subprocess.run([
         "xcodebuild", "build-for-testing",
         "-project", "ios/Amux.xcodeproj",
@@ -158,9 +166,11 @@ def build(udid: str) -> None:
         "-configuration", CONFIGURATION,
         "-destination", f"id={udid}",
         "-derivedDataPath", str(DERIVED_DATA),
+        "-resultBundlePath", str(BUILD_RESULT.resolve()),
         "-quiet",
         *ARCHITECTURE,
     ], check=True, timeout=1800)
+    shutil.rmtree(BUILD_RESULT, ignore_errors=True)
     # Uninstalled first, so every run starts against an app that has never
     # been signed in or paired. Installing over the last run leaves its
     # account and its trust behind, and a machine this phone has already been
@@ -501,6 +511,7 @@ def sizes(output: Path) -> None:
     out on disk, which is what a build produces — not the App Store's thinned
     and compressed download, which no recipe here can produce.
     """
+    shutil.rmtree(RELEASE_RESULT, ignore_errors=True)
     subprocess.run([
         "xcodebuild", "build",
         "-project", "ios/Amux.xcodeproj",
@@ -508,9 +519,11 @@ def sizes(output: Path) -> None:
         "-configuration", "Release",
         "-destination", "generic/platform=iOS",
         "-derivedDataPath", str(DERIVED_DATA),
+        "-resultBundlePath", str(RELEASE_RESULT.resolve()),
         "-quiet",
         "CODE_SIGNING_ALLOWED=NO",
     ], check=True, timeout=1800)
+    shutil.rmtree(RELEASE_RESULT, ignore_errors=True)
     application = DERIVED_DATA / "Build/Products/Release-iphoneos/Amux.app"
     if not application.is_dir():
         raise SystemExit(f"the release build left no application at {application}")

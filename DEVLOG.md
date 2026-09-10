@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **Retain Xcode's reason when a quiet iOS run fails.**
+
+Every journey UI test now writes a fresh result bundle beside its journey log.
+Passing logs remain quiet; on failure the test tree is appended to the log,
+including XCTest's assertion and source location. CI already uploads the whole
+journeys directory, so both the readable summary and the complete result bundle
+survive a failed verification run.
+
+The two quiet performance builds receive the same treatment under the existing
+performance artifact. A deliberate short-journey assertion failure left its
+message and Swift file and line in both the retained bundle and the appended
+log; after reverting that scratch change, the journey passes with concise
+output.
+
+---
+
 2026-09-11 — **Keep Retry Now burst timing virtual until it is observed.**
 
 The Retry Now burst test now pauses Tokio's clock once before all ten presses

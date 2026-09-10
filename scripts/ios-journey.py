@@ -343,6 +343,10 @@ def perform(
     """
     journey.directory.mkdir(parents=True, exist_ok=True)
     log = journey.directory / f"{test.split('/')[-1]}.log"
+    result = journey.directory / f"{test.replace('/', '-')}.xcresult"
+    # xcodebuild refuses to replace a result bundle. A repeated diagnosis is
+    # about this run, so an earlier bundle cannot survive under its name.
+    shutil.rmtree(result, ignore_errors=True)
     # xcodebuild passes TEST_RUNNER_X through to the test process as X, which
     # is the only way to tell a UI test anything: it is launched by the system,
     # not by this script.
@@ -359,6 +363,7 @@ def perform(
             "-destination", f"id={udid}",
             "-derivedDataPath", str(DERIVED_DATA.resolve()),
             "-only-testing", test,
+            "-resultBundlePath", str(result.resolve()),
             "-quiet",
         ], env=environment, text=True, stdout=sink, stderr=subprocess.STDOUT)
         try:
@@ -369,6 +374,26 @@ def perform(
             if started.poll() is None:
                 started.kill()
                 started.wait(timeout=30)
+    if returned != 0 and result.is_dir():
+        # Keep passing output quiet, but make a failed assertion readable in
+        # the plain log as well as in the retained result bundle. The test
+        # tree includes XCTest's complaint and source location.
+        with log.open("a") as sink:
+            sink.write(f"\nFailure details from {result}:\n")
+            sink.flush()
+            details = subprocess.run([
+                "xcrun", "xcresulttool", "get", "test-results", "tests",
+                "--path", str(result.resolve()),
+            ], text=True, stdout=sink, stderr=subprocess.STDOUT, timeout=120)
+            if details.returncode != 0:
+                sink.write(
+                    f"xcresulttool could not read the test details "
+                    f"(exit {details.returncode})\n")
+    elif returned == 0:
+        # Passing journeys need neither the sizeable bundle nor its build
+        # chatter; the ordinary journey record is their evidence.
+        shutil.rmtree(result, ignore_errors=True)
+        log.write_text(f"{test}: passed\n")
     journey.expect(returned == 0, f"{test} failed; its output is in {log}")
     container = test_container(udid)
     for name, destination in collecting.items():
