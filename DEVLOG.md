@@ -4,6 +4,35 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Keep report source identity after measuring build overhead.**
+
+The first build after the runtime changes costs 6.00 seconds wall time and
+4.43 seconds in Cargo. Only amux-cli recompiles, and Cargo identifies the
+changed branch reference as the cause. Keep SHA embedding in debug builds:
+this bounded once-per-commit cost preserves the committed source identity in
+diagnostics and replay reports. Unchanged test iterations do not invalidate
+that input. The command time includes orchestration and sweeping; it is not
+a pure linker measurement.
+
+The next identical build takes 36.70 seconds, rebuilding dependencies whose
+fingerprints wt deleted after the first command. A separate identical pair
+takes 49.47 and 37.11 seconds; both rebuild. Fingerprint snapshots and Cargo
+diagnostics show the two getrandom/tempfile variants being deleted in turn.
+The variants alternate, not necessarily fast and slow command times. This is
+the external wt 0.3.0 sweeper defect; neither wt nor its configuration changes.
+The pairs start at 97.13% and 85.67% system idle, with no foreign build/test
+process observed. Build costs are compared within their pairs, separate from
+the earlier test-runtime measurements.
+
+The completed runtime comparison retains all 62 Rust harness rows: workspace
+harness time falls from 158.59 to 68.62 seconds, with every harness under the
+measured 12-second bound. The full test command falls from 191.27 to 72.00
+seconds, including separately reported preparation. No runtime is remeasured
+for the build-overhead decision.
+
+Verification after both build pairs: `wt test` passes 2,472 Rust and 34 Python
+tests, with one existing ignored test; `wt run spec` passes all 480 specs.
+
 2026-09-10 — **Run independent replay prefixes concurrently and wake host checks on events.**
 
 Both long UI differential sweeps now run as eight libtest cases, sharing each
