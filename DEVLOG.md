@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Use portable working directories in startup service tests.**
+
+The startup tests now create echo agents in the platform's temporary directory,
+matching the neighboring service fixtures. Both the direct service request and
+the client RPC previously assumed `/tmp` exists, which the host correctly
+refuses on Windows. The other `/tmp` fixtures store metadata or exercise
+in-memory sessions; the short installation-root helper already selects the
+platform temporary directory outside Unix.
+
+Verified on macOS with `wt test -- services::startup` (35 tests), the complete
+`wt test` suite and `wt run fmt-check`. A Windows CI run of the repaired revision
+has not been observed.
+
+---
+
 2026-09-10 — **Check nightly Rust formatting during whole verification.**
 
 `wt run fmt-check` runs the same nightly rustfmt check as CI under a five-minute

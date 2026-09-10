@@ -1161,7 +1161,7 @@ mod tests {
                 initial_prompt: None,
                 agent: CreateAgentConfig::TestAgent {
                     command: TEST_ECHO_COMMAND.to_string(),
-                    working_dir: PathBuf::from("/tmp"),
+                    working_dir: std::env::temp_dir(),
                     terminal_size: None,
                 },
             })
@@ -1277,7 +1277,7 @@ mod tests {
             agent: Some(wire::client_create_agent_request::Agent::TestAgent(
                 wire::TestAgentCreateConfig {
                     command: TEST_ECHO_COMMAND.to_string(),
-                    working_dir: "/tmp".to_string(),
+                    working_dir: std::env::temp_dir().to_string_lossy().into_owned(),
                     initial_terminal_size: None,
                 },
             )),
