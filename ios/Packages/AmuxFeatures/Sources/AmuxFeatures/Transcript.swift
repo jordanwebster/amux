@@ -40,27 +40,16 @@ struct TranscriptFeed: View {
 /// where it began instead of being pushed down against the composer. A
 /// two-row conversation must never open with empty ground above its first row.
 ///
-/// Opening is finished off by hand, once, because a feed does not know its own
-/// height when it first draws. The markdown in a prose row is parsed away from
-/// the main thread and the row stands at nothing until the parse lands, so a
-/// conversation whose rows are mostly prose is briefly a fraction of its
-/// finished height — and where a scroll view starts is decided from the height
-/// it had at the moment it was asked. A conversation that opened a screen and
-/// a half short of its own tail is the visible cost. So the last row is put
-/// back under the eye when the feed has finished measuring itself, and after
-/// that the anchors have it: this fires once and never again, because a reader
-/// who has gone looking for something further up is not asking to be brought
-/// back.
+/// Markdown and lazy rows acquire their heights after the scroll view first
+/// lays out. The composer can also change the viewport as its measured height
+/// and the safe-area insets arrive. Keep the opening tail attached to those
+/// layout changes until the reader takes control. Waiting for every lazy row
+/// to report that it finished measuring can wait forever on an offscreen row.
 struct TranscriptContainer<Content: View>: View {
     @Environment(\.design) private var design
     @ViewBuilder let content: Content
-    /// Where the feed is, so opening can finish putting it at the end.
     @State private var position = ScrollPosition()
-    /// Whether anything below was ever still being measured. Without it the
-    /// count reads zero before the rows that will report have drawn at all.
-    @State private var measured = false
-    /// Whether opening has already put the feed at its end.
-    @State private var opened = false
+    @State private var readerMoved = false
 
     var body: some View {
         ScrollView {
@@ -78,30 +67,40 @@ struct TranscriptContainer<Content: View>: View {
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .scrollPosition($position)
-        .onPreferenceChange(RowsBeingMeasured.self) { pending in
+        .onScrollGeometryChange(for: TranscriptLayout.self) { geometry in
+            TranscriptLayout(geometry)
+        } action: { _, layout in
+            // A geometry callback runs while lazy measurements are being
+            // applied. Request the edge after that layout has finished, so
+            // the scroll uses the new heights and insets.
             Task { @MainActor in
-                if pending > 0 {
-                    measured = true
-                } else if measured, !opened {
-                    opened = true
+                if !readerMoved, layout.containerSize.height > 0 {
                     position.scrollTo(edge: .bottom)
                 }
             }
         }
+        .onScrollPhaseChange { _, phase in
+            if phase == .tracking || phase == .interacting {
+                readerMoved = true
+            }
+        }
+        .onChange(of: position.isPositionedByUser) { _, byReader in
+            if byReader { readerMoved = true }
+        }
     }
 }
 
-/// How many rows below have not settled on their height yet.
-///
-/// Reported by the rows that arrive at their size late rather than inferred
-/// from the feed, because a height that has stopped changing for one frame and
-/// a height that is final are different facts and only the row knows which it
-/// has.
-struct RowsBeingMeasured: PreferenceKey {
-    static let defaultValue = 0
+/// Offset changes are deliberately excluded: moving to the tail must not
+/// itself request another scroll, and a reader's movement is not a resize.
+private struct TranscriptLayout: Equatable {
+    let contentSize: CGSize
+    let containerSize: CGSize
+    let insets: EdgeInsets
 
-    static func reduce(value: inout Int, nextValue: () -> Int) {
-        value += nextValue()
+    init(_ geometry: ScrollGeometry) {
+        contentSize = geometry.contentSize
+        containerSize = geometry.containerSize
+        insets = geometry.contentInsets
     }
 }
 
@@ -347,9 +346,6 @@ struct Prose: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(markdown)
         .identified("transcript.prose", value: open ? "open" : "final")
-        // Standing at nothing until the parse lands, and the feed above is
-        // deciding where to open from the height it can see.
-        .preference(key: RowsBeingMeasured.self, value: document == nil ? 1 : 0)
     }
 }
 

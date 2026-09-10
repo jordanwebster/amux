@@ -4,6 +4,27 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Place the opening transcript tail after layout.**
+
+A conversation now follows its actual content size, viewport and safe-area
+insets as its opening layout changes, requesting the tail after the reporting
+layout pass. Reader interaction releases that control. Short feeds retain
+their top alignment and ordinary scrolling keeps the platform's anchors.
+
+The previous one-shot depended on every lazy markdown row reporting a finished
+measurement. That count could remain nonzero for an offscreen row, preventing
+the opening scroll even when the visible tail had rendered. Issuing a scroll
+inside the geometry callback also used unfinished layout; deferring it fixes
+the intermittent accessibility-size transcript displacement.
+
+Validation: ten consecutive isolated accessibility conversation golden recipes
+and the full 124-capture recipe pass against unchanged baselines. Feature and
+copy lint pass. A controlled unfocused short-draft comparison reproduces the
+historical anchor-only displacement; the repaired container matches across
+20 captures. No fixture, capture threshold or settling rule changes.
+
+---
+
 2026-09-10 — **Home journey follows reviewed copy and persisted accounts.**
 
 The relay-loss journey still expected the longer connection and timeout copy
