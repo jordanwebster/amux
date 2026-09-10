@@ -4,6 +4,20 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Keep mobile snapshots identical on Windows.**
+
+The queue and ask JSON snapshots now require LF on checkout, like the schema
+snapshot beside them. Their tests still compare pretty-printed output byte
+for byte; Windows checkout conversion no longer changes the expected values.
+A sweep of embedded string files found no other unprotected byte comparison:
+the remaining configuration, journey and theme files are parsed, the Claude
+transcript guide is read by lines, and the iOS script is substring-matched.
+
+`git check-attr text eol` reports `set` and `lf` for both snapshots, and
+`wt test` passes locally.
+
+---
+
 2026-09-10 — **Give hosted workspace tests room to finish.**
 
 The workspace test deadline returns to 900 seconds. The 150-second limit
