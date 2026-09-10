@@ -54,7 +54,7 @@ impl Fixture {
                 data_dir: paths.data_dir,
                 state_path: paths.state_path,
                 cloud_url: "https://amux.sh".into(),
-                tcp_port: None,
+                lan: Default::default(),
             },
         );
         Self {
@@ -530,7 +530,7 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let mut config = amux::load_profile_config(&remote.profile).unwrap().profile;
-    config.tcp_port = Some(address.port());
+    config.lan.port = address.port();
     write(&remote.profile, &config);
     drop(listener);
     local.run(&["server", "start"]);

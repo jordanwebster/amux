@@ -96,7 +96,7 @@ mod tests {
                     data_dir: paths.data_dir,
                     state_path: paths.state_path,
                     cloud_url: cloud_url.clone(),
-                    tcp_port: None,
+                    lan: Default::default(),
                 };
                 let path = paths.config_path.unwrap();
                 std::fs::write(&path, serde_yaml::to_string(&profile).unwrap()).unwrap();

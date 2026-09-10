@@ -6,7 +6,7 @@
 config:
   name: server_a
   host_name: host-a
-  tcp_port: 0
+  lan_port: 0
 
 config:
   name: server_b
@@ -47,11 +47,11 @@ Server started.
 @TpairA
 > amux pair --listen
 @@capture pairing_pin Pairing PIN:
-LAN direct listener: tcp_port $server_a.tcp_port
+LAN direct listener: port $server_a.lan_port
 Pairing mode active for 5 minutes.
 
 @TpairB
-> amux pair --connect 127.0.0.1:$server_a.tcp_port
+> amux pair --connect 127.0.0.1:$server_a.lan_port
 > $pairing_pin
 
 @@sleep 1500

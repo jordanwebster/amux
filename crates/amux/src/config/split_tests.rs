@@ -39,7 +39,7 @@ impl Fixture {
             data_dir: paths.data_dir.clone(),
             state_path: paths.state_path.clone(),
             cloud_url: "https://account.example".into(),
-            tcp_port: None,
+            lan: Default::default(),
         };
         write(paths.config_path.as_ref().unwrap(), &profile);
         Self {
@@ -67,6 +67,7 @@ fn config_split_loads_shared_preferences_and_profile_paths() {
     assert_eq!(config.profile_id, fixture.id);
     assert_eq!(config.installation.host_name, "shared-device");
     assert_eq!(config.profile.cloud_url, "https://account.example");
+    assert_eq!(config.profile.lan, LanConfig::default());
     assert_eq!(
         config.profile.socket_path,
         fixture
@@ -119,6 +120,7 @@ fn config_split_rejects_unknown_fields_and_missing_installation() {
     for field in [
         "enable_cloud_mode: true",
         "host_name: wrong-owner",
+        "tcp_port: 4242",
         "surprise: true",
     ] {
         let yaml = serde_yaml::to_string(&fixture.profile).unwrap();

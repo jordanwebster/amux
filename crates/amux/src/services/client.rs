@@ -5333,6 +5333,7 @@ mod tests {
         let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
         let service =
             client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
+        service.server_state.write().await.config.lan.listen = false;
 
         let mut qr_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Qr as i32,
@@ -5347,7 +5348,7 @@ mod tests {
                 .await
                 .unwrap_err();
         assert_eq!(error.code(), tonic::Code::FailedPrecondition);
-        assert!(error.message().contains("tcp_port"));
+        assert!(error.message().contains("LAN listener"));
         assert!(!service.pair_mode.is_active());
 
         let mut lan_request = tonic::Request::new(wire::StartPairingRequest {
@@ -5368,7 +5369,8 @@ mod tests {
         {
             let mut state = service.server_state.write().await;
             state.config.host_name = "x".repeat(MAX_PAIRING_NAME_BYTES + 1);
-            state.config.tcp_port = Some(4242);
+            state.config.lan.listen = true;
+            state.config.lan.port = 4242;
         }
         let mut bad_name_request = tonic::Request::new(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin as i32,

@@ -17,6 +17,7 @@ use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries};
 use crate::HostId;
 use crate::client::Client;
 use crate::connection::ConnectionManager;
+use crate::discovery::{Discovery, ScriptedDiscovery};
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};
 use crate::profile::runtime::{
@@ -170,6 +171,7 @@ const CALL_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 pub(crate) async fn start_daemon_runtime(
     inner: &Arc<DaemonInner>,
     listener: Option<TcpListener>,
+    discovery: ScriptedDiscovery,
 ) -> DaemonRuntime {
     let listener = match (listener, inner.tcp_addr) {
         (Some(listener), _) => Some(listener),
@@ -181,7 +183,10 @@ pub(crate) async fn start_daemon_runtime(
         socket_path: inner.data_dir.join("amux.sock"),
         state_path: inner.data_dir.join("state.yaml"),
         data_dir: inner.data_dir.clone(),
-        tcp_port: inner.tcp_addr.map(|addr| addr.port()),
+        lan: crate::config::LanConfig {
+            listen: inner.tcp_addr.is_some(),
+            port: inner.tcp_addr.map_or(0, |addr| addr.port()),
+        },
 
         prevent_idle_sleep: Some(false),
         ..crate::config::Config::default()
@@ -192,9 +197,11 @@ pub(crate) async fn start_daemon_runtime(
         None,
         None,
         Listeners::InProcessOnly,
+        Arc::new(discovery) as Arc<dyn Discovery>,
     );
     options.fixtures = RuntimeFixtures {
         listener,
+        discovery: None,
         tracked_tcp: Some(inner.tracked_tcp.clone()),
         artifact_clock: Some(inner.artifact_clock.clone()),
         cloud_transport: None,
@@ -857,7 +864,8 @@ impl Daemon {
         // Stop first so the old runtime's tasks abort and the TCP listener
         // port is released before the new runtime rebinds it.
         self.stop().await;
-        let mut runtime = start_daemon_runtime(&self.inner, None).await;
+        let discovery = self.net.upgrade().unwrap().discovery.clone();
+        let mut runtime = start_daemon_runtime(&self.inner, None, discovery).await;
         if self.inner.cloud.is_some() {
             wait_for_stored_direct_peers(&runtime).await;
             runtime.spawn_cloud_connector(&self.inner).await;
@@ -910,7 +918,8 @@ impl Daemon {
         std::fs::remove_file(device_key_path(&self.inner.data_dir)).unwrap_or_else(|error| {
             panic!("remove device key for daemon '{}': {error}", self.name())
         });
-        let mut runtime = start_daemon_runtime(&self.inner, None).await;
+        let discovery = self.net.upgrade().unwrap().discovery.clone();
+        let mut runtime = start_daemon_runtime(&self.inner, None, discovery).await;
         if self.inner.cloud.is_some() {
             runtime.spawn_cloud_connector(&self.inner).await;
         }

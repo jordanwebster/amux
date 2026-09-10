@@ -286,11 +286,11 @@ impl ProfileAdmin {
                 "demo pairing requires PIN mode",
             ));
         }
-        let (name, tcp_port, cloud_url) = {
+        let (name, lan_port, cloud_url) = {
             let state = self.service.server_state.read().await;
             (
                 state.config.host_name.clone(),
-                state.config.tcp_port,
+                state.config.lan.listen.then_some(state.config.lan.port),
                 state.config.cloud_url.clone(),
             )
         };
@@ -299,9 +299,9 @@ impl ProfileAdmin {
                 "host_name is too long for pairing",
             ));
         }
-        if request.require_lan_direct && tcp_port.is_none() {
+        if request.require_lan_direct && lan_port.is_none() {
             return Err(tonic::Status::failed_precondition(
-                "set `tcp_port` in your config, or use cloud / SSH pairing",
+                "turn on the LAN listener in your config, or use cloud / SSH pairing",
             ));
         }
         let (method, ttl, secret) = if let Some(demo) = request.demo {
@@ -347,7 +347,7 @@ impl ProfileAdmin {
                 name,
             }),
             ttl_seconds: ttl.as_secs(),
-            tcp_port: tcp_port.map(u32::from),
+            tcp_port: lan_port.map(u32::from),
             cloud_url,
             secret: Some(secret),
         }))

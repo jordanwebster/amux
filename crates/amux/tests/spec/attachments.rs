@@ -27,7 +27,7 @@ mod cross_host {
         let net = TestNet::builder()
             .daemon("viewer")
             .daemon("agent-host")
-            .paired("viewer", "agent-host", Via::Tcp)
+            .paired("viewer", "agent-host", Via::Direct)
             .start()
             .await;
         let [viewer, agent_host] = net.daemons(["viewer", "agent-host"]);
@@ -126,7 +126,7 @@ mod cross_host {
         let net = TestNet::builder()
             .daemon("viewer")
             .daemon("agent-host")
-            .paired("viewer", "agent-host", Via::Tcp)
+            .paired("viewer", "agent-host", Via::Direct)
             .start()
             .await;
         let [viewer, agent_host] = net.daemons(["viewer", "agent-host"]);

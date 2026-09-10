@@ -14,7 +14,7 @@
 //!     .cloud()
 //!     .daemon("laptop")
 //!     .daemon("desktop")
-//!     .paired("laptop", "desktop", Via::Tcp)
+//!     .paired("laptop", "desktop", Via::Direct)
 //!     .start()
 //!     .await;
 //! let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -55,7 +55,7 @@ mod wire;
 
 use std::fmt::Write as _;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use assertions::eventually;
 use daemon::{CloudAttachment, DaemonInner, start_daemon_runtime};
@@ -67,6 +67,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 pub use wire::{LinkCloseReason, WirePeer};
 
+use crate::discovery::{Advertisement, Discovery, DiscoveryEvent, ScriptedDiscovery};
 use crate::identity::{DeviceIdentity, load_or_create_device_identity_in};
 use crate::trust::{Reachability, TrustEntry, TrustStore};
 
@@ -76,7 +77,7 @@ pub enum Via {
     /// Direct TCP: the first daemon stores a `DirectTcp` reachability for
     /// the second (mirroring real PIN pairing over TCP, where only the
     /// initiator learns an address).
-    Tcp,
+    Direct,
     /// Both daemons store a `Cloud` reachability and meet at the relay.
     Cloud,
 }
@@ -94,6 +95,8 @@ pub(crate) struct NetInner {
     pub(crate) cloud: Option<CloudRelay>,
     installations: Vec<InstallationHandle>,
     pairs: Vec<(String, String, Via)>,
+    pub(crate) discovery: ScriptedDiscovery,
+    discovery_events: StdMutex<tokio::sync::broadcast::Receiver<DiscoveryEvent>>,
     /// Owns every daemon's data dir; removed when the net is dropped.
     _data_root: tempfile::TempDir,
 }
@@ -131,6 +134,40 @@ impl TestNet {
     /// `let [a, b] = net.daemons(["a", "b"]);`
     pub fn daemons<const N: usize>(&self, names: [&str; N]) -> [Daemon; N] {
         names.map(|name| self.daemon(name))
+    }
+
+    /// Emits a resolved advertisement for a daemon on this test network.
+    pub fn announce(&self, daemon: &Daemon) {
+        self.inner.discovery.announce(Advertisement {
+            host_id: daemon.host_id(),
+            name: daemon.name().to_string(),
+            version: crate::PROTOCOL_VERSION,
+            addrs: vec![
+                daemon
+                    .inner
+                    .tcp_addr
+                    .expect("cannot announce a profile whose LAN listener is off"),
+            ],
+        });
+    }
+
+    /// Emits a goodbye for a daemon on this test network.
+    pub fn withdraw(&self, daemon: &Daemon) {
+        self.inner.discovery.withdraw_host(daemon.host_id());
+    }
+
+    /// Drains discovery events observed since the previous call.
+    pub fn discovery_events(&self) -> Vec<DiscoveryEvent> {
+        let mut receiver = self.inner.discovery_events.lock().unwrap();
+        let mut events = Vec::new();
+        loop {
+            match receiver.try_recv() {
+                Ok(event) => events.push(event),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => return events,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => return events,
+            }
+        }
     }
 
     /// Rejects this account at the production relay authentication boundary.
@@ -217,7 +254,7 @@ impl TestNet {
         let Some((from, to, reachability)) = attempt else {
             panic!(
                 "establish_direct('{}', '{}'): neither trust store holds a DirectTcp \
-                 reachability; pair them Via::Tcp first",
+                 reachability; pair them Via::Direct first",
                 a.name(),
                 b.name()
             );
@@ -303,7 +340,7 @@ impl TestNet {
 
     /// Waits for the declared steady state: every cloud-attached daemon has
     /// its relay link up, every paired couple sees each other online, and
-    /// `Via::Tcp` pairs route directly.
+    /// `Via::Direct` pairs route directly.
     async fn wait_for_steady_state(&self) {
         if let Some(cloud) = &self.inner.cloud {
             for daemon in self.cloud_attached_daemons() {
@@ -321,7 +358,7 @@ impl TestNet {
             let b = self.daemon(&b);
             a.sees(&b).await;
             match via {
-                Via::Tcp => {
+                Via::Direct => {
                     a.connects_to(&b).via_direct().await;
                     // Any live link is bidirectional at the call layer: the
                     // acceptor records a route back over the inbound link.
@@ -519,6 +556,8 @@ impl TestNetBuilder {
             .prefix("amux-spec")
             .tempdir()
             .expect("create testnet data root");
+        let discovery = ScriptedDiscovery::new();
+        let discovery_events = discovery.browse();
 
         let cloud = if self.cloud {
             Some(CloudRelay::start().await)
@@ -575,10 +614,10 @@ impl TestNetBuilder {
             let host_id_a = preps[ia].identity.host_id;
             let host_id_b = preps[ib].identity.host_id;
             let (reach_a_to_b, reach_b_to_a) = match via {
-                Via::Tcp => {
+                Via::Direct => {
                     let addr_b = preps[ib].tcp_addr.unwrap_or_else(|| {
                         panic!(
-                            "paired('{a}', '{b}', Via::Tcp) requires '{b}' to expose a \
+                            "paired('{a}', '{b}', Via::Direct) requires '{b}' to expose a \
                              direct-TCP listener, but it is cloud_only"
                         )
                     });
@@ -640,7 +679,7 @@ impl TestNetBuilder {
                 installation: None,
                 tracked_tcp: Default::default(),
             });
-            let runtime = start_daemon_runtime(&inner, prep.listener).await;
+            let runtime = start_daemon_runtime(&inner, prep.listener, discovery.clone()).await;
             *inner.runtime.lock().await = Some(runtime);
             daemon_inners.push(inner);
         }
@@ -681,7 +720,8 @@ impl TestNetBuilder {
             );
             for spec in self.installations {
                 let installation =
-                    installation::start(spec, identity.clone(), cloud.as_ref()).await;
+                    installation::start(spec, identity.clone(), cloud.as_ref(), discovery.clone())
+                        .await;
                 daemon_inners.extend(installation.daemon_inners());
                 installations.push(installation);
             }
@@ -730,13 +770,15 @@ impl TestNetBuilder {
                 })
                 .collect(),
             pairs: self.pairs,
+            discovery,
+            discovery_events: StdMutex::new(discovery_events),
             _data_root: data_root,
         });
         let net = TestNet { inner };
         // Staggered bring-up: direct links first, then the cloud relay (see
         // the note on `start_daemon_runtime`).
         for (a, b, via) in net.inner.pairs.clone() {
-            if via == Via::Tcp {
+            if via == Via::Direct {
                 let a = net.daemon(&a);
                 let b = net.daemon(&b);
                 a.connects_to(&b).via_direct().await;
@@ -751,7 +793,7 @@ impl TestNetBuilder {
             let b = net.daemon(&b);
             let pin = b.start_pairing().await;
             match via {
-                Via::Tcp => a.pair(&b).with_pin(&pin).await,
+                Via::Direct => a.pair(&b).with_pin(&pin).await,
                 Via::Cloud => a.pair(&b).with_cloud_pin(&pin).await,
             }
             .expect("pair installation fixture profiles");

@@ -22,7 +22,9 @@ use crate::client::connect_existing_client_service;
 use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
 use crate::identity;
-use crate::profile::runtime::{Listeners, ProfileRuntimeOptions, start_with_security};
+use crate::profile::runtime::{
+    Listeners, ProfileRuntimeOptions, platform_discovery, start_with_security,
+};
 use crate::protocol::wire;
 use crate::services::{CloudLinkService, DeviceRuntimeSecurity};
 use crate::subscription::SubscriptionReporter;
@@ -266,6 +268,7 @@ impl Server {
                 update_reporter,
                 subscription_reporter,
                 Listeners::Sockets,
+                platform_discovery().map_err(|error| ServerError::State(error.to_string()))?,
             );
             let security = self.take_device_runtime_security();
             let runtime = start_with_security(options, security)

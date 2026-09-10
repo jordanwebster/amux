@@ -74,7 +74,7 @@ ui:
   color: ansi
 EOF
   if [ -n "${2:-}" ]; then
-    printf 'tcp_port: %s\n' "$2" >> "$scratch/host-$1.yaml"
+    printf 'lan:\n  listen: true\n  port: %s\n' "$2" >> "$scratch/host-$1.yaml"
   fi
 }
 

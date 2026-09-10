@@ -47,7 +47,7 @@ async fn a2a_cross_device_over_tcp() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -89,7 +89,7 @@ async fn a2a_unreachable_recipient() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -120,7 +120,7 @@ async fn a2a_claude_completion_remote() {
     let net = TestNet::builder()
         .daemon("parent-host")
         .daemon("child-host")
-        .paired("parent-host", "child-host", Via::Tcp)
+        .paired("parent-host", "child-host", Via::Direct)
         .start()
         .await;
     let [parent_host, child_host] = net.daemons(["parent-host", "child-host"]);
@@ -152,7 +152,7 @@ async fn a2a_cascade_delete() {
     let net = TestNet::builder()
         .daemon("parent-host")
         .daemon("child-host")
-        .paired("parent-host", "child-host", Via::Tcp)
+        .paired("parent-host", "child-host", Via::Direct)
         .start()
         .await;
     let [parent_host, child_host] = net.daemons(["parent-host", "child-host"]);
@@ -180,7 +180,7 @@ async fn a2a_cascade_delete_reports_unreachable_children() {
     let net = TestNet::builder()
         .daemon("parent-host")
         .daemon("child-host")
-        .paired("parent-host", "child-host", Via::Tcp)
+        .paired("parent-host", "child-host", Via::Direct)
         .start()
         .await;
     let [parent_host, child_host] = net.daemons(["parent-host", "child-host"]);

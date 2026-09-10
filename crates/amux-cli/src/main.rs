@@ -164,7 +164,7 @@ enum Commands {
         #[cfg_attr(not(debug_assertions), arg(hide = true))]
         link: bool,
 
-        /// Require LAN-direct responder mode; errors when tcp_port is unset
+        /// Require LAN-direct responder mode; errors when the LAN listener is off
         #[arg(long, conflicts_with_all = ["qr", "connect"])]
         #[cfg_attr(unix, arg(conflicts_with = "via_ssh"))]
         listen: bool,
@@ -765,9 +765,9 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
 
             let retry_command = pair_start_retry_command(qr, listen);
             let client = front_door::profile_admin(&config, Some(retry_command)).await?;
-            if listen && config.tcp_port.is_none() {
+            if listen && !config.lan.listen {
                 return Err(anyhow!(
-                    "set `tcp_port` in your config, or use cloud / SSH pairing"
+                    "turn on the LAN listener in your config, or use cloud / SSH pairing"
                 ));
             }
             let pairing = if qr {
@@ -1112,7 +1112,7 @@ fn print_pairing_start(pairing: &PairingStart, print_link: bool) -> Result<()> {
         PairingSecret::Pin(pin) => {
             println!("Pairing PIN: {pin}");
             if let Some(port) = pairing.tcp_port {
-                println!("LAN direct listener: tcp_port {port}");
+                println!("LAN direct listener: port {port}");
             }
         }
         PairingSecret::QrSecret(secret) => {

@@ -8774,3 +8774,11 @@ daemon stopped. Bare report names still use the selected profile's reports
 directory. CLI regressions compare the replayed frame with the saved frame,
 cover absent configuration and stopped installations, and verify that a
 listening installation socket receives no connection during explicit replay.
+
+2026-09-11 — **Listening profiles advertise their actual LAN port.** Device
+profiles now default to an enabled, ephemeral LAN listener and publish its
+bound address through discovery for exactly the listener's lifetime. Quiescing
+or stopping a profile sends a withdrawal. Relay TCP configuration remains
+separate and now has an adjacent UDP port setting for the later QUIC listener;
+the test network shares one scripted discovery bus and can announce or withdraw
+hosts explicitly.

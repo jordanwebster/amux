@@ -815,22 +815,34 @@ impl Inner {
                 .as_ref()
                 .map(|binding| binding.account.service.to_string())
                 .unwrap_or_else(|| crate::config::Config::default().cloud_url);
+            #[cfg(testnet)]
+            let fixtures = self
+                .fixtures
+                .as_ref()
+                .map(|factory| factory(id))
+                .unwrap_or_default();
+            #[cfg(testnet)]
+            let discovery = match fixtures.discovery.clone() {
+                Some(discovery) => discovery,
+                None => runtime::platform_discovery()
+                    .map_err(|error| InstallationError::Unavailable(error.to_string()))?,
+            };
+            #[cfg(not(testnet))]
+            let discovery = runtime::platform_discovery()
+                .map_err(|error| InstallationError::Unavailable(error.to_string()))?;
             let mut options = ProfileRuntimeOptions {
                 paths: paths.clone(),
                 config: RuntimeConfig {
                     cloud_url,
-                    tcp_port: None,
+                    lan: Default::default(),
                 },
                 shared: self.settings.clone(),
                 credentials,
+                discovery,
 
                 listeners: self.listeners,
                 #[cfg(testnet)]
-                fixtures: self
-                    .fixtures
-                    .as_ref()
-                    .map(|factory| factory(id))
-                    .unwrap_or_default(),
+                fixtures,
             };
             let config_path = paths.config_path.as_ref().unwrap();
             if config_path.exists() {
@@ -838,7 +850,7 @@ impl Inner {
                 if record.binding.is_none() {
                     options.config.cloud_url = config.cloud_url;
                 }
-                options.config.tcp_port = config.tcp_port;
+                options.config.lan = config.lan;
             } else {
                 let config = ProfileConfig {
                     installation_config: self.config.file_path(),
@@ -846,7 +858,7 @@ impl Inner {
                     data_dir: paths.data_dir.clone(),
                     state_path: paths.state_path.clone(),
                     cloud_url: options.config.cloud_url.clone(),
-                    tcp_port: options.config.tcp_port,
+                    lan: options.config.lan,
                 };
                 write_yaml(config_path, &config)?;
             }

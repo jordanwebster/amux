@@ -207,6 +207,8 @@ struct VariableContext {
     configs: HashMap<String, PathBuf>,
     /// config name -> tcp_port
     tcp_ports: HashMap<String, u16>,
+    /// config name -> LAN listener port
+    lan_ports: HashMap<String, u16>,
     /// captured output variable name -> value
     captures: HashMap<String, String>,
 }
@@ -717,13 +719,14 @@ impl VariableContext {
             directories: HashMap::new(),
             configs: HashMap::new(),
             tcp_ports: HashMap::new(),
+            lan_ports: HashMap::new(),
             captures: HashMap::new(),
         }
     }
 
     /// Substitute variables in a string.
     /// Supports: $name.path (for directories), $name.socket_path and
-    /// $name.tcp_port (for configs)
+    /// $name.tcp_port (for relays), and $name.lan_port (for profiles)
     fn substitute(&self, input: &str) -> String {
         let mut result = input.to_string();
 
@@ -742,6 +745,11 @@ impl VariableContext {
         for (name, tcp_port) in &self.tcp_ports {
             let var = format!("${}.tcp_port", name);
             result = result.replace(&var, &tcp_port.to_string());
+        }
+
+        for (name, lan_port) in &self.lan_ports {
+            let var = format!("${}.lan_port", name);
+            result = result.replace(&var, &lan_port.to_string());
         }
 
         for (name, value) in &self.captures {
@@ -867,7 +875,12 @@ impl Executor {
             #[cfg(unix)]
             let _ = std::fs::remove_file(&socket_path);
 
-            let tcp_port = match cfg.tcp_port {
+            let configured_port = if cfg.cloud_relay {
+                cfg.tcp_port
+            } else {
+                cfg.lan_port
+            };
+            let listener_port = match configured_port {
                 Some(0) => Some(allocate_local_port()?),
                 Some(port) => Some(port),
                 None => None,
@@ -911,7 +924,7 @@ impl Executor {
                     &serde_json::json!({
                         "host_name": host_name, "socket_path": socket_path,
                         "state_path": state_path, "data_dir": root.join("data"),
-                        "tcp_port": tcp_port, "cloud_url": cloud_url, "prevent_idle_sleep": false,
+                        "tcp_port": listener_port, "cloud_url": cloud_url, "prevent_idle_sleep": false,
                     }),
                 )?;
                 (path, socket_path)
@@ -993,7 +1006,11 @@ impl Executor {
                             &serde_json::json!({
                                 "installation_config": installation_path, "socket_path": socket,
                                 "state_path": dir.join("state/state.yaml"), "data_dir": dir.join("data"),
-                                "cloud_url": cloud_url, "tcp_port": if profile_index == 0 { tcp_port } else { None },
+                                "cloud_url": cloud_url,
+                                "lan": {
+                                    "listen": true,
+                                    "port": if profile_index == 0 { listener_port.unwrap_or(0) } else { 0 },
+                                },
                             }),
                         )?;
                         if profile_index == 0
@@ -1092,8 +1109,12 @@ impl Executor {
             }
             config_envs.insert(cfg.name.clone(), env);
             var_ctx.configs.insert(cfg.name.clone(), socket_path);
-            if let Some(tcp_port) = tcp_port {
-                var_ctx.tcp_ports.insert(cfg.name.clone(), tcp_port);
+            if let Some(listener_port) = listener_port {
+                if cfg.cloud_relay {
+                    var_ctx.tcp_ports.insert(cfg.name.clone(), listener_port);
+                } else {
+                    var_ctx.lan_ports.insert(cfg.name.clone(), listener_port);
+                }
             }
         }
 
@@ -1496,6 +1517,7 @@ impl Executor {
                 worktree: false,
                 cloud_url: None,
                 tcp_port: None,
+                lan_port: None,
                 cloud_relay: false,
                 update_version: None,
                 suspended_agent: None,

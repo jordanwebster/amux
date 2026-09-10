@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::daemon::{CloudAttachment, DaemonInner, TestArtifactClock};
 use super::{Daemon, NetInner};
+use crate::discovery::{Discovery, ScriptedDiscovery};
 use crate::installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
@@ -84,6 +85,7 @@ struct InstallationInner {
     identity: Arc<IdentityServer>,
     fixtures: Fixtures,
     cloud_addr: Option<SocketAddr>,
+    discovery: ScriptedDiscovery,
     root: PathBuf,
     persistent: bool,
     // Keep the root alive until the last handle and all runtimes are gone.
@@ -174,7 +176,11 @@ impl InstallationHandle {
                 &self.inner.name,
                 InstallationRoot::OnDisk(self.inner.root.clone()),
             ),
-            fixture_factory(self.inner.fixtures.clone(), self.inner.cloud_addr),
+            fixture_factory(
+                self.inner.fixtures.clone(),
+                self.inner.cloud_addr,
+                self.inner.discovery.clone(),
+            ),
         )
         .await
         .expect("reopen installation");
@@ -483,6 +489,7 @@ fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
 fn fixture_factory(
     fixtures: Fixtures,
     cloud_addr: Option<SocketAddr>,
+    discovery: ScriptedDiscovery,
 ) -> Arc<dyn Fn(ProfileId) -> RuntimeFixtures + Send + Sync> {
     Arc::new(move |id| {
         let mut fixtures = fixtures.lock().unwrap();
@@ -516,6 +523,7 @@ fn fixture_factory(
             });
         RuntimeFixtures {
             listener: listener.map(|listener| tokio::net::TcpListener::from_std(listener).unwrap()),
+            discovery: Some(Arc::new(discovery.clone()) as Arc<dyn Discovery>),
             tracked_tcp: Some(fixture.tracked_tcp.clone()),
             artifact_clock: Some(fixture.clock.clone()),
             cloud: None,
@@ -532,6 +540,7 @@ pub(super) async fn start(
     spec: InstallationSpec,
     identity: Arc<IdentityServer>,
     cloud: Option<&super::net::CloudRelay>,
+    discovery: ScriptedDiscovery,
 ) -> InstallationHandle {
     let disk_root = crate::test_fixtures::short_installation_root();
     let root = InstallationRoot::OnDisk(disk_root.path().into());
@@ -545,7 +554,11 @@ pub(super) async fn start(
     }));
     let installation = Installation::open_for_test(
         options(&spec.name, root),
-        fixture_factory(fixtures.clone(), cloud.map(|cloud| cloud.addr)),
+        fixture_factory(
+            fixtures.clone(),
+            cloud.map(|cloud| cloud.addr),
+            discovery.clone(),
+        ),
     )
     .await
     .expect("start production installation");
@@ -614,6 +627,7 @@ pub(super) async fn start(
         identity,
         fixtures,
         cloud_addr: cloud.map(|cloud| cloud.addr),
+        discovery,
         root,
         persistent: spec.persistent,
         _disk_root: Some(disk_root),

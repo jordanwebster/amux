@@ -21,7 +21,7 @@ async fn direct_beats_cloud_when_both_are_available() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -66,7 +66,7 @@ async fn a_dying_direct_link_fails_over_to_the_cloud_route() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -94,7 +94,7 @@ async fn a_recovering_direct_link_wins_back_and_breaks_in_flight_cloud_streams()
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -121,7 +121,7 @@ async fn a_cloud_outage_does_not_affect_directly_paired_peers() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -174,7 +174,7 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -205,7 +205,7 @@ async fn revocation_evicts_routes_and_breaks_in_flight_streams() {
         .cloud()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -241,8 +241,8 @@ async fn endpoints_call_each_other_through_a_chain_regardless_of_dial_direction(
         .daemon("a")
         .daemon("b")
         .daemon("c")
-        .paired("a", "b", Via::Tcp)
-        .paired("b", "c", Via::Tcp)
+        .paired("a", "b", Via::Direct)
+        .paired("b", "c", Via::Direct)
         .trusted("a", "c")
         .start()
         .await;
@@ -267,9 +267,9 @@ async fn presence_reaches_exactly_two_hops_along_a_chain() {
         .daemon("b")
         .daemon("c")
         .daemon("d")
-        .paired("a", "b", Via::Tcp)
-        .paired("b", "c", Via::Tcp)
-        .paired("c", "d", Via::Tcp)
+        .paired("a", "b", Via::Direct)
+        .paired("b", "c", Via::Direct)
+        .paired("c", "d", Via::Direct)
         .trusted("a", "c") // call authority for the two-hop calls below;
         .trusted("b", "d") // presence needs no trust at all
         .trusted("a", "d")

@@ -15,7 +15,7 @@ async fn a_peer_attaches_to_a_remote_agent_over_a_direct_link() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
@@ -60,8 +60,8 @@ async fn a_long_lived_session_survives_unrelated_routing_churn() {
         .daemon("laptop")
         .daemon("desktop")
         .daemon("tablet")
-        .paired("laptop", "desktop", Via::Tcp)
-        .paired("desktop", "tablet", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
+        .paired("desktop", "tablet", Via::Direct)
         .start()
         .await;
     let [laptop, desktop, tablet] = net.daemons(["laptop", "desktop", "tablet"]);
@@ -91,7 +91,7 @@ async fn a_paired_peer_cannot_shut_down_or_suspend_the_daemon() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);

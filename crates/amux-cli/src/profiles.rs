@@ -147,7 +147,9 @@ pub fn load(path: &Path) -> Result<Config> {
         host_name: resolved.installation.host_name,
         cloud_url: resolved.profile.cloud_url,
         socket_path: resolved.profile.socket_path,
-        tcp_port: resolved.profile.tcp_port,
+        tcp_port: None,
+        udp_port: None,
+        lan: resolved.profile.lan,
         state_path: resolved.profile.state_path,
         data_dir: resolved.profile.data_dir,
         reports_dir: resolved.installation.reports_dir,
@@ -522,7 +524,7 @@ mod tests {
                 state_path: paths.state_path.clone(),
                 data_dir: paths.data_dir.clone(),
                 cloud_url: amux::Config::default().cloud_url,
-                tcp_port: None,
+                lan: Default::default(),
             })
             .unwrap(),
         )

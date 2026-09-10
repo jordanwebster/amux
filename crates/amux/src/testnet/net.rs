@@ -293,7 +293,7 @@ pub(crate) async fn bind_addr_with_retries(addr: SocketAddr) -> TcpListener {
 
 /// Minimal relay state for an in-process test network.
 ///
-/// `tcp_port` mirrors the configured LAN listener for pairing.
+/// `tcp_port` is the relay's configured TCP link port.
 pub(crate) fn testnet_server_state(
     host_name: &str,
     host_id: HostId,

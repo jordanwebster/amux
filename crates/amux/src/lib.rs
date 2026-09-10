@@ -68,9 +68,9 @@ pub use client::{
     PairingSecret, PairingStart, PeerEntry, PeerReachability, SessionStream,
 };
 pub use config::{
-    ClaudeSettings, ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey,
-    OpenMode, ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
-    resolve_claude_driver,
+    ClaudeSettings, ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LanConfig,
+    LeaderKey, OpenMode, ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings,
+    load_profile_config, resolve_claude_driver,
 };
 pub use debug::DebugFormat;
 pub use installation::{

@@ -93,7 +93,7 @@ the account or label, names each profile's directory and socket:
 |---|---|
 | `registry.yaml`, `lock` | Installation registry and exclusive ownership |
 | `state/last-profile` | Client-side last-used UUID; never a server-wide selection |
-| `profiles/<UUID>/config.yaml` | Profile paths, cloud URL, optional LAN `tcp_port`, absolute `installation_config` reference |
+| `profiles/<UUID>/config.yaml` | Profile paths, cloud URL, LAN listener settings, absolute `installation_config` reference |
 | `profiles/<UUID>/credentials.yaml` | Profile credential, mode `600` |
 | `profiles/<UUID>/data/` | Identity, trust, agents, artifact cache and default reports |
 | `profiles/<UUID>/state/state.yaml` | Profile runtime state |
@@ -268,10 +268,11 @@ A Codex-session preparation mutex preserves one-spawn fanout, while the Codex
 runtime mutex is held only to snapshot or publish cache state.
 
 Each desktop profile owns a **local Unix socket** (`ProfileConfig.socket_path`,
-mode `600`) for its clients. Its **external TCP listener** (`tcp_port`) is off
-by default; LAN-direct reachability requires a separate opt-in port for each
-profile and feeds that profile's dispatcher. Outbound, each profile dials its
-cloud service (TCP + WebPKI TLS + JWT) when eligible and re-dials the direct
+mode `600`) for its clients. Its **LAN listener** is on by default at an
+ephemeral port (`lan.listen: true`, `lan.port: 0`), and discovery advertises the
+actual bound port while the listener is up. A profile can pin the port for a
+firewall or turn the listener off. Outbound, each profile dials its cloud
+service (TCP + WebPKI TLS + JWT) when eligible and re-dials the direct
 reachabilities in its own trust store.
 
 ## Identity and the trust store

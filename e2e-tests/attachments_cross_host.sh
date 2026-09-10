@@ -117,7 +117,8 @@ write(config, {
     "installation_config": str(root / "installation.yaml"),
     "socket_path": str(root / "profiles" / (profile_id + ".sock")),
     "state_path": str(directory / "state" / "state.yaml"),
-    "data_dir": str(directory / "data"), "tcp_port": int(sys.argv[3]),
+    "data_dir": str(directory / "data"),
+    "lan": {"listen": True, "port": int(sys.argv[3])},
 })
 print(config)
 PYCONFIG

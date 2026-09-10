@@ -14,7 +14,8 @@ use tokio::task::JoinHandle;
 use super::status::{Observed, RuntimeStatus};
 use crate::auth::CredentialProvider;
 use crate::client::Client;
-use crate::config::{ClaudeSettings, Config, ConfigError, Keybinds, UiSettings};
+use crate::config::{ClaudeSettings, Config, ConfigError, Keybinds, LanConfig, UiSettings};
+use crate::discovery::{Advertisement, Discovery, DiscoveryError};
 use crate::identity;
 use crate::protocol::wire;
 use crate::server::ShutdownReason;
@@ -29,13 +30,24 @@ use crate::user_state::{ServerState, new_local_agent_host};
 
 const LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
 
+pub(crate) fn platform_discovery() -> Result<Arc<dyn Discovery>, DiscoveryError> {
+    #[cfg(any(test, target_os = "ios"))]
+    {
+        Ok(Arc::new(crate::discovery::ScriptedDiscovery::new()))
+    }
+    #[cfg(not(any(test, target_os = "ios")))]
+    {
+        Ok(Arc::new(crate::discovery::MdnsDiscovery::new()?))
+    }
+}
+
 use crate::installation::ProfilePaths;
 
 /// Settings that vary between profiles.
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeConfig {
     pub(crate) cloud_url: String,
-    pub(crate) tcp_port: Option<u16>,
+    pub(crate) lan: LanConfig,
 }
 
 /// Installation-owned settings shared by every profile runtime.
@@ -81,6 +93,7 @@ pub(crate) enum CloudFixtureAuth {
 #[derive(Default)]
 pub(crate) struct RuntimeFixtures {
     pub(crate) listener: Option<TcpListener>,
+    pub(crate) discovery: Option<Arc<dyn Discovery>>,
     pub(crate) tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
     pub(crate) artifact_clock: Option<Arc<dyn amux_artifacts::Clock>>,
     pub(crate) cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
@@ -92,6 +105,7 @@ pub(crate) struct ProfileRuntimeOptions {
     pub(crate) config: RuntimeConfig,
     pub(crate) shared: Arc<InstallationSettings>,
     pub(crate) credentials: Option<Arc<dyn CredentialProvider>>,
+    pub(crate) discovery: Arc<dyn Discovery>,
 
     pub(crate) listeners: Listeners,
     #[cfg(testnet)]
@@ -105,6 +119,7 @@ impl ProfileRuntimeOptions {
         update_reporter: Option<Arc<dyn UpdateReporter>>,
         subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
         listeners: Listeners,
+        discovery: Arc<dyn Discovery>,
     ) -> Self {
         let paths = ProfilePaths {
             config_path: config.path.clone(),
@@ -115,7 +130,7 @@ impl ProfileRuntimeOptions {
         };
         let profile = RuntimeConfig {
             cloud_url: config.cloud_url.clone(),
-            tcp_port: config.tcp_port,
+            lan: config.lan,
         };
         let shared = InstallationSettings {
             host_name: config.host_name,
@@ -136,6 +151,7 @@ impl ProfileRuntimeOptions {
             config: profile,
             shared: Arc::new(shared),
             credentials,
+            discovery,
 
             listeners,
             #[cfg(testnet)]
@@ -148,7 +164,9 @@ impl ProfileRuntimeOptions {
             host_name: self.shared.host_name.clone(),
             cloud_url: self.config.cloud_url.clone(),
             socket_path: self.paths.socket_path.clone(),
-            tcp_port: self.config.tcp_port,
+            tcp_port: None,
+            udp_port: None,
+            lan: self.config.lan,
             state_path: self.paths.state_path.clone(),
             data_dir: self.paths.data_dir.clone(),
             reports_dir: Some(self.paths.reports_dir.clone()),
@@ -169,6 +187,8 @@ pub(crate) enum ProfileStartError {
     Config(#[from] ConfigError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Discovery(#[from] DiscoveryError),
     #[error("profile state error: {0}")]
     State(String),
 }
@@ -197,6 +217,7 @@ pub(crate) struct ProfileRuntime {
     #[cfg(testnet)]
     pub(crate) client_channel: tonic::transport::Channel,
     in_process_connection: InProcessConnection,
+    discovery: Arc<dyn Discovery>,
     background_tasks: Vec<JoinHandle<()>>,
     cloud_connector: Mutex<Option<CloudConnector>>,
     status: RuntimeStatus,
@@ -280,10 +301,31 @@ async fn build(
         .shared
         .status_reporters
         .resolve(&options.paths.state_path);
-    let service_config = options.service_config();
+    #[cfg(testnet)]
+    let discovery = options
+        .fixtures
+        .discovery
+        .take()
+        .unwrap_or_else(|| options.discovery.clone());
+    #[cfg(not(testnet))]
+    let discovery = options.discovery.clone();
+
+    let mut service_config = options.service_config();
     service_config.validate()?;
 
     let mut bound = BoundListeners::bind(&options).await?;
+    let mut lan_listener = bound.tcp_listener.take();
+    #[cfg(testnet)]
+    if lan_listener.is_none() && options.config.lan.listen {
+        lan_listener = options.fixtures.listener.take();
+    }
+    let lan_addr = lan_listener
+        .as_ref()
+        .map(TcpListener::local_addr)
+        .transpose()?;
+    if let Some(addr) = lan_addr {
+        service_config.lan.port = addr.port();
+    }
 
     let host_id = security.host_id();
     let state = Arc::new(RwLock::new(ServerState::new(
@@ -330,17 +372,27 @@ async fn build(
         tracing::info!(path = %options.paths.socket_path.display(), "listening on profile ClientService");
         task
     });
-    if let Some(listener) = bound.tcp_listener.take() {
-        let addr = listener.local_addr()?;
+    if let Some(listener) = lan_listener {
+        let addr = lan_addr.expect("LAN listener address captured before serving");
+        discovery.advertise(Advertisement {
+            host_id,
+            name: options.shared.host_name.clone(),
+            version: crate::PROTOCOL_VERSION,
+            addrs: vec![addr],
+        })?;
+        #[cfg(testnet)]
+        if let Some(tracked) = &options.fixtures.tracked_tcp {
+            services.serve_external_tcp_listener_tracked(listener, tracked.clone());
+        } else {
+            services.serve_external_tcp_listener(listener);
+        }
+        #[cfg(not(testnet))]
         services.serve_external_tcp_listener(listener);
         tracing::info!(addr = %addr, "listening on profile direct dispatcher TCP");
     }
 
     #[cfg(testnet)]
     if let Some(tracked) = &options.fixtures.tracked_tcp {
-        if let Some(listener) = options.fixtures.listener.take() {
-            services.serve_external_tcp_listener_tracked(listener, tracked.clone());
-        }
         services
             .reachability_link_connector()
             .track_dialed_tcp(tracked.clone());
@@ -391,6 +443,7 @@ async fn build(
         #[cfg(testnet)]
         client_channel,
         in_process_connection,
+        discovery,
         background_tasks,
         cloud_connector: Mutex::new(None),
         status,
@@ -544,6 +597,7 @@ impl ProfileRuntime {
     }
 
     pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
+        self.discovery.withdraw();
         self.stop_accepting_local_clients().await;
         self.stop_cloud().await;
 
@@ -594,6 +648,7 @@ impl ProfileRuntime {
 
 impl Drop for ProfileRuntime {
     fn drop(&mut self) {
+        self.discovery.withdraw();
         #[cfg(unix)]
         if let Some(task) = &self.unix_accept_task {
             task.abort();
@@ -654,7 +709,8 @@ impl BoundListeners {
             #[cfg(unix)]
             socket_ownership,
         };
-        if let Some(port) = options.config.tcp_port {
+        if options.config.lan.listen {
+            let port = options.config.lan.port;
             bound.tcp_listener =
                 Some(TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).await?);
         }
@@ -734,7 +790,7 @@ mod tests {
             },
             config: RuntimeConfig {
                 cloud_url: "http://127.0.0.1:1".to_string(),
-                tcp_port: None,
+                lan: LanConfig::default(),
             },
             shared: Arc::new(InstallationSettings {
                 host_name: "profile-runtime-test".to_string(),
@@ -748,6 +804,7 @@ mod tests {
                 status_reporters: Default::default(),
             }),
             credentials: None,
+            discovery: Arc::new(crate::discovery::ScriptedDiscovery::new()),
 
             listeners,
             #[cfg(testnet)]
@@ -1082,7 +1139,7 @@ mod tests {
         let socket_path = root.path().join("profile.sock");
         let occupied = TcpListener::bind(("0.0.0.0", 0)).await.unwrap();
         let mut options = options(root.path(), Listeners::Sockets);
-        options.config.tcp_port = Some(occupied.local_addr().unwrap().port());
+        options.config.lan.port = occupied.local_addr().unwrap().port();
 
         let status = RuntimeStatus::new(None, None);
         let result = start_observed(options, status.clone()).await;

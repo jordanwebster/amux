@@ -47,6 +47,25 @@ impl Clone for ConfigError {
 
 const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
 
+/// Local-network listener settings for a device profile.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct LanConfig {
+    /// Whether this profile accepts direct connections from the LAN.
+    pub listen: bool,
+    /// Listener port. Zero asks the operating system for an ephemeral port.
+    pub port: u16,
+}
+
+impl Default for LanConfig {
+    fn default() -> Self {
+        Self {
+            listen: true,
+            port: 0,
+        }
+    }
+}
+
 fn default_host_name() -> String {
     gethostname()
         .into_string()
@@ -373,7 +392,7 @@ pub struct ProfileConfig {
     #[serde(default = "default_cloud_url")]
     pub cloud_url: String,
     #[serde(default)]
-    pub tcp_port: Option<u16>,
+    pub lan: LanConfig,
 }
 
 impl ProfileConfig {
@@ -533,6 +552,14 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tcp_port: Option<u16>,
 
+    /// UDP port for the cloud relay's QUIC listener (None = don't listen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udp_port: Option<u16>,
+
+    /// Local-network listener settings when this config runs a device.
+    #[serde(default)]
+    pub lan: LanConfig,
+
     /// Path to state file.
     #[serde(default = "default_state_path")]
     pub state_path: PathBuf,
@@ -581,6 +608,8 @@ impl Default for Config {
             cloud_url: default_cloud_url(),
             socket_path: default_socket_path(),
             tcp_port: None,
+            udp_port: None,
+            lan: LanConfig::default(),
             state_path: default_state_path(),
             data_dir: default_data_dir(),
             reports_dir: None,
@@ -955,7 +984,25 @@ mod tests {
     fn ports_default_to_none() {
         let config = Config::default();
         assert_eq!(config.tcp_port, None);
+        assert_eq!(config.udp_port, None);
+        assert_eq!(config.lan, LanConfig::default());
         assert_eq!(config.prevent_idle_sleep, None);
+    }
+
+    #[test]
+    fn lan_defaults_to_an_ephemeral_listener_and_parses_overrides() {
+        let defaulted: Config = serde_yaml::from_str("host_name: test\n").unwrap();
+        assert_eq!(defaulted.lan, LanConfig::default());
+
+        let configured: Config =
+            serde_yaml::from_str("lan:\n  listen: false\n  port: 4242\n").unwrap();
+        assert_eq!(
+            configured.lan,
+            LanConfig {
+                listen: false,
+                port: 4242,
+            }
+        );
     }
 
     #[test]
@@ -995,12 +1042,17 @@ mod tests {
     }
 
     #[test]
-    fn validate_with_tcp_port() {
+    fn validate_with_relay_ports() {
         let config = Config {
             tcp_port: Some(9001),
+            udp_port: Some(9001),
             ..Config::default()
         };
         assert!(config.validate().is_ok());
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed.tcp_port, Some(9001));
+        assert_eq!(parsed.udp_port, Some(9001));
     }
 
     #[test]

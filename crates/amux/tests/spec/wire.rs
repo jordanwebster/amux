@@ -153,7 +153,7 @@ async fn handshake_floods_are_rate_limited_without_disturbing_existing_links() {
     let net = TestNet::builder()
         .daemon("ally")
         .daemon("victim")
-        .paired("ally", "victim", Via::Tcp)
+        .paired("ally", "victim", Via::Direct)
         .start()
         .await;
     let [ally, victim] = net.daemons(["ally", "victim"]);

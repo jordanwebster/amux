@@ -22,7 +22,7 @@ async fn devices() -> TestNet {
         .cloud_user("bob")
         .cloud_only()
         .paired("phone", "laptop/personal", Via::Cloud)
-        .paired("desk", "laptop/personal", Via::Tcp)
+        .paired("desk", "laptop/personal", Via::Direct)
         .paired("colleague", "laptop/work", Via::Cloud)
         .start()
         .await

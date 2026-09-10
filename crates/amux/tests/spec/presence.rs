@@ -139,7 +139,7 @@ async fn untrusted_online_hosts_are_absent_from_profile_inventory() {
         .cloud_only() // untrusted: same cloud user, never paired
         .daemon("phone")
         .no_cloud() // paired remote caller; its only path to laptop is direct
-        .paired("phone", "laptop/personal", Via::Tcp)
+        .paired("phone", "laptop/personal", Via::Direct)
         .start()
         .await;
     let laptop = net.installation("laptop").profile("personal");
@@ -256,7 +256,7 @@ async fn profile_runtime_stop_closes_direct_links_without_severing() {
     let net = TestNet::builder()
         .daemon("laptop")
         .daemon("desktop")
-        .paired("laptop", "desktop", Via::Tcp)
+        .paired("laptop", "desktop", Via::Direct)
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);

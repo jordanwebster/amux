@@ -34,6 +34,8 @@ pub struct TestConfig {
     #[serde(default)]
     pub tcp_port: Option<u16>,
     #[serde(default)]
+    pub lan_port: Option<u16>,
+    #[serde(default)]
     pub cloud_relay: bool,
     /// Serve a release manifest and a disposable copy of the current executable.
     #[serde(default)]
