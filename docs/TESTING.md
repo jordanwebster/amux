@@ -29,12 +29,16 @@ unification and compile a second dependency graph.
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
-Local `wt test` and `wt run testnet-smoke` use `scripts/workspace-test.sh`,
-which allows 150 seconds for Cargo's test preparation and the selected
-harnesses. The prerequisite workspace build runs before this deadline. It is
-an overall deadline, not a per-test limit. GitHub's workspace test job runs
-`cargo test` directly under its own 30-minute job timeout; it does not use
-this script's 150-second budget.
+Local `wt test`, `wt run testnet-smoke`, and the `test` stage of GitHub's
+`ios` job (through `wt run ios-verify`) use `scripts/workspace-test.sh`.
+It allows 900 seconds for Cargo's test preparation and the selected harnesses;
+the prerequisite workspace build runs before this overall deadline. The
+72-second local measurement did not cover the hosted macOS runner, which
+was still progressing when the former 150-second deadline killed it. The
+script documents the restored allowance and still fails a hung suite.
+The `ios` job also has a 210-minute overall timeout. GitHub's separate
+`Test` matrix jobs on Linux, macOS and Windows run `cargo test` directly,
+with compilation and tests sharing each job's 30-minute timeout.
 
 ## Recorded PTY tests
 

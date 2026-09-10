@@ -8,11 +8,13 @@ import unittest
 
 
 class WorkspaceTestRecipe(unittest.TestCase):
-    def invoke(self, *args):
+    def invoke(self, *args, capture_deadline=False):
         recipe = Path(__file__).resolve().parents[1] / "workspace-test.sh"
         with tempfile.TemporaryDirectory() as directory:
             # Reuse an existing executable; the recipe must never reach Cargo.
             Path(directory, "cargo").symlink_to("/bin/echo")
+            if capture_deadline:
+                Path(directory, "timeout").symlink_to("/bin/echo")
             env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
             result = subprocess.run(
                 ["/bin/sh", str(recipe), *args],
@@ -23,6 +25,16 @@ class WorkspaceTestRecipe(unittest.TestCase):
                 timeout=5,
             )
             return result.stdout.strip()
+
+    def test_full_and_selected_harnesses_share_a_bounded_runner_allowance(self):
+        self.assertEqual(
+            self.invoke(capture_deadline=True),
+            "900 cargo test --workspace --all-targets",
+        )
+        self.assertEqual(
+            self.invoke("--test", "spec", capture_deadline=True),
+            "900 cargo test --workspace --test spec",
+        )
 
     def test_default_and_name_filter_keep_full_coverage(self):
         self.assertEqual(self.invoke(), "test --workspace --all-targets")

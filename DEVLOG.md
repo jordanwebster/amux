@@ -4,6 +4,21 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-10 — **Give hosted workspace tests room to finish.**
+
+The workspace test deadline returns to 900 seconds. The 150-second limit
+was based on a 72-second local run, but the hosted macOS iOS job was still
+running healthy UI specs when it was killed. The script states the basis
+for its conservative 15-minute hang ceiling; compilation stays outside it.
+The testing guide now correctly includes the iOS verification job among
+the script's callers and distinguishes its budget from the standalone
+30-minute Test matrix jobs.
+
+Recipe checks capture the deadline for full and selected harnesses. Both
+`wt test` and `wt run test-recipes` pass locally. No test coverage changes.
+
+---
+
 2026-09-10 — **The documentation follows the current fixtures and recipes.**
 
 The drawer is documented as an added state with no preserved reference, and
