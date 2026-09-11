@@ -1,0 +1,10 @@
+[package]
+name = "host-api"
+version = "0.1.0"
+edition.workspace = true
+description = "Owned lifecycle and local-host contracts for amux nodes"
+publish = false
+
+[dependencies]
+model = { workspace = true }
+tokio = { workspace = true }

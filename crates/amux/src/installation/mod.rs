@@ -18,15 +18,14 @@ pub use crate::services::client::ProfileAdmin;
 pub mod binding;
 mod credentials;
 mod directory;
-pub use directory::{display_label, status_label};
-mod operation;
 pub use binding::{
     AccountId, BindError, BindRequest, BindTarget, CloudServiceId, NonPristine, UserInfo,
 };
+pub use directory::{display_label, status_label};
 mod paths;
 pub mod supervisor;
 
-pub(crate) use operation::OperationGate;
+pub(crate) use host_api::OperationGate;
 pub use supervisor::{
     AgentResumeResult, AgentResumeStatus, CredentialSource, Installation, InstallationOptions,
     Intent, OperationId, ProfileEvent, ProfileResumeResult, ProfileStatus, ProfileSuspendResult,

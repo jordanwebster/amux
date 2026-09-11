@@ -62,6 +62,12 @@ run = "timeout 300 cargo test -p settings"
 [task.test-client]
 run = "timeout 300 cargo test -p client"
 
+[task.test-host-api]
+run = "timeout 300 cargo test -p host-api"
+
+[task.test-node-lifecycle]
+run = "timeout 600 cargo test -p amux --lib installation::supervisor::tests::lifecycle_waits_for_profile_mutations_and_closed_gate_rejects_late_agent_work"
+
 [task.test-ui-state]
 run = "timeout 600 cargo test -p ui-state"
 

@@ -192,9 +192,9 @@ pub(crate) async fn create_agent_record(
     };
 
     let (agent_count, info) = {
-        let operation = operations.read().await;
-        operations
-            .check_mutation()
+        let operation = operations
+            .admit_mutation()
+            .await
             .map_err(CreateAgentError::Unavailable)?;
         let mut state = agent_state.write().await;
 
@@ -405,18 +405,16 @@ pub(crate) async fn resume_agents(
         } else {
             deps.clone()
         };
-        let operation = operations.read().await;
-        if (if updating {
-            operations.check()
+        let operation = if updating {
+            operations.admit().await
         } else {
-            operations.check_mutation()
-        })
-        .is_err()
-        {
+            operations.admit_mutation().await
+        };
+        let Ok(operation) = operation else {
             failed += 1;
             failed_agents.push(original);
             continue;
-        }
+        };
         // Keep start and registration atomic with shutdown, without holding
         // the profile gate through agent startup.
         let mut state = agent_state.write().await;

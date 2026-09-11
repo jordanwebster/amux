@@ -784,7 +784,7 @@ impl Inner {
             let entry = state.active(id)?;
             entry.slot.clone()
         };
-        let _operation = slot.operations.lock().await;
+        let _operation = slot.operations.barrier().await;
         let record = self.state.lock().unwrap().active(id)?.status.record.clone();
         let result = async {
             let mut paths = ProfilePaths::for_id(&self.root, id)?;
@@ -1017,7 +1017,7 @@ impl Inner {
             | Mutation::ResumeAll(..) => unreachable!(),
         };
         let slot = self.state.lock().unwrap().entry(id)?.slot.clone();
-        let _operation = slot.operations.lock().await;
+        let _operation = slot.operations.barrier().await;
         if let Mutation::Delete(_, revision) = request {
             return self
                 .delete(id, revision, &slot)
@@ -1163,7 +1163,7 @@ impl Inner {
             slots
         };
         futures_util::future::join_all(slots.into_iter().map(|slot| async move {
-            let _operation = slot.operations.lock().await;
+            let _operation = slot.operations.barrier().await;
             slot.operations.close();
             if let Some(store) = slot.credentials.lock().unwrap().as_ref() {
                 store.invalidate_pending();

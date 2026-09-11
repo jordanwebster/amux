@@ -269,7 +269,7 @@ impl ProfileAdmin {
         &self,
         request: tonic::Request<wire::StartPairingRequest>,
     ) -> TonicResult<wire::StartPairingResponse> {
-        let _operation = self.service.pairing_trust.trust_commit_lock.lock().await;
+        let _operation = self.service.pairing_trust.trust_commit_lock.barrier().await;
         self.service
             .pairing_trust
             .trust_commit_lock
@@ -367,7 +367,7 @@ impl ProfileAdmin {
         &self,
         _request: tonic::Request<wire::CancelPairingRequest>,
     ) -> TonicResult<wire::CancelPairingResponse> {
-        let _operation = self.service.pairing_trust.trust_commit_lock.lock().await;
+        let _operation = self.service.pairing_trust.trust_commit_lock.barrier().await;
         self.service
             .pairing_trust
             .trust_commit_lock

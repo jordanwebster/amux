@@ -8813,3 +8813,12 @@ inventories remain disjoint, drops one, and then performs an operation through
 the other while the externally owned installation remains available. Focused
 client, reducer, runtime, TUI and shot recipes pass, and the dependency policy
 now enforces these direct local edges.
+
+2026-09-11 — **Profile lifecycle admission is an owned host contract.** The
+operation gate moved into `host-api`. Accepted work carries an opaque owned
+lease, and deletion or trust commits carry an opaque exclusive barrier; neither
+side can retain or expose a borrowed Tokio lock guard. Closing admission first
+rejects queued and future operations, while the barrier waits for work already
+accepted before storage teardown proceeds. A focused host-api race test and the
+existing installation deletion race both exercise that ordering through real
+async contention.

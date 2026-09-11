@@ -12,7 +12,7 @@ use futures_util::{Stream, stream};
 use prost::Message as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{aead, digest, hkdf, hmac};
-use tokio::sync::{OwnedRwLockWriteGuard, mpsc};
+use tokio::sync::mpsc;
 use tonic::{Code, Status};
 use wire::{self, PROTOCOL_VERSION};
 
@@ -571,7 +571,7 @@ async fn stage_peer_trust_update(
     context: PeerTrustCommitContext,
     update: PeerTrustUpdate,
 ) -> Result<PeerTrustCommitGuard, Status> {
-    let trust_commit_lock = context.trust_commit_lock.clone().lock_owned().await;
+    let trust_commit_lock = context.trust_commit_lock.barrier().await;
     context
         .trust_commit_lock
         .check()
@@ -656,7 +656,7 @@ struct PeerTrustCommitGuard {
     staged: Option<TrustStore>,
     outcome: TrustStorePairingUpdate,
     finish_connection: bool,
-    trust_commit_lock: Option<OwnedRwLockWriteGuard<()>>,
+    trust_commit_lock: Option<host_api::OperationBarrier>,
 }
 
 struct PeerTrustCommitState {
@@ -687,7 +687,7 @@ impl PeerTrustCommitGuard {
         context: PeerTrustCommitContext,
         host_id: HostId,
         state: PeerTrustCommitState,
-        trust_commit_lock: OwnedRwLockWriteGuard<()>,
+        trust_commit_lock: host_api::OperationBarrier,
     ) -> Self {
         Self {
             trust_store: context.trust_store,
@@ -1857,7 +1857,7 @@ mod tests {
     #[tokio::test]
     async fn closed_profile_rejects_late_pairing_without_recreating_trust_files() {
         let (dir, service, _pair_mode, trust_store, _responder, peer) = service_fixture();
-        let operation = service.trust_commit_lock.lock().await;
+        let operation = service.trust_commit_lock.barrier().await;
         service.trust_commit_lock.close();
         std::fs::remove_dir_all(dir.path()).unwrap();
         drop(operation);
@@ -1956,7 +1956,7 @@ mod tests {
             )
             .finish_connection(),
             Arc::new(crate::installation::OperationGate::default())
-                .lock_owned()
+                .barrier()
                 .await,
         );
         service.connections.teardown_host(peer.host_id).await;

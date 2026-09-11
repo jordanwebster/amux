@@ -22,6 +22,7 @@ wire = { workspace = true }
 settings = { workspace = true }
 claude = { workspace = true }
 client = { workspace = true }
+host-api = { workspace = true }
 tempfile = { workspace = true }
 pty-host = { workspace = true, optional = true }
 tokio = { workspace = true }

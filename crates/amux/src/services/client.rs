@@ -512,7 +512,7 @@ impl ClientService {
         reason: String,
     ) -> Result<(Uuid, TrustEntry), tonic::Status> {
         let reason = normalized_unpair_reason(reason);
-        let trust_commit_lock = self.pairing_trust.trust_commit_lock.lock().await;
+        let trust_commit_lock = self.pairing_trust.trust_commit_lock.barrier().await;
         self.pairing_trust
             .trust_commit_lock
             .check()

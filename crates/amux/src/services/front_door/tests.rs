@@ -891,9 +891,9 @@ async fn front_door_admin_client_ssh_exchange_keeps_trust_and_windows_independen
     let personal = create(&mut directory, "personal").await;
     let work = create(&mut directory, "work").await;
     let third = create(&mut directory, "third").await;
-    let admin = |profile: &wire::ProfileInfo| {
-        ProfileAdminClient::new(ProfileId(profile.id.parse().unwrap()), directory.clone())
-    };
+    let front_client = client::FrontDoorClient::from_channel(front.channel());
+    let admin =
+        |profile: &wire::ProfileInfo| front_client.admin(ProfileId(profile.id.parse().unwrap()));
     let personal_admin = admin(&personal);
     let work_admin = admin(&work);
     let third_admin = admin(&third);

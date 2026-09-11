@@ -340,7 +340,7 @@ async fn cancelling_a_caller_does_not_cancel_or_duplicate_its_mutation() {
     let slot = installation.inner.state.lock().unwrap().profiles[&profile.record.id]
         .slot
         .clone();
-    let guard = slot.operations.lock().await;
+    let guard = slot.operations.barrier().await;
     let op = OperationId::new();
     let mut rename = Box::pin(installation.rename(op, profile.record.id, 1, Some("office".into())));
     assert!(futures_util::poll!(rename.as_mut()).is_pending());
@@ -452,7 +452,7 @@ async fn lifecycle_waits_for_profile_mutations_and_closed_gate_rejects_late_agen
         .services
         .agent
         .clone();
-    let guard = slot.operations.lock().await;
+    let guard = slot.operations.barrier().await;
     let op = OperationId::new();
     let mut delete = Box::pin(installation.delete(op, profile.record.id, 1));
     assert!(futures_util::poll!(delete.as_mut()).is_pending());
@@ -600,7 +600,7 @@ async fn deletion_that_wins_startup_cannot_be_undone_by_the_late_start() {
     let slot = installation.inner.state.lock().unwrap().profiles[&id]
         .slot
         .clone();
-    let guard = slot.operations.lock().await;
+    let guard = slot.operations.barrier().await;
     let mut delete = Box::pin(installation.delete(OperationId::new(), id, 1));
     assert!(futures_util::poll!(delete.as_mut()).is_pending());
     // The delete worker queues behind the held profile operation before start.

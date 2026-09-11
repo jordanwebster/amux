@@ -352,7 +352,7 @@ pub(super) async fn send_session_input(
     host: &PtyAgentHost,
     request: SendInputRequest,
     attachment_owner: Option<Arc<Owner>>,
-    operation: tokio::sync::RwLockReadGuard<'_, ()>,
+    operation: host_api::OperationLease,
 ) -> Result<(), ProtocolError> {
     let pins = request
         .pin
@@ -527,7 +527,7 @@ async fn send_raw_session_input(
     agent_id: Uuid,
     protocol: Protocol,
     event: SessionInputEvent,
-    operation: tokio::sync::RwLockReadGuard<'_, ()>,
+    operation: host_api::OperationLease,
 ) -> Result<(), ProtocolError> {
     let pty = match raw_plane_target(host, agent_id, protocol).await? {
         RawPtyTarget::Existing(pty) => pty,
@@ -570,7 +570,7 @@ async fn send_structured_session_input(
     event: SessionInputEvent,
     attachment_owner: Option<&Owner>,
     pins: &[ArtifactId],
-    operation: tokio::sync::RwLockReadGuard<'_, ()>,
+    operation: host_api::OperationLease,
 ) -> Result<(), ProtocolError> {
     let SessionInputEvent::Input { input_id, payload } = event else {
         return Err(ProtocolError::InvalidArgument {
@@ -602,7 +602,7 @@ async fn send_claude_pty_to_target(
     input: &mut claude_io::ClaudePtyTranscriptV1Input,
     attachment_owner: Option<&Owner>,
     pins: &[ArtifactId],
-    operation: tokio::sync::RwLockReadGuard<'_, ()>,
+    operation: host_api::OperationLease,
 ) -> Result<(), ProtocolError> {
     if let Some(owner) = attachment_owner {
         let current_seq = log.current_seq().await;

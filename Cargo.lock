@@ -40,6 +40,7 @@ dependencies = [
  "curve25519-dalek",
  "futures-util",
  "gethostname",
+ "host-api",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -1476,6 +1477,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest",
+]
+
+[[package]]
+name = "host-api"
+version = "0.1.0"
+dependencies = [
+ "model",
+ "tokio",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@ members = [
     "crates/codex",
     "crates/client",
     "crates/e2e-runner",
+    "crates/host-api",
     "crates/model",
     "crates/pty-host",
     "crates/replay-support",
@@ -28,6 +29,7 @@ edition = "2024"
 # Internal
 amux = { path = "crates/amux" }
 client = { path = "crates/client" }
+host-api = { path = "crates/host-api" }
 model = { path = "crates/model" }
 wire = { path = "crates/wire" }
 settings = { path = "crates/settings" }

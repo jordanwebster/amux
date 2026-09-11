@@ -14,6 +14,7 @@ ALLOWED_LOCAL = {
     "settings": {"model"},
     "artifacts": {"model"},
     "client": {"model", "wire"},
+    "host-api": {"model"},
     "ui-state": {"model"},
     "ui-runtime": {"artifacts", "client", "model", "ui-state"},
     "tui": {"ui-runtime", "ui-state"},

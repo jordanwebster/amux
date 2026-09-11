@@ -81,7 +81,7 @@ pub(crate) trait LocalAgentHost: Send + Sync {
         &self,
         request: SendInputRequest,
         attachment_owner: Option<Arc<artifacts::Owner>>,
-        operation: tokio::sync::RwLockReadGuard<'_, ()>,
+        operation: host_api::OperationLease,
     ) -> Result<(), ProtocolError>;
     async fn attachment_log(
         &self,
@@ -253,8 +253,7 @@ impl AgentServiceCtx {
         &self,
         request: CreateAgentRpcRequest,
     ) -> Result<Agent, ProtocolError> {
-        let _operation = self.operations.read().await;
-        self.operations.check_mutation()?;
+        let _operation = self.operations.admit_mutation().await?;
         if self.is_cloud_server() || !self.has_supported_agent_types() {
             return Err(no_supported_agent_types());
         }
@@ -270,13 +269,12 @@ impl AgentServiceCtx {
     }
 
     pub(crate) async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {
-        let _operation = self.operations.read().await;
-        self.operations.check_mutation()?;
+        let _operation = self.operations.admit_mutation().await?;
         self.require_host()?.rename(request).await
     }
 
     pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
-        let _operation = self.operations.lock().await;
+        let _operation = self.operations.barrier().await;
         self.operations.check_mutation()?;
         let result = match self.host() {
             Some(host) => host.delete(agent_id).await,
@@ -311,8 +309,7 @@ impl AgentServiceCtx {
     }
 
     pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
-        let _operation = self.operations.read().await;
-        self.operations.check()?;
+        let _operation = self.operations.admit().await?;
         let attachment_owner = if request.pin.is_empty() {
             None
         } else {
@@ -336,8 +333,7 @@ impl AgentServiceCtx {
         mime: &str,
         bytes: Vec<u8>,
     ) -> Result<ArtifactRef, ProtocolError> {
-        let _operation = self.operations.read().await;
-        self.operations.check()?;
+        let _operation = self.operations.admit().await?;
         let log = self.require_host()?.attachment_log(caller).await?;
         let owner = self
             .require_artifact_owners("PutArtifactByAgent")?
@@ -358,8 +354,7 @@ impl AgentServiceCtx {
         &self,
         request: SubscribeSessionRequest,
     ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError> {
-        let _operation = self.operations.read().await;
-        self.operations.check()?;
+        let _operation = self.operations.admit().await?;
         let replay_attachments = self
             .artifact_owners
             .as_ref()
@@ -521,8 +516,7 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::PutArtifactRequest>,
     ) -> TonicResult<wire::PutArtifactResponse> {
-        let _operation = self.operations.read().await;
-        self.operations.check().map_err(protocol_status)?;
+        let _operation = self.operations.admit().await.map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("PutArtifact")
             .map_err(protocol_status)?;
@@ -545,8 +539,7 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::GetArtifactRequest>,
     ) -> TonicResult<wire::GetArtifactResponse> {
-        let _operation = self.operations.read().await;
-        self.operations.check().map_err(protocol_status)?;
+        let _operation = self.operations.admit().await.map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("GetArtifact")
             .map_err(protocol_status)?;
@@ -574,8 +567,7 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::DiffRequest>,
     ) -> TonicResult<wire::DiffResponse> {
-        let _operation = self.operations.read().await;
-        self.operations.check().map_err(protocol_status)?;
+        let _operation = self.operations.admit().await.map_err(protocol_status)?;
         let owners = self
             .require_artifact_owners("Diff")
             .map_err(protocol_status)?;
@@ -1088,7 +1080,7 @@ mod tests {
             },
         }));
         assert!(futures_util::poll!(create.as_mut()).is_pending());
-        let exclusive = tokio::time::timeout(Duration::from_secs(1), ctx.operations.lock())
+        let exclusive = tokio::time::timeout(Duration::from_secs(1), ctx.operations.barrier())
             .await
             .expect("startup preparation must not hold the profile gate");
         ctx.operations.close();
@@ -1127,7 +1119,7 @@ mod tests {
         let state = host.state().write().await;
         let mut resume = Box::pin(host.resume(state_path, &operations));
         assert!(futures_util::poll!(resume.as_mut()).is_pending());
-        let exclusive = tokio::time::timeout(Duration::from_secs(1), operations.lock())
+        let exclusive = tokio::time::timeout(Duration::from_secs(1), operations.barrier())
             .await
             .expect("resume preparation must not hold the profile gate");
         operations.close();

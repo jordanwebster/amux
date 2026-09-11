@@ -210,7 +210,7 @@ impl Inner {
                 } else {
                     let mut pristine = Vec::new();
                     for (id, slot) in candidates {
-                        let _operation = slot.operations.lock().await;
+                        let _operation = slot.operations.barrier().await;
                         if self.state.lock().unwrap().active(id).is_err() {
                             continue;
                         }
@@ -244,7 +244,7 @@ impl Inner {
             }
         };
         let slot = self.state.lock().unwrap().active(id)?.slot.clone();
-        let _operation = slot.operations.lock().await;
+        let _operation = slot.operations.barrier().await;
         let mut record = {
             let state = self.state.lock().unwrap();
             let entry = state.active(id)?;

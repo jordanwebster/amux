@@ -295,7 +295,7 @@ async fn config_split_daemon_owner_flushes_shutdown_and_releases_all_sockets() {
                 match FrontDoorClient::connect_socket(&fixture.installation.front_door_socket).await
                 {
                     Ok(front) => break front,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    Err(error) if error.io_kind() == Some(std::io::ErrorKind::NotFound) => {
                         tokio::task::yield_now().await;
                     }
                     Err(error) => panic!("{error}"),

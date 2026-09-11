@@ -164,7 +164,7 @@ impl Inner {
         // Do not retain these guards while waiting on a host: an admitted
         // resume can need the read gate before releasing its host resume lock.
         for (_, slot) in &slots {
-            let _gate = slot.operations.lock().await;
+            let _gate = slot.operations.barrier().await;
             slot.operations.freeze();
         }
         let mut targets = Vec::new();

@@ -421,7 +421,7 @@ impl LocalAgentHost for PtyAgentHost {
         &self,
         request: SendInputRequest,
         attachment_owner: Option<Arc<artifacts::Owner>>,
-        operation: tokio::sync::RwLockReadGuard<'_, ()>,
+        operation: host_api::OperationLease,
     ) -> Result<(), ProtocolError> {
         session_rpc::send_session_input(self, request, attachment_owner, operation).await
     }
@@ -543,8 +543,7 @@ impl LocalAgentHost for PtyAgentHost {
         operations: &crate::installation::OperationGate,
     ) -> Result<(u64, u64), ProtocolError> {
         let _resume = self.resume_lock.lock().await;
-        let operation = operations.read().await;
-        operations.check_mutation()?;
+        let operation = operations.admit_mutation().await?;
         let suspended =
             suspend::load_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to load state: {error}"),
@@ -559,8 +558,7 @@ impl LocalAgentHost for PtyAgentHost {
             false,
         )
         .await;
-        let _operation = operations.read().await;
-        operations.check_mutation()?;
+        let _operation = operations.admit_mutation().await?;
         if result.failed_agents.is_empty() {
             suspend::remove_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to remove state: {error}"),
