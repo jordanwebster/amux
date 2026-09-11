@@ -8900,3 +8900,17 @@ disk format. The declared node recipe passes all 491 tests, including
 concurrent profile updates, unavailable-host recovery, routing failover,
 authorization, attachments and A2A. All-target Clippy passes with warnings
 denied, and the pinned formatter now covers the extracted workspace.
+
+2026-09-12 — **Declared builds participate in bounded output retention.** The
+ordinary build, check, test, codegen, and lint recipes now reserve capacity in a
+configurable 60 GiB pool,
+records a process lease while its command runs, refreshes its target's allocated
+size periodically and on exit, and forwards cancellation to the complete child
+process group.
+Admission accounts for concurrent reservations and may reclaim only another
+inactive target with the same versioned ownership marker. Fast inventory uses
+maintained measurements and leaves historical unmarked roots untraversed; an
+explicit slower audit can measure them without making them eligible for
+deletion. Focused tests cover refusal, live lease accounting, cancellation,
+inactive reclamation, and symbolic-link rejection, and a wrapped model test
+passes against the real checkout output.

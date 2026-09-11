@@ -441,6 +441,29 @@ make the capacity decision explicit; age-based cleanup alone does not pass.
 
 No cleanup was performed during the audit.
 
+The repository implementation places ordinary Cargo build, check, test,
+codegen, and lint recipes behind
+an output admission helper. A target becomes disposable only after the helper
+writes a versioned marker for the same repository pool. Each running task holds
+a process lease with its declared scratch reservation; the coordination lock is
+released while Cargo runs, so separate worktrees retain private output and can
+compile concurrently. Completion and forwarded termination refresh the cached
+allocated size and clear that task's lease. Long-running tasks refresh that
+measurement every 30 seconds and warn if participating outputs cross the
+admission budget. A later admission may reclaim an
+inactive marked target as one coherent directory, after rechecking both marker
+and lease.
+
+Ordinary inventory uses the cached measurements maintained at task boundaries.
+It reports unmarked historical roots without recursively measuring them, which
+keeps admission responsive even when old worktrees contain large targets. The
+explicit `--include-unmanaged` audit performs that slower scan. Unmanaged bytes
+are reported separately and excluded from the enforceable pool because the
+helper neither owns nor deletes them. The 60 GiB limit is therefore an
+admission bound for participating outputs, not a machine quota or a claim about
+all existing disk use. The compiler cache remains a separately reported 10 GiB
+category when its path is configured.
+
 ## Reproducible tasks and hermetic tests
 
 Give each layer one responsibility: Cargo compiles Rust, Xcode compiles/packages

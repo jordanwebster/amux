@@ -34,6 +34,15 @@ variant than full verification.
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
+Cargo-producing recipes reserve space in the repository's 60 GiB aggregate
+output pool before they start. `wt run output-inventory` is a fast view of
+owned output sizes, live task leases, and unowned roots. Add
+`-- --include-unmanaged` only for an explicit slower audit of historical roots.
+`wt run output-prune` lists inactive owned outputs; `-- --apply` removes those
+whole output directories after rechecking their marker and lease. The helper
+never removes an unmarked output or a symbolic-link root. Run `wt run
+test-output-budget` to exercise admission, cancellation, and reclamation.
+
 ## Recorded PTY tests
 
 Each recorded Claude PTY scenario is a separate test. The standard Rust test
