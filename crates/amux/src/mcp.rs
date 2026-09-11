@@ -4,6 +4,8 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::{Context, Result, anyhow};
+use async_trait::async_trait;
 use node::agent_tools::{
     AgentSpawnKind as SpawnKind, AgentToolRequest as ToolRequest, definitions as tool_definitions,
     parse_call as parse_tool_call,
@@ -12,8 +14,6 @@ use node::{
     Agent, AgentIdentifier, AgentParent, AgentType, ArtifactKind, ArtifactRef, Client, Config,
     CreateAgentRequest, SendMessageRequest, SetAgentStatusRequest,
 };
-use anyhow::{Context, Result, anyhow};
-use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use ui_state::attachments::{Mention, MentionKind, format_mention};

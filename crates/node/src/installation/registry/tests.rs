@@ -1,6 +1,6 @@
 use super::*;
 use crate::installation::ProfilePaths;
-#[cfg(all(unix, feature = "local-agents"))]
+#[cfg(unix)]
 use crate::installation::paths::validate_socket_path;
 
 fn root() -> tempfile::TempDir {
@@ -466,7 +466,7 @@ fn symlinks_cannot_redirect_profile_or_registry_writes() {
     assert_eq!(fs::read_to_string(target).unwrap(), "foreign");
 }
 
-#[cfg(all(unix, feature = "local-agents"))]
+#[cfg(unix)]
 #[test]
 fn socket_allocation_checks_platform_byte_limit_without_truncation() {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};

@@ -717,8 +717,8 @@ async fn ssh_renamed_profile() {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
-    use node::{AgentType, Config, CreateAgentRequest, PeerReachability, Server};
     use client::FrontDoorClient;
+    use node::{AgentType, Config, CreateAgentRequest, PeerReachability, Server};
     use serde_json::{Value, json};
 
     async fn profile_client(path: &Path) -> node::Client {

@@ -64,9 +64,9 @@ fn sequence(rows: Vec<Value>) -> Vec<Msg> {
 }
 fn recorded(name: &str) -> Vec<Value> {
     let raw = match name {
-        "permission" => include_str!(
-            "../../../claude-specs/fixtures/claude-sdk/permission_callback.rows.jsonl"
-        ),
+        "permission" => {
+            include_str!("../../../claude-specs/fixtures/claude-sdk/permission_callback.rows.jsonl")
+        }
         "elicitation" => include_str!(
             "../../../claude-specs/fixtures/claude-sdk/elicitation_accepted.rows.jsonl"
         ),

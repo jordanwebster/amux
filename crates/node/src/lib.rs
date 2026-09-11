@@ -1,4 +1,6 @@
 #![allow(clippy::result_large_err)]
+#[cfg(test)]
+extern crate self as amux;
 pub mod agent_tools;
 mod agents;
 mod audit;
@@ -23,7 +25,7 @@ mod subscription;
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_fixtures;
-#[cfg(testnet)]
+#[cfg(test)]
 #[doc(hidden)]
 pub mod testnet;
 mod transport;
@@ -31,6 +33,10 @@ mod trust;
 mod tunnel;
 pub mod update;
 mod user_state;
+
+#[cfg(test)]
+#[path = "../tests/spec/main.rs"]
+mod spec;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -57,7 +63,10 @@ pub use installation::{
     ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
     SuspendReason, SuspendReport,
 };
-pub use model::{ArtifactId, ArtifactKind, ProtocolError};
+pub use model::{
+    AgentId, AgentIdentifier, ArtifactId, ArtifactKind, HostId, PeerIdentifier, ProtocolError,
+    SendInputRequest, SendMessageRequest, SetAgentStatusRequest, SubscribeSessionRequest,
+};
 pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
@@ -77,9 +86,3 @@ pub use subscription::SubscriptionReporter;
 pub use transport::TransportError;
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 pub use wire::PROTOCOL_VERSION;
-
-
-pub use model::{
-    AgentId, AgentIdentifier, HostId, PeerIdentifier, SendInputRequest, SendMessageRequest,
-    SetAgentStatusRequest, SubscribeSessionRequest,
-};

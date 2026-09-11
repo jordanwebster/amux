@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use node::{Config, DebugFormat, Server};
 use anyhow::{Result, anyhow};
+use node::{Config, DebugFormat, Server};
 
 use crate::client_common::{
     open_daemon, remove_stale_socket, server_unavailable_error, spawn_relay,

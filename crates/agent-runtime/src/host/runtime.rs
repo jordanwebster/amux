@@ -11,11 +11,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use host_api::{
-    ArtifactBlob, HostConfig, HostDebugAgent, HostResourceInventory, HostResumeResult,
-    HostResumeStatus, HostSetAgentStatus, HostSessionStream, LocalAgentHost, LocalAgentHostFactory,
-    OperationBarrier, PreparedHostState, SessionInputRequest, SessionRequest,
+    ArtifactBlob, HostConfig, HostDebugAgent, HostResourceInventory, HostResumeBatch,
+    HostResumeResult, HostResumeStatus, HostSessionStream, HostSetAgentStatus, LocalAgentHost,
+    LocalAgentHostFactory, OperationBarrier, PreparedHostState, SessionInputRequest,
+    SessionRequest,
 };
-use model::ProtocolError;
+use model::envelope::{Envelope, EnvelopeKind};
+use model::{ProtocolError, ShutdownReason};
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
@@ -26,7 +28,7 @@ use super::lifecycle::{
     withdraw_agent,
 };
 use super::{AgentServiceState, SharedAgentServiceState, session};
-#[cfg(testnet)]
+#[cfg(any(test, feature = "test-support"))]
 use crate::agents::claude::ClaudeSession;
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentType, ArtifactOwners, CreateAgentRequest,
@@ -34,8 +36,6 @@ use crate::agents::{
     RenameAgentRequest, SessionCloseReason, SessionEvent, SpawnInheritance, StopPolicy,
     bootstrap_external_hook, compute_diff, store_error,
 };
-use model::envelope::{Envelope, EnvelopeKind};
-use model::ShutdownReason;
 use crate::suspend;
 
 /// The concrete PTY-backed agent runtime.
@@ -43,9 +43,12 @@ pub struct AgentRuntime {
     state: SharedAgentServiceState,
     event_tx: mpsc::Sender<SessionEvent>,
     host_id: Uuid,
+    state_path: PathBuf,
     resume_lock: tokio::sync::Mutex<()>,
     artifact_owners: Arc<ArtifactOwners>,
     artifact_sweeper: tokio::task::JoinHandle<()>,
+    #[cfg(feature = "test-support")]
+    pub(crate) test_cleanup: Option<PathBuf>,
 }
 
 /// Creates one isolated provider runtime for each desktop profile.
@@ -73,6 +76,22 @@ impl AgentRuntime {
         claude_user_keymap_dir: PathBuf,
         data_dir: PathBuf,
     ) -> io::Result<Arc<Self>> {
+        Self::new_with_artifact_clock(
+            route,
+            claude_user_keymap_dir,
+            data_dir,
+            None,
+            Arc::new(artifacts::SystemClock),
+        )
+    }
+
+    pub(crate) fn new_with_artifact_clock(
+        route: McpLaunchRoute,
+        claude_user_keymap_dir: PathBuf,
+        data_dir: PathBuf,
+        state_path: Option<PathBuf>,
+        artifact_clock: Arc<dyn artifacts::Clock>,
+    ) -> io::Result<Arc<Self>> {
         let server_socket_path = route.socket_path().to_path_buf();
         let runtime_dir = server_socket_path
             .parent()
@@ -80,10 +99,10 @@ impl AgentRuntime {
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
         let host_id = route.host_id();
-        let artifact_owners = Arc::new(ArtifactOwners::open(
-            data_dir.clone(),
-            Arc::new(artifacts::SystemClock),
-        ).map_err(io::Error::other)?);
+        let state_path = state_path.unwrap_or_else(|| data_dir.join("state.yaml"));
+        let artifact_owners = Arc::new(
+            ArtifactOwners::open(data_dir.clone(), artifact_clock).map_err(io::Error::other)?,
+        );
         let deps = AgentDeps::new(
             data_dir,
             runtime_dir,
@@ -99,9 +118,12 @@ impl AgentRuntime {
             state,
             event_tx,
             host_id,
+            state_path,
             resume_lock: tokio::sync::Mutex::new(()),
             artifact_owners,
             artifact_sweeper,
+            #[cfg(feature = "test-support")]
+            test_cleanup: None,
         }))
     }
 
@@ -113,8 +135,13 @@ impl AgentRuntime {
         &self.event_tx
     }
 
-    pub(crate) fn host_id(&self) -> Uuid {
+    pub fn host_id(&self) -> Uuid {
         self.host_id
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn sweep_artifacts_for_test(&self) -> Result<Vec<model::ArtifactId>, ProtocolError> {
+        self.artifact_owners.sweep_loaded(artifacts::EPHEMERAL_TTL)
     }
 
     #[cfg(all(debug_assertions, unix))]
@@ -143,7 +170,7 @@ impl AgentRuntime {
         Ok(reader)
     }
 
-    #[cfg(testnet)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn register_scripted_claude(
         &self,
         request: CreateAgentRequest,
@@ -165,7 +192,7 @@ impl AgentRuntime {
         Ok(agent)
     }
 
-    #[cfg(testnet)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn end_scripted_session(&self, agent_id: Uuid) {
         self.event_tx
             .send(SessionEvent::Ended { agent_id })
@@ -173,7 +200,7 @@ impl AgentRuntime {
             .expect("scripted session event loop should be running");
     }
 
-    #[cfg(testnet)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn deliver_scripted_hook(
         &self,
         agent_id: Uuid,
@@ -193,6 +220,10 @@ impl AgentRuntime {
 impl Drop for AgentRuntime {
     fn drop(&mut self) {
         self.artifact_sweeper.abort();
+        #[cfg(feature = "test-support")]
+        if let Some(path) = self.test_cleanup.take() {
+            let _ = std::fs::remove_dir_all(path);
+        }
     }
 }
 
@@ -204,13 +235,53 @@ impl LocalAgentHostFactory for AgentRuntimeFactory {
             config.server_socket_path,
             config.host_id,
         )?;
-        AgentRuntime::new_with_mcp_launch_route(
+        AgentRuntime::new_with_artifact_clock(
             route,
             config.claude_user_keymap_dir,
             config.data_dir,
+            Some(config.state_path),
+            Arc::new(artifacts::SystemClock),
         )
         .map(|host| host as Arc<dyn LocalAgentHost>)
     }
+
+    fn restore_prepared(
+        &self,
+        state_path: &Path,
+        state: PreparedHostState,
+    ) -> Result<(), ProtocolError> {
+        restore_prepared_at(state_path, state)
+    }
+}
+
+pub(crate) fn restore_prepared_at(
+    state_path: &Path,
+    state: PreparedHostState,
+) -> Result<(), ProtocolError> {
+    let agents: Vec<suspend::SuspendedAgent> =
+        serde_json::from_slice(&state.payload).map_err(|error| ProtocolError::ServerError {
+            message: format!("failed to decode prepared host state: {error}"),
+        })?;
+    let mut retained =
+        suspend::load_suspended(state_path).map_err(|error| ProtocolError::ServerError {
+            message: format!("failed to load retained state: {error}"),
+        })?;
+    let prepared_ids: std::collections::HashSet<_> = agents
+        .iter()
+        .map(suspend::SuspendedAgent::agent_id)
+        .collect();
+    retained
+        .agents
+        .retain(|agent| !prepared_ids.contains(&agent.agent_id()));
+    retained.agents.extend(agents);
+    if !retained.agents.is_empty() {
+        suspend::save_suspended(state_path, &retained).map_err(|error| {
+            ProtocolError::ServerError {
+                message: format!("failed to restore retained state: {error}"),
+            }
+        })?;
+    }
+    Ok(())
 }
 
 fn codex_private_socket_path(server_socket_path: &Path) -> io::Result<PathBuf> {
@@ -340,15 +411,25 @@ fn secure_codex_fallback_directory(path: &Path) -> io::Result<()> {
 
 #[async_trait]
 impl LocalAgentHost for AgentRuntime {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn capabilities(&self) -> model::Capabilities {
         model::Capabilities {
             features: Vec::new(),
             supported_agent_types: vec![
-                model::SupportedAgentType { agent_type: model::AGENT_TYPE_CLAUDE.into() },
+                model::SupportedAgentType {
+                    agent_type: model::AGENT_TYPE_CLAUDE.into(),
+                },
                 #[cfg(unix)]
-                model::SupportedAgentType { agent_type: model::AGENT_TYPE_CODEX.into() },
+                model::SupportedAgentType {
+                    agent_type: model::AGENT_TYPE_CODEX.into(),
+                },
                 #[cfg(debug_assertions)]
-                model::SupportedAgentType { agent_type: model::AGENT_TYPE_TEST_AGENT.into() },
+                model::SupportedAgentType {
+                    agent_type: model::AGENT_TYPE_TEST_AGENT.into(),
+                },
             ],
         }
     }
@@ -419,7 +500,11 @@ impl LocalAgentHost for AgentRuntime {
             .map_err(rename_error_to_protocol)
     }
 
-    async fn delete(&self, agent_id: Uuid, _operation: OperationBarrier) -> Result<(), ProtocolError> {
+    async fn delete(
+        &self,
+        agent_id: Uuid,
+        _operation: OperationBarrier,
+    ) -> Result<(), ProtocolError> {
         let session_to_stop = {
             let mut us = self.state().write().await;
             delete_local_agent_and_emit_session_close(&mut us, agent_id)
@@ -536,8 +621,14 @@ impl LocalAgentHost for AgentRuntime {
             .put(kind, &name, &mime, &bytes)
             .map_err(store_error)?
             .into_reference();
-        owner.pin(std::slice::from_ref(&artifact.id)).map_err(store_error)?;
-        log.write(crate::agents::attachments_row(None, std::slice::from_ref(&artifact))).await;
+        owner
+            .pin(std::slice::from_ref(&artifact.id))
+            .map_err(store_error)?;
+        log.write(crate::agents::attachments_row(
+            None,
+            std::slice::from_ref(&artifact),
+        ))
+        .await;
         Ok(artifact)
     }
 
@@ -548,8 +639,15 @@ impl LocalAgentHost for AgentRuntime {
         _operation: host_api::OperationLease,
     ) -> Result<ArtifactBlob, ProtocolError> {
         self.agent(agent_id).await?;
-        let (artifact, bytes) = self.artifact_owners.owner(agent_id)?.get(&id).map_err(store_error)?;
-        Ok(ArtifactBlob { artifact: artifact.into_reference(), bytes })
+        let (artifact, bytes) = self
+            .artifact_owners
+            .owner(agent_id)?
+            .get(&id)
+            .map_err(store_error)?;
+        Ok(ArtifactBlob {
+            artifact: artifact.into_reference(),
+            bytes,
+        })
     }
 
     async fn diff(
@@ -567,9 +665,17 @@ impl LocalAgentHost for AgentRuntime {
         &self,
         request: SessionRequest,
     ) -> Result<HostSessionStream, ProtocolError> {
-        let replay_attachments = self.artifact_owners.owner(request.agent_id).ok().map(|owner| {
-            owner.pinned().into_iter().map(artifacts::ArtifactMeta::into_reference).collect()
-        });
+        let replay_attachments = self
+            .artifact_owners
+            .owner(request.agent_id)
+            .ok()
+            .map(|owner| {
+                owner
+                    .pinned()
+                    .into_iter()
+                    .map(artifacts::ArtifactMeta::into_reference)
+                    .collect()
+            });
         session::subscribe_session_stream(self, request, replay_attachments).await
     }
 
@@ -707,10 +813,38 @@ impl LocalAgentHost for AgentRuntime {
                 message: errors.join("; "),
             });
         }
-        let agent_ids = state.agents.iter().map(suspend::SuspendedAgent::agent_id).collect();
-        let payload = serde_json::to_vec(&state.agents).map_err(|error| ProtocolError::ServerError {
-            message: format!("failed to encode prepared agent state: {error}"),
+        // The runtime owns its persistence format. Retain older failed
+        // sessions and replace only records that are live again.
+        let mut retained = suspend::load_suspended(&self.state_path).map_err(|error| {
+            ProtocolError::ServerError {
+                message: format!("failed to load retained state: {error}"),
+            }
         })?;
+        if !state.agents.is_empty() {
+            let active: std::collections::HashSet<_> = state
+                .agents
+                .iter()
+                .map(suspend::SuspendedAgent::agent_id)
+                .collect();
+            retained
+                .agents
+                .retain(|agent| !active.contains(&agent.agent_id()));
+            retained.agents.extend(state.agents.clone());
+            suspend::save_suspended(&self.state_path, &retained).map_err(|error| {
+                ProtocolError::ServerError {
+                    message: format!("failed to save retained state: {error}"),
+                }
+            })?;
+        }
+        let agent_ids = state
+            .agents
+            .iter()
+            .map(suspend::SuspendedAgent::agent_id)
+            .collect();
+        let payload =
+            serde_json::to_vec(&state.agents).map_err(|error| ProtocolError::ServerError {
+                message: format!("failed to encode prepared agent state: {error}"),
+            })?;
         Ok(PreparedHostState { agent_ids, payload })
     }
 
@@ -718,14 +852,26 @@ impl LocalAgentHost for AgentRuntime {
         &self,
         state: PreparedHostState,
         operations: &host_api::OperationGate,
-    ) -> Vec<HostResumeResult> {
+    ) -> HostResumeBatch {
         let _resume = self.resume_lock.lock().await;
         let mut reports = Vec::new();
         let agents: Vec<suspend::SuspendedAgent> = match serde_json::from_slice(&state.payload) {
             Ok(agents) => agents,
-            Err(_) => return state.agent_ids.into_iter().map(|agent_id| HostResumeResult { agent_id, status: HostResumeStatus::Failed }).collect(),
+            Err(error) => {
+                return HostResumeBatch {
+                    agents: state
+                        .agent_ids
+                        .into_iter()
+                        .map(|agent_id| HostResumeResult {
+                            agent_id,
+                            status: HostResumeStatus::Failed,
+                        })
+                        .collect(),
+                    cleanup_error: Some(format!("failed to decode prepared host state: {error}")),
+                };
+            }
         };
-        for agent in agents {
+        for agent in &agents {
             let agent_id = agent.agent_id();
             // Recovery may repeat after a process started but before its result
             // was persisted. Never construct or start that identity twice.
@@ -735,7 +881,7 @@ impl LocalAgentHost for AgentRuntime {
                 let result = resume_agents(
                     self.state(),
                     self.event_tx(),
-                    vec![agent],
+                    vec![agent.clone()],
                     self.host_id(),
                     operations,
                     true,
@@ -749,7 +895,41 @@ impl LocalAgentHost for AgentRuntime {
             };
             reports.push(HostResumeResult { agent_id, status });
         }
-        reports
+        let successful: std::collections::HashSet<_> = reports
+            .iter()
+            .filter(|agent| agent.status != HostResumeStatus::Failed)
+            .map(|agent| agent.agent_id)
+            .collect();
+        let cleanup = (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            let mut retained = suspend::load_suspended(&self.state_path)?;
+            retained
+                .agents
+                .retain(|agent| !successful.contains(&agent.agent_id()));
+            let retained_ids: std::collections::HashSet<_> = retained
+                .agents
+                .iter()
+                .map(suspend::SuspendedAgent::agent_id)
+                .collect();
+            retained.agents.extend(
+                agents
+                    .iter()
+                    .filter(|agent| {
+                        !successful.contains(&agent.agent_id())
+                            && !retained_ids.contains(&agent.agent_id())
+                    })
+                    .cloned(),
+            );
+            if retained.agents.is_empty() {
+                suspend::remove_suspended(&self.state_path)?;
+            } else {
+                suspend::save_suspended(&self.state_path, &retained)?;
+            }
+            Ok(())
+        })();
+        HostResumeBatch {
+            agents: reports,
+            cleanup_error: cleanup.err().map(|error| error.to_string()),
+        }
     }
 
     async fn stop_all(&self) {
@@ -821,7 +1001,11 @@ impl LocalAgentHost for AgentRuntime {
             .len();
         Ok(HostResourceInventory {
             agents: live.max(suspended),
-            retained_artifacts: self.artifact_owners.loaded_count(),
+            retained_artifacts: self.artifact_owners.retained_count().map_err(|error| {
+                ProtocolError::ServerError {
+                    message: error.to_string(),
+                }
+            })?,
         })
     }
 

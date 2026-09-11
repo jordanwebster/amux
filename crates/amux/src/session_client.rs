@@ -4,15 +4,15 @@ use std::future::Future;
 use std::io::{self, Read, Write};
 use std::path::Path;
 
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
+use crossterm::terminal;
 use model::{CODEX_RAW_THREAD_NOT_READY, TERMINAL_V1, TerminalV1Args};
 use node::{
     AgentIdentifier, AgentType, Client, ClientError, Config, CreateAgentRequest, LeaderKey,
     SendInputRequest, SessionCloseReason, ShutdownReason, SubscribeSessionEvent,
     SubscribeSessionRequest, TerminalSize,
 };
-use anyhow::{Result, anyhow};
-use chrono::{DateTime, Utc};
-use crossterm::terminal;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -655,11 +655,13 @@ pub(crate) async fn subscribe_raw(
         .subscribe_session(SubscribeSessionRequest {
             agent: agent.clone(),
             io_protocol: TERMINAL_V1.to_string(),
-            args: Some(wire::encode_terminal_args(TerminalV1Args {
-                terminal_size,
-                replay_query: None,
-            })
-            .into()),
+            args: Some(
+                wire::encode_terminal_args(TerminalV1Args {
+                    terminal_size,
+                    replay_query: None,
+                })
+                .into(),
+            ),
         })
         .await
         .map_err(|error| anyhow!("failed to subscribe to session: {error}"))?;
@@ -708,9 +710,7 @@ async fn attach_new_codex_terminal(
 /// failed to materialize reports a different error, and waiting will not fix
 /// it, so this must not match it.
 fn codex_thread_not_ready(error: &anyhow::Error) -> bool {
-    error
-        .to_string()
-        .contains(CODEX_RAW_THREAD_NOT_READY)
+    error.to_string().contains(CODEX_RAW_THREAD_NOT_READY)
 }
 
 async fn attach_subscribed(

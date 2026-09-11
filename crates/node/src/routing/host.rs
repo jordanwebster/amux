@@ -83,7 +83,10 @@ mod tests {
         let host = local_host(
             Uuid::from_u128(1),
             "cloud",
-            Capabilities { features: vec![FEATURE_CLOUD_RELAY.to_string()], ..Default::default() },
+            Capabilities {
+                features: vec![FEATURE_CLOUD_RELAY.to_string()],
+                ..Default::default()
+            },
         );
 
         assert!(host.capabilities.supported_agent_types.is_empty());

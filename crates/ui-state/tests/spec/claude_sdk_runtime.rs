@@ -193,8 +193,7 @@ fn claude_sdk_family_needs_tracks_asks_and_offline_hosts() {
     assert!(model.family_needs(agent_id("lead")).is_empty());
 }
 fn facts() -> Vec<Msg> {
-    let rows =
-        include_str!("../../../claude-specs/fixtures/claude-sdk/introspection.rows.jsonl");
+    let rows = include_str!("../../../claude-specs/fixtures/claude-sdk/introspection.rows.jsonl");
     seq([
         claude_sdk_base(AGENT),
         rows.lines()

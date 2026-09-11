@@ -45,7 +45,7 @@ impl ProfileAdmin {
         Ok(self.service.list_pairing_candidates().await)
     }
 
-    #[cfg(any(test, testnet))]
+    #[cfg(test)]
     pub(crate) fn for_test(service: ClientService) -> Self {
         let id = crate::installation::ProfileId(service.local_agents.host_id());
         Self::new(service, id)

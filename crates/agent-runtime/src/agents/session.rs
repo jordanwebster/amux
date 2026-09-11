@@ -9,7 +9,7 @@
 //! each backend's [`AgentKind`].
 //!
 //! This module constructs live agent sessions, so it is gated at its `mod`
-//! declaration behind the `local-agents` feature. The data types it produces
+//! declaration behind the host API boundary. The data types it produces
 //! ([`AgentRecord`], [`SessionEvent`], [`StopPolicy`]) live in
 //! [`super::record`] and stay compiled in every build.
 
@@ -21,6 +21,7 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use model::envelope::Envelope;
 use model::{ProtocolError, SpawnInheritance};
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -40,7 +41,6 @@ use crate::agents::{
 };
 #[cfg(test)]
 use crate::config::Config;
-use model::envelope::Envelope;
 use crate::suspend::SuspendedAgent;
 
 /// The backend carrier that accepted an agent message.

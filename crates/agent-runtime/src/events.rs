@@ -42,15 +42,13 @@ impl<E> EventSource<E> {
 
 impl<E: Clone> EventSource<E> {
     pub(crate) fn emit(&mut self, event: E) {
-        self.subscribers.retain(|subscriber| {
-            match subscriber.tx.try_send(event.clone()) {
+        self.subscribers
+            .retain(|subscriber| match subscriber.tx.try_send(event.clone()) {
                 Ok(()) => true,
                 Err(mpsc::error::TrySendError::Full(_)) if !subscriber.drop_on_overflow => {
                     panic!("critical event subscriber queue full")
                 }
                 Err(_) => false,
-            }
-        });
+            });
     }
 }
-

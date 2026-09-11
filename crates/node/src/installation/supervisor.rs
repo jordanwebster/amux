@@ -154,7 +154,7 @@ pub(super) struct Inner {
     identity_http: reqwest::Client,
     host_factory: Option<Arc<dyn host_api::LocalAgentHostFactory>>,
     binding: AsyncMutex<VecDeque<binding::PendingLogin>>,
-    #[cfg(testnet)]
+    #[cfg(test)]
     fixtures: Option<RuntimeFixtureFactory>,
 }
 
@@ -349,7 +349,7 @@ impl Installation {
         Self::open_inner(
             options,
             None,
-            #[cfg(testnet)]
+            #[cfg(test)]
             None,
         )
         .await
@@ -372,7 +372,7 @@ impl Installation {
         Self::open_inner(
             options,
             Some(config),
-            #[cfg(testnet)]
+            #[cfg(test)]
             None,
         )
         .await
@@ -381,7 +381,7 @@ impl Installation {
     async fn open_inner(
         options: InstallationOptions,
         config: Option<InstallationConfig>,
-        #[cfg(testnet)] fixtures: Option<RuntimeFixtureFactory>,
+        #[cfg(test)] fixtures: Option<RuntimeFixtureFactory>,
     ) -> Result<Self, InstallationError> {
         let registry = Registry::open(options.root)?;
         let temporary_root = if registry.path().is_none() {
@@ -458,7 +458,7 @@ impl Installation {
             identity_http: options.identity_http,
             host_factory: options.host_factory,
             binding: AsyncMutex::new(VecDeque::new()),
-            #[cfg(testnet)]
+            #[cfg(test)]
             fixtures,
         });
         for record in records {
@@ -845,7 +845,7 @@ impl Inner {
                 host_factory: self.host_factory.clone(),
 
                 listeners: self.listeners,
-                #[cfg(testnet)]
+                #[cfg(test)]
                 fixtures: self
                     .fixtures
                     .as_ref()
@@ -1202,10 +1202,10 @@ pub use update::{
     SuspendReason, SuspendReport,
 };
 
-#[cfg(all(test, feature = "local-agents"))]
+#[cfg(test)]
 mod tests;
 
-#[cfg(testnet)]
+#[cfg(test)]
 mod testnet;
-#[cfg(testnet)]
+#[cfg(test)]
 use testnet::RuntimeFixtureFactory;

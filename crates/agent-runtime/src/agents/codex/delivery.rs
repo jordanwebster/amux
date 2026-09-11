@@ -2,13 +2,13 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use model::envelope::{Envelope, Sender};
 use serde_json::{Value, json};
 
 use super::backend::{CodexLive, CodexRuntime, update_attached};
 use crate::agents::{
     AgentDeliveryTarget, Delivery, DeliveryError, DeliveryLiveness, StructuredLogSource,
 };
-use model::envelope::{Envelope, Sender};
 
 pub(super) struct CodexDeliveryTarget {
     runtime: Arc<Mutex<CodexRuntime>>,

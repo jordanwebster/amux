@@ -5,8 +5,8 @@ edition.workspace = true
 description = "Desktop provider sessions and local agent hosting for amux"
 publish = false
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(testnet)'] }
+[features]
+test-support = []
 
 [dependencies]
 anyhow = { workspace = true }

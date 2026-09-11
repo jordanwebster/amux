@@ -22,7 +22,6 @@
 
 // Test scaffolding exists only in debug profiles (see build.rs); a
 // release-profile test build compiles this crate empty rather than failing.
-#![cfg(testnet)]
 mod smoke; // the harness in one test: the canonical TestNet example
 
 mod agents; // Chapter 7 — Agent messaging & relationships

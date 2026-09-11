@@ -4,10 +4,10 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use node::InstallationConfig;
-use node::installation::{Installation, rpc};
 use anyhow::{Context, Result, anyhow};
 use client::FrontDoorClient;
+use node::InstallationConfig;
+use node::installation::{Installation, rpc};
 
 /// AMUX_CONFIG identifies a profile; the default path identifies the installation.
 pub fn configuration(profile_path: Option<&Path>) -> Result<InstallationConfig> {

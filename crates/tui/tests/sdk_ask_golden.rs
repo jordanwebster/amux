@@ -68,9 +68,7 @@ fn recorded(name: &str) -> Vec<Value> {
             include_str!("../../claude-specs/fixtures/claude-sdk/permission_callback.rows.jsonl")
         }
         "elicitation" => {
-            include_str!(
-                "../../claude-specs/fixtures/claude-sdk/elicitation_accepted.rows.jsonl"
-            )
+            include_str!("../../claude-specs/fixtures/claude-sdk/elicitation_accepted.rows.jsonl")
         }
         other => panic!("unknown recording {other}"),
     };

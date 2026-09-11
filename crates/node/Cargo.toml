@@ -12,9 +12,7 @@ test-support = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(testnet)',
     'cfg(test_fixtures)',
-    'cfg(feature, values("local-agents"))',
 ] }
 
 [dependencies]
@@ -76,6 +74,8 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [dev-dependencies]
+agent-runtime = { workspace = true, features = ["test-support"] }
+artifacts = { workspace = true }
 prost-types = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }

@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use client::Client;
+use host_api::LocalAgentHost;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tonic::transport::{Channel, Endpoint};
@@ -28,7 +29,7 @@ use crate::routing::{
     Route, RoutingCore,
 };
 use crate::server::ShutdownReason;
-use crate::services::{ClientService, PtyAgentHost};
+use crate::services::ClientService;
 use crate::trust::{Reachability, SharedTrustStore};
 use crate::tunnel::TunnelPool;
 
@@ -192,11 +193,12 @@ pub(crate) async fn start_daemon_runtime(
         None,
         None,
         Listeners::InProcessOnly,
-        None,
+        Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
     );
     options.fixtures = RuntimeFixtures {
         listener,
         tracked_tcp: Some(inner.tracked_tcp.clone()),
+        artifact_clock: Some(inner.artifact_clock.clone()),
         cloud_transport: None,
         cloud: inner.cloud.as_ref().map(|cloud| {
             (
@@ -248,7 +250,7 @@ async fn wait_for_stored_direct_peers(runtime: &DaemonRuntime) {
 /// assertions never hold the runtime lock across awaits.
 pub(crate) struct DaemonParts {
     pub(crate) client: ClientService,
-    pub(crate) agent_host: Arc<PtyAgentHost>,
+    pub(crate) agent_host: Arc<dyn LocalAgentHost>,
     pub(crate) connections: Arc<ConnectionManager>,
     pub(crate) routing: Arc<RoutingCore>,
     pub(crate) tunnels: Arc<TunnelPool>,
@@ -433,10 +435,7 @@ impl Daemon {
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        runtime
-            .services
-            .artifact_owners
-            .sweep_loaded(artifacts::EPHEMERAL_TTL)
+        agent_runtime::test_support::sweep_artifacts(runtime.test_agent_host.as_ref())
             .unwrap_or_else(|error| panic!("'{}' failed to sweep artifacts: {error}", self.name()))
     }
 

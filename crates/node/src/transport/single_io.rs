@@ -63,17 +63,3 @@ where
 {
     endpoint.connect_with_connector_lazy(SingleIoConnector::new(io, label))
 }
-
-#[cfg(test)]
-pub(crate) async fn connect_single_io<IO>(
-    endpoint: Endpoint,
-    label: &'static str,
-    io: IO,
-) -> Result<Channel, tonic::transport::Error>
-where
-    IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    endpoint
-        .connect_with_connector(SingleIoConnector::new(io, label))
-        .await
-}

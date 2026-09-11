@@ -2,21 +2,21 @@
 //!
 //! Holds the live sessions plus the three event sources the runtime emits
 //! into (agent up/down, session close, server shutdown). Compiled only with
-//! `local-agents`; the rest of the core reaches it through the
+//! the agent runtime; the rest of the core reaches it through the
 //! [`super::LocalAgentHost`] seam.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use model::ShutdownReason;
+use model::envelope::Envelope;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::agents::{
     AgentDeps, AgentEvent, AgentRecord, AgentSession, SessionCloseReason, WorkingOn,
 };
-use model::envelope::Envelope;
 use crate::events::EventSource;
-use model::ShutdownReason;
 
 pub(crate) type SharedAgentServiceState = Arc<RwLock<AgentServiceState>>;
 

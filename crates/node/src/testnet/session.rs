@@ -10,14 +10,13 @@
 
 use std::path::Path;
 
+use agent_runtime::test_support::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use bytes::Bytes;
 use client::{Client, ClientError};
 use uuid::Uuid;
 
 use super::Daemon;
 use super::assertions::{DEFAULT_TIMEOUT, eventually};
-use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
-use crate::services::LocalAgentHost;
 use crate::{
     Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
     DiffBase, DiffResponse, SendInputRequest, SendMessageRequest, SubscribeSessionEvent,
@@ -29,21 +28,8 @@ impl Daemon {
         &self,
         agent: &Agent,
     ) -> Vec<tokio::sync::mpsc::OwnedPermit<Vec<u8>>> {
-        use crate::agents::{Plane, Protocol, RawPtyTarget};
-
         let parts = self.try_parts().await.expect("daemon is running");
-        let pty = {
-            let state = parts.agent_host.state().read().await;
-            match state.local_agents[&agent.id]
-                .session
-                .plane(Protocol::TestEchoV1)
-                .unwrap()
-            {
-                Plane::Terminal(RawPtyTarget::Existing(pty)) => pty,
-                _ => panic!("expected echo PTY"),
-            }
-        };
-        pty.hold_echo_input().await
+        agent_runtime::test_support::hold_echo_input(parts.agent_host.as_ref(), agent.id).await
     }
 
     /// Spawns a local echo (test) agent named `name` through this daemon's
@@ -96,9 +82,9 @@ impl Daemon {
             .try_parts()
             .await
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        parts
-            .agent_host
-            .register_scripted_claude(CreateAgentRequest {
+        agent_runtime::test_support::register_scripted_claude(
+            parts.agent_host.as_ref(),
+            CreateAgentRequest {
                 agent_id,
                 host_id: None,
                 name: Some(name.to_string()),
@@ -110,9 +96,10 @@ impl Daemon {
                 args: Vec::new(),
                 parent: None,
                 initial_prompt: None,
-            })
-            .await
-            .unwrap_or_else(|error| panic!("register scripted Claude agent '{name}': {error}"))
+            },
+        )
+        .await
+        .unwrap_or_else(|error| panic!("register scripted Claude agent '{name}': {error}"))
     }
 
     /// Stores bytes on `owner` for `agent`, routing through this daemon.
@@ -196,26 +183,24 @@ impl Daemon {
         let mut stream = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: agent.id.into(),
-                io_protocol: crate::claude_io::PTY_TRANSCRIPT_V1.to_string(),
+                io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.to_string(),
                 args: None,
             })
             .await
             .unwrap_or_else(|error| panic!("subscribe to scripted Claude agent: {error}"));
         let expected_seq = replay_cursor(&mut stream).await;
         let input_id = Uuid::new_v4().as_bytes().to_vec();
-        let payload = crate::claude_io::encode_pty_transcript_v1_input(
-            crate::claude_io::ClaudePtyTranscriptV1Input {
-                expected_seq,
-                intent: crate::claude_io::Intent::Prompt {
-                    text: text.to_string(),
-                },
+        let payload = wire::encode_claude_pty_input(
+            expected_seq,
+            model::ClaudePtyIntent::Prompt {
+                text: text.to_string(),
             },
         );
         client
             .send_input(SendInputRequest {
                 agent: agent.id.into(),
                 input_id: input_id.clone(),
-                io_protocol: crate::claude_io::PTY_TRANSCRIPT_V1.to_string(),
+                io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.to_string(),
                 payload: payload.into(),
                 pin: pin.into_iter().map(|id| id.to_string()).collect(),
             })
@@ -232,7 +217,7 @@ impl Daemon {
             .await
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: agent.id.into(),
-                io_protocol: crate::claude_io::PTY_TRANSCRIPT_V1.to_string(),
+                io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.to_string(),
                 args: None,
             })
             .await
@@ -482,15 +467,12 @@ impl Daemon {
             .try_parts()
             .await
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        parts
-            .agent_host
-            .event_tx()
-            .send(crate::agents::SessionEvent::Completed {
-                agent_id: child.id,
-                text: "done".to_string(),
-            })
-            .await
-            .expect("session event loop remains open");
+        agent_runtime::test_support::complete(
+            parts.agent_host.as_ref(),
+            child.id,
+            "done".to_string(),
+        )
+        .await;
 
         loop {
             let event = tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
@@ -646,9 +628,9 @@ impl Daemon {
             .try_parts()
             .await
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        let child = parts
-            .agent_host
-            .register_scripted_claude(CreateAgentRequest {
+        let child = agent_runtime::test_support::register_scripted_claude(
+            parts.agent_host.as_ref(),
+            CreateAgentRequest {
                 agent_id: child_id,
                 host_id: None,
                 name: Some("claude-child".to_string()),
@@ -663,9 +645,10 @@ impl Daemon {
                     host_id: parent.host_id,
                 }),
                 initial_prompt: None,
-            })
-            .await
-            .unwrap_or_else(|error| panic!("register scripted Claude child: {error}"));
+            },
+        )
+        .await
+        .unwrap_or_else(|error| panic!("register scripted Claude child: {error}"));
 
         let parent_name = parent
             .name
@@ -690,11 +673,13 @@ impl Daemon {
             "stop_hook_active": false,
         }))
         .expect("scripted Stop hook serializes");
-        parts
-            .agent_host
-            .deliver_scripted_hook(child_id, payload)
-            .await
-            .unwrap_or_else(|error| panic!("deliver scripted Stop hook: {error}"));
+        agent_runtime::test_support::deliver_scripted_hook(
+            parts.agent_host.as_ref(),
+            child_id,
+            payload,
+        )
+        .await
+        .unwrap_or_else(|error| panic!("deliver scripted Stop hook: {error}"));
 
         let completed = echoed_envelope(&mut stream, parent_name, "a completed message").await;
         assert_parent_lifecycle_envelope(
@@ -704,7 +689,8 @@ impl Daemon {
             last_assistant_message,
         );
 
-        parts.agent_host.end_scripted_session(child_id).await;
+        agent_runtime::test_support::end_scripted_session(parts.agent_host.as_ref(), child_id)
+            .await;
         let exited = echoed_envelope(&mut stream, parent_name, "an exited message").await;
         assert_parent_lifecycle_envelope(
             &exited,
@@ -1087,8 +1073,12 @@ async fn replay_cursor(stream: &mut crate::SessionStream) -> u64 {
             SubscribeSessionEvent::ReplayComplete {
                 cursor: Some(cursor),
             } => {
-                return crate::claude_io::decode_pty_transcript_v1_cursor(&cursor)
-                    .expect("scripted Claude replay cursor decodes");
+                return wire::decode_provider_cursor(
+                    model::Protocol::ClaudePtyTranscriptV1,
+                    &cursor,
+                )
+                .expect("scripted Claude replay cursor decodes")
+                .expect("scripted Claude cursor has a sequence");
             }
             SubscribeSessionEvent::ReplayComplete { cursor: None } => {
                 panic!("scripted Claude replay omitted its cursor")
@@ -1114,8 +1104,8 @@ async fn attachment_refs(
             .expect("attachment row stream failed");
         match event {
             SubscribeSessionEvent::Output { payload } => {
-                let output = crate::claude_io::decode_pty_transcript_v1_output(&payload)
-                    .expect("Claude output decodes");
+                let output =
+                    wire::decode_claude_pty_output(&payload).expect("Claude output decodes");
                 let value: serde_json::Value =
                     serde_json::from_slice(&output.payload).expect("Claude output contains JSON");
                 if value.get("type").and_then(serde_json::Value::as_str) != Some("amux.attachments")

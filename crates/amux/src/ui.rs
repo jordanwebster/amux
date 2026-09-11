@@ -8,8 +8,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use node::{ColorSetting, Config, DebugFormat, ThemeSetting, UiSettings};
 use anyhow::{Context, Result};
+use node::{ColorSetting, Config, DebugFormat, ThemeSetting, UiSettings};
 use tui::{
     ColorPreference, TerminalColors, Theme, ThemeError, TuiConfig, detect_color_mode,
     parse_theme_file, query_terminal_colors, run_fleet, theme_from_file,

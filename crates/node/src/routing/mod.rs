@@ -16,13 +16,17 @@ mod wire;
 
 pub(crate) use core::{RouteUpdateOutcome, RoutingCore, RoutingDebug};
 
-#[cfg(testnet)]
+#[cfg(test)]
 pub(crate) use connect::spawn_connector_to_channel_with_bearer_token_and_shutdown;
 pub(crate) use connect::{
     AuthenticatedLinkUser, LinkAuthSession, LinkConnectorAuth, LinkConnectorCtx,
     LinkConnectorToken, LinkConnectorTokenRefresher, LinkServiceCtx, LinkTokenAuthenticator,
     spawn_connector_to_channel_with_auth_establishment_and_shutdown,
     spawn_connector_to_channel_with_establishment,
+};
+#[cfg(test)]
+pub(crate) use connect::{
+    spawn_connector_to_channel, spawn_connector_to_channel_with_bearer_token,
 };
 pub(crate) use events::{EventSource, HostReachabilityEvent, RoutingEvent};
 pub(crate) use host::{FEATURE_CLOUD_RELAY, local_host, validate_remote_host};
@@ -33,7 +37,5 @@ pub(crate) use link_registry::{
     LinkCloseRequest, LinkOutputTx, LinkRegistry, LinkRole, LinkUnavailable,
 };
 pub use model::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
-pub(crate) use types::{
-    LinkId, Route, capabilities_to_wire, host_from_wire, host_to_wire,
-};
+pub(crate) use types::{LinkId, Route, capabilities_to_wire, host_from_wire, host_to_wire};
 pub(crate) use wire::{inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire};

@@ -85,20 +85,13 @@ impl AgentServiceCtx {
     }
 
     pub(crate) fn has_supported_agent_types(&self) -> bool {
-        self.host.as_ref().is_some_and(|host| !host.capabilities().supported_agent_types.is_empty())
+        self.host
+            .as_ref()
+            .is_some_and(|host| !host.capabilities().supported_agent_types.is_empty())
     }
 
     fn require_host(&self) -> Result<&Arc<dyn LocalAgentHost>, ProtocolError> {
         self.host.as_ref().ok_or_else(local_agents_disabled)
-    }
-
-    // Opening an owner creates directories even for reads and replay. Callers
-    // must hold a shared operation guard until storage preparation finishes,
-    // so deletion drains accepted writes and closed profiles cannot recreate
-    // storage. Release it before delivering prepared input to an agent.
-    #[cfg(test)]
-    pub(crate) async fn agent(&self, agent_id: Uuid) -> Result<Agent, ProtocolError> {
-        self.require_host()?.agent(agent_id).await
     }
 
     pub(crate) async fn subscribe_agent_events(
@@ -134,7 +127,9 @@ impl AgentServiceCtx {
             return Err(no_supported_agent_types());
         }
         drop(_operation);
-        self.require_host()?.create(create_rpc_to_domain_request(request)?, &self.operations).await
+        self.require_host()?
+            .create(create_rpc_to_domain_request(request)?, &self.operations)
+            .await
     }
 
     pub(crate) async fn spawn_inheritance(
@@ -176,10 +171,12 @@ impl AgentServiceCtx {
         &self,
         request: SetAgentStatusRequest,
     ) -> Result<(), ProtocolError> {
-        self.require_host()?.set_agent_status(host_api::HostSetAgentStatus {
-            agent_id: request.agent_id,
-            working_on: request.working_on,
-        }).await
+        self.require_host()?
+            .set_agent_status(host_api::HostSetAgentStatus {
+                agent_id: request.agent_id,
+                working_on: request.working_on,
+            })
+            .await
     }
 
     pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
@@ -200,9 +197,16 @@ impl AgentServiceCtx {
         bytes: Vec<u8>,
     ) -> Result<ArtifactRef, ProtocolError> {
         let _operation = self.operations.admit().await?;
-        self.require_host()?.put_artifact_by_agent(
-            caller, kind, name.to_owned(), mime.to_owned(), bytes, _operation,
-        ).await
+        self.require_host()?
+            .put_artifact_by_agent(
+                caller,
+                kind,
+                name.to_owned(),
+                mime.to_owned(),
+                bytes,
+                _operation,
+            )
+            .await
     }
 
     pub(crate) async fn subscribe_session_response_stream(
@@ -363,9 +367,19 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         let request = request.into_inner();
         let agent_id = decode_agent_id("PutArtifactRequest.agent_id", request.agent_id)?;
         let kind = crate::agents::artifact_kind_from_wire(request.kind).map_err(decode_status)?;
-        let artifact = self.require_host().map_err(protocol_status)?.put_artifact(
-            agent_id, kind, request.name, request.mime, request.bytes, _operation,
-        ).await.map_err(protocol_status)?;
+        let artifact = self
+            .require_host()
+            .map_err(protocol_status)?
+            .put_artifact(
+                agent_id,
+                kind,
+                request.name,
+                request.mime,
+                request.bytes,
+                _operation,
+            )
+            .await
+            .map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::PutArtifactResponse {
             artifact: Some(crate::agents::artifact_ref_to_wire(&artifact)),
         }))
@@ -383,7 +397,12 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
                 "GetArtifactRequest.id is invalid: {error}"
             )))
         })?;
-        let blob = self.require_host().map_err(protocol_status)?.get_artifact(agent_id, id, _operation).await.map_err(protocol_status)?;
+        let blob = self
+            .require_host()
+            .map_err(protocol_status)?
+            .get_artifact(agent_id, id, _operation)
+            .await
+            .map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::GetArtifactResponse {
             artifact: Some(crate::agents::artifact_ref_to_wire(&blob.artifact)),
             bytes: blob.bytes,
@@ -405,7 +424,12 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
                 ))
             })
             .and_then(|base| crate::agents::diff_base_from_wire(base).map_err(decode_status))?;
-        let response = self.require_host().map_err(protocol_status)?.diff(agent_id, base, _operation).await.map_err(protocol_status)?;
+        let response = self
+            .require_host()
+            .map_err(protocol_status)?
+            .diff(agent_id, base, _operation)
+            .await
+            .map_err(protocol_status)?;
         Ok(tonic::Response::new(crate::agents::diff_response_to_wire(
             &response,
         )))
@@ -454,16 +478,56 @@ fn decode_subscribe_session_request(
     crate::agents::subscribe_session_request_from_wire(request).map_err(decode_status)
 }
 
-fn create_rpc_to_domain_request(request: CreateAgentRpcRequest) -> Result<model::CreateAgentRequest, ProtocolError> {
+fn create_rpc_to_domain_request(
+    request: CreateAgentRpcRequest,
+) -> Result<model::CreateAgentRequest, ProtocolError> {
     use crate::agents::CreateAgentConfig;
     let (agent_type, working_dir, terminal_size, args) = match request.agent {
-        CreateAgentConfig::Claude { driver, working_dir, terminal_size, args } => (model::AgentType::Claude { driver }, working_dir, terminal_size, args),
-        CreateAgentConfig::Codex { cwd, model, approval_policy, sandbox_policy, resume_thread_id } =>
-            (model::AgentType::Codex { model, approval_policy, sandbox_policy, resume_thread_id }, cwd, None, Vec::new()),
+        CreateAgentConfig::Claude {
+            driver,
+            working_dir,
+            terminal_size,
+            args,
+        } => (
+            model::AgentType::Claude { driver },
+            working_dir,
+            terminal_size,
+            args,
+        ),
+        CreateAgentConfig::Codex {
+            cwd,
+            model,
+            approval_policy,
+            sandbox_policy,
+            resume_thread_id,
+        } => (
+            model::AgentType::Codex {
+                model,
+                approval_policy,
+                sandbox_policy,
+                resume_thread_id,
+            },
+            cwd,
+            None,
+            Vec::new(),
+        ),
         #[cfg(any(debug_assertions, test))]
-        CreateAgentConfig::TestAgent { command, working_dir, terminal_size } => (model::AgentType::TestAgent { command }, working_dir, terminal_size, Vec::new()),
+        CreateAgentConfig::TestAgent {
+            command,
+            working_dir,
+            terminal_size,
+        } => (
+            model::AgentType::TestAgent { command },
+            working_dir,
+            terminal_size,
+            Vec::new(),
+        ),
         #[cfg(not(any(debug_assertions, test)))]
-        CreateAgentConfig::TestAgent { .. } => return Err(ProtocolError::Unimplemented { message: "test-agent creation is unavailable in release builds".into() }),
+        CreateAgentConfig::TestAgent { .. } => {
+            return Err(ProtocolError::Unimplemented {
+                message: "test-agent creation is unavailable in release builds".into(),
+            });
+        }
     };
     Ok(model::CreateAgentRequest {
         agent_id: request.agent_id,
@@ -478,55 +542,127 @@ fn create_rpc_to_domain_request(request: CreateAgentRpcRequest) -> Result<model:
     })
 }
 
-fn host_session_request(request: SubscribeSessionRequest) -> Result<host_api::SessionRequest, ProtocolError> {
+fn host_session_request(
+    request: SubscribeSessionRequest,
+) -> Result<host_api::SessionRequest, ProtocolError> {
     let args = match request.protocol {
-        model::Protocol::TerminalV1 => host_api::HostSessionArgs::Terminal(wire::decode_terminal_args(request.args.as_deref()).map_err(decode_error)?),
-        model::Protocol::ClaudePtyTranscriptV1 => host_api::HostSessionArgs::ClaudePty(wire::decode_claude_pty_args(request.args.as_deref()).map_err(decode_error)?),
-        model::Protocol::ClaudeSdkV1 => host_api::HostSessionArgs::ClaudeSdk(wire::decode_claude_sdk_args(request.args.as_deref()).map_err(decode_error)?),
-        model::Protocol::CodexSdkV1 => host_api::HostSessionArgs::Codex(wire::decode_codex_sdk_args(request.args.as_deref()).map_err(decode_error)?),
-        model::Protocol::TestEchoV1 if request.args.is_none() => host_api::HostSessionArgs::TestEcho,
-        model::Protocol::TestEchoV1 => return Err(ProtocolError::InvalidArgument { message: "test echo does not accept arguments".into() }),
+        model::Protocol::TerminalV1 => host_api::HostSessionArgs::Terminal(
+            wire::decode_terminal_args(request.args.as_deref()).map_err(decode_error)?,
+        ),
+        model::Protocol::ClaudePtyTranscriptV1 => host_api::HostSessionArgs::ClaudePty(
+            wire::decode_claude_pty_args(request.args.as_deref()).map_err(decode_error)?,
+        ),
+        model::Protocol::ClaudeSdkV1 => host_api::HostSessionArgs::ClaudeSdk(
+            wire::decode_claude_sdk_args(request.args.as_deref()).map_err(decode_error)?,
+        ),
+        model::Protocol::CodexSdkV1 => host_api::HostSessionArgs::Codex(
+            wire::decode_codex_sdk_args(request.args.as_deref()).map_err(decode_error)?,
+        ),
+        model::Protocol::TestEchoV1 if request.args.is_none() => {
+            host_api::HostSessionArgs::TestEcho
+        }
+        model::Protocol::TestEchoV1 => {
+            return Err(ProtocolError::InvalidArgument {
+                message: "test echo does not accept arguments".into(),
+            });
+        }
     };
-    Ok(host_api::SessionRequest { agent_id: request.agent_id, args })
+    Ok(host_api::SessionRequest {
+        agent_id: request.agent_id,
+        args,
+    })
 }
 
-fn host_input_request(request: SendInputRequest) -> Result<host_api::SessionInputRequest, ProtocolError> {
+fn host_input_request(
+    request: SendInputRequest,
+) -> Result<host_api::SessionInputRequest, ProtocolError> {
     let input_id = match &request.event {
         SessionInputEvent::Input { input_id, .. } => input_id.clone(),
         SessionInputEvent::Control { .. } => Vec::new(),
     };
     let input = match (request.protocol, request.event) {
-        (model::Protocol::TerminalV1, SessionInputEvent::Input { payload, .. }) => HostSessionInput::TerminalBytes(payload),
-        (model::Protocol::TerminalV1, SessionInputEvent::Control { payload }) => HostSessionInput::TerminalControl(wire::decode_terminal_control(&payload).map_err(decode_error)?),
-        (model::Protocol::ClaudePtyTranscriptV1, SessionInputEvent::Input { payload, .. }) => HostSessionInput::ClaudePty(wire::decode_claude_pty_input(&payload).map_err(decode_error)?),
-        (model::Protocol::ClaudeSdkV1, SessionInputEvent::Input { payload, .. }) => HostSessionInput::ClaudeSdk(wire::decode_claude_sdk_input(&payload).map_err(decode_error)?),
-        (model::Protocol::CodexSdkV1, SessionInputEvent::Input { payload, .. }) => HostSessionInput::Codex(wire::decode_codex_sdk_input(&payload).map_err(decode_error)?),
-        (model::Protocol::TestEchoV1, SessionInputEvent::Input { payload, .. }) => HostSessionInput::TestEcho(payload),
-        (protocol, SessionInputEvent::Control { .. }) => return Err(ProtocolError::InvalidArgument { message: format!("{protocol} does not accept control input") }),
+        (model::Protocol::TerminalV1, SessionInputEvent::Input { payload, .. }) => {
+            HostSessionInput::TerminalBytes(payload)
+        }
+        (model::Protocol::TerminalV1, SessionInputEvent::Control { payload }) => {
+            HostSessionInput::TerminalControl(
+                wire::decode_terminal_control(&payload).map_err(decode_error)?,
+            )
+        }
+        (model::Protocol::ClaudePtyTranscriptV1, SessionInputEvent::Input { payload, .. }) => {
+            HostSessionInput::ClaudePty(
+                wire::decode_claude_pty_input(&payload).map_err(decode_error)?,
+            )
+        }
+        (model::Protocol::ClaudeSdkV1, SessionInputEvent::Input { payload, .. }) => {
+            HostSessionInput::ClaudeSdk(
+                wire::decode_claude_sdk_input(&payload).map_err(decode_error)?,
+            )
+        }
+        (model::Protocol::CodexSdkV1, SessionInputEvent::Input { payload, .. }) => {
+            HostSessionInput::Codex(wire::decode_codex_sdk_input(&payload).map_err(decode_error)?)
+        }
+        (model::Protocol::TestEchoV1, SessionInputEvent::Input { payload, .. }) => {
+            HostSessionInput::TestEcho(payload)
+        }
+        (protocol, SessionInputEvent::Control { .. }) => {
+            return Err(ProtocolError::InvalidArgument {
+                message: format!("{protocol} does not accept control input"),
+            });
+        }
     };
-    let pin = request.pin.into_iter().map(|id| id.parse().map_err(|error| ProtocolError::InvalidArgument { message: format!("invalid attachment id `{id}`: {error}") })).collect::<Result<Vec<_>, _>>()?;
-    Ok(host_api::SessionInputRequest { agent_id: request.agent_id, input_id, input, pin })
+    let pin = request
+        .pin
+        .into_iter()
+        .map(|id| {
+            id.parse().map_err(|error| ProtocolError::InvalidArgument {
+                message: format!("invalid attachment id `{id}`: {error}"),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(host_api::SessionInputRequest {
+        agent_id: request.agent_id,
+        input_id,
+        input,
+        pin,
+    })
 }
 
 fn decode_error(error: wire::DecodeError) -> ProtocolError {
-    ProtocolError::InvalidArgument { message: error.to_string() }
+    ProtocolError::InvalidArgument {
+        message: error.to_string(),
+    }
 }
 
-fn host_stream_to_wire(stream: host_api::HostSessionStream, protocol: model::Protocol) -> ResponseStream<wire::SubscribeSessionResponse> {
+fn host_stream_to_wire(
+    stream: host_api::HostSessionStream,
+    protocol: model::Protocol,
+) -> ResponseStream<wire::SubscribeSessionResponse> {
     Box::pin(stream.map(move |item| {
         let event = match item {
             Ok(HostSessionEvent::Opened) => model::SubscribeSessionEvent::Opened,
-            Ok(HostSessionEvent::Output { sequence, payload }) => model::SubscribeSessionEvent::Output {
-                payload: wire::encode_provider_output(protocol, sequence, payload).map_err(encode_status)?,
-            },
-            Ok(HostSessionEvent::ReplayComplete { sequence }) => model::SubscribeSessionEvent::ReplayComplete {
-                cursor: wire::encode_provider_cursor(protocol, sequence).map_err(encode_status)?,
-            },
-            Ok(HostSessionEvent::Closed { reason }) => model::SubscribeSessionEvent::Closed { reason },
+            Ok(HostSessionEvent::Output { sequence, payload }) => {
+                model::SubscribeSessionEvent::Output {
+                    payload: wire::encode_provider_output(protocol, sequence, payload)
+                        .map_err(encode_status)?,
+                }
+            }
+            Ok(HostSessionEvent::ReplayComplete { sequence }) => {
+                model::SubscribeSessionEvent::ReplayComplete {
+                    cursor: wire::encode_provider_cursor(protocol, sequence)
+                        .map_err(encode_status)?,
+                }
+            }
+            Ok(HostSessionEvent::Closed { reason }) => {
+                model::SubscribeSessionEvent::Closed { reason }
+            }
             Err(host_api::HostStreamError::Protocol(error)) => return Err(protocol_status(error)),
-            Err(host_api::HostStreamError::Shutdown(reason)) => return Err(server_shutdown_status(reason)),
+            Err(host_api::HostStreamError::Shutdown(reason)) => {
+                return Err(server_shutdown_status(reason));
+            }
         };
-        crate::agents::session_output_event_to_wire(&event, protocol).map_err(|error| tonic::Status::internal(error.to_string()))
+        crate::agents::session_output_event_to_wire(&event, protocol)
+            .map_err(|error| tonic::Status::internal(error.to_string()))
     }))
 }
 
@@ -593,14 +729,14 @@ fn decode_status(error: wire::DecodeError) -> tonic::Status {
     tonic::Status::invalid_argument(error.to_string())
 }
 
-#[cfg(all(test, feature = "local-agents"))]
+#[cfg(test)]
 mod tests {
     use std::io;
-    use std::path::PathBuf;
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use chrono::Utc;
+    use agent_runtime::AgentRuntime as PtyAgentHost;
+    use agent_runtime::test_support::{self, TEST_ECHO_COMMAND};
     use futures_util::StreamExt;
     use hyper_util::rt::TokioIo;
     use tonic::codegen::http::Uri;
@@ -608,31 +744,15 @@ mod tests {
     use tower::service_fn;
 
     use super::*;
-    use crate::agents::{CreateAgentConfig, TEST_ECHO_COMMAND};
+    use crate::agents::CreateAgentConfig;
 
     fn service_host() -> Arc<PtyAgentHost> {
-        PtyAgentHost::new(Uuid::from_u128(1))
+        test_support::runtime(Uuid::from_u128(1))
     }
 
     fn service_ctx() -> AgentServiceCtx {
         let host = service_host();
         AgentServiceCtx::new(Some(host.clone()), host.host_id(), false)
-    }
-
-    fn agent(agent_id: Uuid, host_id: Uuid, name: &str) -> crate::agents::AgentRecord {
-        crate::agents::AgentRecord {
-            id: agent_id,
-            host_id,
-            name: Some(name.to_string()),
-            command: "test-agent".to_string(),
-            working_dir: PathBuf::from("/tmp"),
-            kind: crate::agents::AgentKind::TestAgent,
-            readonly: false,
-            args: Vec::new(),
-            created_at: Utc::now(),
-            parent: None,
-            working_on: None,
-        }
     }
 
     async fn create_test_echo_agent(ctx: &AgentServiceCtx, agent_id: Uuid) {
@@ -740,17 +860,8 @@ mod tests {
 
     #[tokio::test]
     async fn configured_artifact_service_puts_gets_and_deletes_with_the_agent() {
-        let data_dir = tempfile::tempdir().unwrap();
         let host = service_host();
-        let owners = Arc::new(
-            ArtifactOwners::open(
-                data_dir.path().to_path_buf(),
-                Arc::new(artifacts::SystemClock),
-            )
-            .unwrap(),
-        );
-        let ctx = AgentServiceCtx::new(Some(host.clone()), host.host_id(), false)
-            .with_artifact_owners(owners);
+        let ctx = AgentServiceCtx::new(Some(host.clone()), host.host_id(), false);
         let agent_id = Uuid::new_v4();
         create_test_echo_agent(&ctx, agent_id).await;
 
@@ -769,13 +880,6 @@ mod tests {
         .into_inner()
         .artifact
         .unwrap();
-        let artifact_root = data_dir
-            .path()
-            .join("agents")
-            .join(agent_id.to_string())
-            .join("artifacts");
-        assert!(artifact_root.is_dir());
-
         let get = <AgentServiceCtx as wire::agent_service_server::AgentService>::get_artifact(
             &ctx,
             tonic::Request::new(wire::GetArtifactRequest {
@@ -797,52 +901,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!artifact_root.exists());
-    }
-
-    #[tokio::test]
-    async fn put_artifact_by_agent_pins_and_publishes_the_ref_before_returning() {
-        let data_dir = tempfile::tempdir().unwrap();
-        let host = service_host();
-        let owners = Arc::new(
-            ArtifactOwners::open(
-                data_dir.path().to_path_buf(),
-                Arc::new(artifacts::SystemClock),
-            )
-            .unwrap(),
-        );
-        let ctx = AgentServiceCtx::new(Some(host.clone()), host.host_id(), false)
-            .with_artifact_owners(owners.clone());
-        let agent_id = Uuid::new_v4();
-        create_test_echo_agent(&ctx, agent_id).await;
-        let log = host.attachment_log(agent_id).await.unwrap();
-        let (mut rows, seq) = log.subscribe_with_query(None).await.unwrap();
-        assert_eq!(seq, 0);
-
-        let artifact = ctx
-            .put_artifact_by_agent(
-                agent_id,
-                model::ArtifactKind::Image,
-                "screen.png",
-                "image/png",
-                b"png bytes".to_vec(),
-            )
-            .await
-            .unwrap();
-
-        assert!(
-            owners
-                .owner(agent_id)
-                .unwrap()
-                .meta(&artifact.id)
-                .unwrap()
-                .pinned_at
-                .is_some()
-        );
-        assert_eq!(
-            rows.read().await.unwrap().payload,
-            attachments_row(None, std::slice::from_ref(&artifact))
-        );
     }
 
     #[tokio::test]
@@ -866,11 +924,8 @@ mod tests {
             Some(wire::subscribe_agent_events_response::Event::SnapshotComplete(_))
         ));
 
-        let live_agent = agent(Uuid::from_u128(20), host_id, "live");
-        {
-            let mut state = host.state().write().await;
-            state.local_agent_events.emit(live_agent.agent_event());
-        }
+        let live_agent_id = Uuid::from_u128(20);
+        create_test_echo_agent(&ctx, live_agent_id).await;
 
         let next = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
@@ -880,7 +935,7 @@ mod tests {
         let Some(wire::subscribe_agent_events_response::Event::AgentUp(up)) = next.event else {
             panic!("expected AgentUp");
         };
-        assert_eq!(up.agent.unwrap().agent_id, live_agent.id.as_bytes());
+        assert_eq!(up.agent.unwrap().agent_id, live_agent_id.as_bytes());
     }
 
     #[tokio::test]
@@ -966,80 +1021,6 @@ mod tests {
             events.try_recv().unwrap(),
             AgentEvent::AgentDown { agent_id } if agent_id == first_id
         ));
-    }
-
-    #[tokio::test]
-    async fn create_waiting_for_host_preparation_does_not_hold_gate_and_rechecks_close() {
-        let host = service_host();
-        let ctx = AgentServiceCtx::new(Some(host.clone()), host.host_id(), false);
-        let state = host.state().write().await;
-        let mut create = Box::pin(ctx.create(CreateAgentRpcRequest {
-            agent_id: Uuid::new_v4(),
-            name: None,
-            parent: None,
-            initial_prompt: None,
-            agent: CreateAgentConfig::TestAgent {
-                command: TEST_ECHO_COMMAND.into(),
-                working_dir: std::env::temp_dir(),
-                terminal_size: None,
-            },
-        }));
-        assert!(futures_util::poll!(create.as_mut()).is_pending());
-        let exclusive = tokio::time::timeout(Duration::from_secs(1), ctx.operations.barrier())
-            .await
-            .expect("startup preparation must not hold the profile gate");
-        ctx.operations.close();
-        drop(exclusive);
-        drop(state);
-        assert!(matches!(
-            create.await,
-            Err(ProtocolError::FailedPrecondition { .. })
-        ));
-        assert_eq!(host.agent_count().await, 0);
-    }
-
-    #[tokio::test]
-    async fn resume_waiting_for_host_preparation_does_not_hold_gate_or_recreate_closed_storage() {
-        let host = service_host();
-        let operations = crate::installation::OperationGate::default();
-        let temp = tempfile::tempdir().unwrap();
-        let directory = temp.path().join("profile");
-        let state_path = directory.join("state.yaml");
-        crate::suspend::save_suspended(
-            &state_path,
-            &crate::suspend::SuspendedServerState {
-                agents: vec![crate::suspend::SuspendedAgent::TestAgent {
-                    agent_id: Uuid::new_v4(),
-                    name: None,
-                    command: TEST_ECHO_COMMAND.into(),
-                    working_dir: std::env::temp_dir(),
-                    terminal_size: None,
-                    created_at: Utc::now(),
-                    parent: None,
-                    working_on: None,
-                }],
-            },
-        )
-        .unwrap();
-        let state = host.state().write().await;
-        let mut resume = Box::pin(host.resume(state_path, &operations));
-        assert!(futures_util::poll!(resume.as_mut()).is_pending());
-        let exclusive = tokio::time::timeout(Duration::from_secs(1), operations.barrier())
-            .await
-            .expect("resume preparation must not hold the profile gate");
-        operations.close();
-        std::fs::remove_dir_all(&directory).unwrap();
-        drop(exclusive);
-        drop(state);
-        assert!(matches!(
-            resume.await,
-            Err(ProtocolError::FailedPrecondition { .. })
-        ));
-        assert_eq!(host.agent_count().await, 0);
-        assert!(
-            !directory.exists(),
-            "failed resume must not recreate closed storage"
-        );
     }
 
     #[tokio::test]
@@ -1140,11 +1121,7 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::Unimplemented);
-        assert_eq!(
-            error.message(),
-            "PutArtifact is not configured on this host"
-        );
+        assert_eq!(error.code(), tonic::Code::NotFound);
         server_task.abort();
     }
 

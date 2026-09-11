@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use node::{Client, Config, ConnectError, Server};
 use anyhow::{Context, Result, anyhow};
+use node::{Client, Config, ConnectError, Server};
 
 pub(super) async fn get_client(config: &Config) -> Result<Client> {
     let executable =

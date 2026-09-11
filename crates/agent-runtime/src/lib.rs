@@ -9,6 +9,157 @@ mod suspend;
 
 pub use host::{AgentRuntime, AgentRuntimeFactory};
 
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub mod test_support {
+    use std::io;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use host_api::{HostConfig, LocalAgentHost, LocalAgentHostFactory};
+    use model::{Agent, AgentId, CreateAgentRequest, Protocol, ProtocolError};
+    use tokio::sync::mpsc::OwnedPermit;
+    use uuid::Uuid;
+
+    use crate::AgentRuntime;
+    use crate::agents::{McpLaunchRoute, Plane, RawPtyTarget, SessionEvent};
+
+    pub const TEST_ECHO_COMMAND: &str = "__amux_test_echo__";
+    pub const TEST_DELAYED_DELIVERY_COMMAND: &str = "__amux_test_delayed_delivery__";
+    pub const TEST_FAILED_DELIVERY_COMMAND: &str = "__amux_test_failed_delivery__";
+    pub const TEST_UNAVAILABLE_DELIVERY_COMMAND: &str = "__amux_test_unavailable_delivery__";
+    pub const TEST_ECHO_V1: &str = "test_echo_v1";
+
+    pub fn runtime(host_id: Uuid) -> Arc<AgentRuntime> {
+        let data_dir = tempfile::Builder::new()
+            .prefix("amux-agent-runtime-")
+            .tempdir_in(std::env::temp_dir())
+            .expect("create agent runtime test directory")
+            .keep();
+        let socket_path = data_dir.join("amux.sock");
+        let route =
+            McpLaunchRoute::new(std::env::current_exe().unwrap(), None, socket_path, host_id)
+                .expect("create test MCP route");
+        let mut runtime = AgentRuntime::new_with_mcp_launch_route(
+            route,
+            data_dir.join("keymaps"),
+            data_dir.clone(),
+        )
+        .expect("create test agent runtime");
+        Arc::get_mut(&mut runtime)
+            .expect("new test runtime has one owner")
+            .test_cleanup = Some(data_dir);
+        runtime
+    }
+
+    fn concrete(host: &dyn LocalAgentHost) -> &AgentRuntime {
+        host.as_any()
+            .downcast_ref::<AgentRuntime>()
+            .expect("test support requires AgentRuntime")
+    }
+
+    #[derive(Clone)]
+    pub struct Factory {
+        clock: Arc<dyn artifacts::Clock>,
+    }
+
+    impl Factory {
+        pub fn new(clock: Arc<dyn artifacts::Clock>) -> Self {
+            Self { clock }
+        }
+    }
+
+    impl LocalAgentHostFactory for Factory {
+        fn create(&self, config: HostConfig) -> Result<Arc<dyn LocalAgentHost>, io::Error> {
+            let route = McpLaunchRoute::new(
+                config.executable,
+                config.profile_config_path,
+                config.server_socket_path,
+                config.host_id,
+            )?;
+            AgentRuntime::new_with_artifact_clock(
+                route,
+                config.claude_user_keymap_dir,
+                config.data_dir,
+                Some(config.state_path),
+                self.clock.clone(),
+            )
+            .map(|host| host as Arc<dyn LocalAgentHost>)
+        }
+
+        fn restore_prepared(
+            &self,
+            state_path: &Path,
+            state: host_api::PreparedHostState,
+        ) -> Result<(), ProtocolError> {
+            crate::host::restore_prepared_at(state_path, state)
+        }
+    }
+
+    pub async fn hold_echo_input(
+        host: &dyn LocalAgentHost,
+        agent_id: AgentId,
+    ) -> Vec<OwnedPermit<Vec<u8>>> {
+        let host = concrete(host);
+        let pty = {
+            let state = host.state().read().await;
+            match state.local_agents[&agent_id]
+                .session
+                .plane(Protocol::TestEchoV1)
+                .expect("echo agent supports test protocol")
+            {
+                Plane::Terminal(RawPtyTarget::Existing(pty)) => pty,
+                _ => panic!("expected echo PTY"),
+            }
+        };
+        pty.hold_echo_input().await
+    }
+
+    pub async fn register_scripted_claude(
+        host: &dyn LocalAgentHost,
+        request: CreateAgentRequest,
+    ) -> Result<Agent, ProtocolError> {
+        concrete(host).register_scripted_claude(request).await
+    }
+
+    pub async fn deliver_scripted_hook(
+        host: &dyn LocalAgentHost,
+        agent_id: AgentId,
+        payload: Vec<u8>,
+    ) -> Result<(), ProtocolError> {
+        concrete(host)
+            .deliver_scripted_hook(agent_id, payload)
+            .await
+    }
+
+    pub async fn end_scripted_session(host: &dyn LocalAgentHost, agent_id: AgentId) {
+        concrete(host).end_scripted_session(agent_id).await;
+    }
+
+    pub async fn complete(host: &dyn LocalAgentHost, agent_id: AgentId, text: String) {
+        concrete(host)
+            .event_tx()
+            .send(SessionEvent::Completed { agent_id, text })
+            .await
+            .expect("session event loop remains open");
+    }
+
+    pub fn suspended_agent_ids(state_path: &Path) -> Vec<AgentId> {
+        crate::suspend::load_suspended(state_path)
+            .expect("suspended state loads")
+            .agents
+            .iter()
+            .map(crate::suspend::SuspendedAgent::agent_id)
+            .collect()
+    }
+
+    pub fn sweep_artifacts(
+        host: &dyn LocalAgentHost,
+    ) -> Result<Vec<model::ArtifactId>, ProtocolError> {
+        concrete(host).sweep_artifacts_for_test()
+    }
+}
+
 pub use model::{
     Agent, AgentEvent, AgentKind, AgentType, ArtifactRef, CreateAgentRequest, Protocol,
 };

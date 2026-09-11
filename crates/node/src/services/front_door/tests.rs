@@ -10,6 +10,7 @@ use crate::installation::{
     CredentialSource, InstallationOptions, InstallationRoot, InstallationSettings, Listeners,
     OperationId,
 };
+use crate::transport::GrpcIo;
 
 struct NoCredentials;
 
@@ -33,7 +34,7 @@ async fn front(listeners: Listeners) -> (FrontDoor, tempfile::TempDir) {
             listeners,
             credentials: CredentialSource::HostProvided(Arc::new(|_| Arc::new(NoCredentials))),
             identity_http: reqwest::Client::new(),
-            host_factory: None,
+            host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
             settings: InstallationSettings {
                 host_name: "front-door-test".into(),
                 prevent_idle_sleep: Some(false),
@@ -502,7 +503,7 @@ async fn installation_info_debug_and_shutdown_are_separate_from_client_service()
     );
 }
 
-#[cfg(all(unix, feature = "local-agents"))]
+#[cfg(unix)]
 #[tokio::test]
 async fn unix_front_door_discovers_profile_socket_and_refuses_socket_theft() {
     use std::os::unix::fs::PermissionsExt;
@@ -727,10 +728,11 @@ async fn stopping_old_front_door_preserves_a_replacement_socket() {
         .await;
 }
 
-#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn suspend_resume_wire_reports_agents_and_replays_across_connections() {
-    use crate::agents::{AgentType, CreateAgentRequest, TEST_ECHO_COMMAND};
+    use agent_runtime::test_support::TEST_ECHO_COMMAND;
+
+    use crate::agents::{AgentType, CreateAgentRequest};
     let (front, _root) = front(Listeners::InProcessOnly).await;
     let mut profiles = client(&front);
     let mut hosted = Vec::new();
@@ -853,8 +855,10 @@ async fn front_door_adoption_response_identifies_confirmation_and_retries_staged
         .root()
         .join("profiles")
         .join(&profile.id)
-        .join("data/cache/artifacts/retained");
-    std::fs::write(retained, b"existing local artifact").unwrap();
+        .join("data/agents")
+        .join(uuid::Uuid::new_v4().to_string())
+        .join("artifacts");
+    std::fs::create_dir_all(retained).unwrap();
     let mut request = wire::BindProfileRequest {
         operation_id: op(),
         profile_id: Some(profile.id.clone()),

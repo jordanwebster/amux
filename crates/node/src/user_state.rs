@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use host_api::LocalAgentHost;
 use uuid::Uuid;
 
 use crate::auth::CredentialProvider;
 use crate::auth::jwt::JwtValidator;
 use crate::config::Config;
-use host_api::LocalAgentHost;
 use crate::subscription::SubscriptionReporter;
 use crate::update::UpdateReporter;
 

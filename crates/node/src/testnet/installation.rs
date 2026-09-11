@@ -315,7 +315,6 @@ impl Profile {
 
     /// Prepare and park the currently active sessions through the local host.
     pub async fn park_agents(&self) {
-        use crate::services::LocalAgentHost;
         let runtime = self
             .daemon
             .inner
@@ -331,12 +330,7 @@ impl Profile {
     }
 
     pub fn suspended_agent_ids(&self) -> Vec<uuid::Uuid> {
-        crate::suspend::load_suspended(&self.paths().state_path)
-            .unwrap()
-            .agents
-            .iter()
-            .map(crate::suspend::SuspendedAgent::agent_id)
-            .collect()
+        agent_runtime::test_support::suspended_agent_ids(&self.paths().state_path)
     }
 
     /// Retain service work that has already resolved this profile. It does not
@@ -466,7 +460,7 @@ fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
         listeners: Listeners::Sockets,
         credentials: CredentialSource::ProfileFiles,
         identity_http: reqwest::Client::new(),
-        host_factory: None,
+        host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
         settings: InstallationSettings {
             host_name: name.into(),
             prevent_idle_sleep: Some(false),

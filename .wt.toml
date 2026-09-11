@@ -54,6 +54,9 @@ run = "timeout 1200 cargo build --release -p amux -p shot --bins"
 [task.format-check]
 run = "cargo +nightly-2026-08-30 fmt --all -- --check"
 
+[task.format]
+run = "cargo +nightly-2026-08-30 fmt --all"
+
 [task.codegen-check]
 run = "timeout 600 scripts/codegen-check.sh"
 
@@ -115,6 +118,9 @@ run = "timeout 900 cargo check -p node -p agent-runtime -p amux --bins"
 [task.test-node-lifecycle]
 run = "timeout 600 cargo test -p node --lib installation::supervisor::tests::lifecycle_waits_for_profile_mutations_and_closed_gate_rejects_late_agent_work"
 
+[task.test-node]
+run = 'timeout 900 cargo test -p node --lib "$@"'
+
 [task.test-ui-state]
 run = "timeout 600 cargo test -p ui-state"
 
@@ -153,8 +159,7 @@ needs = ["build"]
 # Regenerates the committed protobuf code (crates/wire/src/generated)
 # after a proto change. Not a build step: the output is committed, and CI
 # fails when it goes stale.
-# The iOS library builds without `local-agents`. The check always names the
-# target so it never produces a host variant of the workspace.
+# The iOS check names its targets so it never produces desktop-only packages.
 [task.mobile-check]
 run = "timeout 1200 cargo check -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios && timeout 1200 cargo check -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios-sim"
 

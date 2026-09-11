@@ -15,6 +15,8 @@ use codex::{
     daemon_socket_path, ensure_daemon_with_fallback,
 };
 use model::ProtocolError;
+#[cfg(test)]
+use model::envelope::{Envelope, Sender};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
 use tokio::task::AbortHandle;
@@ -33,8 +35,6 @@ use crate::agents::{
     RawPtyTarget, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy, StructuredInput,
     StructuredInputEvent, StructuredLogSource, spawn_pty_agent,
 };
-#[cfg(test)]
-use model::envelope::{Envelope, Sender};
 use crate::suspend::SuspendedAgent;
 
 // Codex streams are delta-heavy and this is their sole elastic/replay buffer.
@@ -1989,6 +1989,7 @@ impl AgentBackend for CodexBackend {
 #[cfg(test)]
 mod tests {
     use futures_util::{SinkExt, StreamExt};
+    use model::envelope::{AgentSender, EnvelopeKind};
     use replay_support::{
         IoDirection, ReplayAdvance, ReplayOptions, load_script, replay_transport_with_controller,
     };
@@ -2001,7 +2002,6 @@ mod tests {
 
     use super::*;
     use crate::agents::AgentType;
-    use model::envelope::{AgentSender, EnvelopeKind};
 
     fn session_request() -> CreateAgentRequest {
         CreateAgentRequest {

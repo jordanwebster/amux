@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use host_api::HostDebugAgent;
+use model::Agent;
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use tokio::sync::RwLock;
 
-use host_api::HostDebugAgent;
-use model::Agent;
 use crate::debug::{DebugFormat, LossyPath};
 use crate::routing::{RoutingCore, RoutingDebug};
 use crate::tunnel::{TunnelDebug, TunnelPool};

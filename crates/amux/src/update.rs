@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result, bail};
 use node::InstallationConfig;
 pub(crate) use node::update::MarkerFileReporter;
-use anyhow::{Context, Result, bail};
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};

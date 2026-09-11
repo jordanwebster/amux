@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use model::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -10,7 +11,6 @@ use crate::agents::{
     AgentEvent, AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest,
     SessionEvent, StopPolicy, WorkingOn, agent_from_suspended, new_agent,
 };
-use model::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use crate::suspend::{SuspendedAgent, SuspendedServerState};
 
 /// Maximum local agents per user. Each agent holds a PTY and several tokio

@@ -2317,10 +2317,12 @@ mod tests {
         runtime.observe_now(old);
 
         let before = Utc::now();
-        let op = runtime.dispatch(Command::Claude(ui_state::claude::ClaudeCommand::SendPrompt {
-            agent,
-            text: "fresh dispatch".to_string(),
-        }));
+        let op = runtime.dispatch(Command::Claude(
+            ui_state::claude::ClaudeCommand::SendPrompt {
+                agent,
+                text: "fresh dispatch".to_string(),
+            },
+        ));
         let after = Utc::now();
 
         let observed = runtime.model().now().expect("dispatch observes time");

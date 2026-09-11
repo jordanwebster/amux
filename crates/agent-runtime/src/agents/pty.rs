@@ -3,10 +3,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(any(test, testnet))]
+#[cfg(any(test, feature = "test-support"))]
 use anyhow::anyhow;
 use anyhow::{Context, Result};
-#[cfg(any(test, testnet))]
+#[cfg(any(test, feature = "test-support"))]
 use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -24,7 +24,7 @@ const TERMINATE_GRACE: Duration = Duration::from_millis(250);
 enum HostedPty {
     Process(Arc<pty_host::PtyProcess>),
     Claude(claude::pty::Control),
-    #[cfg(any(test, testnet))]
+    #[cfg(any(test, feature = "test-support"))]
     TestEcho(mpsc::Sender<Vec<u8>>),
 }
 
@@ -52,7 +52,7 @@ impl PtyHandle {
         })
     }
 
-    #[cfg(any(test, testnet))]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn test_echo() -> Self {
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
         let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
@@ -71,7 +71,7 @@ impl PtyHandle {
     }
 
     /// Reserve the echo input queue so production writes wait on backpressure.
-    #[cfg(testnet)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn hold_echo_input(&self) -> Vec<mpsc::OwnedPermit<Vec<u8>>> {
         let HostedPty::TestEcho(input) = &self.hosted else {
             panic!("input backpressure fixture requires an echo PTY");
@@ -92,7 +92,7 @@ impl PtyHandle {
                 .await
                 .map(|_| ())
                 .map_err(Into::into),
-            #[cfg(any(test, testnet))]
+            #[cfg(any(test, feature = "test-support"))]
             HostedPty::TestEcho(input_tx) => input_tx
                 .send(data)
                 .await
@@ -118,11 +118,11 @@ impl PtyHandle {
                 control.terminal().map(|terminal| terminal.pid()),
                 control.exit_status(),
             ),
-            #[cfg(any(test, testnet))]
+            #[cfg(any(test, feature = "test-support"))]
             HostedPty::TestEcho(_) if _output.closed => {
                 return BackendState::Exited { code: None };
             }
-            #[cfg(any(test, testnet))]
+            #[cfg(any(test, feature = "test-support"))]
             HostedPty::TestEcho(_) => (None, None),
         };
         match status {
@@ -143,7 +143,7 @@ impl PtyHandle {
             HostedPty::Claude(control) => control
                 .resize(pty_size(size))
                 .context("failed to resize Claude PTY"),
-            #[cfg(any(test, testnet))]
+            #[cfg(any(test, feature = "test-support"))]
             HostedPty::TestEcho(_) => Ok(()),
         }
     }
@@ -177,7 +177,7 @@ impl PtyHandle {
                         .await;
                 }
             }
-            #[cfg(any(test, testnet))]
+            #[cfg(any(test, feature = "test-support"))]
             HostedPty::TestEcho(_) => {}
         }
         self.buffer.close().await;
@@ -196,7 +196,7 @@ impl PtyHandle {
                 .ok_or_else(|| anyhow::anyhow!("Claude session has no live PTY handle"))?
                 .signal_process_group(signal)
                 .map_err(Into::into),
-            #[cfg(any(test, testnet))]
+            #[cfg(any(test, feature = "test-support"))]
             HostedPty::TestEcho(_) => Ok(()),
         }
     }

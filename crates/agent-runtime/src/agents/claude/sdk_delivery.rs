@@ -3,13 +3,13 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use model::envelope::Envelope;
 
 use super::sdk_backend::{ClaudeSdkBackend, Runtime};
 use super::sdk_io::{ClaudeSdkSynthesized, ClaudeSdkV1Row};
 use crate::agents::{
     AgentDeliveryTarget, Delivery, DeliveryError, DeliveryLiveness, StructuredLogSource,
 };
-use model::envelope::Envelope;
 
 pub(super) struct ClaudeSdkDeliveryTarget {
     runtime: Arc<Mutex<Runtime>>,
@@ -88,6 +88,7 @@ mod tests {
     use std::time::Duration;
 
     use chrono::Utc;
+    use model::envelope::{AgentSender, EnvelopeKind, Sender};
     use serde_json::json;
     use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, duplex};
     use tokio::sync::mpsc;
@@ -98,7 +99,6 @@ mod tests {
         AgentBackend, AgentKind, AgentParent, AgentRecord, ClaudeDriver, Plane, Protocol,
         SessionEvent,
     };
-    use model::envelope::{AgentSender, EnvelopeKind, Sender};
 
     /// These waits prove a row arrives at all, not that it arrives quickly. A
     /// machine compiling other crates alongside the test can stall the session

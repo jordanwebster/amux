@@ -3,7 +3,7 @@
 //! These carry no live process state — [`AgentRecord`] is the registry's view
 //! of an agent, [`SessionEvent`] is the runtime→service notification, and
 //! [`StopPolicy`] selects a stop behavior. They stay compiled in every build
-//! (the runtime in [`super::session`] is the part gated behind `local-agents`).
+//! The provider runtime consumes these values behind the host API boundary.
 
 use std::path::PathBuf;
 

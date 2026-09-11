@@ -28,12 +28,11 @@ pub(crate) use codex::CodexRawPtyLease;
 pub(crate) use debug::{BackendState, BufferDebug, ObligationDebug, OutputDebug, SessionDebug};
 pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
 pub(crate) use log_source::StructuredLogSource;
-pub(crate) use model::{HookEnvironment, SpawnInheritance};
 pub use model::{
     Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, ClaudeDriver,
-    CreateAgentRequest, Protocol, RenameAgentRequest,
-    SessionCloseReason, TerminalSize, WorkingOn,
+    CreateAgentRequest, Protocol, RenameAgentRequest, SessionCloseReason, TerminalSize, WorkingOn,
 };
+pub(crate) use model::{HookEnvironment, SpawnInheritance};
 pub(crate) use naming::LocalAgentNameSource;
 pub(crate) use pty::{PtyHandle, spawn_pty_agent};
 pub(crate) use record::{AgentRecord, SessionEvent, StopPolicy};
@@ -46,5 +45,5 @@ pub(crate) use session::{
 };
 #[cfg(any(debug_assertions, test))]
 pub(crate) use test_agent::TestAgentSession;
-#[cfg(any(test, testnet))]
+#[cfg(test)]
 pub(crate) use test_agent::io::TEST_ECHO_COMMAND;

@@ -8887,3 +8887,16 @@ spec packages, and CLI tests supply the desktop host factory when they exercise
 test-agent sessions. Profile-adoption coverage now writes the retained-owner
 layout used by the extracted artifact runtime. The workspace test targets
 compile, and the repaired runtime, session and adoption tests pass.
+
+2026-09-12 — **Node extraction preserves the complete lifecycle and topology
+suite.** Dormant unit modules and the whole multi-daemon specification now
+compile only in the node test target, with provider fixtures crossing an
+explicit `agent-runtime` test-support API. The production host contract keeps
+prepared state opaque: the runtime owns serialization and failed-session
+retention, while the node owns the installation journal and typed resume
+results. A factory can restore opaque prepared state when a profile cannot
+start, preserving recovery ordering without teaching the node the provider's
+disk format. The declared node recipe passes all 491 tests, including
+concurrent profile updates, unavailable-host recovery, routing failover,
+authorization, attachments and A2A. All-target Clippy passes with warnings
+denied, and the pinned formatter now covers the extracted workspace.

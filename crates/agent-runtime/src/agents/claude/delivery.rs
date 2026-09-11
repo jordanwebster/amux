@@ -1,10 +1,10 @@
 use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
+use model::envelope::{Envelope, format_cross_session};
 
 use super::pty_backend::ClaudePtyBackend;
 use crate::agents::{AgentDeliveryTarget, Delivery, DeliveryError, DeliveryLiveness};
-use model::envelope::{Envelope, format_cross_session};
 
 pub(super) struct ClaudeDeliveryTarget {
     readonly: bool,
@@ -88,6 +88,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use chrono::Utc;
+    use model::envelope::{AgentSender, EnvelopeKind, Sender};
     use tokio::io::{AsyncBufReadExt, AsyncReadExt};
     use tokio::sync::mpsc;
     use uuid::Uuid;
@@ -97,7 +98,6 @@ mod tests {
         AgentBackend, AgentKind, AgentParent, AgentRecord, AgentType, ClaudeDriver,
         CreateAgentRequest,
     };
-    use model::envelope::{AgentSender, EnvelopeKind, Sender};
 
     type ManagedSession = (
         ClaudePtyBackend,

@@ -18,13 +18,13 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use node::{AgentType, Config, PairingSecret, PairingStart};
 #[cfg(debug_assertions)]
 use amux::debug_cmd::{self, DebugCommands};
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use node::{AgentType, Config, PairingSecret, PairingStart};
 use qrcode::QrCode;
 use qrcode::render::unicode;
 use tracing_appender::non_blocking::WorkerGuard;

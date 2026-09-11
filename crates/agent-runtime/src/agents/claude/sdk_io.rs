@@ -364,5 +364,4 @@ mod tests {
         assert_eq!(row, ClaudeSdkV1Row::Verbatim(upstream.clone()));
         assert_eq!(row.into_json(), upstream);
     }
-
 }

@@ -1,10 +1,11 @@
 //! A durable installation transaction selects exactly the sessions to restore.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use host_api::{HostResumeBatch, HostResumeStatus, LocalAgentHost, PreparedHostState};
 
 use super::*;
-use host_api::{HostResumeStatus, LocalAgentHost, PreparedHostState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SuspendReason {
@@ -118,6 +119,8 @@ struct Target {
     id: ProfileId,
     slot: Arc<Slot>,
     host: Option<Arc<dyn LocalAgentHost>>,
+    host_factory: Option<Arc<dyn host_api::LocalAgentHostFactory>>,
+    state_path: PathBuf,
 }
 
 impl Installation {
@@ -172,6 +175,12 @@ impl Inner {
                 id,
                 slot,
                 host,
+                host_factory: self.host_factory.clone(),
+                state_path: self
+                    .root
+                    .join("profiles")
+                    .join(id.to_string())
+                    .join("state/state.yaml"),
             });
         }
         Ok(targets)
@@ -277,9 +286,10 @@ impl Inner {
         }
         let targets = self.update_targets().await?;
         let mut report = ResumeReport::default();
+        let mut cleanup_pending = false;
         for profile in &journal.profiles {
             let target = targets.iter().find(|target| target.id == profile.id);
-            let (agents, error) = match target {
+            let (batch, mut error) = match target {
                 Some(Target {
                     host: Some(host),
                     slot,
@@ -289,23 +299,46 @@ impl Inner {
                         .await,
                     None,
                 ),
-                _ if profile.host_state.agent_ids.is_empty() => (Vec::new(), None),
-                _ => (
-                    profile
-                        .host_state
-                        .agent_ids
-                        .iter()
-                        .map(|agent_id| host_api::HostResumeResult {
-                            agent_id: *agent_id,
-                            status: HostResumeStatus::Failed,
+                _ if profile.host_state.agent_ids.is_empty() => (HostResumeBatch::default(), None),
+                _ => {
+                    let cleanup_error = target
+                        .and_then(|target| {
+                            target
+                                .host_factory
+                                .as_ref()
+                                .map(|factory| (target, factory))
                         })
-                        .collect(),
-                    Some("profile agent host is unavailable".into()),
-                ),
+                        .and_then(|(target, factory)| {
+                            factory
+                                .restore_prepared(&target.state_path, profile.host_state.clone())
+                                .err()
+                                .map(|error| error.to_string())
+                        });
+                    (
+                        HostResumeBatch {
+                            agents: profile
+                                .host_state
+                                .agent_ids
+                                .iter()
+                                .map(|agent_id| host_api::HostResumeResult {
+                                    agent_id: *agent_id,
+                                    status: HostResumeStatus::Failed,
+                                })
+                                .collect(),
+                            cleanup_error,
+                        },
+                        Some("profile agent host is unavailable".into()),
+                    )
+                }
             };
+            if let Some(cleanup_error) = batch.cleanup_error {
+                cleanup_pending = true;
+                error = Some(cleanup_error);
+            }
             report.profiles.push(ProfileResumeResult {
                 profile_id: profile.id,
-                agents: agents
+                agents: batch
+                    .agents
                     .into_iter()
                     .map(|agent| AgentResumeResult {
                         agent_id: agent.agent_id,
@@ -319,10 +352,12 @@ impl Inner {
                 error,
             });
         }
-        journal.phase = Phase::Complete;
-        journal.resume_operation = Some(op);
-        journal.resume_report = Some(report.clone());
-        journal.save(&self.root)?;
+        if !cleanup_pending {
+            journal.phase = Phase::Complete;
+            journal.resume_operation = Some(op);
+            journal.resume_report = Some(report.clone());
+            journal.save(&self.root)?;
+        }
         Ok(report)
     }
 }

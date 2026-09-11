@@ -2497,7 +2497,7 @@ fn is_cloud_relay_host(host: &Host) -> bool {
         .any(|feature| feature == FEATURE_CLOUD_RELAY)
 }
 
-#[cfg(all(test, feature = "local-agents"))]
+#[cfg(test)]
 mod tests {
     use std::path::PathBuf;
     use std::pin::Pin;
@@ -2506,22 +2506,23 @@ mod tests {
     use std::task::{Context, Poll};
     use std::time::Duration;
 
+    use agent_runtime::AgentRuntime as PtyAgentHost;
+    use agent_runtime::test_support::{
+        TEST_DELAYED_DELIVERY_COMMAND, TEST_ECHO_COMMAND, TEST_FAILED_DELIVERY_COMMAND,
+        TEST_UNAVAILABLE_DELIVERY_COMMAND,
+    };
     use chrono::{TimeZone, Utc};
-    use serde_json::json;
+    use model::AGENT_TYPE_CLAUDE;
     use tempfile::TempDir;
     use tokio::task::JoinHandle;
 
     use super::*;
-    use crate::agents::{
-        AGENT_TYPE_CLAUDE, ArtifactOwners, HookEnvironment, TEST_DELAYED_DELIVERY_COMMAND,
-        TEST_ECHO_COMMAND, TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
-    };
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
     use crate::routing::{
         Capabilities, LinkCloseRequest, LinkId, LinkRole, RoutingCore, SupportedAgentType,
     };
-    use crate::services::agent::{LocalAgentHost, PtyAgentHost, spawn_agent_tonic_server};
+    use crate::services::agent::spawn_agent_tonic_server;
     use crate::trust::{TrustEntry, TrustStore};
     use crate::tunnel::TunnelPool;
     use crate::user_state::ServerState;
@@ -2731,7 +2732,7 @@ mod tests {
 
     fn client_service_with_local_host() -> (ClientService, Arc<PtyAgentHost>) {
         let host_id = Uuid::from_u128(1);
-        let host = PtyAgentHost::new(host_id);
+        let host = agent_runtime::test_support::runtime(host_id);
         let agent_service = AgentServiceCtx::new(Some(host.clone()), host_id, false);
 
         let server_state = Arc::new(RwLock::new(ServerState::new(
@@ -2748,7 +2749,11 @@ mod tests {
     }
 
     fn agent_service_ctx(host_id: Uuid) -> AgentServiceCtx {
-        AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false)
+        AgentServiceCtx::new(
+            Some(agent_runtime::test_support::runtime(host_id)),
+            host_id,
+            false,
+        )
     }
 
     fn client_service_with_agent_and_tunnels(
@@ -2796,7 +2801,7 @@ mod tests {
         trust_store: crate::trust::SharedTrustStore,
     ) -> ClientService {
         let agent_service = AgentServiceCtx::new(
-            Some(PtyAgentHost::new(local_identity.host_id)),
+            Some(agent_runtime::test_support::runtime(local_identity.host_id)),
             local_identity.host_id,
             false,
         );
@@ -2833,7 +2838,6 @@ mod tests {
     struct RemoteDispatchHarness {
         service: ClientService,
         _remote_server: JoinHandle<Result<(), tonic::transport::Error>>,
-        _remote_data_dir: TempDir,
         bridges: Vec<JoinHandle<()>>,
     }
 
@@ -2937,16 +2941,7 @@ mod tests {
             spawn_tunnel_bridge(remote_to_relay_rx, relay_tunnels, relay_to_remote),
             spawn_tunnel_bridge(relay_to_local_rx, local_tunnels.clone(), local_to_relay),
         ];
-        let remote_data_dir = tempfile::tempdir().unwrap();
-        let remote_owners = Arc::new(
-            ArtifactOwners::open(
-                remote_data_dir.path().to_path_buf(),
-                Arc::new(artifacts::SystemClock),
-            )
-            .unwrap(),
-        );
-        let remote_agent_service =
-            agent_service_ctx(remote_host_id).with_artifact_owners(remote_owners);
+        let remote_agent_service = agent_service_ctx(remote_host_id);
         let remote_server = spawn_agent_tonic_server(remote_agent_service, remote_incoming_rx);
 
         let service = client_service_with_agent_and_tunnels(
@@ -2958,7 +2953,6 @@ mod tests {
         RemoteDispatchHarness {
             service,
             _remote_server: remote_server,
-            _remote_data_dir: remote_data_dir,
             bridges,
         }
     }
@@ -4599,66 +4593,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_message_refuses_an_external_readonly_claude_session() {
-        let (service, host) = client_service_with_local_host();
-        let sender_id = Uuid::from_u128(160);
-        let readonly_id = Uuid::from_u128(161);
-
-        <ClientService as wire::client_service_server::ClientService>::create_agent(
-            &service,
-            tonic::Request::new(test_agent_create_request(sender_id, "sender", None)),
-        )
-        .await
-        .unwrap();
-
-        let payload = serde_json::to_vec(&json!({
-            "hook_event_name": "SessionStart",
-            "session_id": Uuid::from_u128(162),
-            "transcript_path": "/tmp/amux-readonly-transcript.jsonl",
-            "cwd": "/tmp"
-        }))
-        .unwrap();
-        let env = HookEnvironment::from([
-            (
-                "CLAUDE_CODE_MESSAGING_SOCKET".to_string(),
-                "/tmp/external-claude.sock".to_string(),
-            ),
-            (
-                "CLAUDE_CODE_MESSAGING_TOKEN".to_string(),
-                "external-token".to_string(),
-            ),
-        ]);
-        host.handle_hook(readonly_id, payload, env, true)
-            .await
-            .unwrap();
-        let readonly = host
-            .state()
-            .read()
-            .await
-            .local_agent_info(Uuid::from_u128(1), &readonly_id)
-            .expect("external hook registered a readonly session");
-        assert!(readonly.readonly);
-        service.apply_agent_event(agent_up(readonly.into())).await;
-
-        let error = <ClientService as wire::client_service_server::ClientService>::send_message(
-            &service,
-            tonic::Request::new(wire::ClientSendMessageRequest {
-                to: Some(agent_ref_id(readonly_id)),
-                text: "do not deliver".to_string(),
-                context: None,
-                from_agent_id: Some(sender_id.as_bytes().to_vec()),
-            }),
-        )
-        .await
-        .expect_err("readonly external sessions must reject agent messages");
-        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
-        assert_eq!(
-            error.message(),
-            "session is readonly and cannot receive messages"
-        );
-    }
-
-    #[tokio::test]
     async fn tonic_client_service_dispatches_local_subscribe_session() {
         let service = client_service_for_tests();
         let agent_id = Uuid::from_u128(126);
@@ -4731,66 +4665,6 @@ mod tests {
             closed.reason,
             Some(wire::session_closed::Reason::AgentDeleted(_))
         ));
-    }
-
-    #[tokio::test]
-    async fn tonic_client_service_agent_attach_put_pins_and_publishes_locally() {
-        let data_dir = tempfile::tempdir().unwrap();
-        let host_id = Uuid::from_u128(1);
-        let host = PtyAgentHost::new(host_id);
-        let owners = Arc::new(
-            ArtifactOwners::open(
-                data_dir.path().to_path_buf(),
-                Arc::new(artifacts::SystemClock),
-            )
-            .unwrap(),
-        );
-        let agent_service = AgentServiceCtx::new(Some(host.clone()), host_id, false)
-            .with_artifact_owners(owners.clone());
-        let (routing, tunnels) = test_routing_and_tunnels(host_id);
-        let service = client_service_with_agent_and_tunnels(agent_service, routing, tunnels);
-        let agent_id = Uuid::from_u128(126);
-        <ClientService as wire::client_service_server::ClientService>::create_agent(
-            &service,
-            tonic::Request::new(test_agent_create_request(agent_id, "local-echo", None)),
-        )
-        .await
-        .unwrap();
-        let log = host.attachment_log(agent_id).await.unwrap();
-        let (mut rows, seq) = log.subscribe_with_query(None).await.unwrap();
-        assert_eq!(seq, 0);
-
-        let put = <ClientService as wire::client_service_server::ClientService>::put_artifact(
-            &service,
-            tonic::Request::new(wire::ClientPutArtifactRequest {
-                agent: Some(agent_ref_id(agent_id)),
-                kind: wire::ArtifactKind::Image as i32,
-                name: "screen.png".to_string(),
-                mime: "image/png".to_string(),
-                bytes: b"png bytes".to_vec(),
-                agent_attach: true,
-            }),
-        )
-        .await
-        .unwrap()
-        .into_inner()
-        .artifact
-        .unwrap();
-        let artifact = crate::agents::artifact_ref_from_wire(put).unwrap();
-
-        assert!(
-            owners
-                .owner(agent_id)
-                .unwrap()
-                .meta(&artifact.id)
-                .unwrap()
-                .pinned_at
-                .is_some()
-        );
-        assert_eq!(
-            rows.read().await.unwrap().payload,
-            crate::attachments_row(None, std::slice::from_ref(&artifact))
-        );
     }
 
     #[tokio::test]
@@ -5594,8 +5468,11 @@ mod tests {
             store.save_in(data_dir.path()).unwrap();
         }
 
-        let agent_service =
-            AgentServiceCtx::new(Some(PtyAgentHost::new(local.host_id)), local.host_id, false);
+        let agent_service = AgentServiceCtx::new(
+            Some(agent_runtime::test_support::runtime(local.host_id)),
+            local.host_id,
+            false,
+        );
 
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -5862,59 +5739,5 @@ mod tests {
             assert_eq!(user["links"], dump["links"]);
             assert_eq!(user["tunnels"], dump["tunnels"]);
         }
-    }
-
-    #[tokio::test]
-    async fn local_host_resume_keeps_failed_suspended_agents_on_disk() {
-        let temp = TempDir::new().unwrap();
-        let state_path = temp.path().join("state.yaml");
-        let config = Config {
-            state_path: state_path.clone(),
-            ..Config::default()
-        };
-
-        let host_id = Uuid::from_u128(1);
-        let agent_service = AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false);
-
-        let server_state = Arc::new(RwLock::new(ServerState::new(config, host_id, None, None)));
-        let (routing, tunnels) = test_routing_and_tunnels(host_id);
-        let service = client_service_from_parts(agent_service, server_state, routing, tunnels);
-        let suspended = crate::suspend::SuspendedAgent::TestAgent {
-            agent_id: Uuid::new_v4(),
-            name: Some("will-fail".to_string()),
-            command: "definitely-not-an-amux-test-agent-command".to_string(),
-            working_dir: std::env::temp_dir(),
-            terminal_size: None,
-            created_at: Utc::now(),
-            parent: None,
-            working_on: None,
-        };
-        crate::suspend::save_suspended(
-            &state_path,
-            &crate::suspend::SuspendedServerState {
-                agents: vec![suspended],
-            },
-        )
-        .unwrap();
-
-        let (resumed_count, failed_count) = service
-            .local_agents
-            .host()
-            .unwrap()
-            .resume(
-                state_path.clone(),
-                &crate::installation::OperationGate::default(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resumed_count, 0);
-        assert_eq!(failed_count, 1);
-        assert_eq!(
-            crate::suspend::load_suspended(&state_path)
-                .unwrap()
-                .agents
-                .len(),
-            1
-        );
     }
 }

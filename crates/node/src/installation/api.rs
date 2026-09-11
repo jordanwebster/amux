@@ -3,13 +3,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(test)]
+use crate::ProfileEvent;
 use crate::{
     AccessToken, AuthError, CredentialProvider, CredentialSource, Installation,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
     ProfileAdmin, ShutdownReason,
 };
-#[cfg(testnet)]
-use crate::ProfileEvent;
 
 struct NoCredentials;
 
@@ -94,7 +94,7 @@ async fn background_profiles_outlive_every_screen_client() {
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
-#[cfg(testnet)]
+#[cfg(test)]
 #[tokio::test]
 async fn shutdown_yields_and_finishes_after_its_caller_is_cancelled() {
     let root = crate::test_fixtures::short_installation_root();

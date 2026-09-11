@@ -34,7 +34,9 @@ pub fn agent_from_wire(agent: wire::Agent) -> Result<model::Agent, DecodeError> 
     })
 }
 
-pub fn agent_parent_from_wire(parent: wire::AgentParent) -> Result<model::AgentParent, DecodeError> {
+pub fn agent_parent_from_wire(
+    parent: wire::AgentParent,
+) -> Result<model::AgentParent, DecodeError> {
     Ok(model::AgentParent {
         agent_id: uuid_from_bytes("parent.agent_id", parent.agent_id)?,
         host_id: uuid_from_bytes("parent.host_id", parent.host_id)?,

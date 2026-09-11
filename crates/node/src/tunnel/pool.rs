@@ -575,7 +575,7 @@ impl TunnelPool {
 
     /// Testnet observation seam: every active tunnel as
     /// `(id, remote peer, pinned link)`.
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) async fn active_tunnels(&self) -> Vec<(TunnelId, HostId, LinkId)> {
         self.state
             .read()

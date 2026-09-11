@@ -89,8 +89,8 @@ impl Route {
                 installation,
                 Some(std::sync::Arc::new(agent_runtime::AgentRuntimeFactory)),
             )
-                .await
-                .unwrap(),
+            .await
+            .unwrap(),
         );
         let front_door = node::installation::FrontDoor::new(owner.clone(), Some(front_path))
             .listen()

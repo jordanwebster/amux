@@ -3,11 +3,11 @@
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use node::installation::rpc;
-use node::{Config, InstallationConfig};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use client::FrontDoorClient;
+use node::installation::rpc;
+use node::{Config, InstallationConfig};
 use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]

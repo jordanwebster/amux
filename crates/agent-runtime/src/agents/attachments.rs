@@ -129,11 +129,35 @@ impl ArtifactOwners {
             .join("artifacts")
     }
 
+    #[cfg(test)]
     pub(crate) fn loaded_count(&self) -> usize {
         self.owners
             .read()
             .unwrap_or_else(|error| error.into_inner())
             .len()
+    }
+
+    pub(crate) fn retained_count(&self) -> Result<usize, StoreError> {
+        let agents_dir = self.data_dir.join("agents");
+        let entries = match fs::read_dir(agents_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut count = 0;
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_type()?.is_dir()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| Uuid::parse_str(name).is_ok())
+                && entry.path().join("artifacts").is_dir()
+            {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 }
 

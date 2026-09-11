@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use node::{AgentIdentifier, ArtifactKind, CreateAgentRequest};
 use artifacts::ARTIFACT_SIZE_CAP;
+use node::{AgentIdentifier, ArtifactKind, CreateAgentRequest};
 use tempfile::tempdir;
 use ui_runtime::{
     AttachmentClient, AttachmentClientFuture, Runtime, RuntimeOptions, execute_put_then_send,
@@ -726,9 +726,7 @@ async fn switcher_rejects_late_results() {
     // in its connection: its subscription status, report directory and
     // artifact cache are the work account's.
     assert!(runtime.model().cloud_subscription_required());
-    let report = runtime
-        .report(ui_state::DumpReason::UserRequested)
-        .unwrap();
+    let report = runtime.report(ui_state::DumpReason::UserRequested).unwrap();
     assert!(
         report.starts_with(root.join("work").join("reports")),
         "report landed outside the work account: {}",

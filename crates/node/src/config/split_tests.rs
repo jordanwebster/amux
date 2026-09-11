@@ -1,12 +1,13 @@
 use serde::Serialize;
 
 use super::*;
-#[cfg(all(unix, feature = "local-agents"))]
+#[cfg(unix)]
 use crate::installation::{FrontDoor, OperationId};
-#[cfg(feature = "local-agents")]
-use crate::installation::{Installation, InstallationError};
-use crate::installation::{InstallationRoot, ProfileId, ProfileLabel, ProfilePaths, Registry};
-#[cfg(all(unix, feature = "local-agents"))]
+use crate::installation::{
+    Installation, InstallationError, InstallationRoot, ProfileId, ProfileLabel, ProfilePaths,
+    Registry,
+};
+#[cfg(unix)]
 use crate::server::ShutdownReason;
 
 struct Fixture {
@@ -151,7 +152,6 @@ fn config_split_rejects_unknown_fields_and_missing_installation() {
     );
 }
 
-#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn config_split_path_disagreement_fails_before_any_runtime_starts() {
     for field in [
@@ -186,7 +186,7 @@ async fn config_split_path_disagreement_fails_before_any_runtime_starts() {
     }
 }
 
-#[cfg(all(unix, feature = "local-agents"))]
+#[cfg(unix)]
 #[tokio::test]
 async fn config_split_boots_from_temp_root_and_discovers_profile_over_grpc() {
     use std::sync::Arc;
@@ -196,7 +196,11 @@ async fn config_split_boots_from_temp_root_and_discovers_profile_over_grpc() {
     use crate::transport::{self, GrpcIo};
     let fixture = Fixture::new();
     let config = InstallationConfig::from_file(&fixture.installation.file_path()).unwrap();
-    let installation = Arc::new(Installation::from_config(config.clone(), None).await.unwrap());
+    let installation = Arc::new(
+        Installation::from_config(config.clone(), None)
+            .await
+            .unwrap(),
+    );
     let front = FrontDoor::new(installation.clone(), Some(config.front_door_socket.clone()));
     let listener = front.listen().unwrap();
     let stream = tokio::net::UnixStream::connect(&config.front_door_socket)
@@ -275,7 +279,7 @@ async fn config_split_boots_from_temp_root_and_discovers_profile_over_grpc() {
     reopened.shutdown(ShutdownReason::UserRequested).await;
 }
 
-#[cfg(all(unix, feature = "local-agents"))]
+#[cfg(unix)]
 #[tokio::test]
 async fn config_split_daemon_owner_flushes_shutdown_and_releases_all_sockets() {
     use client::FrontDoorClient;

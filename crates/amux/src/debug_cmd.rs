@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::{fs, io};
 
-use node::{Config, DebugFormat};
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use clap::{Subcommand, ValueEnum};
+use node::{Config, DebugFormat};
 use replay_support::{Redaction, RedactionSummary, redact_text, redact_value};
 use serde::{Deserialize, Serialize};
 use tui::replay::{self, Replay};

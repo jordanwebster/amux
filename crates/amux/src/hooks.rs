@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 use std::io::{self, Read};
 
-use node::Config;
 use anyhow::Result;
+use node::Config;
 use serde_json::Value;
 
 const MESSAGING_ENV_KEYS: &[&str] = &[

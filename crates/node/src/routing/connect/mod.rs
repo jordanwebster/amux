@@ -230,7 +230,7 @@ impl LinkConnectorCtx {
         self
     }
 
-    #[cfg(any(test, testnet))]
+    #[cfg(test)]
     pub(crate) fn with_link_role(mut self, link_role: LinkRole) -> Self {
         self.link_role = link_role;
         self
@@ -302,7 +302,7 @@ pub(crate) fn spawn_connector_to_channel_with_auth_establishment_and_shutdown(
     (task, established_rx)
 }
 
-#[cfg(testnet)]
+#[cfg(test)]
 pub(crate) fn spawn_connector_to_channel_with_bearer_token_and_shutdown(
     ctx: LinkConnectorCtx,
     channel: Channel,

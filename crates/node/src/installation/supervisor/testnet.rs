@@ -67,17 +67,6 @@ impl Installation {
         self.inner.root.clone()
     }
 
-    pub(crate) async fn test_runtime(
-        &self,
-        id: ProfileId,
-    ) -> Option<tokio::sync::OwnedMutexGuard<Option<ProfileRuntime>>> {
-        let runtime = {
-            let state = self.inner.state.lock().unwrap();
-            state.active(id).ok()?.slot.runtime.clone()
-        };
-        Some(runtime.lock_owned().await)
-    }
-
     pub(crate) async fn stop_for_test(&self) {
         self.inner.shutdown(ShutdownReason::UserRequested).await;
     }

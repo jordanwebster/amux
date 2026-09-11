@@ -1,7 +1,8 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::any::Any;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -11,8 +12,7 @@ use model::{
     Agent, AgentEvent, AgentId, ArtifactId, ArtifactKind, ArtifactRef, ClaudePtyTranscriptV1Args,
     ClaudePtyTranscriptV1Input, ClaudeSdkInput, ClaudeSdkV1Args, CodexSdkInput, CodexSdkV1Args,
     CreateAgentRequest, HookEnvironment, Protocol, ProtocolError, RenameAgentRequest,
-    SessionCloseReason, ShutdownReason, SpawnInheritance, TerminalV1Args,
-    TerminalV1Control,
+    SessionCloseReason, ShutdownReason, SpawnInheritance, TerminalV1Args, TerminalV1Control,
 };
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use uuid::Uuid;
@@ -85,9 +85,16 @@ pub struct HostSetAgentStatus {
 #[derive(Clone, Debug, PartialEq)]
 pub enum HostSessionEvent {
     Opened,
-    Output { sequence: Option<u64>, payload: Vec<u8> },
-    ReplayComplete { sequence: Option<u64> },
-    Closed { reason: SessionCloseReason },
+    Output {
+        sequence: Option<u64>,
+        payload: Vec<u8>,
+    },
+    ReplayComplete {
+        sequence: Option<u64>,
+    },
+    Closed {
+        reason: SessionCloseReason,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -129,6 +136,14 @@ pub struct HostResumeResult {
     pub status: HostResumeStatus,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct HostResumeBatch {
+    pub agents: Vec<HostResumeResult>,
+    /// Persistence cleanup failed after resume work ran. The installation
+    /// keeps its journal pending and may safely retry the same prepared state.
+    pub cleanup_error: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum HostStreamError {
     #[error("{0}")]
@@ -145,6 +160,7 @@ pub type HostSessionStream =
 pub struct HostConfig {
     pub host_id: Uuid,
     pub data_dir: PathBuf,
+    pub state_path: PathBuf,
     pub runtime_dir: PathBuf,
     pub server_socket_path: PathBuf,
     pub executable: PathBuf,
@@ -154,6 +170,8 @@ pub struct HostConfig {
 
 #[async_trait]
 pub trait LocalAgentHost: Send + Sync {
+    /// Returns the concrete host for diagnostics and feature-gated test support.
+    fn as_any(&self) -> &dyn Any;
     fn capabilities(&self) -> model::Capabilities;
     async fn agent(&self, agent_id: AgentId) -> Result<Agent, ProtocolError>;
     async fn create(
@@ -161,18 +179,21 @@ pub trait LocalAgentHost: Send + Sync {
         request: CreateAgentRequest,
         operations: &OperationGate,
     ) -> Result<Agent, ProtocolError>;
-    async fn spawn_inheritance(&self, agent_id: AgentId) -> Result<SpawnInheritance, ProtocolError>;
+    async fn spawn_inheritance(&self, agent_id: AgentId)
+    -> Result<SpawnInheritance, ProtocolError>;
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
-    async fn delete(&self, agent_id: AgentId, operation: OperationBarrier)
-        -> Result<(), ProtocolError>;
+    async fn delete(
+        &self,
+        agent_id: AgentId,
+        operation: OperationBarrier,
+    ) -> Result<(), ProtocolError>;
     async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError>;
     async fn send_message_waiting(
         &self,
         envelope: Envelope,
         timeout: Duration,
     ) -> Result<(), ProtocolError>;
-    async fn set_agent_status(&self, request: HostSetAgentStatus)
-        -> Result<(), ProtocolError>;
+    async fn set_agent_status(&self, request: HostSetAgentStatus) -> Result<(), ProtocolError>;
     async fn send_input(
         &self,
         request: SessionInputRequest,
@@ -208,9 +229,13 @@ pub trait LocalAgentHost: Send + Sync {
         base: model::DiffBase,
         operation: OperationLease,
     ) -> Result<model::DiffResponse, ProtocolError>;
-    async fn subscribe_session(&self, request: SessionRequest)
-        -> Result<HostSessionStream, ProtocolError>;
-    async fn agent_events_snapshot(&self) -> (Vec<AgentEvent>, tokio::sync::mpsc::Receiver<AgentEvent>);
+    async fn subscribe_session(
+        &self,
+        request: SessionRequest,
+    ) -> Result<HostSessionStream, ProtocolError>;
+    async fn agent_events_snapshot(
+        &self,
+    ) -> (Vec<AgentEvent>, tokio::sync::mpsc::Receiver<AgentEvent>);
     async fn subscribe_agent_events(&self) -> tokio::sync::mpsc::Receiver<AgentEvent>;
     async fn subscribe_outbound_envelopes(&self) -> tokio::sync::mpsc::Receiver<Envelope>;
     async fn handle_hook(
@@ -220,14 +245,17 @@ pub trait LocalAgentHost: Send + Sync {
         env: HookEnvironment,
         external: bool,
     ) -> Result<(), ProtocolError>;
-    async fn resume(&self, state_path: PathBuf, operations: &OperationGate)
-        -> Result<(u64, u64), ProtocolError>;
+    async fn resume(
+        &self,
+        state_path: PathBuf,
+        operations: &OperationGate,
+    ) -> Result<(u64, u64), ProtocolError>;
     async fn prepare_update(&self) -> Result<PreparedHostState, ProtocolError>;
     async fn resume_update(
         &self,
         state: PreparedHostState,
         operations: &OperationGate,
-    ) -> Vec<HostResumeResult>;
+    ) -> HostResumeBatch;
     async fn stop_all(&self);
     async fn prepare_suspend(&self, state_path: PathBuf) -> Result<u64, ProtocolError>;
     async fn commit_suspend(&self);
@@ -242,6 +270,12 @@ pub trait LocalAgentHost: Send + Sync {
 
 pub trait LocalAgentHostFactory: Send + Sync {
     fn create(&self, config: HostConfig) -> Result<Arc<dyn LocalAgentHost>, std::io::Error>;
+    /// Re-persist an opaque prepared state when its profile cannot start.
+    fn restore_prepared(
+        &self,
+        state_path: &std::path::Path,
+        state: PreparedHostState,
+    ) -> Result<(), ProtocolError>;
 }
 
 /// An admitted operation. Holding this opaque value keeps lifecycle teardown

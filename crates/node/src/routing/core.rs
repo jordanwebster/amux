@@ -249,7 +249,7 @@ impl RoutingCore {
             .unwrap_or_default()
     }
 
-    #[cfg(any(test, testnet))]
+    #[cfg(test)]
     pub(crate) async fn host_entry(&self, host_id: HostId) -> Option<Host> {
         let state = self.state.read().await;
         state

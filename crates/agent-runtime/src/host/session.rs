@@ -8,7 +8,7 @@ use host_api::{
     HostSessionArgs, HostSessionEvent, HostSessionInput, HostSessionStream, HostStreamError,
     SessionInputRequest, SessionRequest,
 };
-use model::{ArtifactId, ProtocolError};
+use model::{ArtifactId, ProtocolError, ShutdownReason};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -23,7 +23,6 @@ use crate::agents::{
     RawPtyTarget, SessionCloseReason, StructuredInput, StructuredInputEvent, StructuredLogSource,
     StructuredOutput, attachments_row, materialise_and_log, materialise_paths,
 };
-use model::ShutdownReason;
 
 pub(super) async fn subscribe_session_stream(
     host: &AgentRuntime,
@@ -112,7 +111,9 @@ async fn prepare_direct_raw_session_subscription(
     host: &AgentRuntime,
 ) -> Result<RawSessionOutputReader, ProtocolError> {
     let HostSessionArgs::Terminal(args) = &request.args else {
-        return Err(ProtocolError::InvalidArgument { message: "terminal subscription requires terminal arguments".into() });
+        return Err(ProtocolError::InvalidArgument {
+            message: "terminal subscription requires terminal arguments".into(),
+        });
     };
     let replay_query = args
         .replay_query
@@ -321,17 +322,17 @@ fn structured_replay_query(
                 }
                 Some(model::CodexSdkV1ReplayQuery::Since { seq }) => {
                     Some(crate::agents::SequencedReplayQuery::Since {
-                        seq: seq
-                            .checked_add(1)
-                            .ok_or_else(|| out_of_range(protocol))?,
+                        seq: seq.checked_add(1).ok_or_else(|| out_of_range(protocol))?,
                     })
                 }
             };
             Ok((query, None))
         }
-        HostSessionArgs::Terminal(_) | HostSessionArgs::TestEcho => Err(ProtocolError::InvalidArgument {
-            message: format!("{protocol} is not a structured protocol"),
-        }),
+        HostSessionArgs::Terminal(_) | HostSessionArgs::TestEcho => {
+            Err(ProtocolError::InvalidArgument {
+                message: format!("{protocol} is not a structured protocol"),
+            })
+        }
     }
 }
 
@@ -367,8 +368,7 @@ pub(super) async fn send_session_input(
             .await
         }
         HostSessionInput::ClaudeSdk(input) => {
-            let (log, target) =
-                structured_plane_target(host, request.agent_id, protocol).await?;
+            let (log, target) = structured_plane_target(host, request.agent_id, protocol).await?;
             let mut input = claude_sdk_input(input)?;
             if let Some(owner) = attachment_owner.as_deref() {
                 let crate::agents::claude::sdk_io::ClaudeSdkV1Input::Prompt { text, image_blocks } =
@@ -390,7 +390,10 @@ pub(super) async fn send_session_input(
             }
             drop(operation);
             target
-                .send(StructuredInputEvent::ClaudeSdk { input_id: request.input_id, input })
+                .send(StructuredInputEvent::ClaudeSdk {
+                    input_id: request.input_id,
+                    input,
+                })
                 .await
         }
         HostSessionInput::Codex(mut input) => {
@@ -438,7 +441,10 @@ pub(super) async fn send_session_input(
                 }
                 drop(operation);
                 target
-                    .send(StructuredInputEvent::Codex { input_id: request.input_id, input })
+                    .send(StructuredInputEvent::Codex {
+                        input_id: request.input_id,
+                        input,
+                    })
                     .await
             }
             #[cfg(not(unix))]
@@ -463,40 +469,104 @@ pub(super) async fn send_session_input(
     }
 }
 
-fn claude_sdk_input(input: model::ClaudeSdkInput) -> Result<claude_sdk_io::ClaudeSdkV1Input, ProtocolError> {
+fn claude_sdk_input(
+    input: model::ClaudeSdkInput,
+) -> Result<claude_sdk_io::ClaudeSdkV1Input, ProtocolError> {
     use claude_sdk_io::ClaudeSdkV1Input;
     Ok(match input {
-        model::ClaudeSdkInput::Prompt { text } => ClaudeSdkV1Input::Prompt { text, image_blocks: Vec::new() },
+        model::ClaudeSdkInput::Prompt { text } => ClaudeSdkV1Input::Prompt {
+            text,
+            image_blocks: Vec::new(),
+        },
         model::ClaudeSdkInput::Interrupt => ClaudeSdkV1Input::Interrupt,
         model::ClaudeSdkInput::SetPermissionMode { mode } => ClaudeSdkV1Input::SetPermissionMode {
-            mode: serde_json::from_value(serde_json::Value::String(mode)).map_err(|error| ProtocolError::InvalidArgument { message: format!("invalid permission mode: {error}") })?,
+            mode: serde_json::from_value(serde_json::Value::String(mode)).map_err(|error| {
+                ProtocolError::InvalidArgument {
+                    message: format!("invalid permission mode: {error}"),
+                }
+            })?,
         },
         model::ClaudeSdkInput::SetModel { model } => ClaudeSdkV1Input::SetModel { model },
         model::ClaudeSdkInput::RequestContextBreakdown => ClaudeSdkV1Input::RequestContextBreakdown,
-        model::ClaudeSdkInput::ElicitationDecision { request_id, result } => ClaudeSdkV1Input::ElicitationDecision {
+        model::ClaudeSdkInput::ElicitationDecision { request_id, result } => {
+            ClaudeSdkV1Input::ElicitationDecision {
+                request_id,
+                result: serde_json::from_value(result).map_err(|error| {
+                    ProtocolError::InvalidArgument {
+                        message: format!("invalid elicitation result: {error}"),
+                    }
+                })?,
+            }
+        }
+        model::ClaudeSdkInput::DialogDecision { request_id, result } => {
+            ClaudeSdkV1Input::DialogDecision {
+                request_id,
+                result: serde_json::from_value(result).map_err(|error| {
+                    ProtocolError::InvalidArgument {
+                        message: format!("invalid dialog result: {error}"),
+                    }
+                })?,
+            }
+        }
+        model::ClaudeSdkInput::PermissionDecision {
             request_id,
-            result: serde_json::from_value(result).map_err(|error| ProtocolError::InvalidArgument { message: format!("invalid elicitation result: {error}") })?,
-        },
-        model::ClaudeSdkInput::DialogDecision { request_id, result } => ClaudeSdkV1Input::DialogDecision {
-            request_id,
-            result: serde_json::from_value(result).map_err(|error| ProtocolError::InvalidArgument { message: format!("invalid dialog result: {error}") })?,
-        },
-        model::ClaudeSdkInput::PermissionDecision { request_id, decision } => {
-            let behavior = decision.get("behavior").and_then(serde_json::Value::as_str).ok_or_else(|| ProtocolError::InvalidArgument { message: "permission decision requires behavior".into() })?;
+            decision,
+        } => {
+            let behavior = decision
+                .get("behavior")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| ProtocolError::InvalidArgument {
+                    message: "permission decision requires behavior".into(),
+                })?;
             let decision = match behavior {
                 "allow" => claude::sdk::PermissionResult::Allow {
-                    updated_input: decision.get("updatedInput").filter(|value| !value.is_null()).cloned(),
-                    updated_permissions: decision.get("updatedPermissions").and_then(serde_json::Value::as_array).map(|values| values.iter().cloned().map(serde_json::from_value).collect::<Result<Vec<_>, _>>()).transpose().map_err(|error| ProtocolError::InvalidArgument { message: format!("invalid updated permissions: {error}") })?,
-                    tool_use_id: decision.get("toolUseID").and_then(serde_json::Value::as_str).map(str::to_owned),
+                    updated_input: decision
+                        .get("updatedInput")
+                        .filter(|value| !value.is_null())
+                        .cloned(),
+                    updated_permissions: decision
+                        .get("updatedPermissions")
+                        .and_then(serde_json::Value::as_array)
+                        .map(|values| {
+                            values
+                                .iter()
+                                .cloned()
+                                .map(serde_json::from_value)
+                                .collect::<Result<Vec<_>, _>>()
+                        })
+                        .transpose()
+                        .map_err(|error| ProtocolError::InvalidArgument {
+                            message: format!("invalid updated permissions: {error}"),
+                        })?,
+                    tool_use_id: decision
+                        .get("toolUseID")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
                 },
                 "deny" => claude::sdk::PermissionResult::Deny {
-                    message: decision.get("message").and_then(serde_json::Value::as_str).unwrap_or("User denied permission").to_owned(),
-                    interrupt: decision.get("interrupt").and_then(serde_json::Value::as_bool),
-                    tool_use_id: decision.get("toolUseID").and_then(serde_json::Value::as_str).map(str::to_owned),
+                    message: decision
+                        .get("message")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("User denied permission")
+                        .to_owned(),
+                    interrupt: decision
+                        .get("interrupt")
+                        .and_then(serde_json::Value::as_bool),
+                    tool_use_id: decision
+                        .get("toolUseID")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned),
                 },
-                other => return Err(ProtocolError::InvalidArgument { message: format!("unsupported permission behavior {other:?}") }),
+                other => {
+                    return Err(ProtocolError::InvalidArgument {
+                        message: format!("unsupported permission behavior {other:?}"),
+                    });
+                }
             };
-            ClaudeSdkV1Input::PermissionDecision { request_id, decision }
+            ClaudeSdkV1Input::PermissionDecision {
+                request_id,
+                decision,
+            }
         }
     })
 }
@@ -543,25 +613,24 @@ async fn send_raw_session_input(
     };
     drop(operation);
     match input {
-        HostSessionInput::TerminalBytes(payload) | HostSessionInput::TestEcho(payload) => {
-            pty.send_input(payload)
-                .await
-                .map_err(|error| ProtocolError::ServerError {
-                    message: error.to_string(),
-                })
-        }
-        HostSessionInput::TerminalControl(control) => {
-            match control {
-                TerminalV1Control::Resize(size) => {
-                    pty.resize(size)
-                        .await
-                        .map_err(|error| ProtocolError::ServerError {
-                            message: error.to_string(),
-                        })
-                }
+        HostSessionInput::TerminalBytes(payload) | HostSessionInput::TestEcho(payload) => pty
+            .send_input(payload)
+            .await
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            }),
+        HostSessionInput::TerminalControl(control) => match control {
+            TerminalV1Control::Resize(size) => {
+                pty.resize(size)
+                    .await
+                    .map_err(|error| ProtocolError::ServerError {
+                        message: error.to_string(),
+                    })
             }
-        }
-        _ => Err(ProtocolError::InvalidArgument { message: format!("{protocol} received incompatible input") }),
+        },
+        _ => Err(ProtocolError::InvalidArgument {
+            message: format!("{protocol} received incompatible input"),
+        }),
     }
 }
 
@@ -724,12 +793,10 @@ fn direct_session_response_stream(
                     shutdown_rx,
                     refs,
                 } => {
-                    let event = structured_output_event(
-                        StructuredOutput {
-                            seq: 0,
-                            payload: attachments_row(None, &refs),
-                        },
-                    );
+                    let event = structured_output_event(StructuredOutput {
+                        seq: 0,
+                        payload: attachments_row(None, &refs),
+                    });
                     Some((
                         event.map_err(HostStreamError::from),
                         DirectSessionStreamState::Reading {
@@ -830,7 +897,10 @@ async fn read_session_output_event(
     match reader {
         SessionOutputReader::Raw(raw) => raw.reader.read_event().await.map(|event| match event {
             BroadcastRead::ReplayItem(payload) | BroadcastRead::LiveItem(payload) => {
-                Ok(HostSessionEvent::Output { sequence: None, payload })
+                Ok(HostSessionEvent::Output {
+                    sequence: None,
+                    payload,
+                })
             }
             BroadcastRead::ReplayComplete => {
                 Ok(HostSessionEvent::ReplayComplete { sequence: None })
@@ -839,7 +909,11 @@ async fn read_session_output_event(
                 message: "session output subscriber queue closed".to_string(),
             }),
         }),
-        SessionOutputReader::Structured { reader, replay_cursor, .. } => reader.read_event().await.map(|event| match event {
+        SessionOutputReader::Structured {
+            reader,
+            replay_cursor,
+            ..
+        } => reader.read_event().await.map(|event| match event {
             BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
                 structured_output_event(output)
             }
@@ -853,14 +927,15 @@ async fn read_session_output_event(
     }
 }
 
-fn structured_output_event(
-    output: StructuredOutput,
-) -> Result<HostSessionEvent, ProtocolError> {
+fn structured_output_event(output: StructuredOutput) -> Result<HostSessionEvent, ProtocolError> {
     let payload_json =
         serde_json::to_vec(&output.payload).map_err(|error| ProtocolError::ServerError {
             message: format!("failed to encode transcript SubscribeSession output: {error}"),
         })?;
-    Ok(HostSessionEvent::Output { sequence: Some(output.seq), payload: payload_json })
+    Ok(HostSessionEvent::Output {
+        sequence: Some(output.seq),
+        payload: payload_json,
+    })
 }
 
 #[cfg(test)]
@@ -918,7 +993,10 @@ mod tests {
         let opened = stream.next().await.unwrap().unwrap();
         assert!(matches!(opened, HostSessionEvent::Opened));
         let replay_complete = stream.next().await.unwrap().unwrap();
-        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete { sequence: None }));
+        assert!(matches!(
+            replay_complete,
+            HostSessionEvent::ReplayComplete { sequence: None }
+        ));
     }
 
     #[tokio::test]
@@ -1116,7 +1194,10 @@ mod tests {
         let opened = stream.next().await.unwrap().unwrap();
         assert!(matches!(opened, HostSessionEvent::Opened));
         let replay_complete = stream.next().await.unwrap().unwrap();
-        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete { .. }));
+        assert!(matches!(
+            replay_complete,
+            HostSessionEvent::ReplayComplete { .. }
+        ));
 
         let mut saw_resource_exhausted = false;
         for _ in 0..300 {
@@ -1175,7 +1256,10 @@ mod tests {
         );
 
         let replay_complete = stream.next().await.unwrap().unwrap();
-        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete { .. }));
+        assert!(matches!(
+            replay_complete,
+            HostSessionEvent::ReplayComplete { .. }
+        ));
     }
 
     #[tokio::test]
@@ -1205,7 +1289,10 @@ mod tests {
             .await
             .expect("shutdown receiver should be active");
         let error = stream.next().await.unwrap().unwrap_err();
-        assert!(matches!(error, HostStreamError::Shutdown(ShutdownReason::Suspending)));
+        assert!(matches!(
+            error,
+            HostStreamError::Shutdown(ShutdownReason::Suspending)
+        ));
         assert!(stream.next().await.is_none());
     }
 }

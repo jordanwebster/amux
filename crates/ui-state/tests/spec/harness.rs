@@ -273,9 +273,7 @@ pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
             include_str!("../../../claude-specs/fixtures/claude-pty/mode_cycle.rows.jsonl")
         }
         "permission_session" => {
-            include_str!(
-                "../../../claude-specs/fixtures/claude-pty/permission_session.rows.jsonl"
-            )
+            include_str!("../../../claude-specs/fixtures/claude-pty/permission_session.rows.jsonl")
         }
         "permission_deny_feedback" => {
             include_str!(

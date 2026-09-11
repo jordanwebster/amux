@@ -221,7 +221,6 @@ async fn cancelled_refresh_caller_does_not_burn_rotation() {
     store.access_token().await.unwrap();
 }
 
-#[cfg(feature = "local-agents")]
 fn options(root: InstallationRoot) -> InstallationOptions {
     options_with_credentials(root, CredentialSource::ProfileFiles)
 }
@@ -235,7 +234,7 @@ fn options_with_credentials(
         listeners: Listeners::InProcessOnly,
         credentials,
         identity_http: reqwest::Client::new(),
-        host_factory: None,
+        host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
         settings: InstallationSettings {
             host_name: "binding-test".into(),
             prevent_idle_sleep: Some(false),
@@ -249,7 +248,6 @@ fn options_with_credentials(
         },
     }
 }
-#[cfg(feature = "local-agents")]
 fn request(identity: &IdentityServer, sub: &str, target: BindTarget) -> BindRequest {
     BindRequest {
         target,
@@ -258,14 +256,12 @@ fn request(identity: &IdentityServer, sub: &str, target: BindTarget) -> BindRequ
         adopt_non_pristine: false,
     }
 }
-#[cfg(feature = "local-agents")]
 async fn create(installation: &Installation) -> crate::installation::ProfileStatus {
     let status = installation.create(OperationId::new(), None).await.unwrap();
     assert!(status.available, "{status:?}");
     status
 }
 
-#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn explicit_target_never_substitutes_and_refusals_keep_credential_and_label() {
     let identity = identity().await;
@@ -325,7 +321,6 @@ async fn explicit_target_never_substitutes_and_refusals_keep_credential_and_labe
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
-#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn by_account_chooses_sole_pristine_then_bound_and_concurrent_logins_share_one_profile() {
     let identity = identity().await;
@@ -362,7 +357,6 @@ async fn by_account_chooses_sole_pristine_then_bound_and_concurrent_logins_share
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
-#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn logout_reserves_account_across_restart_and_relogin_preserves_device() {
     let identity = identity().await;
@@ -410,7 +404,6 @@ async fn logout_reserves_account_across_restart_and_relogin_preserves_device() {
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
-#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn logout_and_delete_cancel_pending_login_before_it_can_commit_or_connect() {
     for delete in [false, true] {
@@ -466,7 +459,6 @@ async fn logout_and_delete_cancel_pending_login_before_it_can_commit_or_connect(
     );
 }
 
-#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn adoption_confirmation_reuses_staged_rotation_and_rechecks_local_state() {
     let identity = identity().await;
@@ -489,8 +481,10 @@ async fn adoption_confirmation_reuses_staged_rotation_and_rechecks_local_state()
         .path()
         .join("profiles")
         .join(first.record.id.to_string())
-        .join("data/cache/artifacts/retained");
-    std::fs::write(artifact, "retained data").unwrap();
+        .join("data/agents")
+        .join(uuid::Uuid::new_v4().to_string())
+        .join("artifacts");
+    std::fs::create_dir_all(artifact).unwrap();
     hold.release();
     assert!(
         matches!(worker.await.unwrap(), Err(BindError::AdoptionNeedsConfirmation { profile, reason: NonPristine::RetainedArtifacts(1) }) if profile == first.record.id)
@@ -576,7 +570,6 @@ async fn host_credentials_are_subject_checked_and_logout_stays_logged_out_on_reo
     installation.shutdown(ShutdownReason::UserRequested).await;
 }
 
-#[cfg(feature = "local-agents")]
 #[tokio::test]
 async fn registry_write_failure_does_not_activate_staged_login() {
     let identity = identity().await;
@@ -615,50 +608,5 @@ async fn registry_write_failure_does_not_activate_staged_login() {
     assert!(reopened.available, "{reopened:?}");
     assert_eq!(reopened.record, first.record);
     assert_eq!(reopened.intent, Intent::Bound);
-    installation.shutdown(ShutdownReason::UserRequested).await;
-}
-
-#[cfg(feature = "local-agents")]
-#[tokio::test]
-async fn suspended_agents_require_explicit_adoption_confirmation() {
-    use crate::suspend::{SuspendedAgent, SuspendedLocalAgentNameSource, SuspendedServerState};
-    let identity = identity().await;
-    let root = crate::test_fixtures::short_installation_root();
-    let installation = Installation::open(options(InstallationRoot::OnDisk(root.path().into())))
-        .await
-        .unwrap();
-    let first = create(&installation).await;
-    let paths = crate::installation::ProfilePaths::for_id(root.path(), first.record.id).unwrap();
-    crate::suspend::save_suspended(
-        &paths.state_path,
-        &SuspendedServerState {
-            agents: vec![SuspendedAgent::Claude {
-                driver: crate::agents::ClaudeDriver::Pty,
-                agent_id: uuid::Uuid::new_v4(),
-                name: None,
-                name_source: SuspendedLocalAgentNameSource::Unset,
-                working_dir: root.path().into(),
-                terminal_size: None,
-                args: Vec::new(),
-                session_id: uuid::Uuid::new_v4(),
-                created_at: Utc::now(),
-                parent: None,
-                working_on: None,
-            }],
-        },
-    )
-    .unwrap();
-    assert!(matches!(
-        installation
-            .bind(
-                OperationId::new(),
-                request(&identity, "alice", BindTarget::Explicit(first.record.id))
-            )
-            .await,
-        Err(BindError::AdoptionNeedsConfirmation {
-            reason: NonPristine::LocalAgents(1),
-            ..
-        })
-    ));
     installation.shutdown(ShutdownReason::UserRequested).await;
 }

@@ -13,6 +13,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 pub(crate) use cloud::{CloudConnector, establish_cloud_connection};
 use futures_util::{Stream, StreamExt, stream};
+use host_api::LocalAgentHost;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{RwLock, Semaphore, mpsc};
@@ -24,7 +25,6 @@ use tonic::transport::server::Connected;
 use tower::Service;
 use uuid::Uuid;
 
-use host_api::LocalAgentHost;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
@@ -37,6 +37,8 @@ use crate::services::client::{ClientService, PairingTrustAccess};
 use crate::services::{
     AgentServiceCtx, LocalPairingIdentity, PairingService, ReachabilityLinkConnector,
 };
+#[cfg(test)]
+use crate::transport::in_process_transport_pair;
 #[cfg(any(test, feature = "test-support"))]
 use crate::transport::tcp_incoming;
 #[cfg(unix)]
@@ -45,8 +47,6 @@ use crate::transport::{
     BoxedGrpcIo, InProcessConnection, TcpServerTransport, in_process_channel,
     managed_in_process_transport_pair,
 };
-#[cfg(test)]
-use crate::transport::in_process_transport_pair;
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::tunnel::{TunnelPool, TunnelTransport};
 use crate::user_state::ServerState;
@@ -159,7 +159,7 @@ impl CloudLinkService {
 
     /// Serves the relay on an arbitrary accepted-transport stream. Used by
     /// the testnet harness to keep kill-switch handles on accepted sockets.
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) fn serve_on_incoming<I, IO>(&self, incoming: I) -> JoinHandle<()>
     where
         I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
@@ -200,7 +200,7 @@ impl CloudLinkService {
     /// Testnet observation seam: the relay-side `ConnectionManager` serving
     /// `user_id`, if that user has attached. Lets spec tests assert what the
     /// relay can (not) do with the traffic it forwards.
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) async fn user_routing_connections(
         &self,
         user_id: Uuid,
@@ -213,7 +213,7 @@ impl CloudLinkService {
             .map(|services| services.connections.clone())
     }
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) async fn user_has_link_to(&self, user_id: Uuid, host_id: HostId) -> bool {
         let tunnels = self
             .inner
@@ -497,13 +497,13 @@ pub(crate) async fn start_routing_services(
 
 pub(crate) struct StartedUserServices {
     runtime: StartedRoutingServices,
-    #[cfg(any(test, testnet))]
+    #[cfg(test)]
     pub(crate) agent: AgentServiceCtx,
     pub(crate) client: ClientService,
     trusted_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
     #[cfg(test)]
     pairing_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
-    #[cfg(any(test, testnet))]
+    #[cfg(test)]
     pub(crate) pair_mode: Arc<PairMode>,
     reachability_links: ReachabilityLinkConnector,
     dispatcher: TunnelDispatcher,
@@ -663,13 +663,13 @@ pub(crate) async fn start_user_services(
     Ok(StartedUserServices {
         connections_closed,
         runtime: parts.runtime,
-        #[cfg(any(test, testnet))]
+        #[cfg(test)]
         agent,
         client,
         trusted_incoming_tx,
         #[cfg(test)]
         pairing_incoming_tx,
-        #[cfg(any(test, testnet))]
+        #[cfg(test)]
         pair_mode,
         reachability_links,
         dispatcher,
@@ -743,7 +743,7 @@ impl StartedUserServices {
     /// accepted socket in `connections`, so an in-process restart can sever
     /// them like a real process exit (see
     /// [`crate::dispatcher::TunnelDispatcher::serve_tcp_listener_tracked`]).
-    #[cfg(any(test, testnet))]
+    #[cfg(test)]
     pub(crate) fn serve_external_tcp_listener_tracked(
         &mut self,
         listener: TcpListener,
@@ -774,7 +774,7 @@ impl StartedUserServices {
         }
     }
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) fn reachability_link_connector(&self) -> &ReachabilityLinkConnector {
         &self.reachability_links
     }
@@ -918,13 +918,14 @@ where
     })
 }
 
-#[cfg(all(test, feature = "local-agents"))]
+#[cfg(test)]
 mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use std::{fmt, io};
 
+    use agent_runtime::test_support::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
     use futures_util::StreamExt;
     use hyper_util::rt::TokioIo;
     use model::ProtocolError;
@@ -943,13 +944,11 @@ mod tests {
     use tower::service_fn;
 
     use super::*;
-    use crate::agents::{
-        CreateAgentConfig, CreateAgentRpcRequest, TEST_ECHO_COMMAND, TEST_ECHO_V1,
-    };
+    use crate::agents::{CreateAgentConfig, CreateAgentRpcRequest};
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
     use crate::routing::{Capabilities, Host, Route, SupportedAgentType};
-    use crate::transport::in_process_incoming;
+    use crate::transport::{PreTrustPairingReachability, in_process_incoming};
     use crate::trust::{Reachability, TrustEntry};
     use crate::{HostId, SessionCloseReason, SubscribeSessionEvent};
 
@@ -976,7 +975,7 @@ mod tests {
     ) -> StartedUserServices {
         let state = test_state(identity.host_id);
         let agent_host: Option<Arc<dyn LocalAgentHost>> =
-            Some(crate::services::PtyAgentHost::new(identity.host_id));
+            Some(agent_runtime::test_support::runtime(identity.host_id));
         let data_dir = tempfile::tempdir().unwrap();
         start_user_services(
             state,
@@ -985,48 +984,6 @@ mod tests {
         )
         .await
         .unwrap()
-    }
-
-    #[tokio::test]
-    async fn daemon_startup_preloads_every_existing_artifact_owner() {
-        let host_id = Uuid::new_v4();
-        let data_dir = tempfile::tempdir().unwrap();
-        for agent_id in [Uuid::new_v4(), Uuid::new_v4()] {
-            let owner = artifacts::Owner::open(
-                data_dir
-                    .path()
-                    .join("agents")
-                    .join(agent_id.to_string())
-                    .join("artifacts"),
-                Arc::new(artifacts::SystemClock),
-            )
-            .unwrap();
-            owner
-                .put(
-                    model::ArtifactKind::File,
-                    "existing.txt",
-                    "text/plain",
-                    agent_id.as_bytes(),
-                )
-                .unwrap();
-        }
-        let identity = DeviceIdentity::for_test(host_id);
-        let agent_host: Option<Arc<dyn LocalAgentHost>> =
-            Some(crate::services::PtyAgentHost::new(host_id));
-
-        let services = start_user_services(
-            test_state(host_id),
-            agent_host,
-            DeviceRuntimeSecurity::new(
-                identity,
-                TrustStore::default(),
-                data_dir.path().to_path_buf(),
-            ),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(services.artifact_owners.loaded_count(), 2);
     }
 
     fn trust_store_for(peers: &[&DeviceIdentity]) -> TrustStore {
@@ -1440,7 +1397,7 @@ mod tests {
         let responder_trust = responder_security.trust_store.clone();
         let initiator = start_user_services(
             test_state(initiator_identity.host_id),
-            Some(crate::services::PtyAgentHost::new(
+            Some(agent_runtime::test_support::runtime(
                 initiator_identity.host_id,
             )),
             initiator_security,
@@ -1449,7 +1406,7 @@ mod tests {
         .unwrap();
         let mut responder = start_user_services(
             test_state(responder_identity.host_id),
-            Some(crate::services::PtyAgentHost::new(
+            Some(agent_runtime::test_support::runtime(
                 responder_identity.host_id,
             )),
             responder_security,
@@ -1924,14 +1881,14 @@ mod tests {
         let trust_b = security_b.trust_store.clone();
         let host_a = start_user_services(
             test_state(identity_a.host_id),
-            Some(crate::services::PtyAgentHost::new(identity_a.host_id)),
+            Some(agent_runtime::test_support::runtime(identity_a.host_id)),
             security_a,
         )
         .await
         .unwrap();
         let host_b = start_user_services(
             test_state(identity_b.host_id),
-            Some(crate::services::PtyAgentHost::new(identity_b.host_id)),
+            Some(agent_runtime::test_support::runtime(identity_b.host_id)),
             security_b,
         )
         .await
@@ -2032,14 +1989,14 @@ mod tests {
         let trust_b = security_b.trust_store.clone();
         let host_a = start_user_services(
             test_state(identity_a.host_id),
-            Some(crate::services::PtyAgentHost::new(identity_a.host_id)),
+            Some(agent_runtime::test_support::runtime(identity_a.host_id)),
             security_a,
         )
         .await
         .unwrap();
         let host_b = start_user_services(
             test_state(identity_b.host_id),
-            Some(crate::services::PtyAgentHost::new(identity_b.host_id)),
+            Some(agent_runtime::test_support::runtime(identity_b.host_id)),
             security_b,
         )
         .await

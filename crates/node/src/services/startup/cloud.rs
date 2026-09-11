@@ -57,7 +57,7 @@ impl CloudConnector {
         let _ = self.task.await;
     }
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) fn testnet_bearer(
         connector_ctx: LinkConnectorCtx,
         channel: tonic::transport::Channel,
@@ -83,7 +83,7 @@ impl CloudConnector {
         Self { stop_tx, task }
     }
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) fn testnet_with_auth(
         connector_ctx: LinkConnectorCtx,
         channel: tonic::transport::Channel,
@@ -110,7 +110,7 @@ impl CloudConnector {
     }
 }
 
-#[cfg(testnet)]
+#[cfg(test)]
 async fn observe_fixture_connector(
     connector_task: JoinHandle<Result<(), tonic::Status>>,
     established_rx: oneshot::Receiver<Result<Host, tonic::Status>>,

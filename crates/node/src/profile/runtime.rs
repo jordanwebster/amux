@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use client::Client;
+use host_api::{HostConfig, LocalAgentHost, LocalAgentHostFactory};
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock, watch};
@@ -17,8 +18,6 @@ use crate::auth::CredentialProvider;
 use crate::config::{ClaudeSettings, Config, ConfigError, Keybinds, UiSettings};
 use crate::identity;
 use crate::server::ShutdownReason;
-use host_api::{HostConfig, LocalAgentHost, LocalAgentHostFactory};
-
 use crate::services::{
     CloudConnector, DeviceRuntimeSecurity, StartedUserServices, establish_cloud_connection,
     start_user_services,
@@ -69,18 +68,19 @@ impl Listeners {
     }
 }
 
-#[cfg(testnet)]
+#[cfg(test)]
 #[derive(Clone)]
 pub(crate) enum CloudFixtureAuth {
     Bearer(String),
     Refreshing(crate::routing::LinkConnectorAuth),
 }
 
-#[cfg(testnet)]
+#[cfg(test)]
 #[derive(Default)]
 pub(crate) struct RuntimeFixtures {
     pub(crate) listener: Option<TcpListener>,
     pub(crate) tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
+    pub(crate) artifact_clock: Option<Arc<dyn artifacts::Clock>>,
     pub(crate) cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
     pub(crate) cloud_transport: Option<tonic::transport::Channel>,
 }
@@ -93,7 +93,7 @@ pub(crate) struct ProfileRuntimeOptions {
     pub(crate) host_factory: Option<Arc<dyn LocalAgentHostFactory>>,
 
     pub(crate) listeners: Listeners,
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) fixtures: RuntimeFixtures,
 }
 
@@ -139,7 +139,7 @@ impl ProfileRuntimeOptions {
             host_factory,
 
             listeners,
-            #[cfg(testnet)]
+            #[cfg(test)]
             fixtures: RuntimeFixtures::default(),
         }
     }
@@ -187,15 +187,15 @@ pub(crate) struct ProfileRuntime {
     state: Arc<RwLock<ServerState>>,
     pub(crate) agent_host: Option<Arc<dyn LocalAgentHost>>,
     pub(crate) services: StartedUserServices,
-    #[cfg(testnet)]
-    pub(crate) test_agent_host: Arc<crate::services::PtyAgentHost>,
+    #[cfg(test)]
+    pub(crate) test_agent_host: Arc<dyn LocalAgentHost>,
     pub(crate) trust: crate::trust::SharedTrustStore,
-    #[cfg(testnet)]
+    #[cfg(test)]
     test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) test_cloud_transport: Option<tonic::transport::Channel>,
     client: Client,
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) client_channel: tonic::transport::Channel,
     in_process_connection: InProcessConnection,
     background_tasks: Vec<JoinHandle<()>>,
@@ -209,7 +209,7 @@ pub(crate) struct ProfileRuntime {
 
 /// Start local services and listeners for one profile. Cloud attachment is
 /// intentionally a separate operation.
-#[cfg(any(test, testnet))]
+#[cfg(test)]
 pub(crate) async fn start(
     options: ProfileRuntimeOptions,
 ) -> Result<ProfileRuntime, ProfileStartError> {
@@ -221,7 +221,7 @@ pub(crate) async fn start(
     start_observed(options, status).await
 }
 
-#[cfg(any(test, testnet))]
+#[cfg(test)]
 pub(crate) async fn start_observed(
     options: ProfileRuntimeOptions,
     status: RuntimeStatus,
@@ -277,7 +277,7 @@ async fn build(
     security: DeviceRuntimeSecurity,
     status: RuntimeStatus,
 ) -> Result<ProfileRuntime, ProfileStartError> {
-    #[cfg(testnet)]
+    #[cfg(test)]
     let mut options = options;
     let reporters = options
         .shared
@@ -297,13 +297,23 @@ async fn build(
     )));
     state.write().await.subscription_reporter = reporters.subscription.clone();
 
-    let agent_host = options
-        .host_factory
+    #[cfg(test)]
+    let host_factory: Option<Arc<dyn LocalAgentHostFactory>> = options
+        .fixtures
+        .artifact_clock
+        .as_ref()
+        .map(|clock| Arc::new(agent_runtime::test_support::Factory::new(clock.clone())) as _)
+        .or_else(|| options.host_factory.clone())
+        .or_else(|| Some(Arc::new(agent_runtime::AgentRuntimeFactory)));
+    #[cfg(not(test))]
+    let host_factory = options.host_factory.clone();
+    let agent_host = host_factory
         .as_ref()
         .map(|factory| {
             factory.create(HostConfig {
                 host_id,
                 data_dir: options.paths.data_dir.clone(),
+                state_path: options.paths.state_path.clone(),
                 runtime_dir: options
                     .paths
                     .socket_path
@@ -317,15 +327,17 @@ async fn build(
             })
         })
         .transpose()?;
-    #[cfg(testnet)]
-    let test_agent_host = agent_host.clone().expect("testnet requires local agents");
+    #[cfg(test)]
+    let test_agent_host = agent_host
+        .clone()
+        .expect("node tests require an agent runtime");
     let trust = security.shared_trust_store();
-    #[cfg(not(testnet))]
+    #[cfg(not(test))]
     let mut services = start_user_services(state.clone(), agent_host.clone(), security)
         .await
         .map_err(|error| ProfileStartError::State(error.to_string()))?;
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     let mut services = start_user_services(state.clone(), agent_host.clone(), security)
         .await
         .map_err(|error| ProfileStartError::State(error.to_string()))?;
@@ -342,7 +354,7 @@ async fn build(
         tracing::info!(addr = %addr, "listening on profile direct dispatcher TCP");
     }
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     if let Some(tracked) = &options.fixtures.tracked_tcp {
         if let Some(listener) = options.fixtures.listener.take() {
             services.serve_external_tcp_listener_tracked(listener, tracked.clone());
@@ -365,7 +377,7 @@ async fn build(
         }
     }
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     if options.listeners == Listeners::InProcessOnly && options.fixtures.tracked_tcp.is_some() {
         background_tasks.extend(services.spawn_reachability_links());
     }
@@ -382,17 +394,17 @@ async fn build(
         state,
         agent_host,
         services,
-        #[cfg(testnet)]
+        #[cfg(test)]
         test_agent_host,
         trust,
-        #[cfg(testnet)]
+        #[cfg(test)]
         test_cloud: options.fixtures.cloud,
-        #[cfg(testnet)]
+        #[cfg(test)]
         test_cloud_transport: options.fixtures.cloud_transport,
-        #[cfg(all(any(test, feature = "test-support"), not(testnet)))]
+        #[cfg(all(any(test, feature = "test-support"), not(test)))]
         test_cloud_transport: None,
         client,
-        #[cfg(testnet)]
+        #[cfg(test)]
         client_channel,
         in_process_connection,
         background_tasks,
@@ -410,7 +422,7 @@ impl ProfileRuntime {
         self.client.clone()
     }
 
-    #[cfg(any(testnet, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn report_status_for_test(&self, observed: Observed) {
         self.status.report(observed);
     }
@@ -458,7 +470,7 @@ impl ProfileRuntime {
     }
 
     pub(crate) async fn start_cloud(&self) -> Result<(), CloudStartError> {
-        #[cfg(testnet)]
+        #[cfg(test)]
         if let Some((channel, auth)) = &self.test_cloud {
             let mut connector = self.cloud_connector.lock().await;
             if connector
@@ -516,7 +528,7 @@ impl ProfileRuntime {
         Ok(())
     }
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) async fn set_test_cloud_auth(&mut self, auth: CloudFixtureAuth) {
         self.stop_cloud().await;
         self.test_cloud.as_mut().expect("test cloud configured").1 = auth;
@@ -705,14 +717,14 @@ impl SocketOwnership {
     }
 }
 
-#[cfg(all(test, unix, feature = "local-agents"))]
+#[cfg(all(test, unix))]
 mod tests {
     use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream};
 
+    use model::ProtocolError;
     use tempfile::tempdir;
 
     use super::*;
-    use crate::ProtocolError;
 
     fn options(root: &std::path::Path, listeners: Listeners) -> ProfileRuntimeOptions {
         let data_dir = root.join("profile-data");
@@ -743,7 +755,7 @@ mod tests {
             host_factory: None,
 
             listeners,
-            #[cfg(testnet)]
+            #[cfg(test)]
             fixtures: RuntimeFixtures::default(),
         }
     }
@@ -836,7 +848,7 @@ mod tests {
         }
     }
 
-    #[cfg(testnet)]
+    #[cfg(test)]
     #[tokio::test]
     async fn profile_runtime_reports_status_from_relay_and_outlives_cloud_clients() {
         use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};

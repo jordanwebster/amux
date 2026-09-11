@@ -64,7 +64,7 @@ pub(crate) enum LinkCloseRequest {
 }
 
 impl LinkRegistry {
-    #[cfg(testnet)]
+    #[cfg(test)]
     pub(crate) async fn cloud_link_ids(&self) -> Vec<String> {
         let state = self.state.read().await;
         let mut ids: Vec<_> = state

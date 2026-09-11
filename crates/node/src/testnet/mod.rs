@@ -39,8 +39,7 @@
 //!   close links) hard and return only once the affected daemons have
 //!   observed the loss, so follow-up assertions start from a settled net.
 //!
-//! Compiled only with the `testnet` cargo feature; not part of the public
-//! API.
+//! Compiled only into the node unit-test target; not part of the public API.
 
 mod assertions;
 mod daemon;

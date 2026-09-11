@@ -2106,7 +2106,9 @@ dependencies = [
 name = "node"
 version = "0.6.0"
 dependencies = [
+ "agent-runtime",
  "anyhow",
+ "artifacts",
  "async-trait",
  "base64",
  "bytes",
