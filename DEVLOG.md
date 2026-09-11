@@ -1,3 +1,10 @@
+2026-09-11 — **Carry channel setup through the native link registry.** The
+connection manager and test network now share the carrier-backed link registry
+when opening application and pairing streams. Cached channel lookup releases
+its synchronization guard before checking link liveness, shutdown uses the
+version-2 refusal code, and pairing reuses the existing anonymous TLS channel
+handshake over its native stream.
+
 2026-09-11 — **Run link control directly on every carrier.** The shared link
 runtime now performs both sides of the version-2 hello handshake, binds the
 announced host to the carrier-authenticated peer, exchanges neighbor snapshots

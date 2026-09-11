@@ -6,12 +6,12 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use super::{ByteStream, OpenError};
+use crate::HostId;
 use crate::protocol::wire::pb;
 use crate::resource_limits::{
     CLOUD_INBOUND_TUNNEL_RATE_LIMIT, CLOUD_INBOUND_TUNNEL_RATE_WINDOW, SlidingWindowRateLimiter,
 };
 use crate::routing::{LinkAdmission, LinkId, LinkRegistry};
-use crate::HostId;
 
 #[derive(Clone)]
 pub(crate) struct Piper {
@@ -62,7 +62,7 @@ impl Piper {
             return refuse(&mut incoming, pb::StreamRefusal::PaymentRequired).await;
         }
 
-        let mut outgoing = match outgoing.open_stream(preface).await {
+        let outgoing = match outgoing.open_stream(preface).await {
             Ok(stream) => stream,
             Err(OpenError::Refused(reason)) => return refuse(&mut incoming, reason).await,
             Err(OpenError::LinkClosed | OpenError::Io(_)) => {

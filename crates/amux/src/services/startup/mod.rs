@@ -535,10 +535,10 @@ async fn start_user_services_with_clock(
         pairing_incoming_tx.clone(),
         DEVICE_TLS_HANDSHAKE_TIMEOUT,
     )?;
-    parts
-        .runtime
-        .tasks
-        .push(serve_inbound_streams(Arc::new(dispatcher), parts.incoming_streams_rx));
+    parts.runtime.tasks.push(serve_inbound_streams(
+        Arc::new(dispatcher.clone()),
+        parts.incoming_streams_rx,
+    ));
     parts.runtime.tasks.push(
         client
             .attach_routing_events(parts.runtime.routing.clone())
@@ -882,6 +882,7 @@ mod tests {
     use crate::protocol::ProtocolError;
     use crate::routing::{Capabilities, Host, Route, SupportedAgentType};
     use crate::trust::{Reachability, TrustEntry};
+    use crate::tunnel::TunnelTransport;
     use crate::{HostId, SessionCloseReason, SubscribeSessionEvent};
 
     fn test_state(host_id: Uuid) -> Arc<RwLock<ServerState>> {
@@ -1481,7 +1482,7 @@ mod tests {
         );
 
         host_a
-            .tunnels
+            .channels
             .link_registry()
             .close_host(identity_b.host_id)
             .await;
@@ -1671,13 +1672,13 @@ mod tests {
                     .read()
                     .await
                     .get(&user_id)
-                    .map(|services| services.tunnels.link_registry());
+                    .map(|services| services.channels.link_registry());
                 let cloud_sees_connector = match cloud_links {
                     Some(links) => links.link_to_peer(Uuid::from_u128(2)).await.is_some(),
                     None => false,
                 };
                 let connector_sees_cloud = connector
-                    .tunnels
+                    .channels
                     .link_registry()
                     .has_cloud_relay_link_to(Uuid::from_u128(1))
                     .await;

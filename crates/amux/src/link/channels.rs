@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 use tokio_rustls::TlsConnector;
 use tonic::transport::{Channel, Endpoint};
 
-use super::{ByteStream, LinkCarrier, OpenError};
+use super::{ByteStream, OpenError};
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
 use crate::protocol::wire::pb;
@@ -110,14 +110,16 @@ impl ChannelPool {
     }
 
     pub(crate) async fn channel(&self, key: ChannelKey) -> Result<Channel, ChannelError> {
-        if key.class == ChannelClass::Calls
-            && let Some(channel) = self
-                .by_key
+        let cached = if key.class == ChannelClass::Calls {
+            self.by_key
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .get(&key)
                 .cloned()
-        {
+        } else {
+            None
+        };
+        if let Some(channel) = cached {
             if self.route_is_live(key.route).await {
                 return Ok(channel);
             }
@@ -173,7 +175,11 @@ impl ChannelPool {
             })
             .collect::<Vec<_>>();
         channels.sort_unstable_by_key(|channel| {
-            (channel.peer, channel.route.clone(), format!("{:?}", channel.class))
+            (
+                channel.peer,
+                channel.route.clone(),
+                format!("{:?}", channel.class),
+            )
         });
         channels
     }
@@ -186,19 +192,16 @@ impl ChannelPool {
             .len()
     }
 
-    async fn open_stream(
-        &self,
-        peer: HostId,
-        route: Route,
-    ) -> Result<ByteStream, ChannelError> {
+    async fn open_stream(&self, peer: HostId, route: Route) -> Result<ByteStream, ChannelError> {
         let carrier = match route {
-            Route::Direct(link) => self
-                .links
-                .native_carrier(&link)
-                .await
-                .ok_or(ChannelError::LinkUnavailable {
-                    host_id: link.peer(),
-                })?,
+            Route::Direct(link) => {
+                self.links
+                    .native_carrier(&link)
+                    .await
+                    .ok_or(ChannelError::LinkUnavailable {
+                        host_id: link.peer(),
+                    })?
+            }
             Route::Via(relay) => self
                 .links
                 .native_carrier_to_peer(relay)
@@ -219,9 +222,10 @@ impl ChannelPool {
         peer: HostId,
         stream: ByteStream,
     ) -> Result<Channel, ChannelError> {
-        let security = self.security.as_ref().ok_or_else(|| {
-            ChannelError::Handshake("device identity is unavailable".to_string())
-        })?;
+        let security = self
+            .security
+            .as_ref()
+            .ok_or_else(|| ChannelError::Handshake("device identity is unavailable".to_string()))?;
         let config = security
             .identity
             .client_tls_config_for_peer(security.trust_store.clone(), peer)?;

@@ -246,7 +246,11 @@ impl TestNet {
     pub async fn sever_direct(&self, a: &Daemon, b: &Daemon) {
         for (from, to) in [(a, b), (b, a)] {
             if let Some(parts) = from.try_parts().await {
-                parts.tunnels.link_registry().close_host(to.host_id()).await;
+                parts
+                    .channels
+                    .link_registry()
+                    .close_host(to.host_id())
+                    .await;
             }
         }
         for (from, to) in [(a, b), (b, a)] {

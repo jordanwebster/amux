@@ -857,7 +857,7 @@ mod tests {
                 signed_in: Some(true),
             },
             routing,
-            tunnels,
+            tunnels.link_registry(),
         );
         let connector = establish_cloud_link(
             config,

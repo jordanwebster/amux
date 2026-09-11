@@ -1,18 +1,18 @@
 //! Outbound channel selection over native link streams.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use tokio::{sync::RwLock, task::JoinHandle};
-use tokio_rustls::TlsConnector;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 
 use crate::HostId;
 use crate::link::{ChannelClass, ChannelError, ChannelKey, ChannelPool};
-use crate::pairing::pairing_channel_from_io;
 use crate::routing::{
-    FEATURE_CLOUD_RELAY, Host, HostVia, LinkCarrier, LinkId, Route, RoutingCore, RoutingEvent,
+    FEATURE_CLOUD_RELAY, Host, HostVia, LinkCarrier, Route, RoutingCore, RoutingEvent,
 };
-use crate::transport::TrustedPeerConnections;
+use crate::transport::{TrustedPeerConnections, pairing_channel_from_io};
 
 pub(crate) struct ConnectionManager {
     routing: Arc<RoutingCore>,
@@ -41,6 +41,11 @@ impl ConnectionManager {
         self.trusted_connections.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) fn pool(&self) -> Arc<ChannelPool> {
+        self.channels.clone()
+    }
+
     pub(crate) async fn attach_routing_events(self: Arc<Self>) -> JoinHandle<()> {
         for event in self.routing.routing_events_snapshot().await {
             self.handle_event(event).await;
@@ -62,7 +67,8 @@ impl ConnectionManager {
         peer: HostId,
         agent: crate::AgentId,
     ) -> Result<Channel, ChannelError> {
-        self.channel_to_class(peer, ChannelClass::Session { agent }).await
+        self.channel_to_class(peer, ChannelClass::Session { agent })
+            .await
     }
 
     pub(crate) async fn bulk_channel_to(&self, peer: HostId) -> Result<Channel, ChannelError> {
@@ -87,14 +93,13 @@ impl ConnectionManager {
         peer: HostId,
     ) -> Result<Channel, ChannelError> {
         let relay = self.cloud_relay_for(peer).await?;
-        let stream = self.channels.pairing_stream(peer, Route::Via(relay)).await?;
-        let connector = TlsConnector::from(Arc::new(
-            crate::pairing::pairing_client_tls_config()
-                .map_err(|error| ChannelError::Tls(error.to_string()))?,
-        ));
+        let stream = self
+            .channels
+            .pairing_stream(peer, Route::Via(relay))
+            .await?;
         tokio::time::timeout(
-            Duration::from_secs(10),
-            pairing_channel_from_io(stream, connector),
+            std::time::Duration::from_secs(10),
+            pairing_channel_from_io(stream),
         )
         .await
         .map_err(|_| ChannelError::Handshake("pairing TLS handshake timed out".into()))?
@@ -110,11 +115,20 @@ impl ConnectionManager {
     }
 
     pub(crate) async fn stored_reachability_error(&self, peer: HostId) -> Option<String> {
-        self.state.read().await.reachability_errors.get(&peer).cloned()
+        self.state
+            .read()
+            .await
+            .reachability_errors
+            .get(&peer)
+            .cloned()
     }
 
     pub(crate) async fn record_reachability_error(&self, peer: HostId, error: impl Into<String>) {
-        self.state.write().await.reachability_errors.insert(peer, error.into());
+        self.state
+            .write()
+            .await
+            .reachability_errors
+            .insert(peer, error.into());
     }
 
     pub(crate) async fn clear_reachability_error(&self, peer: HostId) {
@@ -123,7 +137,10 @@ impl ConnectionManager {
 
     pub(crate) async fn via_for(&self, peer: HostId) -> HostVia {
         let route = self.state.read().await.active.get(&peer).copied();
-        let route = match route { Some(route) => Some(route), None => self.routing.route_to(peer).await };
+        let route = match route {
+            Some(route) => Some(route),
+            None => self.routing.route_to(peer).await,
+        };
         match route {
             Some(Route::Via(_)) => HostVia::Relay,
             Some(Route::Direct(link)) => match self.channels.link_registry().carrier(&link).await {
@@ -140,7 +157,10 @@ impl ConnectionManager {
         peer: HostId,
         reason: crate::protocol::wire::pb::LinkCloseReason,
     ) {
-        self.channels.link_registry().send_link_close_to_host(peer, reason).await;
+        self.channels
+            .link_registry()
+            .send_link_close_to_host(peer, reason)
+            .await;
     }
 
     pub(crate) async fn teardown_host(&self, peer: HostId) {
@@ -161,35 +181,67 @@ impl ConnectionManager {
         match event {
             RoutingEvent::NeighborUp { host, link } => {
                 self.clear_reachability_error(host.id).await;
-                if host_is_cloud_relay(&host) { return; }
-                let already_direct = matches!(self.state.read().await.active.get(&host.id), Some(Route::Direct(_)));
-                if !already_direct && let Err(error) = self.activate_route(host.id, Route::Direct(link), ChannelClass::Calls).await {
+                if host_is_cloud_relay(&host) {
+                    return;
+                }
+                let already_direct = matches!(
+                    self.state.read().await.active.get(&host.id),
+                    Some(Route::Direct(_))
+                );
+                if !already_direct
+                    && let Err(error) = self
+                        .activate_route(host.id, Route::Direct(link), ChannelClass::Calls)
+                        .await
+                {
                     tracing::warn!(peer = %host.id, error = %error, "failed to activate direct route");
                 }
             }
             RoutingEvent::NeighborDown { host_id, link, .. } => {
                 self.channels.drop_link(link);
                 let mut state = self.state.write().await;
-                if state.active.get(&host_id) == Some(&Route::Direct(link)) { state.active.remove(&host_id); }
+                if state.active.get(&host_id) == Some(&Route::Direct(link)) {
+                    state.active.remove(&host_id);
+                }
             }
             RoutingEvent::ClaimUp { relay, host } => {
                 self.clear_reachability_error(host.id).await;
-                if host_is_cloud_relay(&host) || self.channels.link_registry().has_cloud_relay_link_to(relay).await { return; }
+                if host_is_cloud_relay(&host)
+                    || self
+                        .channels
+                        .link_registry()
+                        .has_cloud_relay_link_to(relay)
+                        .await
+                {
+                    return;
+                }
                 if !self.state.read().await.active.contains_key(&host.id)
-                    && let Err(error) = self.activate_route(host.id, Route::Via(relay), ChannelClass::Calls).await {
+                    && let Err(error) = self
+                        .activate_route(host.id, Route::Via(relay), ChannelClass::Calls)
+                        .await
+                {
                     tracing::warn!(peer = %host.id, relay = %relay, error = %error, "failed to activate relay route");
                 }
             }
             RoutingEvent::ClaimDown { relay, host_id } => {
                 self.channels.drop_host(host_id);
                 let mut state = self.state.write().await;
-                if state.active.get(&host_id) == Some(&Route::Via(relay)) { state.active.remove(&host_id); }
+                if state.active.get(&host_id) == Some(&Route::Via(relay)) {
+                    state.active.remove(&host_id);
+                }
             }
         }
     }
 
-    async fn activate_route(&self, peer: HostId, route: Route, class: ChannelClass) -> Result<Channel, ChannelError> {
-        let channel = self.channels.channel(ChannelKey { peer, route, class }).await?;
+    async fn activate_route(
+        &self,
+        peer: HostId,
+        route: Route,
+        class: ChannelClass,
+    ) -> Result<Channel, ChannelError> {
+        let channel = self
+            .channels
+            .channel(ChannelKey { peer, route, class })
+            .await?;
         let old = {
             let mut state = self.state.write().await;
             if !self.routing.routes_to(peer).await.contains(&route) {
@@ -198,11 +250,15 @@ impl ConnectionManager {
                 return Err(ChannelError::NoRoute { host_id: peer });
             }
             match state.active.get(&peer) {
-                Some(active @ Route::Direct(_)) if !route.is_direct() && *active != route => return Ok(channel),
+                Some(active @ Route::Direct(_)) if !route.is_direct() && *active != route => {
+                    return Ok(channel);
+                }
                 _ => state.active.insert(peer, route),
             }
         };
-        if old.is_some_and(|old| old != route) { self.channels.drop_host(peer); }
+        if old.is_some_and(|old| old != route) {
+            self.channels.drop_host(peer);
+        }
         self.clear_reachability_error(peer).await;
         Ok(channel)
     }
@@ -215,13 +271,19 @@ impl ConnectionManager {
     async fn cloud_relay_for(&self, peer: HostId) -> Result<HostId, ChannelError> {
         let registry = self.channels.link_registry();
         for relay in self.routing.relays_to(peer).await {
-            if registry.has_cloud_relay_link_to(relay).await { return Ok(relay); }
+            if registry.has_cloud_relay_link_to(relay).await {
+                return Ok(relay);
+            }
         }
         Err(ChannelError::NoRoute { host_id: peer })
     }
 
-    pub(crate) fn routing(&self) -> &Arc<RoutingCore> { &self.routing }
-    pub(crate) fn channels(&self) -> &Arc<ChannelPool> { &self.channels }
+    pub(crate) fn routing(&self) -> &Arc<RoutingCore> {
+        &self.routing
+    }
+    pub(crate) fn channels(&self) -> &Arc<ChannelPool> {
+        &self.channels
+    }
 
     #[cfg(any(test, testnet))]
     pub(crate) async fn active_route(&self, peer: HostId) -> Option<Route> {
@@ -235,5 +297,8 @@ impl ConnectionManager {
 }
 
 fn host_is_cloud_relay(host: &Host) -> bool {
-    host.capabilities.features.iter().any(|feature| feature == FEATURE_CLOUD_RELAY)
+    host.capabilities
+        .features
+        .iter()
+        .any(|feature| feature == FEATURE_CLOUD_RELAY)
 }

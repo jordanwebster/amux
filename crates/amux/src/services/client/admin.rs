@@ -600,7 +600,7 @@ impl ProfileAdmin {
                 .remote_agent_connections
                 .cloud_pairing_channel_to(host)
                 .await
-                .map_err(|error| remote_tunnel_status("BeginPair", host, error))?;
+                .map_err(|error| remote_channel_status("BeginPair", host, error))?;
             let pending = begin_pair_initiator(
                 &mut wire::pairing_service_client::PairingServiceClient::new(channel),
                 &identity,

@@ -356,10 +356,7 @@ impl LinkRegistry {
             .map(|writer| writer.carrier)
     }
 
-    pub(crate) async fn native_carrier(
-        &self,
-        link: &LinkId,
-    ) -> Option<Arc<dyn NativeLinkCarrier>> {
+    pub(crate) async fn native_carrier(&self, link: &LinkId) -> Option<Arc<dyn NativeLinkCarrier>> {
         self.state
             .read()
             .await
@@ -379,7 +376,12 @@ impl LinkRegistry {
             .iter()
             .find_map(|(link, writer)| {
                 (writer.host.id == peer)
-                    .then(|| writer.native_carrier.clone().map(|carrier| (*link, carrier)))
+                    .then(|| {
+                        writer
+                            .native_carrier
+                            .clone()
+                            .map(|carrier| (*link, carrier))
+                    })
                     .flatten()
             })
     }

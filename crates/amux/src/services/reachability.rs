@@ -16,6 +16,7 @@ use crate::connection::ConnectionManager;
 use crate::discovery::{Discovery, DiscoveryEvent, FoundHosts};
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::DeviceIdentity;
+use crate::link::ChannelPool;
 use crate::routing::{
     Host, LinkCarrier, LinkConnectorCtx, LiveLocalHost, Route, RoutingCore,
     spawn_connector_to_channel_with_establishment,
@@ -25,7 +26,6 @@ use crate::transport::{
     trusted_device_channel_tracked,
 };
 use crate::trust::{Reachability, SharedTrustStore};
-use crate::link::ChannelPool;
 
 const DIRECT_LINK_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 

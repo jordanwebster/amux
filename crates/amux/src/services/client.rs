@@ -1867,7 +1867,8 @@ impl ClientService {
         host_id: Uuid,
     ) -> Result<wire::agent_service_client::AgentServiceClient<Channel>, tonic::Status> {
         let result = self.remote_agent_connections.channel_to(host_id).await;
-        self.remote_agent_client_with_channel(method, host_id, result).await
+        self.remote_agent_client_with_channel(method, host_id, result)
+            .await
     }
 
     async fn remote_agent_client_with_channel(
@@ -2039,7 +2040,10 @@ impl ClientService {
     ) -> TonicResult<ResponseStream<wire::SubscribeSessionResponse>> {
         let agent = Uuid::from_slice(&request.agent_id)
             .map_err(|_| tonic::Status::invalid_argument("invalid agent_id"))?;
-        let channel = self.remote_agent_connections.session_channel_to(host_id, agent).await;
+        let channel = self
+            .remote_agent_connections
+            .session_channel_to(host_id, agent)
+            .await;
         let mut client = match self
             .remote_agent_client_with_channel("ClientService.SubscribeSession", host_id, channel)
             .await
@@ -2100,9 +2104,9 @@ impl ClientService {
         request: wire::GetArtifactRequest,
     ) -> TonicResult<wire::GetArtifactResponse> {
         let channel = self.remote_agent_connections.bulk_channel_to(host_id).await;
-        let mut client = self.remote_agent_client_with_channel(
-            "ClientService.GetArtifact", host_id, channel,
-        ).await?;
+        let mut client = self
+            .remote_agent_client_with_channel("ClientService.GetArtifact", host_id, channel)
+            .await?;
         let response = client.get_artifact(request).await?.into_inner();
         Ok(tonic::Response::new(response))
     }
@@ -2113,9 +2117,9 @@ impl ClientService {
         request: wire::DiffRequest,
     ) -> TonicResult<wire::DiffResponse> {
         let channel = self.remote_agent_connections.bulk_channel_to(host_id).await;
-        let mut client = self.remote_agent_client_with_channel(
-            "ClientService.Diff", host_id, channel,
-        ).await?;
+        let mut client = self
+            .remote_agent_client_with_channel("ClientService.Diff", host_id, channel)
+            .await?;
         let response = client.diff(request).await?.into_inner();
         Ok(tonic::Response::new(response))
     }
@@ -2423,10 +2427,11 @@ fn remote_channel_status(
         ChannelError::Refused(crate::protocol::wire::pb::StreamRefusal::RateLimited) => {
             protocol_status(ProtocolError::ResourceExhausted { message })
         }
-        ChannelError::Refused(_) | ChannelError::LinkUnavailable { .. }
-        | ChannelError::Identity(_) | ChannelError::Tls(_) | ChannelError::Handshake(_) => {
-            tonic::Status::unavailable(message)
-        }
+        ChannelError::Refused(_)
+        | ChannelError::LinkUnavailable { .. }
+        | ChannelError::Identity(_)
+        | ChannelError::Tls(_)
+        | ChannelError::Handshake(_) => tonic::Status::unavailable(message),
     }
 }
 
@@ -2779,7 +2784,10 @@ mod tests {
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
     ) -> ClientService {
-        let connections = Arc::new(ConnectionManager::new(routing, tunnels));
+        let connections = Arc::new(ConnectionManager::new(
+            routing,
+            Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
+        ));
         let identity = DeviceIdentity::for_test(agent_service.host_id());
         ClientService::new(
             agent_service,
@@ -2817,7 +2825,10 @@ mod tests {
         ClientService::new(
             agent_service,
             server_state,
-            Arc::new(ConnectionManager::new(routing, tunnels)),
+            Arc::new(ConnectionManager::new(
+                routing,
+                Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
+            )),
             PairingTrustAccess::new(
                 local_identity.public_key().to_vec(),
                 trust_store,
@@ -5447,7 +5458,10 @@ mod tests {
         let service = ClientService::new(
             agent_service,
             server_state,
-            Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone())),
+            Arc::new(ConnectionManager::new(
+                routing.clone(),
+                Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
+            )),
             PairingTrustAccess::new(
                 local.public_key().to_vec(),
                 trust_store.clone(),
@@ -5516,7 +5530,7 @@ mod tests {
                 .is_empty()
         );
         assert!(routing.route_to(peer.host_id).await.is_none());
-        assert_eq!(service.remote_agent_connections.pool().len().await, 0);
+        assert_eq!(service.remote_agent_connections.pool().len(), 0);
     }
 
     #[tokio::test]

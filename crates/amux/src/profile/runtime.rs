@@ -691,7 +691,7 @@ impl ProfileRuntime {
             host.notify_shutdown(reason).await;
         }
         self.services
-            .tunnels
+            .channels
             .link_registry()
             .send_link_close_to_all(link_close_reason(reason))
             .await;

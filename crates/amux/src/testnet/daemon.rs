@@ -21,6 +21,7 @@ use crate::connection::ConnectionManager;
 use crate::discovery::{Discovery, ScriptedDiscovery};
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};
+use crate::link::ChannelPool;
 use crate::profile::runtime::{
     self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
 };
@@ -32,7 +33,6 @@ use crate::routing::{
 use crate::server::ShutdownReason;
 use crate::services::{ClientService, PtyAgentHost};
 use crate::trust::{Reachability, SharedTrustStore};
-use crate::tunnel::TunnelPool;
 
 /// Parameters a daemon needs to (re)connect to the testnet cloud relay.
 pub(crate) struct CloudAttachment {
@@ -304,7 +304,7 @@ pub(crate) struct DaemonParts {
     pub(crate) agent_host: Arc<PtyAgentHost>,
     pub(crate) connections: Arc<ConnectionManager>,
     pub(crate) routing: Arc<RoutingCore>,
-    pub(crate) tunnels: Arc<TunnelPool>,
+    pub(crate) channels: Arc<ChannelPool>,
     pub(crate) trust: SharedTrustStore,
 }
 
@@ -471,7 +471,7 @@ impl Daemon {
         self.try_parts()
             .await
             .unwrap()
-            .tunnels
+            .channels
             .link_registry()
             .cloud_link_ids()
             .await
@@ -677,11 +677,6 @@ impl Daemon {
             ),
             Err(error) => error,
         };
-        if let Some(crate::tunnel::TunnelPoolError::Rejected(error)) =
-            error.downcast_ref::<crate::tunnel::TunnelPoolError>()
-        {
-            return error.clone();
-        }
         if let Some(status) = error.downcast_ref::<tonic::Status>()
             && let Some(error) = crate::protocol::protocol_error_from_status_details(status)
         {
@@ -708,11 +703,10 @@ impl Daemon {
                     return true;
                 };
                 !parts
-                    .tunnels
-                    .active_tunnels()
-                    .await
+                    .channels
+                    .debug_view()
                     .iter()
-                    .any(|(_, peer, _)| *peer == other.host_id())
+                    .any(|channel| channel.peer == other.host_id())
             },
             self.failure_dump(),
         )
@@ -819,11 +813,10 @@ impl Daemon {
                     return false;
                 };
                 let no_tunnel = !parts
-                    .tunnels
-                    .active_tunnels()
-                    .await
+                    .channels
+                    .debug_view()
                     .into_iter()
-                    .any(|(_, peer, _)| peer == other_id);
+                    .any(|channel| channel.peer == other_id);
                 let no_direct_connection = other
                     .inner
                     .tracked_tcp
@@ -1112,7 +1105,7 @@ impl Daemon {
             agent_host: runtime.test_agent_host.clone(),
             connections: runtime.services.connections.clone(),
             routing: runtime.services.routing.clone(),
-            tunnels: runtime.services.tunnels.clone(),
+            channels: runtime.services.channels.clone(),
             trust: runtime.trust.clone(),
         })
     }
@@ -1415,8 +1408,12 @@ impl Daemon {
                     );
                 }
                 if let Some(parts) = daemon.try_parts().await {
-                    for (id, peer, link) in parts.tunnels.active_tunnels().await {
-                        let _ = writeln!(out, "  tunnel {id} peer={peer} link={link}");
+                    for channel in parts.channels.debug_view() {
+                        let _ = writeln!(
+                            out,
+                            "  channel peer={} route={} class={:?}",
+                            channel.peer, channel.route, channel.class
+                        );
                     }
                 }
             }

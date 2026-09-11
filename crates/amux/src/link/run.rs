@@ -583,10 +583,10 @@ async fn run_established(
                     if let Some(sender) = &ctx.incoming_streams_tx {
                         if let Err(error) = sender.send((peer_host.id, stream)).await {
                             let (_, mut stream) = error.0;
-                            let _ = stream.reset(wire::pb::StreamRefusal::Shutdown).await;
+                            let _ = stream.reset(wire::pb::StreamRefusal::ShuttingDown).await;
                         }
                     } else {
-                        let _ = stream.reset(wire::pb::StreamRefusal::Shutdown).await;
+                        let _ = stream.reset(wire::pb::StreamRefusal::ShuttingDown).await;
                     }
                 } else {
                     let _ = ctx.piper.pipe(link, preface, stream).await;

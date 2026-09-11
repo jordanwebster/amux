@@ -1371,7 +1371,10 @@ mod tests {
             routing.clone(),
             incoming_tx,
         ));
-        let connections = Arc::new(ConnectionManager::new(routing, tunnels));
+        let connections = Arc::new(ConnectionManager::new(
+            routing,
+            Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
+        ));
         let service = PairingService::new(
             pair_mode.clone(),
             LocalPairingIdentity::from_device_identity(&responder),
@@ -2444,7 +2447,10 @@ mod tests {
         let _pairing_transport = incoming_rx.recv().await.unwrap();
         assert_eq!(tunnels.active_count().await, 1);
 
-        let connections = Arc::new(ConnectionManager::new(routing, tunnels.clone()));
+        let connections = Arc::new(ConnectionManager::new(
+            routing,
+            Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
+        ));
         let service = PairingService::new(
             pair_mode.clone(),
             LocalPairingIdentity::from_device_identity(&responder),

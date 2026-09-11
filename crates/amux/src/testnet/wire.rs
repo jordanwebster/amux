@@ -112,13 +112,13 @@ impl WirePeer {
         let connector_ctx = LinkCtx::new(
             connector_host,
             connector_parts.routing,
-            connector_parts.tunnels,
+            connector_parts.channels.link_registry(),
         )
         .with_expected_peer(acceptor_daemon.host_id());
         let acceptor_ctx = LinkCtx::new(
             acceptor_host,
             acceptor_parts.routing,
-            acceptor_parts.tunnels,
+            acceptor_parts.channels.link_registry(),
         )
         .with_authenticated_peer(connector_daemon.host_id());
 
@@ -162,8 +162,12 @@ impl WirePeer {
             MuxRole::Acceptor,
             CarrierKind::RelayTcp,
         ));
-        let mut acceptor_ctx = LinkCtx::new(local, victim_parts.routing, victim_parts.tunnels)
-            .with_authenticated_peer(bound);
+        let mut acceptor_ctx = LinkCtx::new(
+            local,
+            victim_parts.routing,
+            victim_parts.channels.link_registry(),
+        )
+        .with_authenticated_peer(bound);
         if authenticated {
             acceptor_ctx = acceptor_ctx
                 .with_link_role(crate::routing::LinkRole::CloudRelay)
