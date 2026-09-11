@@ -1,3 +1,10 @@
+2026-09-11 — **Try every usable relay address before remembering UDP as
+blocked.** Cloud QUIC dials now skip DNS results from a socket family the
+profile's endpoint cannot use and give each remaining address its own bounded
+handshake attempt. TCP can still win the connection race promptly, while a
+short background QUIC probe finishes the candidate list before deciding
+whether to retain the one-hour TCP preference.
+
 2026-09-11 — **Document the native-stream protocol from discovery through
 relay fallback.** The protocol guide now distinguishes carriers, adjacent
 links, native streams, and end-to-end authenticated channels; enumerates the

@@ -26,6 +26,10 @@ async fn a_device_on_a_udp_blocked_network_falls_back_to_tcp_within_one_dial_bud
     phone.uses_tcp_relay().await;
     host.uses_quic_relay().await;
 
+    // The quick TCP win is not enough to classify the network. Leave the
+    // black-holed QUIC probe its bounded candidate budget before checking the
+    // remembered fallback.
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
     net.udp_blocked(&phone, false);
     phone.restart_cloud_link().await;
     phone.uses_tcp_relay().await;

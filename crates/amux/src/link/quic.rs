@@ -20,6 +20,11 @@ use crate::trust::SharedTrustStore;
 const STREAM_ACCEPTED: u8 = 0;
 const CONTROL_QUEUE_CAPACITY: usize = 32;
 const DEVICE_SERVER_NAME: &str = "amux-device.local";
+// Quinn's first Initial PTO is about one second with its default initial RTT.
+// Two seconds lets one lost handshake packet retransmit without allowing one
+// black-holed DNS candidate to consume the cloud connection's whole dial.
+pub(crate) const RELAY_QUIC_HANDSHAKE_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(2);
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ConnectError {
@@ -33,9 +38,17 @@ pub(crate) enum ConnectError {
         #[source]
         source: io::Error,
     },
-    #[error("{host}:{port} resolved to no addresses")]
+    #[error("{host}:{port} resolved to no addresses usable by this QUIC endpoint")]
     #[allow(dead_code)]
     NoAddress { host: String, port: u16 },
+    #[error("could not inspect the QUIC endpoint's local address: {0}")]
+    EndpointAddress(#[source] io::Error),
+    #[error("QUIC connection to {host}:{port} failed for every usable address: {failures}")]
+    Candidates {
+        host: String,
+        port: u16,
+        failures: String,
+    },
     #[error("QUIC connection setup failed: {0}")]
     Setup(#[from] quinn::ConnectError),
     #[error("QUIC handshake failed: {0}")]
@@ -86,21 +99,59 @@ impl QuicCarrier {
         host: &str,
         port: u16,
     ) -> Result<Self, ConnectError> {
-        let addr = tokio::net::lookup_host((host, port))
+        let addrs = tokio::net::lookup_host((host, port))
             .await
             .map_err(|source| ConnectError::Resolve {
                 host: host.to_string(),
                 port,
                 source,
-            })?
-            .next()
-            .ok_or_else(|| ConnectError::NoAddress {
-                host: host.to_string(),
-                port,
             })?;
         let config = crate::transport::relay_quic_client_config()
             .map_err(|error| IdentityError::TlsConfig(error.to_string()))?;
-        Self::connect_relay_with_config(endpoint, addr, host, config).await
+        Self::connect_relay_candidates_with_config(endpoint, addrs, host, port, config).await
+    }
+
+    pub(crate) async fn connect_relay_candidates_with_config(
+        endpoint: &quinn::Endpoint,
+        addrs: impl IntoIterator<Item = SocketAddr>,
+        server_name: &str,
+        port: u16,
+        config: quinn::ClientConfig,
+    ) -> Result<Self, ConnectError> {
+        let local_addr = endpoint
+            .local_addr()
+            .map_err(ConnectError::EndpointAddress)?;
+        let mut failures = Vec::new();
+        let mut usable = false;
+
+        for addr in addrs
+            .into_iter()
+            .filter(|addr| addr.is_ipv4() == local_addr.is_ipv4())
+        {
+            usable = true;
+            match tokio::time::timeout(
+                RELAY_QUIC_HANDSHAKE_TIMEOUT,
+                Self::connect_relay_with_config(endpoint, addr, server_name, config.clone()),
+            )
+            .await
+            {
+                Ok(Ok(carrier)) => return Ok(carrier),
+                Ok(Err(error)) => failures.push(format!("{addr}: {error}")),
+                Err(_) => failures.push(format!("{addr}: handshake timed out")),
+            }
+        }
+
+        if !usable {
+            return Err(ConnectError::NoAddress {
+                host: server_name.to_string(),
+                port,
+            });
+        }
+        Err(ConnectError::Candidates {
+            host: server_name.to_string(),
+            port,
+            failures: failures.join("; "),
+        })
     }
 
     pub(crate) async fn connect_relay_with_config(
@@ -615,7 +666,7 @@ fn reset_stream_pair(
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use chrono::Utc;
     use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
@@ -703,6 +754,90 @@ mod tests {
             TrustStorePairingUpdate::Inserted
         );
         Arc::new(std::sync::RwLock::new(trust))
+    }
+
+    fn relay_test_configs() -> (quinn::ServerConfig, quinn::ClientConfig) {
+        let client_identity = DeviceIdentity::for_test(HostId::new_v4());
+        let server_identity = DeviceIdentity::for_test(HostId::new_v4());
+        let server_config = server_identity
+            .quic_server_config(trust_for(&client_identity))
+            .unwrap();
+        let client_config = client_identity
+            .quic_client_config_for_peer(trust_for(&server_identity), server_identity.host_id)
+            .unwrap();
+        (server_config, client_config)
+    }
+
+    #[tokio::test]
+    async fn relay_dial_skips_an_ipv6_result_for_an_ipv4_endpoint() {
+        let (server_config, client_config) = relay_test_configs();
+        let server_endpoint =
+            quinn::Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let server_addr = server_endpoint.local_addr().unwrap();
+        let client_endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
+        let ipv6_first = SocketAddr::new("::1".parse().unwrap(), server_addr.port());
+
+        let accept = async {
+            server_endpoint
+                .accept()
+                .await
+                .expect("server endpoint closed")
+                .await
+                .expect("server handshake failed")
+        };
+        let connect = QuicCarrier::connect_relay_candidates_with_config(
+            &client_endpoint,
+            [ipv6_first, server_addr],
+            DEVICE_SERVER_NAME,
+            server_addr.port(),
+            client_config,
+        );
+        let (server_connection, client) = tokio::join!(accept, connect);
+
+        client
+            .expect("IPv4 relay candidate was not tried")
+            .close(pb::LinkCloseReason::UserShutdown);
+        server_connection.close(0_u32.into(), b"test complete");
+    }
+
+    #[tokio::test]
+    async fn relay_dial_falls_through_a_bound_unresponsive_candidate() {
+        let (server_config, client_config) = relay_test_configs();
+        let server_endpoint =
+            quinn::Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let server_addr = server_endpoint.local_addr().unwrap();
+        let client_endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
+        let blackhole = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let blackhole_addr = blackhole.local_addr().unwrap();
+        let started = Instant::now();
+
+        let accept = async {
+            server_endpoint
+                .accept()
+                .await
+                .expect("server endpoint closed")
+                .await
+                .expect("server handshake failed")
+        };
+        let connect = tokio::time::timeout(
+            RELAY_QUIC_HANDSHAKE_TIMEOUT + Duration::from_secs(1),
+            QuicCarrier::connect_relay_candidates_with_config(
+                &client_endpoint,
+                [blackhole_addr, server_addr],
+                DEVICE_SERVER_NAME,
+                server_addr.port(),
+                client_config,
+            ),
+        );
+        let (server_connection, client) = tokio::join!(accept, connect);
+
+        let client = client
+            .expect("relay candidates exceeded their bounded dial budget")
+            .expect("working relay candidate was not tried");
+        assert!(started.elapsed() >= RELAY_QUIC_HANDSHAKE_TIMEOUT);
+        client.close(pb::LinkCloseReason::UserShutdown);
+        server_connection.close(0_u32.into(), b"test complete");
+        drop(blackhole);
     }
 
     fn preface(byte: u8) -> pb::StreamPreface {

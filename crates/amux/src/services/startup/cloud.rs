@@ -450,32 +450,15 @@ async fn select_cloud_carrier<Q, T>(
     tcp: T,
 ) -> Result<(Arc<dyn LinkCarrier>, RelayCarrier), String>
 where
-    Q: Future<Output = CloudDialResult>,
-    T: Future<Output = CloudDialResult>,
+    Q: Future<Output = CloudDialResult> + Send + 'static,
+    T: Future<Output = CloudDialResult> + Send,
 {
     if udp_blocked.holds(host) {
         tracing::debug!(host, "remembered UDP-blocked cloud host; dialing TCP only");
         return tcp.await.map(|carrier| (carrier, RelayCarrier::Tcp));
     }
 
-    let selected = race_cloud_carriers(fallback_delay, quic, tcp).await?;
-    match selected.1 {
-        RelayCarrier::Quic => udp_blocked.clear(host),
-        RelayCarrier::Tcp => udp_blocked.record(host),
-    }
-    Ok(selected)
-}
-
-async fn race_cloud_carriers<Q, T>(
-    fallback_delay: Duration,
-    quic: Q,
-    tcp: T,
-) -> Result<(Arc<dyn LinkCarrier>, RelayCarrier), String>
-where
-    Q: Future<Output = CloudDialResult>,
-    T: Future<Output = CloudDialResult>,
-{
-    tokio::pin!(quic);
+    let mut quic = Box::pin(quic);
     let tcp = async move {
         tokio::time::sleep(fallback_delay).await;
         tcp.await
@@ -488,23 +471,53 @@ where
     }
     let first = tokio::select! {
         biased;
-        result = &mut quic => First::Quic(result),
+        result = quic.as_mut() => First::Quic(result),
         result = &mut tcp => First::Tcp(result),
     };
 
     match first {
         First::Quic(Ok(carrier)) => {
             close_ready_loser(tcp.as_mut().now_or_never());
+            udp_blocked.clear(host);
             Ok((carrier, RelayCarrier::Quic))
         }
         First::Tcp(Ok(carrier)) => {
-            close_ready_loser(quic.as_mut().now_or_never());
+            match quic.as_mut().now_or_never() {
+                Some(Ok(late_quic)) => {
+                    late_quic.close(crate::protocol::wire::pb::LinkCloseReason::UserShutdown);
+                    udp_blocked.clear(host);
+                }
+                Some(Err(error)) => {
+                    tracing::debug!(%error, "cloud QUIC dial failed after all candidates");
+                    udp_blocked.record(host);
+                }
+                None => {
+                    let host = host.to_string();
+                    tokio::spawn(async move {
+                        match quic.await {
+                            Ok(late_quic) => {
+                                late_quic.close(
+                                    crate::protocol::wire::pb::LinkCloseReason::UserShutdown,
+                                );
+                                udp_blocked.clear(&host);
+                            }
+                            Err(error) => {
+                                tracing::debug!(%error, %host, "cloud QUIC probe failed after all candidates");
+                                udp_blocked.record(&host);
+                            }
+                        }
+                    });
+                }
+            }
             Ok((carrier, RelayCarrier::Tcp))
         }
         First::Quic(Err(quic_error)) => {
             tracing::debug!(error = %quic_error, "cloud QUIC dial failed; waiting for TCP");
             match tcp.await {
-                Ok(carrier) => Ok((carrier, RelayCarrier::Tcp)),
+                Ok(carrier) => {
+                    udp_blocked.record(host);
+                    Ok((carrier, RelayCarrier::Tcp))
+                }
                 Err(tcp_error) => Err(format!(
                     "QUIC failed: {quic_error}; TCP failed: {tcp_error}"
                 )),
@@ -513,7 +526,10 @@ where
         First::Tcp(Err(tcp_error)) => {
             tracing::debug!(error = %tcp_error, "cloud TCP dial failed; waiting for QUIC");
             match quic.await {
-                Ok(carrier) => Ok((carrier, RelayCarrier::Quic)),
+                Ok(carrier) => {
+                    udp_blocked.clear(host);
+                    Ok((carrier, RelayCarrier::Quic))
+                }
                 Err(quic_error) => Err(format!(
                     "QUIC failed: {quic_error}; TCP failed: {tcp_error}"
                 )),
@@ -562,10 +578,11 @@ async fn dial_test_cloud_carrier(
         TestCloudTransport::Tcp => return tcp.await.map(|carrier| (carrier, RelayCarrier::Tcp)),
     };
     let quic = async move {
-        QuicCarrier::connect_relay_with_config(
+        QuicCarrier::connect_relay_candidates_with_config(
             &quic_endpoint,
-            quic_addr,
+            [quic_addr],
             &server_name,
+            quic_addr.port(),
             client_config,
         )
         .await
@@ -933,7 +950,7 @@ mod tests {
         INITIAL_BACKOFF, MAX_BACKOFF, TCP_FALLBACK_DELAY, UDP_BLOCKED_MEMORY, UdpBlockedMemory,
         await_cloud_establishment, cloud_connection_error_from_fetch,
         cloud_connection_error_from_status, establish_cloud_link, jittered_backoff_with_samples,
-        next_backoff, race_cloud_carriers, should_reset_backoff_after_connection, sleep_or_stop,
+        next_backoff, select_cloud_carrier, should_reset_backoff_after_connection, sleep_or_stop,
     };
     use crate::auth::{AccessToken, AuthError, CredentialProvider};
     use crate::config::Config;
@@ -1019,7 +1036,10 @@ mod tests {
             MuxRole::Connector,
             CarrierKind::RelayTcp,
         ));
-        let (winner, carrier) = race_cloud_carriers(
+        let memory = Arc::new(UdpBlockedMemory::new(Duration::from_secs(10)));
+        let (winner, carrier) = select_cloud_carrier(
+            "relay.test",
+            memory.clone(),
             Duration::ZERO,
             std::future::ready(Ok(quic)),
             std::future::ready(Ok(tcp)),
@@ -1029,6 +1049,44 @@ mod tests {
 
         assert_eq!(carrier, RelayCarrier::Quic);
         assert_eq!(winner.kind(), CarrierKind::RelayQuic);
+        assert!(!memory.holds("relay.test"));
+    }
+
+    #[tokio::test]
+    async fn tcp_winner_is_not_remembered_until_the_complete_quic_probe_fails() {
+        let memory = Arc::new(UdpBlockedMemory::new(Duration::from_secs(10)));
+        let (probe_tx, probe_rx) = oneshot::channel();
+        let quic = async move {
+            probe_rx.await.unwrap();
+            Err("all QUIC candidates failed".to_string())
+        };
+        let (tcp_io, _tcp_peer) = tokio::io::duplex(64);
+        let tcp: Arc<dyn LinkCarrier> = Arc::new(MuxCarrier::new(
+            tcp_io,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ));
+
+        let (_, carrier) = select_cloud_carrier(
+            "relay.test",
+            memory.clone(),
+            Duration::ZERO,
+            quic,
+            std::future::ready(Ok(tcp)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(carrier, RelayCarrier::Tcp);
+        assert!(!memory.holds("relay.test"));
+
+        probe_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !memory.holds("relay.test") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("failed QUIC probe was not remembered");
     }
 
     #[tokio::test]
