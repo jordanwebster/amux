@@ -8849,3 +8849,9 @@ listener bound to all interfaces now expands its ephemeral port across the
 host's interface addresses before publishing discovery. The wildcard addresses
 `0.0.0.0` and `[::]` therefore cannot reach found-host inventories, pairing
 candidates, or direct-link dialing; QR generation uses the same expansion.
+
+2026-09-11 — **Cloud QR pairing is proven without a direct escape hatch.** The
+relay pairing chapter now gives both peers cloud-only topology and verifies the
+responder's QR contains no LAN addresses before pairing. The resulting trusted
+link is asserted to use the cloud route, so the chapter fails if QR pairing can
+no longer traverse the relay.

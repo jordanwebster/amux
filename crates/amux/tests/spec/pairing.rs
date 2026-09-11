@@ -168,6 +168,7 @@ async fn qr_pairing_through_the_cloud() {
     let net = TestNet::builder()
         .cloud()
         .daemon("desktop")
+        .cloud_only()
         .daemon("phone")
         .cloud_only()
         .start()
@@ -176,6 +177,10 @@ async fn qr_pairing_through_the_cloud() {
     phone.sees(&desktop).await;
 
     let qr = desktop.start_qr_pairing().await;
+    assert!(
+        qr.addrs.is_empty(),
+        "a cloud-only responder must not put a direct route in its QR"
+    );
     phone
         .pair(&desktop)
         .with_qr(&qr)
@@ -184,6 +189,7 @@ async fn qr_pairing_through_the_cloud() {
 
     phone.trusts(&desktop).await;
     desktop.trusts(&phone).await;
+    phone.connects_to(&desktop).via_cloud().await;
     phone.can_call(&desktop).await;
     desktop.can_call(&phone).await;
     desktop.pair_mode_ends().await; // the one-shot secret is consumed
