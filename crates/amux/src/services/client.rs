@@ -5273,27 +5273,23 @@ mod tests {
         qr_request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
-        let error =
+        let response =
             ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), qr_request)
                 .await
-                .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
-        assert!(error.message().contains("LAN listener"));
-        assert!(!service.pair_mode.is_active());
+                .unwrap()
+                .into_inner();
+        assert!(response.addrs.is_empty());
+        assert!(service.pair_mode.is_active());
 
-        let mut lan_request = tonic::Request::new(wire::StartPairingRequest {
-            mode: wire::start_pairing_request::Mode::Pin as i32,
-            ttl_seconds: None,
-            demo: None,
-        });
-        lan_request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-        let error =
-            ProfileAdmin::rpc_start_pairing(&ProfileAdmin::for_test(service.clone()), lan_request)
-                .await
-                .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        let mut cancel_request = tonic::Request::new(wire::CancelPairingRequest {});
+        cancel_request
+            .extensions_mut()
+            .insert(BoxedGrpcConnectInfo {
+                auth: BoxedGrpcAuth::LocalTrusted,
+            });
+        ProfileAdmin::rpc_cancel_pairing(&ProfileAdmin::for_test(service.clone()), cancel_request)
+            .await
+            .unwrap();
         assert!(!service.pair_mode.is_active());
 
         {

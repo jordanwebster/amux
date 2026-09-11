@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::pin::Pin;
 
 use futures_util::{Stream, stream};
@@ -451,15 +452,23 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
         &self,
         request: Request<wire::ProfileRequest>,
     ) -> Rpc<wire::ListPairingCandidatesResponse> {
+        let profile_id = profile_id(&request.into_inner().profile_id)?;
+        let installation_hosts = self
+            .installation
+            .profiles()
+            .into_iter()
+            .map(|profile| profile.host_id)
+            .collect::<HashSet<_>>();
         let admin = self
             .installation
-            .admin_service(profile_id(&request.into_inner().profile_id)?)
+            .admin_service(profile_id)
             .await
             .map_err(installation_error)?;
         let candidates = admin
             .list_pairing_candidates()
             .await
-            .iter()
+            .into_iter()
+            .filter(|candidate| !installation_hosts.contains(&candidate.host.id))
             .map(|candidate| wire::PairingCandidate {
                 host: Some(crate::services::client::host_entry_to_wire(&candidate.host)),
                 via: match candidate.via {

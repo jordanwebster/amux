@@ -8829,3 +8829,17 @@ or stopping a profile sends a withdrawal. Relay TCP configuration remains
 separate and now has an adjacent UDP port setting for the later QUIC listener;
 the test network shares one scripted discovery bus and can announce or withdraw
 hosts explicitly.
+
+2026-09-11 — **Pairing windows can open without a LAN listener.** Starting a
+pairing window with LAN listening disabled now has explicit regression coverage:
+the window arms with no direct addresses, preserving cloud-only pairing and QR
+creation independent of listener state. Listening profiles still return their
+expanded listener addresses, and invalid host names are rejected before the
+window arms.
+
+2026-09-11 — **Nearby-host lists omit profiles from the same installation.**
+Each listening profile remains discoverable to other devices, including devices
+signed into another account, while the installation front door filters all of
+its own profile identities from pairing candidates. A multi-profile desktop no
+longer offers its personal, work, or spare identities to one another as nearby
+hosts.
