@@ -8914,3 +8914,13 @@ explicit slower audit can measure them without making them eligible for
 deletion. Focused tests cover refusal, live lease accounting, cancellation,
 inactive reclamation, and symbolic-link rejection, and a wrapped model test
 passes against the real checkout output.
+
+2026-09-12 — **Retention has a reproducible concurrent-worktree workload.** A
+declared wt recipe creates three detached disposable wt trees, directs their
+Cargo writes into independently owned nested targets, alternates a behavior-
+preserving model function edit, and starts the same focused build/test in all
+three trees for ten cycles. It records task overlap, allocated bytes after each
+cycle, a forced coherent reclamation halfway through, post-rebuild size spread,
+cancellation lease cleanup, and one-byte-budget refusal before removing only
+the trees it created. Wt's automatically seeded parent targets remain unowned
+and excluded from the experiment.

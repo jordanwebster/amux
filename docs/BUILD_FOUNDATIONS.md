@@ -624,6 +624,14 @@ requesting equivalents. Source audit: wt 0.3.0 and its local README/cookbook.
 | High, new capability | Explain task decisions and artifact provenance in structured output | A no-op explains reused dependencies; a changed SDK/header forces the correct action; failure cannot reuse a stale success receipt. |
 | Conditional | Declared task inputs/outputs with content validity and local result reuse for pure orchestration steps | Same inputs in a second tree reuse packaging/codegen; changing an input, declared environment value or tool identity invalidates; effectful tasks never skip. |
 
+The retention workload also exposed a smaller lifecycle gap in wt 0.3.0. A
+detached tree created with `--no-build` still has the repository's declared
+tree-bound daemon resource, although no daemon instance exists. Removing that
+tree reports the absent resource probe as `DESTROY_FAILED`; the caller must use
+`--keep-orphans` and then target the stale record with `wt prune --records`.
+Wt should treat a never-created tree resource as already absent, or provide one
+removal operation that safely forgets that record after the tree disappears.
+
 The last capability is a scope decision for wt. Do not grow a compiler dependency
 scanner, remote executor, sandbox, or general CAS protocol inside it. If amux
 needs cross-language action caching, delegate that to Bazel or native build

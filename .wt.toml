@@ -81,6 +81,14 @@ run = 'python3 scripts/output-budget.py prune "$@"'
 [task.test-output-budget]
 run = "timeout 30 python3 scripts/tests/output_budget.py"
 
+# Used only by the controlled three-worktree retention workload. Its private
+# target path and aggregate pool are supplied by that runner.
+[task.retention-cycle]
+run = "scripts/with-output-budget.sh 536870912 retention-cycle timeout 180 cargo test -p model --lib"
+
+[task.retention-workload]
+run = 'timeout 1200 python3 scripts/output-workload.py "$@"'
+
 [task.build-benchmark]
 run = 'python3 scripts/build-foundations-run.py benchmark "$@"'
 
