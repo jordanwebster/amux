@@ -979,18 +979,20 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     rows = seen.get("rows", [])
     journey.expect("transcript.prose" in rows and "transcript.code" in rows,
                    f"the agent's prose did not arrive as markdown: {rows}")
-    everyKind = [
+    # A turn boundary changes composer and follow-the-tail behavior but has no
+    # visual row in the selected conversation design, so it is deliberately
+    # absent from this inventory of things a reader can see and photograph.
+    everyVisibleKind = [
         "transcript.prompt", "transcript.prose", "transcript.code",
         "transcript.exploration", "transcript.edit", "transcript.wrote", "transcript.ran",
         "transcript.output", "transcript.tool", "transcript.denied", "transcript.failed",
         "transcript.interrupted", "transcript.provider-error", "transcript.subagent",
         "transcript.agent-message", "transcript.exit", "transcript.unreadable",
-        "transcript.compaction", "transcript.turn-end",
+        "transcript.compaction",
     ]
     told_apart = ["transcript.denied", "transcript.failed", "transcript.interrupted",
                   "transcript.provider-error", "transcript.subagent", "transcript.wrote",
-                  "transcript.exit", "transcript.unreadable", "transcript.compaction",
-                  "transcript.turn-end"]
+                  "transcript.exit", "transcript.unreadable", "transcript.compaction"]
     missing = [kind for kind in told_apart if kind not in rows]
     journey.expect(not missing, f"the transcript never drew {', '.join(missing)}: {rows}")
     journey.say(f"the provider played every kind of step it has and the transcript drew "
@@ -1005,7 +1007,7 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
                    f"the walk down the feed never had {seen.get('unreadable')} anywhere a "
                    f"reader could read them")
     photographed = {kind for capture in held for kind in capture["shows"]}
-    unphotographed = [kind for kind in everyKind if kind not in photographed]
+    unphotographed = [kind for kind in everyVisibleKind if kind not in photographed]
     journey.expect(not unphotographed,
                    f"no retained picture holds {', '.join(unphotographed)} where it can be "
                    f"read")

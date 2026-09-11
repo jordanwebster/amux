@@ -5,7 +5,6 @@ import SwiftUI
 /// Everything a conversation can be done *to* rather than said to.
 public enum OverflowChoice: Equatable, Sendable {
     case rename
-    case mute
     /// The agent's address on the fleet, on the clipboard, so it can be
     /// written to from somewhere else — another agent, a script, a terminal.
     ///
@@ -27,14 +26,11 @@ struct OverflowMenu: View {
     @Environment(\.design) private var design
     /// What the agent answers to elsewhere: "refactor-auth/studio".
     let address: String
-    let muted: Bool
     let choose: @MainActor (OverflowChoice) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             row(.rename, glyph: "pencil", label: "Rename")
-            Divider().overlay(design.hairline.color).padding(.leading, 49)
-            row(.mute, glyph: muted ? "bell" : "bell.slash", label: muted ? "Unmute" : "Mute")
             Divider().overlay(design.hairline.color).padding(.leading, 49)
             row(.copyAddress(address), glyph: "at", label: "Copy Address", detail: address)
             Divider().overlay(design.hairline.color).padding(.leading, 56)
@@ -74,12 +70,14 @@ struct OverflowMenu: View {
             .padding(.horizontal, 15)
             .padding(.vertical, 12)
             .contentShape(Rectangle())
+            .thumbTarget(y: 1)
         }
         .buttonStyle(.plain)
         .accessibilityLabel([label, detail].compactMap { $0 }.joined(separator: ", "))
         .identified(
             "overflow.\(label.lowercased().replacingOccurrences(of: " ", with: "-"))",
             label: label, value: detail ?? "")
+        .reclaimingThumbTarget(y: 1)
     }
 }
 

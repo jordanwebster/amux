@@ -12,7 +12,6 @@ public enum AccountsAction: Equatable, Sendable {
     case delete(AccountId)
     /// Open what this account has bought.
     case subscription
-    case notifications
     case appearance(Appearance?)
     case identity
     case support
@@ -322,10 +321,6 @@ public struct YouScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: "This phone")
             VStack(spacing: 0) {
-                row("Notifications", value: "When an agent needs you", id: "notifications") {
-                    actions(.notifications)
-                }
-                rule(inset: 14)
                 appearanceRow
                 if let identity {
                     rule(inset: 14)

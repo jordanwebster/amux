@@ -55,12 +55,12 @@ final class TranscriptRowsTests: XCTestCase {
         ].transcriptRows()
 
         XCTAssertEqual(rows.count, 1)
-        guard case .exploration(let reads, let searches, let last, let inside) = rows[0].kind else {
+        guard case .exploration(let reads, let searches, let anchor, let inside) = rows[0].kind else {
             return XCTFail("expected a folded run, got \(rows[0].kind)")
         }
         XCTAssertEqual(reads, 2)
         XCTAssertEqual(searches, 1)
-        XCTAssertEqual(last, "INVALID_PIN")
+        XCTAssertEqual(anchor, "a.rs")
         XCTAssertEqual(inside.map(\.verb), ["Read", "Read", "Searched"])
     }
 

@@ -90,6 +90,12 @@ public enum Sessions {
         ],
         permission: .object(["provider": .string("claude"), "mode": .string("default")]))
 
+    public static var representativeProvider: ProviderFacts {
+        var facts = claudeProvider
+        facts.effort = "high"
+        return facts
+    }
+
     public static let codexProvider = ProviderFacts(
         model: "gpt-5.2",
         effort: "medium",
@@ -207,6 +213,26 @@ public enum Sessions {
         "document": .null,
     ]))
 
+    /// The source design.s matched-content plan, carried through the same parser.
+    public static let representativePlan = Ask(layer: .claudePty, body: .object([
+        "id": .int(30), "seq": .int(30),
+        "tool_use_id": .string("toolu_30"),
+        "session_ask_id": .string("ask-30"),
+        "kind": .object([
+            "ask": .string("permission"),
+            "tool_name": .string("ExitPlanMode"),
+            "invocation": .object([
+                "tool": .string("plan"),
+                "plan_title": .string("Collapse the pairing failures onto one message"),
+                "plan": .string(representativePlanMarkdown),
+                "plan_file_path": .null,
+            ]),
+            "suggestions": .array([]),
+        ]),
+        "state": .object(["state": .string("pending")]),
+        "document": .null,
+    ]))
+
     /// The same request in Codex's words, with Codex's own choices.
     public static let codexPermission = Ask(layer: .codex, body: .object([
         "seq": .int(9),
@@ -295,5 +321,39 @@ public enum Sessions {
 
         - Touch the daemon-side mapping
         - Change the retry budget, which looks wrong but is a separate change
+        """
+
+    public static let representativePlanMarkdown = """
+        The client maps gRPC statuses onto distinct strings in three places. The protocol \
+        refuses to distinguish them, so the client must not either. This is a small change \
+        with a wide blast radius, because the strings are asserted on in specs.
+
+        ## Approach
+
+        Replace the match in `amux-ui/src/pairing.rs` with a single arm, then delete what \
+        becomes unreachable. The daemon-side mapping stays: it is allowed to know which \
+        failure happened.
+
+        1. Read every call site that maps a gRPC status to a string — 6 files
+        2. Replace the match in `amux-ui/src/pairing.rs` with one arm
+        3. Delete the three error constants nothing else reads
+        4. Update the two spec tests that assert on the old strings
+
+        ## Risk
+
+        The relay's own reconnect path reads `INVALID_PIN` by name. I will grep for it \
+        before deleting anything, and if it is load-bearing I will come back rather than guess.
+
+        ```text
+        crates/amux-ui/src/pairing.rs   -14 +9
+        crates/amux-ui/src/errors.rs     -8 +0
+        crates/amux-ui/tests/pairing.rs  -6 +4
+        ```
+
+        ## What I will not do
+
+        - Touch the daemon-side mapping
+        - Change the retry budget, which looks wrong but is a separate change
+        - Rename anything, so the diff stays about one thing
         """
 }

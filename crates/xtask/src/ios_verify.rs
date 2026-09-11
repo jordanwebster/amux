@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::error::Error;
+use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 
@@ -118,10 +119,33 @@ fn report_missing_baseline(machine: &PerfMachine) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+fn is_package_metadata(key: &OsStr) -> bool {
+    key.to_str().is_some_and(|key| {
+        key == "CARGO_MANIFEST_DIR" || key == "CARGO_MANIFEST_PATH" || key.starts_with("CARGO_PKG_")
+    })
+}
+
+fn remove_package_metadata(command: &mut Command, keys: impl Iterator<Item = OsString>) {
+    for key in keys.filter(|key| is_package_metadata(key)) {
+        command.env_remove(key);
+    }
+}
+
+/// Cargo supplies the runner's package metadata when launching it. Passing
+/// those values to a fresh Cargo invocation changes build-script fingerprints
+/// relative to running the same recipe directly, rebuilding valid dependencies.
+/// Keep target, profile, toolchain and user configuration; only the outer
+/// package's metadata is unrelated to the child build.
+fn recipe_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    remove_package_metadata(&mut command, std::env::vars_os().map(|(key, _)| key));
+    command
+}
+
 /// Asks the measurement script which machine this is. The script owns the
 /// answer; nothing here reads the measurement document.
 fn perf_machine() -> Result<PerfMachine, String> {
-    let output = Command::new("timeout")
+    let output = recipe_command("timeout")
         .args(["120", "python3", "-B", "scripts/ios-perf.py", "--machine"])
         .output()
         .map_err(|error| error.to_string())?;
@@ -147,7 +171,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         eprintln!("Running wt run {recipe}");
         // Recipes own their individual deadlines. The outer deadline also
         // bounds dependencies without cutting off a longer recipe early.
-        let mut child = Command::new("timeout")
+        let mut child = recipe_command("timeout")
             .args(["12600", "wt", "run", recipe])
             .stdout(Stdio::piped())
             .spawn()?;
@@ -175,6 +199,64 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ios_verify_removes_outer_package_metadata_but_preserves_build_configuration() {
+        let removed = [
+            "CARGO_MANIFEST_DIR",
+            "CARGO_MANIFEST_PATH",
+            "CARGO_PKG_NAME",
+            "CARGO_PKG_VERSION",
+            "CARGO_PKG_VERSION_MAJOR",
+            "CARGO_PKG_AUTHORS",
+            "CARGO_PKG_RUST_VERSION",
+            "CARGO_PKG_README",
+        ];
+        let retained = [
+            "CARGO",
+            "CARGO_HOME",
+            "CARGO_TARGET_DIR",
+            "CARGO_BUILD_TARGET",
+            "CARGO_PROFILE_RELEASE_LTO",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_TARGET_AARCH64_APPLE_IOS_LINKER",
+            "CARGO_NET_OFFLINE",
+            "RUSTFLAGS",
+            "RUSTUP_TOOLCHAIN",
+            "DEVELOPER_DIR",
+            "PATH",
+            "AMUX_CONFIG",
+        ];
+        let mut command = Command::new("unused");
+        for key in removed.into_iter().chain(retained) {
+            command.env(key, "unchanged");
+        }
+        remove_package_metadata(
+            &mut command,
+            removed.into_iter().chain(retained).map(OsString::from),
+        );
+        let configured: std::collections::BTreeMap<_, _> = command.get_envs().collect();
+        for key in removed {
+            assert_eq!(configured[OsStr::new(key)], None, "{key}");
+        }
+        for key in retained {
+            assert_eq!(
+                configured[OsStr::new(key)],
+                Some(OsStr::new("unchanged")),
+                "{key}"
+            );
+        }
+        // The normal constructor sanitizes the inherited environment too,
+        // not just explicit Command::env overrides used above.
+        let inherited = recipe_command("unused");
+        for (key, _) in std::env::vars_os().filter(|(key, _)| is_package_metadata(key)) {
+            assert!(
+                inherited
+                    .get_envs()
+                    .any(|(name, value)| name == key && value.is_none())
+            );
+        }
+    }
 
     fn config() -> String {
         RECIPES

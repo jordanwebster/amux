@@ -28,9 +28,9 @@ public struct TranscriptRow: Identifiable, Equatable, Sendable {
         case prose(markdown: String, open: Bool)
         /// `~ thought for 8s`, and whether the content was withheld.
         case thinking(seconds: Int?, redacted: Bool)
-        /// A run of reads and searches, folded to its counts and the last
-        /// thing it touched. The rows themselves are kept so the fold opens.
-        case exploration(reads: Int, searches: Int, last: String, inside: [Detail])
+        /// A run of reads and searches, folded to its counts and where the
+        /// exploration began. The rows themselves are kept so the fold opens.
+        case exploration(reads: Int, searches: Int, anchor: String, inside: [Detail])
         /// A file that changed, as its path and the arithmetic.
         case edit(path: String, added: Int, removed: Int)
         /// A file written whole, with what the layer said about it.
@@ -157,7 +157,7 @@ extension Array where Element == FeedEntry {
                 id: first.id, layer: first.layer,
                 kind: .exploration(
                     reads: reads, searches: searches,
-                    last: run[run.count - 1].subject, inside: details)))
+                    anchor: first.subject, inside: details)))
             run.removeAll(keepingCapacity: true)
         }
 
@@ -423,7 +423,7 @@ extension FeedEntry {
         switch kind {
         case "user_reject": "You said no"
         case "user_abort": "You interrupted it"
-        case "permission_denied": "Outside what it may touch"
+        case "permission_denied": "Outside the working tree"
         case .some(let other): other.replacingOccurrences(of: "_", with: " ")
         case .none: nil
         }
@@ -439,7 +439,7 @@ extension FeedEntry {
         // "more" without a number rather than inventing one; the count is only
         // claimed where every line is actually in hand.
         return TranscriptRow.Output(
-            head: shown, hidden: truncated ? -1 : max(0, lines.count - 2))
+            head: shown, hidden: facts["hidden"]?.intValue ?? (truncated ? -1 : max(0, lines.count - 2)))
     }
 
     private static func duration(_ value: JSONValue?) -> String? {

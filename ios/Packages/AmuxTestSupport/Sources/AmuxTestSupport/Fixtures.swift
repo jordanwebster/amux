@@ -9,7 +9,7 @@ import Foundation
 /// a send that was refused, an upload that failed, and the whole thing at an
 /// accessibility type size.
 public enum Fixtures {
-    public static let all: [Fixture] = catalogue + states
+    public static let all: [Fixture] = catalogue + states + reviewCandidates
 
     /// What the cloud says when it turns a sign-in away. Written once because
     /// two states read it: what the scripted cloud throws, and what the screen
@@ -23,6 +23,11 @@ public enum Fixtures {
 
     public static func named(_ id: String) -> Fixture? {
         all.first { $0.id == id }
+    }
+
+    public static func isOpenable(_ screen: Screen, state: String) -> Bool {
+        isBuilt(screen, state: state)
+            || reviewCandidates.contains { $0.screen == screen && $0.id == state }
     }
 
     /// One state this build can be asked for: a screen and what fills it.
@@ -473,6 +478,26 @@ public enum Fixtures {
         accounts[0].entitlement = .active(grant: .purchased(.appStore), renews: Scenario.now.addingTimeInterval(11 * 24 * 60 * 60))
         return accounts
     }()
+
+    /// Matched-content states used before any new baseline is accepted.
+    /// They are openable through the Debug door but absent from `built`, so
+    /// catalogue sweeps do not mistake review candidates for approved screens.
+    public static let reviewCandidates: [Fixture] = [
+        Fixture(id: "representative-home", screen: .home) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+        },
+        Fixture(id: "representative-run", screen: .run) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts,
+                        entries: Transcript.representativeTurn,
+                        session: Sessions.claude(provider: Sessions.representativeProvider))
+        },
+        Fixture(id: "representative-plan", screen: .plan) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts,
+                        entries: Transcript.representativePlanContext,
+                        session: Sessions.claude(
+                            gate: .needsYou, asks: [Sessions.representativePlan]))
+        },
+    ]
 
     /// States a screenshot of a good morning never shows.
     public static let states: [Fixture] = [

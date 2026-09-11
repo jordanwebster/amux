@@ -20,7 +20,7 @@ struct AskPanelView: View {
     let answer: @MainActor (AskDecision) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 11) {
             switch panel.kind {
             case .permission(let permission):
                 PermissionAsk(permission: permission, answer: answer)
@@ -49,8 +49,8 @@ private struct AskHead: View {
     let title: String
 
     var body: some View {
-        HStack(spacing: 10) {
-            NeedsYouMark(glyph: glyph, size: 22)
+        HStack(spacing: 8) {
+            NeedsYouMark(glyph: glyph, size: 18)
             Text(title)
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
@@ -77,11 +77,11 @@ private struct Verbatim: View {
             .designFont(literal ? .mono : .body, design)
             .foregroundStyle(design.ink.color)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
-                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(design.sunken.color)
             }
             .accessibilityLabel(text)
@@ -117,7 +117,7 @@ private struct PermissionAsk: View {
             Explain(unanswerable)
                 .identified("ask.unanswerable", label: unanswerable)
         } else {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Button { answer(.allowOnce) } label: {
                     ActionLabel("Allow", kind: .primary, fill: true)
                 }
@@ -214,6 +214,12 @@ private struct PlanAsk: View {
 
     var body: some View {
         AskHead(glyph: "list.bullet", title: "Plan")
+        if let title = plan.title {
+            Text(title)
+                .designFont(.bodyEmphasis, design)
+                .foregroundStyle(design.ink.color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         ScrollView {
             Prose(markdown: plan.markdown, open: false)
         }
@@ -224,23 +230,23 @@ private struct PlanAsk: View {
             // The fade says there is more without drawing a rule that would
             // read as the end of the plan.
             LinearGradient(
-                stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.86),
+                stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.55),
                         .init(color: .black.opacity(0), location: 1)],
                 startPoint: .top, endPoint: .bottom)
         }
         .identified("ask.plan", value: open ? "open" : "folded")
         Button { open.toggle() } label: {
             Capsule()
-                .fill(design.hairline.color)
-                .frame(width: 40, height: 5)
-                .frame(maxWidth: .infinity, minHeight: 22)
-                .thumbTarget(y: 12)
+                .fill(design.inkFaint.color.opacity(0.5))
+                .frame(width: 34, height: 4)
+                .frame(maxWidth: .infinity, minHeight: 4)
+                .thumbTarget(y: 20)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(open ? "Fold Plan" : "Read Whole Plan")
         .identified("ask.plan.more", label: open ? "Fold Plan" : "Read Whole Plan")
-        .reclaimingThumbTarget(y: 12)
-        HStack(spacing: 10) {
+        .reclaimingThumbTarget(y: 20)
+        HStack(spacing: 8) {
             Button { answer(.approvePlan) } label: {
                 ActionLabel("Approve", kind: .primary, fill: true)
             }

@@ -4,6 +4,88 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-12 — **The representative iPhone flow is now a direct production port.**
+Home, conversation and the plan card use the selected source layout and
+components through the real shell, stores, router and native editor. Shared tab
+chrome, home sections and folding, transcript rows and rail, floating subject
+chrome, composer and bottom panel were replaced together; end-of-turn remains
+semantic state but is not rendered as a separator because the selected design
+does not draw one. The source-style status strip now expands to a Started
+section, so child asks remain reachable; the fleet supplies human names while
+identities remain routing keys. Production code contains no `DesignPort`
+migration vocabulary. Debug-only alternatives and scenarios are absent from
+Release.
+
+An equivalent native batch builds alternatives together and uses one installed
+app session. Two ideas took 20.88s and four took 21.25s, versus 19.57–20.14s and
+20.27–21.16s in the isolated source app: 0.74–1.31s and 0.09–0.98s slower,
+respectively. The four-idea batch includes a structural alternative. A fresh
+gallery pairs matched home/run/plan source and production images in both
+appearances, retaining originals and displaying sRGB-normalized derivatives;
+no golden was changed. The production shell necessarily uses the real Dynamic
+Island and safe areas. Its real editable composer also shortens the transcript
+viewport compared with the source mockup's overlaid static composer, so the
+same conversation begins higher on screen. The unchanged comparator detected
+deliberate spacing, type and glass mistakes.
+
+Optimized performance passes all unchanged budgets and drift gates: 444ms
+median cold first frame, 42.9% median streaming main-thread CPU, 71.1MB median
+for a thousand-row conversation, zero idle commits and 241ms median foreground
+recovery. One cold launch reached 472ms while the other four were 435–448ms;
+the unchanged 460ms gate judges the five-launch median. Accessibility passes
+668 controls across 63 states with every app-drawn target at least 44 points.
+Home, writing, ask and conversation live journeys pass. The conversation check
+exercises every one of the 18 visible row families, drawer and tab navigation,
+changes review, reconnect/retry behavior, refusal delivery, long-history
+scrolling and preservation of draft, overlay and reading position. Reopening a
+120-row conversation exposed a main-thread stall; the transcript now keeps its
+lazy feed directly under the scroll view, draws rail connectors without an
+infinite layout proposal and keys scroll state to the selected agent. Release
+inspection passes after removing the explicitly excluded Mute and Notifications
+rows and their dormant production state rather than waiving the gate.
+
+2026-09-11 — **The direct design port has started at the production shell.**
+Home, conversation and plan fixtures now enter the real shell instead of
+constructing isolated screens; fresh navigation state prevents preceding
+scenarios leaking their route. Three app-hosted scenario tests pass, including
+a rendered-home assertion for the shell and all three tabs. The tab chrome's
+presentation is ported from the design source, removing independent fixed
+symbol/text heights while keeping routing and accessibility semantics.
+This is the first foundation, not a visually accepted flow; no golden changed.
+The verifier now strips its outer Cargo package metadata before child commands,
+preserving build/toolchain configuration; its six focused library tests pass.
+Full direct/comprehensive/direct cache-reuse qualification remains outstanding.
+An isolated design-loop benchmark measured two ideas/four images in 19.6–20.1s
+and four ideas/eight images in 20.3–21.2s, including build and publication to the
+original harness. The warm 68-image catalogue took 35.4s. These gutter/title
+alternatives establish a batch reference, not a structural-edit or golden
+fidelity guarantee. The source worktree and its decisions remain untouched.
+Twelve first-slice display captures matched their later references; all six
+repeated-state comparisons matched with the existing tolerance. Runtime budgets
+are unchanged and have not been requalified by these Debug capture checks.
+The final recipe suite passes 117 tests; iOS source/copy lint, formatting and
+diff checks pass. Release inspection confirms the new scenario types are absent
+but fails overall on pre-existing Mute/Notifications rows in unchanged feature
+sources. That exclusion conflict remains visible, not waived or called a pass.
+
+2026-09-11 — **iOS iteration and capture have an opt-in measurement tool.**
+`wt run ios-explore` retains recipe timing and failures, compares existing
+window/display capture paths, and writes a local screenshot contact sheet.
+It can build before capture or measure an already-built app independently.
+The diagnostic changes no production views, goldens, performance budgets or
+verification policy. State queries and binary fingerprints accompany new
+captures; report scenarios explicitly reset omitted environment defaults.
+Repetition exposed text-size leakage from an accessibility fixture into replay,
+and a focus request that did not display a software keyboard. Neither is counted
+as capture-method qualification. `wt run test-recipes` passes (114 tests), and
+`wt fmt` passes. An unchanged-app comprehensive verification attempt reached
+the golden gate in 26 minutes and stopped on 104/124 stored-baseline differences;
+the remaining stages were not run. No baseline was reapproved to make it pass.
+An actual title-edit-to-gallery example took 26.5 seconds with the existing
+capture policy. A selected startup journey passed in 22.4 seconds with warm
+inputs. Cargo diagnostics identified leaked verifier package metadata as a
+dependency invalidation trigger; that boundary fix remains separate work.
+
 2026-09-11 — **Source icon checks read device PNG headers correctly.** The
 icon test walks PNG chunks to IHDR, matching the release scope audit instead
 of assuming a fixed offset. Tests cover plain and CgBI-prefixed headers,

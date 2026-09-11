@@ -34,9 +34,11 @@ public struct ReportPrompt: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
             .frosted(Capsule(), wash: 0.88)
+            .thumbTarget(y: 2)
         }
         .buttonStyle(.plain)
         .identified("report.prompt", label: "Report")
+        .reclaimingThumbTarget(y: 2)
     }
 }
 

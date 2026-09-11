@@ -43,6 +43,7 @@ struct TranscriptFeed: View {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 TranscriptRowView(
                     row: row,
+                    railBegins: index > 0 && rows[index - 1].onRail,
                     railContinues: index + 1 < rows.count && rows[index + 1].onRail)
                     // Where this entry begins, measured against the page
                     // rather than against the feed.
@@ -64,6 +65,7 @@ struct TranscriptFeed: View {
             }
         }
         .padding(.horizontal, design.metrics.gutter)
+        .padding(.top, 4)
     }
 }
 
@@ -152,9 +154,11 @@ struct TranscriptContainer<Content: View>: View {
         // it onto whichever row is nearest.
         ScrollViewReader { entries in
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                content
-            }
+            // Keep the lazy feed directly under the scroll view. A regular
+            // stack around it asks for the whole history's size when a long
+            // conversation is reopened, defeating lazy construction and
+            // blocking the main thread while every markdown row is measured.
+            content
             // One gap under the last row and no more. The composer inset
             // already holds the feed clear of the box, so anything further
             // would open every conversation on a band of empty ground where
@@ -315,13 +319,14 @@ private struct TranscriptReach: Equatable {
 private struct TranscriptRowView: View {
     @Environment(\.design) private var design
     let row: TranscriptRow
+    let railBegins: Bool
     let railContinues: Bool
 
     var body: some View {
         switch row.kind {
         case .prompt(let text):
             PromptSurface(text: text)
-                .padding(.vertical, design.metrics.feedGap / 2)
+                .padding(.bottom, 15)
         case .prose(let markdown, let open):
             // An agent can attach things too, through its `attach` tool, and
             // they are elements in the message text exactly as yours are — so
@@ -329,16 +334,19 @@ private struct TranscriptRowView: View {
             AttachedText(text: markdown) { said in
                 Prose(markdown: said, open: open)
             }
-                .padding(.vertical, design.metrics.feedGap / 2)
+                .padding(.bottom, 15)
         case .turnEnd, .thinking:
             EmptyView()
         case .compaction(let before, let after):
             FeedRule(
                 kind: "compaction", glyph: "arrow.down.right.and.arrow.up.left",
                 label: Self.compacted(before, after))
-                .padding(.vertical, design.metrics.feedGap / 2)
+                .padding(.bottom, 15)
         default:
-            Rail(glyph: glyph, accented: accented, continues: railContinues) {
+            Rail(
+                glyph: glyph, accented: accented,
+                begins: railBegins, continues: railContinues
+            ) {
                 content
             }
         }
@@ -358,8 +366,8 @@ private struct TranscriptRowView: View {
     @ViewBuilder
     private var content: some View {
         switch row.kind {
-        case .exploration(let reads, let searches, let last, let inside):
-            ExplorationRow(reads: reads, searches: searches, last: last, inside: inside)
+        case .exploration(let reads, let searches, let anchor, let inside):
+            ExplorationRow(reads: reads, searches: searches, anchor: anchor, inside: inside)
         case .edit(let path, let added, let removed):
             EditRow(path: path, added: added, removed: removed)
         case .wrote(let path, let meta):
@@ -451,34 +459,44 @@ private struct Rail<Content: View>: View {
     @Environment(\.design) private var design
     let glyph: String
     let accented: Bool
+    let begins: Bool
     let continues: Bool
     @ViewBuilder let content: Content
 
     /// Wide enough for the widest glyph in the vocabulary and no wider: the
     /// column is a margin, and every point of it is width the prose beside it
     /// does not get.
-    private let column: CGFloat = 14
+    private let column: CGFloat = 18
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
-            VStack(spacing: 0) {
-                Image(systemName: glyph)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(accented ? design.accent.color : design.inkFaint.color)
-                    .frame(width: column, height: 18)
-                // The line is drawn per row rather than once behind the whole
-                // feed, so a lazy list that has not built the rows below still
-                // draws a rail that stops where the work does.
-                Rectangle()
-                    .fill(design.hairline.color)
-                    .frame(width: design.metrics.hairline)
-                    .frame(maxHeight: .infinity)
-                    .opacity(continues ? 1 : 0)
-            }
-            .frame(width: column)
+            Image(systemName: glyph)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(accented ? design.accent.color : design.inkFaint.color)
+                .frame(width: column, height: column)
+                .background { Circle().fill(design.ground.color) }
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 4)
+                .padding(.bottom, continues ? 11 : 15)
+        }
+        // A background takes the row's measured height without proposing one
+        // back to it. That matters in a lazy transcript: an infinite-height
+        // child inside a fixed row makes reopening a long history lay out the
+        // entire feed. The path joins the previous and next marks while the
+        // ground-coloured disc above knocks the line out behind this glyph.
+        .background(alignment: .topLeading) {
+            if begins || continues {
+                GeometryReader { geometry in
+                    Path { path in
+                        let middle = column / 2
+                        path.move(to: CGPoint(x: middle, y: begins ? 0 : middle))
+                        path.addLine(to: CGPoint(
+                            x: middle,
+                            y: continues ? geometry.size.height : middle))
+                    }
+                    .stroke(design.hairline.color, lineWidth: design.metrics.hairline)
+                }
+            }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -757,13 +775,13 @@ private struct FeedRule: View {
 /// A run of reads and searches, folded to its counts.
 ///
 /// The counts are the point: what a reader wants from six looks in a row is
-/// "it looked around, here is the last place it landed", not six lines. It
+/// "it looked around, here is where it started", not six lines. It
 /// opens, because the paths matter once you are asking a question about them.
 private struct ExplorationRow: View {
     @Environment(\.design) private var design
     let reads: Int
     let searches: Int
-    let last: String
+    let anchor: String
     let inside: [TranscriptRow.Detail]
     @State private var open = false
 
@@ -775,7 +793,7 @@ private struct ExplorationRow: View {
                         .designFont(.body, design)
                         .foregroundStyle(design.ink.color)
                         .fixedSize()
-                    Text(last)
+                    Text(anchor)
                         .designFont(.monoSmall, design)
                         .foregroundStyle(design.inkFaint.color)
                         .lineLimit(1)
@@ -788,9 +806,9 @@ private struct ExplorationRow: View {
                 .thumbTarget(y: 13)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(counts), \(last)")
+            .accessibilityLabel("\(counts), \(anchor)")
             .identified(
-                "transcript.exploration", label: "\(counts), \(last)",
+                "transcript.exploration", label: "\(counts), \(anchor)",
                 value: open ? "open" : "folded")
             .reclaimingThumbTarget(y: 13)
             if open {
@@ -940,7 +958,10 @@ private struct RanRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ActivityRow(kind: "ran", verb: "Ran", subject: command, mono: true, meta: meta)
-            if let output { OutputPreview(output: output) }
+            if let output {
+                OutputPreview(output: output)
+                    .padding(.leading, 27)
+            }
         }
     }
 }

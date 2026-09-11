@@ -39,9 +39,11 @@ struct SlashRows: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
             .contentShape(Rectangle())
+            .thumbTarget(y: 4)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("/\(command.name), \(command.origin)")
         .identified("slash.\(command.name)", label: "/\(command.name)", value: command.origin)
+        .reclaimingThumbTarget(y: 4)
     }
 }

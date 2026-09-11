@@ -64,14 +64,16 @@ public enum Transcript {
     }
 
     public static func ran(
-        _ id: Int, seq: Int, command: String, output: String, truncated: Bool = false
+        _ id: Int, seq: Int, command: String, output: String, truncated: Bool = false,
+        meta: String? = nil, hidden: Int? = nil
     ) -> FeedEntry {
         tool(id, seq, name: "Bash",
              invocation: .object(["tool": .string("bash"), "command": .string(command),
-                                  "description": .null]),
+                                  "description": meta.map(JSONValue.string) ?? .null]),
              outcome: .object([
                 "outcome": .string("success"),
                 "facts": .object(["facts": .string("output"), "head": .string(output),
+                                  "hidden": hidden.map(JSONValue.int) ?? .null,
                                   "truncated": .bool(truncated)]),
              ]))
     }
@@ -105,11 +107,13 @@ public enum Transcript {
 
     /// A command the agent asked to run and was refused. The denial is a typed
     /// fact from the transcript, never a guess made from an error string.
-    public static func denied(_ id: Int, seq: Int, command: String) -> FeedEntry {
+    public static func denied(
+        _ id: Int, seq: Int, command: String, kind: String = "user_reject"
+    ) -> FeedEntry {
         tool(id, seq, name: "Bash",
              invocation: .object(["tool": .string("bash"), "command": .string(command),
                                   "description": .null]),
-             outcome: .object(["outcome": .string("denied"), "kind": .string("user_reject")]))
+             outcome: .object(["outcome": .string("denied"), "kind": .string(kind)]))
     }
 
     public static func failed(_ id: Int, seq: Int, command: String, message: String) -> FeedEntry {

@@ -75,6 +75,21 @@ public struct Design: Sendable, Equatable {
         public let rowGap: CGFloat
         public let feedGap: CGFloat
         public let hairline: CGFloat
+
+        public init(
+            cardRadius: CGFloat, controlRadius: CGFloat, floatRadius: CGFloat,
+            rowPadding: CGFloat, gutter: CGFloat, rowGap: CGFloat,
+            feedGap: CGFloat, hairline: CGFloat
+        ) {
+            self.cardRadius = cardRadius
+            self.controlRadius = controlRadius
+            self.floatRadius = floatRadius
+            self.rowPadding = rowPadding
+            self.gutter = gutter
+            self.rowGap = rowGap
+            self.feedGap = feedGap
+            self.hairline = hairline
+        }
     }
 
     /// How a raised thing separates itself from what is behind it.
@@ -107,6 +122,17 @@ public struct Design: Sendable, Equatable {
         public let titleSize: CGFloat
         public let bodySize: CGFloat
         public let tightTracking: CGFloat
+
+        public init(
+            identifierIsMono: Bool, titleWeight: Font.Weight, titleSize: CGFloat,
+            bodySize: CGFloat, tightTracking: CGFloat
+        ) {
+            self.identifierIsMono = identifierIsMono
+            self.titleWeight = titleWeight
+            self.titleSize = titleSize
+            self.bodySize = bodySize
+            self.tightTracking = tightTracking
+        }
     }
 
     /// The app's one skin: type-led, rules instead of containers, and mono

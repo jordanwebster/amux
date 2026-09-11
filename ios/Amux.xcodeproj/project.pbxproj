@@ -14,9 +14,11 @@
 		0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31777DF351ACE50870B1C6A5 /* LaunchTests.swift */; };
 		0F3AC52183DBFF753C52B8CF /* States.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66609895E99B406673EEADA3 /* States.swift */; };
 		108379821A1408D28DB67B7C /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */; };
+		1599214176F52201938E5128 /* DesignVariant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 068E67CC97AD687C742CD825 /* DesignVariant.swift */; };
 		1A2A6C51813425F3286B3CB6 /* DoorScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979C7C4DC969977B66A65802 /* DoorScreens.swift */; };
 		1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B661BE2402BC7D004818A5 /* Workloads.swift */; };
 		1F71DC755174214F60A5E1B2 /* AccessibilityAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */; };
+		25543F13A602DAF36EED1D80 /* ScenarioShellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD21CD9D48E1CF568C0633C /* ScenarioShellTests.swift */; };
 		2F0347A6EA4A7731721003EE /* Budgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001566356B6645AB41CE39B /* Budgets.swift */; };
 		344D301838279573239BD80D /* Judge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7316CFA811C55B9CEEB041C5 /* Judge.swift */; };
 		37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */; };
@@ -42,6 +44,7 @@
 		8F140E2B8F22F4D06C725763 /* ReportFreeze.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */; };
 		9222A460D7D6704965F130AF /* VisualInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD55A5CE02759F024BF86B2D /* VisualInteractionTests.swift */; };
 		9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE1CD31C989C5DC52354A7AE /* WritingTests.swift */; };
+		9B72360D2DD856243C1AED49 /* ScenarioShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D6ABD3CC3348B9AB8762BA /* ScenarioShell.swift */; };
 		9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */; };
 		9EFF05E4F3B472A8E7481411 /* Report.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25AE3ED34EF70375D2BC299C /* Report.swift */; };
 		A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */; };
@@ -66,6 +69,7 @@
 		EEEEF4C1DDA205961E7286E0 /* DebugCopy.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */; };
 		EF9507B8D384D5EAE754EFB4 /* AmuxShell in Frameworks */ = {isa = PBXBuildFile; productRef = 62675EA602BEE702494C2D3C /* AmuxShell */; };
 		F073F2C3564C00E3DE4850C2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 75B8EB7D0AC92E0E6CB50314 /* Assets.xcassets */; };
+		F462B3B792079FFC1F05BD7B /* RepresentativeFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33D5BB0F34644987899D6D91 /* RepresentativeFixtures.swift */; };
 		F58309647B1BADB6407F626C /* DebugReports.swift in Sources */ = {isa = PBXBuildFile; fileRef = F285BF2881D10503D4252DF7 /* DebugReports.swift */; };
 		F840D37348D0746EA906D110 /* Harness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E50ACE0C6E84D336B13332 /* Harness.swift */; };
 		F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BAD30E79F5FE66C97691B57 /* RootView.swift */; };
@@ -98,6 +102,7 @@
 /* Begin PBXFileReference section */
 		00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsTests.swift; sourceTree = "<group>"; };
 		03CB11BE8186B9B3BB3A02C2 /* ReportTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportTools.swift; sourceTree = "<group>"; };
+		068E67CC97AD687C742CD825 /* DesignVariant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignVariant.swift; sourceTree = "<group>"; };
 		0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JourneyCase.swift; sourceTree = "<group>"; };
 		11108752C34ADBDF5089E372 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
 		1E66BD0F085353353B013CB1 /* AmuxCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxCore; path = Packages/AmuxCore; sourceTree = SOURCE_ROOT; };
@@ -110,6 +115,7 @@
 		2DE7599AB005A8225918A3EF /* Fixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixture.swift; sourceTree = "<group>"; };
 		31777DF351ACE50870B1C6A5 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
 		33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorRecording.swift; sourceTree = "<group>"; };
+		33D5BB0F34644987899D6D91 /* RepresentativeFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepresentativeFixtures.swift; sourceTree = "<group>"; };
 		35ED0CE4A533E8878FBD1675 /* AmuxFeatures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxFeatures; path = Packages/AmuxFeatures; sourceTree = SOURCE_ROOT; };
 		383300BBC8CEEE1F13228DF4 /* ProductionStartupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionStartupTests.swift; sourceTree = "<group>"; };
 		456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAuditTests.swift; sourceTree = "<group>"; };
@@ -131,6 +137,7 @@
 		7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSessionsTests.swift; sourceTree = "<group>"; };
 		7BF809F88F54D264E26E1F0B /* DrawerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerTests.swift; sourceTree = "<group>"; };
 		7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scenario.swift; sourceTree = "<group>"; };
+		88D6ABD3CC3348B9AB8762BA /* ScenarioShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenarioShell.swift; sourceTree = "<group>"; };
 		8959E3A72299B8152BE86967 /* AmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8A10C4D43E54FEABB391277E /* PerfRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfRun.swift; sourceTree = "<group>"; };
 		8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsLifecycleTests.swift; sourceTree = "<group>"; };
@@ -155,6 +162,7 @@
 		D5E1FE40B447768ED3E301C2 /* Instruments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Instruments.swift; sourceTree = "<group>"; };
 		D8269D1B95602732F33C12F2 /* AmuxDesign */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxDesign; path = Packages/AmuxDesign; sourceTree = SOURCE_ROOT; };
 		DCD0B049D76F4DAF62A8B46E /* AskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskTests.swift; sourceTree = "<group>"; };
+		DDD21CD9D48E1CF568C0633C /* ScenarioShellTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenarioShellTests.swift; sourceTree = "<group>"; };
 		DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DebugCopy.xcstrings; sourceTree = "<group>"; };
 		DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxPerformanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E2D4F1F96B2AE8306CD589E6 /* AmuxShell */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxShell; path = Packages/AmuxShell; sourceTree = SOURCE_ROOT; };
@@ -278,6 +286,7 @@
 			children = (
 				A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */,
 				F285BF2881D10503D4252DF7 /* DebugReports.swift */,
+				068E67CC97AD687C742CD825 /* DesignVariant.swift */,
 				5CBBB924EED36840518D0268 /* DoorHost.swift */,
 				33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */,
 				979C7C4DC969977B66A65802 /* DoorScreens.swift */,
@@ -285,6 +294,7 @@
 				A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */,
 				2D67FA937AF3288820FA3464 /* Perturbation.swift */,
 				7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */,
+				88D6ABD3CC3348B9AB8762BA /* ScenarioShell.swift */,
 				E8CE78DF417F5614935595CA /* VisibleTree.swift */,
 			);
 			path = Debug;
@@ -304,6 +314,7 @@
 			children = (
 				C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */,
 				F786377F0001A4D4CC64B7DE /* DoorClearTests.swift */,
+				DDD21CD9D48E1CF568C0633C /* ScenarioShellTests.swift */,
 			);
 			path = AmuxAppTests;
 			sourceTree = "<group>";
@@ -357,6 +368,7 @@
 				25AE3ED34EF70375D2BC299C /* Report.swift */,
 				B1186A0565AF5053EC2C320C /* ReportAssembly.swift */,
 				C038F1CC378B4A9539628D19 /* Reporting.swift */,
+				33D5BB0F34644987899D6D91 /* RepresentativeFixtures.swift */,
 				7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */,
 				C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */,
 				CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */,
@@ -561,6 +573,7 @@
 			files = (
 				EBAE1EC4295F9EBBA0AF2D66 /* CloudSessionStoreTests.swift in Sources */,
 				7DD03CB11455B60BDC9037F5 /* DoorClearTests.swift in Sources */,
+				25543F13A602DAF36EED1D80 /* ScenarioShellTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -574,6 +587,7 @@
 				07F4FE52C75D22617CDE6BB9 /* Composition.swift in Sources */,
 				F58309647B1BADB6407F626C /* DebugReports.swift in Sources */,
 				63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */,
+				1599214176F52201938E5128 /* DesignVariant.swift in Sources */,
 				48C852D18B47B3DA431FDA05 /* Door.swift in Sources */,
 				AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */,
 				03A652855597531ADB49E8BC /* DoorRecording.swift in Sources */,
@@ -591,8 +605,10 @@
 				8F140E2B8F22F4D06C725763 /* ReportFreeze.swift in Sources */,
 				CAD420C705F7B9D3741E4C03 /* ReportTools.swift in Sources */,
 				67582381464B6DAA9FEB4458 /* Reporting.swift in Sources */,
+				F462B3B792079FFC1F05BD7B /* RepresentativeFixtures.swift in Sources */,
 				F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */,
 				9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */,
+				9B72360D2DD856243C1AED49 /* ScenarioShell.swift in Sources */,
 				05DFFA86753B995BB850DE4C /* ScriptedCloud.swift in Sources */,
 				CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */,
 				E2141E4F9E984ECACF441955 /* Sessions.swift in Sources */,

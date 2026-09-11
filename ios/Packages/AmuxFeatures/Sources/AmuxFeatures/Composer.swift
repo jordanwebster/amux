@@ -29,11 +29,18 @@ struct ComposerBox: View {
     let actions: @MainActor (ConversationAction) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             if let activity = state.activity {
                 WorkingLine(activity: activity)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 11)
+                    .padding(.bottom, 9)
+                MovingSegment()
             }
             field
+                .padding(.horizontal, 14)
+                .padding(.top, 13)
+                .padding(.bottom, 4)
             if let sentence = dictation.sentence {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(sentence)
@@ -51,11 +58,14 @@ struct ComposerBox: View {
                         .identified("composer.dictation.settings", label: "Open Settings")
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.top, 4)
             }
             footer
+                .padding(.horizontal, 9)
+                .padding(.bottom, 9)
+                .padding(.top, 3)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .identified("composer", label: placeholder, value: spoken)
@@ -242,19 +252,18 @@ private struct WorkingLine: View {
     let activity: ComposerActivity
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Text(activity.name)
-                    .designFont(.body, design)
-                    .foregroundStyle(design.inkMuted.color)
-                    .lineLimit(1)
-                if let elapsed = activity.elapsed {
-                    Text(elapsed)
-                        .designFont(.caption, design)
-                        .foregroundStyle(design.inkFaint.color)
-                }
+        HStack(spacing: 7) {
+            Text(activity.name)
+                .designFont(.detail, design)
+                .foregroundStyle(design.inkMuted.color)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let elapsed = activity.elapsed {
+                Text(elapsed)
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
             }
-            MovingSegment()
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)

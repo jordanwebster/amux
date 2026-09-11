@@ -16,7 +16,7 @@ DERIVED = Path("target/ios/DerivedData")
 APP = DERIVED / "Build/Products/Release-iphonesimulator/Amux.app"
 DEBUG_SYMBOLS = (
     "DoorServer", "DoorHost", "DoorScreens", "DoorCapture", "DoorFrames",
-    "DoorRecording", "DrivenRoot", "VisibleTree", "AmuxTestSupport",
+    "DoorRecording", "DrivenRoot", "ScenarioShell", "ScenarioScene", "VisibleTree", "AmuxTestSupport",
     "ReportCapture", "ReportFreeze", "ReportAssembly", "ReportStore", "ReportScreen",
     "FreezeOnScreenshot", "DebugReports", "FrozenFrame", "ColdStartProbe", "PerfRun",
     "Workloads", "BudgetTable",

@@ -41,16 +41,16 @@ public struct ConversationFacts: Equatable, Sendable {
 
     /// Nothing is true, so there is no strip.
     ///
-    /// The children are deliberately not enough on their own. They are already
-    /// named in full in the chrome, one chip each, with the one that cannot
-    /// continue coloured there; the number in the strip is a summary that
-    /// rides on the task row, and a strip that existed only to repeat a count
-    /// would be a second answer to a question already answered above the feed.
-    public var isEmpty: Bool { tasks == nil && queued == nil }
+    /// Started agents count here because the strip is their way into the
+    /// expanded list. Without it a child waiting for an answer would be a fact
+    /// in the store with no reachable control on screen.
+    public var isEmpty: Bool { tasks == nil && children == nil && queued == nil }
 
     /// Whether there is a list to grow into. A strip with one line of task in
     /// it and nothing behind that line has nothing to open.
-    public var opens: Bool { !(tasks?.items.isEmpty ?? true) }
+    public var opens: Bool {
+        !(tasks?.items.isEmpty ?? true) || children != nil
+    }
 
     /// What the count reads: "3/7". The provider's own two numbers, in the
     /// order it reports them, and never recomputed from the items — a list
@@ -70,8 +70,8 @@ public struct ConversationFacts: Equatable, Sendable {
 extension ConversationFacts {
     /// The facts a conversation can state about its own turn.
     ///
-    /// The children are counted off the same roster the chrome draws, so the
-    /// number in the strip and the chips above the feed can never disagree.
+    /// The children are counted from the same roster the expanded strip draws,
+    /// so its summary and Started rows can never disagree.
     @MainActor
     public init(_ store: ConversationStore) {
         let roster = store.children()

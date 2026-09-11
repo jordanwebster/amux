@@ -42,6 +42,9 @@ final class DoorHost {
     /// The design every driven screen is drawn with. The app's own, unless a
     /// driver has asked for one token to be moved.
     private(set) var design: Design = .app
+    /// The layout alternative selected by the debug design-round driver.
+    /// This state and every reader of it are absent from Release.
+    private(set) var designVariant: DesignVariant = .production
     private(set) var typeSize: DynamicTypeSize = .large
     /// Whether to draw as the system does for a reader who has asked for less
     /// motion, and for one who has asked for less transparency. Both are the
@@ -251,6 +254,13 @@ final class DoorHost {
             }
             design = moved
             return .ack
+        case .designVariant(let name):
+            guard let variant = DesignVariant(name: name) else {
+                return .error("no design variant named \(name ?? "nil")")
+            }
+            designVariant = variant
+            design = variant.design
+            return .ack
         case .dynamicType(let name):
             guard let size = DynamicTypeSize(doorName: name) else {
                 return .error("no type size named \(name)")
@@ -337,7 +347,7 @@ final class DoorHost {
         // looked up: a state nobody has written yet is unimplemented, and a
         // golden run over the whole manifest needs to hear that word rather
         // than a complaint about a missing fixture.
-        guard Fixtures.isBuilt(screen, state: wanted) else {
+        guard Fixtures.isOpenable(screen, state: wanted) else {
             return .error("unimplemented: \(wanted)")
         }
         guard let fixture = Fixtures.named(wanted) else { return .error("no state named \(wanted)") }

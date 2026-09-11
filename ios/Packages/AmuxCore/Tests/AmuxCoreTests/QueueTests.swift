@@ -149,15 +149,15 @@ final class QueueTests: XCTestCase {
         XCTAssertTrue(ConversationFacts(working(bundle)).isEmpty)
     }
 
-    /// The children alone are not a strip. They are named in full in the
-    /// chrome, one chip each, and a strip that existed only to repeat their
-    /// number would be a second answer to a question already answered.
-    func testStartedAgentsAloneAreNotEnoughToDrawAStrip() {
+    /// Started agents are enough to draw and open the strip: its expanded
+    /// Started section is how somebody reaches a child's conversation.
+    func testStartedAgentsMakeTheStripReachable() {
         let bundle = StoreBundle(account: AccountId("test"))
         let store = working(
             bundle, family: [FamilyMember(agent: AgentId(UUID()), depth: 1, needs: nil)])
         let facts = ConversationFacts(store)
-        XCTAssertTrue(facts.isEmpty)
+        XCTAssertFalse(facts.isEmpty)
+        XCTAssertTrue(facts.opens)
         XCTAssertEqual(facts.children?.count, 1)
     }
 

@@ -126,12 +126,14 @@ struct SettingsCard: View {
             .padding(.horizontal, 15)
             .padding(.vertical, 11)
             .contentShape(Rectangle())
+            .thumbTarget(y: 2)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(model.name)
         .accessibilityAddTraits(chosen ? [.isSelected] : [])
         .identified(
             "settings.model.\(model.id)", label: model.name, value: chosen ? "current" : "")
+        .reclaimingThumbTarget(y: 2)
     }
 }
 

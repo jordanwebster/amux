@@ -1,6 +1,78 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Outside the working tree": {
+      "comment": "English app copy. Used in TranscriptRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Outside the working tree"
+          }
+        }
+      }
+    },
+    "Show Agents": {
+      "comment": "English app copy. Used in AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Agents"
+          }
+        }
+      }
+    },
+    "STARTED": {
+      "comment": "English app copy. Used in Facts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "STARTED"
+          }
+        }
+      }
+    },
+    "in this session": {
+      "comment": "English app copy. Used in Facts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in this session"
+          }
+        }
+      }
+    },
+    "running": {
+      "comment": "English app copy. Used in Facts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "running"
+          }
+        }
+      }
+    },
+    "in provider": {
+      "comment": "English app copy. Used in Facts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in provider"
+          }
+        }
+      }
+    },
     "The mobile runtime stopped": {
       "comment": "Fallback diagnostic for a stopped runtime that supplied no detail. Used by reports and the driving door.",
       "extractionState": "manual",
@@ -5749,30 +5821,6 @@
         }
       }
     },
-    "Notifications": {
-      "comment": "Label for the notification settings row on the You screen.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Notifications"
-          }
-        }
-      }
-    },
-    "When an agent needs you": {
-      "comment": "Value explaining when notifications are sent on the You screen.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "When an agent needs you"
-          }
-        }
-      }
-    },
     "Show": {
       "comment": "Accessibility title for the Agents home filter picker.",
       "extractionState": "manual",
@@ -5865,30 +5913,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ line%@ in"
-          }
-        }
-      }
-    },
-    "Unmute": {
-      "comment": "Per-agent overflow action that enables notifications.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unmute"
-          }
-        }
-      }
-    },
-    "Mute": {
-      "comment": "Per-agent overflow action that disables notifications.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Mute"
           }
         }
       }

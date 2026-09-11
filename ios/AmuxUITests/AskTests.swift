@@ -225,6 +225,8 @@ final class AskTests: JourneyCase {
             "tool": "Edit", "invocation": ["tool": "edit", "file_path": "/work/spec/wire.md"],
             "scoped_directories": ["/work/spec"],
         ]]]])
+        waitFor(app, "facts.grow", "the child count offered no way into the Started list")
+        press(app, "facts.grow")
         var child: Said?
         for _ in 0..<20 where child == nil {
             child = try declared(runner).first {
@@ -273,6 +275,8 @@ final class AskTests: JourneyCase {
         // MARK: A child that runs inside the session, which is nowhere to go.
         try control.ask(["AgentPlay": ["agent": "mind-the-gap",
                                        "steps": [["ChildStarted": ["name": "scout"]]]]])
+        waitFor(app, "facts.grow", "the provider child count offered no Started list")
+        press(app, "facts.grow")
         // A subagent is named by what it is as well as what it is called —
         // the provider reports both and two of the same name doing different
         // work are two rows — so the chip is found by what it starts with
@@ -336,10 +340,14 @@ final class AskTests: JourneyCase {
         record["place"] = kept
         photograph(app, "ask-place-after-child")
 
-        // Coming back keeps the compact review entry in the header.
+        // The drawer replaces the Agents home while a conversation is open.
+        // Leave through its Hosts link and return through the ordinary Agents
+        // tab; that tab preserves the conversation stack by design.
+        press(app, "conversation.drawer")
+        waitFor(app, "drawer.hosts", "the drawer offered no route to Hosts")
+        press(app, "drawer.hosts")
+        waitFor(app, "hosts", "leaving the conversation did not reach Hosts")
         pressTab(app, "Agents")
-        waitFor(app, "home", "leaving the conversation did not return to the home")
-        press(app, "home.row.\(runner.agent)")
         waitFor(app, "conversation.changes",
                 "coming back to a finished turn lost the way to review its changes")
         press(app, "conversation.changes")

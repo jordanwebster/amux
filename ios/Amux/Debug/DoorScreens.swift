@@ -34,7 +34,9 @@ enum DoorScreens {
         // The gated states are the same screen: what is empty and why is an
         // account fact the screen already reads, not a screen of its own.
         case .home, .homeQuiet, .firstRun, .firstRunPaid:
-            AgentsHome(model: host.stores.fleet, accounts: host.accounts) { _ in }
+            ScenarioShell(screen: screen, host: host)
+        case .run, .plan:
+            ScenarioShell(screen: screen, host: host)
         // The switcher is the home with its account list out. Drawn over the
         // real screen rather than on bare ground, because what it covers and
         // how the list behind it dims are facts about the screen underneath.
@@ -112,7 +114,7 @@ enum DoorScreens {
                     agent: Scenario.focus, in: host.stores.fleet),
                 showing: host.overlay) { _ in }
                 .expandedPeerMessages()
-        case .run, .runLive, .reviewCta, .working, .queued, .exited, .typing, .offline:
+        case .runLive, .reviewCta, .working, .queued, .exited, .typing, .offline:
             Conversation(
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(
@@ -137,7 +139,7 @@ enum DoorScreens {
         // so permission, question and plan are one screen with a different
         // thing waiting on it. The Codex approval opens on a Codex agent,
         // which is why the agent is not always the same one.
-        case .askPermission, .askQuestion, .plan:
+        case .askPermission, .askQuestion:
             let agent = host.stores.conversations.keys.contains(Scenario.focus)
                 ? Scenario.focus : Scenario.agentId("spec-suite")
             Conversation(
@@ -256,6 +258,7 @@ struct DrivenRoot<Content: View>: View {
             }
         }
         .environment(\.design, host.design)
+        .modifier(DesignVariantLayout(variant: host.designVariant))
         // A screen the door is showing is being photographed, not used: what
         // blinks on a timer of its own draws its resting state so two runs
         // take the same picture.

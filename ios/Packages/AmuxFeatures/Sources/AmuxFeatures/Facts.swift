@@ -10,12 +10,13 @@ import SwiftUI
 /// it is a fact about the running turn, so it stays bright behind anything
 /// that is open and there is nothing on it to dismiss.
 ///
-/// Two rows are drawn today, in this order, because that is the order they are
-/// read in: what is being done and how far through it is, then the message
-/// waiting to go. What the agent is doing *this second* is deliberately not
-/// repeated here — it is the line at the top of the composer, one plate below,
-/// and the same sentence twice with the second copy truncated is the version a
-/// person would try to read.
+/// The summary rows are drawn in reading order: what is being done and how far
+/// through it is, then the message waiting to go. When expanded, task detail
+/// and children started by this conversation sit above that stable summary.
+/// What the agent is doing *this second* is deliberately not repeated here —
+/// it is the line at the top of the composer, one plate below, and the same
+/// sentence twice with the second copy truncated is the version a person would
+/// try to read.
 ///
 /// Opened, the strip grows in place. The summary line stays exactly where it
 /// was and the list appears above it, so what was tapped does not move out
@@ -23,25 +24,42 @@ import SwiftUI
 struct FactsStrip: View {
     @Environment(\.design) private var design
     let facts: ConversationFacts
+    /// The same roster whose count is in `facts`, retained in full for the
+    /// selected design's expanded Started section.
+    let children: [ChildRow]
     /// Whether the task list is showing.
     let open: Bool
     /// Show or hide the list. Absent from the strip when there is no list to
     /// grow into.
     let grow: @MainActor () -> Void
+    /// Reach an amux child. Provider-internal work has nowhere to open and is
+    /// explained in place instead.
+    let openChild: @MainActor (ChildRow) -> Void
     /// Take the held message back into the field.
     let unqueue: @MainActor () -> Void
+    @State private var explaining: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if open, let tasks = facts.tasks, !tasks.items.isEmpty {
-                TaskListPanel(tasks: tasks)
-                Divider().overlay(design.hairline.color)
+            if open {
+                if let tasks = facts.tasks, !tasks.items.isEmpty {
+                    TaskListPanel(tasks: tasks)
+                    Divider().overlay(design.hairline.color)
+                }
+                if !children.isEmpty {
+                    StartedPanel(
+                        children: children, explaining: $explaining,
+                        openChild: openChild)
+                    Divider().overlay(design.hairline.color)
+                }
             }
-            if facts.progress != nil {
+            if facts.progress != nil || facts.children != nil {
                 taskRow
             }
             if let queued = facts.queued {
-                if facts.progress != nil { Divider().overlay(design.hairline.color) }
+                if facts.progress != nil || facts.children != nil {
+                    Divider().overlay(design.hairline.color)
+                }
                 queuedRow(queued)
             }
         }
@@ -149,6 +167,90 @@ struct FactsStrip: View {
         .identified(
             "facts.queued", label: queued.text, value: queued.spoken,
             enabled: queued.changeable)
+    }
+}
+
+/// The selected design's expanded Started section.
+///
+/// An amux child opens its own conversation. Provider-internal work stays in
+/// this conversation, so pressing it explains that boundary instead of acting
+/// like a broken navigation control.
+private struct StartedPanel: View {
+    @Environment(\.design) private var design
+    let children: [ChildRow]
+    @Binding var explaining: String?
+    let openChild: @MainActor (ChildRow) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("STARTED")
+                .designFont(.sectionTitle, design)
+                .foregroundStyle(design.inkFaint.color)
+            VStack(spacing: 11) {
+                ForEach(children) { child in
+                    row(child)
+                    if explaining == child.id, let sentence = child.unopenable {
+                        Text(sentence)
+                            .designFont(.caption, design)
+                            .foregroundStyle(design.inkMuted.color)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .identified("conversation.child.unopenable", value: sentence)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .accessibilityElement(children: .contain)
+        .identified("conversation.children", value: "\(children.count)")
+    }
+
+    private func row(_ child: ChildRow) -> some View {
+        Button {
+            if child.openable != nil {
+                explaining = nil
+                openChild(child)
+            } else {
+                explaining = explaining == child.id ? nil : child.id
+            }
+        } label: {
+            HStack(spacing: 10) {
+                AttentionMark(attention: attention(child), size: 15)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(child.name)
+                        .designFont(.identifier, design)
+                        .foregroundStyle(design.ink.color)
+                    Text(child.state ?? (child.openable == nil ? "in this session" : "running"))
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkFaint.color)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if child.openable != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(design.inkFaint.color)
+                } else {
+                    Text("in provider")
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkFaint.color)
+                }
+            }
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(spoken(child))
+        .identified("conversation.child.\(child.id)", label: spoken(child))
+    }
+
+    private func attention(_ child: ChildRow) -> Attention {
+        child.needs.map { .needsYou(why: $0) } ?? .working
+    }
+
+    private func spoken(_ child: ChildRow) -> String {
+        [child.name, child.state, child.openable == nil ? "no conversation" : nil]
+            .compactMap { $0 }.joined(separator: ", ")
     }
 }
 

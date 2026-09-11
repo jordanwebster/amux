@@ -108,6 +108,90 @@ without a network and establish appearance, not protocol correctness.
 `connect` instead supplies the test relay, token and user for real journeys.
 The request and reply types live in `AmuxTestSupport/Door.swift`.
 
+Home (including quiet and gated home states), `run`, and `plan` fixtures enter
+the actual `Shell` with fixture-filled stores. Home therefore includes the
+production tab bar; conversation and plan use its real conversation route.
+Reopening creates fresh navigation state. Other catalogue screens still use
+isolated feature views until migrated. Scenario routing has no network loader,
+and shell-level account service actions are inert; captures do not establish
+successful remote interactions. Use live/scripted journeys for those outcomes.
+
+## Measuring iteration and capture
+
+To benchmark a batch of ideas against the design app's original review loop:
+
+```sh
+wt run ios-design-benchmark -- /absolute/path/to/appdesigns
+```
+
+This copies the design inputs into a fresh ignored directory under
+`target/ios/design-benchmarks/`, uses a separate simulator bundle identifier,
+and runs the original compiler/capture/harness path. It does not change the
+source checkout's captures or decisions, or integrate that harness into the
+production app. Two and four gutter/title-size ideas compile and capture in
+one launch, in both appearances. Repeats change source before rebuilding.
+The full catalogue is measured separately. `results.json` records timings,
+source/image hashes and toolchain/device information; per-run logs and images
+are retained. Reported duration ends when harness image/index files are ready;
+human idea-authoring and browser paint time are not included. The source's
+window renderer is a preview benchmark, not golden-capture qualification.
+
+To measure the same two/four-idea loop in the production app, compile all Debug
+alternatives together and capture them through one installed shell session:
+
+```sh
+wt run ios-native-design-benchmark -- batch --ideas 2
+wt run ios-native-design-benchmark -- batch --ideas 4
+```
+
+The four-idea batch includes a structural context band as well as gutter and
+type alternatives. These alternatives and the driving protocol are Debug-only;
+Release has one UI. Each run writes original PNGs, hashes, separate build,
+install, launch, capture and gallery timings, a manifest and a simple local
+`index.html` under `target/ios/native-design-benchmarks/`. It never updates a
+golden. Use `review` to pair matched home, conversation and plan content from
+the selected source with the production shell in light/dark; original images
+are retained and the displayed derivatives are normalized to sRGB. Use
+`detection` to prove the unchanged comparator notices deliberate spacing, type
+and glass mistakes.
+
+`ios-explore` is an opt-in diagnostic, not a verification gate. It times existing
+recipes and compares capture methods without updating expected images:
+
+```sh
+wt run ios-explore -- observe ios-verify
+wt run ios-explore -- cycle --rounds 1 --methods current --screens home
+wt run ios-explore -- summarize target/ios/explorations/<run>
+wt run ios-explore -- timings target/ios/explorations/<run>
+```
+
+Each run writes monotonic events and available logs to a new directory under
+`target/ios/explorations/`. Completed captures include PNGs, `samples.json` and
+a local `index.html` contact sheet. `summarize` compares repeated captures of
+the same state and appearance and writes `summary.json`. The `cycle` command
+builds the Debug app first; `capture` instead installs the existing build and
+records its binary hashes. It does not prove that build matches current source.
+`timings` reconstructs the verifier's declared stage order from its timestamped
+output, distinguishing completed, failed, skipped and unreached stages. A
+partial run remains partial; nested test output cannot advance the stage list.
+
+Available capture policies are `current`, `window`, `display-once`,
+`display-pair` and `display-guarded`. The guarded policy combines two agreeing
+display screenshots with a minimum 0.8-second observation period; that is an
+experimental delay, not a guarantee of app readiness. A later simulator display
+is retained for comparison. Candidate timings exclude that reference capture
+and diff; whole-cycle timings include them. A successful experiment command
+means the measurements completed, not that its screenshots are stable or
+approved goldens. Inspect both later-display and repeated-state comparisons.
+
+`--screens` selects manifest IDs; `shell-home` and `shell-conversation` replay
+committed reports through the actual app shell. `focus-probe` requests composer
+focus but does not assert software-keyboard visibility. Use `--appearances light`
+or `dark` to investigate without alternating themes, and `--simulator amux-small`
+for the narrow test device. The command terminates this app on the selected
+simulator. Do not overlap it with other simulator checks, or run capture/image
+comparison work alongside performance measurements.
+
 ## Goldens and baseline changes
 
 ```sh
@@ -126,7 +210,12 @@ glass and the pinned system status bar. The in-app report capture instead uses
 Expected, actual and difference PNGs land in `target/ios/goldens/`. The reference
 recipe pairs all 66 preserved design images in `ios/Goldens/References/` with
 the app baselines under `target/ios/goldens/reference/`. Reference comparisons support
-visual review; baseline comparisons are the regression gate.
+visual review; baseline comparisons detect regressions only after a baseline
+has been visually approved. During the direct design port, existing native
+expected images are historical outputs, not visual authority. Compare the
+ported components with the selected design source and references, obtain
+visual approval, and only then establish the replacement goldens. No command
+automatically grants that approval.
 
 Inspect a mismatch before updating anything. A deliberate visual change uses
 `timeout 2400 wt run ios-goldens -- --update SCREEN`, limited to the changed

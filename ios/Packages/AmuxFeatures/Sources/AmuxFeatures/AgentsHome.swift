@@ -42,6 +42,7 @@ public struct AgentsHome: View {
     /// this phone has is a fact, having the list open is not.
     @State private var switcherOpen: Bool
     @State private var filter: HomeFilter = .all
+    @State private var choosingFilter = false
 
     public init(
         model: FleetStore,
@@ -111,13 +112,7 @@ public struct AgentsHome: View {
             if accounts.gate == .ready {
                 HStack(spacing: 8) {
                     if !switcherOpen {
-                        Menu {
-                            Picker("Show", selection: $filter) {
-                                ForEach(HomeFilter.allCases) { filter in
-                                    Text(filter.title).tag(filter)
-                                }
-                            }
-                        } label: {
+                        Button { choosingFilter = true } label: {
                             GlassIcon(glyph: "line.3.horizontal.decrease")
                                 .thumbTarget(x: 5, y: 5)
                         }
@@ -125,6 +120,14 @@ public struct AgentsHome: View {
                         .accessibilityLabel("Filter Agents")
                         .identified("home.filter", label: "Filter Agents", value: filter.rawValue)
                         .reclaimingThumbTarget(x: 5, y: 5)
+                        .confirmationDialog(
+                            "Show Agents", isPresented: $choosingFilter,
+                            titleVisibility: .visible
+                        ) {
+                            ForEach(HomeFilter.allCases) { choice in
+                                Button(choice.title) { filter = choice }
+                            }
+                        }
                     }
                     Button { actions(.newAgent) } label: {
                         GlassIcon(glyph: "plus", prominent: true)
@@ -194,7 +197,7 @@ public struct AgentsHome: View {
         // Nothing else the panel can say reaches this screen: the rest of an
         // account's actions live under You, where there is room to state what
         // they do.
-        case .signOut, .delete, .subscription, .notifications, .appearance, .identity, .support, .report:
+        case .signOut, .delete, .subscription, .appearance, .identity, .support, .report:
             break
         }
     }

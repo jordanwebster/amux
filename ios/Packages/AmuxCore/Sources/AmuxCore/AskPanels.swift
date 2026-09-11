@@ -101,12 +101,14 @@ public struct AskPanel: Identifiable, Equatable, Sendable {
     // MARK: - Plan
 
     public struct Plan: Equatable, Sendable {
+        public let title: String?
         /// Free-form markdown, as the agent wrote it.
         public let markdown: String
         /// Where the agent also wrote it down, when it did.
         public let path: String?
 
-        public init(markdown: String, path: String?) {
+        public init(title: String? = nil, markdown: String, path: String?) {
+            self.title = title
             self.markdown = markdown
             self.path = path
         }
@@ -366,6 +368,7 @@ extension Ask {
             let invocation = kind?["invocation"]
             if invocation?["tool"]?.stringValue == "plan" {
                 return AskPanel(id: id, address: address, kind: .plan(AskPanel.Plan(
+                    title: invocation?["plan_title"]?.stringValue,
                     markdown: invocation?["plan"]?.stringValue ?? "",
                     path: invocation?["plan_file_path"]?.stringValue)))
             }
@@ -376,6 +379,7 @@ extension Ask {
                     suggestions: kind?["suggestions"]?.arrayValue ?? [], sdk: sdk)))
         case "plan" where sdk:
             return AskPanel(id: id, address: address, kind: .plan(AskPanel.Plan(
+                title: kind?["plan_title"]?.stringValue,
                 markdown: kind?["plan"]?.stringValue ?? "",
                 path: kind?["plan_file_path"]?.stringValue)))
         case "question":

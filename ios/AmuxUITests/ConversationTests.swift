@@ -12,9 +12,9 @@ import XCTest
 ///
 /// Three sockets, all on the loopback the simulator shares with the Mac:
 /// XCUITest for what a finger does, the runner's control channel for what the
-/// agent on the other side does, and the app's own door for the one thing a
-/// finger cannot yet do — trying to send a message, because the composer is not
-/// built. The journey that starts this test passes their addresses in.
+/// agent on the other side does, and the app's own door for requests that set
+/// up host state without pretending a screen gesture did it. The journey that
+/// starts this test passes their addresses in.
 final class ConversationTests: XCTestCase {
     private let waiting: TimeInterval = 60
 
@@ -152,7 +152,7 @@ final class ConversationTests: XCTestCase {
         try? app.debugDescription.write(
             to: Self.inContainer("conversation-tree.txt"), atomically: true, encoding: .utf8)
         try write("conversation-captures.json", walked.captures)
-        for kind in Self.everyRowKind {
+        for kind in Self.everyVisibleRowKind {
             XCTAssertTrue(walked.everything.contains(kind),
                           "the transcript never drew \(kind); it drew "
                           + "\(walked.everything.sorted())")
@@ -191,13 +191,13 @@ final class ConversationTests: XCTestCase {
         let chip = element(app, "conversation.changes")
         XCTAssertTrue(chip.waitForExistence(timeout: waiting),
                       "the host answered with no changes to review")
-        // The chip's own tally, once. The two numbers are drawn as separate
-        // texts and the system publishes the element that combines them as
-        // well, so reading every text that starts with a sign gathers the same
-        // tally three times; the combined one is the chip as it is read out.
-        record["changes"] = app.staticTexts.allElementsBoundByIndex.map { $0.label }
-            .filter { $0.hasPrefix("+") && $0.contains("\u{2212}") }
-            .prefix(1).map { $0 }
+        // The two visual numbers are separate text leaves, while the button's
+        // accessibility label combines them into the one actionable tally a
+        // VoiceOver reader hears.
+        XCTAssertTrue(
+            chip.label.contains("added") && chip.label.contains("removed"),
+            "the changes control did not expose its tally: \(chip.label)")
+        record["changes"] = [chip.label]
         press(app, "conversation.changes")
         // Where the chip leads. The diff itself is a later screen; what is
         // claimed here is that a real diff, computed by the host that holds
@@ -324,16 +324,14 @@ final class ConversationTests: XCTestCase {
         press(app, "drawer.scrim")
         XCTAssertTrue(waitUntil { self.identifiers(app, startingWith: "drawer.row.").isEmpty },
                       "the drawer would not close again")
-        // Out of the conversation altogether and back into it, which is what
-        // somebody who wrote half a message and went to look at something else
-        // does. What comes back has to be what was typed: a draft belongs to
+        settleDrawer()
+        // Out to the other conversation and back through the source-designed
+        // drawer. What comes back has to be what was typed: a draft belongs to
         // the conversation and not to the field it was typed into.
-        pressTab(app, "Agents")
-        XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
-                      "leaving the conversation did not return to the home")
-        press(app, "home.row.\(runner.agent)")
-        XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
-                      "coming back did not lead to the conversation")
+        press(app, "conversation.drawer")
+        chooseConversation(app, runner.ended, "leaving did not reach the other conversation")
+        press(app, "conversation.drawer")
+        chooseConversation(app, runner.agent, "coming back did not lead to the conversation")
         XCTAssertTrue(waitUntil { self.value(app, "composer.field") == Self.halfWritten },
                       "the half-written message did not survive leaving the conversation; the "
                       + "field says \(value(app, "composer.field") ?? "nothing")")
@@ -366,14 +364,11 @@ final class ConversationTests: XCTestCase {
                       "the overflow would not close")
 
         // MARK: A run that ended.
-        pressTab(app, "Agents")
-        XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
-                      "going back did not return to the home")
+        press(app, "conversation.drawer")
         // Opened first and ended while it is open, which is how somebody would
         // see a run end: they are reading it when it stops.
-        press(app, "home.row.\(runner.ended)")
-        XCTAssertTrue(element(app, "conversation").waitForExistence(timeout: waiting),
-                      "opening the second agent did not lead to a conversation")
+        chooseConversation(
+            app, runner.ended, "opening the second agent did not lead to a conversation")
         try control.ask(["AgentExit": ["agent": "ran-its-course", "code": 7]])
         let ended = app.staticTexts["Exited · code 7"]
         XCTAssertTrue(ended.waitForExistence(timeout: waiting),
@@ -392,12 +387,9 @@ final class ConversationTests: XCTestCase {
         // Back to the conversation that is still running: the one that ended
         // has nothing to say about a machine going away, because it has
         // already said the only thing it has to say.
-        pressTab(app, "Agents")
-        XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
-                      "leaving the agent that ended did not return to the home")
-        press(app, "home.row.\(runner.agent)")
-        XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
-                      "reopening the running agent did not lead to its conversation")
+        press(app, "conversation.drawer")
+        chooseConversation(
+            app, runner.agent, "reopening the running agent did not lead to its conversation")
         // The turn's changes remain available from the compact header chip;
         // the composer itself stays available until the machine goes away.
         // What is on screen before the machine goes, to compare against what
@@ -653,10 +645,13 @@ final class ConversationTests: XCTestCase {
         "EndTurn",
     ] }
 
-    /// The rows those steps have to become. Named by what the screen calls
-    /// them, so a kind that stops being drawn fails here rather than quietly
-    /// going missing.
-    private static let everyRowKind = [
+    /// Every event family the selected design gives a visible row.
+    ///
+    /// `EndTurn` remains in the host stream and is folded by the core, but it
+    /// deliberately draws nothing: the composer and running state already say
+    /// whether a turn is over, and an extra rule at every turn boundary is not
+    /// part of the selected transcript design.
+    private static let everyVisibleRowKind = [
         "transcript.prompt",
         "transcript.prose",
         "transcript.code",
@@ -675,7 +670,6 @@ final class ConversationTests: XCTestCase {
         "transcript.exit",
         "transcript.unreadable",
         "transcript.compaction",
-        "transcript.turn-end",
     ]
 
     // MARK: - Talking to the runner and to the app
@@ -939,7 +933,7 @@ final class ConversationTests: XCTestCase {
     /// moving it, which is the end, and everything there is already covered.
     private func walkTheFeed(_ app: XCUIApplication) -> Walk {
         var walk = Walk()
-        var uncovered = Set(Self.everyRowKind)
+        var uncovered = Set(Self.everyVisibleRowKind)
 
         _ = toTheEnd(app)
         var scan = readable(app)
@@ -961,7 +955,7 @@ final class ConversationTests: XCTestCase {
             for (kind, note) in scan.nearest where uncovered.contains(kind) {
                 walk.closest[kind] = note
             }
-            let fresh = Self.everyRowKind.filter {
+            let fresh = Self.everyVisibleRowKind.filter {
                 uncovered.contains($0) && scan.readable.contains($0)
             }
             if step == 0 {
@@ -1154,6 +1148,22 @@ final class ConversationTests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(2))
     }
 
+    /// Selects a conversation from an already-open drawer and waits until the
+    /// sideways route replacement and the drawer's close animation both land.
+    private func chooseConversation(
+        _ app: XCUIApplication, _ agent: String, _ complaint: String
+    ) {
+        press(app, "drawer.row.\(agent)")
+        XCTAssertTrue(
+            waitUntil { self.identifiers(app, startingWith: "drawer.row.").isEmpty },
+            "\(complaint); the drawer remained open")
+        settleDrawer()
+    }
+
+    private func settleDrawer() {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    }
+
     private func waitUntil(_ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(waiting)
         while Date() < deadline {
@@ -1163,18 +1173,15 @@ final class ConversationTests: XCTestCase {
         return condition()
     }
 
-    private func pressTab(_ app: XCUIApplication, _ title: String) {
-        let button = app.descendants(matching: .any)
-            .matching(identifier: "tab.\(title.lowercased())").firstMatch
-        guard button.waitForExistence(timeout: waiting) else {
-            return XCTFail("the tab bar has no \(title) tab")
-        }
-        button.tap()
-    }
-
+    /// Allows animated controls to settle under a finger before pressing.
     private func press(_ app: XCUIApplication, _ identifier: String) {
-        let candidates = app.descendants(matching: .any)
-            .matching(identifier: identifier).allElementsBoundByIndex
+        var candidates: [XCUIElement] = []
+        for _ in 0..<20 {
+            candidates = app.descendants(matching: .any)
+                .matching(identifier: identifier).allElementsBoundByIndex
+            if candidates.contains(where: { $0.isHittable }) { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
         let hittable = candidates.first(where: { $0.isHittable })
         guard let target = hittable ?? candidates.first else {
             return XCTFail("nothing on screen is named \(identifier)")

@@ -42,6 +42,8 @@ final class DoorTests: XCTestCase {
             .states,
             .perturb(token: "accent"),
             .perturb(token: nil),
+            .designVariant("context-band"),
+            .designVariant(nil),
             .settle,
             .query,
             .capture(path: "/tmp/home.png"),

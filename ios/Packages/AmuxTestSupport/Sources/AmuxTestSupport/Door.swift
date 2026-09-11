@@ -99,6 +99,8 @@ public enum DoorRequest: Sendable, Equatable {
     /// The one thing a driver can ask for that makes the app draw something
     /// its baseline does not show.
     case perturb(token: String?)
+    /// Select one of the Debug-only layouts compiled together for a design round.
+    case designVariant(String?)
     /// Wait until the screen has stopped changing. A capture that does not
     /// wait for this photographs a frame mid-animation.
     case settle
@@ -614,6 +616,8 @@ extension DoorRequest: Codable {
                 transparency: try fields.decode(Bool.self, forKey: .transparency))
         case "perturb":
             self = .perturb(token: try fields.decodeIfPresent(String.self, forKey: .token))
+        case "designVariant":
+            self = .designVariant(try fields.decodeIfPresent(String.self, forKey: .name))
         case "settle": self = .settle
         case "query": self = .query
         case "capture":
@@ -759,6 +763,9 @@ extension DoorRequest: Codable {
         case .perturb(let token):
             try fields.encode("perturb", forKey: .kind)
             try fields.encodeIfPresent(token, forKey: .token)
+        case .designVariant(let name):
+            try fields.encode("designVariant", forKey: .kind)
+            try fields.encodeIfPresent(name, forKey: .name)
         case .settle:
             try fields.encode("settle", forKey: .kind)
         case .query:

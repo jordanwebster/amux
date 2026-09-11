@@ -334,12 +334,12 @@ private struct FileHeading: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(design.inkFaint.color)
-                    .thumbTarget(x: 13, y: 14)
+                    .thumbTarget(x: 18, y: 17)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("All Files")
             .identified("review.files", label: "All Files")
-            .reclaimingThumbTarget(x: 13, y: 14)
+            .reclaimingThumbTarget(x: 18, y: 17)
             Spacer(minLength: 6)
             if comments > 0 { CommentCount(count: comments, size: 16) }
             Text("+\(file.added)")

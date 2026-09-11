@@ -262,14 +262,14 @@ public struct NewAgent: View {
                                     .overlay(Capsule().strokeBorder(
                                         design.hairline.color, lineWidth: 1))
                             }
-                            .thumbTarget(y: 6)
+                            .thumbTarget(y: 8)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Start in \(project.name)")
                     .identified(
                         "new-agent.recent.\(project.name)", label: "Start in \(project.name)",
                         value: project.path)
-                    .reclaimingThumbTarget(y: 6)
+                    .reclaimingThumbTarget(y: 8)
                 }
             }
             .padding(.vertical, 1)

@@ -48,7 +48,18 @@ extension View {
         _ identifier: String, label: String? = nil, value: String? = nil, enabled: Bool = true
     ) -> some View {
         accessibilityIdentifier(identifier)
-            .modifier(Identify(identifier: identifier, label: label, value: value, enabled: enabled))
+            .reported(identifier, label: label, value: value, enabled: enabled)
+    }
+
+    /// Declares a structural surface to the in-process driver without making
+    /// it an accessibility element. Container accessibility identifiers can
+    /// be inherited by otherwise independent SwiftUI controls, obscuring the
+    /// controls' own identifiers; a screen root therefore reports its state
+    /// while leaving accessibility to the controls inside it.
+    public func reported(
+        _ identifier: String, label: String? = nil, value: String? = nil, enabled: Bool = true
+    ) -> some View {
+        modifier(Identify(identifier: identifier, label: label, value: value, enabled: enabled))
     }
 }
 

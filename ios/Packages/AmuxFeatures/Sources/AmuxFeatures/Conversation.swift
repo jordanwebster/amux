@@ -213,11 +213,12 @@ public struct Conversation: View {
     /// Told where the reader has come to rest in the transcript, for the same
     /// reason and by the same builds.
     private let reading: (@MainActor (TranscriptResting) -> Void)?
+    /// Agent identities are stable routing keys; the fleet owns the names a
+    /// person recognises in the expanded Started section.
+    private let naming: (AgentId) -> String
     private let actions: @MainActor (ConversationAction) -> Void
     /// What this conversation has opened over itself, if anything.
     @State private var showing: ConversationOverlay?
-    /// The durable notification preference owned by the presenting app.
-    private let muted: Bool
     /// How tall the page is, and how tall what is standing at the bottom of it
     /// wants to be. Both are measured rather than assumed because the answer
     /// is the reader's: at the largest accessibility size an unanswered ask is
@@ -235,18 +236,18 @@ public struct Conversation: View {
         model: ConversationStore,
         subject: ConversationSubject,
         showing: ConversationOverlay? = nil,
-        muted: Bool = false,
         resting: TranscriptResting? = nil,
         opening: (@MainActor (ConversationOverlay?) -> Void)? = nil,
         reading: (@MainActor (TranscriptResting) -> Void)? = nil,
+        naming: @escaping (AgentId) -> String = { $0.description },
         actions: @escaping @MainActor (ConversationAction) -> Void
     ) {
         self.model = model
         self.subject = subject
-        self.muted = muted
         self.resting = resting
         self.opening = opening
         self.reading = reading
+        self.naming = naming
         self.actions = actions
         _showing = State(initialValue: showing)
     }
@@ -264,10 +265,9 @@ public struct Conversation: View {
             // The overflow hangs from the control that opened it. Bottom
             // cards live with the composer in the safe-area inset below.
             if showing == .overflow {
-                OverflowMenu(address: address, muted: muted) { choice in
+                OverflowMenu(address: address) { choice in
                     switch choice {
                     case .rename: showing = .rename
-                    case .mute: showing = nil
                     case .delete: showing = .deleteAgent
                     // Copying happens outside this screen and leaves nothing
                     // open behind it: the menu did what it said it would.
@@ -506,10 +506,14 @@ public struct Conversation: View {
     @ViewBuilder
     private var strip: some View {
         let facts = ConversationFacts(model)
+        let children = model.children(named: naming)
         if !facts.isEmpty {
             FactsStrip(
-                facts: facts, open: showing == .tasks,
+                facts: facts, children: children, open: showing == .tasks,
                 grow: { showing = showing == .tasks ? nil : .tasks },
+                openChild: { child in
+                    if let agent = child.openable { leaving(.openChild(agent)) }
+                },
                 unqueue: {
                     showing = nil
                     actions(.unqueue)
@@ -576,8 +580,7 @@ public struct Conversation: View {
             .reclaimingThumbTarget(x: 4, y: 4)
         }
         .padding(.horizontal, design.metrics.gutter)
-        .padding(.top, 6)
-        .padding(.bottom, typeSize.isAccessibilitySize ? 18 : 6)
+        .padding(.top, typeSize.isAccessibilitySize ? 6 : 2)
         // Glass over a sliver of transcript says "this floats". Glass over a
         // third of the display says nothing and leaves half-read words behind
         // every letter of the name, so at an accessibility size the chrome
@@ -597,6 +600,35 @@ public struct Conversation: View {
     /// two belong together: the pill says which conversation you are in, and
     /// the control is how you go to another one.
     private var pill: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                accessiblePill
+            } else {
+                HStack(spacing: 8) {
+                    Button { leaving(.openDrawer) } label: {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(design.inkMuted.color)
+                            .thumbTarget(x: 15, y: 15)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Agents")
+                    .identified("conversation.drawer", label: "Agents")
+                    .reclaimingThumbTarget(x: 15, y: 15)
+                    subjectLabel
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, 8)
+                .frosted(Capsule())
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .identified(
+            "conversation.subject", label: "\(subject.name), \(subject.place)",
+            value: subject.name)
+    }
+
+    private var accessiblePill: some View {
         HStack(spacing: 10) {
             Button { leaving(.openDrawer) } label: {
                 Image(systemName: "sidebar.left")
@@ -608,40 +640,25 @@ public struct Conversation: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Agents")
             .identified("conversation.drawer", label: "Agents")
-            // One line each at ordinary sizes, where the pill is a label and
-            // a name shortened to "refacto…" would still be recognisable
-            // beside the conversation it names.
-            //
-            // At an accessibility size it would not be — three letters and an
-            // ellipsis name nothing — so the name wraps and the pill grows to
-            // hold it, which is why the capsule states a minimum height and
-            // not a height. The machine and the directory are dropped there:
-            // four wrapped lines of chrome is most of the display, and of the
-            // two the name is the one that says which conversation this is.
-            // Where you are running is still on the overflow and in the
-            // drawer, one press away.
-            VStack(alignment: .leading, spacing: 0) {
-                Text(subject.name)
-                    .designFont(.identifier, design)
-                    .foregroundStyle(design.ink.color)
-                    .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
-                Text(subject.place)
-                    .designFont(.monoSmall, design)
-                    .foregroundStyle(design.inkFaint.color)
-                    .lineLimit(1)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.trailing, 14)
+            subjectLabel.padding(.trailing, 14)
         }
         .padding(.leading, 2)
         .frame(minHeight: 52)
-        // Large transcript type must not remain legible through the subject:
-        // the shape still has the approved glass edge, over an opaque wash.
-        .frosted(Capsule(), wash: typeSize.isAccessibilitySize ? 1 : Glass.wash)
-        .accessibilityElement(children: .contain)
-        .identified(
-            "conversation.subject", label: "\(subject.name), \(subject.place)",
-            value: subject.name)
+        .frosted(Capsule(), wash: 1)
+    }
+
+    private var subjectLabel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(subject.name)
+                .designFont(.identifier, design)
+                .foregroundStyle(design.ink.color)
+                .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+            Text(subject.place)
+                .designFont(.monoSmall, design)
+                .foregroundStyle(design.inkFaint.color)
+                .lineLimit(1)
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

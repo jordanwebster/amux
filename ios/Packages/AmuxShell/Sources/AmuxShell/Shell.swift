@@ -154,12 +154,11 @@ public struct Shell: View {
 
             if router.path.isEmpty {
                 ShellTabBar(selected: router.tab) { router.select($0) }
-                    .padding(.horizontal, 44)
                     .safeAreaPadding(.bottom, 6)
             }
         }
         .tint(design.accentColor)
-        .identified("shell", value: router.tab.rawValue)
+        .reported("shell", value: router.tab.rawValue)
         .simultaneousGesture(backGesture)
     }
 
@@ -216,31 +215,19 @@ private extension View {
 /// The app's three top-level places. It floats above root screens and leaves
 /// pushed work alone so a conversation ends with its composer.
 private struct ShellTabBar: View {
-    @Environment(\.design) private var design
     let selected: Tab
     let select: (Tab) -> Void
 
     var body: some View {
-        HStack(spacing: 2) {
+        TabChrome {
             ForEach(Tab.allCases, id: \.self) { item in
                 let isSelected = item == selected
                 Button { select(item) } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 17, weight: isSelected ? .semibold : .regular))
-                            .frame(height: 20)
-                        Text(item.title)
-                            .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
-                            .frame(height: 13)
-                    }
-                    .foregroundStyle(isSelected ? design.ink.color : design.inkFaint.color)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .contentShape(Rectangle())
+                    TabLabel(item.title, glyph: item.symbol, selected: isSelected)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
-                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(item.title)
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .identified(
@@ -248,8 +235,6 @@ private struct ShellTabBar: View {
                     value: isSelected ? "selected" : "not selected")
             }
         }
-        .padding(.horizontal, 6)
-        .frosted(Capsule())
     }
 }
 
@@ -282,16 +267,12 @@ private struct ConversationPage: View {
     @State private var pickingPhoto = false
     @State private var pickingFile = false
     @State private var picked: PhotosPickerItem?
-    /// A per-agent preference survives page reconstruction and app launches.
-    @AppStorage private var muted: Bool
-
     init(agent: AgentId, router: Router, stores: StoreBundle, recording: ConversationRecording?) {
         self.agent = agent
         self.router = router
         self.stores = stores
         self.recording = recording
         _open = State(initialValue: recording?.showing[agent] == ConversationRecording.drawer)
-        _muted = AppStorage(wrappedValue: false, "notifications.muted.\(agent.description)")
     }
 
     var body: some View {
@@ -300,7 +281,6 @@ private struct ConversationPage: View {
                 model: stores.conversation(agent),
                 subject: ConversationSubject(agent: agent, in: stores.fleet),
                 showing: recording?.showing[agent].flatMap(ConversationOverlay.init(rawValue:)),
-                muted: muted,
                 resting: recording?.reading[agent],
                 opening: recording.map { recording in
                     { @MainActor @Sendable in recording.opened?(agent, $0?.rawValue) }
@@ -308,6 +288,7 @@ private struct ConversationPage: View {
                 reading: recording.map { recording in
                     { @MainActor @Sendable in recording.read?(agent, $0) }
                 },
+                naming: { stores.fleet.name(of: $0) },
             ) { action in
                 switch action {
                 case .openDrawer: open = true
@@ -384,7 +365,6 @@ private struct ConversationPage: View {
                 case .overflowing(let choice):
                     switch choice {
                     case .copyAddress(let address): copy(address)
-                    case .mute: muted.toggle()
                     case .rename, .delete: break
                     }
                 case .renamed(let name): stores.rename(name, of: agent)
@@ -394,6 +374,12 @@ private struct ConversationPage: View {
                 case .deleteAgent: stores.delete(agent)
                 }
             }
+            // Replacing one conversation route with another keeps the same
+            // destination type. Key its ephemeral overlay and scroll state to
+            // the agent so a long transcript never inherits the position and
+            // geometry callbacks of the conversation it replaced. Drafts and
+            // transcript data live in their per-agent stores and survive.
+            .id(agent)
         }
         // A conversation has no bar. The feed runs to the top of the display
         // and the way out is the drawer control on its own chrome.
@@ -862,10 +848,6 @@ private struct YouTabRoot: View {
             case .signIn: actions(.signIn)
             case .signOut(let id): actions(.signOutAccount(id))
             case .subscription: actions(.subscribe)
-            case .notifications:
-                if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
-                    leave(for: url)
-                }
             case .appearance(let wanted): actions(.wear(wanted))
             case .delete(let id): actions(.deleteAccount(id))
             // This phone's key and the machines that trust it are one page,
