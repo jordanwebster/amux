@@ -66,6 +66,9 @@ pub struct TestConfig {
     /// Disable discovery for this daemon, modelling a network that blocks multicast.
     #[serde(default)]
     pub multicast_blocked: bool,
+    /// Block this daemon's UDP path to the cloud relay while leaving TCP available.
+    #[serde(default)]
+    pub udp_blocked: bool,
     /// Debug-build-only free-tier refresh interval.
     #[serde(default)]
     pub cloud_refresh_secs: Option<u64>,
@@ -675,6 +678,30 @@ terminal:
                 tier: AccountTier::Pro,
             } if account == "alice"
         ));
+    }
+
+    #[test]
+    fn parses_udp_blocked_config() {
+        let content = r#"# test: udp_blocked
+
+## Environment
+
+config:
+  name: local
+  udp_blocked: true
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@T1
+> amux profiles
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+        assert!(test_case.configs[0].udp_blocked);
     }
 
     #[test]

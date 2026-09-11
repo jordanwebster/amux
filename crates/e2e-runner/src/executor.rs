@@ -1355,6 +1355,9 @@ impl Executor {
                     .to_string(),
                 ),
             ]);
+            if cfg.udp_blocked {
+                env.insert("AMUX_TEST_RELAY_UDP_BLOCKED".to_string(), "1".to_string());
+            }
             if let Some(fixture) = &cloud_fixture {
                 env.insert(
                     "AMUX_CLOUD_TLS_CA".to_string(),
@@ -1898,6 +1901,7 @@ impl Executor {
                 lan_port: None,
                 lan_discovery: false,
                 multicast_blocked: false,
+                udp_blocked: false,
                 cloud_refresh_secs: None,
                 cloud_relay: false,
                 update_version: None,

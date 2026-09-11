@@ -1,3 +1,13 @@
+2026-09-11 — **Exercise the relay's QUIC-to-TCP fallback through real daemon
+boundaries.** The end-to-end runner can model one daemon whose relay UDP path is
+blocked while TCP remains available. Its mixed-carrier scenario checks the
+reported carrier on both profiles, pairs the devices through one relay, and
+carries an interactive session between them. A local smoke launches the debug
+relay with the fixture identity and certificate, then proves an interactive
+session carries traffic in both directions across QUIC and TCP. The production
+relay will be smoked after the operator applies the UDP-opening infra branch
+and deploys it.
+
 2026-09-11 — **Serve cloud links over QUIC beside the TCP fallback.** Cloud
 relay startup now binds UDP and TCP listeners from the same WebPKI certificate,
 with TLS 1.3, the version-2 ALPN, disabled resumption and 0-RTT, and QUIC

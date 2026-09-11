@@ -590,6 +590,10 @@ async fn run_cloud_connection_with_details(
     let quic_host = details.host.clone();
     let quic_port = details.port;
     let quic = async move {
+        #[cfg(all(test_fixtures, debug_assertions))]
+        if std::env::var_os("AMUX_TEST_RELAY_UDP_BLOCKED").is_some() {
+            return Err("relay UDP blocked by test fixture".to_string());
+        }
         QuicCarrier::connect_relay(&quic_endpoint, &quic_host, quic_port)
             .await
             .map(|carrier| Arc::new(carrier) as Arc<dyn LinkCarrier>)

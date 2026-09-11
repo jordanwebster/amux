@@ -1,0 +1,95 @@
+# test: relay_udp_blocked
+# description: A UDP-blocked daemon and a QUIC daemon share a session through one relay
+
+## Environment
+
+config:
+  name: relay
+  host_name: relay
+  tcp_port: 0
+  cloud_relay: true
+
+config:
+  name: server_a
+  host_name: host-a
+  cloud_account: alice
+  udp_blocked: true
+
+config:
+  name: server_b
+  host_name: host-b
+  cloud_account: alice
+
+directory:
+  name: dir_a
+
+terminal:
+  name: Relay
+  config: relay
+
+terminal:
+  name: A
+  config: server_a
+  cwd: dir_a
+
+terminal:
+  name: B
+  config: server_b
+
+terminal:
+  name: PairA
+  config: server_a
+
+terminal:
+  name: PairB
+  config: server_b
+
+## Test
+
+@Relay
+> amux server start --cloud --foreground
+@@sleep 500
+
+@PairA
+> amux profiles
+@@retry 10000 100
+@@contains bound / connected (pro, tcp)
+
+@PairB
+> amux profiles
+@@retry 10000 100
+@@contains bound / connected (pro, quic)
+
+@PairA
+> amux pair
+@@capture pairing_pin Pairing PIN:
+@@capture direct_addresses LAN direct addresses:
+Pairing mode active for 5 minutes.
+
+@PairB
+> amux pair host-a
+> $pairing_pin
+@@sleep 1500
+@@capture-contains paired_peer Paired with
+
+@PairA
+@@sleep 500
+Pairing mode ended.
+
+@A
+> amux new test-agent --name mixed-relay
+> hello from tcp
+hello from tcp
+echo: hello from tcp
+
+@B
+> amux attach mixed-relay
+hello from tcp
+echo: hello from tcp
+> hello from quic
+hello from quic
+echo: hello from quic
+
+@A
+hello from quic
+echo: hello from quic
