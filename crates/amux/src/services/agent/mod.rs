@@ -16,8 +16,10 @@ use async_trait::async_trait;
 use futures_util::Stream;
 #[cfg(feature = "local-agents")]
 pub(crate) use host::PtyAgentHost;
+use model::ProtocolError;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use wire::{self, protocol_status};
 
 use crate::agents::{
     Agent, AgentEvent, AgentRecord, ArtifactOwners, ArtifactRef, CreateAgentRpcRequest,
@@ -25,7 +27,6 @@ use crate::agents::{
     SubscribeSessionRequest, attachments_row,
 };
 use crate::envelope::Envelope;
-use crate::protocol::{ProtocolError, protocol_status, wire};
 use crate::server::ShutdownReason;
 #[cfg(test)]
 use crate::tunnel::TunnelTransport;
@@ -79,7 +80,7 @@ pub(crate) trait LocalAgentHost: Send + Sync {
     async fn send_input(
         &self,
         request: SendInputRequest,
-        attachment_owner: Option<Arc<amux_artifacts::Owner>>,
+        attachment_owner: Option<Arc<artifacts::Owner>>,
         operation: tokio::sync::RwLockReadGuard<'_, ()>,
     ) -> Result<(), ProtocolError>;
     async fn attachment_log(
@@ -330,7 +331,7 @@ impl AgentServiceCtx {
     pub(crate) async fn put_artifact_by_agent(
         &self,
         caller: Uuid,
-        kind: amux_artifacts::ArtifactKind,
+        kind: model::ArtifactKind,
         name: &str,
         mime: &str,
         bytes: Vec<u8>,
@@ -341,11 +342,10 @@ impl AgentServiceCtx {
         let owner = self
             .require_artifact_owners("PutArtifactByAgent")?
             .owner(caller)?;
-        let artifact = ArtifactRef::from(
-            owner
-                .put(kind, name, mime, &bytes)
-                .map_err(crate::agents::store_error)?,
-        );
+        let artifact = owner
+            .put(kind, name, mime, &bytes)
+            .map_err(crate::agents::store_error)?
+            .into_reference();
         owner
             .pin(std::slice::from_ref(&artifact.id))
             .map_err(crate::agents::store_error)?;
@@ -364,9 +364,13 @@ impl AgentServiceCtx {
             .artifact_owners
             .as_ref()
             .map(|owners| {
-                owners
-                    .owner(request.agent_id)
-                    .map(|owner| owner.pinned().into_iter().map(ArtifactRef::from).collect())
+                owners.owner(request.agent_id).map(|owner| {
+                    owner
+                        .pinned()
+                        .into_iter()
+                        .map(artifacts::ArtifactMeta::into_reference)
+                        .collect()
+                })
             })
             .transpose()?;
         drop(_operation);
@@ -531,7 +535,7 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
             .put(kind, &request.name, &request.mime, &request.bytes)
             .map_err(crate::agents::store_error)
             .map_err(protocol_status)?
-            .into();
+            .into_reference();
         Ok(tonic::Response::new(wire::PutArtifactResponse {
             artifact: Some(crate::agents::artifact_ref_to_wire(&artifact)),
         }))
@@ -559,7 +563,7 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
             .get(&id)
             .map_err(crate::agents::store_error)
             .map_err(protocol_status)?;
-        let artifact = artifact.into();
+        let artifact = artifact.into_reference();
         Ok(tonic::Response::new(wire::GetArtifactResponse {
             artifact: Some(crate::agents::artifact_ref_to_wire(&artifact)),
             bytes,
@@ -844,7 +848,7 @@ mod tests {
         let owners = Arc::new(
             ArtifactOwners::open(
                 data_dir.path().to_path_buf(),
-                Arc::new(amux_artifacts::SystemClock),
+                Arc::new(artifacts::SystemClock),
             )
             .unwrap(),
         );
@@ -906,7 +910,7 @@ mod tests {
         let owners = Arc::new(
             ArtifactOwners::open(
                 data_dir.path().to_path_buf(),
-                Arc::new(amux_artifacts::SystemClock),
+                Arc::new(artifacts::SystemClock),
             )
             .unwrap(),
         );
@@ -921,7 +925,7 @@ mod tests {
         let artifact = ctx
             .put_artifact_by_agent(
                 agent_id,
-                amux_artifacts::ArtifactKind::Image,
+                model::ArtifactKind::Image,
                 "screen.png",
                 "image/png",
                 b"png bytes".to_vec(),

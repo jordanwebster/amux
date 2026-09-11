@@ -27,13 +27,12 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
 use tonic::Request;
+use wire::{self, PROTOCOL_VERSION, pb};
 
 use super::TestNet;
 use super::assertions::DEFAULT_TIMEOUT;
 use crate::HostId;
 use crate::identity::load_or_create_device_identity_in;
-use crate::protocol::PROTOCOL_VERSION;
-use crate::protocol::wire::{self, pb};
 use crate::routing::{Capabilities, Host, host_to_wire};
 use crate::transport::trusted_device_channel_tracked;
 use crate::trust::{TrustEntry, TrustStore};

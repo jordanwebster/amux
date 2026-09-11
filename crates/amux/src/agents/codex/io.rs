@@ -3,9 +3,8 @@
 //! The core protocol treats session arguments, input, control, output, and
 //! cursors as opaque bytes. This module owns the first-party Codex schemas.
 
+use model::ProtocolError;
 use prost::Message as ProstMessage;
-
-use crate::protocol::{ProtocolError, wire};
 
 pub const CODEX_SDK_V1: &str = "codex_sdk_v1";
 

@@ -653,9 +653,8 @@ impl RetainedProfileWork {
     }
 
     pub async fn diff(&self, agent: &crate::Agent) -> Result<(), tonic::Status> {
+        use wire;
         use wire::agent_service_server::AgentService;
-
-        use crate::protocol::wire;
         self.agent
             .diff(tonic::Request::new(wire::DiffRequest {
                 agent_id: agent.id.as_bytes().to_vec(),
@@ -673,9 +672,8 @@ impl RetainedProfileWork {
         peer: &Daemon,
         artifact: &crate::ArtifactRef,
     ) {
+        use wire;
         use wire::agent_service_server::AgentService;
-
-        use crate::protocol::wire;
         let (id, key) = peer.identity_on_disk();
         let error = crate::services::commit_peer_trust(
             self.pairing.clone(),

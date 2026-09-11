@@ -23,7 +23,6 @@ use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
 use crate::identity;
 use crate::profile::runtime::{Listeners, ProfileRuntimeOptions, start_with_security};
-use crate::protocol::wire;
 use crate::services::{CloudLinkService, DeviceRuntimeSecurity};
 use crate::subscription::SubscriptionReporter;
 use crate::transport::{TransportError, create_tls_acceptor};
@@ -471,9 +470,9 @@ fn link_close_reason_for_shutdown(reason: ShutdownReason) -> wire::pb::LinkClose
 mod tests {
     use std::time::Duration;
 
+
     use super::{Server, ShutdownReason, link_close_reason_for_shutdown};
     use crate::Config;
-    use crate::protocol::wire;
 
     #[test]
     fn shutdown_reason_maps_to_link_close_reason() {

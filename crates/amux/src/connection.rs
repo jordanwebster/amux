@@ -158,7 +158,7 @@ impl ConnectionManager {
     pub(crate) async fn send_link_close_to_host(
         &self,
         peer: HostId,
-        reason: crate::protocol::wire::pb::LinkCloseReason,
+        reason: wire::pb::LinkCloseReason,
     ) {
         self.tunnels
             .link_registry()
@@ -407,7 +407,7 @@ mod tests {
         tunnels: &TunnelPool,
         peer: &Host,
         role: LinkRole,
-    ) -> (LinkId, mpsc::Receiver<crate::protocol::wire::pb::Message>) {
+    ) -> (LinkId, mpsc::Receiver<wire::pb::Message>) {
         let (tx, rx) = mpsc::channel(64);
         let link = LinkId::new(peer.id);
         tunnels
@@ -417,8 +417,8 @@ mod tests {
         (link, rx)
     }
 
-    fn is_tunnel_frame(message: &crate::protocol::wire::pb::Message) -> bool {
-        use crate::protocol::wire::pb::message::Body;
+    fn is_tunnel_frame(message: &wire::pb::Message) -> bool {
+        use wire::pb::message::Body;
         matches!(
             message.body,
             Some(Body::TunnelOpen(_)) | Some(Body::TunnelData(_)) | Some(Body::TunnelClose(_))

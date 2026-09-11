@@ -114,7 +114,7 @@ missing-diff notice.
 
 ## The artifact crate: owner and cache
 
-`amux-artifacts` has no dependency on `amux`. Both of its roles use the same
+`artifacts` has no dependency on `amux`. Both of its roles use the same
 layout: `blobs/<sha256 hex>` for content-addressed bytes and `index.json` for
 metadata, persisted atomically. Reads rehash bytes; a missing or invalid index
 is recovered by rescanning and rehashing the blob directory.
@@ -245,5 +245,5 @@ addition possible without changing the shipped meaning:
 
 Two adjacent implementation boundaries are also deliberate. Claude SDK chat
 viewing remains unsupported even though daemon-side attachment delivery works,
-and wiring the iOS bridge to `amux-artifacts` is separate client work; keeping
+and wiring the iOS bridge to `artifacts` is separate client work; keeping
 the crate free of `amux` dependencies makes that adoption possible.

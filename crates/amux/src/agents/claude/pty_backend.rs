@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use claude::hooks::{HookPayload, MessagingCredentials};
 use claude::pty::keymap::{BAKED_KEYMAPS, KeymapSources};
 use claude::pty::{Control, HookSource, PtyEvent, PtySource, Session, Sources, TranscriptSource};
+use model::ProtocolError;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
@@ -28,7 +29,6 @@ use crate::agents::{
     StructuredInputEvent, StructuredLogSource, TerminalSize,
 };
 use crate::debug::DebugView;
-use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
 
 const STRUCTURED_LOG_RETENTION: usize = 1000;
@@ -101,7 +101,7 @@ impl ClaudePtyBackend {
             },
             version_cache,
             launch_route: Some(launch_route),
-            artifact_root: req.working_dir.join(".amux-artifacts"),
+            artifact_root: req.working_dir.join(".artifacts"),
             parent: req.parent,
             name_source: if req.name.is_some() {
                 LocalAgentNameSource::Amux
@@ -152,7 +152,7 @@ impl ClaudePtyBackend {
                 driver: ClaudeDriver::Pty
             }
         );
-        let artifact_root = record.working_dir.join(".amux-artifacts");
+        let artifact_root = record.working_dir.join(".artifacts");
         Self {
             driver: ClaudeDriver::Pty,
             agent_id: record.id,

@@ -21,7 +21,7 @@ use amux::{
     CreateAgentRequest, HostId, ProfileId, ProtocolError, SendInputRequest, SessionCloseReason,
     SubscribeSessionEvent, SubscribeSessionRequest, claude_io, claude_sdk_io, codex_io,
 };
-use amux_artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
+use artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
 use chrono::{DateTime, Utc};
 use futures_util::FutureExt;
 use tokio::sync::mpsc;
@@ -1910,7 +1910,7 @@ mod tests {
     #[test]
     fn macos_opens_extensionless_images_with_preview() {
         let meta = ArtifactMeta {
-            id: amux_artifacts::id_of(b"png"),
+            id: model::id_of(b"png"),
             kind: ArtifactKind::Image,
             name: "clipboard.png".to_string(),
             mime: "image/png".to_string(),

@@ -13,10 +13,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use model::Host;
 use tokio::sync::{Notify, RwLock, mpsc};
+use wire::pb;
 
-use crate::protocol::wire::pb;
-use crate::routing::types::{Host, LinkId};
+use crate::routing::types::LinkId;
 use crate::routing::wire::{neighbor_down_message, neighbor_up_message};
 use crate::{HostId, audit};
 

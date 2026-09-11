@@ -38,7 +38,7 @@ fn a2a_fixture_codex_mcp_substrate_replays_offline() {
         .and_then(Value::as_str)
         .expect("Codex MCP metadata records the derived fixture digest");
     assert_eq!(
-        amux_artifacts::id_of(CODEX_MCP_SUBSTRATE.as_bytes()).as_str(),
+        model::id_of(CODEX_MCP_SUBSTRATE.as_bytes()).as_str(),
         format!("sha256:{recorded_sha}")
     );
 

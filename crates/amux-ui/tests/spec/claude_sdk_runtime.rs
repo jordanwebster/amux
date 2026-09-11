@@ -137,7 +137,7 @@ fn attachments() -> Vec<Msg> {
 #[test]
 fn claude_sdk_attachments_keep_pins_metadata_and_fetched_diffs() {
     let (model, effects) = fold_with_effects(attachments());
-    let id = amux_artifacts::id_of(b"facts");
+    let id = model::id_of(b"facts");
     let index = claude_sdk_layer(&model, AGENT).attachments();
     assert_eq!(index.artifact(&id).unwrap().name, "facts.txt");
     assert_eq!(index.diff(&id), Some("a patch"));

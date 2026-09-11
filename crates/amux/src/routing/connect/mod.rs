@@ -14,14 +14,13 @@ use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt, stream};
+use model::ProtocolError;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 use uuid::Uuid;
+use wire::{self, PROTOCOL_VERSION, protocol_error_from_status_details, protocol_status};
 
-use crate::protocol::{
-    PROTOCOL_VERSION, ProtocolError, protocol_error_from_status_details, protocol_status, wire,
-};
 use crate::routing::{
     ConnectHandshake, ConnectHandshakeEvent, Host, LinkCloseRequest, LinkId, LinkRegistry,
     LinkRole, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,

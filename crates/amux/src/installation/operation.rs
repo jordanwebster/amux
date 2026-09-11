@@ -39,19 +39,19 @@ impl OperationGate {
         self.frozen.store(false, Ordering::Release);
     }
 
-    pub(crate) fn check_mutation(&self) -> Result<(), crate::protocol::ProtocolError> {
+    pub(crate) fn check_mutation(&self) -> Result<(), model::ProtocolError> {
         self.check()?;
         if self.frozen.load(Ordering::Acquire) {
-            return Err(crate::protocol::ProtocolError::FailedPrecondition {
+            return Err(model::ProtocolError::FailedPrecondition {
                 message: "installation update is in progress".into(),
             });
         }
         Ok(())
     }
 
-    pub(crate) fn check(&self) -> Result<(), crate::protocol::ProtocolError> {
+    pub(crate) fn check(&self) -> Result<(), model::ProtocolError> {
         if self.closed.load(Ordering::Acquire) {
-            Err(crate::protocol::ProtocolError::FailedPrecondition {
+            Err(model::ProtocolError::FailedPrecondition {
                 message: "profile is unavailable".into(),
             })
         } else {

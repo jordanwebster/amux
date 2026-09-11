@@ -29,25 +29,3 @@ impl std::fmt::Display for SessionCloseReason {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn session_output_event_decoder_accepts_closed_event() {
-        assert_eq!(
-            crate::agents::decode_session_output_event_payload(
-                &crate::agents::encode_session_output_event_payload(
-                    &SubscribeSessionEvent::Closed {
-                        reason: SessionCloseReason::AgentDeleted,
-                    },
-                    crate::agents::Protocol::TerminalV1,
-                )
-            )
-            .unwrap(),
-            SubscribeSessionEvent::Closed {
-                reason: SessionCloseReason::AgentDeleted,
-            }
-        );
-    }
-}

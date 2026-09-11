@@ -13,9 +13,11 @@ use std::time::Duration;
 pub use admin::ProfileAdmin;
 use chrono::Utc;
 use futures_util::{Stream, StreamExt, stream};
+use model::ProtocolError;
 use tokio::sync::{RwLock, mpsc};
 use tonic::transport::Channel;
 use uuid::Uuid;
+use wire::{self, protocol_status};
 
 use crate::agents::{
     Agent, AgentEvent, CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest,
@@ -26,7 +28,6 @@ use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
 use crate::identity::IdentityError;
 use crate::pairing::{PAIR_MODE_TTL, PairMode, PairModeError};
-use crate::protocol::{ProtocolError, protocol_status, wire};
 use crate::routing::{
     EventSource, FEATURE_CLOUD_RELAY, Host, HostEntry, HostEvent, HostReachabilityEvent,
     HostTrustStatus, RoutingCore, capabilities_to_wire,
@@ -2940,7 +2941,7 @@ mod tests {
         let remote_owners = Arc::new(
             ArtifactOwners::open(
                 remote_data_dir.path().to_path_buf(),
-                Arc::new(amux_artifacts::SystemClock),
+                Arc::new(artifacts::SystemClock),
             )
             .unwrap(),
         );
@@ -4740,7 +4741,7 @@ mod tests {
         let owners = Arc::new(
             ArtifactOwners::open(
                 data_dir.path().to_path_buf(),
-                Arc::new(amux_artifacts::SystemClock),
+                Arc::new(artifacts::SystemClock),
             )
             .unwrap(),
         );

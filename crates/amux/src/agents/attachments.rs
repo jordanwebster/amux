@@ -5,38 +5,18 @@ use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use amux_artifacts::{ArtifactId, ArtifactKind, ArtifactMeta, Clock, Owner, StoreError};
+use artifacts::{ArtifactMeta, Clock, Owner, StoreError};
 use base64::Engine as _;
 use claude::sdk::{ContentBlock, ImageSource, ImageSourceType};
-use serde::{Deserialize, Serialize};
+use model::{
+    ArtifactId, ArtifactKind, ArtifactRef, BaseIdentity, DiffBase, DiffFile, DiffResponse,
+    ProtocolError,
+};
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::Agent;
-use crate::protocol::{ProtocolError, wire};
-
-/// Metadata for an artifact without its owner-only lifetime fields.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ArtifactRef {
-    pub id: ArtifactId,
-    pub kind: ArtifactKind,
-    pub name: String,
-    pub mime: String,
-    pub size: u64,
-}
-
-impl From<ArtifactMeta> for ArtifactRef {
-    fn from(meta: ArtifactMeta) -> Self {
-        Self {
-            id: meta.id,
-            kind: meta.kind,
-            name: meta.name,
-            mime: meta.mime,
-            size: meta.size,
-        }
-    }
-}
 
 /// All authoritative artifact stores loaded by one daemon.
 pub(crate) struct ArtifactOwners {
@@ -164,7 +144,7 @@ pub(crate) fn spawn_artifact_sweeper(owners: Arc<ArtifactOwners>) -> JoinHandle<
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(5 * 60)).await;
-            match owners.sweep_loaded(amux_artifacts::EPHEMERAL_TTL) {
+            match owners.sweep_loaded(artifacts::EPHEMERAL_TTL) {
                 Ok(swept) if !swept.is_empty() => {
                     tracing::info!(count = swept.len(), "swept ephemeral artifacts");
                 }
@@ -230,7 +210,7 @@ pub(crate) fn materialise(
     debug_assert_eq!(metas.len(), pinned.len());
     let refs = pinned
         .into_iter()
-        .map(ArtifactRef::from)
+        .map(ArtifactMeta::into_reference)
         .collect::<Vec<_>>();
     let text = materialise_paths(owner, text, &refs, backend);
 
@@ -429,40 +409,6 @@ pub(crate) fn artifact_kind_from_wire(kind: i32) -> Result<ArtifactKind, wire::D
     }
 }
 
-/// The repository state a diff compares.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DiffBase {
-    WorkingTree,
-    Branch { base: String },
-}
-
-/// The immutable repository identity captured with a diff.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct BaseIdentity {
-    pub base: DiffBase,
-    pub head: String,
-    pub merge_base: Option<String>,
-    pub blobs: Vec<(String, String)>,
-}
-
-/// Addition and removal totals for one changed path.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct DiffFile {
-    pub path: String,
-    pub added: u32,
-    pub removed: u32,
-}
-
-/// A frozen patch and the repository identity it was computed from.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct DiffResponse {
-    pub artifact: ArtifactRef,
-    pub patch: String,
-    pub identity: BaseIdentity,
-    pub files: Vec<DiffFile>,
-}
-
 pub(crate) fn diff_base_to_wire(base: &DiffBase) -> wire::DiffBase {
     wire::DiffBase {
         base: Some(match base {
@@ -642,7 +588,7 @@ pub(crate) async fn compute_diff(
             patch.as_bytes(),
         )
         .map_err(store_error)?
-        .into();
+        .into_reference();
 
     Ok(DiffResponse {
         artifact,
@@ -915,8 +861,9 @@ impl Drop for TemporaryIndex {
 mod owners {
     use std::sync::Mutex;
 
-    use amux_artifacts::{EPHEMERAL_TTL, id_of};
+    use artifacts::EPHEMERAL_TTL;
     use chrono::{DateTime, TimeDelta, Utc};
+    use model::id_of;
     use serde_json::json;
     use tempfile::TempDir;
 
@@ -987,7 +934,7 @@ mod owners {
         let data_dir = TempDir::new().unwrap();
         let owners = ArtifactOwners::open(
             data_dir.path().to_path_buf(),
-            Arc::new(amux_artifacts::SystemClock),
+            Arc::new(artifacts::SystemClock),
         )
         .unwrap();
         let agent_id = Uuid::new_v4();
@@ -1042,7 +989,8 @@ mod materialise {
     use std::str::FromStr;
     use std::sync::Arc;
 
-    use amux_artifacts::{ArtifactKind, SystemClock, id_of};
+    use artifacts::SystemClock;
+    use model::{ArtifactKind, id_of};
     use serde_json::json;
     use tempfile::TempDir;
 
@@ -1146,7 +1094,7 @@ mod materialise {
 
         let pinned = owner.meta(&stored.id).unwrap();
         assert!(pinned.pinned_at.is_some());
-        let expected = vec![ArtifactRef::from(pinned)];
+        let expected = vec![pinned.into_reference()];
         assert_eq!(prepared.refs, expected);
         let (mut reader, _) = log.subscribe_with_query(None).await.unwrap();
         assert_eq!(
@@ -1178,7 +1126,7 @@ mod materialise {
         assert!(owner.meta(&diff.id).unwrap().pinned_at.is_some());
         assert_eq!(
             result.refs,
-            vec![ArtifactRef::from(owner.meta(&diff.id).unwrap())]
+            vec![owner.meta(&diff.id).unwrap().into_reference()]
         );
     }
 
@@ -1192,7 +1140,7 @@ mod materialise {
             "inspect <amux-attachment id=\"{}\" kind=\"image\"/>",
             image.id
         );
-        let expected_ref = ArtifactRef::from(image.clone());
+        let expected_ref = image.clone().into_reference();
         let expected_path = owner.path_of(&image.id);
 
         let pty = materialise(
@@ -1294,7 +1242,7 @@ mod diff {
     use std::process::Command;
     use std::sync::Arc;
 
-    use amux_artifacts::SystemClock;
+    use artifacts::SystemClock;
     use chrono::Utc;
     use tempfile::TempDir;
     use uuid::Uuid;

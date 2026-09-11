@@ -15,6 +15,7 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
+use model::Host;
 use serde::Serialize;
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::Instant;
@@ -22,7 +23,7 @@ use tokio::time::Instant;
 use crate::HostId;
 use crate::resource_limits::{CLIENT_VISIBLE_ACTIVITY_RECENT_WINDOW, ROUTING_HOST_CAP};
 use crate::routing::events::{EventSource, HostReachabilityEvent, RoutingEvent};
-use crate::routing::types::{Host, LinkId, Route};
+use crate::routing::types::{LinkId, Route};
 use crate::routing::{LinkRegistry, LinkRole};
 use crate::trust::SharedTrustStore;
 

@@ -5,9 +5,9 @@
 //! it. Nothing transitive is expressible.
 
 use uuid::Uuid;
+use wire::pb;
 
 use crate::HostId;
-use crate::protocol::wire::pb;
 use crate::routing::{Host, host_from_wire, host_to_wire, validate_remote_host};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

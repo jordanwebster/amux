@@ -1,3 +1,15 @@
+2026-09-11 — **Extract transport-independent values, wire encoding, settings, and artifact storage.**
+Added `model`, `wire`, and `settings` packages with explicit dependency rules,
+renamed the content-addressed store to `artifacts`, and moved protobuf schemas,
+committed generated output, error codecs, shared agent/session/host/artifact
+values, and persisted preferences to their owners. E2E now consumes committed
+wire types without a build script, so ordinary builds do not invoke protoc.
+Workspace membership is explicit and every package is unpublished. Focused
+model (2), wire (6), settings (36), and artifact (21) tests pass; the amux
+library's full 50.43-second test run and the independent E2E compile pass. The
+dependency policy confirms the value package has no local production dependency
+or async/transport/filesystem API.
+
 2026-09-11 — **Make build-foundation measurements reproducible and owned.**
 Added named wt recipes for structured build reports, target inventory, and the
 controlled before/after workload. Reports bind tool and source identities,

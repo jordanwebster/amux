@@ -361,11 +361,11 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let channel = runtime.client_channel.clone();
         drop(guard);
-        let mut client = crate::protocol::wire::client_service_client(channel);
+        let mut client = wire::client_service_client(channel);
         let response = client
-            .delete_agent(crate::protocol::wire::ClientDeleteAgentRequest {
-                agent: Some(crate::protocol::wire::AgentRef {
-                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::AgentId(
+            .delete_agent(wire::ClientDeleteAgentRequest {
+                agent: Some(wire::AgentRef {
+                    identifier: Some(wire::agent_ref::Identifier::AgentId(
                         parent.id.as_bytes().to_vec(),
                     )),
                 }),
@@ -599,11 +599,11 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let channel = runtime.client_channel.clone();
         drop(guard);
-        let mut client = crate::protocol::wire::client_service_client(channel);
+        let mut client = wire::client_service_client(channel);
         let response = client
-            .delete_agent(crate::protocol::wire::ClientDeleteAgentRequest {
-                agent: Some(crate::protocol::wire::AgentRef {
-                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::AgentId(
+            .delete_agent(wire::ClientDeleteAgentRequest {
+                agent: Some(wire::AgentRef {
+                    identifier: Some(wire::agent_ref::Identifier::AgentId(
                         parent.id.as_bytes().to_vec(),
                     )),
                 }),
@@ -725,13 +725,11 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let channel = runtime.client_channel.clone();
         drop(guard);
-        let mut client = crate::protocol::wire::client_service_client(channel);
+        let mut client = wire::client_service_client(channel);
         let error = client
-            .send_message(crate::protocol::wire::ClientSendMessageRequest {
-                to: Some(crate::protocol::wire::AgentRef {
-                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::Name(
-                        recipient.to_string(),
-                    )),
+            .send_message(wire::ClientSendMessageRequest {
+                to: Some(wire::AgentRef {
+                    identifier: Some(wire::agent_ref::Identifier::Name(recipient.to_string())),
                 }),
                 text: "must not be delivered".to_string(),
                 context: None,
@@ -924,12 +922,12 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         let channel = runtime.client_channel.clone();
         drop(guard);
-        let mut client = crate::protocol::wire::client_service_client(channel);
+        let mut client = wire::client_service_client(channel);
 
         let human_error = client
-            .send_message(crate::protocol::wire::ClientSendMessageRequest {
-                to: Some(crate::protocol::wire::AgentRef {
-                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::AgentId(
+            .send_message(wire::ClientSendMessageRequest {
+                to: Some(wire::AgentRef {
+                    identifier: Some(wire::agent_ref::Identifier::AgentId(
                         recipient.id.as_bytes().to_vec(),
                     )),
                 }),
@@ -942,9 +940,9 @@ impl Daemon {
         assert_eq!(human_error.code(), tonic::Code::Unavailable);
 
         let response = client
-            .send_message(crate::protocol::wire::ClientSendMessageRequest {
-                to: Some(crate::protocol::wire::AgentRef {
-                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::AgentId(
+            .send_message(wire::ClientSendMessageRequest {
+                to: Some(wire::AgentRef {
+                    identifier: Some(wire::agent_ref::Identifier::AgentId(
                         recipient.id.as_bytes().to_vec(),
                     )),
                 }),
@@ -1324,9 +1322,9 @@ async fn assert_admin_absent(channel: tonic::transport::Channel, boundary: &str)
             let path = format!("/amux.v1.{service}/{method}");
             let mut grpc = tonic::client::Grpc::new(channel.clone());
             grpc.ready().await.expect("profile channel ready");
-            let result: Result<tonic::Response<crate::protocol::wire::ListPeersResponse>, _> = grpc
+            let result: Result<tonic::Response<wire::ListPeersResponse>, _> = grpc
                 .unary(
-                    tonic::Request::new(crate::protocol::wire::ListPeersRequest {}),
+                    tonic::Request::new(wire::ListPeersRequest {}),
                     path.parse().unwrap(),
                     tonic_prost::ProstCodec::default(),
                 )

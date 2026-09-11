@@ -3,6 +3,7 @@ name = "amux-cli"
 version = "0.6.0"
 edition.workspace = true
 description = "Agent multiplexer - CLI binary"
+publish = false
 
 [lib]
 name = "amux_cli"

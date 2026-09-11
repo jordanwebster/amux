@@ -27,9 +27,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 name = "amux"
 version = "0.6.0"
 dependencies = [
- "amux-artifacts",
  "amux-ui",
  "anyhow",
+ "artifacts",
  "async-trait",
  "base64",
  "bytes",
@@ -45,6 +45,7 @@ dependencies = [
  "hyper-util",
  "jsonwebtoken",
  "libc",
+ "model",
  "nix 0.31.3",
  "oauth2",
  "prost",
@@ -60,6 +61,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "settings",
  "shell-words",
  "socket2",
  "tempfile",
@@ -75,17 +77,7 @@ dependencies = [
  "uuid",
  "webpki-roots",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "amux-artifacts"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
+ "wire",
 ]
 
 [[package]]
@@ -176,9 +168,10 @@ name = "amux-ui"
 version = "0.4.0"
 dependencies = [
  "amux",
- "amux-artifacts",
+ "artifacts",
  "chrono",
  "futures-util",
+ "model",
  "serde",
  "serde_json",
  "similar",
@@ -288,6 +281,17 @@ name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+
+[[package]]
+name = "artifacts"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "model",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "asn1-rs"
@@ -1044,7 +1048,6 @@ dependencies = [
  "portable-pty",
  "prost",
  "prost-types",
- "protoc-bin-vendored",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1055,10 +1058,10 @@ dependencies = [
  "toml",
  "tonic",
  "tonic-prost",
- "tonic-prost-build",
  "tower",
  "url",
  "uuid",
+ "wire",
 ]
 
 [[package]]
@@ -2069,6 +2072,19 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "model"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
@@ -3531,6 +3547,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings"
+version = "0.1.0"
+dependencies = [
+ "gethostname",
+ "libc",
+ "model",
+ "semver",
+ "serde",
+ "serde_yaml",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4899,6 +4928,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "80d0f4e272c85def139476380b12f9ac60926689dd2e01d4923222f40580869d"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "wire"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "model",
+ "prost",
+ "prost-types",
+ "thiserror 2.0.20",
+ "tonic",
+ "tonic-prost",
+ "uuid",
 ]
 
 [[package]]

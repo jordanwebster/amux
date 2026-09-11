@@ -13,6 +13,7 @@ use claude::sdk::{
     SettingsConfig, SyncHookOutput, UserDialogResult, UserMessage,
 };
 use futures_util::StreamExt;
+use model::ProtocolError;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
@@ -31,7 +32,6 @@ use crate::agents::{
     StructuredInput, StructuredInputEvent, StructuredLogSource,
 };
 use crate::debug::DebugView;
-use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
 
 const STRUCTURED_LOG_RETENTION: usize = 8192;
@@ -173,7 +173,7 @@ impl ClaudeSdkBackend {
             },
             created_at: Utc::now(),
             launch_route: Some(launch_route),
-            artifact_root: req.working_dir.join(".amux-artifacts"),
+            artifact_root: req.working_dir.join(".artifacts"),
             runtime: Arc::new(Mutex::new(Runtime {
                 facts: SessionFacts::from_args(&req.args),
                 session_id: Some(req.agent_id),
@@ -217,7 +217,7 @@ impl ClaudeSdkBackend {
             }
         );
         let session_id = session.control.session_id().parse().ok();
-        let artifact_root = record.working_dir.join(".amux-artifacts");
+        let artifact_root = record.working_dir.join(".artifacts");
         let facts = SessionFacts::from_args(&record.args);
         Self {
             agent_id: record.id,

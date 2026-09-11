@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use amux::testnet::{TestNet, Via};
 use amux::{ArtifactId, ArtifactKind, ClientError, DiffBase, ProtocolError};
-use amux_artifacts::ARTIFACT_SIZE_CAP;
+use artifacts::ARTIFACT_SIZE_CAP;
 use tempfile::TempDir;
 use uuid::Uuid;
 

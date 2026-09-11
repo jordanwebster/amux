@@ -5,8 +5,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 pub use amux::{ArtifactId, ArtifactKind, ArtifactRef};
-pub use amux_artifacts::ARTIFACT_SIZE_CAP;
-use amux_artifacts::id_of;
+pub use artifacts::ARTIFACT_SIZE_CAP;
+use model::id_of;
 use serde::{Deserialize, Serialize};
 
 use crate::review::{ReviewComment, ReviewHeader};

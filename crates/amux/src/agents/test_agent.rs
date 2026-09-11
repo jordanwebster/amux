@@ -12,6 +12,7 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use model::ProtocolError;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use uuid::Uuid;
@@ -25,7 +26,6 @@ use crate::agents::{
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
 use crate::debug::DebugView;
-use crate::protocol::ProtocolError;
 
 const STRUCTURED_LOG_RETENTION: usize = 1000;
 

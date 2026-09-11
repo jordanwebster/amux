@@ -31,7 +31,6 @@ pub mod installation;
 mod pairing;
 mod paths;
 mod profile;
-mod protocol;
 mod resource_limits;
 mod routing;
 mod server;
@@ -59,7 +58,6 @@ pub use agents::{
     CreateAgentRequest, DiffBase, DiffFile, DiffResponse, Protocol, SessionCloseReason,
     SubscribeSessionEvent, TerminalSize, WorkingOn, attachments_row,
 };
-pub use amux_artifacts::{ArtifactId, ArtifactKind};
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
@@ -78,6 +76,7 @@ pub use installation::{
     ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
     SuspendReason, SuspendReport,
 };
+pub use model::{ArtifactId, ArtifactKind, ProtocolError};
 pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
@@ -91,12 +90,12 @@ pub use pairing::ssh::{
 #[cfg(unix)]
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
 pub use paths::{default_data_dir, default_log_path, keymap_dir};
-pub use protocol::{PROTOCOL_VERSION, ProtocolError};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
 pub use server::{DaemonBuilder, Server, ServerBuilder, ServerError, ShutdownReason};
 pub use subscription::SubscriptionReporter;
 pub use transport::TransportError;
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
+pub use wire::PROTOCOL_VERSION;
 
 #[cfg(all(feature = "local-agents", debug_assertions))]
 #[doc(hidden)]
@@ -155,90 +154,7 @@ pub mod terminal_io {
     };
 }
 
-pub type AgentId = uuid::Uuid;
-pub type HostId = uuid::Uuid;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AgentIdentifier {
-    Id(AgentId),
-    Name(String),
-}
-
-impl From<AgentId> for AgentIdentifier {
-    fn from(id: AgentId) -> Self {
-        Self::Id(id)
-    }
-}
-
-impl From<String> for AgentIdentifier {
-    fn from(name: String) -> Self {
-        Self::Name(name)
-    }
-}
-
-impl From<&str> for AgentIdentifier {
-    fn from(value: &str) -> Self {
-        uuid::Uuid::parse_str(value)
-            .map(Self::Id)
-            .unwrap_or_else(|_| Self::Name(value.to_string()))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PeerIdentifier {
-    Id(HostId),
-    Name(String),
-}
-
-impl From<HostId> for PeerIdentifier {
-    fn from(id: HostId) -> Self {
-        Self::Id(id)
-    }
-}
-
-impl From<String> for PeerIdentifier {
-    fn from(name: String) -> Self {
-        Self::Name(name)
-    }
-}
-
-impl From<&str> for PeerIdentifier {
-    fn from(value: &str) -> Self {
-        uuid::Uuid::parse_str(value)
-            .map(Self::Id)
-            .unwrap_or_else(|_| Self::Name(value.to_string()))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SendInputRequest {
-    pub agent: AgentIdentifier,
-    /// Caller-supplied correlation id, returned verbatim in the structured
-    /// stream's `amux.input_result` row.
-    pub input_id: Vec<u8>,
-    pub io_protocol: String,
-    pub payload: bytes::Bytes,
-    /// Content-addressed artifact ids to pin and materialise with this input.
-    pub pin: Vec<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SendMessageRequest {
-    pub to: AgentIdentifier,
-    pub text: String,
-    pub context: Option<AgentId>,
-    pub from_agent_id: Option<AgentId>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SetAgentStatusRequest {
-    pub agent: AgentIdentifier,
-    pub working_on: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SubscribeSessionRequest {
-    pub agent: AgentIdentifier,
-    pub io_protocol: String,
-    pub args: Option<bytes::Bytes>,
-}
+pub use model::{
+    AgentId, AgentIdentifier, HostId, PeerIdentifier, SendInputRequest, SendMessageRequest,
+    SetAgentStatusRequest, SubscribeSessionRequest,
+};

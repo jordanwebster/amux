@@ -62,7 +62,7 @@ impl AgentKind {
         }
     }
 
-    pub(crate) fn from_legacy(provider: &str, protocols: &[String]) -> Result<Self, String> {
+    pub fn from_legacy(provider: &str, protocols: &[String]) -> Result<Self, String> {
         match provider {
             "claude" => Ok(Self::Claude {
                 driver: if protocols

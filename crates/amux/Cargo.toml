@@ -3,6 +3,7 @@ name = "amux"
 version = "0.6.0"
 edition.workspace = true
 description = "Agent multiplexer - library for building amux clients and servers"
+publish = false
 
 [features]
 default = ["local-agents"]
@@ -15,7 +16,10 @@ local-agents = ["claude/pty", "dep:pty-host", "dep:codex"]
 
 [dependencies]
 anyhow = { workspace = true }
-amux-artifacts = { workspace = true }
+artifacts = { workspace = true }
+model = { workspace = true }
+wire = { workspace = true }
+settings = { workspace = true }
 claude = { workspace = true }
 tempfile = { workspace = true }
 pty-host = { workspace = true, optional = true }

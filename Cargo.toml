@@ -1,6 +1,23 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = [
+    "crates/amux",
+    "crates/amux-cli",
+    "crates/amux-shot",
+    "crates/amux-tui",
+    "crates/amux-ui",
+    "crates/artifacts",
+    "crates/claude",
+    "crates/codex",
+    "crates/e2e-runner",
+    "crates/model",
+    "crates/pty-host",
+    "crates/replay-support",
+    "crates/settings",
+    "crates/test-agent",
+    "crates/wire",
+    "crates/xtask",
+]
 
 [workspace.package]
 edition = "2024"
@@ -8,7 +25,10 @@ edition = "2024"
 [workspace.dependencies]
 # Internal
 amux = { path = "crates/amux" }
-amux-artifacts = { path = "crates/amux-artifacts" }
+model = { path = "crates/model" }
+wire = { path = "crates/wire" }
+settings = { path = "crates/settings" }
+artifacts = { path = "crates/artifacts" }
 amux-ui = { path = "crates/amux-ui" }
 amux-tui = { path = "crates/amux-tui" }
 pty-host = { path = "crates/pty-host" }

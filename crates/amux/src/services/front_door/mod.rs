@@ -6,9 +6,9 @@ use std::sync::Arc;
 use futures_util::{StreamExt, stream};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Channel;
+use wire;
 
 use crate::installation::Installation;
-use crate::protocol::wire;
 #[cfg(test)]
 use crate::transport::GrpcIo;
 use crate::transport::{self, BoxedGrpcIo, ShutdownIo};

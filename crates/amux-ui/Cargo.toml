@@ -3,10 +3,12 @@ name = "amux-ui"
 version = "0.4.0"
 edition.workspace = true
 description = "Client state library for amux UIs: reducer core, effects, runtime shell"
+publish = false
 
 [dependencies]
 amux = { path = "../amux", default-features = false }
-amux-artifacts = { workspace = true }
+artifacts = { workspace = true }
+model = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 serde = { workspace = true }

@@ -638,7 +638,7 @@ fn parse_endpoint(endpoint: &str) -> Option<(Side, u32)> {
 
 #[cfg(test)]
 mod tests {
-    use amux_artifacts::id_of;
+    use model::id_of;
 
     use super::*;
 

@@ -192,7 +192,7 @@ mod tests {
         fn new() -> Self {
             let sequence = NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "amux-artifacts-test-{}-{}",
+                "artifacts-test-{}-{}",
                 std::process::id(),
                 sequence
             ));

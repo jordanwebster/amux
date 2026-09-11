@@ -1,4 +1,4 @@
-use crate::protocol::wire::pb;
+use wire::pb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConnectRole {

@@ -25,10 +25,10 @@ use serde::Serialize;
 use tokio::sync::{RwLock, mpsc};
 use tokio_rustls::TlsConnector;
 use tonic::transport::{Channel, Endpoint};
+use wire as pb;
 
 use crate::HostId;
 use crate::identity::{DeviceIdentity, IdentityError};
-use crate::protocol::wire as pb;
 use crate::resource_limits::{
     CLOUD_INBOUND_TUNNEL_RATE_LIMIT, CLOUD_INBOUND_TUNNEL_RATE_WINDOW, SlidingWindowRateLimiter,
 };

@@ -152,7 +152,7 @@ pub(super) fn parent_envelope(
 #[derive(Debug, Error)]
 pub(crate) enum CreateAgentError {
     #[error("{0}")]
-    Unavailable(crate::protocol::ProtocolError),
+    Unavailable(model::ProtocolError),
     #[error("agent limit reached ({max} max)")]
     LimitReached { max: usize },
     #[error("Agent already exists: {0}")]

@@ -52,8 +52,8 @@ jobs:
         run: cargo run -p xtask -- codegen
       - name: Committed output matches the protos
         run: |
-          if [ -n "$(git status --porcelain crates/amux/src/protocol/generated)" ]; then
-            git --no-pager diff -- crates/amux/src/protocol/generated
+          if [ -n "$(git status --porcelain crates/wire/src/generated)" ]; then
+            git --no-pager diff -- crates/wire/src/generated
             echo "::error::committed protobuf codegen is stale; run 'cargo run -p xtask -- codegen' and commit the result"
             exit 1
           fi

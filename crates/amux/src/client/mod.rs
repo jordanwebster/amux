@@ -8,17 +8,18 @@ use std::task::{Context, Poll};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::Stream;
+use model::ProtocolError;
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 use tonic::transport::Channel;
 use uuid::Uuid;
+use wire::{self, protocol_error_from_status_details};
 
 use crate::agents::{
     Agent, AgentEvent, CreateAgentRequest, SessionCloseReason, SubscribeSessionEvent,
 };
 use crate::debug::DebugFormat;
 use crate::pairing::ssh::SshPairingPeer;
-use crate::protocol::{ProtocolError, protocol_error_from_status_details, wire};
 use crate::routing::{HostEntry, HostEvent, HostTrustStatus, capabilities_from_wire};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::transport::TransportError;

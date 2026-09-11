@@ -212,7 +212,7 @@ fn every_msg_variant_round_trips_through_serde() {
                 agent: agent_id("fix-auth-bug"),
                 text: "inspect the attachment".to_string(),
                 attachments: vec![amux_ui::DraftAttachment {
-                    id: amux_artifacts::id_of(b"wire attachment"),
+                    id: model::id_of(b"wire attachment"),
                     kind: ArtifactKind::Image,
                     name: "wire.png".to_string(),
                     mime: "image/png".to_string(),
@@ -225,14 +225,14 @@ fn every_msg_variant_round_trips_through_serde() {
             op(18),
             amux_ui::Command::FetchDiff {
                 agent: agent_id("fix-auth-bug"),
-                id: amux_artifacts::id_of(b"wire diff"),
+                id: model::id_of(b"wire diff"),
             },
         ),
         command(
             op(19),
             amux_ui::Command::OpenAttachment {
                 agent: agent_id("fix-auth-bug"),
-                id: amux_artifacts::id_of(b"wire open"),
+                id: model::id_of(b"wire open"),
             },
         ),
         command(
@@ -248,14 +248,14 @@ fn every_msg_variant_round_trips_through_serde() {
         op_result(
             op(18),
             OpOutcome::DiffFetched {
-                id: amux_artifacts::id_of(b"wire diff"),
+                id: model::id_of(b"wire diff"),
                 patch: "diff --git a/a b/a".to_string(),
             },
         ),
         op_result(
             op(19),
             OpOutcome::AttachmentOpened {
-                id: amux_artifacts::id_of(b"wire open"),
+                id: model::id_of(b"wire open"),
             },
         ),
         op_result(
@@ -263,7 +263,7 @@ fn every_msg_variant_round_trips_through_serde() {
             OpOutcome::DiffReady {
                 response: amux::DiffResponse {
                     artifact: ArtifactRef {
-                        id: amux_artifacts::id_of(b"wire response"),
+                        id: model::id_of(b"wire response"),
                         kind: ArtifactKind::Diff,
                         name: "main.diff".to_string(),
                         mime: "text/x-diff".to_string(),
@@ -288,7 +288,7 @@ fn every_msg_variant_round_trips_through_serde() {
             op(21),
             OpOutcome::Error {
                 error: OpError::AttachmentMissing {
-                    id: amux_artifacts::id_of(b"wire missing"),
+                    id: model::id_of(b"wire missing"),
                     name: "missing.png".to_string(),
                 },
             },
@@ -307,7 +307,7 @@ fn every_msg_variant_round_trips_through_serde() {
             op(23),
             OpOutcome::Error {
                 error: OpError::ArtifactCorrupt {
-                    id: amux_artifacts::id_of(b"wire corrupt"),
+                    id: model::id_of(b"wire corrupt"),
                 },
             },
         ),

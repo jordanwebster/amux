@@ -1,17 +1,21 @@
 use std::path::{Path, PathBuf};
 
 use chrono::{TimeZone, Utc};
+#[cfg(test)]
+use model::AgentKind;
 use prost::Message as ProstMessage;
 use protocol_wire::DeleteAgentRequest;
 use uuid::Uuid;
+use wire::{
+    self as protocol_wire, agent_kind_from_wire, agent_kind_to_wire, claude_driver_from_wire, pb,
+};
 
 use super::{
-    Agent, AgentKind, AgentParent, ClaudeDriver, Protocol, SessionCloseReason,
-    SubscribeSessionEvent, WorkingOn,
+    Agent, AgentParent, ClaudeDriver, Protocol, SessionCloseReason, SubscribeSessionEvent,
+    WorkingOn,
 };
 use crate::agents::{RenameAgentRequest, TerminalSize};
 use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
-use crate::protocol::wire::{self as protocol_wire, pb};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionInputEvent {
@@ -746,55 +750,6 @@ pub(crate) fn agent_from_wire(
         parent,
         working_on,
     })
-}
-
-pub(crate) fn agent_kind_to_wire(kind: AgentKind) -> protocol_wire::AgentKind {
-    let kind = match kind {
-        AgentKind::Claude { driver } => {
-            protocol_wire::agent_kind::Kind::Claude(protocol_wire::ClaudeKind {
-                driver: claude_driver_to_wire(driver) as i32,
-            })
-        }
-        AgentKind::Codex => protocol_wire::agent_kind::Kind::Codex(protocol_wire::CodexKind {}),
-        AgentKind::TestAgent => {
-            protocol_wire::agent_kind::Kind::TestAgent(protocol_wire::TestAgentKind {})
-        }
-    };
-    protocol_wire::AgentKind { kind: Some(kind) }
-}
-
-pub(crate) fn agent_kind_from_wire(
-    kind: protocol_wire::AgentKind,
-) -> Result<AgentKind, protocol_wire::DecodeError> {
-    let kind = kind
-        .kind
-        .ok_or_else(|| protocol_wire::DecodeError::Invalid("AgentKind missing kind".into()))?;
-    Ok(match kind {
-        protocol_wire::agent_kind::Kind::Claude(claude) => AgentKind::Claude {
-            driver: claude_driver_from_wire(claude.driver)?,
-        },
-        protocol_wire::agent_kind::Kind::Codex(_) => AgentKind::Codex,
-        protocol_wire::agent_kind::Kind::TestAgent(_) => AgentKind::TestAgent,
-    })
-}
-
-pub(crate) const fn claude_driver_to_wire(driver: ClaudeDriver) -> protocol_wire::ClaudeDriver {
-    match driver {
-        ClaudeDriver::Pty => protocol_wire::ClaudeDriver::Pty,
-        ClaudeDriver::Sdk => protocol_wire::ClaudeDriver::Sdk,
-    }
-}
-
-pub(crate) fn claude_driver_from_wire(
-    driver: i32,
-) -> Result<ClaudeDriver, protocol_wire::DecodeError> {
-    match protocol_wire::ClaudeDriver::try_from(driver) {
-        Ok(protocol_wire::ClaudeDriver::Pty) => Ok(ClaudeDriver::Pty),
-        Ok(protocol_wire::ClaudeDriver::Sdk) => Ok(ClaudeDriver::Sdk),
-        Ok(protocol_wire::ClaudeDriver::Unspecified) | Err(_) => Err(
-            protocol_wire::DecodeError::Invalid("ClaudeDriver must be specified".into()),
-        ),
-    }
 }
 
 pub(crate) fn agent_parent_to_wire(parent: AgentParent) -> protocol_wire::AgentParent {

@@ -1,9 +1,9 @@
 //! Agent-independent raw terminal IO protocol payloads for session RPCs.
 
+use model::ProtocolError;
 use prost::Message as ProstMessage;
 
 use crate::agents::TerminalSize;
-use crate::protocol::{ProtocolError, wire};
 
 pub const TERMINAL_V1: &str = "terminal_v1";
 

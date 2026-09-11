@@ -482,7 +482,7 @@ async fn lifecycle_waits_for_profile_mutations_and_closed_gate_rejects_late_agen
         .unwrap_err();
     assert!(matches!(
         error,
-        crate::protocol::ProtocolError::FailedPrecondition { .. }
+        model::ProtocolError::FailedPrecondition { .. }
     ));
     installation.shutdown(ShutdownReason::UserRequested).await;
 }

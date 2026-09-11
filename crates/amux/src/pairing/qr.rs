@@ -1,19 +1,10 @@
+pub use model::QrPairingPayload;
 use serde::{Deserialize, Serialize};
 
 use crate::HostId;
 use crate::client::PairingStart;
 
 const QR_SECRET_LEN: usize = 32;
-
-/// What the QR code carries: `{host_id, cloud_url, secret}`. The secret is
-/// a one-shot 256-bit SPAKE2 input — it never crosses the wire, so the QR
-/// needs no pubkey; SPAKE2 provides mutual authentication from possession.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct QrPairingPayload {
-    pub host_id: HostId,
-    pub cloud_url: String,
-    pub secret: Vec<u8>,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum QrPairingError {

@@ -1,6 +1,6 @@
 use bytes::Bytes;
+use model::{Protocol, ProtocolError};
 use prost::Message as ProstMessage;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::amux::v1::{
@@ -8,87 +8,9 @@ use super::amux::v1::{
     DiffUnavailable, Error, ErrorCode, ErrorDetail, ProtocolNotExposed, ProtocolVersionMismatch,
     SequenceNumberMismatch, UpdateRequired,
 };
-use crate::agents::{AgentKind, Protocol};
-
-/// Errors carried over generated service and routing protocol boundaries.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, thiserror::Error)]
-#[serde(tag = "code", rename_all = "snake_case")]
-pub enum ProtocolError {
-    /// The requested agent session is no longer available on this connection.
-    #[error("No agent found")]
-    NoAgentFound,
-    /// The requested protocol method or variant is not implemented by this peer.
-    #[error("{message}")]
-    Unimplemented { message: String },
-    /// The active call was cancelled by its caller.
-    #[error("{message}")]
-    Cancelled { message: String },
-    /// The request payload or arguments are invalid.
-    #[error("{message}")]
-    InvalidArgument { message: String },
-    /// The requested protocol is not part of the agent kind's closed surface.
-    #[error("{kind} does not expose `{protocol}`")]
-    NotExposed { kind: AgentKind, protocol: Protocol },
-    /// The requested resource already exists.
-    #[error("{message}")]
-    AlreadyExists { message: String },
-    /// The method exists, but the caller is not allowed to invoke it in this scope.
-    #[error("{message}")]
-    PermissionDenied { message: String },
-    /// The method exists, but the current connection/resource state does not permit it.
-    #[error("{message}")]
-    FailedPrecondition { message: String },
-    /// The routed call could not be delivered to its destination.
-    #[error("{message}")]
-    Unreachable { message: String },
-    /// An unqualified agent name matched more than one known agent.
-    #[error("ambiguous agent name `{name}`")]
-    AmbiguousAgentName { name: String, agent_ids: Vec<Uuid> },
-    /// Generic server error with message.
-    #[error("{message}")]
-    ServerError { message: String },
-    /// Invalid or missing authentication credentials.
-    #[error("Invalid or missing credentials")]
-    InvalidCredentials,
-    /// Cloud access requires an active subscription.
-    #[error("Cloud subscription required")]
-    PaymentRequired,
-    /// The receiver was unable to allocate a required protocol resource.
-    #[error("{message}")]
-    ResourceExhausted { message: String },
-    /// Protocol version mismatch between client and server.
-    #[error(
-        "amux update required (supported protocol versions {supported_versions:?}, peer supports {peer_supported_versions:?})"
-    )]
-    ProtocolMismatch {
-        supported_versions: Vec<u32>,
-        peer_supported_versions: Vec<u32>,
-    },
-    /// Client binary version is below the server's minimum requirement.
-    #[error("amux update required (minimum v{minimum_version}, you have v{client_version})")]
-    UpdateRequired {
-        minimum_version: String,
-        client_version: String,
-    },
-    /// Structured input seq doesn't match current output seq.
-    #[error("sequence number mismatch (client {client_seq}, server {current_seq})")]
-    SequenceNumberMismatch { client_seq: u64, current_seq: u64 },
-    /// A message referred to artifact bytes that are not present on the agent's host.
-    #[error("attachment `{id}` is missing")]
-    AttachmentMissing { id: String },
-    /// An artifact exceeded the per-artifact byte limit.
-    #[error("attachment is {size} bytes; maximum is {max} bytes")]
-    AttachmentTooLarge { size: u64, max: u64 },
-    /// Stored bytes no longer match their content-addressed identity.
-    #[error("artifact `{id}` is corrupt")]
-    ArtifactCorrupt { id: String },
-    /// A diff could not be computed for the requested checkout or base.
-    #[error("{message}")]
-    DiffUnavailable { message: String },
-}
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum EncodeError {
+pub enum EncodeError {
     #[error("protobuf encode error: {0}")]
     Protobuf(#[from] prost::EncodeError),
     #[error("invalid protobuf message: {0}")]
@@ -96,14 +18,14 @@ pub(crate) enum EncodeError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum DecodeError {
+pub enum DecodeError {
     #[error("protobuf decode error: {0}")]
     Protobuf(#[from] prost::DecodeError),
     #[error("invalid protobuf message: {0}")]
     Invalid(String),
 }
 
-pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
+pub fn encode_protocol_error(error: &ProtocolError) -> Error {
     match error {
         ProtocolError::NoAgentFound => simple_error(3, error.to_string()),
         ProtocolError::Unimplemented { message } => simple_error(10, message.clone()),
@@ -114,7 +36,7 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
             error.to_string(),
             "amux.v1.ProtocolNotExposed",
             ProtocolNotExposed {
-                kind: Some(crate::agents::agent_kind_to_wire(*kind)),
+                kind: Some(crate::agent_kind_to_wire(*kind)),
                 protocol: agent_protocol_to_wire(*protocol) as i32,
             },
         ),
@@ -175,7 +97,7 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
     }
 }
 
-pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
+pub fn decode_protocol_error(error: Error) -> ProtocolError {
     for detail in &error.details {
         match detail.r#type.as_str() {
             "amux.v1.ProtocolVersionMismatch" => {
@@ -250,7 +172,7 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
             "amux.v1.ProtocolNotExposed" => {
                 if let Ok(detail) = ProtocolNotExposed::decode(detail.value.as_slice())
                     && let Some(kind) = detail.kind
-                    && let Ok(kind) = crate::agents::agent_kind_from_wire(kind)
+                    && let Ok(kind) = crate::agent_kind_from_wire(kind)
                     && let Ok(protocol) = AgentProtocol::try_from(detail.protocol)
                     && let Some(protocol) = agent_protocol_from_wire(protocol)
                 {
@@ -319,7 +241,7 @@ fn agent_protocol_from_wire(protocol: AgentProtocol) -> Option<Protocol> {
     }
 }
 
-pub(crate) fn protocol_status(error: ProtocolError) -> tonic::Status {
+pub fn protocol_status(error: ProtocolError) -> tonic::Status {
     let encoded = encode_protocol_error(&error);
     let details = encoded.encode_to_vec();
     match error {
@@ -389,7 +311,7 @@ pub(crate) fn protocol_status(error: ProtocolError) -> tonic::Status {
     }
 }
 
-pub(crate) fn protocol_error_from_status_details(status: &tonic::Status) -> Option<ProtocolError> {
+pub fn protocol_error_from_status_details(status: &tonic::Status) -> Option<ProtocolError> {
     if status.details().is_empty() {
         return None;
     }
@@ -406,7 +328,7 @@ fn protocol_status_with_details(
     tonic::Status::with_details(code, message, Bytes::from(details))
 }
 
-pub(crate) fn protocol_version_mismatch_error(
+pub fn protocol_version_mismatch_error(
     supported_versions: &[u32],
     peer_supported_versions: &[u32],
 ) -> Error {
@@ -526,8 +448,8 @@ mod tests {
     #[test]
     fn not_exposed_uses_typed_detail() {
         let error = ProtocolError::NotExposed {
-            kind: AgentKind::Claude {
-                driver: crate::agents::ClaudeDriver::Pty,
+            kind: model::AgentKind::Claude {
+                driver: model::ClaudeDriver::Pty,
             },
             protocol: Protocol::ClaudeSdkV1,
         };

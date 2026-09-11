@@ -21,6 +21,7 @@ use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use model::{ProtocolError, SpawnInheritance};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -30,7 +31,6 @@ use super::TestAgentSession;
 use super::claude::{ClaudeSdkBackend, ClaudeSession, ClaudeVersionCache};
 #[cfg(unix)]
 use super::codex::{CodexBackend, CodexClient, CodexRawPtyTarget};
-use super::types::SpawnInheritance;
 use super::{
     AgentRecord, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome,
     LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredLogSource,
@@ -40,7 +40,6 @@ use crate::agents::{
 };
 use crate::config::Config;
 use crate::envelope::Envelope;
-use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
 
 /// The backend carrier that accepted an agent message.
@@ -651,13 +650,13 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let owners = crate::agents::ArtifactOwners::open(
             linked_data_dir.clone(),
-            Arc::new(amux_artifacts::SystemClock),
+            Arc::new(artifacts::SystemClock),
         )
         .unwrap();
         let owner = owners.owner(agent_id).unwrap();
         let artifact = owner
             .put(
-                amux_artifacts::ArtifactKind::Image,
+                model::ArtifactKind::Image,
                 "screen.png",
                 "image/png",
                 b"image bytes",

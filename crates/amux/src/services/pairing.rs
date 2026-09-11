@@ -14,12 +14,12 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::{aead, digest, hkdf, hmac};
 use tokio::sync::{OwnedRwLockWriteGuard, mpsc};
 use tonic::{Code, Status};
+use wire::{self, PROTOCOL_VERSION};
 
 use crate::connection::ConnectionManager;
 use crate::identity::{DeviceIdentity, IdentityError};
 use crate::pairing::ssh::SshPairingPeer;
 use crate::pairing::{PairMode, PairModeAttempt};
-use crate::protocol::{PROTOCOL_VERSION, wire};
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo, PreTrustPairingReachability};
 use crate::trust::{Reachability, SharedTrustStore, TrustStore, TrustStorePairingUpdate};
 use crate::{HostId, audit};
@@ -575,7 +575,7 @@ async fn stage_peer_trust_update(
     context
         .trust_commit_lock
         .check()
-        .map_err(crate::protocol::protocol_status)?;
+        .map_err(wire::protocol_status)?;
     let host_id = update.host_id;
     let (before, mut staged, mut outcome) = {
         let store = context

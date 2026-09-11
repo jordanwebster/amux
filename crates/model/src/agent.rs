@@ -8,22 +8,21 @@ use uuid::Uuid;
 use super::{AgentKind, ClaudeDriver};
 
 /// Environment variables forwarded from an agent's hook invocation.
-pub(crate) type HookEnvironment = HashMap<String, String>;
+pub type HookEnvironment = HashMap<String, String>;
 
 /// The provider-specific launch policy a same-kind child inherits.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SpawnInheritance {
-    pub(crate) claude_permission_args: Vec<String>,
-    pub(crate) codex_approval_policy: Option<String>,
-    pub(crate) codex_sandbox_policy: Option<String>,
+pub struct SpawnInheritance {
+    pub claude_permission_args: Vec<String>,
+    pub codex_approval_policy: Option<String>,
+    pub codex_sandbox_policy: Option<String>,
 }
 
-pub(crate) const AGENT_TYPE_CLAUDE: &str = "claude";
-#[cfg(all(feature = "local-agents", unix))]
-pub(crate) const AGENT_TYPE_CODEX: &str = "codex";
+pub const AGENT_TYPE_CLAUDE: &str = "claude";
 
-#[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
-pub(crate) const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
+pub const AGENT_TYPE_CODEX: &str = "codex";
+
+pub const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
 
 /// Type of agent to spawn.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -43,7 +42,6 @@ pub enum AgentType {
         resume_thread_id: Option<String>,
     },
     /// Test agent for E2E tests.
-    #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
     TestAgent { command: String },
 }
 

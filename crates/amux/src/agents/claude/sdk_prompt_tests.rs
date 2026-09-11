@@ -134,7 +134,7 @@ async fn prompt_publication(fail: bool) {
     let metadata = crate::agents::attachments::attachments_row(
         Some(id.as_bytes()),
         &[crate::ArtifactRef {
-            id: amux_artifacts::id_of(b"image"),
+            id: model::id_of(b"image"),
             kind: crate::ArtifactKind::Image,
             name: "screen.png".into(),
             mime: "image/png".into(),

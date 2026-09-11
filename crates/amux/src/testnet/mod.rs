@@ -136,7 +136,7 @@ impl TestNet {
     /// Rejects this account at the production relay authentication boundary.
     pub fn reject_cloud_user(&self, user: &str, error: Option<crate::ProtocolError>) {
         self.cloud()
-            .reject_user(user, error.map(crate::protocol::protocol_status));
+            .reject_user(user, error.map(::wire::protocol_status));
     }
 
     /// Takes the cloud relay down hard: accepted sockets are severed, so

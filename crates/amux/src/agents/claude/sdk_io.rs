@@ -6,12 +6,12 @@
 //! additions require a protocol change and a frozen-shape test.
 
 pub use claude::sdk::init::ContextUsage;
+use model::ProtocolError;
 use prost::Message as ProstMessage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agents::ArtifactRef;
-use crate::protocol::{ProtocolError, wire};
 
 pub const CLAUDE_SDK_V1: &str = "claude_sdk_v1";
 const SYNTHESIZED_PREFIX: &str = "amux.claude_sdk.";
@@ -457,7 +457,7 @@ fn invalid_input(message: impl std::fmt::Display) -> ProtocolError {
 
 #[cfg(test)]
 mod tests {
-    use amux_artifacts::{ArtifactKind, id_of};
+    use model::{ArtifactKind, id_of};
     use serde_json::json;
 
     use super::*;

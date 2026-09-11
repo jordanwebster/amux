@@ -18,12 +18,12 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+use wire;
 
 use super::assertions::POLL_INTERVAL;
 use crate::HostId;
 use crate::config::Config;
 use crate::connection::ConnectionManager;
-use crate::protocol::wire;
 use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
 use crate::services::CloudLinkService;
 use crate::transport::TcpServerTransport;

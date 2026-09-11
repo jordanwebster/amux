@@ -48,7 +48,7 @@ Around the daemon sit its clients and consumers:
   same `ClientService` surface, for embedding in apps. It joins attachment
   puts before a send, folds stream refs, fetches opened artifacts through the
   viewing-profile cache, and leaves presentation to its client.
-- **Artifact library** (`crates/amux-artifacts`): dependency-light
+- **Artifact library** (`crates/artifacts`): dependency-light
   content-addressed storage with an authoritative per-agent Owner role and a
   disposable per-viewing-profile Cache role. It depends on neither the daemon
   nor the UI, so another client can reuse the storage contract directly.
@@ -414,7 +414,7 @@ described in [`A2A.md`](./A2A.md).
 ## Attachment storage and routing
 
 An agent's daemon is the sole owner of that agent's artifacts. It opens one
-`amux_artifacts::Owner` at
+`artifacts::Owner` at
 `<data_dir>/agents/<agent-id>/artifacts`, loads the index once, and keeps it in
 memory. Content starts ephemeral, is pinned when a sent message explicitly
 names its id, is swept after one hour if still ephemeral, and is deleted with
@@ -429,7 +429,7 @@ the provider input; it replays all pinned refs when a session subscription
 opens. Diff computation also happens there, in the agent's working directory,
 and stores the returned patch as a Diff artifact.
 
-Every viewing profile uses one `amux_artifacts::Cache` shared across its agents.
+Every viewing profile uses one `artifacts::Cache` shared across its agents.
 It fetches through `GetArtifact`, verifies content identities, persists recency,
 and uses only byte-bounded LRU eviction. Its root is
 `<data_dir>/cache/artifacts`; the shared `ui.artifact_cache_mib` preference sets

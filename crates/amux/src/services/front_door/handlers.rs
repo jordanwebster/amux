@@ -3,12 +3,12 @@ use std::pin::Pin;
 use futures_util::{Stream, stream};
 use prost::Message;
 use tonic::{Request, Response, Status};
+use wire;
+use wire::client_service_server::ClientService;
 
 use super::FrontDoor;
 use super::mapping::*;
 use crate::installation::{BindRequest, BindTarget};
-use crate::protocol::wire;
-use crate::protocol::wire::client_service_server::ClientService;
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 
 type Rpc<T> = Result<Response<T>, Status>;

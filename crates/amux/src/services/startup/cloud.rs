@@ -6,10 +6,12 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use model::ProtocolError;
 use tokio::sync::{RwLock, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 use uuid::Uuid;
+use wire::{protocol_error_from_status_details, protocol_status};
 
 use crate::audit;
 use crate::auth::CredentialProvider;
@@ -18,7 +20,6 @@ use crate::auth::cloud::{
 };
 use crate::config::Config;
 use crate::profile::status::{Observed, RuntimeStatus};
-use crate::protocol::{ProtocolError, protocol_error_from_status_details, protocol_status};
 use crate::routing::{
     Host, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher,
     spawn_connector_to_channel_with_auth_establishment_and_shutdown,
@@ -589,9 +590,11 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    use model::ProtocolError;
     use tokio::io::AsyncReadExt;
     use tokio::sync::{RwLock, mpsc, oneshot};
     use uuid::Uuid;
+    use wire::protocol_status;
 
     use super::{
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
@@ -604,7 +607,6 @@ mod tests {
     use crate::auth::{AccessToken, AuthError, CredentialProvider};
     use crate::config::Config;
     use crate::profile::status::{Observed, RuntimeStatus};
-    use crate::protocol::{ProtocolError, protocol_status};
     use crate::routing::{Capabilities, Host, LinkConnectorCtx, RoutingCore};
     use crate::subscription::SubscriptionReporter;
     use crate::tunnel::TunnelPool;

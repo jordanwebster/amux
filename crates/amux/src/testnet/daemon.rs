@@ -10,6 +10,7 @@ use chrono::{DateTime, TimeDelta, Utc};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tonic::transport::{Channel, Endpoint};
+use wire;
 
 use super::NetInner;
 use super::assertions::eventually;
@@ -22,7 +23,6 @@ use crate::identity::{device_key_path, load_or_create_device_identity_in};
 use crate::profile::runtime::{
     self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
 };
-use crate::protocol::wire;
 use crate::routing::{
     HostEntry, HostTrustStatus, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
     Route, RoutingCore,
@@ -72,7 +72,7 @@ impl TestArtifactClock {
     }
 }
 
-impl amux_artifacts::Clock for TestArtifactClock {
+impl artifacts::Clock for TestArtifactClock {
     fn now(&self) -> DateTime<Utc> {
         *self.0.lock().unwrap_or_else(|error| error.into_inner())
     }
@@ -436,7 +436,7 @@ impl Daemon {
         runtime
             .services
             .artifact_owners
-            .sweep_loaded(amux_artifacts::EPHEMERAL_TTL)
+            .sweep_loaded(artifacts::EPHEMERAL_TTL)
             .unwrap_or_else(|error| panic!("'{}' failed to sweep artifacts: {error}", self.name()))
     }
 

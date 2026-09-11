@@ -2,7 +2,6 @@
 //! consume the same row and mention grammar, so prompts and replies carry
 //! typed segments without fetching artifact bytes.
 
-use amux_artifacts::id_of;
 use amux_ui::attachments::{AttachmentIndex, AttachmentKind, Mention, MentionKind, Segment};
 use amux_ui::claude::FeedEntryKind as ClaudeEntry;
 use amux_ui::codex::FeedEntryKind as CodexEntry;
@@ -10,6 +9,7 @@ use amux_ui::{
     ArtifactKind, ArtifactRef, Command, Effect, InputPayload, Msg, OpError, OpOutcome, Recorder,
     StreamMsg, format_mention,
 };
+use model::id_of;
 use serde_json::{Value, json};
 
 use crate::harness::*;

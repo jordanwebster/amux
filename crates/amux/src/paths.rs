@@ -41,19 +41,6 @@ pub(crate) fn amux_xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
     xdg_dir(env_var, default_suffix).join("amux")
 }
 
-/// Default state path: `$XDG_STATE_HOME/amux/state.yaml`,
-/// falling back to `~/.local/state/amux/state.yaml`.
-#[cfg(not(target_os = "ios"))]
-pub(crate) fn default_state_path() -> PathBuf {
-    amux_xdg_dir("XDG_STATE_HOME", ".local/state").join("state.yaml")
-}
-
-/// Default iOS state path under the app container.
-#[cfg(target_os = "ios")]
-pub(crate) fn default_state_path() -> PathBuf {
-    ios_application_support_dir().join("state.yaml")
-}
-
 /// Default data directory: `$XDG_DATA_HOME/amux`,
 /// falling back to `~/.local/share/amux`.
 #[cfg(not(target_os = "ios"))]

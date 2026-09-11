@@ -16,9 +16,9 @@ pub(crate) use pool::{TunnelDebug, TunnelPool, TunnelPoolError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 pub(crate) use transport::TunnelTransport;
+use wire as pb;
 
 use crate::HostId;
-use crate::protocol::wire as pb;
 use crate::routing::LinkOutputTx;
 pub(crate) use crate::tunnel::types::TunnelId;
 

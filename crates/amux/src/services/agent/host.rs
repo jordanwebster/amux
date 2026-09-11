@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use model::ProtocolError;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
@@ -33,7 +34,6 @@ use crate::agents::{
     bootstrap_external_hook,
 };
 use crate::envelope::{Envelope, EnvelopeKind};
-use crate::protocol::{ProtocolError, wire};
 use crate::server::ShutdownReason;
 use crate::suspend;
 
@@ -420,7 +420,7 @@ impl LocalAgentHost for PtyAgentHost {
     async fn send_input(
         &self,
         request: SendInputRequest,
-        attachment_owner: Option<Arc<amux_artifacts::Owner>>,
+        attachment_owner: Option<Arc<artifacts::Owner>>,
         operation: tokio::sync::RwLockReadGuard<'_, ()>,
     ) -> Result<(), ProtocolError> {
         session_rpc::send_session_input(self, request, attachment_owner, operation).await

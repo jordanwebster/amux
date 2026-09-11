@@ -4,11 +4,11 @@
 //! `SessionOutput.payload`, and cursors as opaque bytes. This module owns the
 //! first-party Claude schemas for those bytes.
 
+use model::ProtocolError;
 use prost::Message as ProstMessage;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::TerminalSize;
-use crate::protocol::{ProtocolError, wire};
 
 pub const PTY_TRANSCRIPT_V1: &str = "claude_pty_transcript_v1";
 

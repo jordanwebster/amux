@@ -1,6 +1,5 @@
+use model::ProtocolError;
 use thiserror::Error;
-
-use crate::protocol::ProtocolError;
 
 pub(crate) enum ExternalHookBootstrap {
     Noop,

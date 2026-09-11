@@ -9,9 +9,9 @@
 //! this chapter proves that nothing the composer did can leak into a
 //! later send.
 
-use amux_artifacts::id_of;
 use amux_ui::attachments::{Mention, MentionKind};
 use amux_ui::{ArtifactKind, Command, DraftAttachment, Effect, Msg, OpId, format_mention};
+use model::id_of;
 use serde_json::json;
 
 use crate::harness::*;

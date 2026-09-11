@@ -1,32 +1,6 @@
-use serde::{Deserialize, Serialize};
+use model::AgentEvent;
 use uuid::Uuid;
-
-use crate::agents::Agent;
-use crate::protocol::wire as protocol_wire;
-
-/// Routed agent-inventory stream events.
-///
-/// These are carried in protobuf stream items for
-/// `AgentService.SubscribeAgentEvents`.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AgentEvent {
-    SnapshotComplete,
-    AgentUp { agent: Agent },
-    AgentUpdated { agent: Agent },
-    AgentDown { agent_id: Uuid },
-}
-
-impl AgentEvent {
-    pub fn type_label(&self) -> &'static str {
-        match self {
-            Self::SnapshotComplete => "Agent::SnapshotComplete",
-            Self::AgentUp { .. } => "Agent::AgentUp",
-            Self::AgentUpdated { .. } => "Agent::AgentUpdated",
-            Self::AgentDown { .. } => "Agent::AgentDown",
-        }
-    }
-}
+use wire as protocol_wire;
 
 pub(crate) fn agent_event_to_wire(
     event: &AgentEvent,
@@ -118,6 +92,8 @@ fn uuid_to_bytes(uuid: Uuid) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use model::Agent;
+
     use super::*;
 
     #[cfg(unix)]

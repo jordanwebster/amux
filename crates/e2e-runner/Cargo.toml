@@ -3,6 +3,7 @@ name = "e2e-runner"
 version = "0.1.0"
 edition = "2024"
 description = "E2E test runner for amux"
+publish = false
 
 [dependencies]
 serde = { workspace = true }
@@ -28,7 +29,4 @@ tower = { workspace = true }
 toml = { workspace = true }
 url = "2"
 libc = { workspace = true }
-
-[build-dependencies]
-tonic-prost-build = { workspace = true }
-protoc-bin-vendored = { workspace = true }
+wire = { workspace = true }

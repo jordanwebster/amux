@@ -4,9 +4,11 @@ use std::future::Future;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use amux_artifacts::{ArtifactId, Owner};
+use artifacts::Owner;
+use model::{ArtifactId, ProtocolError};
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use wire::protocol_status;
 
 use super::PtyAgentHost;
 #[cfg(unix)]
@@ -25,14 +27,13 @@ use crate::agents::{
     StructuredInputEvent, StructuredLogSource, StructuredOutput, SubscribeSessionEvent,
     SubscribeSessionRequest, attachments_row, materialise_and_log, materialise_paths,
 };
-use crate::protocol::{ProtocolError, protocol_status};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 
 pub(super) async fn subscribe_session_stream(
     host: &PtyAgentHost,
     request: SubscribeSessionRequest,
     replay_attachments: Option<Vec<ArtifactRef>>,
-) -> Result<super::ResponseStream<crate::protocol::wire::SubscribeSessionResponse>, ProtocolError> {
+) -> Result<super::ResponseStream<wire::SubscribeSessionResponse>, ProtocolError> {
     let close_rx = host
         .state()
         .write()
@@ -690,7 +691,7 @@ fn direct_session_response_stream(
     close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
     shutdown_rx: mpsc::Receiver<ShutdownReason>,
     replay_attachments: Option<Vec<ArtifactRef>>,
-) -> super::ResponseStream<crate::protocol::wire::SubscribeSessionResponse> {
+) -> super::ResponseStream<wire::SubscribeSessionResponse> {
     Box::pin(futures_util::stream::unfold(
         DirectSessionStreamState::Opening {
             agent_id,
@@ -857,7 +858,7 @@ async fn recv_close_reason_for_agent(
 fn session_output_response(
     event: SubscribeSessionEvent,
     protocol: Protocol,
-) -> Result<crate::protocol::wire::SubscribeSessionResponse, tonic::Status> {
+) -> Result<wire::SubscribeSessionResponse, tonic::Status> {
     crate::agents::session_output_event_to_wire(&event, protocol)
         .map_err(|error| tonic::Status::internal(error.to_string()))
 }
@@ -1135,12 +1136,11 @@ mod tests {
         let opened = stream.next().await.unwrap().unwrap();
         assert!(matches!(
             opened.event,
-            Some(crate::protocol::wire::subscribe_session_response::Event::Opened(_))
+            Some(wire::subscribe_session_response::Event::Opened(_))
         ));
         let replay_complete = stream.next().await.unwrap().unwrap();
-        let Some(crate::protocol::wire::subscribe_session_response::Event::ReplayComplete(
-            replay_complete,
-        )) = replay_complete.event
+        let Some(wire::subscribe_session_response::Event::ReplayComplete(replay_complete)) =
+            replay_complete.event
         else {
             panic!("expected replay-complete marker");
         };
@@ -1344,12 +1344,12 @@ mod tests {
         let opened = stream.next().await.unwrap().unwrap();
         assert!(matches!(
             opened.event,
-            Some(crate::protocol::wire::subscribe_session_response::Event::Opened(_))
+            Some(wire::subscribe_session_response::Event::Opened(_))
         ));
         let replay_complete = stream.next().await.unwrap().unwrap();
         assert!(matches!(
             replay_complete.event,
-            Some(crate::protocol::wire::subscribe_session_response::Event::ReplayComplete(_))
+            Some(wire::subscribe_session_response::Event::ReplayComplete(_))
         ));
 
         let mut saw_resource_exhausted = false;
@@ -1379,8 +1379,8 @@ mod tests {
         let (_close_tx, close_rx) = mpsc::channel(1);
         let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let artifact = ArtifactRef {
-            id: amux_artifacts::id_of(b"image"),
-            kind: amux_artifacts::ArtifactKind::Image,
+            id: model::id_of(b"image"),
+            kind: model::ArtifactKind::Image,
             name: "screen.png".to_string(),
             mime: "image/png".to_string(),
             size: 5,
@@ -1400,17 +1400,13 @@ mod tests {
         let opened = stream.next().await.unwrap().unwrap();
         assert!(matches!(
             opened.event,
-            Some(crate::protocol::wire::subscribe_session_response::Event::Opened(_))
+            Some(wire::subscribe_session_response::Event::Opened(_))
         ));
         let replay = stream.next().await.unwrap().unwrap();
-        let Some(crate::protocol::wire::subscribe_session_response::Event::Output(output)) =
-            replay.event
-        else {
+        let Some(wire::subscribe_session_response::Event::Output(output)) = replay.event else {
             panic!("expected attachment replay output");
         };
-        let Some(crate::protocol::wire::session_output::Output::ClaudeSdkV1(output)) =
-            output.output
-        else {
+        let Some(wire::session_output::Output::ClaudeSdkV1(output)) = output.output else {
             panic!("expected Claude SDK attachment replay output");
         };
         assert_eq!(output.seq_id, 0);
@@ -1422,7 +1418,7 @@ mod tests {
         let replay_complete = stream.next().await.unwrap().unwrap();
         assert!(matches!(
             replay_complete.event,
-            Some(crate::protocol::wire::subscribe_session_response::Event::ReplayComplete(_))
+            Some(wire::subscribe_session_response::Event::ReplayComplete(_))
         ));
     }
 
@@ -1449,7 +1445,7 @@ mod tests {
         let opened = stream.next().await.unwrap().unwrap();
         assert!(matches!(
             opened.event,
-            Some(crate::protocol::wire::subscribe_session_response::Event::Opened(_))
+            Some(wire::subscribe_session_response::Event::Opened(_))
         ));
 
         shutdown_tx

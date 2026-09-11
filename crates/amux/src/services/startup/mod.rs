@@ -29,7 +29,6 @@ use crate::connection::ConnectionManager;
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
 use crate::pairing::PairMode;
-use crate::protocol::wire;
 use crate::routing::{
     AuthenticatedLinkUser, Host, HostReachabilityEvent, LinkAuthSession, LinkConnectorCtx,
     LinkServiceCtx, LinkTokenAuthenticator, RoutingCore, local_host,
@@ -554,7 +553,7 @@ pub(crate) async fn start_user_services(
         state,
         agent_host,
         device_security,
-        Arc::new(amux_artifacts::SystemClock),
+        Arc::new(artifacts::SystemClock),
     )
     .await
 }
@@ -564,7 +563,7 @@ pub(crate) async fn start_user_services_with_artifact_clock(
     state: Arc<RwLock<ServerState>>,
     agent_host: Option<Arc<dyn LocalAgentHost>>,
     device_security: DeviceRuntimeSecurity,
-    clock: Arc<dyn amux_artifacts::Clock>,
+    clock: Arc<dyn artifacts::Clock>,
 ) -> Result<StartedUserServices, IdentityError> {
     start_user_services_with_clock(state, agent_host, device_security, clock).await
 }
@@ -573,7 +572,7 @@ async fn start_user_services_with_clock(
     state: Arc<RwLock<ServerState>>,
     agent_host: Option<Arc<dyn LocalAgentHost>>,
     device_security: DeviceRuntimeSecurity,
-    artifact_clock: Arc<dyn amux_artifacts::Clock>,
+    artifact_clock: Arc<dyn artifacts::Clock>,
 ) -> Result<StartedUserServices, IdentityError> {
     // ClientService and the debug serializer must observe the same concrete
     // local runtime. Production startup already seeded this slot lazily;
@@ -954,6 +953,7 @@ mod tests {
 
     use futures_util::StreamExt;
     use hyper_util::rt::TokioIo;
+    use model::ProtocolError;
     use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
     use rustls::crypto::{
         WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature,
@@ -974,7 +974,6 @@ mod tests {
     };
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
-    use crate::protocol::ProtocolError;
     use crate::routing::{Capabilities, Host, Route, SupportedAgentType};
     use crate::transport::in_process_incoming;
     use crate::trust::{Reachability, TrustEntry};
@@ -1019,18 +1018,18 @@ mod tests {
         let host_id = Uuid::new_v4();
         let data_dir = tempfile::tempdir().unwrap();
         for agent_id in [Uuid::new_v4(), Uuid::new_v4()] {
-            let owner = amux_artifacts::Owner::open(
+            let owner = artifacts::Owner::open(
                 data_dir
                     .path()
                     .join("agents")
                     .join(agent_id.to_string())
                     .join("artifacts"),
-                Arc::new(amux_artifacts::SystemClock),
+                Arc::new(artifacts::SystemClock),
             )
             .unwrap();
             owner
                 .put(
-                    amux_artifacts::ArtifactKind::File,
+                    model::ArtifactKind::File,
                     "existing.txt",
                     "text/plain",
                     agent_id.as_bytes(),
@@ -2226,7 +2225,7 @@ mod tests {
         let artifact = client
             .put_artifact(
                 crate::AgentIdentifier::Id(agent_id),
-                amux_artifacts::ArtifactKind::File,
+                model::ArtifactKind::File,
                 "notes.txt",
                 "text/plain",
                 b"public client bytes".to_vec(),

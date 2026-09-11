@@ -44,8 +44,7 @@ where
         audit::pairing_start("direct_pin");
         audit::pairing_failure("direct_pin", error);
     })?;
-    let mut pairing_client =
-        crate::protocol::wire::pairing_service_client::PairingServiceClient::new(channel);
+    let mut pairing_client = wire::pairing_service_client::PairingServiceClient::new(channel);
     let peer = pair_initiator(
         &mut pairing_client,
         &local_identity,

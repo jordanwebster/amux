@@ -1,11 +1,11 @@
 use tonic::Status;
 use uuid::Uuid;
+use wire;
 
 use crate::installation::{
     BindError, InstallationError, Intent, Observed, OperationId, ProfileEvent, ProfileId,
     ProfileStatus,
 };
-use crate::protocol::wire;
 
 pub(super) fn operation_id(value: &str) -> Result<OperationId, Status> {
     Uuid::parse_str(value)

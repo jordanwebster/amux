@@ -5,13 +5,13 @@ use std::time::Duration;
 
 use tonic::transport::Channel;
 use uuid::Uuid;
+use wire;
 
 use crate::client::{
     debug_format_to_wire, host_entry_from_wire, pairing_identity_from_wire,
     pairing_start_from_wire, peer_entry_from_wire, peer_ref, status_to_client_error,
 };
 use crate::installation::ProfileId;
-use crate::protocol::wire;
 use crate::{
     ClientError, DebugFormat, HostEntry, PairingStart, PeerEntry, PeerIdentifier, SshPairingPeer,
 };

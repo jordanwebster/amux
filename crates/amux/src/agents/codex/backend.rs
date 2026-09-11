@@ -14,6 +14,7 @@ use codex::{
     ThreadEvent, ThreadItem, TurnEvent, TurnInput, connect_daemon, connect_socket,
     daemon_socket_path, ensure_daemon_with_fallback,
 };
+use model::ProtocolError;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
 use tokio::task::AbortHandle;
@@ -34,7 +35,6 @@ use crate::agents::{
 };
 #[cfg(test)]
 use crate::envelope::{Envelope, Sender};
-use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
 
 // Codex streams are delta-heavy and this is their sole elastic/replay buffer.

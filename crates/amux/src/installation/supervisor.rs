@@ -17,7 +17,9 @@ use super::{
 use crate::HostId;
 use crate::auth::CredentialProvider;
 use crate::client::Client;
-use crate::config::{ConfigError, InstallationConfig, ProfileConfig, check_path};
+use crate::config::{
+    ConfigError, InstallationConfig, ProfileConfig, check_path, check_profile_paths,
+};
 use crate::profile::runtime::{self, ProfileRuntime, ProfileRuntimeOptions, RuntimeConfig};
 use crate::profile::status::RuntimeStatus;
 use crate::server::ShutdownReason;
@@ -255,7 +257,7 @@ fn read_profile_config(
         &installation.file_path(),
         &profile.installation_config,
     )?;
-    profile.check_paths(&installation.root, id)?;
+    check_profile_paths(&profile, &installation.root, id)?;
     // A profile file never silently falls back to process defaults when its
     // explicitly referenced installation file is missing or invalid.
     let referenced = InstallationConfig::from_file(&profile.installation_config)?;
@@ -346,7 +348,7 @@ impl Installation {
         config.validate()?;
         let options = InstallationOptions {
             root: InstallationRoot::OnDisk(config.root.clone()),
-            settings: config.settings(),
+            settings: crate::config::installation_settings(&config),
             listeners: Listeners::Sockets,
             credentials: CredentialSource::ProfileFiles,
             identity_http: reqwest::Client::new(),

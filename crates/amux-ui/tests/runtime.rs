@@ -9,12 +9,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use amux::{AgentIdentifier, ArtifactKind, CreateAgentRequest, claude_io};
-use amux_artifacts::ARTIFACT_SIZE_CAP;
 use amux_ui::{
     AgentPhase, AttachmentClient, AttachmentClientFuture, Attention, Command, DraftAttachment,
     InputPayload, Model, Msg, OpError, OpId, OpOutcome, Runtime, RuntimeOptions,
     execute_put_then_send,
 };
+use artifacts::ARTIFACT_SIZE_CAP;
 use tempfile::tempdir;
 use uuid::Uuid;
 
@@ -139,7 +139,7 @@ impl AttachmentClient for AttachmentStub {
                 ));
             }
             Ok(amux::ArtifactRef {
-                id: amux_artifacts::id_of(&bytes),
+                id: model::id_of(&bytes),
                 kind,
                 name: name.to_string(),
                 mime: mime.to_string(),
@@ -310,7 +310,7 @@ async fn attachments_open_uses_one_persistent_cache_and_refetches_tampering() {
     let opened = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
     let opener = {
         let opened = opened.clone();
-        Arc::new(move |meta: &amux_artifacts::ArtifactMeta, path: &Path| {
+        Arc::new(move |meta: &artifacts::ArtifactMeta, path: &Path| {
             assert_eq!(meta.name, "cached.txt");
             opened.lock().unwrap().push(path.to_path_buf());
             Ok(())
@@ -711,12 +711,10 @@ impl ProfileBindings {
             artifact_cache: Some(profile_root.join("cache")),
             artifact_cache_bound: 1024 * 1024,
             subscription_status_provider: Some(Arc::new(move || subscription_required)),
-            attachment_opener: Arc::new(
-                move |_meta: &amux_artifacts::ArtifactMeta, path: &Path| {
-                    opened.lock().unwrap().push(path.to_path_buf());
-                    Ok(())
-                },
-            ),
+            attachment_opener: Arc::new(move |_meta: &artifacts::ArtifactMeta, path: &Path| {
+                opened.lock().unwrap().push(path.to_path_buf());
+                Ok(())
+            }),
             ..RuntimeOptions::default()
         }
     }

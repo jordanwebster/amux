@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use super::*;
 #[cfg(all(unix, feature = "local-agents"))]
 use crate::installation::{FrontDoor, OperationId};
@@ -189,7 +191,8 @@ async fn config_split_path_disagreement_fails_before_any_runtime_starts() {
 async fn config_split_boots_from_temp_root_and_discovers_profile_over_grpc() {
     use std::sync::Arc;
 
-    use crate::protocol::wire;
+    use wire;
+
     use crate::transport::{self, GrpcIo};
     let fixture = Fixture::new();
     let config = InstallationConfig::from_file(&fixture.installation.file_path()).unwrap();

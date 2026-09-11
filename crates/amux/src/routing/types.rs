@@ -4,38 +4,11 @@
 //! nothing about a link's identity crosses the wire. A route is either
 //! `Direct` (a link of our own) or `Via` (any adjacent relay).
 
-use serde::{Deserialize, Serialize};
+use model::{Capabilities, Host, SupportedAgentType};
 use uuid::Uuid;
+use wire::{self as protocol_wire, pb};
 
 use crate::HostId;
-use crate::protocol::wire::{self as protocol_wire, pb};
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
-pub struct Capabilities {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub features: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub supported_agent_types: Vec<SupportedAgentType>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct SupportedAgentType {
-    pub agent_type: String,
-}
-
-/// Information about a connected host (machine running amux server).
-/// Exchanged in the link handshake and in NeighborUp adjacency events.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct Host {
-    /// Daemon-lifetime host ID announced to peers.
-    pub id: Uuid,
-    /// Human-readable hostname from config
-    pub name: String,
-    /// amux version of the host
-    pub version: String,
-    /// Host-level protocol and agent creation capabilities.
-    pub capabilities: Capabilities,
-}
 
 /// Local identity of one link: the authenticated peer plus a connection
 /// instance. Two links to the same peer differ only in `instance`.

@@ -12,7 +12,6 @@ use tokio::io::{
 use super::PairingAdmin;
 use crate::identity::{DeviceIdentity, IdentityError, load_or_create_device_identity_in};
 use crate::installation::ProfileId;
-use crate::protocol::wire;
 use crate::{HostId, audit};
 
 const SSH_PAIRING_FRAME_MAX_BYTES: usize = 4096;

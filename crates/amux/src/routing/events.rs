@@ -1,8 +1,8 @@
+use model::Host;
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 use crate::HostId;
-use crate::routing::types::{Capabilities, Host, LinkId};
+use crate::routing::types::LinkId;
 
 const DEFAULT_EVENT_BUFFER: usize = 256;
 
@@ -29,52 +29,6 @@ pub(crate) enum RoutingEvent {
 pub(crate) enum HostReachabilityEvent {
     Added { host: Host },
     Removed { host_id: HostId },
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum HostTrustStatus {
-    Trusted,
-    UntrustedButOnline,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct HostEntry {
-    pub id: Uuid,
-    pub name: String,
-    /// Presence, derived from routing: adjacent, or claimed adjacent by a
-    /// neighbor.
-    pub online: bool,
-    pub version: Option<String>,
-    pub capabilities: Option<Capabilities>,
-    pub trust_status: HostTrustStatus,
-    /// The outcome of the daemon's last failed dial attempt at this host,
-    /// cleared when a route comes up. Nothing probes, so this is all the
-    /// daemon honestly knows; "never tried / no news" is
-    /// `!online && last_dial_error.is_none()`, derived client-side if
-    /// anyone cares.
-    pub last_dial_error: Option<String>,
-}
-
-/// Client-facing host inventory events.
-///
-/// These are carried by `ClientService.SubscribeHosts`.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HostEvent {
-    SnapshotComplete,
-    HostUpdated { host: HostEntry },
-    HostRemoved { id: Uuid },
-}
-
-impl HostEvent {
-    pub fn type_label(&self) -> &'static str {
-        match self {
-            Self::SnapshotComplete => "Host::SnapshotComplete",
-            Self::HostUpdated { .. } => "Host::HostUpdated",
-            Self::HostRemoved { .. } => "Host::HostRemoved",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

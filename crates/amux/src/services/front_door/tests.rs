@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use tonic::{Code, Request};
+use wire::profile_service_server::ProfileService;
 
 use super::*;
 use crate::installation::{
     CredentialSource, InstallationOptions, InstallationRoot, InstallationSettings, Listeners,
     OperationId,
 };
-use crate::protocol::wire::profile_service_server::ProfileService;
 
 struct NoCredentials;
 

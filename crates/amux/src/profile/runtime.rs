@@ -16,7 +16,6 @@ use crate::auth::CredentialProvider;
 use crate::client::Client;
 use crate::config::{ClaudeSettings, Config, ConfigError, Keybinds, UiSettings};
 use crate::identity;
-use crate::protocol::wire;
 use crate::server::ShutdownReason;
 use crate::services::{
     CloudConnector, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices,
@@ -82,7 +81,7 @@ pub(crate) enum CloudFixtureAuth {
 pub(crate) struct RuntimeFixtures {
     pub(crate) listener: Option<TcpListener>,
     pub(crate) tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
-    pub(crate) artifact_clock: Option<Arc<dyn amux_artifacts::Clock>>,
+    pub(crate) artifact_clock: Option<Arc<dyn artifacts::Clock>>,
     pub(crate) cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
     pub(crate) cloud_transport: Option<tonic::transport::Channel>,
 }
@@ -926,11 +925,11 @@ mod tests {
                 Observed::AuthenticationRequired,
             ),
             (
-                crate::protocol::protocol_status(ProtocolError::PaymentRequired),
+                wire::protocol_status(ProtocolError::PaymentRequired),
                 Observed::SubscriptionRequired,
             ),
             (
-                crate::protocol::protocol_status(ProtocolError::UpdateRequired {
+                wire::protocol_status(ProtocolError::UpdateRequired {
                     minimum_version: "99.0.0".into(),
                     client_version: "0.6.0".into(),
                 }),
