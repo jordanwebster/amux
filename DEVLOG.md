@@ -1,3 +1,12 @@
+2026-09-11 — **Gate cloud tunnels at the relay while preserving presence.**
+Every live link now records whether it was admitted by a pinned device key or
+by a cloud token with a free/pro tier. The relay refuses a tunnel open when
+either participating cloud link is free and returns a structured payment
+error to ordinary calls and pairing, while neighbor presence continues to
+flow. Pinned links never consult entitlement, so an account-free device can
+still relay between its paired peers. Reauthentication updates the admission
+tier used by subsequent opens without replacing the link.
+
 2026-09-11 — **Carry relay entitlement in authenticated link state.** Cloud
 connection tokens now require a recognised `free` or `pro` tier, and the relay
 rejects a signed token that omits or invents the claim. Same-account reauth

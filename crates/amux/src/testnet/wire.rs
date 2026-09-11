@@ -245,6 +245,7 @@ impl WirePeer {
             body: Some(pb::message::Body::TunnelClose(pb::TunnelClose {
                 tunnel_id,
                 dst: dst.as_bytes().to_vec(),
+                error: None,
             })),
         })
         .await;

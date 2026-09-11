@@ -335,6 +335,7 @@ impl wire::link_service_server::LinkService for CloudLinkService {
         let ctx = self
             .link_service_ctx_for_user(user.user_id)
             .await
+            .with_link_role(crate::routing::LinkRole::CloudRelay)
             .with_auth_session(LinkAuthSession::new(
                 user,
                 self.inner.authenticator.clone(),

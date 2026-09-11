@@ -18,7 +18,7 @@ use tokio::sync::{Notify, RwLock, mpsc};
 use crate::protocol::wire::pb;
 use crate::routing::types::{Host, LinkId};
 use crate::routing::wire::{neighbor_down_message, neighbor_up_message};
-use crate::{HostId, audit};
+use crate::{HostId, Tier, audit};
 
 pub(crate) type LinkOutputTx = mpsc::Sender<pb::Message>;
 
@@ -45,6 +45,21 @@ pub(crate) enum LinkRole {
     CloudRelay,
 }
 
+/// How this daemon authenticated a live link. Only token-admitted links
+/// carry entitlement: pinned device links are independent of any account.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum LinkAdmission {
+    PinnedKey,
+    CloudToken { tier: Tier },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum TunnelOpenForward {
+    Forwarded,
+    NoLink,
+    PaymentRequired,
+}
+
 #[derive(Clone)]
 struct LinkWriter {
     host: Host,
@@ -52,6 +67,7 @@ struct LinkWriter {
     close_tx: mpsc::Sender<LinkCloseRequest>,
     closed: Arc<Notify>,
     role: LinkRole,
+    admission: LinkAdmission,
 }
 
 /// A local request for the link's connect task to close the link. Distinct
@@ -86,6 +102,26 @@ impl LinkRegistry {
         host: Host,
         outgoing_tx: LinkOutputTx,
         role: LinkRole,
+        advertised_snapshot: &[HostId],
+    ) -> mpsc::Receiver<LinkCloseRequest> {
+        self.register_with_admission(
+            link,
+            host,
+            outgoing_tx,
+            role,
+            LinkAdmission::PinnedKey,
+            advertised_snapshot,
+        )
+        .await
+    }
+
+    pub(crate) async fn register_with_admission(
+        &self,
+        link: LinkId,
+        host: Host,
+        outgoing_tx: LinkOutputTx,
+        role: LinkRole,
+        admission: LinkAdmission,
         advertised_snapshot: &[HostId],
     ) -> mpsc::Receiver<LinkCloseRequest> {
         let (close_tx, close_rx) = mpsc::channel(1);
@@ -131,6 +167,7 @@ impl LinkRegistry {
                 close_tx,
                 closed,
                 role,
+                admission,
             },
         );
         drop(state);
@@ -245,6 +282,25 @@ impl LinkRegistry {
         self.state.read().await.writers.contains_key(link)
     }
 
+    pub(crate) async fn admission(&self, link: &LinkId) -> Option<LinkAdmission> {
+        self.state
+            .read()
+            .await
+            .writers
+            .get(link)
+            .map(|writer| writer.admission)
+    }
+
+    pub(crate) async fn update_cloud_tier(&self, link: &LinkId, tier: Tier) {
+        let mut state = self.state.write().await;
+        let Some(writer) = state.writers.get_mut(link) else {
+            return;
+        };
+        if matches!(writer.admission, LinkAdmission::CloudToken { .. }) {
+            writer.admission = LinkAdmission::CloudToken { tier };
+        }
+    }
+
     /// A writer for any live link to `peer` — the forwarding rule's "do I
     /// have a direct link to dst" lookup.
     pub(crate) async fn link_to_peer(&self, peer: HostId) -> Option<(LinkId, LinkOutputTx)> {
@@ -269,6 +325,38 @@ impl LinkRegistry {
         };
         try_send_or_request_close(&writer.tx, &writer.close_tx, message);
         true
+    }
+
+    /// Chooses the destination writer and applies the cloud entitlement gate
+    /// under the same registry read lock, so the checked link is exactly the
+    /// link that receives the Open.
+    pub(crate) async fn forward_tunnel_open(
+        &self,
+        origin: &LinkId,
+        peer: HostId,
+        message: pb::Message,
+    ) -> TunnelOpenForward {
+        let state = self.state.read().await;
+        let origin_is_free = state.writers.get(origin).is_some_and(|writer| {
+            matches!(
+                writer.admission,
+                LinkAdmission::CloudToken { tier: Tier::Free }
+            )
+        });
+        if origin_is_free {
+            return TunnelOpenForward::PaymentRequired;
+        }
+        let Some(writer) = state.writers.values().find(|writer| writer.host.id == peer) else {
+            return TunnelOpenForward::NoLink;
+        };
+        if matches!(
+            writer.admission,
+            LinkAdmission::CloudToken { tier: Tier::Free }
+        ) {
+            return TunnelOpenForward::PaymentRequired;
+        }
+        try_send_or_request_close(&writer.tx, &writer.close_tx, message);
+        TunnelOpenForward::Forwarded
     }
 
     /// Best-effort enqueue on one specific link (proactive `TunnelClose`):
@@ -653,6 +741,40 @@ mod tests {
         };
         assert_eq!(close.reason, pb::LinkCloseReason::UserShutdown as i32);
         assert!(close.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn cloud_admission_tier_updates_without_changing_pinned_links() {
+        let registry = LinkRegistry::default();
+        let cloud = link(1, 1);
+        let pinned = link(2, 1);
+        let (cloud_tx, _cloud_rx) = mpsc::channel(8);
+        registry
+            .register_with_admission(
+                cloud,
+                host(1),
+                cloud_tx,
+                LinkRole::CloudRelay,
+                LinkAdmission::CloudToken { tier: Tier::Free },
+                &[],
+            )
+            .await;
+        let (pinned_tx, _pinned_rx) = mpsc::channel(8);
+        registry
+            .register(pinned, host(2), pinned_tx, LinkRole::Peer, &[])
+            .await;
+
+        registry.update_cloud_tier(&cloud, Tier::Pro).await;
+        registry.update_cloud_tier(&pinned, Tier::Free).await;
+
+        assert_eq!(
+            registry.admission(&cloud).await,
+            Some(LinkAdmission::CloudToken { tier: Tier::Pro })
+        );
+        assert_eq!(
+            registry.admission(&pinned).await,
+            Some(LinkAdmission::PinnedKey)
+        );
     }
 
     #[tokio::test]

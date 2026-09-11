@@ -105,8 +105,17 @@ address travels exactly once, here), `TunnelData { tunnel_id, dst, payload }`
 frames (≤ 64 KiB) carry it, and `TunnelClose` — or link death — ends it.
 Only an Open allocates state; Data for an unknown id is a violation and is
 dropped without allocation. There is no open-ack: the mTLS handshake inside
-is the acknowledgement, and rejection is `TunnelClose`. Replies travel back
-out the link they arrived on.
+is the acknowledgement, and rejection is `TunnelClose`, whose optional
+structured error explains policy refusals such as `PaymentRequired`. Replies
+travel back out the link they arrived on.
+
+Each live link records how it was admitted. Device links authenticated by a
+pinned key carry no account tier. Links accepted by the cloud relay carry the
+`free` or `pro` tier from their token, updated on reauthentication. The cloud
+relay refuses an Open when either the origin or destination link is free, but
+continues forwarding neighbor events so presence and pairing discovery remain
+available. A device relaying between its own pinned peers never consults an
+account or tier.
 
 Inside **every** tunnel — even to an adjacent peer — runs an mTLS handshake
 pinned against the trust store. This is the system's single authority

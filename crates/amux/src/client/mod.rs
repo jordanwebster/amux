@@ -167,6 +167,11 @@ impl From<ClientError> for PairingError {
 }
 
 pub(crate) fn status_to_pairing_error(error: tonic::Status) -> PairingError {
+    if crate::protocol::protocol_error_from_status_details(&error)
+        == Some(ProtocolError::PaymentRequired)
+    {
+        return PairingError::SubscriptionRequired;
+    }
     match error.code() {
         tonic::Code::NotFound => PairingError::NotFound,
         tonic::Code::Unavailable => PairingError::Unreachable(error.message().to_string()),

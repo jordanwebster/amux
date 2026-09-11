@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 pub(crate) use transport::TunnelTransport;
 
 use crate::HostId;
-use crate::protocol::wire as pb;
+use crate::protocol::{ProtocolError, wire as pb};
 use crate::routing::LinkOutputTx;
 pub(crate) use crate::tunnel::types::TunnelId;
 
@@ -30,11 +30,19 @@ pub(crate) struct Tunnel {
     inbound_tx: mpsc::Sender<Bytes>,
     reader_task: tokio::task::JoinHandle<()>,
     writer_task: tokio::task::JoinHandle<()>,
+    rejection: std::sync::Arc<std::sync::Mutex<Option<ProtocolError>>>,
 }
 
 impl Tunnel {
     pub(crate) fn inbound_sender(&self) -> mpsc::Sender<Bytes> {
         self.inbound_tx.clone()
+    }
+
+    pub(crate) fn reject(&self, error: ProtocolError) {
+        *self
+            .rejection
+            .lock()
+            .expect("tunnel rejection lock poisoned") = Some(error);
     }
 }
 
@@ -59,6 +67,7 @@ pub(crate) fn create_tunnel(
     let (grpc_half, routing_half) = tokio::io::duplex(BUF_SIZE);
     let (mut routing_read, mut routing_write) = tokio::io::split(routing_half);
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<Bytes>(INBOUND_DEPTH);
+    let rejection = std::sync::Arc::new(std::sync::Mutex::new(None));
 
     let reader_task = tokio::spawn(async move {
         let mut open_pending = open_as;
@@ -96,8 +105,9 @@ pub(crate) fn create_tunnel(
             inbound_tx,
             reader_task,
             writer_task,
+            rejection: rejection.clone(),
         },
-        TunnelTransport::new(grpc_half, peer),
+        TunnelTransport::new(grpc_half, peer).with_rejection(rejection),
     )
 }
 
@@ -126,6 +136,7 @@ pub(crate) fn tunnel_close_message(id: TunnelId, dst: HostId) -> pb::Message {
         body: Some(pb::message::Body::TunnelClose(pb::TunnelClose {
             tunnel_id: id.to_wire(),
             dst: dst.as_bytes().to_vec(),
+            error: None,
         })),
     }
 }

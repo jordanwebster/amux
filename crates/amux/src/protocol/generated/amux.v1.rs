@@ -764,12 +764,16 @@ pub struct TunnelData {
 /// Ends a tunnel. Sent proactively on normal teardown from either endpoint;
 /// a TunnelClose for an unknown tunnel_id is dropped. Tunnels also die with
 /// the link they are pinned to.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TunnelClose {
     #[prost(bytes = "vec", tag = "1")]
     pub tunnel_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "2")]
     pub dst: ::prost::alloc::vec::Vec<u8>,
+    /// Present when the peer or relay refused the tunnel. An ordinary close
+    /// carries no error.
+    #[prost(message, optional, tag = "3")]
+    pub error: ::core::option::Option<Error>,
 }
 /// Fire-and-forget credential refresh on the cloud link, sent before the
 /// current token expires. There is no acknowledgement — the protocol never

@@ -508,7 +508,10 @@ daemon initiates or hosts, plus the relay forwarding rule. Only a
 `TunnelOpen` allocates state; data for an unknown id is dropped without
 allocation; closes are sent proactively on teardown. Forwarding consults
 only the `LinkRegistry` — a frame for `dst` is forwarded iff a direct
-link to `dst` exists — and keeps no per-tunnel state for relayed traffic.
+link to `dst` exists. At the cloud relay, the same registry operation refuses
+an Open when its token-admitted origin or destination link has a free tier;
+pinned device links have no entitlement to consult. Forwarding keeps no
+per-tunnel state for relayed traffic.
 Terminating tunnels are surfaced as byte streams to the dispatcher, which
 runs the pinned mTLS handshake inside them.
 

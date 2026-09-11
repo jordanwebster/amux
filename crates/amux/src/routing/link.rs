@@ -375,6 +375,7 @@ mod tests {
             pb::message::Body::TunnelClose(pb::TunnelClose {
                 tunnel_id: [2_u8; 16].to_vec(),
                 dst: [3_u8; 16].to_vec(),
+                error: None,
             }),
             pb::message::Body::Reauth(pb::Reauth {
                 auth_token: "new-token".to_string(),

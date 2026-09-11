@@ -2342,6 +2342,7 @@ fn remote_tunnel_status(
     let message = format!("{method} remote dispatch to host {host_id} failed: {error}");
     match error {
         TunnelPoolError::NotFound { .. } => protocol_status(ProtocolError::Unreachable { message }),
+        TunnelPoolError::Rejected(error) => protocol_status(error),
         TunnelPoolError::LinkUnavailable { .. }
         | TunnelPoolError::Identity(_)
         | TunnelPoolError::Tls(_) => tonic::Status::unavailable(message),

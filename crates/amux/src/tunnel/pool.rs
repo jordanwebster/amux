@@ -28,11 +28,11 @@ use tonic::transport::{Channel, Endpoint};
 
 use crate::HostId;
 use crate::identity::{DeviceIdentity, IdentityError};
-use crate::protocol::wire as pb;
+use crate::protocol::{ProtocolError, wire as pb};
 use crate::resource_limits::{
     CLOUD_INBOUND_TUNNEL_RATE_LIMIT, CLOUD_INBOUND_TUNNEL_RATE_WINDOW, SlidingWindowRateLimiter,
 };
-use crate::routing::{LinkId, LinkRegistry, LinkUnavailable, RoutingCore};
+use crate::routing::{LinkId, LinkRegistry, LinkUnavailable, RoutingCore, TunnelOpenForward};
 use crate::transport::{
     channel_from_single_io, configure_tonic_endpoint_keepalive, pairing_channel_from_io,
 };
@@ -62,6 +62,8 @@ pub(crate) enum TunnelPoolError {
     Identity(#[from] IdentityError),
     #[error("tunnel TLS error: {0}")]
     Tls(String),
+    #[error(transparent)]
+    Rejected(ProtocolError),
     #[allow(dead_code)]
     #[error("tunnel endpoint channels require device TLS")]
     DeviceTlsRequired,
@@ -225,6 +227,7 @@ impl TunnelPool {
         relay: HostId,
     ) -> Result<Channel, TunnelPoolError> {
         let (id, transport) = self.pairing_transport_via(peer, relay).await?;
+        let rejection = transport.rejection_handle();
         match tokio::time::timeout(
             self.pairing_handshake_timeout,
             pairing_channel_from_io(transport),
@@ -240,7 +243,7 @@ impl TunnelPool {
             Ok(Ok(channel)) => Ok(channel),
             Ok(Err(error)) => {
                 self.retire_and_notify(id).await;
-                Err(TunnelPoolError::Tls(error.to_string()))
+                Err(rejection_or_tls_error(rejection, error.to_string()))
             }
         }
     }
@@ -302,6 +305,7 @@ impl TunnelPool {
         peer: HostId,
         transport: TunnelTransport,
     ) -> Result<Channel, TunnelPoolError> {
+        let rejection = transport.rejection_handle();
         match &self.channel_security {
             #[cfg(test)]
             TunnelChannelSecurity::Plain => Ok(channel_from_transport(transport)),
@@ -324,7 +328,7 @@ impl TunnelPool {
                 )
                 .await
                 .map_err(|_| TunnelPoolError::Tls("TLS handshake timed out".to_string()))?
-                .map_err(|error| TunnelPoolError::Tls(error.to_string()))?;
+                .map_err(|error| rejection_or_tls_error(rejection, error.to_string()))?;
                 Ok(channel_from_tls_transport(tls))
             }
         }
@@ -356,7 +360,39 @@ impl TunnelPool {
         }
 
         if dst != self.my_host_id {
-            self.forward(dst, message_from_open(open), &id).await;
+            let src = host_id_from_wire(&open.src).map_err(|_| TunnelPoolError::InvalidSource {
+                actual: open.src.len(),
+            })?;
+            match self
+                .links
+                .forward_tunnel_open(origin_link, dst, message_from_open(open))
+                .await
+            {
+                TunnelOpenForward::Forwarded => {}
+                TunnelOpenForward::NoLink => {
+                    tracing::debug!(
+                        dst = %dst,
+                        tunnel_id = %id,
+                        "dropping tunnel frame for a host with no direct link"
+                    );
+                }
+                TunnelOpenForward::PaymentRequired => {
+                    let origin_admission = self.links.admission(origin_link).await;
+                    tracing::info!(
+                        tunnel_id = %id,
+                        origin = %origin_link.peer(),
+                        ?origin_admission,
+                        destination = %dst,
+                        "refusing cloud tunnel for a free-tier link"
+                    );
+                    self.links
+                        .send_best_effort(
+                            origin_link,
+                            tunnel_close_error_message(id, src, ProtocolError::PaymentRequired),
+                        )
+                        .await;
+                }
+            }
             return Ok(());
         }
 
@@ -456,9 +492,14 @@ impl TunnelPool {
             self.forward(dst, message_from_close(close), &id).await;
             return Ok(());
         }
+        let rejection = close.error.as_ref().cloned().map(pb::decode_protocol_error);
         // Dropping the endpoint closes its byte stream; the peer asked for
         // the close, so no TunnelClose goes back.
-        self.state.write().await.tunnels.remove(&id);
+        if let Some(active) = self.state.write().await.tunnels.remove(&id)
+            && let Some(error) = rejection
+        {
+            active.tunnel.reject(error);
+        }
         Ok(())
     }
 
@@ -623,6 +664,31 @@ fn message_from_close(close: pb::TunnelClose) -> pb::Message {
     }
 }
 
+fn tunnel_close_error_message(id: TunnelId, dst: HostId, error: ProtocolError) -> pb::Message {
+    pb::Message {
+        body: Some(pb::message::Body::TunnelClose(pb::TunnelClose {
+            tunnel_id: id.to_wire(),
+            dst: dst.as_bytes().to_vec(),
+            error: Some(pb::encode_protocol_error(&error)),
+        })),
+    }
+}
+
+fn rejection_or_tls_error(
+    rejection: Option<Arc<std::sync::Mutex<Option<ProtocolError>>>>,
+    fallback: String,
+) -> TunnelPoolError {
+    rejection
+        .and_then(|rejection| {
+            rejection
+                .lock()
+                .expect("tunnel rejection lock poisoned")
+                .clone()
+        })
+        .map(TunnelPoolError::Rejected)
+        .unwrap_or(TunnelPoolError::Tls(fallback))
+}
+
 impl From<LinkUnavailable> for TunnelPoolError {
     fn from(error: LinkUnavailable) -> Self {
         Self::LinkUnavailable {
@@ -712,6 +778,26 @@ mod tests {
         link
     }
 
+    async fn register_test_cloud_link(
+        pool: &TunnelPool,
+        peer: u128,
+        tx: mpsc::Sender<pb::Message>,
+        tier: crate::Tier,
+    ) -> LinkId {
+        let link = LinkId::new(HostId::from_u128(peer));
+        pool.link_registry()
+            .register_with_admission(
+                link,
+                host(peer, &format!("peer-{peer}")),
+                tx,
+                LinkRole::CloudRelay,
+                crate::routing::LinkAdmission::CloudToken { tier },
+                &[],
+            )
+            .await;
+        link
+    }
+
     async fn wait_for_active_count(pool: &TunnelPool, expected: usize) {
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
@@ -779,6 +865,7 @@ mod tests {
         pb::TunnelClose {
             tunnel_id: id.to_wire(),
             dst: dst.as_bytes().to_vec(),
+            error: None,
         }
     }
 
@@ -1314,6 +1401,95 @@ mod tests {
         }
         assert_eq!(bodies, ["open", "data", "close"]);
         assert_eq!(pool.active_count().await, 0, "relays keep no tunnel state");
+    }
+
+    #[tokio::test]
+    async fn a_free_cloud_origin_is_refused_before_forwarding() {
+        let (pool, _incoming_rx) = test_pool(HostId::from_u128(1));
+        let (origin_tx, mut origin_rx) = mpsc::channel(8);
+        let origin = register_test_cloud_link(&pool, 10, origin_tx, crate::Tier::Free).await;
+        let (target_tx, mut target_rx) = mpsc::channel(8);
+        register_test_cloud_link(&pool, 9, target_tx, crate::Tier::Pro).await;
+        let id = TunnelId::from_u128(20);
+
+        pool.handle_inbound_open(
+            open_to(HostId::from_u128(9), HostId::from_u128(10), id),
+            &origin,
+        )
+        .await
+        .unwrap();
+
+        let close = recv_tunnel_close(&mut origin_rx).await;
+        assert_eq!(
+            close.error.map(pb::decode_protocol_error),
+            Some(ProtocolError::PaymentRequired)
+        );
+        while let Ok(message) = target_rx.try_recv() {
+            assert!(!matches!(
+                message.body,
+                Some(pb::message::Body::TunnelOpen(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_free_cloud_destination_refuses_a_pro_origin() {
+        let (pool, _incoming_rx) = test_pool(HostId::from_u128(1));
+        let (origin_tx, mut origin_rx) = mpsc::channel(8);
+        let origin = register_test_cloud_link(&pool, 10, origin_tx, crate::Tier::Pro).await;
+        let (target_tx, mut target_rx) = mpsc::channel(8);
+        register_test_cloud_link(&pool, 9, target_tx, crate::Tier::Free).await;
+        let id = TunnelId::from_u128(20);
+
+        pool.handle_inbound_open(
+            open_to(HostId::from_u128(9), HostId::from_u128(10), id),
+            &origin,
+        )
+        .await
+        .unwrap();
+
+        let close = recv_tunnel_close(&mut origin_rx).await;
+        assert_eq!(
+            close.error.map(pb::decode_protocol_error),
+            Some(ProtocolError::PaymentRequired)
+        );
+        while let Ok(message) = target_rx.try_recv() {
+            assert!(!matches!(
+                message.body,
+                Some(pb::message::Body::TunnelOpen(_))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn tunnel_refusal_is_retained_for_the_initiator_handshake() {
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        let (pool, _incoming_rx) = test_pool(initiator);
+        let (link_tx, _link_rx) = mpsc::channel(8);
+        let link = register_test_link(&pool, 2, link_tx.clone()).await;
+        let id = TunnelId::from_u128(42);
+        let (tunnel, transport) = create_tunnel(id, target, Some(initiator), link_tx);
+        let rejection = transport.rejection_handle();
+        pool.state.write().await.tunnels.insert(
+            id,
+            ActiveTunnel {
+                peer: target,
+                link,
+                initiated: true,
+                opened_at: Utc::now(),
+                tunnel,
+            },
+        );
+
+        let mut close = close_to(initiator, id);
+        close.error = Some(pb::encode_protocol_error(&ProtocolError::PaymentRequired));
+        pool.handle_inbound_close(close, &link).await.unwrap();
+
+        assert!(matches!(
+            rejection_or_tls_error(rejection, "tls fallback".to_string()),
+            TunnelPoolError::Rejected(ProtocolError::PaymentRequired)
+        ));
     }
 
     /// Rule 2's other half: no direct link to dst → the frame is dropped.

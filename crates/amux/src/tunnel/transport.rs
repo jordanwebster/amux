@@ -4,7 +4,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 use tonic::transport::server::Connected;
 
-use crate::HostId;
+use crate::{HostId, ProtocolError};
 
 type DropHook = Box<dyn FnOnce() + Send + 'static>;
 
@@ -13,6 +13,7 @@ pub(crate) struct TunnelTransport {
     peer: HostId,
     cloud_pairing_reachability: bool,
     on_drop: Option<DropHook>,
+    rejection: Option<std::sync::Arc<std::sync::Mutex<Option<ProtocolError>>>>,
 }
 
 impl TunnelTransport {
@@ -22,7 +23,22 @@ impl TunnelTransport {
             peer,
             cloud_pairing_reachability: false,
             on_drop: None,
+            rejection: None,
         }
+    }
+
+    pub(crate) fn with_rejection(
+        mut self,
+        rejection: std::sync::Arc<std::sync::Mutex<Option<ProtocolError>>>,
+    ) -> Self {
+        self.rejection = Some(rejection);
+        self
+    }
+
+    pub(crate) fn rejection_handle(
+        &self,
+    ) -> Option<std::sync::Arc<std::sync::Mutex<Option<ProtocolError>>>> {
+        self.rejection.clone()
     }
 
     pub(crate) fn with_cloud_pairing_reachability(mut self, cloud: bool) -> Self {

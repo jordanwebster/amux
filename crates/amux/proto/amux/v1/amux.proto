@@ -283,6 +283,9 @@ message TunnelData {
 message TunnelClose {
   bytes tunnel_id = 1;
   bytes dst = 2;
+  // Present when the peer or relay refused the tunnel. An ordinary close
+  // carries no error.
+  Error error = 3;
 }
 
 // Fire-and-forget credential refresh on the cloud link, sent before the

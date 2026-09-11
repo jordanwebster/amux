@@ -408,6 +408,7 @@ struct DaemonSpec {
     cloud_only: bool,
     no_cloud: bool,
     cloud_user: Option<String>,
+    cloud_tier: crate::Tier,
 }
 
 /// Declares a topology for [`TestNetBuilder::start`]: daemons, an optional
@@ -503,6 +504,7 @@ impl TestNetBuilder {
             cloud_only: false,
             no_cloud: false,
             cloud_user: None,
+            cloud_tier: crate::Tier::Pro,
         });
         self
     }
@@ -556,6 +558,18 @@ impl TestNetBuilder {
         } else {
             self.last_daemon("cloud_user").cloud_user = Some(user.into());
         }
+        self
+    }
+
+    /// Gives the most recently added daemon a token with this tier. A
+    /// non-default tier receives a distinct token, so one account can
+    /// exercise mixed-tier live links without changing account identity.
+    pub fn cloud_tier(mut self, tier: crate::Tier) -> Self {
+        assert!(
+            !self.selecting_profile,
+            "cloud_tier currently requires a standalone daemon"
+        );
+        self.last_daemon("cloud_tier").cloud_tier = tier;
         self
     }
 
@@ -750,9 +764,22 @@ impl TestNetBuilder {
                 tcp_addr: prep.tcp_addr,
                 cloud: prep.attaches_to_cloud.then(|| {
                     let cloud = cloud.as_ref().expect("cloud attachment without cloud");
-                    let (user_id, token) = match &spec.cloud_user {
+                    let (user_id, shared_token) = match &spec.cloud_user {
                         Some(label) => cloud.credentials_for_user(label),
                         None => (cloud.default_user_id(), cloud.token.clone()),
+                    };
+                    let token = if spec.cloud_tier == crate::Tier::Pro {
+                        shared_token
+                    } else {
+                        let token =
+                            format!("spec-token-{}-{}", spec.name, uuid::Uuid::new_v4().simple());
+                        cloud.register_token_with_tier(
+                            &token,
+                            user_id,
+                            std::time::Duration::from_secs(3600),
+                            spec.cloud_tier,
+                        );
+                        token
                     };
                     CloudAttachment {
                         addr: cloud.addr,

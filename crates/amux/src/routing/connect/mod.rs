@@ -23,8 +23,8 @@ use crate::protocol::{
     PROTOCOL_VERSION, ProtocolError, protocol_error_from_status_details, protocol_status, wire,
 };
 use crate::routing::{
-    ConnectHandshake, ConnectHandshakeEvent, Host, LinkCloseRequest, LinkId, LinkRegistry,
-    LinkRole, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,
+    ConnectHandshake, ConnectHandshakeEvent, Host, LinkAdmission, LinkCloseRequest, LinkId,
+    LinkRegistry, LinkRole, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,
     inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
     protocol_error_hello_ack, protocol_error_link_close, validate_remote_host,
 };
@@ -237,6 +237,7 @@ pub(crate) struct LinkServiceCtx {
     links: Arc<LinkRegistry>,
     auth_session: Option<LinkAuthSession>,
     tls_peer: Option<Uuid>,
+    link_role: LinkRole,
 }
 
 impl LinkServiceCtx {
@@ -252,6 +253,7 @@ impl LinkServiceCtx {
             tunnels,
             auth_session: None,
             tls_peer: None,
+            link_role: LinkRole::Peer,
         }
     }
 
@@ -263,12 +265,17 @@ impl LinkServiceCtx {
             links: self.links.clone(),
             link,
             auth_session: self.auth_session.clone(),
-            link_role: LinkRole::Peer,
+            link_role: self.link_role,
         }
     }
 
     pub(crate) fn with_auth_session(mut self, auth_session: LinkAuthSession) -> Self {
         self.auth_session = Some(auth_session);
+        self
+    }
+
+    pub(crate) fn with_link_role(mut self, link_role: LinkRole) -> Self {
+        self.link_role = link_role;
         self
     }
 
@@ -763,16 +770,38 @@ async fn run_established_connect(
     } else {
         ctx.link_role
     };
-    let mut link_close_rx = ctx
-        .links
-        .register(
-            ctx.link,
-            peer_host.clone(),
-            out_tx.clone(),
-            link_role,
-            &sent_snapshot,
-        )
-        .await;
+    let admission = ctx
+        .auth_session
+        .as_ref()
+        .map(|session| LinkAdmission::CloudToken {
+            tier: session.tier(),
+        })
+        .unwrap_or(LinkAdmission::PinnedKey);
+    let mut link_close_rx = match admission {
+        LinkAdmission::PinnedKey => {
+            ctx.links
+                .register(
+                    ctx.link,
+                    peer_host.clone(),
+                    out_tx.clone(),
+                    link_role,
+                    &sent_snapshot,
+                )
+                .await
+        }
+        LinkAdmission::CloudToken { .. } => {
+            ctx.links
+                .register_with_admission(
+                    ctx.link,
+                    peer_host.clone(),
+                    out_tx.clone(),
+                    link_role,
+                    admission,
+                    &sent_snapshot,
+                )
+                .await
+        }
+    };
 
     // Apply the peer's handshake snapshot as its adjacency claims.
     for neighbor in peer_neighbors {
@@ -1149,7 +1178,7 @@ async fn handle_post_handshake_body(
     ctx: &EstablishedConnectCtx,
     out_tx: &mpsc::Sender<wire::pb::Message>,
     body: wire::pb::message::Body,
-    acceptor_auth: Option<&mut EstablishedLinkAuth>,
+    mut acceptor_auth: Option<&mut EstablishedLinkAuth>,
 ) -> PostHandshakeAction {
     match body {
         wire::pb::message::Body::NeighborUp(event) => match neighbor_up_from_wire(event) {
@@ -1204,7 +1233,12 @@ async fn handle_post_handshake_body(
             }
         }
         wire::pb::message::Body::Reauth(reauth) => {
-            if handle_reauth(acceptor_auth, out_tx, reauth).await {
+            if handle_reauth(acceptor_auth.as_deref_mut(), out_tx, reauth).await {
+                if let Some(auth) = acceptor_auth {
+                    ctx.links
+                        .update_cloud_tier(&ctx.link, auth.session.tier())
+                        .await;
+                }
                 PostHandshakeAction::Continue
             } else {
                 PostHandshakeAction::Close
@@ -1839,7 +1873,7 @@ mod tests {
     /// have sent `LinkClose(AUTH_EXPIRED)`.
     #[tokio::test]
     async fn authenticated_acceptor_silently_extends_auth_on_reauth_for_same_user() {
-        let (ctx, _routing, _tunnels) = test_ctx().await;
+        let (ctx, _routing, tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let initial_user = auth_user_with_tier(
             100,
@@ -1858,6 +1892,17 @@ mod tests {
         let ctx = ctx.with_auth_session(session);
 
         let (input_tx, mut output_rx) = establish(ctx, &peer).await;
+        let links = tunnels.link_registry();
+        let (link, _) = links
+            .link_to_peer(peer.id)
+            .await
+            .expect("authenticated link is registered");
+        assert_eq!(
+            links.admission(&link).await,
+            Some(LinkAdmission::CloudToken {
+                tier: crate::Tier::Free
+            })
+        );
         input_tx
             .send(message(wire::pb::message::Body::Reauth(wire::pb::Reauth {
                 auth_token: "token-b".to_string(),
@@ -1867,6 +1912,12 @@ mod tests {
 
         assert_link_silence(&mut output_rx, Duration::from_millis(1200)).await;
         assert_eq!(live_link.tier(), crate::Tier::Pro);
+        assert_eq!(
+            links.admission(&link).await,
+            Some(LinkAdmission::CloudToken {
+                tier: crate::Tier::Pro
+            })
+        );
         drop(input_tx);
     }
 

@@ -208,6 +208,19 @@ impl CloudRelay {
             .insert(token.to_string(), RegisteredToken { user_id, ttl, tier });
     }
 
+    pub(crate) fn register_token_with_tier(
+        &self,
+        token: &str,
+        user_id: Uuid,
+        ttl: Duration,
+        tier: crate::Tier,
+    ) {
+        self.tokens
+            .write()
+            .expect("testnet token registry poisoned")
+            .insert(token.to_string(), RegisteredToken { user_id, ttl, tier });
+    }
+
     pub(crate) fn token_registry(&self) -> TokenRegistry {
         self.tokens.clone()
     }

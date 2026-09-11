@@ -39,7 +39,8 @@ pub(crate) use link::{
     ConnectHandshake, ConnectHandshakeEvent, protocol_error_hello_ack, protocol_error_link_close,
 };
 pub(crate) use link_registry::{
-    LinkCloseRequest, LinkOutputTx, LinkRegistry, LinkRole, LinkUnavailable,
+    LinkAdmission, LinkCloseRequest, LinkOutputTx, LinkRegistry, LinkRole, LinkUnavailable,
+    TunnelOpenForward,
 };
 pub use types::{Capabilities, Host, SupportedAgentType};
 pub(crate) use types::{

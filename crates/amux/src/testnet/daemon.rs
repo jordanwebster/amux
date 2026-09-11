@@ -376,6 +376,7 @@ impl Daemon {
                 body: Some(pb::message::Body::TunnelClose(pb::TunnelClose {
                     tunnel_id: tunnel.as_bytes().to_vec(),
                     dst: target.host_id().as_bytes().to_vec(),
+                    error: None,
                 })),
             })
             .await
@@ -675,6 +676,59 @@ impl Daemon {
             {
                 Ok(result) => result.is_err(),
                 Err(_) => true,
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    /// Performs one settled routed call and returns its structured protocol
+    /// refusal. This is for specs that distinguish policy from reachability.
+    pub async fn refused_call_error(&self, other: &Daemon) -> crate::ProtocolError {
+        let error = match self.lists_agents_on(other).await {
+            Ok(_) => panic!(
+                "expected routed call from '{}' to '{}' to be refused",
+                self.name(),
+                other.name()
+            ),
+            Err(error) => error,
+        };
+        if let Some(crate::tunnel::TunnelPoolError::Rejected(error)) =
+            error.downcast_ref::<crate::tunnel::TunnelPoolError>()
+        {
+            return error.clone();
+        }
+        if let Some(status) = error.downcast_ref::<tonic::Status>()
+            && let Some(error) = crate::protocol::protocol_error_from_status_details(status)
+        {
+            return error;
+        }
+        panic!(
+            "routed call from '{}' to '{}' failed without a structured protocol refusal: {error:#}",
+            self.name(),
+            other.name()
+        );
+    }
+
+    /// Asserts that no endpoint tunnel to `other` survives a refusal.
+    pub async fn has_no_active_tunnel_to(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' has no active tunnel to '{}'",
+            self.name(),
+            other.name()
+        );
+        eventually(
+            &assertion,
+            async || {
+                let Some(parts) = self.try_parts().await else {
+                    return true;
+                };
+                !parts
+                    .tunnels
+                    .active_tunnels()
+                    .await
+                    .iter()
+                    .any(|(_, peer, _)| *peer == other.host_id())
             },
             self.failure_dump(),
         )
