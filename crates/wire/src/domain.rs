@@ -34,7 +34,7 @@ pub fn agent_from_wire(agent: wire::Agent) -> Result<model::Agent, DecodeError> 
     })
 }
 
-fn agent_parent_from_wire(parent: wire::AgentParent) -> Result<model::AgentParent, DecodeError> {
+pub fn agent_parent_from_wire(parent: wire::AgentParent) -> Result<model::AgentParent, DecodeError> {
     Ok(model::AgentParent {
         agent_id: uuid_from_bytes("parent.agent_id", parent.agent_id)?,
         host_id: uuid_from_bytes("parent.host_id", parent.host_id)?,
@@ -61,6 +61,16 @@ pub fn artifact_ref_from_wire(value: wire::ArtifactRef) -> Result<model::Artifac
         mime: value.mime,
         size: value.size,
     })
+}
+
+pub fn artifact_ref_to_wire(value: &model::ArtifactRef) -> wire::ArtifactRef {
+    wire::ArtifactRef {
+        id: value.id.to_string(),
+        kind: artifact_kind_to_wire(value.kind) as i32,
+        name: value.name.clone(),
+        mime: value.mime.clone(),
+        size: value.size,
+    }
 }
 
 pub const fn artifact_kind_to_wire(kind: model::ArtifactKind) -> wire::ArtifactKind {
@@ -91,7 +101,7 @@ pub fn diff_base_to_wire(base: &model::DiffBase) -> wire::DiffBase {
     }
 }
 
-fn diff_base_from_wire(base: wire::DiffBase) -> Result<model::DiffBase, DecodeError> {
+pub fn diff_base_from_wire(base: wire::DiffBase) -> Result<model::DiffBase, DecodeError> {
     match base.base {
         Some(wire::diff_base::Base::WorkingTree(_)) => Ok(model::DiffBase::WorkingTree),
         Some(wire::diff_base::Base::Branch(base)) if !base.is_empty() => {
@@ -103,6 +113,36 @@ fn diff_base_from_wire(base: wire::DiffBase) -> Result<model::DiffBase, DecodeEr
         None => Err(DecodeError::Invalid(
             "DiffBase.base is required".to_string(),
         )),
+    }
+}
+
+pub fn diff_response_to_wire(response: &model::DiffResponse) -> wire::DiffResponse {
+    wire::DiffResponse {
+        artifact: Some(artifact_ref_to_wire(&response.artifact)),
+        patch: response.patch.clone(),
+        identity: Some(wire::BaseIdentity {
+            base: Some(diff_base_to_wire(&response.identity.base)),
+            head: response.identity.head.clone(),
+            merge_base: response.identity.merge_base.clone(),
+            blobs: response
+                .identity
+                .blobs
+                .iter()
+                .map(|(path, blob)| wire::PathBlob {
+                    path: path.clone(),
+                    blob: blob.clone(),
+                })
+                .collect(),
+        }),
+        files: response
+            .files
+            .iter()
+            .map(|file| wire::DiffFile {
+                path: file.path.clone(),
+                added: file.added,
+                removed: file.removed,
+            })
+            .collect(),
     }
 }
 

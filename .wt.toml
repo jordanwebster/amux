@@ -65,8 +65,17 @@ run = "timeout 300 cargo test -p client"
 [task.test-host-api]
 run = "timeout 300 cargo test -p host-api"
 
+[task.check-agent-runtime]
+run = "timeout 600 cargo check -p agent-runtime"
+
+[task.check-node-boundary]
+run = "timeout 600 cargo check -p node --lib"
+
+[task.check-products]
+run = "timeout 900 cargo check -p node -p agent-runtime -p amux --bins"
+
 [task.test-node-lifecycle]
-run = "timeout 600 cargo test -p amux --lib installation::supervisor::tests::lifecycle_waits_for_profile_mutations_and_closed_gate_rejects_late_agent_work"
+run = "timeout 600 cargo test -p node --lib installation::supervisor::tests::lifecycle_waits_for_profile_mutations_and_closed_gate_rejects_late_agent_work"
 
 [task.test-ui-state]
 run = "timeout 600 cargo test -p ui-state"
@@ -103,14 +112,14 @@ needs = ["build"]
 # The iOS library builds without `local-agents`. The check always names the
 # target so it never produces a host variant of the workspace.
 [task.mobile-check]
-run = "cargo check -p amux --no-default-features --target aarch64-apple-ios"
+run = "cargo check -p node --target aarch64-apple-ios"
 
 # Match CI's embedded library suite without unifying desktop features.
 [task.client-test]
-run = 'CARGO_TARGET_DIR=target/embed timeout 900 cargo test -p amux --no-default-features --lib "$@"'
+run = 'CARGO_TARGET_DIR=target/embed timeout 900 cargo test -p node --lib "$@"'
 
 [task.embed-test]
-run = "AMUX_EMBED_TEST=1 CARGO_TARGET_DIR=target/embed cargo test -p amux --no-default-features --test embedding -- --nocapture"
+run = "AMUX_EMBED_TEST=1 CARGO_TARGET_DIR=target/embed cargo test -p node --test embedding -- --nocapture"
 
 [task.protobuf]
 run = "cargo run -p xtask -- codegen"

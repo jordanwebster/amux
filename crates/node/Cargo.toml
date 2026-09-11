@@ -1,0 +1,107 @@
+[package]
+name = "node"
+version = "0.6.0"
+edition.workspace = true
+description = "Identity, routing, and supervised node services for amux"
+publish = false
+
+[features]
+default = []
+local-agents = []
+
+[dependencies]
+anyhow = { workspace = true }
+model = { workspace = true }
+wire = { workspace = true }
+settings = { workspace = true }
+client = { workspace = true }
+host-api = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+prost = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+tower = { workspace = true }
+hyper-util = { workspace = true }
+hyper = { workspace = true }
+http-body-util = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+futures-util = { workspace = true }
+gethostname = { workspace = true }
+oauth2 = { workspace = true }
+async-trait = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = { workspace = true }
+rustls-pemfile = { workspace = true }
+ring = { workspace = true }
+curve25519-dalek = { workspace = true }
+rcgen = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+socket2 = { workspace = true }
+chrono = { workspace = true }
+semver = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+shell-words = { workspace = true }
+base64 = "0.22"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Power",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+prost-types = { workspace = true }
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
+claude = { workspace = true }
+codex = { path = "../codex" }
+replay-support = { path = "../replay-support" }
+tokio-tungstenite = { workspace = true }
+nix = { workspace = true }
+
+[[test]]
+name = "spec"
+path = "tests/spec/main.rs"
+required-features = ["local-agents"]
+
+# Maintained opt-in real-Claude PTY backend suite. With no arguments it prints
+# usage and exits without live work; see tests/claude_pty_live.rs.
+[[test]]
+name = "claude_pty_live"
+path = "tests/claude_pty_live.rs"
+harness = false
+test = false
+
+# Maintained opt-in real-Codex backend suite. With no arguments it prints usage
+# and exits without live work; see tests/codex_live.rs.
+[[test]]
+name = "codex_live"
+path = "tests/codex_live.rs"
+harness = false
+test = false
+
+# Maintained opt-in real-Claude SDK backend suite. With no arguments it prints
+# usage and exits without live work; see tests/claude_sdk_live.rs.
+[[test]]
+name = "claude_sdk_live"
+path = "tests/claude_sdk_live.rs"
+harness = false
+test = false

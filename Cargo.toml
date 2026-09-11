@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/agent-runtime",
     "crates/amux",
-    "crates/amux-cli",
+    "crates/node",
     "crates/shot",
     "crates/tui",
     "crates/ui-runtime",
@@ -27,7 +28,8 @@ edition = "2024"
 
 [workspace.dependencies]
 # Internal
-amux = { path = "crates/amux" }
+agent-runtime = { path = "crates/agent-runtime" }
+node = { path = "crates/node" }
 client = { path = "crates/client" }
 host-api = { path = "crates/host-api" }
 model = { path = "crates/model" }

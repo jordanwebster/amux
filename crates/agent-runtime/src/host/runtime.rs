@@ -1,0 +1,1202 @@
+//! The local agent runtime behind the [`LocalAgentHost`] seam.
+//!
+//! [`AgentRuntime`] owns the live session registry ([`AgentServiceState`]),
+//! the session-event loop, and the host's identity, and implements every
+//! core→runtime call as a [`LocalAgentHost`] method. The rest of the core
+//! holds an `Option<Arc<dyn LocalAgentHost>>` and never names these types.
+
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use host_api::{
+    ArtifactBlob, HostConfig, HostDebugAgent, HostResourceInventory, HostResumeResult,
+    HostResumeStatus, HostSetAgentStatus, HostSessionStream, LocalAgentHost, LocalAgentHostFactory,
+    OperationBarrier, PreparedHostState, SessionInputRequest, SessionRequest,
+};
+use model::ProtocolError;
+use tokio::sync::{RwLock, mpsc};
+use uuid::Uuid;
+
+use super::lifecycle::{
+    CreateAgentError, RenameAgentError, clear_working_on, commit_server_suspend,
+    create_agent_record, delete_local_agent, parent_envelope, prepare_server_suspend,
+    rename_local_agent_record, resume_agents, shutdown_server, spawn_session_event_loop,
+    withdraw_agent,
+};
+use super::{AgentServiceState, SharedAgentServiceState, session};
+#[cfg(testnet)]
+use crate::agents::claude::ClaudeSession;
+use crate::agents::{
+    Agent, AgentDeps, AgentEvent, AgentSession, AgentType, ArtifactOwners, CreateAgentRequest,
+    DeliveryError, ExternalHookBootstrap, HookEnvironment, HookOutcome, McpLaunchRoute,
+    RenameAgentRequest, SessionCloseReason, SessionEvent, SpawnInheritance, StopPolicy,
+    bootstrap_external_hook, compute_diff, store_error,
+};
+use model::envelope::{Envelope, EnvelopeKind};
+use model::ShutdownReason;
+use crate::suspend;
+
+/// The concrete PTY-backed agent runtime.
+pub struct AgentRuntime {
+    state: SharedAgentServiceState,
+    event_tx: mpsc::Sender<SessionEvent>,
+    host_id: Uuid,
+    resume_lock: tokio::sync::Mutex<()>,
+    artifact_owners: Arc<ArtifactOwners>,
+    artifact_sweeper: tokio::task::JoinHandle<()>,
+}
+
+/// Creates one isolated provider runtime for each desktop profile.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AgentRuntimeFactory;
+
+impl AgentRuntime {
+    /// Build a host against the default configured socket path.
+    #[cfg(test)]
+    pub(crate) fn new(host_id: Uuid) -> Arc<Self> {
+        let config = crate::config::Config::default();
+        let route = McpLaunchRoute::for_current_process(&config, host_id)
+            .expect("default managed MCP route should be usable");
+        Self::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir), config.data_dir)
+            .expect("default Codex private socket path should be usable")
+    }
+
+    /// Build the host and spawn its session-event loop. Cloud-vs-device is
+    /// decided by runtime guards in `AgentServiceCtx`, not by host presence.
+    /// The private Codex fallback socket lives beside the configured amux
+    /// socket; its short filename preserves as much `SUN_LEN` headroom as
+    /// possible.
+    pub(crate) fn new_with_mcp_launch_route(
+        route: McpLaunchRoute,
+        claude_user_keymap_dir: PathBuf,
+        data_dir: PathBuf,
+    ) -> io::Result<Arc<Self>> {
+        let server_socket_path = route.socket_path().to_path_buf();
+        let runtime_dir = server_socket_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let host_id = route.host_id();
+        let artifact_owners = Arc::new(ArtifactOwners::open(
+            data_dir.clone(),
+            Arc::new(artifacts::SystemClock),
+        ).map_err(io::Error::other)?);
+        let deps = AgentDeps::new(
+            data_dir,
+            runtime_dir,
+            codex_private_socket_path(&server_socket_path)?,
+            route,
+            claude_user_keymap_dir,
+        )?;
+        let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
+        let (event_tx, event_rx) = mpsc::channel(256);
+        spawn_session_event_loop(state.clone(), event_rx, host_id);
+        let artifact_sweeper = crate::agents::spawn_artifact_sweeper(artifact_owners.clone());
+        Ok(Arc::new(Self {
+            state,
+            event_tx,
+            host_id,
+            resume_lock: tokio::sync::Mutex::new(()),
+            artifact_owners,
+            artifact_sweeper,
+        }))
+    }
+
+    pub(crate) fn state(&self) -> &SharedAgentServiceState {
+        &self.state
+    }
+
+    pub(crate) fn event_tx(&self) -> &mpsc::Sender<SessionEvent> {
+        &self.event_tx
+    }
+
+    pub(crate) fn host_id(&self) -> Uuid {
+        self.host_id
+    }
+
+    #[cfg(all(debug_assertions, unix))]
+    pub(crate) async fn register_sdk_fixture(
+        &self,
+        record: crate::agents::AgentRecord,
+        provider: claude::sdk::Session,
+    ) -> anyhow::Result<crate::agents::MultiplexStructuredReader> {
+        let agent_id = record.id;
+        let mut session: AgentSession = Box::new(
+            crate::agents::claude::ClaudeSdkBackend::with_session(record, provider),
+        );
+        let crate::agents::Plane::Structured { log, .. } =
+            session.plane(crate::agents::Protocol::ClaudeSdkV1)?
+        else {
+            anyhow::bail!("SDK fixture needs a structured plane");
+        };
+        let reader = log.subscribe().await.expect("fresh SDK log is open");
+        let mut state = self.state.write().await;
+        let exit_handle = session.start(&self.event_tx)?;
+        state
+            .register_local_agent_context(self.host_id, agent_id, session)
+            .map_err(anyhow::Error::msg)?;
+        super::lifecycle::monitor_session_exit(exit_handle, self.event_tx.clone(), agent_id);
+        Ok(reader)
+    }
+
+    #[cfg(testnet)]
+    pub(crate) async fn register_scripted_claude(
+        &self,
+        request: CreateAgentRequest,
+    ) -> Result<Agent, ProtocolError> {
+        let agent_id = request.agent_id;
+        let mut state = self.state.write().await;
+        let session: AgentSession = Box::new(ClaudeSession::scripted_for_testnet(
+            &request,
+            state.deps.runtime_dir.clone(),
+            state.deps.claude_version_cache.clone(),
+            state.deps.mcp_launch_route.clone(),
+            state.deps.claude_user_keymap_dir.clone(),
+        ));
+        let agent = session.to_agent(self.host_id).into();
+        let announce = state
+            .register_local_agent_context(self.host_id, agent_id, session)
+            .map_err(|message| ProtocolError::ServerError { message })?;
+        state.local_agent_events.emit(announce);
+        Ok(agent)
+    }
+
+    #[cfg(testnet)]
+    pub(crate) async fn end_scripted_session(&self, agent_id: Uuid) {
+        self.event_tx
+            .send(SessionEvent::Ended { agent_id })
+            .await
+            .expect("scripted session event loop should be running");
+    }
+
+    #[cfg(testnet)]
+    pub(crate) async fn deliver_scripted_hook(
+        &self,
+        agent_id: Uuid,
+        payload: Vec<u8>,
+    ) -> Result<(), ProtocolError> {
+        <Self as LocalAgentHost>::handle_hook(
+            self,
+            agent_id,
+            payload,
+            HookEnvironment::new(),
+            false,
+        )
+        .await
+    }
+}
+
+impl Drop for AgentRuntime {
+    fn drop(&mut self) {
+        self.artifact_sweeper.abort();
+    }
+}
+
+impl LocalAgentHostFactory for AgentRuntimeFactory {
+    fn create(&self, config: HostConfig) -> Result<Arc<dyn LocalAgentHost>, io::Error> {
+        let route = McpLaunchRoute::new(
+            config.executable,
+            config.profile_config_path,
+            config.server_socket_path,
+            config.host_id,
+        )?;
+        AgentRuntime::new_with_mcp_launch_route(
+            route,
+            config.claude_user_keymap_dir,
+            config.data_dir,
+        )
+        .map(|host| host as Arc<dyn LocalAgentHost>)
+    }
+}
+
+fn codex_private_socket_path(server_socket_path: &Path) -> io::Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::geteuid() };
+        let fallback_dir = PathBuf::from(format!("/tmp/amux-{uid}"));
+        codex_private_socket_path_with_fallback(server_socket_path, &fallback_dir)
+    }
+    #[cfg(not(unix))]
+    {
+        let socket_dir = server_socket_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        Ok(socket_dir.join("cx.sock"))
+    }
+}
+
+#[cfg(unix)]
+fn codex_private_socket_path_with_fallback(
+    server_socket_path: &Path,
+    fallback_dir: &Path,
+) -> io::Result<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+
+    const MAX_CODEX_SOCKET_PATH_BYTES: usize = 103;
+    fn adjacent_codex_socket_path(server_socket_path: &Path) -> PathBuf {
+        let hash = server_socket_path
+            .as_os_str()
+            .as_bytes()
+            .iter()
+            .fold(0xcbf29ce484222325_u64, |hash, byte| {
+                (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+            });
+        server_socket_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(format!("c{hash:016x}.sock"))
+    }
+
+    let adjacent = adjacent_codex_socket_path(server_socket_path);
+    if adjacent.as_os_str().as_bytes().len() <= MAX_CODEX_SOCKET_PATH_BYTES {
+        Ok(adjacent)
+    } else {
+        // Move only the Codex runtime socket when the configured amux
+        // directory leaves too little room for codex's sun_path cap.
+        secure_codex_fallback_directory(fallback_dir)?;
+        Ok(fallback_dir.join(adjacent.file_name().expect("Codex socket has a filename")))
+    }
+}
+
+#[cfg(unix)]
+fn secure_codex_fallback_directory(path: &Path) -> io::Result<()> {
+    use std::fs::{DirBuilder, Permissions};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+    let mut builder = DirBuilder::new();
+    builder.mode(0o700);
+    match builder.create(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to create secure Codex fallback directory {}: {error}",
+                    path.display()
+                ),
+            ));
+        }
+    }
+
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to inspect Codex fallback directory {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "Codex fallback directory {} must not be a symlink",
+                path.display()
+            ),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "Codex fallback directory {} is not a directory",
+                path.display()
+            ),
+        ));
+    }
+
+    let effective_uid = unsafe { libc::geteuid() };
+    if metadata.uid() != effective_uid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "Codex fallback directory {} is owned by uid {}, expected effective uid {effective_uid}",
+                path.display(),
+                metadata.uid()
+            ),
+        ));
+    }
+
+    if metadata.mode() & 0o777 != 0o700 {
+        std::fs::set_permissions(path, Permissions::from_mode(0o700)).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to secure Codex fallback directory {} with mode 0700: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+#[async_trait]
+impl LocalAgentHost for AgentRuntime {
+    fn capabilities(&self) -> model::Capabilities {
+        model::Capabilities {
+            features: Vec::new(),
+            supported_agent_types: vec![
+                model::SupportedAgentType { agent_type: model::AGENT_TYPE_CLAUDE.into() },
+                #[cfg(unix)]
+                model::SupportedAgentType { agent_type: model::AGENT_TYPE_CODEX.into() },
+                #[cfg(debug_assertions)]
+                model::SupportedAgentType { agent_type: model::AGENT_TYPE_TEST_AGENT.into() },
+            ],
+        }
+    }
+
+    async fn agent(&self, agent_id: Uuid) -> Result<Agent, ProtocolError> {
+        self.state()
+            .read()
+            .await
+            .local_agents
+            .get(&agent_id)
+            .map(|context| context.record(self.host_id()).into())
+            .ok_or(ProtocolError::NoAgentFound)
+    }
+
+    async fn create(
+        &self,
+        request: CreateAgentRequest,
+        operations: &host_api::OperationGate,
+    ) -> Result<Agent, ProtocolError> {
+        let req = request;
+        if matches!(req.agent_type, AgentType::Codex { .. }) {
+            #[cfg(unix)]
+            {
+                let client = self.state().read().await.deps.codex_client.clone();
+                client.ensure_authenticated().await.map_err(|error| {
+                    ProtocolError::FailedPrecondition {
+                        message: error.to_string(),
+                    }
+                })?;
+            }
+            #[cfg(not(unix))]
+            return Err(ProtocolError::FailedPrecondition {
+                message: "Codex agents are supported only on Unix platforms".to_string(),
+            });
+        }
+        create_agent_record(
+            self.state(),
+            self.event_tx(),
+            req,
+            self.host_id(),
+            operations,
+        )
+        .await
+        .map(Into::into)
+        .map_err(create_error_to_protocol)
+    }
+
+    async fn spawn_inheritance(&self, agent_id: Uuid) -> Result<SpawnInheritance, ProtocolError> {
+        self.state()
+            .read()
+            .await
+            .local_agents
+            .get(&agent_id)
+            .map(|context| context.session.spawn_inheritance())
+            .ok_or(ProtocolError::NoAgentFound)
+    }
+
+    async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {
+        if request.name.is_empty() {
+            return Err(ProtocolError::InvalidArgument {
+                message: "RenameAgentRequest.name must not be empty".to_string(),
+            });
+        }
+        let host_id = self.host_id();
+        let mut us = self.state().write().await;
+        rename_local_agent_record(&mut us, host_id, &request)
+            .map(Into::into)
+            .map_err(rename_error_to_protocol)
+    }
+
+    async fn delete(&self, agent_id: Uuid, _operation: OperationBarrier) -> Result<(), ProtocolError> {
+        let session_to_stop = {
+            let mut us = self.state().write().await;
+            delete_local_agent_and_emit_session_close(&mut us, agent_id)
+        };
+
+        match session_to_stop {
+            Some(session) => {
+                session.stop(StopPolicy::Interrupt).await;
+                self.artifact_owners.delete_agent(agent_id)?;
+                Ok(())
+            }
+            None => Err(ProtocolError::NoAgentFound),
+        }
+    }
+
+    async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError> {
+        let delivery_target = {
+            let state = self.state().read().await;
+            state
+                .local_agents
+                .get(&envelope.to.agent_id)
+                .map(|context| context.session.delivery_target())
+                .ok_or(ProtocolError::NoAgentFound)?
+        };
+        deliver_message(delivery_target, &envelope).await
+    }
+
+    async fn send_message_waiting(
+        &self,
+        envelope: Envelope,
+        timeout: std::time::Duration,
+    ) -> Result<(), ProtocolError> {
+        let delivery_target = {
+            let state = self.state().read().await;
+            state
+                .local_agents
+                .get(&envelope.to.agent_id)
+                .map(|context| context.session.delivery_target())
+                .ok_or(ProtocolError::NoAgentFound)?
+        };
+        delivery_target
+            .wait_until_live(timeout)
+            .await
+            .map_err(delivery_error_to_protocol)?;
+        deliver_message(delivery_target, &envelope).await
+    }
+
+    async fn set_agent_status(&self, request: HostSetAgentStatus) -> Result<(), ProtocolError> {
+        let mut state = self.state().write().await;
+        let context = state
+            .local_agents
+            .get_mut(&request.agent_id)
+            .ok_or(ProtocolError::NoAgentFound)?;
+        context.working_on = request.working_on.map(|text| crate::agents::WorkingOn {
+            text,
+            updated_at: chrono::Utc::now(),
+        });
+        let updated = context.record(self.host_id());
+        state.local_agent_events.emit(updated.agent_updated_event());
+        Ok(())
+    }
+
+    async fn send_input(
+        &self,
+        request: SessionInputRequest,
+        operation: host_api::OperationLease,
+    ) -> Result<(), ProtocolError> {
+        let attachment_owner = if request.pin.is_empty() {
+            None
+        } else {
+            Some(self.artifact_owners.owner(request.agent_id)?)
+        };
+        session::send_session_input(self, request, attachment_owner, operation).await
+    }
+
+    async fn put_artifact(
+        &self,
+        agent_id: Uuid,
+        kind: model::ArtifactKind,
+        name: String,
+        mime: String,
+        bytes: Vec<u8>,
+        _operation: host_api::OperationLease,
+    ) -> Result<model::ArtifactRef, ProtocolError> {
+        self.agent(agent_id).await?;
+        self.artifact_owners
+            .owner(agent_id)?
+            .put(kind, &name, &mime, &bytes)
+            .map(artifacts::ArtifactMeta::into_reference)
+            .map_err(store_error)
+    }
+
+    async fn put_artifact_by_agent(
+        &self,
+        agent_id: Uuid,
+        kind: model::ArtifactKind,
+        name: String,
+        mime: String,
+        bytes: Vec<u8>,
+        _operation: host_api::OperationLease,
+    ) -> Result<model::ArtifactRef, ProtocolError> {
+        let state = self.state().read().await;
+        let log = state
+            .local_agents
+            .get(&agent_id)
+            .map(|context| &context.session)
+            .ok_or(ProtocolError::NoAgentFound)?
+            .attachment_log()
+            .ok_or_else(|| ProtocolError::FailedPrecondition {
+                message: "agent session has no structured output log".to_string(),
+            })?;
+        let owner = self.artifact_owners.owner(agent_id)?;
+        let artifact = owner
+            .put(kind, &name, &mime, &bytes)
+            .map_err(store_error)?
+            .into_reference();
+        owner.pin(std::slice::from_ref(&artifact.id)).map_err(store_error)?;
+        log.write(crate::agents::attachments_row(None, std::slice::from_ref(&artifact))).await;
+        Ok(artifact)
+    }
+
+    async fn get_artifact(
+        &self,
+        agent_id: Uuid,
+        id: model::ArtifactId,
+        _operation: host_api::OperationLease,
+    ) -> Result<ArtifactBlob, ProtocolError> {
+        self.agent(agent_id).await?;
+        let (artifact, bytes) = self.artifact_owners.owner(agent_id)?.get(&id).map_err(store_error)?;
+        Ok(ArtifactBlob { artifact: artifact.into_reference(), bytes })
+    }
+
+    async fn diff(
+        &self,
+        agent_id: Uuid,
+        base: model::DiffBase,
+        _operation: host_api::OperationLease,
+    ) -> Result<model::DiffResponse, ProtocolError> {
+        let agent = self.agent(agent_id).await?;
+        let owner = self.artifact_owners.owner(agent_id)?;
+        compute_diff(&owner, &agent, base).await
+    }
+
+    async fn subscribe_session(
+        &self,
+        request: SessionRequest,
+    ) -> Result<HostSessionStream, ProtocolError> {
+        let replay_attachments = self.artifact_owners.owner(request.agent_id).ok().map(|owner| {
+            owner.pinned().into_iter().map(artifacts::ArtifactMeta::into_reference).collect()
+        });
+        session::subscribe_session_stream(self, request, replay_attachments).await
+    }
+
+    async fn agent_events_snapshot(&self) -> (Vec<AgentEvent>, mpsc::Receiver<AgentEvent>) {
+        let mut state = self.state().write().await;
+        let mut snapshot: Vec<_> = state
+            .local_agents
+            .values()
+            .map(|context| context.record(self.host_id()).agent_event())
+            .collect();
+        snapshot.sort_unstable_by_key(agent_event_sort_key);
+        let rx = state.local_agent_events.subscribe_drop_on_overflow();
+        (snapshot, rx)
+    }
+
+    async fn subscribe_agent_events(&self) -> mpsc::Receiver<AgentEvent> {
+        self.state().write().await.local_agent_events.subscribe()
+    }
+
+    async fn subscribe_outbound_envelopes(&self) -> mpsc::Receiver<Envelope> {
+        self.state().write().await.outbound_envelopes.subscribe()
+    }
+
+    async fn handle_hook(
+        &self,
+        agent_id: Uuid,
+        payload: Vec<u8>,
+        env: HookEnvironment,
+        external: bool,
+    ) -> Result<(), ProtocolError> {
+        tracing::debug!(%agent_id, external, "received Claude hook event");
+
+        let mut session_to_stop = None;
+        let result = {
+            let mut state = self.state().write().await;
+            if let Some(session) = state.agent_session_mut(&agent_id) {
+                match session.handle_hook_payload(&payload, &env).await {
+                    Ok(HookOutcome::Noop | HookOutcome::KeepSession) => Ok(()),
+                    Ok(HookOutcome::Completed { text }) => {
+                        let envelope =
+                            parent_envelope(session, self.host_id, EnvelopeKind::Completed, text);
+                        clear_working_on(&mut state, self.host_id, agent_id);
+                        if let Some(envelope) = envelope {
+                            state.outbound_envelopes.emit(envelope);
+                        }
+                        Ok(())
+                    }
+                    Ok(HookOutcome::WithdrawSession) => {
+                        session_to_stop = withdraw_agent(&mut state, agent_id);
+                        Ok(())
+                    }
+                    Err(error) => Err(error.into_protocol_error()),
+                }
+            } else if !external {
+                tracing::warn!(%agent_id, "hook target not found");
+                Err(ProtocolError::NoAgentFound)
+            } else {
+                match bootstrap_external_hook(agent_id, &payload, &env).await {
+                    Ok(ExternalHookBootstrap::Noop) => Ok(()),
+                    Ok(ExternalHookBootstrap::Register(session)) => {
+                        match state.insert_registered_local_agent(self.host_id(), agent_id, session)
+                        {
+                            Ok(announce) => {
+                                if let Some(session) = state.agent_session_mut(&agent_id) {
+                                    session.maybe_start_name_sniffer(self.event_tx());
+                                }
+                                state.local_agent_events.emit(announce);
+                                tracing::info!(%agent_id, "created readonly session from external hook");
+                                Ok(())
+                            }
+                            Err(e) => Err(ProtocolError::ServerError {
+                                message: format!(
+                                    "failed to register readonly agent {agent_id}: {e}"
+                                ),
+                            }),
+                        }
+                    }
+                    Err(error) => Err(error.into_protocol_error()),
+                }
+            }
+        };
+
+        if let Some(session) = session_to_stop {
+            session.stop(StopPolicy::Interrupt).await;
+        }
+
+        result
+    }
+
+    async fn resume(
+        &self,
+        state_path: PathBuf,
+        operations: &host_api::OperationGate,
+    ) -> Result<(u64, u64), ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
+        let operation = operations.admit_mutation().await?;
+        let suspended =
+            suspend::load_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
+                message: format!("failed to load state: {error}"),
+            })?;
+        drop(operation);
+        let result = resume_agents(
+            self.state(),
+            self.event_tx(),
+            suspended.agents,
+            self.host_id(),
+            operations,
+            false,
+        )
+        .await;
+        let _operation = operations.admit_mutation().await?;
+        if result.failed_agents.is_empty() {
+            suspend::remove_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
+                message: format!("failed to remove state: {error}"),
+            })?;
+        } else {
+            suspend::save_suspended(
+                &state_path,
+                &suspend::SuspendedServerState {
+                    agents: result.failed_agents,
+                },
+            )
+            .map_err(|error| ProtocolError::ServerError {
+                message: format!("failed to save remaining state: {error}"),
+            })?;
+        }
+        Ok((result.resumed_count as u64, result.failed_count as u64))
+    }
+
+    async fn prepare_update(&self) -> Result<PreparedHostState, ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
+        let (state, errors) = prepare_server_suspend(self.state()).await;
+        if !errors.is_empty() {
+            return Err(ProtocolError::ServerError {
+                message: errors.join("; "),
+            });
+        }
+        let agent_ids = state.agents.iter().map(suspend::SuspendedAgent::agent_id).collect();
+        let payload = serde_json::to_vec(&state.agents).map_err(|error| ProtocolError::ServerError {
+            message: format!("failed to encode prepared agent state: {error}"),
+        })?;
+        Ok(PreparedHostState { agent_ids, payload })
+    }
+
+    async fn resume_update(
+        &self,
+        state: PreparedHostState,
+        operations: &host_api::OperationGate,
+    ) -> Vec<HostResumeResult> {
+        let _resume = self.resume_lock.lock().await;
+        let mut reports = Vec::new();
+        let agents: Vec<suspend::SuspendedAgent> = match serde_json::from_slice(&state.payload) {
+            Ok(agents) => agents,
+            Err(_) => return state.agent_ids.into_iter().map(|agent_id| HostResumeResult { agent_id, status: HostResumeStatus::Failed }).collect(),
+        };
+        for agent in agents {
+            let agent_id = agent.agent_id();
+            // Recovery may repeat after a process started but before its result
+            // was persisted. Never construct or start that identity twice.
+            let status = if self.state().read().await.contains_agent_id(&agent_id) {
+                HostResumeStatus::AlreadyRunning
+            } else {
+                let result = resume_agents(
+                    self.state(),
+                    self.event_tx(),
+                    vec![agent],
+                    self.host_id(),
+                    operations,
+                    true,
+                )
+                .await;
+                if result.failed_count == 0 {
+                    HostResumeStatus::Resumed
+                } else {
+                    HostResumeStatus::Failed
+                }
+            };
+            reports.push(HostResumeResult { agent_id, status });
+        }
+        reports
+    }
+
+    async fn stop_all(&self) {
+        shutdown_server(self.state()).await;
+    }
+
+    async fn prepare_suspend(&self, state_path: PathBuf) -> Result<u64, ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
+        let (suspended, errors) = prepare_server_suspend(self.state()).await;
+        if !errors.is_empty() {
+            return Err(ProtocolError::ServerError {
+                message: errors.join("; "),
+            });
+        }
+        let count = suspended.agents.len() as u64;
+        if !suspended.agents.is_empty() {
+            // A failed resume can leave older sessions on disk. Keep them when
+            // preparing the live sessions, replacing only stale copies of an
+            // agent that is running again under the same identity.
+            let mut retained = suspend::load_suspended(&state_path).map_err(|error| {
+                ProtocolError::ServerError {
+                    message: format!("failed to load retained state: {error}"),
+                }
+            })?;
+            let active: std::collections::HashSet<_> = suspended
+                .agents
+                .iter()
+                .map(|agent| agent.agent_id())
+                .collect();
+            retained
+                .agents
+                .retain(|agent| !active.contains(&agent.agent_id()));
+            retained.agents.extend(suspended.agents);
+            suspend::save_suspended(&state_path, &retained).map_err(|error| {
+                ProtocolError::ServerError {
+                    message: format!("failed to save state: {error}"),
+                }
+            })?;
+        }
+        Ok(count)
+    }
+
+    async fn commit_suspend(&self) {
+        commit_server_suspend(self.state()).await;
+    }
+
+    async fn notify_shutdown(&self, reason: ShutdownReason) {
+        self.state()
+            .write()
+            .await
+            .local_shutdown_events
+            .emit(reason);
+    }
+
+    async fn agent_count(&self) -> usize {
+        self.state().read().await.local_agent_count()
+    }
+
+    async fn resource_inventory(
+        &self,
+        state_path: PathBuf,
+    ) -> Result<HostResourceInventory, ProtocolError> {
+        let live = self.state().read().await.local_agent_count();
+        let suspended = crate::suspend::load_suspended(&state_path)
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })?
+            .agents
+            .len();
+        Ok(HostResourceInventory {
+            agents: live.max(suspended),
+            retained_artifacts: self.artifact_owners.loaded_count(),
+        })
+    }
+
+    async fn debug_dump(&self, verbose: bool) -> Vec<HostDebugAgent> {
+        let host_id = self.host_id();
+        let state = self.state().read().await;
+        let mut agents = Vec::with_capacity(state.local_agents.len());
+        for context in state.local_agents.values() {
+            agents.push(HostDebugAgent {
+                agent: context.record(host_id).into(),
+                session: if verbose {
+                    context.session.debug_json(verbose).await.ok()
+                } else {
+                    None
+                },
+            });
+        }
+        agents.sort_unstable_by(|a, b| {
+            a.agent
+                .name
+                .as_deref()
+                .unwrap_or("")
+                .cmp(b.agent.name.as_deref().unwrap_or(""))
+                .then_with(|| a.agent.id.as_u128().cmp(&b.agent.id.as_u128()))
+        });
+        agents
+    }
+}
+
+async fn deliver_message(
+    delivery_target: Box<dyn crate::agents::AgentDeliveryTarget>,
+    envelope: &Envelope,
+) -> Result<(), ProtocolError> {
+    match delivery_target.deliver(envelope).await {
+        Ok(delivery) => {
+            tracing::info!(
+                envelope_id = %envelope.id,
+                recipient_agent_id = %envelope.to.agent_id,
+                carrier = delivery.carrier(),
+                "agent message delivered"
+            );
+            Ok(())
+        }
+        Err(error) => {
+            tracing::info!(
+                envelope_id = %envelope.id,
+                recipient_agent_id = %envelope.to.agent_id,
+                carrier = "none",
+                error = %error,
+                "agent message delivery failed"
+            );
+            Err(delivery_error_to_protocol(error))
+        }
+    }
+}
+
+fn delivery_error_to_protocol(error: DeliveryError) -> ProtocolError {
+    match error {
+        DeliveryError::UnsupportedAgentType(agent_type) => ProtocolError::Unimplemented {
+            message: format!("{agent_type} agent message delivery is not implemented"),
+        },
+        DeliveryError::FailedPrecondition(message) => ProtocolError::FailedPrecondition { message },
+        DeliveryError::Failed(message) => ProtocolError::ServerError { message },
+    }
+}
+
+fn delete_local_agent_and_emit_session_close(
+    us: &mut AgentServiceState,
+    agent_id: Uuid,
+) -> Option<AgentSession> {
+    let session = delete_local_agent(us, agent_id);
+    if session.is_some() {
+        us.local_session_close_events
+            .emit((agent_id, SessionCloseReason::AgentDeleted));
+    }
+    session
+}
+
+fn create_error_to_protocol(error: CreateAgentError) -> ProtocolError {
+    match error {
+        CreateAgentError::Unavailable(error) => error,
+        err @ CreateAgentError::LimitReached { .. } => ProtocolError::ResourceExhausted {
+            message: err.to_string(),
+        },
+        err @ CreateAgentError::AlreadyExists(_) => ProtocolError::AlreadyExists {
+            message: err.to_string(),
+        },
+        err @ (CreateAgentError::Start(_) | CreateAgentError::Register(_)) => {
+            ProtocolError::ServerError {
+                message: err.to_string(),
+            }
+        }
+    }
+}
+
+fn rename_error_to_protocol(error: RenameAgentError) -> ProtocolError {
+    match error {
+        RenameAgentError::NotFound(_) => ProtocolError::NoAgentFound,
+        err @ RenameAgentError::AlreadyExists(_) => ProtocolError::AlreadyExists {
+            message: err.to_string(),
+        },
+        err @ RenameAgentError::Update(_) => ProtocolError::ServerError {
+            message: err.to_string(),
+        },
+    }
+}
+
+fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
+    match event {
+        AgentEvent::AgentUp { agent } => {
+            (agent.name.clone().unwrap_or_default(), agent.id.as_u128())
+        }
+        AgentEvent::AgentUpdated { agent } => {
+            (agent.name.clone().unwrap_or_default(), agent.id.as_u128())
+        }
+        AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
+        AgentEvent::SnapshotComplete => (String::new(), 0),
+    }
+}
+
+#[cfg(test)]
+mod suspend_tests {
+    use super::*;
+    use crate::agents::{AgentBackend, TestAgentSession};
+    use crate::suspend::{SuspendedAgent, SuspendedServerState};
+
+    fn host(root: &Path) -> Arc<AgentRuntime> {
+        std::fs::create_dir(root.join("data")).unwrap();
+        let route = McpLaunchRoute::new(
+            std::env::current_exe().unwrap(),
+            None,
+            root.join("amux.sock"),
+            Uuid::new_v4(),
+        )
+        .unwrap();
+        AgentRuntime::new_with_mcp_launch_route(route, root.join("keymaps"), root.join("data"))
+            .unwrap()
+    }
+
+    fn record(id: Uuid, name: &str) -> SuspendedAgent {
+        TestAgentSession::echo_for_tests(id, Some(name.into()))
+            .suspended_state()
+            .unwrap()
+    }
+
+    async fn register(host: &AgentRuntime, id: Uuid) {
+        host.state
+            .write()
+            .await
+            .insert_registered_local_agent(
+                host.host_id,
+                id,
+                Box::new(TestAgentSession::echo_for_tests(id, Some("live".into()))),
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_preserves_older_records_and_replaces_stale_active_copies() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        let older = record(Uuid::new_v4(), "previously suspended");
+        let older_yaml = serde_yaml::to_string(&older).unwrap();
+        let active_id = Uuid::new_v4();
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![older.clone(), record(active_id, "stale")],
+            },
+        )
+        .unwrap();
+        register(&host, active_id).await;
+
+        for _ in 0..2 {
+            assert_eq!(host.prepare_suspend(state_path.clone()).await.unwrap(), 1);
+            assert_eq!(host.agent_count().await, 1);
+            let saved = suspend::load_suspended(&state_path).unwrap();
+            assert_eq!(saved.agents.len(), 2);
+            assert_eq!(serde_yaml::to_string(&saved.agents[0]).unwrap(), older_yaml);
+            assert_eq!(saved.agents[1].agent_id(), active_id);
+            assert_eq!(saved.agents[1].name(), Some("live"));
+        }
+        host.commit_suspend().await;
+        assert_eq!(host.agent_count().await, 0);
+        assert_eq!(
+            suspend::load_suspended(&state_path).unwrap().agents.len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_refuses_unreadable_retained_state_without_stopping_agents() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        let saved_path = root.path().join("suspended.yaml");
+        let original = b"agents: [invalid";
+        std::fs::write(&saved_path, original).unwrap();
+        let active_id = Uuid::new_v4();
+        register(&host, active_id).await;
+
+        assert!(
+            host.prepare_suspend(state_path)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("failed to load retained state")
+        );
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+        assert!(host.agent(active_id).await.is_ok());
+        host.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_write_failure_preserves_saved_and_live_agents() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![record(Uuid::new_v4(), "older")],
+            },
+        )
+        .unwrap();
+        let saved_path = root.path().join("suspended.yaml");
+        let original = std::fs::read(&saved_path).unwrap();
+        std::fs::create_dir(root.path().join("suspended.yaml.tmp")).unwrap();
+        let active_id = Uuid::new_v4();
+        register(&host, active_id).await;
+
+        assert!(
+            host.prepare_suspend(state_path)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("failed to save state")
+        );
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+        assert!(host.agent(active_id).await.is_ok());
+        host.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn prepare_suspend_without_live_agents_leaves_saved_state_untouched() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let state_path = root.path().join("state.yaml");
+        suspend::save_suspended(
+            &state_path,
+            &SuspendedServerState {
+                agents: vec![record(Uuid::new_v4(), "older")],
+            },
+        )
+        .unwrap();
+        let saved_path = root.path().join("suspended.yaml");
+        let original = std::fs::read(&saved_path).unwrap();
+
+        assert_eq!(host.prepare_suspend(state_path).await.unwrap(), 0);
+        assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod socket_tests {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn managed_host_propagates_the_exact_route_into_agent_dependencies() {
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("amux");
+        let config = temp.path().join("amux.yaml");
+        let socket = temp.path().join("custom.sock");
+        std::fs::write(&executable, b"test executable").unwrap();
+        std::fs::write(&config, b"host_name: test\n").unwrap();
+        let route =
+            McpLaunchRoute::new(executable, Some(config), socket, Uuid::from_u128(80)).unwrap();
+
+        let keymap_dir = temp.path().join("keymaps");
+        let host = AgentRuntime::new_with_mcp_launch_route(
+            route.clone(),
+            keymap_dir.clone(),
+            temp.path().to_path_buf(),
+        )
+        .unwrap();
+
+        assert_eq!(host.host_id(), route.host_id());
+        let state = host.state().read().await;
+        let deps = &state.deps;
+        assert_eq!(deps.mcp_launch_route, route);
+        assert_eq!(deps.claude_user_keymap_dir, keymap_dir);
+    }
+
+    #[test]
+    fn private_codex_socket_follows_configured_server_socket_dir() {
+        let first =
+            codex_private_socket_path(Path::new("/var/run/custom-amux/control.sock")).unwrap();
+        let second =
+            codex_private_socket_path(Path::new("/var/run/custom-amux/other.sock")).unwrap();
+
+        assert_eq!(first.parent(), Some(Path::new("/var/run/custom-amux")));
+        assert_eq!(second.parent(), first.parent());
+        assert_ne!(first, second);
+        assert!(first.file_name().unwrap().len() <= 22);
+    }
+
+    #[test]
+    fn private_codex_socket_uses_short_fallback_dir_for_long_configured_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let fallback_dir = temp.path().join("codex-fallback");
+        let long_dir = std::path::Path::new("/tmp").join("x".repeat(110));
+        let server_socket = long_dir.join("control.sock");
+        let socket =
+            codex_private_socket_path_with_fallback(&server_socket, &fallback_dir).unwrap();
+
+        assert_eq!(socket.parent(), Some(fallback_dir.as_path()));
+        assert!(socket.as_os_str().as_bytes().len() <= 103);
+
+        let hash = server_socket
+            .as_os_str()
+            .as_bytes()
+            .iter()
+            .fold(0xcbf29ce484222325_u64, |hash, byte| {
+                (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+            });
+        assert_eq!(
+            socket.file_name(),
+            Some(std::ffi::OsStr::new(&format!("c{hash:016x}.sock")))
+        );
+    }
+
+    #[test]
+    fn secure_fallback_directory_creates_private_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let fallback_dir = temp.path().join("fresh");
+
+        secure_codex_fallback_directory(&fallback_dir).unwrap();
+
+        let metadata = std::fs::symlink_metadata(&fallback_dir).unwrap();
+        assert!(metadata.is_dir());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn secure_fallback_directory_repairs_lax_permissions() {
+        let temp = tempfile::tempdir().unwrap();
+        let fallback_dir = temp.path().join("lax");
+        std::fs::create_dir(&fallback_dir).unwrap();
+        std::fs::set_permissions(&fallback_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        secure_codex_fallback_directory(&fallback_dir).unwrap();
+
+        let metadata = std::fs::symlink_metadata(&fallback_dir).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn secure_fallback_directory_rejects_symlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let fallback_dir = temp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &fallback_dir).unwrap();
+
+        let error = secure_codex_fallback_directory(&fallback_dir).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            error
+                .to_string()
+                .contains(&fallback_dir.display().to_string())
+        );
+        assert!(error.to_string().contains("must not be a symlink"));
+    }
+}

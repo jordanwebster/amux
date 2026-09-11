@@ -8822,3 +8822,16 @@ rejects queued and future operations, while the barrier waits for work already
 accepted before storage teardown proceeds. A focused host-api race test and the
 existing installation deletion race both exercise that ordering through real
 async contention.
+
+2026-09-11 — **The node and provider runtime now compose through an owned host
+API.** Provider sessions, persistence, attachments, artifact retention and
+cleanup moved to `agent-runtime`; the node decodes requests, enforces routing
+and profile authority, and persists only an opaque update payload. Installation
+startup accepts an optional host factory, creates one isolated runtime per
+profile, and advertises the capabilities returned by that runtime. Embedded
+owners omit the factory. The old feature selected host construction and public
+provider codec facades were removed from the product path. Packages now use
+their intended names: `node` is the provider free service library, while
+`amux` is the CLI product that composes node, runtime and TUI. Declared checks
+compile `node` and `agent-runtime` independently and compile the complete host
+product successfully.

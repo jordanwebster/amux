@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use amux::{AgentIdentifier, ArtifactKind, CreateAgentRequest, claude_io};
+use node::{AgentIdentifier, ArtifactKind, CreateAgentRequest, claude_io};
 use artifacts::ARTIFACT_SIZE_CAP;
 use tempfile::tempdir;
 use ui_runtime::{
@@ -45,13 +45,13 @@ async fn embedded_server_test_guard() -> tokio::sync::OwnedMutexGuard<()> {
         .await
 }
 
-async fn create_test_agent(client: &amux::Client, working_dir: &Path) -> amux::Agent {
+async fn create_test_agent(client: &node::Client, working_dir: &Path) -> node::Agent {
     client
         .create_agent(CreateAgentRequest {
             agent_id: Uuid::new_v4(),
             host_id: None,
             name: Some("attachment-stub".into()),
-            agent_type: amux::AgentType::TestAgent {
+            agent_type: node::AgentType::TestAgent {
                 command: "cat".into(),
             },
             working_dir: working_dir.to_path_buf(),
@@ -64,11 +64,11 @@ async fn create_test_agent(client: &amux::Client, working_dir: &Path) -> amux::A
         .expect("create attachment stub agent")
 }
 
-async fn installation_client() -> (amux::Installation, amux::Client, PathBuf, tempfile::TempDir) {
-    let disk_root = amux::test_fixtures::short_installation_root();
-    let installation = amux::Installation::open(amux::InstallationOptions {
-        root: amux::InstallationRoot::OnDisk(disk_root.path().into()),
-        settings: amux::InstallationSettings {
+async fn installation_client() -> (node::Installation, node::Client, PathBuf, tempfile::TempDir) {
+    let disk_root = node::test_fixtures::short_installation_root();
+    let installation = node::Installation::open(node::InstallationOptions {
+        root: node::InstallationRoot::OnDisk(disk_root.path().into()),
+        settings: node::InstallationSettings {
             host_name: "ui-test".into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
@@ -79,14 +79,15 @@ async fn installation_client() -> (amux::Installation, amux::Client, PathBuf, te
             update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
             status_reporters: Default::default(),
         },
-        listeners: amux::Listeners::InProcessOnly,
-        credentials: amux::CredentialSource::ProfileFiles,
+        listeners: node::Listeners::InProcessOnly,
+        credentials: node::CredentialSource::ProfileFiles,
         identity_http: Default::default(),
+        host_factory: None,
     })
     .await
     .unwrap();
     let id = installation
-        .create(amux::OperationId::new(), None)
+        .create(node::OperationId::new(), None)
         .await
         .unwrap()
         .record
@@ -106,7 +107,7 @@ fn claude_input(text: &str) -> InputPayload {
     }
 }
 
-fn blob_path(root: &Path, agent: amux::AgentId, id: &amux::ArtifactId) -> PathBuf {
+fn blob_path(root: &Path, agent: node::AgentId, id: &node::ArtifactId) -> PathBuf {
     root.join("data")
         .join("agents")
         .join(agent.to_string())
@@ -117,7 +118,7 @@ fn blob_path(root: &Path, agent: amux::AgentId, id: &amux::ArtifactId) -> PathBu
 
 #[derive(Default)]
 struct AttachmentStub {
-    requests: Mutex<Vec<amux::SendInputRequest>>,
+    requests: Mutex<Vec<node::SendInputRequest>>,
     calls: Mutex<Vec<String>>,
 }
 
@@ -129,18 +130,18 @@ impl AttachmentClient for AttachmentStub {
         name: &'a str,
         mime: &'a str,
         bytes: Vec<u8>,
-    ) -> AttachmentClientFuture<'a, amux::ArtifactRef> {
+    ) -> AttachmentClientFuture<'a, node::ArtifactRef> {
         Box::pin(async move {
             self.calls.lock().unwrap().push(format!("put:{name}"));
             if name == "oversized.bin" {
-                return Err(amux::ClientError::Protocol(
-                    amux::ProtocolError::AttachmentTooLarge {
+                return Err(node::ClientError::Protocol(
+                    node::ProtocolError::AttachmentTooLarge {
                         size: ARTIFACT_SIZE_CAP + 1,
                         max: ARTIFACT_SIZE_CAP,
                     },
                 ));
             }
-            Ok(amux::ArtifactRef {
+            Ok(node::ArtifactRef {
                 id: model::id_of(&bytes),
                 kind,
                 name: name.to_string(),
@@ -150,7 +151,7 @@ impl AttachmentClient for AttachmentStub {
         })
     }
 
-    fn send_input(&self, request: amux::SendInputRequest) -> AttachmentClientFuture<'_, ()> {
+    fn send_input(&self, request: node::SendInputRequest) -> AttachmentClientFuture<'_, ()> {
         Box::pin(async move {
             self.calls
                 .lock()
@@ -182,7 +183,7 @@ async fn runtime_reflects_daemon_state_in_the_model() {
     let op = runtime.dispatch(Command::CreateAgent {
         host: None,
         name: "ui-integration".to_string(),
-        agent_type: amux::AgentType::TestAgent {
+        agent_type: node::AgentType::TestAgent {
             command: "cat".to_string(),
         },
         working_dir: std::env::temp_dir(),
@@ -224,7 +225,7 @@ async fn runtime_reflects_daemon_state_in_the_model() {
     })
     .await;
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
 }
 
@@ -295,7 +296,7 @@ async fn independent_runtimes_keep_account_identity_and_node_ownership_separate(
 
     drop(work_view);
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
 }
 
@@ -472,7 +473,7 @@ async fn attachments_open_uses_one_persistent_cache_and_refetches_tampering() {
     std::fs::rename(&held_owner_blob, &owner_blob).unwrap();
     client.delete_agent(agent.id).await.unwrap();
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
 }
 
@@ -520,7 +521,7 @@ async fn attachments_fetch_and_diff_preserve_typed_runtime_outcomes() {
 
     let diff = runtime.dispatch(Command::RequestDiff {
         agent: agent.id,
-        base: amux::DiffBase::WorkingTree,
+        base: node::DiffBase::WorkingTree,
     });
     wait_for(&mut runtime, "unavailable diff", move |model| {
         model.finished_op(diff).is_some()
@@ -534,7 +535,7 @@ async fn attachments_fetch_and_diff_preserve_typed_runtime_outcomes() {
     ));
     client.delete_agent(agent.id).await.unwrap();
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
 }
 
@@ -548,7 +549,7 @@ async fn attachments_fetch_and_diff_preserve_typed_runtime_outcomes() {
     ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
 )]
 async fn switcher_rejects_late_results() {
-    use amux::installation::FrontDoor;
+    use node::installation::FrontDoor;
     use ui_runtime::{LateResult, ProfileDirectory};
     use ui_state::{ServerMsg, StreamMsg};
 
@@ -573,7 +574,7 @@ async fn switcher_rejects_late_results() {
         .list()
         .await
         .unwrap();
-    let entry = |id: amux::ProfileId| {
+    let entry = |id: node::ProfileId| {
         entries
             .iter()
             .find(|entry| entry.id == id)
@@ -633,7 +634,7 @@ async fn switcher_rejects_late_results() {
     let late_command = runtime.dispatch(Command::CreateAgent {
         host: None,
         name: "late-personal-agent".to_string(),
-        agent_type: amux::AgentType::TestAgent {
+        agent_type: node::AgentType::TestAgent {
             command: "cat".to_string(),
         },
         working_dir: dir.path().to_path_buf(),
@@ -756,7 +757,7 @@ async fn switcher_rejects_late_results() {
     Arc::try_unwrap(installation)
         .ok()
         .expect("the front door released the installation")
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
 }
 
@@ -802,7 +803,7 @@ fn socket_connector(socket: &Path) -> ui_runtime::Connector {
     Box::new(move || {
         let socket = socket.clone();
         Box::pin(async move {
-            amux::Client::connect_socket(&socket)
+            node::Client::connect_socket(&socket)
                 .await
                 .map_err(|error| ui_runtime::ConnectFailure {
                     message: error.to_string(),
@@ -814,11 +815,11 @@ fn socket_connector(socket: &Path) -> ui_runtime::Connector {
 }
 
 #[cfg(unix)]
-async fn socketed_installation() -> (amux::Installation, tempfile::TempDir) {
-    let disk_root = amux::test_fixtures::short_installation_root();
-    let installation = amux::Installation::open(amux::InstallationOptions {
-        root: amux::InstallationRoot::OnDisk(disk_root.path().into()),
-        settings: amux::InstallationSettings {
+async fn socketed_installation() -> (node::Installation, tempfile::TempDir) {
+    let disk_root = node::test_fixtures::short_installation_root();
+    let installation = node::Installation::open(node::InstallationOptions {
+        root: node::InstallationRoot::OnDisk(disk_root.path().into()),
+        settings: node::InstallationSettings {
             host_name: "ui-switcher-test".into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
@@ -829,9 +830,10 @@ async fn socketed_installation() -> (amux::Installation, tempfile::TempDir) {
             update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
             status_reporters: Default::default(),
         },
-        listeners: amux::Listeners::Sockets,
-        credentials: amux::CredentialSource::ProfileFiles,
+        listeners: node::Listeners::Sockets,
+        credentials: node::CredentialSource::ProfileFiles,
         identity_http: Default::default(),
+        host_factory: None,
     })
     .await
     .unwrap();
@@ -839,9 +841,9 @@ async fn socketed_installation() -> (amux::Installation, tempfile::TempDir) {
 }
 
 #[cfg(unix)]
-async fn new_profile(installation: &amux::Installation, label: &str) -> amux::ProfileId {
+async fn new_profile(installation: &node::Installation, label: &str) -> node::ProfileId {
     installation
-        .create(amux::OperationId::new(), Some(label.to_string()))
+        .create(node::OperationId::new(), Some(label.to_string()))
         .await
         .unwrap()
         .record

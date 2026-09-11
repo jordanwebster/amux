@@ -1,0 +1,246 @@
+use std::sync::Arc;
+
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Serialize, Serializer};
+use tokio::sync::RwLock;
+
+use host_api::HostDebugAgent;
+use model::Agent;
+use crate::debug::{DebugFormat, LossyPath};
+use crate::routing::{RoutingCore, RoutingDebug};
+use crate::tunnel::{TunnelDebug, TunnelPool};
+use crate::user_state::ServerState;
+
+pub(crate) async fn dump_server_debug_info(
+    state: &Arc<RwLock<ServerState>>,
+    routing: &RoutingCore,
+    tunnel_pool: &TunnelPool,
+    remote_agent_count: usize,
+    format: DebugFormat,
+    verbose: bool,
+) -> String {
+    let link_registry = tunnel_pool.link_registry();
+    let routing = routing.debug_view(&link_registry).await;
+    let tunnels = tunnel_pool.debug_view().await;
+    let state_guard = state.read().await;
+    // A profile is given a credential store whether or not it holds a token,
+    // so this reports that a provider is installed, never that a login exists.
+    let has_credential_provider = state_guard.credentials.is_some();
+
+    let host = state_guard.local_agent_host();
+    let (agents, agent_count) = match &host {
+        Some(host) => (host.debug_dump(verbose).await, host.agent_count().await),
+        None => (Vec::new(), 0),
+    };
+    let view = ServerDebugView {
+        state: &state_guard,
+        has_credential_provider,
+        local_version: env!("CARGO_PKG_VERSION"),
+        agents: &agents,
+        agent_count,
+        remote_agent_count,
+        routing: &routing,
+        tunnels: &tunnels,
+        verbose,
+    };
+
+    match format {
+        DebugFormat::Yaml => serde_yaml::to_string(&view).unwrap_or_default(),
+        DebugFormat::Json => serde_json::to_string_pretty(&view).unwrap_or_default(),
+    }
+}
+
+struct ServerDebugView<'a> {
+    state: &'a ServerState,
+    has_credential_provider: bool,
+    local_version: &'static str,
+    agents: &'a [HostDebugAgent],
+    agent_count: usize,
+    remote_agent_count: usize,
+    routing: &'a RoutingDebug,
+    tunnels: &'a [TunnelDebug],
+    verbose: bool,
+}
+
+impl Serialize for ServerDebugView<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("is_cloud_server", &self.state.is_cloud_server)?;
+        map.serialize_entry("has_credential_provider", &self.has_credential_provider)?;
+        map.serialize_entry("user_count", &1usize)?;
+        map.serialize_entry("agent_count", &self.agent_count)?;
+        map.serialize_entry("remote_agent_count", &self.remote_agent_count)?;
+        map.serialize_entry("host_count", &self.routing.hosts.len())?;
+        map.serialize_entry("route_count", &self.routing.routes.len())?;
+        map.serialize_entry("peer_link_count", &self.routing.links.len())?;
+        map.serialize_entry("tunnel_count", &self.tunnels.len())?;
+        map.serialize_entry("hosts", &self.routing.hosts)?;
+        map.serialize_entry("routes", &self.routing.routes)?;
+        map.serialize_entry("links", &self.routing.links)?;
+        map.serialize_entry("tunnels", &self.tunnels)?;
+        map.serialize_entry("config", &self.state.config)?;
+
+        if self.verbose {
+            map.serialize_entry(
+                "local_host",
+                &LocalHostView {
+                    id: self.state.host_id,
+                    name: &self.state.config.host_name,
+                    version: self.local_version,
+                },
+            )?;
+            map.serialize_entry(
+                "users",
+                &UsersListView {
+                    state: self.state,
+                    agents: self.agents,
+                    agent_count: self.agent_count,
+                    remote_agent_count: self.remote_agent_count,
+                    routing: self.routing,
+                    tunnels: self.tunnels,
+                    verbose: self.verbose,
+                },
+            )?;
+        }
+
+        map.end()
+    }
+}
+
+struct LocalHostView<'a> {
+    id: uuid::Uuid,
+    name: &'a str,
+    version: &'static str,
+}
+
+impl Serialize for LocalHostView<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(3))?;
+        map.serialize_entry("id", &self.id)?;
+        map.serialize_entry("name", &self.name)?;
+        map.serialize_entry("version", &self.version)?;
+        map.end()
+    }
+}
+
+struct UsersListView<'a> {
+    state: &'a ServerState,
+    agents: &'a [HostDebugAgent],
+    agent_count: usize,
+    remote_agent_count: usize,
+    routing: &'a RoutingDebug,
+    tunnels: &'a [TunnelDebug],
+    verbose: bool,
+}
+
+impl Serialize for UsersListView<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // One synthetic "local" user holds this daemon's local agents.
+        let mut seq = serializer.serialize_seq(Some(1))?;
+        seq.serialize_element(&UserView {
+            state: self.state,
+            user_id: "local",
+            agents: self.agents,
+            agent_count: self.agent_count,
+            remote_agent_count: self.remote_agent_count,
+            routing: self.routing,
+            tunnels: self.tunnels,
+            verbose: self.verbose,
+        })?;
+        seq.end()
+    }
+}
+
+struct UserView<'a> {
+    state: &'a ServerState,
+    user_id: &'a str,
+    agents: &'a [HostDebugAgent],
+    agent_count: usize,
+    remote_agent_count: usize,
+    routing: &'a RoutingDebug,
+    tunnels: &'a [TunnelDebug],
+    verbose: bool,
+}
+
+impl Serialize for UserView<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("user_id", self.user_id)?;
+        map.serialize_entry("agent_count", &self.agent_count)?;
+        map.serialize_entry("remote_agent_count", &self.remote_agent_count)?;
+        map.serialize_entry("host_count", &self.routing.hosts.len())?;
+        map.serialize_entry("route_count", &self.routing.routes.len())?;
+        map.serialize_entry("peer_link_count", &self.routing.links.len())?;
+        map.serialize_entry("tunnel_count", &self.tunnels.len())?;
+        map.serialize_entry("hosts", &self.routing.hosts)?;
+        map.serialize_entry("routes", &self.routing.routes)?;
+        map.serialize_entry("links", &self.routing.links)?;
+        map.serialize_entry("tunnels", &self.tunnels)?;
+        map.serialize_entry(
+            "agents",
+            &AgentsView {
+                state: self.state,
+                agents: self.agents,
+                verbose: self.verbose,
+            },
+        )?;
+        map.end()
+    }
+}
+
+struct AgentsView<'a> {
+    state: &'a ServerState,
+    agents: &'a [HostDebugAgent],
+    verbose: bool,
+}
+
+impl Serialize for AgentsView<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(self.agents.len()))?;
+        for agent in self.agents {
+            let host_name = (agent.agent.host_id == self.state.host_id)
+                .then_some(self.state.config.host_name.as_str());
+            seq.serialize_element(&AgentDebugEntry {
+                agent: &agent.agent,
+                host_name,
+                session: agent.session.as_ref(),
+                verbose: self.verbose,
+            })?;
+        }
+        seq.end()
+    }
+}
+
+struct AgentDebugEntry<'a> {
+    agent: &'a Agent,
+    host_name: Option<&'a str>,
+    session: Option<&'a serde_json::Value>,
+    verbose: bool,
+}
+
+impl Serialize for AgentDebugEntry<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let _ = self.verbose;
+        let info = self.agent;
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("id", &info.id)?;
+        map.serialize_entry("host_id", &info.host_id)?;
+        if let Some(host_name) = self.host_name {
+            map.serialize_entry("host_name", host_name)?;
+        }
+        if let Some(name) = &info.name {
+            map.serialize_entry("name", name)?;
+        }
+        map.serialize_entry("location", "local")?;
+        map.serialize_entry("kind", &info.kind)?;
+        map.serialize_entry("readonly", &info.readonly)?;
+        map.serialize_entry("command", &info.command)?;
+        map.serialize_entry("working_dir", &LossyPath(&info.working_dir))?;
+        map.serialize_entry("args", &info.args)?;
+        map.serialize_entry("created_at", &info.created_at)?;
+        if let Some(session) = self.session {
+            map.serialize_entry("session", session)?;
+        }
+        map.end()
+    }
+}

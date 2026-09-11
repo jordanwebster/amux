@@ -6,5 +6,11 @@ description = "Owned lifecycle and local-host contracts for amux nodes"
 publish = false
 
 [dependencies]
+async-trait = { workspace = true }
+futures-util = { workspace = true }
 model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
+uuid = { workspace = true }

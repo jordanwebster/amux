@@ -8,6 +8,25 @@ use serde_json::Value;
 pub const CLAUDE_PTY_TRANSCRIPT_V1: &str = "claude_pty_transcript_v1";
 pub const CLAUDE_SDK_V1: &str = "claude_sdk_v1";
 pub const CODEX_SDK_V1: &str = "codex_sdk_v1";
+pub const TERMINAL_V1: &str = "terminal_v1";
+pub const CODEX_RAW_THREAD_NOT_READY: &str =
+    "Codex raw session is not ready: thread_id is not available yet";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TerminalV1Args {
+    pub terminal_size: Option<crate::TerminalSize>,
+    pub replay_query: Option<TerminalV1ReplayQuery>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalV1ReplayQuery {
+    TailBytes { count: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalV1Control {
+    Resize(crate::TerminalSize),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudePtyTranscriptV1Args {
@@ -25,6 +44,12 @@ pub enum ClaudePtyTranscriptV1ReplayQuery {
 pub struct ClaudePtyTranscriptV1Output {
     pub seq_id: u64,
     pub payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudePtyTranscriptV1Input {
+    pub expected_seq: u64,
+    pub intent: ClaudePtyIntent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

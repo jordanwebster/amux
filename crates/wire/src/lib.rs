@@ -8,8 +8,9 @@ mod provider;
 pub const PROTOCOL_VERSION: u32 = 1;
 
 pub use domain::{
-    agent_from_wire, artifact_kind_from_wire, artifact_kind_to_wire, artifact_ref_from_wire,
-    capabilities_from_wire, diff_base_to_wire, diff_response_from_wire, send_input_to_client_wire,
+    agent_from_wire, agent_parent_from_wire, artifact_kind_from_wire, artifact_kind_to_wire,
+    artifact_ref_from_wire, artifact_ref_to_wire, capabilities_from_wire, diff_base_from_wire,
+    diff_base_to_wire, diff_response_from_wire, diff_response_to_wire, send_input_to_client_wire,
     session_output_payload_from_wire, subscribe_protocol_to_client_wire,
 };
 pub use error::{
@@ -17,7 +18,11 @@ pub use error::{
     protocol_error_from_status_details, protocol_status, protocol_version_mismatch_error,
 };
 pub use provider::{
-    decode_claude_pty_output, decode_claude_sdk_output, decode_codex_sdk_output,
+    decode_claude_pty_args, decode_claude_pty_input, decode_claude_pty_output,
+    decode_claude_sdk_args, decode_claude_sdk_input, decode_claude_sdk_output,
+    decode_codex_sdk_args, decode_codex_sdk_input, decode_codex_sdk_output,
+    decode_terminal_args, decode_terminal_control, encode_provider_cursor, encode_provider_output,
+    encode_terminal_args,
     encode_claude_pty_args, encode_claude_pty_input, encode_claude_sdk_args,
     encode_claude_sdk_input, encode_codex_sdk_args, encode_codex_sdk_input,
 };

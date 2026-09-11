@@ -3,6 +3,219 @@ use serde_json::Value;
 
 use crate::{self as wire, DecodeError, EncodeError};
 
+pub fn decode_terminal_args(payload: Option<&[u8]>) -> Result<model::TerminalV1Args, DecodeError> {
+    let args = match payload {
+        Some(payload) => wire::TerminalV1Args::decode(payload)
+            .map_err(|error| DecodeError::Invalid(format!("invalid terminal args: {error}")))?,
+        None => wire::TerminalV1Args::default(),
+    };
+    Ok(model::TerminalV1Args {
+        terminal_size: args.terminal_size.map(terminal_size_from_wire).transpose()?,
+        replay_query: args.replay_query.map(|query| {
+            match query.query.ok_or_else(|| DecodeError::Invalid("terminal replay query is missing".into()))? {
+                wire::terminal_v1_replay_query::Query::TailBytes(count) =>
+                    Ok::<_, DecodeError>(model::TerminalV1ReplayQuery::TailBytes { count }),
+            }
+        }).transpose()?,
+    })
+}
+
+pub fn decode_terminal_control(payload: &[u8]) -> Result<model::TerminalV1Control, DecodeError> {
+    let control = wire::SessionControl::decode(payload)
+        .map_err(|error| DecodeError::Invalid(format!("invalid terminal control: {error}")))?
+        .control
+        .ok_or_else(|| DecodeError::Invalid("terminal control is missing".into()))?;
+    match control {
+        wire::session_control::Control::Resize(size) =>
+            Ok(model::TerminalV1Control::Resize(terminal_size_from_wire(size)?)),
+    }
+}
+
+pub fn decode_claude_pty_args(payload: Option<&[u8]>) -> Result<model::ClaudePtyTranscriptV1Args, DecodeError> {
+    let args = match payload {
+        Some(payload) => wire::ClaudePtyTranscriptV1Args::decode(payload)
+            .map_err(|error| DecodeError::Invalid(format!("invalid Claude PTY args: {error}")))?,
+        None => wire::ClaudePtyTranscriptV1Args::default(),
+    };
+    Ok(model::ClaudePtyTranscriptV1Args {
+        terminal_size: args.terminal_size.map(terminal_size_from_wire).transpose()?,
+        replay_query: args.replay_query.map(|query| {
+            match query.query.ok_or_else(|| DecodeError::Invalid("Claude PTY replay query is missing".into()))? {
+                wire::claude_pty_transcript_v1_replay_query::Query::Since(seq_id) =>
+                    Ok::<_, DecodeError>(model::ClaudePtyTranscriptV1ReplayQuery::Since { seq_id }),
+                wire::claude_pty_transcript_v1_replay_query::Query::TailCount(count) =>
+                    Ok::<_, DecodeError>(model::ClaudePtyTranscriptV1ReplayQuery::Tail { count }),
+            }
+        }).transpose()?,
+    })
+}
+
+pub fn decode_claude_pty_input(payload: &[u8]) -> Result<model::ClaudePtyTranscriptV1Input, DecodeError> {
+    let input = wire::ClaudePtyTranscriptV1Input::decode(payload)
+        .map_err(|error| DecodeError::Invalid(format!("invalid Claude PTY input: {error}")))?;
+    let intent = input.intent.ok_or_else(|| DecodeError::Invalid("Claude PTY intent is missing".into()))?;
+    use wire::claude_pty_transcript_v1_input::Intent;
+    let intent = match intent {
+        Intent::Prompt(prompt) => model::ClaudePtyIntent::Prompt { text: prompt.text },
+        Intent::Interrupt(_) => model::ClaudePtyIntent::Interrupt,
+        Intent::CyclePermissionMode(_) => model::ClaudePtyIntent::CyclePermissionMode,
+        Intent::Answer(answer) => model::ClaudePtyIntent::Answer {
+            ask_id: answer.ask_id,
+            answer: answer_from_wire(answer.answer.ok_or_else(|| DecodeError::Invalid("Claude answer is missing".into()))?)?,
+        },
+    };
+    Ok(model::ClaudePtyTranscriptV1Input { expected_seq: input.expected_seq, intent })
+}
+
+pub fn decode_claude_sdk_args(payload: Option<&[u8]>) -> Result<model::ClaudeSdkV1Args, DecodeError> {
+    let args = match payload {
+        Some(payload) => wire::ClaudeSdkV1Args::decode(payload)
+            .map_err(|error| DecodeError::Invalid(format!("invalid Claude SDK args: {error}")))?,
+        None => wire::ClaudeSdkV1Args::default(),
+    };
+    Ok(model::ClaudeSdkV1Args { replay_query: args.replay_query.map(|query| {
+        match query.query.ok_or_else(|| DecodeError::Invalid("Claude SDK replay query is missing".into()))? {
+            wire::claude_sdk_v1_replay_query::Query::Since(seq_id) => Ok::<_, DecodeError>(model::ClaudeSdkV1ReplayQuery::Since { seq_id }),
+            wire::claude_sdk_v1_replay_query::Query::TailCount(count) => Ok::<_, DecodeError>(model::ClaudeSdkV1ReplayQuery::Tail { count }),
+        }
+    }).transpose()? })
+}
+
+pub fn decode_claude_sdk_input(payload: &[u8]) -> Result<model::ClaudeSdkInput, DecodeError> {
+    let input = wire::ClaudeSdkV1Input::decode(payload)
+        .map_err(|error| DecodeError::Invalid(format!("invalid Claude SDK input: {error}")))?
+        .input.ok_or_else(|| DecodeError::Invalid("Claude SDK input is missing".into()))?;
+    use wire::claude_sdk_v1_input::Input;
+    Ok(match input {
+        Input::Prompt(value) => model::ClaudeSdkInput::Prompt { text: value.text },
+        Input::Interrupt(_) => model::ClaudeSdkInput::Interrupt,
+        Input::SetPermissionMode(value) => model::ClaudeSdkInput::SetPermissionMode { mode: value.mode },
+        Input::SetModel(value) => model::ClaudeSdkInput::SetModel { model: value.model },
+        Input::RequestContextBreakdown(_) => model::ClaudeSdkInput::RequestContextBreakdown,
+        Input::ElicitationDecision(value) => model::ClaudeSdkInput::ElicitationDecision { request_id: value.request_id, result: json_value(&value.result_json, "elicitation result")? },
+        Input::DialogDecision(value) => model::ClaudeSdkInput::DialogDecision { request_id: value.request_id, result: json_value(&value.result_json, "dialog result")? },
+        Input::PermissionDecision(value) => model::ClaudeSdkInput::PermissionDecision { request_id: value.request_id, decision: permission_decision_value(value.decision.ok_or_else(|| DecodeError::Invalid("permission decision is missing".into()))?)? },
+    })
+}
+
+pub fn decode_codex_sdk_args(payload: Option<&[u8]>) -> Result<model::CodexSdkV1Args, DecodeError> {
+    let args = match payload {
+        Some(payload) => wire::CodexSdkV1Args::decode(payload)
+            .map_err(|error| DecodeError::Invalid(format!("invalid Codex SDK args: {error}")))?,
+        None => wire::CodexSdkV1Args::default(),
+    };
+    Ok(model::CodexSdkV1Args { replay_query: args.replay_query.map(|query| {
+        match query.query.ok_or_else(|| DecodeError::Invalid("Codex replay query is missing".into()))? {
+            wire::codex_sdk_v1_replay_query::Query::Since(seq) => Ok::<_, DecodeError>(model::CodexSdkV1ReplayQuery::Since { seq }),
+            wire::codex_sdk_v1_replay_query::Query::TailCount(count) => Ok::<_, DecodeError>(model::CodexSdkV1ReplayQuery::Tail { count }),
+        }
+    }).transpose()? })
+}
+
+pub fn decode_codex_sdk_input(payload: &[u8]) -> Result<model::CodexSdkInput, DecodeError> {
+    let input = wire::CodexSdkV1Input::decode(payload)
+        .map_err(|error| DecodeError::Invalid(format!("invalid Codex SDK input: {error}")))?
+        .input.ok_or_else(|| DecodeError::Invalid("Codex SDK input is missing".into()))?;
+    use wire::codex_sdk_v1_input::Input;
+    Ok(match input {
+        Input::UserTurn(value) => model::CodexSdkInput::UserTurn { input: value.input },
+        Input::Steer(value) => model::CodexSdkInput::Steer { turn_id: value.turn_id, input: value.input },
+        Input::Interrupt(value) => model::CodexSdkInput::Interrupt { turn_id: value.turn_id },
+        Input::ApprovalDecision(value) => model::CodexSdkInput::ApprovalDecision { request_id: value.request_id, decision: value.decision },
+    })
+}
+
+pub fn encode_provider_output(protocol: model::Protocol, sequence: Option<u64>, payload: Vec<u8>) -> Result<Vec<u8>, EncodeError> {
+    let sequence = || sequence.ok_or_else(|| EncodeError::Invalid(format!("{protocol} output requires a sequence")));
+    Ok(match protocol {
+        model::Protocol::TerminalV1 | model::Protocol::TestEchoV1 => payload,
+        model::Protocol::ClaudePtyTranscriptV1 => wire::ClaudePtyTranscriptV1Output { seq_id: sequence()?, payload }.encode_to_vec(),
+        model::Protocol::ClaudeSdkV1 => wire::ClaudeSdkV1Output { seq_id: sequence()?, payload }.encode_to_vec(),
+        model::Protocol::CodexSdkV1 => wire::CodexSdkV1Output { seq: sequence()?, payload }.encode_to_vec(),
+    })
+}
+
+pub fn encode_provider_cursor(protocol: model::Protocol, sequence: Option<u64>) -> Result<Option<Vec<u8>>, EncodeError> {
+    Ok(match (protocol, sequence) {
+        (_, None) => None,
+        (model::Protocol::ClaudePtyTranscriptV1 | model::Protocol::ClaudeSdkV1 | model::Protocol::CodexSdkV1, Some(seq_id)) => Some(wire::ClaudePtyTranscriptV1Cursor { seq_id }.encode_to_vec()),
+        (protocol, Some(_)) => return Err(EncodeError::Invalid(format!("{protocol} does not support a cursor"))),
+    })
+}
+
+fn terminal_size_from_wire(size: wire::TerminalSize) -> Result<model::TerminalSize, DecodeError> {
+    Ok(model::TerminalSize {
+        rows: size.rows.try_into().map_err(|_| DecodeError::Invalid(format!("terminal rows out of range: {}", size.rows)))?,
+        cols: size.cols.try_into().map_err(|_| DecodeError::Invalid(format!("terminal columns out of range: {}", size.cols)))?,
+    })
+}
+
+fn terminal_size_to_wire(size: model::TerminalSize) -> wire::TerminalSize {
+    wire::TerminalSize {
+        rows: size.rows.into(),
+        cols: size.cols.into(),
+    }
+}
+
+fn answer_from_wire(answer: wire::claude_answer::Answer) -> Result<model::AskAnswer, DecodeError> {
+    use wire::claude_answer::Answer;
+    Ok(match answer {
+        Answer::Permission(value) => {
+            let decision = value.decision.ok_or_else(|| DecodeError::Invalid("Claude permission decision is missing".into()))?;
+            use wire::claude_permission_answer::Decision;
+            model::AskAnswer::Permission(match decision {
+                Decision::AllowOnce(_) => model::PermissionAnswer::AllowOnce,
+                Decision::AllowScoped(value) => model::PermissionAnswer::AllowScoped {
+                    suggestion: value.suggestion.try_into().map_err(|_| DecodeError::Invalid("Claude suggestion index is out of range".into()))?,
+                },
+                Decision::Deny(value) => model::PermissionAnswer::Deny { feedback: value.feedback },
+            })
+        }
+        Answer::Plan(value) => {
+            let decision = value.decision.ok_or_else(|| DecodeError::Invalid("Claude plan decision is missing".into()))?;
+            use wire::claude_plan_answer::Decision;
+            model::AskAnswer::Plan(match decision {
+                Decision::ApproveAuto(_) => model::PlanAnswer::ApproveAuto,
+                Decision::ApproveManual(_) => model::PlanAnswer::ApproveManual,
+                Decision::RequestChanges(value) => model::PlanAnswer::RequestChanges { feedback: value.feedback },
+            })
+        }
+        Answer::Question(value) => model::AskAnswer::Question(model::QuestionResponse {
+            answers: value.answers.into_iter().map(|answer| {
+                Ok(model::QuestionAnswer {
+                    selected: answer.selected.into_iter().map(|index| index.try_into().map_err(|_| DecodeError::Invalid("Claude answer index is out of range".into()))).collect::<Result<Vec<_>, _>>()?,
+                    other: answer.other,
+                })
+            }).collect::<Result<Vec<_>, DecodeError>>()?,
+        }),
+    })
+}
+
+fn json_value(bytes: &[u8], field: &str) -> Result<Value, DecodeError> {
+    serde_json::from_slice(bytes)
+        .map_err(|error| DecodeError::Invalid(format!("invalid {field} JSON: {error}")))
+}
+
+fn permission_decision_value(
+    decision: wire::claude_sdk_permission_decision::Decision,
+) -> Result<Value, DecodeError> {
+    use wire::claude_sdk_permission_decision::Decision;
+    Ok(match decision {
+        Decision::Allow(value) => serde_json::json!({
+            "behavior": "allow",
+            "updatedInput": value.updated_input_json.as_deref().map(|bytes| json_value(bytes, "updatedInput")).transpose()?,
+            "updatedPermissions": value.updated_permissions_json.iter().enumerate().map(|(index, bytes)| json_value(bytes, &format!("updatedPermissions[{index}]"))).collect::<Result<Vec<_>, _>>()?,
+            "toolUseID": value.tool_use_id,
+        }),
+        Decision::Deny(value) => serde_json::json!({
+            "behavior": "deny",
+            "message": value.message,
+            "interrupt": value.interrupt,
+            "toolUseID": value.tool_use_id,
+        }),
+    })
+}
+
 pub fn encode_claude_pty_input(expected_seq: u64, intent: model::ClaudePtyIntent) -> Vec<u8> {
     use model::ClaudePtyIntent;
     use wire::claude_pty_transcript_v1_input::Intent;
@@ -293,4 +506,17 @@ pub fn decode_codex_sdk_output(payload: &[u8]) -> Result<model::CodexSdkV1Output
 fn json_bytes(value: &Value, field: &str) -> Result<Vec<u8>, EncodeError> {
     serde_json::to_vec(value)
         .map_err(|error| EncodeError::Invalid(format!("invalid {field}: {error}")))
+}
+pub fn encode_terminal_args(args: model::TerminalV1Args) -> Vec<u8> {
+    wire::TerminalV1Args {
+        terminal_size: args.terminal_size.map(terminal_size_to_wire),
+        replay_query: args.replay_query.map(|query| wire::TerminalV1ReplayQuery {
+            query: Some(match query {
+                model::TerminalV1ReplayQuery::TailBytes { count } => {
+                    wire::terminal_v1_replay_query::Query::TailBytes(count)
+                }
+            }),
+        }),
+    }
+    .encode_to_vec()
 }

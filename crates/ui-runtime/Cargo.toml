@@ -20,5 +20,5 @@ ui-state = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-amux = { workspace = true }
+node = { workspace = true }
 tempfile = { workspace = true }
