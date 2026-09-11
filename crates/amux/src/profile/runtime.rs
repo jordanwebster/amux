@@ -540,10 +540,12 @@ impl ProfileRuntime {
         cloud_url: String,
         credentials: Option<Arc<dyn CredentialProvider>>,
     ) {
+        let signed_in = credentials.is_some();
         let mut state = self.state.write().await;
         state.config.cloud_url = cloud_url;
 
         state.credentials = credentials;
+        self.services.set_signed_in(signed_in);
     }
 
     /// Called while the supervisor holds the same gate as agent and trust mutations.

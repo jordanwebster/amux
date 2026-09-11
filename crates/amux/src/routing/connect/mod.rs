@@ -24,7 +24,7 @@ use crate::protocol::{
 };
 use crate::routing::{
     ConnectHandshake, ConnectHandshakeEvent, Host, LinkAdmission, LinkCarrier, LinkCloseRequest,
-    LinkId, LinkProperties, LinkRegistry, LinkRole, RouteUpdateOutcome, RoutingCore,
+    LinkId, LinkProperties, LinkRegistry, LinkRole, LiveLocalHost, RouteUpdateOutcome, RoutingCore,
     host_from_wire, host_to_wire, inbound_host_from_wire, neighbor_down_from_wire,
     neighbor_up_from_wire, protocol_error_hello_ack, protocol_error_link_close,
     validate_remote_host,
@@ -288,7 +288,7 @@ fn refresh_deadline(
 /// Acceptor-side context: serves `LinkService.Connect`.
 #[derive(Clone)]
 pub(crate) struct LinkServiceCtx {
-    local_host: Host,
+    local_host: LiveLocalHost,
     routing: Arc<RoutingCore>,
     tunnels: Arc<TunnelPool>,
     links: Arc<LinkRegistry>,
@@ -299,8 +299,17 @@ pub(crate) struct LinkServiceCtx {
 }
 
 impl LinkServiceCtx {
+    #[cfg(test)]
     pub(crate) fn new(
         local_host: Host,
+        routing: Arc<RoutingCore>,
+        tunnels: Arc<TunnelPool>,
+    ) -> Self {
+        Self::new_live(LiveLocalHost::new(local_host), routing, tunnels)
+    }
+
+    pub(crate) fn new_live(
+        local_host: LiveLocalHost,
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
     ) -> Self {
@@ -318,7 +327,7 @@ impl LinkServiceCtx {
 
     fn established(&self, link: LinkId) -> EstablishedConnectCtx {
         EstablishedConnectCtx {
-            local_host_id: self.local_host.id,
+            local_host_id: self.local_host.id(),
             routing: self.routing.clone(),
             tunnels: self.tunnels.clone(),
             links: self.links.clone(),
@@ -353,7 +362,7 @@ impl LinkServiceCtx {
 /// Connector-side context: dials a peer's `LinkService.Connect`.
 #[derive(Clone)]
 pub(crate) struct LinkConnectorCtx {
-    local_host: Host,
+    local_host: LiveLocalHost,
     routing: Arc<RoutingCore>,
     tunnels: Arc<TunnelPool>,
     links: Arc<LinkRegistry>,
@@ -365,6 +374,14 @@ pub(crate) struct LinkConnectorCtx {
 impl LinkConnectorCtx {
     pub(crate) fn new(
         local_host: Host,
+        routing: Arc<RoutingCore>,
+        tunnels: Arc<TunnelPool>,
+    ) -> Self {
+        Self::new_live(LiveLocalHost::new(local_host), routing, tunnels)
+    }
+
+    pub(crate) fn new_live(
+        local_host: LiveLocalHost,
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
     ) -> Self {
@@ -397,7 +414,7 @@ impl LinkConnectorCtx {
 
     fn established(&self, link: LinkId) -> EstablishedConnectCtx {
         EstablishedConnectCtx {
-            local_host_id: self.local_host.id,
+            local_host_id: self.local_host.id(),
             routing: self.routing.clone(),
             tunnels: self.tunnels.clone(),
             links: self.links.clone(),
@@ -1124,7 +1141,7 @@ async fn accept_peer_hello(
     if let Some(auth_session) = &ctx.auth_session {
         validate_minimum_client_version(&host, auth_session)?;
     }
-    if host.id == ctx.local_host.id {
+    if host.id == ctx.local_host.id() {
         return Err(host_id_collision_error(format!(
             "peer host_id {} matches local host_id",
             host.id
@@ -1211,7 +1228,7 @@ async fn accept_peer_hello_ack(
             host.id, expected_peer
         )));
     }
-    if host.id == ctx.local_host.id {
+    if host.id == ctx.local_host.id() {
         return Err(host_id_collision_error(format!(
             "peer host_id {} matches local host_id",
             host.id
@@ -1232,10 +1249,11 @@ fn neighbors_from_wire(neighbors: Vec<wire::pb::Host>) -> Result<Vec<Host>, wire
 }
 
 fn connector_hello(ctx: &LinkConnectorCtx, snapshot: &[Host]) -> wire::pb::Message {
+    let local_host = ctx.local_host.snapshot();
     wire::pb::Message {
         body: Some(wire::pb::message::Body::Hello(wire::pb::Hello {
             supported_protocol_versions: vec![PROTOCOL_VERSION],
-            host: Some(host_to_wire(&ctx.local_host)),
+            host: Some(host_to_wire(&local_host)),
             neighbors: snapshot.iter().map(host_to_wire).collect(),
         })),
     }
@@ -1246,12 +1264,13 @@ fn accepted_hello_ack(
     snapshot: &[Host],
     peer_host_id: HostId,
 ) -> wire::pb::Message {
+    let local_host = ctx.local_host.snapshot();
     wire::pb::Message {
         body: Some(wire::pb::message::Body::HelloAck(wire::pb::HelloAck {
             outcome: Some(wire::pb::hello_ack::Outcome::Accepted(
                 wire::pb::HelloAccepted {
                     protocol_version: PROTOCOL_VERSION,
-                    host: Some(host_to_wire(&ctx.local_host)),
+                    host: Some(host_to_wire(&local_host)),
                     neighbors: snapshot
                         .iter()
                         .filter(|host| host.id != peer_host_id)

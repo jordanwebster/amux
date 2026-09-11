@@ -31,8 +31,8 @@ use crate::identity::{DeviceIdentity, IdentityError};
 use crate::pairing::PairMode;
 use crate::protocol::wire;
 use crate::routing::{
-    AuthenticatedLinkUser, Host, HostReachabilityEvent, LinkAuthSession, LinkConnectorCtx,
-    LinkServiceCtx, LinkTokenAuthenticator, RoutingCore, local_host,
+    AuthenticatedLinkUser, HostReachabilityEvent, LinkAuthSession, LinkConnectorCtx,
+    LinkServiceCtx, LinkTokenAuthenticator, LiveLocalHost, RoutingCore, local_host,
 };
 use crate::services::client::{ClientService, PairingTrustAccess};
 use crate::services::{
@@ -423,7 +423,7 @@ pub(crate) struct StartedRoutingServices {
     pub(crate) routing: Arc<RoutingCore>,
     pub(crate) tunnels: Arc<TunnelPool>,
     pub(crate) connections: Arc<ConnectionManager>,
-    local_host: Host,
+    local_host: LiveLocalHost,
     _incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -446,7 +446,7 @@ async fn start_routing_services_parts(
             state.credentials.is_some(),
         )
     };
-    let host = local_host(host_id, &host_name, is_cloud_server, signed_in);
+    let host = LiveLocalHost::new(local_host(host_id, &host_name, is_cloud_server, signed_in));
 
     let routing = Arc::new(match device_security.as_ref() {
         Some(security) => RoutingCore::with_persisted_trust_store(
@@ -587,7 +587,7 @@ async fn start_user_services_with_clock(
     state.write().await.local_agent_host = agent_host.clone();
     let mut parts =
         start_routing_services_parts(state.clone(), Some(device_security.clone())).await;
-    let host_id = parts.runtime.local_host.id;
+    let host_id = parts.runtime.local_host.id();
     let is_cloud_server = {
         let state = state.read().await;
         state.is_cloud_server()
@@ -625,7 +625,7 @@ async fn start_user_services_with_clock(
     );
     client
         .apply_host_event(HostReachabilityEvent::Added {
-            host: parts.runtime.local_host.clone(),
+            host: parts.runtime.local_host.snapshot(),
         })
         .await;
 
@@ -644,7 +644,7 @@ async fn start_user_services_with_clock(
         PairingService::new(
             pair_mode.clone(),
             LocalPairingIdentity::from_device_identity(&device_security.identity),
-            parts.runtime.local_host.name.clone(),
+            parts.runtime.local_host.snapshot().name,
             device_security.trust_store.clone(),
             trust_commit_lock,
             parts.runtime.connections.clone(),
@@ -674,6 +674,7 @@ async fn start_user_services_with_clock(
     if !parts
         .runtime
         .local_host
+        .snapshot()
         .capabilities
         .supported_agent_types
         .is_empty()
@@ -839,8 +840,12 @@ impl StartedUserServices {
 }
 
 impl StartedRoutingServices {
+    pub(crate) fn set_signed_in(&self, signed_in: bool) {
+        self.local_host.set_signed_in(signed_in);
+    }
+
     pub(crate) fn link_connector_ctx(&self) -> LinkConnectorCtx {
-        LinkConnectorCtx::new(
+        LinkConnectorCtx::new_live(
             self.local_host.clone(),
             self.routing.clone(),
             self.tunnels.clone(),
@@ -848,13 +853,13 @@ impl StartedRoutingServices {
     }
 
     pub(crate) fn link_connector_ctx_with_signed_in(&self, signed_in: bool) -> LinkConnectorCtx {
-        let mut host = self.local_host.clone();
+        let mut host = self.local_host.snapshot();
         host.signed_in = Some(signed_in);
         LinkConnectorCtx::new(host, self.routing.clone(), self.tunnels.clone())
     }
 
     fn link_service_ctx(&self) -> LinkServiceCtx {
-        LinkServiceCtx::new(
+        LinkServiceCtx::new_live(
             self.local_host.clone(),
             self.routing.clone(),
             self.tunnels.clone(),

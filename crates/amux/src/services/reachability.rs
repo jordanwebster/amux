@@ -17,7 +17,7 @@ use crate::discovery::{Discovery, DiscoveryEvent, FoundHosts};
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::DeviceIdentity;
 use crate::routing::{
-    Host, LinkCarrier, LinkConnectorCtx, Route, RoutingCore,
+    Host, LinkCarrier, LinkConnectorCtx, LiveLocalHost, Route, RoutingCore,
     spawn_connector_to_channel_with_establishment,
 };
 use crate::transport::{
@@ -53,7 +53,7 @@ struct ReachabilityLinkConnectorInner {
 struct ReachabilityLinkContext {
     identity: DeviceIdentity,
     trust_store: SharedTrustStore,
-    local_host: Host,
+    local_host: LiveLocalHost,
     routing: Arc<RoutingCore>,
     tunnels: Arc<TunnelPool>,
     connections: Arc<ConnectionManager>,
@@ -79,7 +79,7 @@ impl ReachabilityLinkConnector {
     pub(crate) fn new(
         identity: DeviceIdentity,
         trust_store: SharedTrustStore,
-        local_host: Host,
+        local_host: LiveLocalHost,
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
         connections: Arc<ConnectionManager>,
@@ -565,7 +565,7 @@ async fn establish_channel(
     channel: tonic::transport::Channel,
     carrier: LinkCarrier,
 ) -> Result<(Host, JoinHandle<Result<(), tonic::Status>>, AbortTaskOnDrop), String> {
-    let connector_ctx = LinkConnectorCtx::new(
+    let connector_ctx = LinkConnectorCtx::new_live(
         context.local_host.clone(),
         context.routing.clone(),
         context.tunnels.clone(),

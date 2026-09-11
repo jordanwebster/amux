@@ -7,6 +7,7 @@
 //! "Service surface map", "The cloud deployment")
 
 use amux::HostVia;
+use amux::installation::{BindRequest, BindTarget, OperationId};
 use amux::testnet::{TestNet, Via};
 
 /// Host inventory follows the active route, including the carrier under a
@@ -65,6 +66,58 @@ async fn an_offline_host_that_never_signed_in_is_reported_as_such() {
     laptop
         .sees_host_status(&desktop, HostVia::Offline, Some(false))
         .await;
+}
+
+/// Direct handshakes read the profile's current account binding. Signing in
+/// and out changes the next hello without rebuilding either device runtime.
+#[tokio::test]
+async fn direct_hellos_follow_login_and_logout_without_restarting() {
+    let net = TestNet::builder()
+        .cloud()
+        .installation("laptop")
+        .profile("personal")
+        .daemon("desktop")
+        .no_cloud()
+        .paired("desktop", "laptop/personal", Via::Direct)
+        .start()
+        .await;
+    let installation = net.installation("laptop");
+    let laptop = installation.profile("personal");
+    let desktop = net.daemon("desktop");
+
+    desktop
+        .sees_host_status(&laptop, HostVia::Direct, Some(false))
+        .await;
+
+    installation
+        .front_door()
+        .bind(
+            OperationId::new(),
+            BindRequest {
+                target: BindTarget::Explicit(laptop.id),
+                cloud_url: installation.identity().url(),
+                staged_refresh_token: installation.identity().refresh_token_for("default"),
+                adopt_non_pristine: true,
+            },
+        )
+        .await
+        .unwrap();
+    laptop.sever_direct_connections().await;
+    net.announce(&laptop);
+    desktop
+        .sees_host_status(&laptop, HostVia::Direct, Some(true))
+        .await;
+
+    installation.logout("personal").await;
+    laptop.sever_direct_connections().await;
+    net.announce(&laptop);
+    desktop
+        .sees_host_status(&laptop, HostVia::Direct, Some(false))
+        .await;
+
+    println!(
+        "A paired profile announces signed_in=false, then true after login and false after logout; both daemons keep the same running runtime throughout."
+    );
 }
 
 /// Two daemons attached to the same cloud user see each other come online —

@@ -32,7 +32,8 @@ pub(crate) use connect::{
 pub(crate) use events::{EventSource, HostReachabilityEvent, RoutingEvent};
 pub use events::{HostEntry, HostEvent, HostTrustStatus, HostVia};
 pub(crate) use host::{
-    FEATURE_CLOUD_RELAY, MAX_HOST_NAME_BYTES, local_capabilities, local_host, validate_remote_host,
+    FEATURE_CLOUD_RELAY, LiveLocalHost, MAX_HOST_NAME_BYTES, local_capabilities, local_host,
+    validate_remote_host,
 };
 pub(crate) use link::{
     ConnectHandshake, ConnectHandshakeEvent, protocol_error_hello_ack, protocol_error_link_close,

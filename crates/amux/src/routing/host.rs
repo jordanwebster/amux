@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use uuid::Uuid;
 
 #[cfg(feature = "local-agents")]
@@ -11,6 +14,39 @@ use crate::routing::{Capabilities, Host, SupportedAgentType};
 pub(crate) const FEATURE_CLOUD_RELAY: &str = "amux.cloud_relay";
 pub(crate) const MAX_SUPPORTED_AGENT_TYPES: usize = 64;
 pub(crate) const MAX_HOST_NAME_BYTES: usize = 256;
+
+/// The stable local identity plus the profile binding fact read by each new
+/// link handshake. Credential changes do not restart routing services, so the
+/// binding bit must remain live while the rest of the host description stays
+/// immutable.
+#[derive(Clone)]
+pub(crate) struct LiveLocalHost {
+    host: Host,
+    signed_in: Arc<AtomicBool>,
+}
+
+impl LiveLocalHost {
+    pub(crate) fn new(host: Host) -> Self {
+        Self {
+            signed_in: Arc::new(AtomicBool::new(host.signed_in.unwrap_or(false))),
+            host,
+        }
+    }
+
+    pub(crate) fn id(&self) -> Uuid {
+        self.host.id
+    }
+
+    pub(crate) fn snapshot(&self) -> Host {
+        let mut host = self.host.clone();
+        host.signed_in = Some(self.signed_in.load(Ordering::Acquire));
+        host
+    }
+
+    pub(crate) fn set_signed_in(&self, signed_in: bool) {
+        self.signed_in.store(signed_in, Ordering::Release);
+    }
+}
 
 pub(crate) fn local_host(
     host_id: Uuid,

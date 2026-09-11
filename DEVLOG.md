@@ -1,3 +1,8 @@
+2026-09-11 — **Announce the current profile binding on direct links.** Direct
+and SSH handshakes now read the profile's live signed-in state instead of the
+value captured when routing started. A paired peer sees login and logout in
+the next hello without either daemon restarting.
+
 2026-09-11 — **List reachable agents when one relay host is blocked.** The
 command-line fleet list now omits cached agents behind a free relay while still
 printing local, direct, SSH, and paid-relay agents. Each blocked host is named
