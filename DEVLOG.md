@@ -1,3 +1,9 @@
+2026-09-11 — **Lock the link runtime's admission refusals to native carriers.**
+In-memory multiplexed link tests now cover token expiry without
+reauthentication, rejection of a reauthentication token for another user
+without changing the active tier, structured minimum-version refusal, and the
+acceptor's no-Hello deadline without a transient registry entry.
+
 2026-09-11 — **Exercise remote client calls through native relay streams.**
 The remote client test harness now opens real yamux streams, forwards them
 through the relay piper, and completes the pinned inner TLS handshake at the

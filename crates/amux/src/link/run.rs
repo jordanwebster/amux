@@ -1264,6 +1264,19 @@ mod tests {
         opened: Notify,
     }
 
+    #[derive(Clone)]
+    struct FixedAuthenticator(AuthenticatedLinkUser);
+
+    #[tonic::async_trait]
+    impl LinkTokenAuthenticator for FixedAuthenticator {
+        async fn authenticate_token(
+            &self,
+            _token: &str,
+        ) -> Result<AuthenticatedLinkUser, tonic::Status> {
+            Ok(self.0.clone())
+        }
+    }
+
     impl BlockingOpenCarrier {
         fn new() -> Self {
             Self {
@@ -1310,6 +1323,244 @@ mod tests {
             capabilities: Capabilities::default(),
             signed_in: Some(false),
         }
+    }
+
+    fn mux_pair() -> (Arc<MuxCarrier>, Arc<MuxCarrier>) {
+        let (connector_io, acceptor_io) = tokio::io::duplex(1024 * 1024);
+        (
+            Arc::new(MuxCarrier::new(
+                connector_io,
+                MuxRole::Connector,
+                CarrierKind::RelayTcp,
+            )),
+            Arc::new(MuxCarrier::new(
+                acceptor_io,
+                MuxRole::Acceptor,
+                CarrierKind::RelayTcp,
+            )),
+        )
+    }
+
+    fn authenticated_user(
+        user_id: Uuid,
+        expires_at: SystemTime,
+        tier: crate::Tier,
+    ) -> AuthenticatedLinkUser {
+        AuthenticatedLinkUser {
+            user_id,
+            client_id: "test-client".to_string(),
+            expires_at,
+            tier,
+        }
+    }
+
+    async fn send_hello(sink: &mut ControlSink, peer: &Host, auth_token: Option<&str>) {
+        write_message(
+            sink,
+            &wire::pb::Message {
+                body: Some(wire::pb::message::Body::Hello(wire::pb::Hello {
+                    supported_protocol_versions: vec![PROTOCOL_VERSION],
+                    host: Some(host_to_wire(peer)),
+                    neighbors: Vec::new(),
+                    auth_token: auth_token.map(str::to_string),
+                })),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn expect_accepted(source: &mut ControlSource) {
+        let ack = read_message(source).await.unwrap().unwrap();
+        assert!(matches!(
+            ack.body,
+            Some(wire::pb::message::Body::HelloAck(wire::pb::HelloAck {
+                outcome: Some(wire::pb::hello_ack::Outcome::Accepted(_)),
+            }))
+        ));
+    }
+
+    async fn expect_link_close(
+        source: &mut ControlSource,
+        expected: wire::pb::LinkCloseReason,
+    ) -> wire::pb::LinkClose {
+        let message = read_message(source).await.unwrap().unwrap();
+        let Some(wire::pb::message::Body::LinkClose(close)) = message.body else {
+            panic!("expected LinkClose, got {message:?}");
+        };
+        assert_eq!(
+            wire::pb::LinkCloseReason::try_from(close.reason).unwrap(),
+            expected
+        );
+        close
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn authenticated_link_expires_without_reauthentication() {
+        let local = host(1);
+        let peer = host(2);
+        let routing = Arc::new(RoutingCore::new());
+        let links = Arc::new(LinkRegistry::default());
+        let user = authenticated_user(
+            Uuid::new_v4(),
+            SystemTime::now() + Duration::from_secs(60),
+            crate::Tier::Free,
+        );
+        let (connector_carrier, acceptor_carrier) = mux_pair();
+        let ctx = LinkCtx::new(local, routing, links.clone())
+            .with_authenticated_peer(peer.id)
+            .with_token_authenticator(Arc::new(FixedAuthenticator(user)), None);
+        let task = tokio::spawn(run_link(
+            ctx,
+            acceptor_carrier.clone(),
+            crate::routing::ConnectRole::Acceptor,
+        ));
+        let (mut sink, mut source) = connector_carrier.control();
+
+        send_hello(&mut sink, &peer, Some("initial-token")).await;
+        expect_accepted(&mut source).await;
+        assert!(links.link_to_peer(peer.id).await.is_some());
+
+        tokio::time::advance(Duration::from_secs(61)).await;
+        let close = expect_link_close(&mut source, wire::pb::LinkCloseReason::AuthExpired).await;
+        assert_eq!(
+            close.error.as_ref().map(|error| error.code),
+            Some(wire::pb::ErrorCode::Unauthenticated as i32)
+        );
+        assert_eq!(
+            acceptor_carrier.closed().await,
+            wire::pb::LinkCloseReason::AuthExpired
+        );
+        task.await.unwrap().unwrap();
+        assert!(links.link_to_peer(peer.id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn reauthentication_for_another_user_expires_without_changing_tier() {
+        let local = host(1);
+        let peer = host(2);
+        let user_id = Uuid::new_v4();
+        let initial = authenticated_user(
+            user_id,
+            SystemTime::now() + Duration::from_secs(3600),
+            crate::Tier::Free,
+        );
+        let other_user = authenticated_user(
+            Uuid::new_v4(),
+            SystemTime::now() + Duration::from_secs(3600),
+            crate::Tier::Pro,
+        );
+        let session = LinkAuthSession::new(initial, FixedAuthenticator(other_user), None);
+        let routing = Arc::new(RoutingCore::new());
+        let links = Arc::new(LinkRegistry::default());
+        let (connector_carrier, acceptor_carrier) = mux_pair();
+        let mut ctx = LinkCtx::new(local, routing, links).with_authenticated_peer(peer.id);
+        ctx.acceptor_session = Some(session.clone());
+        let task = tokio::spawn(run_link(
+            ctx,
+            acceptor_carrier.clone(),
+            crate::routing::ConnectRole::Acceptor,
+        ));
+        let (mut sink, mut source) = connector_carrier.control();
+
+        send_hello(&mut sink, &peer, None).await;
+        expect_accepted(&mut source).await;
+        write_message(
+            &mut sink,
+            &wire::pb::Message {
+                body: Some(wire::pb::message::Body::Reauth(wire::pb::Reauth {
+                    auth_token: "another-user-token".to_string(),
+                })),
+            },
+        )
+        .await
+        .unwrap();
+
+        expect_link_close(&mut source, wire::pb::LinkCloseReason::AuthExpired).await;
+        assert_eq!(session.tier(), crate::Tier::Free);
+        assert_eq!(session.user().user_id, user_id);
+        assert_eq!(
+            acceptor_carrier.closed().await,
+            wire::pb::LinkCloseReason::AuthExpired
+        );
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn client_below_the_session_minimum_gets_structured_update_required() {
+        let local = host(1);
+        let mut peer = host(2);
+        peer.version = "1.4.0".to_string();
+        let user = authenticated_user(
+            Uuid::new_v4(),
+            SystemTime::now() + Duration::from_secs(3600),
+            crate::Tier::Free,
+        );
+        let session = LinkAuthSession::new(
+            user.clone(),
+            FixedAuthenticator(user),
+            Some("1.5.0".to_string()),
+        );
+        let routing = Arc::new(RoutingCore::new());
+        let links = Arc::new(LinkRegistry::default());
+        let (connector_carrier, acceptor_carrier) = mux_pair();
+        let mut ctx = LinkCtx::new(local, routing, links.clone()).with_authenticated_peer(peer.id);
+        ctx.acceptor_session = Some(session);
+        let task = tokio::spawn(run_link(
+            ctx,
+            acceptor_carrier.clone(),
+            crate::routing::ConnectRole::Acceptor,
+        ));
+        let (mut sink, mut source) = connector_carrier.control();
+
+        send_hello(&mut sink, &peer, None).await;
+        let ack = read_message(&mut source).await.unwrap().unwrap();
+        let Some(wire::pb::message::Body::HelloAck(wire::pb::HelloAck {
+            outcome: Some(wire::pb::hello_ack::Outcome::Error(error)),
+        })) = ack.body
+        else {
+            panic!("expected rejected HelloAck, got {ack:?}");
+        };
+        assert_eq!(
+            wire::decode_protocol_error(error),
+            ProtocolError::UpdateRequired {
+                minimum_version: "1.5.0".to_string(),
+                client_version: "1.4.0".to_string(),
+            }
+        );
+        assert_eq!(
+            acceptor_carrier.closed().await,
+            wire::pb::LinkCloseReason::ProtocolError
+        );
+        task.await.unwrap().unwrap();
+        assert!(links.link_to_peer(peer.id).await.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn acceptor_without_hello_times_out_without_registering_a_link() {
+        let local = host(1);
+        let peer = host(2);
+        let routing = Arc::new(RoutingCore::new());
+        let links = Arc::new(LinkRegistry::default());
+        let (connector_carrier, acceptor_carrier) = mux_pair();
+        let ctx = LinkCtx::new(local, routing, links.clone()).with_authenticated_peer(peer.id);
+        let task = tokio::spawn(run_link(
+            ctx,
+            acceptor_carrier.clone(),
+            crate::routing::ConnectRole::Acceptor,
+        ));
+        let (_sink, _source) = connector_carrier.control();
+
+        tokio::task::yield_now().await;
+        assert!(links.link_to_peer(peer.id).await.is_none());
+        tokio::time::advance(LINK_CONNECT_HELLO_TIMEOUT + Duration::from_millis(1)).await;
+
+        assert_eq!(
+            acceptor_carrier.closed().await,
+            wire::pb::LinkCloseReason::ProtocolError
+        );
+        task.await.unwrap().unwrap();
+        assert!(links.link_to_peer(peer.id).await.is_none());
     }
 
     #[tokio::test]
