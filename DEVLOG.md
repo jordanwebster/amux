@@ -14398,13 +14398,14 @@ between those areas. Even closed, that mask exposed two differently sampled stri
 outer gradient. Open, its rounded top edge sat directly behind the real conversation pill,
 so the pill appeared to overlap a second bubble.
 
-The mask is removed. The drawer already covers the transformed page's leading corners and
-its trailing corners move beyond the display, so the mask contributed no visible designed
-edge; it only cut off the full-bleed background. The drawer and conversation keep their real
-safe-area layout, including the reconnect action above the home area. The reference's 4%
-centred scale remains, so the small designed vertical movement of the background page is
-unchanged.
+The mask is removed. The drawer covers the page's leading edge and the rest moves beyond the
+display, so the mask contributed no useful visible edge; it only cut off the full-bleed
+background. The page also keeps its original size and translates by one complete panel width.
+There is no approved open-drawer capture, and shrinking the prior screen made its ordinary
+header look like an extra surface. A direct slide keeps the relationship unambiguous while
+preserving the conversation and its scroll position.
 
-Focused light and dark captures of both the open drawer and unreachable conversation show a
-continuous physical-edge background, one conversation pill, correctly placed drawer chrome,
-and a fully clear Retry Now card. Golden baselines were not updated.
+Focused light and dark captures of the open drawer show the chat at its original vertical
+position behind one continuous physical-edge background. The unreachable conversation was
+also checked in both appearances: its Retry Now card remains clear of the home area and the
+closed page has no bands. Golden baselines were not updated.

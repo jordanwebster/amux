@@ -248,11 +248,9 @@ struct DrawerRow: View {
 
 /// The drawer over the screen it was opened from.
 ///
-/// The screen behind it is never torn down and never re-entered: it slides and
-/// shrinks and comes back, so closing the drawer returns to the conversation
-/// exactly as it was, at the scroll position it was left at. A drawer that
-/// pushed or presented would rebuild the page, and the transcript would come
-/// back at the top.
+/// The screen behind it is never torn down and never re-entered: it keeps its
+/// size and slides by the panel's width, so closing the drawer returns to the
+/// conversation exactly as it was, at the scroll position it was left at.
 ///
 /// It follows the thumb rather than playing an animation at it. The gesture
 /// drives the same number the animation does, so a drag can catch a panel that
@@ -262,7 +260,6 @@ public struct DrawerOverlay<Content: View>: View {
     /// enough that the conversation behind it is still visibly there.
     public static var width: CGFloat { 302 }
 
-    @Environment(\.design) private var design
     @Environment(\.reducesMotion) private var reduceMotion
     @Binding private var open: Bool
     private let drawer: AgentsDrawer
@@ -288,13 +285,12 @@ public struct DrawerOverlay<Content: View>: View {
 
     public var body: some View {
         ZStack(alignment: .leading) {
-            // What the screen slides off, so the corner it uncovers is the
+            // What the screen slides off, so the area it uncovers is the
             // app's own ground in either appearance rather than whatever the
             // window happens to be filled with.
             Ground().ignoresSafeArea()
             content
-                .offset(x: Self.width * progress * 0.82)
-                .scaleEffect(1 - 0.04 * progress, anchor: .center)
+                .offset(x: Self.width * progress)
                 // While the panel is out, the screen behind it is scenery.
                 // Said before the scrim goes over it, because the scrim is
                 // the way back and a disabled scrim is a drawer that can only
@@ -302,11 +298,9 @@ public struct DrawerOverlay<Content: View>: View {
                 .disabled(progress > 0)
                 .accessibilityHidden(progress > 0)
                 .overlay { scrim }
-                // The drawer always covers the page's leading corners and the
-                // trailing corners move beyond the display. Clipping this
-                // safe-area-sized view only cuts off the full-bleed ground,
-                // exposing bands and a false rounded surface behind the real
-                // conversation pill.
+                // The drawer covers the page's leading edge and the rest
+                // moves beyond the display. A mask here would clip the page's
+                // full-bleed ground to the safe-area-sized layout rectangle.
                 .shadow(color: .black.opacity(0.24 * progress), radius: 24, x: -6)
 
             drawer
