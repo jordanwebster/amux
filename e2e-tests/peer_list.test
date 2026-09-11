@@ -6,10 +6,12 @@
 config:
   name: local
   host_name: phone
+  lan_discovery: true
 
 config:
   name: remote
   host_name: nova
+  lan_discovery: true
 
 terminal:
   name: Local

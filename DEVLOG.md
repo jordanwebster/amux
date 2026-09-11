@@ -1,3 +1,15 @@
+2026-09-11 — **Prove account-free pairing over real multicast.** The end-to-end
+runner now opts individual daemons into platform mDNS while keeping unrelated
+fixtures on isolated scripted discovery, can disable discovery on one daemon,
+and reports an explicit skip when a runner cannot loop multicast. Two fresh
+installations with no account now prove discovery by name, pairing with the
+grouped code printed by `amux init`, and direct test-agent attachment. A second
+scenario proves the same direct attachment from the deep link printed by
+`amux pair --qr --link` while discovery is blocked on the joining device;
+`amux pair --qr-payload` consumes that link. Unbound runtimes no longer expose
+their default cloud address in pairing QR data. CLI-boundary transcripts and a
+private-tmux capture record the on-ramp.
+
 2026-09-11 — **Make nearby pairing the desktop on-ramp.** A fresh `amux init`
 now leaves a fifteen-minute pairing code open beside an install-link QR and
 explains that local use needs no account. `amux pair` accepts one host name,

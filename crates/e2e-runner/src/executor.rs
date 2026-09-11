@@ -3,7 +3,7 @@ use crate::parser::{Directory, RetryPolicy, Terminal, TestCase, TestConfig, Test
 type PreparedEnvironment = (Vec<Directory>, Vec<TestConfig>, Vec<Terminal>);
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,7 +46,7 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
         }
         "pair" => command.args[index + 1..]
             .iter()
-            .any(|arg| arg == "--cancel" || arg == "--demo"),
+            .any(|arg| arg == "--cancel" || arg == "--demo" || arg == "--qr-payload"),
         "profile" => {
             command
                 .args
@@ -117,6 +117,68 @@ fn retry_oneshot_until_expected(
     Ok(actual)
 }
 
+fn retry_oneshot_until_contains(
+    command: &ResolvedCommand,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+    expected: &str,
+    policy: RetryPolicy,
+    first_output: String,
+) -> Result<String, String> {
+    let started = Instant::now();
+    let timeout = Duration::from_millis(policy.timeout_ms);
+    let interval = Duration::from_millis(policy.interval_ms);
+    let mut actual = first_output;
+
+    while !actual.contains(expected) && started.elapsed() < timeout {
+        thread::sleep(interval);
+        actual = run_oneshot_command(command, cwd, env)?;
+    }
+
+    Ok(actual)
+}
+
+fn multicast_skip_reason() -> Option<String> {
+    if std::env::var_os("AMUX_E2E_DISABLE_MULTICAST").is_some() {
+        return Some("multicast disabled by AMUX_E2E_DISABLE_MULTICAST".to_string());
+    }
+    if !matches!(std::env::consts::OS, "macos" | "linux") {
+        return Some(format!(
+            "real multicast e2e is unsupported on {}",
+            std::env::consts::OS
+        ));
+    }
+
+    let socket = match UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) {
+        Ok(socket) => socket,
+        Err(error) => return Some(format!("cannot bind multicast probe: {error}")),
+    };
+    let group = Ipv4Addr::new(239, 255, 42, 99);
+    if let Err(error) = socket.join_multicast_v4(&group, &Ipv4Addr::UNSPECIFIED) {
+        return Some(format!("cannot join multicast probe group: {error}"));
+    }
+    if let Err(error) = socket.set_multicast_loop_v4(true) {
+        return Some(format!("cannot enable multicast loopback: {error}"));
+    }
+    if let Err(error) = socket.set_read_timeout(Some(Duration::from_millis(500))) {
+        return Some(format!("cannot time out multicast probe: {error}"));
+    }
+    let marker = b"amux-e2e-multicast-probe";
+    let port = match socket.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(error) => return Some(format!("cannot inspect multicast probe socket: {error}")),
+    };
+    if let Err(error) = socket.send_to(marker, (group, port)) {
+        return Some(format!("cannot send multicast probe: {error}"));
+    }
+    let mut received = [0_u8; 64];
+    match socket.recv_from(&mut received) {
+        Ok((length, _)) if received[..length] == marker[..] => None,
+        Ok(_) => Some("multicast probe received an unexpected datagram".to_string()),
+        Err(error) => Some(format!("multicast loopback unavailable: {error}")),
+    }
+}
+
 fn append_config_logs(
     mut error: String,
     config_envs: &HashMap<String, HashMap<String, String>>,
@@ -178,6 +240,7 @@ fn default_socket_path(base_dir: &Path, test_name: &str, config_name: &str) -> P
 pub struct TestResult {
     pub passed: bool,
     pub error: Option<String>,
+    pub skipped: Option<String>,
 }
 
 /// Configuration for the executor
@@ -778,6 +841,23 @@ impl Executor {
 
     /// Run a test case
     pub fn run_test(&self, test_case: &TestCase) -> TestResult {
+        if test_case.configs.iter().any(|config| config.lan_discovery)
+            && let Some(reason) = multicast_skip_reason()
+        {
+            if let Some(directory) = &self.config.transcript_dir {
+                let _ = std::fs::create_dir_all(directory).and_then(|()| {
+                    std::fs::write(
+                        directory.join(format!("{}.txt", test_case.name)),
+                        format!("[skipped] {reason}\n\nResult: SKIP\n"),
+                    )
+                });
+            }
+            return TestResult {
+                passed: true,
+                error: None,
+                skipped: Some(reason),
+            };
+        }
         let result = if test_case
             .configs
             .iter()
@@ -802,10 +882,12 @@ impl Executor {
             Ok(()) => TestResult {
                 passed: true,
                 error: None,
+                skipped: None,
             },
             Err(e) => TestResult {
                 passed: false,
                 error: Some(e),
+                skipped: None,
             },
         }
     }
@@ -870,6 +952,12 @@ impl Executor {
         let mut config_envs: HashMap<String, HashMap<String, String>> = HashMap::new();
 
         for (index, cfg) in configs.iter().enumerate() {
+            if cfg.lan_discovery && cfg.multicast_blocked {
+                return Err(format!(
+                    "config {} cannot enable lan_discovery and multicast_blocked together",
+                    cfg.name
+                ));
+            }
             // Determine socket path
             let socket_path = match &cfg.socket_path {
                 Some(p) if p != "auto" => PathBuf::from(p),
@@ -1006,18 +1094,18 @@ impl Executor {
                         std::fs::create_dir_all(dir.join("state")).map_err(|e| e.to_string())?;
                         let path = dir.join("config.yaml");
                         let socket = root.join("profiles").join(format!("{profile_id}.sock"));
-                        write_fixture_yaml(
-                            &path,
-                            &serde_json::json!({
-                                "installation_config": installation_path, "socket_path": socket,
-                                "state_path": dir.join("state/state.yaml"), "data_dir": dir.join("data"),
-                                "cloud_url": cloud_url,
-                                "lan": {
-                                    "listen": true,
-                                    "port": if profile_index == 0 { listener_port.unwrap_or(0) } else { 0 },
-                                },
-                            }),
-                        )?;
+                        let mut profile = serde_json::json!({
+                            "installation_config": installation_path, "socket_path": socket,
+                            "state_path": dir.join("state/state.yaml"), "data_dir": dir.join("data"),
+                            "lan": {
+                                "listen": true,
+                                "port": if profile_index == 0 { listener_port.unwrap_or(0) } else { 0 },
+                            },
+                        });
+                        if let Some(cloud_url) = &cfg.cloud_url {
+                            profile["cloud_url"] = serde_json::Value::String(cloud_url.clone());
+                        }
+                        write_fixture_yaml(&path, &profile)?;
                         if profile_index == 0
                             && let Some(name) = &cfg.suspended_agent
                         {
@@ -1094,6 +1182,17 @@ impl Executor {
                 (
                     "AMUX_LOG".to_string(),
                     log_path.to_string_lossy().to_string(),
+                ),
+                (
+                    "AMUX_TEST_DISCOVERY_MODE".to_string(),
+                    if cfg.lan_discovery {
+                        "mdns"
+                    } else if cfg.multicast_blocked {
+                        "disabled"
+                    } else {
+                        "scripted"
+                    }
+                    .to_string(),
                 ),
             ]);
             if let Some(fixture) = &cloud_fixture {
@@ -1317,13 +1416,34 @@ impl Executor {
                 }
                 TestStep::ExpectContains(expected) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
-                    let output = oneshot_outputs
-                        .get(term_name)
-                        .ok_or("@@contains requires a completed one-shot command")?;
                     let expected = var_ctx.substitute(expected);
+                    let retry_policy = retry_next_expect.take();
+                    let first_output = oneshot_outputs
+                        .remove(term_name)
+                        .ok_or("@@contains requires a completed one-shot command")?;
+                    let output = if let Some(policy) = retry_policy {
+                        let (command, cwd, env) = last_oneshot_commands
+                            .get(term_name)
+                            .ok_or("Retry directive requires a previous one-shot amux command")?;
+                        retry_oneshot_until_contains(
+                            command,
+                            cwd,
+                            env,
+                            &expected,
+                            policy,
+                            first_output,
+                        )?
+                    } else {
+                        first_output
+                    };
+                    if retry_policy.is_some() && !transcript.ends_with(&output) {
+                        transcript.push_str("[retry result]\n");
+                        transcript.push_str(&output);
+                    }
                     if !output.contains(&expected) {
                         return Err(format!("Expected {expected:?} in output:\n{output}"));
                     }
+                    oneshot_outputs.insert(term_name.clone(), output);
                 }
                 TestStep::Exit(code) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
@@ -1379,6 +1499,41 @@ impl Executor {
                             term_name, prefix_substituted, actual
                         ));
                     }
+                    let value = actual[prefix_substituted.len()..].trim().to_string();
+                    if value.is_empty() {
+                        return Err(format!(
+                            "Capture {name} in terminal {term_name} produced an empty value"
+                        ));
+                    }
+                    var_ctx.captures.insert(name.clone(), value);
+                }
+                TestStep::CaptureContainingOutput { name, prefix } => {
+                    let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
+                    let prefix_substituted = var_ctx.substitute(prefix);
+                    let actual = if let Some(output) = oneshot_outputs.get(term_name) {
+                        output
+                            .lines()
+                            .find(|line| line.starts_with(&prefix_substituted))
+                            .map(str::to_string)
+                            .ok_or_else(|| {
+                                format!(
+                                    "Capture search in terminal {term_name} found no line starting with {prefix_substituted:?} in:\n{output}"
+                                )
+                            })?
+                    } else {
+                        let terminal = active_terminals
+                            .get_mut(term_name)
+                            .ok_or(format!("Terminal {} not initialized", term_name))?;
+                        loop {
+                            let line = terminal
+                                .read_line(self.config.timeout)
+                                .map_err(|e| format!("Failed to search output: {e}"))?;
+                            transcript.push_str(&format!("{line}\n"));
+                            if line.starts_with(&prefix_substituted) {
+                                break line;
+                            }
+                        }
+                    };
                     let value = actual[prefix_substituted.len()..].trim().to_string();
                     if value.is_empty() {
                         return Err(format!(
@@ -1529,6 +1684,8 @@ impl Executor {
                 cloud_url: None,
                 tcp_port: None,
                 lan_port: None,
+                lan_discovery: false,
+                multicast_blocked: false,
                 cloud_relay: false,
                 update_version: None,
                 suspended_agent: None,

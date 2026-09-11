@@ -51,6 +51,7 @@ Arguments:
 
 Options:
       --qr                 Display a QR pairing code for this device
+      --qr-payload <LINK>  Pair using the deep link printed by `amux pair --qr --link`
       --link               Also print the QR deep link for simulator pairing
       --listen             Require LAN-direct responder mode; errors when the LAN listener is off
       --demo               Hold a reusable fixed PIN open for unattended demos (returns immediately; the daemon keeps the session until it expires or `amux pair --cancel`)

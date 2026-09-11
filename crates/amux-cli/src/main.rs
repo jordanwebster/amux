@@ -156,12 +156,16 @@ enum Commands {
     /// Pair this device with another amux daemon
     Pair {
         /// Host name, IP:port, or user@host to pair through SSH
-        #[arg(value_name = "TARGET", conflicts_with_all = ["qr", "listen", "demo", "cancel"])]
+        #[arg(value_name = "TARGET", conflicts_with_all = ["qr", "qr_payload", "listen", "demo", "cancel"])]
         target: Option<String>,
 
         /// Display a QR pairing code for this device
         #[arg(long, conflicts_with = "listen")]
         qr: bool,
+
+        /// Pair using the deep link printed by `amux pair --qr --link`
+        #[arg(long, value_name = "LINK", conflicts_with_all = ["qr", "listen", "demo", "cancel"])]
+        qr_payload: Option<String>,
 
         /// Also print the QR deep link for simulator pairing
         #[arg(long, requires = "qr")]
@@ -656,6 +660,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         Commands::Pair {
             target,
             qr,
+            qr_payload,
             link,
             listen,
             demo,
@@ -752,6 +757,26 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         }
                     }
                 }
+                return Ok(ExitCode::SUCCESS);
+            }
+
+            if let Some(link) = qr_payload {
+                ensure_initialized(&mut config).await?;
+                let client =
+                    front_door::profile_admin(&config, Some("amux pair --qr-payload <LINK>"))
+                        .await?;
+                let payload = parse_qr_pairing_link(&link)?;
+                let pending = client
+                    .begin_pair_qr(&payload)
+                    .await
+                    .context("failed to begin QR pairing")?;
+                print_pairing_identity(&pending);
+                let via = pending.via;
+                let peer = client
+                    .confirm_pair(pending)
+                    .await
+                    .context("failed to confirm QR pairing")?;
+                println!("{}", pairing_success_line(&peer, via));
                 return Ok(ExitCode::SUCCESS);
             }
 
@@ -927,7 +952,20 @@ fn prompt_pairing_pin() -> Result<String> {
     std::io::stdin()
         .read_line(&mut pin)
         .context("failed to read PIN")?;
-    Ok(pin.trim().to_string())
+    Ok(normalize_pairing_pin(&pin))
+}
+
+fn normalize_pairing_pin(input: &str) -> String {
+    let displayed_code = input.split('·').next().unwrap_or(input);
+    let digits = displayed_code
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect::<String>();
+    if digits.len() == 6 {
+        digits
+    } else {
+        input.trim().to_string()
+    }
 }
 
 fn format_pairing_ttl(seconds: u64) -> String {
@@ -1030,6 +1068,17 @@ fn qr_pairing_payload(pairing: &PairingStart, secret: &[u8]) -> Result<String> {
         .context("failed to encode QR pairing payload")?;
     let encoded = URL_SAFE_NO_PAD.encode(payload.as_bytes());
     Ok(format!("{QR_PAIRING_DEEP_LINK_PREFIX}{encoded}"))
+}
+
+fn parse_qr_pairing_link(link: &str) -> Result<amux::QrPairingPayload> {
+    let encoded = link
+        .strip_prefix(QR_PAIRING_DEEP_LINK_PREFIX)
+        .ok_or_else(|| anyhow!("invalid pairing link"))?;
+    let decoded = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .context("invalid pairing link payload")?;
+    let json = std::str::from_utf8(&decoded).context("pairing link payload is not UTF-8")?;
+    amux::parse_qr_pairing_payload(json).context("invalid pairing link payload")
 }
 
 async fn wait_for_pairing_mode_to_end(
@@ -1685,6 +1734,16 @@ mod tests {
     }
 
     #[test]
+    fn pairing_pin_accepts_the_grouped_init_line() {
+        assert_eq!(normalize_pairing_pin("481 923"), "481923");
+        assert_eq!(
+            normalize_pairing_pin("481 923 · valid for 15 minutes"),
+            "481923"
+        );
+        assert_eq!(normalize_pairing_pin("not a code"), "not a code");
+    }
+
+    #[test]
     fn pair_without_target_parses_as_responder() {
         let cli = Cli::try_parse_from(["amux", "pair"]).unwrap();
         let Some(Commands::Pair { target, .. }) = cli.command else {
@@ -1722,6 +1781,24 @@ mod tests {
         };
         assert!(qr);
         assert!(link);
+    }
+
+    #[test]
+    fn pair_qr_payload_parses_as_initiator() {
+        let cli = Cli::try_parse_from(["amux", "pair", "--qr-payload", "amux://pair?payload=e30"])
+            .unwrap();
+        let Some(Commands::Pair {
+            qr_payload,
+            qr,
+            target,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected pair command");
+        };
+        assert_eq!(qr_payload.as_deref(), Some("amux://pair?payload=e30"));
+        assert!(!qr);
+        assert!(target.is_none());
     }
 
     #[test]

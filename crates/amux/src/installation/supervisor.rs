@@ -814,7 +814,10 @@ impl Inner {
             {
                 store.use_host(binding, provider(id));
             }
-            let credentials: Option<Arc<dyn CredentialProvider>> = Some(store.clone());
+            let credentials: Option<Arc<dyn CredentialProvider>> = record
+                .binding
+                .as_ref()
+                .map(|_| store.clone() as Arc<dyn CredentialProvider>);
             *slot.credentials.lock().unwrap() = Some(store);
             let cloud_url = record
                 .binding

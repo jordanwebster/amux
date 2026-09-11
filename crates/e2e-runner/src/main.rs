@@ -214,6 +214,7 @@ fn run_tests(
 
     let mut passed = 0;
     let mut failed = 0;
+    let mut skipped = 0;
 
     println!("Running {} test(s)...\n", test_files.len());
 
@@ -228,7 +229,10 @@ fn run_tests(
         match parser::parse_test_file(test_file) {
             Ok(test_case) => {
                 let result = executor.run_test(&test_case);
-                if result.passed {
+                if let Some(reason) = result.skipped {
+                    println!("skipped ({reason})");
+                    skipped += 1;
+                } else if result.passed {
                     println!("ok");
                     passed += 1;
                 } else {
@@ -248,7 +252,10 @@ fn run_tests(
     }
 
     println!();
-    println!("Results: {} passed, {} failed", passed, failed);
+    println!(
+        "Results: {} passed, {} skipped, {} failed",
+        passed, skipped, failed
+    );
 
     if failed > 0 {
         std::process::exit(1);

@@ -35,6 +35,12 @@ pub struct TestConfig {
     pub tcp_port: Option<u16>,
     #[serde(default)]
     pub lan_port: Option<u16>,
+    /// Use the platform mDNS implementation instead of isolated scripted discovery.
+    #[serde(default)]
+    pub lan_discovery: bool,
+    /// Disable discovery for this daemon, modelling a network that blocks multicast.
+    #[serde(default)]
+    pub multicast_blocked: bool,
     #[serde(default)]
     pub cloud_relay: bool,
     /// Serve a release manifest and a disposable copy of the current executable.
@@ -75,6 +81,8 @@ pub enum TestStep {
     ProcessExited(String),
     /// Capture one output line suffix after a required prefix into a variable.
     CaptureOutput { name: String, prefix: String },
+    /// Find an output line by prefix and capture its suffix into a variable.
+    CaptureContainingOutput { name: String, prefix: String },
     /// Sleep for a given number of milliseconds
     Sleep(u64),
     /// Retry the next expected output by rerunning the last one-shot command.
@@ -392,6 +400,26 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     continue;
                 }
 
+                // Capture-search directive: @@capture-contains <variable> <line prefix>
+                if let Some(rest) = trimmed.strip_prefix("@@capture-contains ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    let (name, prefix) = rest.split_once(' ').ok_or_else(|| ParseError {
+                        line: line_num,
+                        message: format!("Invalid capture-search directive: {rest}"),
+                    })?;
+                    if name.is_empty() || prefix.is_empty() {
+                        return Err(ParseError {
+                            line: line_num,
+                            message: format!("Invalid capture-search directive: {rest}"),
+                        });
+                    }
+                    steps.push(TestStep::CaptureContainingOutput {
+                        name: name.to_string(),
+                        prefix: prefix.to_string(),
+                    });
+                    continue;
+                }
+
                 // Terminal switch - flush any pending output first
                 if let Some(rest) = trimmed.strip_prefix('@') {
                     flush_pending_output(&mut pending_output_lines, &mut steps);
@@ -551,6 +579,31 @@ terminal:
                 assert_eq!(prefix, "Pairing PIN:");
             }
             _ => panic!("expected capture step"),
+        }
+    }
+
+    #[test]
+    fn test_parse_capture_containing_output() {
+        let content = r#"# test: capture_search
+
+## Environment
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux init
+@@capture-contains pairing_code Pairing code:
+"#;
+        let test_case = parse_test_content(content).unwrap();
+        match &test_case.steps[2] {
+            TestStep::CaptureContainingOutput { name, prefix } => {
+                assert_eq!(name, "pairing_code");
+                assert_eq!(prefix, "Pairing code:");
+            }
+            _ => panic!("expected capture-search step"),
         }
     }
 

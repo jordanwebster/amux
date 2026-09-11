@@ -31,6 +31,23 @@ use crate::user_state::{ServerState, new_local_agent_host};
 const LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
 
 pub(crate) fn platform_discovery() -> Result<Arc<dyn Discovery>, DiscoveryError> {
+    #[cfg(all(testnet, not(target_os = "ios")))]
+    match std::env::var("AMUX_TEST_DISCOVERY_MODE").as_deref() {
+        Ok("scripted" | "disabled") => {
+            return Ok(Arc::new(crate::discovery::ScriptedDiscovery::new()));
+        }
+        Ok("mdns") | Err(std::env::VarError::NotPresent) => {}
+        Ok(mode) => {
+            return Err(DiscoveryError::Unavailable(format!(
+                "unknown test discovery mode {mode:?}"
+            )));
+        }
+        Err(error) => {
+            return Err(DiscoveryError::Unavailable(format!(
+                "invalid test discovery mode: {error}"
+            )));
+        }
+    }
     #[cfg(any(test, target_os = "ios"))]
     {
         Ok(Arc::new(crate::discovery::ScriptedDiscovery::new()))
