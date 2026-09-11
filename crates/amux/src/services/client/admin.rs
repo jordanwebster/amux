@@ -11,6 +11,10 @@ use crate::{
     ClientError, PairingCandidate, PairingStart, PeerEntry, PeerIdentifier, SshPairingPeer,
 };
 
+// Quinn's first Initial retransmission starts after about one second. Bound a
+// silent candidate without cutting off that retry before trying the next one.
+const PAIRING_QUIC_DIAL_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// An in-process administration handle for one profile. It cannot be obtained
 /// through a profile socket or a peer tunnel.
 #[derive(Clone)]
@@ -557,10 +561,19 @@ impl ProfileAdmin {
                 last_unreachable = Some("direct QUIC endpoint is not configured".to_string());
                 break;
             };
-            let channel = match crate::transport::pairing_quic_channel(endpoint, addr).await {
-                Ok(channel) => channel,
-                Err(error) => {
+            let channel = match tokio::time::timeout(
+                PAIRING_QUIC_DIAL_TIMEOUT,
+                crate::transport::pairing_quic_channel(endpoint, addr),
+            )
+            .await
+            {
+                Ok(Ok(channel)) => channel,
+                Ok(Err(error)) => {
                     last_unreachable = Some(error.to_string());
+                    continue;
+                }
+                Err(_) => {
+                    last_unreachable = Some(format!("pairing QUIC dial to {addr} timed out"));
                     continue;
                 }
             };

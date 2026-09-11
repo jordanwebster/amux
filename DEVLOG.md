@@ -9111,3 +9111,8 @@ loss when a peer's UDP path is blocked.
 candidate address now gets two seconds to complete the QUIC handshake. That
 budget reaches Quinn's first Initial retransmission without making several
 black-holed addresses hold connection attempts for more than a few seconds.
+
+2026-09-11 — **Pairing moves past silent network addresses.** Each advertised
+address gets a bounded QUIC dial before pairing tries the next candidate. A
+host remains promptly pairable through a working address when an earlier VPN
+or virtual-interface address silently drops every handshake packet.

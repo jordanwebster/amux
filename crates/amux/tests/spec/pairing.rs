@@ -75,6 +75,32 @@ async fn a_qr_with_addresses_pairs_with_multicast_blocked_and_no_cloud() {
     desktop.trusts(&phone).await;
 }
 
+/// A stale VPN or virtual-interface address may accept no UDP traffic at all.
+/// Pairing gives that candidate one bounded QUIC dial before moving to the
+/// responder's working address.
+#[tokio::test]
+async fn pairing_moves_past_a_silent_candidate_address_promptly() {
+    let net = TestNet::builder()
+        .daemon("desktop")
+        .outside_discovery("desktop")
+        .daemon("phone")
+        .start()
+        .await;
+    let [desktop, phone] = net.daemons(["desktop", "phone"]);
+
+    let blackhole = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let mut qr = desktop.start_qr_pairing().await;
+    qr.addrs.insert(0, blackhole.local_addr().unwrap());
+
+    tokio::time::timeout(Duration::from_secs(5), phone.pair(&desktop).with_qr(&qr))
+        .await
+        .expect("pairing should move past a silent address within one candidate budget")
+        .expect("pair through the later working address");
+
+    phone.trusts(&desktop).await;
+    desktop.trusts(&phone).await;
+}
+
 /// An untrusted advertisement is offered to local callers as a direct
 /// candidate, but never enters the trusted host dial path.
 #[tokio::test]
