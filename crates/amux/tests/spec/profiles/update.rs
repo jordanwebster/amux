@@ -2,10 +2,11 @@
 
 use amux::installation::{AgentResumeStatus, OperationId, SuspendReason};
 #[cfg(unix)]
-use amux::installation::{FrontDoor, FrontDoorClient, rpc};
+use amux::installation::{FrontDoor, rpc};
 #[cfg(unix)]
 use amux::testnet::InstallationHandle;
 use amux::testnet::TestNet;
+use client::FrontDoorClient;
 
 async fn devices() -> TestNet {
     TestNet::builder()
@@ -397,7 +398,7 @@ async fn assert_failed_resume_releases_installation(
         let listener = FrontDoor::new(laptop.front_door(), Some(socket.clone()))
             .listen()
             .unwrap();
-        let mut front = FrontDoorClient::connect(&socket).await.unwrap();
+        let mut front = FrontDoorClient::connect_socket(&socket).await.unwrap();
         let report = if stage == "immediately" {
             front
                 .installation

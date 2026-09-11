@@ -7,8 +7,10 @@ publish = false
 
 [dependencies]
 bytes = { workspace = true }
+chrono = { workspace = true }
 model = { workspace = true }
 prost = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }

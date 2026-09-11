@@ -1,8 +1,8 @@
+use client::PairingStart;
 pub use model::QrPairingPayload;
 use serde::{Deserialize, Serialize};
 
 use crate::HostId;
-use crate::client::PairingStart;
 
 const QR_SECRET_LEN: usize = 32;
 
@@ -98,8 +98,9 @@ fn validate_qr_payload_bytes(field: &'static str, bytes: &[u8]) -> Result<(), Qr
 
 #[cfg(test)]
 mod tests {
+    use client::PairingSecret;
+
     use super::*;
-    use crate::client::PairingSecret;
     use crate::pairing::ssh::SshPairingPeer;
 
     #[test]

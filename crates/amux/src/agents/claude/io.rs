@@ -5,8 +5,11 @@
 //! first-party Claude schemas for those bytes.
 
 use model::ProtocolError;
+pub use model::{
+    AskAnswer, ClaudePtyIntent as Intent, PermissionAnswer, PlanAnswer, QuestionAnswer,
+    QuestionResponse,
+};
 use prost::Message as ProstMessage;
-use serde::{Deserialize, Serialize};
 
 use crate::agents::TerminalSize;
 
@@ -33,52 +36,6 @@ pub enum ClaudePtyTranscriptV1ReplayQuery {
 pub struct ClaudePtyTranscriptV1Input {
     pub expected_seq: u64,
     pub intent: Intent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "intent", rename_all = "snake_case", deny_unknown_fields)]
-pub enum Intent {
-    Prompt { text: String },
-    Interrupt,
-    CyclePermissionMode,
-    Answer { ask_id: String, answer: AskAnswer },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "answer", rename_all = "snake_case", deny_unknown_fields)]
-pub enum AskAnswer {
-    Permission(PermissionAnswer),
-    Plan(PlanAnswer),
-    Question(QuestionResponse),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "permission", rename_all = "snake_case", deny_unknown_fields)]
-pub enum PermissionAnswer {
-    AllowOnce,
-    AllowScoped { suggestion: usize },
-    Deny { feedback: Option<String> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "plan", rename_all = "snake_case", deny_unknown_fields)]
-pub enum PlanAnswer {
-    ApproveAuto,
-    ApproveManual,
-    RequestChanges { feedback: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionResponse {
-    pub answers: Vec<QuestionAnswer>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionAnswer {
-    pub selected: Vec<usize>,
-    pub other: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

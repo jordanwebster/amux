@@ -278,7 +278,9 @@ async fn config_split_boots_from_temp_root_and_discovers_profile_over_grpc() {
 #[cfg(all(unix, feature = "local-agents"))]
 #[tokio::test]
 async fn config_split_daemon_owner_flushes_shutdown_and_releases_all_sockets() {
-    use crate::installation::{FrontDoorClient, rpc};
+    use client::FrontDoorClient;
+
+    use crate::installation::rpc;
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let fixture = Fixture::new();
         for via_rpc in [true, false] {
@@ -290,7 +292,8 @@ async fn config_split_daemon_owner_flushes_shutdown_and_releases_all_sockets() {
                 let _ = stopped.await;
             }));
             let mut front = loop {
-                match FrontDoorClient::connect(&fixture.installation.front_door_socket).await {
+                match FrontDoorClient::connect_socket(&fixture.installation.front_door_socket).await
+                {
                     Ok(front) => break front,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         tokio::task::yield_now().await;

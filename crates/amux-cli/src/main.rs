@@ -1026,7 +1026,7 @@ fn validate_pair_qr_link_usage(link: bool, debug_build: bool) -> Result<()> {
 }
 
 async fn pair_cloud_host(
-    client: &amux::installation::ProfileAdminClient,
+    client: &client::ProfileAdminClient,
     host: &amux::HostEntry,
 ) -> Result<amux::SshPairingPeer> {
     let pin = prompt_pairing_pin()?;
@@ -1143,7 +1143,7 @@ fn terminal_qr_code(payload: &str) -> Result<String> {
 }
 
 async fn wait_for_pairing_mode_to_end(
-    client: &amux::installation::ProfileAdminClient,
+    client: &client::ProfileAdminClient,
     ttl_seconds: u64,
 ) -> Result<()> {
     let ttl = Duration::from_secs(ttl_seconds);

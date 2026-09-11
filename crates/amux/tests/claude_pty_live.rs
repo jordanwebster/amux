@@ -1021,7 +1021,7 @@ async fn attach_tool(
     model: &str,
 ) -> Result<serde_json::Value> {
     use amux::{AgentIdentifier, ArtifactKind, ArtifactRef};
-    use amux_ui::attachments::{Mention, MentionKind, format_mention};
+    use ui_state::attachments::{Mention, MentionKind, format_mention};
 
     const NAME: &str = "agent-attach-claude.png";
     let dir = scratch.project_dir("attach_tool")?;
@@ -1194,7 +1194,7 @@ async fn attach_tool(
             "owner_blob": blob,
         },
         "assertions": {
-            "amux_shot_render": true,
+            "shot_render": true,
             "attach_tool_use": true,
             "refs_row": true,
             "null_input_id": true,
@@ -3053,10 +3053,10 @@ async fn prompt_multiline(
 }
 
 async fn wait_runtime(
-    runtime: &mut amux_ui::Runtime,
+    runtime: &mut ui_runtime::Runtime,
     timeout: Duration,
     what: &str,
-    ready: impl Fn(&amux_ui::Model) -> bool,
+    ready: impl Fn(&ui_state::Model) -> bool,
 ) -> Result<()> {
     let deadline = std::time::Instant::now() + timeout;
     while !ready(runtime.model()) {
@@ -3082,9 +3082,10 @@ async fn stale_seq(
     scratch: &Scratch,
     model: &str,
 ) -> Result<serde_json::Value> {
-    use amux_ui::claude::AskState;
-    use amux_ui::claude::answer::{AskAnswer, PermissionAnswer};
-    use amux_ui::{Command, OpOutcome, Runtime, RuntimeOptions};
+    use ui_runtime::{Runtime, RuntimeOptions};
+    use ui_state::claude::AskState;
+    use ui_state::claude::answer::{AskAnswer, PermissionAnswer};
+    use ui_state::{Command, OpOutcome};
 
     let (session, index) = open(
         daemon,
@@ -3159,7 +3160,7 @@ async fn stale_seq(
         bail!("daemon seq did not advance: captured={captured_seq} current={advanced_seq}");
     }
 
-    let first = runtime.dispatch(Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
+    let first = runtime.dispatch(Command::Claude(ui_state::ClaudeCommand::AnswerAsk {
         agent,
         ask,
         answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
@@ -3210,7 +3211,7 @@ async fn stale_seq(
 
     // The retry is a fresh typed command using the folded notification's
     // cursor. It must be accepted and resolve the real permission menu.
-    let retry = runtime.dispatch(Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
+    let retry = runtime.dispatch(Command::Claude(ui_state::ClaudeCommand::AnswerAsk {
         agent,
         ask,
         answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),

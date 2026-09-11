@@ -8,9 +8,10 @@
 
 use std::time::Duration;
 
+use client::PairingSecret;
+
 use super::Daemon;
 use super::assertions::eventually;
-use crate::client::PairingSecret;
 use crate::{HostId, pair_via_pin_direct_tcp, pair_via_ssh_initiator, pair_via_ssh_responder};
 
 /// A 6-digit pairing PIN handed out by [`Daemon::start_pairing`].

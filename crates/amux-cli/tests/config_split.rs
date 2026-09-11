@@ -101,8 +101,8 @@ mod saved_report_replay {
     use super::*;
 
     fn copy_report(parent: &Path) -> PathBuf {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../amux-tui/tests/reports/chat_agent_activity");
+        let source =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../tui/tests/reports/chat_agent_activity");
         let report = parent.join("saved-report");
         std::fs::create_dir_all(&report).unwrap();
         for entry in std::fs::read_dir(source).unwrap() {
@@ -523,7 +523,7 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     use std::io::Write;
     use std::process::Stdio;
 
-    use amux::installation::FrontDoorClient;
+    use client::FrontDoorClient;
 
     let local = Fixture::new();
     let remote = Fixture::new();
@@ -536,7 +536,7 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     local.run(&["server", "start"]);
     remote.run(&["server", "start"]);
     local.run(&["profile", "create", "work"]);
-    let front = FrontDoorClient::connect(&local.installation.front_door_socket)
+    let front = FrontDoorClient::connect_socket(&local.installation.front_door_socket)
         .await
         .unwrap();
     let personal = front.admin(local.id);
@@ -650,7 +650,7 @@ async fn front_door_cli_ssh_pair_receiver_uses_its_explicit_profile() {
     use std::process::Stdio;
     use std::time::Duration;
 
-    use amux::installation::FrontDoorClient;
+    use client::FrontDoorClient;
     let local = Fixture::new();
     let remote = Fixture::new();
     local.run(&["server", "start"]);
@@ -658,10 +658,10 @@ async fn front_door_cli_ssh_pair_receiver_uses_its_explicit_profile() {
     let created = remote.run(&["profile", "create", "work"]);
     let created = String::from_utf8(created.stdout).unwrap();
     let work_id = ProfileId(created.split_whitespace().next().unwrap().parse().unwrap());
-    let local_front = FrontDoorClient::connect(&local.installation.front_door_socket)
+    let local_front = FrontDoorClient::connect_socket(&local.installation.front_door_socket)
         .await
         .unwrap();
-    let remote_front = FrontDoorClient::connect(&remote.installation.front_door_socket)
+    let remote_front = FrontDoorClient::connect_socket(&remote.installation.front_door_socket)
         .await
         .unwrap();
     let local_admin = local_front.admin(local.id);
@@ -716,8 +716,8 @@ async fn ssh_renamed_profile() {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
-    use amux::installation::FrontDoorClient;
     use amux::{AgentType, Config, CreateAgentRequest, PeerReachability, Server};
+    use client::FrontDoorClient;
     use serde_json::{Value, json};
 
     async fn profile_client(path: &Path) -> amux::Client {
@@ -790,10 +790,10 @@ os.execve({binary}, [{binary}] + args[6:], env)
     run_local_ssh(&["server", "start"]);
     run_local_ssh(&["pair", "--via-ssh", "remote.example"]);
 
-    let local_front = FrontDoorClient::connect(&local.installation.front_door_socket)
+    let local_front = FrontDoorClient::connect_socket(&local.installation.front_door_socket)
         .await
         .unwrap();
-    let remote_front = FrontDoorClient::connect(&remote.installation.front_door_socket)
+    let remote_front = FrontDoorClient::connect_socket(&remote.installation.front_door_socket)
         .await
         .unwrap();
     let peers = local_front.admin(local.id).list_peers().await.unwrap();
@@ -894,7 +894,7 @@ os.execve({binary}, [{binary}] + args[6:], env)
     );
     run_local_ssh(&["server", "start"]);
     wait_for_work().await;
-    let restarted_front = FrontDoorClient::connect(&local.installation.front_door_socket)
+    let restarted_front = FrontDoorClient::connect_socket(&local.installation.front_door_socket)
         .await
         .unwrap();
     assert_eq!(

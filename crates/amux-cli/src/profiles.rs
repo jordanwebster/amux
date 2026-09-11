@@ -3,10 +3,11 @@
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use amux::installation::{FrontDoorClient, rpc};
+use amux::installation::rpc;
 use amux::{Config, InstallationConfig};
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
+use client::FrontDoorClient;
 use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]

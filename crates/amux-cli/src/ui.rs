@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use amux::{ColorSetting, Config, DebugFormat, ThemeSetting, UiSettings};
-use amux_tui::{
+use anyhow::{Context, Result};
+use tui::{
     ColorPreference, TerminalColors, Theme, ThemeError, TuiConfig, detect_color_mode,
     parse_theme_file, query_terminal_colors, run_fleet, theme_from_file,
 };
-use amux_ui::{ConnectFailure, Connector, Runtime, RuntimeOptions};
-use anyhow::{Context, Result};
+use ui_runtime::{ConnectFailure, Connector, Runtime, RuntimeOptions};
 
 use crate::client_common::get_client;
 use crate::init::{self, InitContext};
@@ -90,7 +90,7 @@ async fn run_inner(
     // replayed. The declaration is compile-gated because release builds do
     // not contain the trace module or carry its storage in TuiConfig.
     #[cfg(debug_assertions)]
-    let trace = Some(amux_tui::trace::shared(amux_tui::trace::SEGMENT_LEN));
+    let trace = Some(tui::trace::shared(tui::trace::SEGMENT_LEN));
     let mut runtime = Runtime::start(
         connector,
         runtime_options(
@@ -100,7 +100,7 @@ async fn run_inner(
         ),
     );
     // A panic anywhere in the TUI leaves a report: the terminal.rs panic
-    // hook calls amux_ui::write_panic_report after restoring the
+    // hook calls ui_runtime::write_panic_report after restoring the
     // terminal.
     runtime.install_panic_report();
 
@@ -111,13 +111,13 @@ async fn run_inner(
     // device identity. Reusing this profile's would file a report about the
     // account the person had just left.
     let installation = crate::front_door::configuration(config.path.as_deref())?;
-    let profiles = Some(amux_tui::run::ProfileSwitching {
+    let profiles = Some(tui::run::ProfileSwitching {
         front_door: installation.front_door_socket.clone(),
         current: config.socket_path.clone(),
         options: {
             #[cfg(debug_assertions)]
             let trace = trace.clone();
-            Box::new(move |entry: &amux_ui::ProfileEntry| {
+            Box::new(move |entry: &ui_runtime::ProfileEntry| {
                 let selected = crate::profiles::load(&crate::profiles::config_path_for(
                     &installation,
                     entry.id.0,
@@ -126,7 +126,7 @@ async fn run_inner(
                     &crate::profiles::last_used(&installation),
                     &entry.id.0.to_string(),
                 )?;
-                Ok(amux_tui::run::ProfileOptions {
+                Ok(tui::run::ProfileOptions {
                     runtime: runtime_options(
                         &selected,
                         #[cfg(debug_assertions)]
@@ -145,8 +145,8 @@ async fn run_inner(
         // The A1 entry-mode setting, from the usual amux config
         // (`ui.default_open_mode`; shipped default: raw attach).
         default_open_mode: match config.ui.default_open_mode {
-            amux::OpenMode::Raw => amux_tui::OpenMode::RawAttach,
-            amux::OpenMode::Chat => amux_tui::OpenMode::Chat,
+            amux::OpenMode::Raw => tui::OpenMode::RawAttach,
+            amux::OpenMode::Chat => tui::OpenMode::Chat,
         },
         default_agent_type: default_agent_type(&config),
         initial_chat,
@@ -171,7 +171,7 @@ fn default_agent_type(config: &Config) -> amux::AgentType {
     }
 }
 
-fn profile_diagnostics(config: &Config) -> Option<amux_tui::DiagnosticsSource> {
+fn profile_diagnostics(config: &Config) -> Option<tui::DiagnosticsSource> {
     // Fetch at the capture keypress, using this selection's configuration.
     // A missing daemon is a reason string, not a failed capture.
     let dump_config = config.clone();
@@ -193,7 +193,7 @@ fn profile_diagnostics(config: &Config) -> Option<amux_tui::DiagnosticsSource> {
 /// from the account it replaced.
 fn runtime_options(
     config: &Config,
-    #[cfg(debug_assertions)] trace: Option<amux_tui::trace::SharedTrace>,
+    #[cfg(debug_assertions)] trace: Option<tui::trace::SharedTrace>,
 ) -> RuntimeOptions {
     // The local host id comes from the stored device identity — the wire
     // does not mark the local host (see docs/UI.md, subscription policy).
@@ -203,10 +203,10 @@ fn runtime_options(
     // outside would mean guessing how a drain batched, and a wrong guess is
     // a replay that diverges for no visible reason.
     #[cfg(debug_assertions)]
-    let msg_tap: Option<amux_ui::MsgTap> = trace.map(|trace| {
-        Box::new(move |msg: &amux_ui::Msg| {
-            amux_tui::trace::record_shared(&trace, &amux_tui::chrome::TraceEvent::Msg(msg.clone()));
-        }) as amux_ui::MsgTap
+    let msg_tap: Option<ui_runtime::MsgTap> = trace.map(|trace| {
+        Box::new(move |msg: &ui_state::Msg| {
+            tui::trace::record_shared(&trace, &tui::chrome::TraceEvent::Msg(msg.clone()));
+        }) as ui_runtime::MsgTap
     });
     RuntimeOptions {
         local_host_id,
@@ -290,11 +290,11 @@ fn resolve_theme_path(path: &Path, config_dir: &Path) -> PathBuf {
 mod tests {
     use std::fs;
 
-    use amux_tui::ColorMode;
+    use tui::ColorMode;
 
     use super::*;
 
-    const BASE16_SAMPLE: &str = include_str!("../../amux-tui/tests/themes/base16-sample.yaml");
+    const BASE16_SAMPLE: &str = include_str!("../../tui/tests/themes/base16-sample.yaml");
 
     fn env(colorterm: Option<&str>, no_color: bool) -> ColorEnv {
         ColorEnv {
@@ -336,7 +336,7 @@ mod tests {
             None,
         )
         .expect("resolve built-in theme");
-        assert_eq!(theme.name, amux_tui::ThemeName::Light);
+        assert_eq!(theme.name, tui::ThemeName::Light);
         assert_eq!(theme.mode, ColorMode::Ansi);
     }
 
@@ -372,7 +372,7 @@ mod tests {
             None,
         )
         .expect("resolve the fallback");
-        assert_eq!(silent.name, amux_tui::ThemeName::Dark);
+        assert_eq!(silent.name, tui::ThemeName::Dark);
 
         let reported = TerminalColors {
             background: (0xfd, 0xf6, 0xe3),
@@ -386,7 +386,7 @@ mod tests {
             Some(reported),
         )
         .expect("derive from the terminal");
-        assert_eq!(derived.name, amux_tui::ThemeName::Adopted);
+        assert_eq!(derived.name, tui::ThemeName::Adopted);
         assert_eq!(derived.tokens.background.rgb, reported.background);
         assert_eq!(derived.tokens.text.rgb, reported.foreground);
     }
@@ -407,7 +407,7 @@ mod tests {
         let config_dir = config.parent().expect("temporary config has a parent");
         let theme = resolve_theme(&settings, config_dir, &ColorEnv::default(), None)
             .expect("resolve committed sample relative to config");
-        assert_eq!(theme.name, amux_tui::ThemeName::Imported);
+        assert_eq!(theme.name, tui::ThemeName::Imported);
         assert_eq!(theme.tokens.background.rgb, (0x10, 0x10, 0x10));
         assert_eq!(theme.mode, ColorMode::TrueColor);
     }

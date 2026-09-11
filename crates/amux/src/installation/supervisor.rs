@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use client::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, watch};
 use uuid::Uuid;
@@ -16,7 +17,6 @@ use super::{
 };
 use crate::HostId;
 use crate::auth::CredentialProvider;
-use crate::client::Client;
 use crate::config::{
     ConfigError, InstallationConfig, ProfileConfig, check_path, check_profile_paths,
 };

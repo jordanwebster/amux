@@ -13,46 +13,6 @@ use crate::installation::Installation;
 use crate::transport::GrpcIo;
 use crate::transport::{self, BoxedGrpcIo, ShutdownIo};
 
-/// A plain gRPC connection to the installation's local administration socket.
-/// Connecting here does not select a profile or open its client API.
-pub struct FrontDoorClient {
-    pub profiles: wire::profile_service_client::ProfileServiceClient<Channel>,
-    pub installation: wire::installation_service_client::InstallationServiceClient<Channel>,
-}
-
-impl FrontDoorClient {
-    pub fn admin(&self, id: crate::installation::ProfileId) -> ProfileAdminClient {
-        ProfileAdminClient::new(id, self.profiles.clone())
-    }
-
-    #[cfg(not(unix))]
-    pub async fn connect(_path: &std::path::Path) -> std::io::Result<Self> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "installation sockets are not supported on this platform",
-        ))
-    }
-
-    #[cfg(unix)]
-    pub async fn connect(path: &std::path::Path) -> std::io::Result<Self> {
-        let stream = tokio::net::UnixStream::connect(path).await?;
-        let channel = transport::channel_from_single_io(
-            tonic::transport::Endpoint::from_static("http://localhost"),
-            "front door",
-            crate::transport::GrpcIo::new(stream),
-        );
-        Ok(Self {
-            profiles: wire::profile_service_client::ProfileServiceClient::new(channel.clone()),
-            installation: wire::installation_service_client::InstallationServiceClient::new(
-                channel,
-            ),
-        })
-    }
-}
-
-mod client;
-pub use client::ProfileAdminClient;
-
 mod handlers;
 mod ledger;
 pub(crate) use ledger::Ledger as FrontDoorOperations;

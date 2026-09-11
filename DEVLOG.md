@@ -8799,3 +8799,17 @@ daemon stopped. Bare report names still use the selected profile's reports
 directory. CLI regressions compare the replayed frame with the saved frame,
 cover absent configuration and stopped installations, and verify that a
 listening installation socket receives no connection during explicit replay.
+
+2026-09-11 — **Clients, UI state and UI resources now have separate build
+boundaries.** RPC access lives in `client` and accepts an explicit channel or
+socket; it neither discovers configuration nor starts a node. The pure reducer
+lives in `ui-state`, while connections, tasks, artifact viewing and reports live
+in `ui-runtime`. The terminal package is now `tui`, and the deterministic image
+tool is package `shot` while retaining the `amux-shot` executable. Shared
+provider inputs and payload codecs moved into `model` and `wire`, so none of
+these packages reaches through the node for protocol values. A live embedded
+test runs two independent UI instances against different profiles, proves their
+inventories remain disjoint, drops one, and then performs an operation through
+the other while the externally owned installation remains available. Focused
+client, reducer, runtime, TUI and shot recipes pass, and the dependency policy
+now enforces these direct local edges.

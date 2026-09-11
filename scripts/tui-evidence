@@ -40,7 +40,7 @@ unset CARGO_BUILD_BUILD_DIR
 export CARGO_TARGET_DIR
 
 shot() {
-    timeout 600 cargo run --quiet -p amux-shot -- "$@"
+    timeout 600 cargo run --quiet -p shot -- "$@"
 }
 
 capture() {
@@ -69,10 +69,10 @@ repeatability() {
     run_b=$evidence_dir/tool/run-b/smoke.png
     mkdir -p "$(dirname "$run_a")" "$(dirname "$run_b")"
     if {
-        echo '$ cargo run --quiet -p amux-shot -- render claude-idle --out tool/run-a/smoke.png' &&
+        echo '$ cargo run --quiet -p shot -- render claude-idle --out tool/run-a/smoke.png' &&
             shot render claude-idle --out "$run_a" &&
             echo &&
-            echo '$ cargo run --quiet -p amux-shot -- render claude-idle --out tool/run-b/smoke.png' &&
+            echo '$ cargo run --quiet -p shot -- render claude-idle --out tool/run-b/smoke.png' &&
             shot render claude-idle --out "$run_b" &&
             echo &&
             echo '$ shasum -a 256 tool/run-a/smoke.png tool/run-b/smoke.png' &&
@@ -101,20 +101,20 @@ shot record-scroll codex --out "$evidence_dir/scroll"
 
 echo "Capturing screenshot-tool commands"
 capture "$evidence_dir/tool/help.txt" \
-    timeout 600 cargo run --quiet -p amux-shot -- --help
+    timeout 600 cargo run --quiet -p shot -- --help
 capture "$evidence_dir/tool/list.txt" \
-    timeout 600 cargo run --quiet -p amux-shot -- list
+    timeout 600 cargo run --quiet -p shot -- list
 repeatability
 
 echo "Capturing mechanical demonstrations"
 capture "$evidence_dir/perf/perf-debug.txt" \
-    timeout 900 cargo test -p amux-tui --test perf -- --nocapture
+    timeout 900 cargo test -p tui --test perf -- --nocapture
 capture "$evidence_dir/perf/perf-release.txt" \
-    timeout 900 cargo test -p amux-tui --release --test perf -- --nocapture
+    timeout 900 cargo test -p tui --release --test perf -- --nocapture
 capture "$evidence_dir/themes/theme-loader-tests.txt" \
-    timeout 600 cargo test -p amux-tui theme:: -- --nocapture
+    timeout 600 cargo test -p tui theme:: -- --nocapture
 capture "$evidence_dir/copy/osc52-transcript.txt" \
-    timeout 600 cargo test -p amux-tui osc52 -- --nocapture
+    timeout 600 cargo test -p tui osc52 -- --nocapture
 
 for required_file in \
     "$evidence_dir/scroll/claude-wheel.gif" \

@@ -1,19 +1,11 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize, Serializer};
+pub use model::DebugFormat;
+use serde::{Serialize, Serializer};
 
 mod server;
 
 pub(crate) use server::dump_server_debug_info;
-
-/// Output format requested for the server debug dump.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum DebugFormat {
-    #[default]
-    Yaml,
-    Json,
-}
 
 /// Serde-driven debug rendering wrapper used across domains.
 pub(crate) struct DebugView<'a, T: ?Sized> {

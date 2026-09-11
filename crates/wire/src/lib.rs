@@ -1,13 +1,25 @@
 //! Committed protobuf messages and codecs for amux protocol boundaries.
 
+mod domain;
 mod error;
+mod provider;
 
 /// Protocol version for the generated `LinkService.Connect` handshake.
 pub const PROTOCOL_VERSION: u32 = 1;
 
+pub use domain::{
+    agent_from_wire, artifact_kind_from_wire, artifact_kind_to_wire, artifact_ref_from_wire,
+    capabilities_from_wire, diff_base_to_wire, diff_response_from_wire, send_input_to_client_wire,
+    session_output_payload_from_wire, subscribe_protocol_to_client_wire,
+};
 pub use error::{
     DecodeError, EncodeError, decode_protocol_error, encode_protocol_error,
     protocol_error_from_status_details, protocol_status, protocol_version_mismatch_error,
+};
+pub use provider::{
+    decode_claude_pty_output, decode_claude_sdk_output, decode_codex_sdk_output,
+    encode_claude_pty_args, encode_claude_pty_input, encode_claude_sdk_args,
+    encode_claude_sdk_input, encode_codex_sdk_args, encode_codex_sdk_input,
 };
 
 pub mod amux {

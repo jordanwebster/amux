@@ -11,12 +11,12 @@
 use std::path::Path;
 
 use bytes::Bytes;
+use client::{Client, ClientError};
 use uuid::Uuid;
 
 use super::Daemon;
 use super::assertions::{DEFAULT_TIMEOUT, eventually};
 use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
-use crate::client::{Client, ClientError};
 use crate::services::LocalAgentHost;
 use crate::{
     Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
@@ -1001,7 +1001,7 @@ impl Daemon {
                 .channel_to(other.host_id())
                 .await
                 .unwrap_or_else(|error| panic!("failed to route {description}: {error}"));
-            Client::from_client_service_channel(channel)
+            Client::from_channel(channel)
         };
         let stream = client
             .subscribe_session(crate::SubscribeSessionRequest {
@@ -1038,7 +1038,7 @@ impl Daemon {
             socket_path,
             ..Default::default()
         };
-        let channel = crate::client::connect_existing_client_service(&config)
+        let channel = client::connect_socket(&config.socket_path)
             .await
             .expect("profile socket");
         assert_admin_absent(channel, "profile socket").await;
@@ -1072,7 +1072,7 @@ impl Daemon {
                     peer.name()
                 )
             });
-        Client::from_client_service_channel(channel)
+        Client::from_channel(channel)
     }
 }
 

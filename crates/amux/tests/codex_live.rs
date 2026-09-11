@@ -250,7 +250,7 @@ fn main() -> anyhow::Result<()> {
 
     async fn attach_tool(harness: &mut Harness, model: &str) -> Result<Value> {
         use amux::{AgentIdentifier, ArtifactKind, ArtifactRef};
-        use amux_ui::attachments::{Mention, MentionKind, format_mention};
+        use ui_state::attachments::{Mention, MentionKind, format_mention};
 
         const NAME: &str = "agent-attach-codex.png";
         let shot = harness.scratch.project.join(NAME);
@@ -416,7 +416,7 @@ fn main() -> anyhow::Result<()> {
                 "owner_blob": blob,
             },
             "assertions": {
-                "amux_shot_render": true,
+                "shot_render": true,
                 "attach_tool_use": true,
                 "refs_row": true,
                 "null_input_id": true,

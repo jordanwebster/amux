@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use amux::{Client, Config, ConnectError, Server, TransportError};
+use amux::{Client, Config, ConnectError, Server};
 use anyhow::{Context, Result, anyhow};
 
 pub(super) async fn get_client(config: &Config) -> Result<Client> {
@@ -38,7 +38,7 @@ pub(super) async fn get_client_with_executable(
 async fn connect_profile(
     config: &Config,
     installation: &amux::InstallationConfig,
-    front: &mut amux::installation::FrontDoorClient,
+    front: &mut client::FrontDoorClient,
 ) -> Result<Client> {
     let path = config
         .path
@@ -156,7 +156,7 @@ async fn wait_for_server_connection(
     for _ in 0..50 {
         match open_daemon(config).await {
             Ok(client) => return Ok(client),
-            Err(ConnectError::Transport(TransportError::Io(_))) => {
+            Err(error) if is_server_unavailable(&error) => {
                 if let Some(status) = child
                     .try_wait()
                     .context("failed to inspect server process")?
@@ -184,34 +184,22 @@ async fn wait_for_server_connection(
     )))
 }
 
-pub(super) fn server_unavailable_error(config: &Config, error: &ConnectError) -> bool {
-    match error {
-        #[cfg(unix)]
-        ConnectError::Transport(TransportError::Io(e))
-            if config.socket_path.exists() && is_server_unavailable(e) =>
-        {
-            true
-        }
-        ConnectError::Transport(TransportError::Io(e)) if is_server_unavailable(e) => true,
-        _ => false,
-    }
+pub(super) fn server_unavailable_error(_config: &Config, error: &ConnectError) -> bool {
+    is_server_unavailable(error)
 }
 
 pub(super) fn remove_stale_socket(config: &Config, error: &ConnectError) {
     #[cfg(unix)]
-    if let ConnectError::Transport(TransportError::Io(e)) = error
-        && config.socket_path.exists()
-        && is_server_unavailable(e)
-    {
-        tracing::warn!(error = %e, "stale local socket detected, removing");
+    if config.socket_path.exists() && is_server_unavailable(error) {
+        tracing::warn!(error = %error, "stale local socket detected, removing");
         let _ = std::fs::remove_file(&config.socket_path);
     }
 }
 
-fn is_server_unavailable(error: &io::Error) -> bool {
+fn is_server_unavailable(error: &ConnectError) -> bool {
     matches!(
-        error.kind(),
-        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+        error.io_kind(),
+        Some(io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused)
     )
 }
 

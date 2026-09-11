@@ -15,9 +15,11 @@ path = "src/main.rs"
 
 [dependencies]
 amux = { workspace = true }
+client = { workspace = true }
 claude = { workspace = true }
-amux-tui = { workspace = true }
-amux-ui = { workspace = true }
+tui = { workspace = true }
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
 replay-support = { path = "../replay-support" }
 tokio = { workspace = true }
 clap = { workspace = true }

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use amux::Config;
-use amux_tui::DiagnosticsSource;
+use tui::DiagnosticsSource;
 
 /// Build the source the TUI captures reports from, or `None` when this is
 /// not a debug build. `daemon_dump` is the shell's fetcher — it runs at the

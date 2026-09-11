@@ -13,6 +13,10 @@ ALLOWED_LOCAL = {
     "wire": {"model"},
     "settings": {"model"},
     "artifacts": {"model"},
+    "client": {"model", "wire"},
+    "ui-state": {"model"},
+    "ui-runtime": {"artifacts", "client", "model", "ui-state"},
+    "tui": {"ui-runtime", "ui-state"},
     "e2e-runner": {"wire"},
 }
 MODEL_BANNED_DEPENDENCIES = {
@@ -74,7 +78,7 @@ def main() -> int:
                 if token in text:
                     failures.append(f"model: {source.relative_to(ROOT)} contains banned API {token}")
 
-    for name in ("model", "wire", "settings", "artifacts", "e2e-runner"):
+    for name in ALLOWED_LOCAL:
         package = packages.get(name)
         if package is None:
             continue
@@ -87,7 +91,7 @@ def main() -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
     print(
-        "dependency policy passed for model, wire, settings, artifacts, and independent E2E wire use"
+        "dependency policy passed for foundations, client/UI layers, and independent E2E wire use"
     )
     return 0
 

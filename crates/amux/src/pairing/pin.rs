@@ -3,9 +3,10 @@
 use std::net::SocketAddr;
 use std::path::Path;
 
+use client::ClientError;
+
 use super::PairingAdmin;
 use crate::audit;
-use crate::client::ClientError;
 use crate::identity::load_or_create_device_identity_in;
 use crate::pairing::ssh::SshPairingPeer;
 use crate::services::{LocalPairingIdentity, pair_initiator};

@@ -12,11 +12,11 @@ use amux::{
     Agent, AgentIdentifier, AgentParent, AgentType, ArtifactKind, ArtifactRef, Client, Config,
     CreateAgentRequest, SendMessageRequest, SetAgentStatusRequest,
 };
-use amux_ui::attachments::{Mention, MentionKind, format_mention};
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use ui_state::attachments::{Mention, MentionKind, format_mention};
 use uuid::Uuid;
 
 use crate::client_common::open_daemon;

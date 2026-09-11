@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use chrono::{DateTime, TimeDelta, Utc};
+use client::Client;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tonic::transport::{Channel, Endpoint};
@@ -16,7 +17,6 @@ use super::NetInner;
 use super::assertions::eventually;
 use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries};
 use crate::HostId;
-use crate::client::Client;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};

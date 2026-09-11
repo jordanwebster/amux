@@ -3,11 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use amux::installation::{
-    FrontDoorClient, InstallationRoot, OperationId, ProfileId, ProfileLabel, ProfilePaths,
-    Registry, rpc,
+    InstallationRoot, OperationId, ProfileId, ProfileLabel, ProfilePaths, Registry, rpc,
 };
 use amux::{Config, InstallationConfig, ProfileConfig};
 use anyhow::Result;
+use client::FrontDoorClient;
 
 pub fn configure(root: &Path, name: &str) -> Result<(Config, PathBuf)> {
     let root = root.canonicalize()?;
@@ -49,7 +49,7 @@ pub fn configure(root: &Path, name: &str) -> Result<(Config, PathBuf)> {
 }
 
 pub async fn shutdown(root: &Path) -> Result<()> {
-    FrontDoorClient::connect(&root.join("amux.sock"))
+    FrontDoorClient::connect_socket(&root.join("amux.sock"))
         .await?
         .installation
         .shutdown(rpc::InstallationShutdownRequest {
@@ -60,7 +60,7 @@ pub async fn shutdown(root: &Path) -> Result<()> {
 }
 
 pub async fn suspend(root: &Path) -> Result<u64> {
-    let response = FrontDoorClient::connect(&root.join("amux.sock"))
+    let response = FrontDoorClient::connect_socket(&root.join("amux.sock"))
         .await?
         .installation
         .suspend_all(rpc::SuspendAllRequest {
@@ -73,7 +73,7 @@ pub async fn suspend(root: &Path) -> Result<u64> {
 }
 
 pub async fn resume(root: &Path) -> Result<(u64, u64)> {
-    let response = FrontDoorClient::connect(&root.join("amux.sock"))
+    let response = FrontDoorClient::connect_socket(&root.join("amux.sock"))
         .await?
         .installation
         .resume_all(rpc::ResumeAllRequest {

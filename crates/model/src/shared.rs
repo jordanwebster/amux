@@ -7,6 +7,88 @@ use crate::{Agent, AgentKind, Protocol};
 pub type AgentId = Uuid;
 pub type HostId = Uuid;
 
+/// Output format requested for a node debug snapshot.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugFormat {
+    #[default]
+    Yaml,
+    Json,
+}
+
+/// Reason attached to a node shutdown notification.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShutdownReason {
+    UpdateRequired,
+    ProtocolError,
+    UserRequested,
+    Updating,
+    Suspending,
+    Restarting,
+    AuthExpired,
+}
+
+impl ShutdownReason {
+    pub fn as_wire_value(self) -> &'static str {
+        match self {
+            Self::UpdateRequired => "update_required",
+            Self::ProtocolError => "protocol_error",
+            Self::UserRequested => "user_requested",
+            Self::Updating => "updating",
+            Self::Suspending => "suspending",
+            Self::Restarting => "restarting",
+            Self::AuthExpired => "auth_expired",
+        }
+    }
+
+    pub fn from_wire_value(value: &str) -> Option<Self> {
+        match value {
+            "update_required" => Some(Self::UpdateRequired),
+            "protocol_error" => Some(Self::ProtocolError),
+            "user_requested" => Some(Self::UserRequested),
+            "updating" => Some(Self::Updating),
+            "suspending" => Some(Self::Suspending),
+            "restarting" => Some(Self::Restarting),
+            "auth_expired" => Some(Self::AuthExpired),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ShutdownReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::UpdateRequired => "amux update required",
+            Self::ProtocolError => "protocol error",
+            Self::UserRequested => "server shutting down",
+            Self::Updating => "server updating",
+            Self::Suspending => "server suspending",
+            Self::Restarting => "server restarting",
+            Self::AuthExpired => "authentication expired",
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshPairingPeer {
+    pub host_id: HostId,
+    pub pubkey: Vec<u8>,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshPairingProfile {
+    pub identity: SshPairingPeer,
+    pub profile: crate::ProfileId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshTarget {
+    pub target: String,
+    pub profile: crate::ProfileId,
+}
+
 /// Account-scoped data carried by a one-shot QR pairing code.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QrPairingPayload {

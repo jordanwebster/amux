@@ -2588,7 +2588,7 @@ mod tests {
             driver: crate::ClaudeDriver::Pty,
         };
         caller.working_dir = PathBuf::from("/parent/work");
-        let mut request = crate::client::client_create_request_to_wire(crate::CreateAgentRequest {
+        let mut request = client::client_create_request_to_wire(crate::CreateAgentRequest {
             agent_id: Uuid::from_u128(10),
             host_id: None,
             name: Some("child".to_string()),
@@ -2628,7 +2628,7 @@ mod tests {
     fn public_create_rpc_applies_codex_parent_policy_inheritance() {
         let mut caller = agent(3, 4, "parent");
         caller.kind = crate::AgentKind::Codex;
-        let mut request = crate::client::client_create_request_to_wire(crate::CreateAgentRequest {
+        let mut request = client::client_create_request_to_wire(crate::CreateAgentRequest {
             agent_id: Uuid::from_u128(11),
             host_id: None,
             name: None,

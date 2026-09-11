@@ -8,6 +8,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(unix)]
+use client::connect_socket;
+use client::{Client, ConnectError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::net::TcpListener;
@@ -17,9 +20,6 @@ use uuid::Uuid;
 
 use crate::auth::CredentialProvider;
 use crate::auth::jwt::JwtValidator;
-#[cfg(unix)]
-use crate::client::connect_existing_client_service;
-use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
 use crate::identity;
 use crate::profile::runtime::{Listeners, ProfileRuntimeOptions, start_with_security};
@@ -47,58 +47,7 @@ type BuilderParts = (
 /// Reason for server shutdown notification.
 pub(crate) const SHUTDOWN_REASON_METADATA_KEY: &str = "amux-shutdown-reason";
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShutdownReason {
-    UpdateRequired,
-    ProtocolError,
-    UserRequested,
-    Updating,
-    Suspending,
-    Restarting,
-    AuthExpired,
-}
-
-impl ShutdownReason {
-    pub(crate) fn as_wire_value(&self) -> &'static str {
-        match self {
-            ShutdownReason::UpdateRequired => "update_required",
-            ShutdownReason::ProtocolError => "protocol_error",
-            ShutdownReason::UserRequested => "user_requested",
-            ShutdownReason::Updating => "updating",
-            ShutdownReason::Suspending => "suspending",
-            ShutdownReason::Restarting => "restarting",
-            ShutdownReason::AuthExpired => "auth_expired",
-        }
-    }
-
-    pub(crate) fn from_wire_value(value: &str) -> Option<Self> {
-        match value {
-            "update_required" => Some(ShutdownReason::UpdateRequired),
-            "protocol_error" => Some(ShutdownReason::ProtocolError),
-            "user_requested" => Some(ShutdownReason::UserRequested),
-            "updating" => Some(ShutdownReason::Updating),
-            "suspending" => Some(ShutdownReason::Suspending),
-            "restarting" => Some(ShutdownReason::Restarting),
-            "auth_expired" => Some(ShutdownReason::AuthExpired),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for ShutdownReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ShutdownReason::UpdateRequired => write!(f, "amux update required"),
-            ShutdownReason::ProtocolError => write!(f, "protocol error"),
-            ShutdownReason::UserRequested => write!(f, "server shutting down"),
-            ShutdownReason::Updating => write!(f, "server updating"),
-            ShutdownReason::Suspending => write!(f, "server suspending"),
-            ShutdownReason::Restarting => write!(f, "server restarting"),
-            ShutdownReason::AuthExpired => write!(f, "authentication expired"),
-        }
-    }
-}
+pub use model::ShutdownReason;
 
 #[derive(Debug, Error)]
 pub enum ServerError {
@@ -394,16 +343,14 @@ impl DaemonBuilder {
             .inner
             .config
             .ok_or_else(|| ConfigError::Invalid("server config is required".to_string()))
-            .map_err(ConnectError::Config)?;
+            .map_err(|error| ConnectError::InvalidConfiguration(error.to_string()))?;
         #[cfg(unix)]
         {
-            let channel = connect_existing_client_service(&config).await?;
-            Ok(Client::from_client_service_channel(channel))
+            let channel = connect_socket(&config.socket_path).await?;
+            Ok(Client::from_channel(channel))
         }
         #[cfg(not(unix))]
-        Err(ConnectError::Start(
-            "local ClientService is only available on Unix sockets and embedded in-process channels".to_string(),
-        ))
+        Err(ConnectError::Unsupported)
     }
 }
 
@@ -469,7 +416,6 @@ fn link_close_reason_for_shutdown(reason: ShutdownReason) -> wire::pb::LinkClose
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
-
 
     use super::{Server, ShutdownReason, link_close_reason_for_shutdown};
     use crate::Config;

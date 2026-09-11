@@ -5,8 +5,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use amux::InstallationConfig;
-use amux::installation::{FrontDoorClient, Installation, rpc};
+use amux::installation::{Installation, rpc};
 use anyhow::{Context, Result, anyhow};
+use client::FrontDoorClient;
 
 /// AMUX_CONFIG identifies a profile; the default path identifies the installation.
 pub fn configuration(profile_path: Option<&Path>) -> Result<InstallationConfig> {
@@ -18,7 +19,7 @@ pub fn configuration(profile_path: Option<&Path>) -> Result<InstallationConfig> 
 }
 
 pub async fn existing(config: &InstallationConfig) -> Result<Option<FrontDoorClient>> {
-    match FrontDoorClient::connect(&config.front_door_socket).await {
+    match FrontDoorClient::connect_socket(&config.front_door_socket).await {
         Ok(mut front) => {
             front
                 .installation
@@ -29,8 +30,8 @@ pub async fn existing(config: &InstallationConfig) -> Result<Option<FrontDoorCli
         }
         Err(error)
             if matches!(
-                error.kind(),
-                ErrorKind::NotFound | ErrorKind::ConnectionRefused
+                error.io_kind(),
+                Some(ErrorKind::NotFound | ErrorKind::ConnectionRefused)
             ) =>
         {
             Ok(None)
@@ -238,7 +239,7 @@ pub async fn resume_with_executable(config: &InstallationConfig, executable: &Pa
 pub async fn profile_admin(
     config: &amux::Config,
     retry_command: Option<&str>,
-) -> Result<amux::installation::ProfileAdminClient> {
+) -> Result<client::ProfileAdminClient> {
     let path = config
         .path
         .as_deref()

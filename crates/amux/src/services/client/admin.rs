@@ -1,10 +1,11 @@
 //! In-process pairing and trust administration, available only to the installation owner.
 
-use super::*;
-use crate::client::{
+use client::{
     pairing_identity_from_wire, pairing_start_from_wire, peer_entry_from_wire, peer_ref,
     status_to_client_error,
 };
+
+use super::*;
 use crate::{ClientError, PairingStart, PeerEntry, PeerIdentifier, SshPairingPeer};
 
 /// An in-process administration handle for one profile. It cannot be obtained

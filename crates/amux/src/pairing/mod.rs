@@ -50,7 +50,7 @@ impl PairingAdmin for crate::installation::ProfileAdmin {
 }
 
 #[async_trait::async_trait]
-impl PairingAdmin for crate::installation::ProfileAdminClient {
+impl PairingAdmin for client::ProfileAdminClient {
     fn profile_id(&self) -> crate::installation::ProfileId {
         self.profile_id()
     }

@@ -57,8 +57,10 @@ impl ProfileOwner {
             .expect("profile is running")
     }
 
-    pub(crate) fn admin_client(&self) -> crate::installation::ProfileAdminClient {
-        use crate::installation::{FrontDoor, FrontDoorClient, rpc};
+    pub(crate) fn admin_client(&self) -> client::ProfileAdminClient {
+        use client::FrontDoorClient;
+
+        use crate::installation::{FrontDoor, rpc};
         let owner = self.installation.upgrade().expect("installation dropped");
         let channel = FrontDoor::new(owner.current(), None).channel();
         FrontDoorClient {
@@ -378,10 +380,8 @@ impl Profile {
             socket_path: self.paths().socket_path,
             ..Default::default()
         };
-        let channel = crate::client::connect_existing_client_service(&config)
-            .await
-            .unwrap();
-        crate::Client::from_client_service_channel(channel)
+        let channel = client::connect_socket(&config.socket_path).await.unwrap();
+        crate::Client::from_channel(channel)
     }
 
     pub fn status(&self) -> ProfileStatus {

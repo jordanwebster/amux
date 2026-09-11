@@ -4,6 +4,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+pub use model::{SshPairingPeer, SshPairingProfile, SshTarget};
 use prost::Message as _;
 use tokio::io::{
     AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf, copy_bidirectional,
@@ -18,27 +19,6 @@ const SSH_PAIRING_FRAME_MAX_BYTES: usize = 4096;
 const HOST_ID_LEN: usize = 16;
 const PUBKEY_LEN: usize = 32;
 const MAX_PAIRING_NAME_BYTES: usize = 256;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SshPairingPeer {
-    pub host_id: HostId,
-    pub pubkey: Vec<u8>,
-    pub name: String,
-}
-
-/// A device identity and its immutable selector on the remote installation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SshPairingProfile {
-    pub identity: SshPairingPeer,
-    pub profile: ProfileId,
-}
-
-/// An SSH destination pinned to one profile, independent of its display label.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SshTarget {
-    pub target: String,
-    pub profile: ProfileId,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum SshPairingError {

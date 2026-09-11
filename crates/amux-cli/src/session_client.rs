@@ -427,7 +427,7 @@ fn resolve_attach_agent<'a>(
 pub(crate) async fn attach_for_ui(
     config: &Config,
     agent: amux::AgentId,
-) -> Result<amux_tui::AttachReturn> {
+) -> Result<tui::AttachReturn> {
     let rpc = require_running_client(config, None).await?;
     let agent = AgentIdentifier::from(agent);
     // Failing to subscribe happens before the reader exists, so it can be a
@@ -444,10 +444,10 @@ pub(crate) async fn attach_for_ui(
             }
         };
     if matches!(outcome, AttachOutcome::SwitchedToFleet) {
-        return Ok(amux_tui::AttachReturn::Fleet(None));
+        return Ok(tui::AttachReturn::Fleet(None));
     }
     report_attach_end(&outcome, &config.state_path);
-    Ok(amux_tui::AttachReturn::Exit)
+    Ok(tui::AttachReturn::Exit)
 }
 
 /// List running agents, folding children into their family unless requested.
@@ -559,7 +559,7 @@ impl ListRender<'_> {
             (!text.is_empty()).then(|| {
                 format!(
                     " · {text} {}",
-                    amux_ui::format_relative_age(self.now, working.updated_at)
+                    ui_state::format_relative_age(self.now, working.updated_at)
                 )
             })
         });
@@ -737,7 +737,7 @@ async fn attach_subscribed(
 /// terminal that is already sane every sequence is a no-op.
 fn reset_terminal_after_passthrough() {
     let mut out = io::stdout();
-    let _ = out.write_all(amux_tui::terminal::RESTORE_BYTES);
+    let _ = out.write_all(tui::terminal::RESTORE_BYTES);
     let _ = out.flush();
 }
 
@@ -1235,7 +1235,8 @@ mod attach {
     use std::time::Duration;
 
     use amux::AgentId;
-    use amux_ui::{Model, Runtime, RuntimeOptions};
+    use ui_runtime::{Runtime, RuntimeOptions};
+    use ui_state::Model;
 
     use super::*;
 
@@ -1587,14 +1588,14 @@ mod attach {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let mut terminal = Terminal::new(TestBackend::new(68, 11)).expect("terminal");
-        let view = amux_tui::ViewState::default();
-        let ctx = amux_tui::FrameContext {
+        let view = tui::ViewState::default();
+        let ctx = tui::FrameContext {
             viewport: (68, 11),
-            theme: amux_tui::Theme::default(),
+            theme: tui::Theme::default(),
             now: chrono::Utc::now(),
         };
         terminal
-            .draw(|frame| amux_tui::render(model, &view, &ctx, frame))
+            .draw(|frame| tui::render(model, &view, &ctx, frame))
             .expect("draw");
         let buffer = terminal.backend().buffer().clone();
         let mut out = String::new();
@@ -1693,13 +1694,13 @@ mod attach {
         let mut parser = vt100::Parser::new(24, 80, 0);
 
         let mut enter = Vec::new();
-        amux_tui::write_enter_chrome(&mut enter).unwrap();
+        tui::write_enter_chrome(&mut enter).unwrap();
         parser.process(&enter);
         assert!(parser.screen().alternate_screen(), "chrome uses alt screen");
         assert!(parser.screen().hide_cursor(), "chrome hides the cursor");
 
         let mut restore = Vec::new();
-        amux_tui::write_restore(&mut restore).unwrap();
+        tui::write_restore(&mut restore).unwrap();
         parser.process(&restore);
         assert!(
             !parser.screen().alternate_screen(),
@@ -1748,10 +1749,10 @@ mod attach {
         // captured stream through vt100.
         let mut parser = vt100::Parser::new(24, 80, 0);
         let mut enter = Vec::new();
-        amux_tui::write_enter_chrome(&mut enter).unwrap();
+        tui::write_enter_chrome(&mut enter).unwrap();
         parser.process(&enter);
         let mut restore = Vec::new();
-        amux_tui::write_restore(&mut restore).unwrap();
+        tui::write_restore(&mut restore).unwrap();
         parser.process(&restore);
         assert!(!parser.screen().alternate_screen());
         assert!(!parser.screen().hide_cursor());
@@ -1764,7 +1765,7 @@ mod attach {
     /// `last_dial_error` in the status line instead of attaching.
     #[tokio::test]
     async fn offline_host_shows_dial_error_instead_of_attaching() {
-        use amux_ui::{Msg, ServerMsg, update};
+        use ui_state::{Msg, ServerMsg, update};
 
         let host = amux::HostEntry {
             id: Uuid::from_u128(1),
@@ -1803,8 +1804,8 @@ mod attach {
             update(&mut model, msg);
         }
 
-        let mut view = amux_tui::ViewState::default();
-        let action = amux_tui::keys::handle_key(
+        let mut view = tui::ViewState::default();
+        let action = tui::keys::handle_key(
             &mut view,
             &model,
             crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter),
@@ -1825,17 +1826,17 @@ mod attach {
         );
     }
 
-    fn render_fleet_with_view(model: &Model, view: &amux_tui::ViewState) -> String {
+    fn render_fleet_with_view(model: &Model, view: &tui::ViewState) -> String {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let mut terminal = Terminal::new(TestBackend::new(68, 11)).expect("terminal");
-        let ctx = amux_tui::FrameContext {
+        let ctx = tui::FrameContext {
             viewport: (68, 11),
-            theme: amux_tui::Theme::default(),
+            theme: tui::Theme::default(),
             now: chrono::Utc::now(),
         };
         terminal
-            .draw(|frame| amux_tui::render(model, view, &ctx, frame))
+            .draw(|frame| tui::render(model, view, &ctx, frame))
             .expect("draw");
         let buffer = terminal.backend().buffer().clone();
         let mut out = String::new();

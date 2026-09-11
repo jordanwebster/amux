@@ -21,6 +21,7 @@ model = { workspace = true }
 wire = { workspace = true }
 settings = { workspace = true }
 claude = { workspace = true }
+client = { workspace = true }
 tempfile = { workspace = true }
 pty-host = { workspace = true, optional = true }
 tokio = { workspace = true }
@@ -76,7 +77,8 @@ windows-sys = { version = "0.61.2", features = [
 
 [dev-dependencies]
 prost-types = { workspace = true }
-amux-ui = { workspace = true }
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
 claude = { workspace = true }
 codex = { path = "../codex" }
 replay-support = { path = "../replay-support" }

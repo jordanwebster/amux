@@ -1,8 +1,6 @@
 //! Installation ownership, isolated profile storage, and supervised lifecycles.
 
-pub use crate::services::front_door::{
-    FrontDoor, FrontDoorClient, FrontDoorListener, ProfileAdminClient,
-};
+pub use crate::services::front_door::{FrontDoor, FrontDoorListener};
 
 /// Generated messages and clients for the installation's local gRPC boundary.
 pub mod rpc {
@@ -41,10 +39,11 @@ pub mod registry;
 
 use std::path::PathBuf;
 
+pub use model::ProfileId;
 pub use paths::ProfilePaths;
 #[cfg(unix)]
 pub(crate) use paths::{MAX_CODEX_SOCKET_PATH_BYTES, adjacent_codex_socket_path};
-pub use registry::{Binding, InstallationRoot, ProfileId, ProfileLabel, ProfileRecord, Registry};
+pub use registry::{Binding, InstallationRoot, ProfileLabel, ProfileRecord, Registry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstallationError {

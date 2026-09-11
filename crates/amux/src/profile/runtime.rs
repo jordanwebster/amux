@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use client::Client;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock, watch};
@@ -13,7 +14,6 @@ use tokio::task::JoinHandle;
 
 use super::status::{Observed, RuntimeStatus};
 use crate::auth::CredentialProvider;
-use crate::client::Client;
 use crate::config::{ClaudeSettings, Config, ConfigError, Keybinds, UiSettings};
 use crate::identity;
 use crate::server::ShutdownReason;
@@ -368,7 +368,7 @@ async fn build(
     let (client_channel, client_task, in_process_connection) =
         services.open_managed_in_process_client_channel();
     services.push_task(client_task);
-    let client = Client::from_client_service_channel(client_channel.clone());
+    let client = Client::from_channel(client_channel.clone());
     status.report(Observed::Local);
 
     Ok(ProfileRuntime {
@@ -578,7 +578,7 @@ impl ProfileRuntime {
     pub(crate) async fn finish_stop(mut self) {
         self.stop_accepting_local_clients().await;
         tokio::time::sleep(LINK_CLOSE_FLUSH_TIMEOUT).await;
-        self.client.close();
+        self.client.disconnect();
         self.in_process_connection.close();
         tokio::task::yield_now().await;
         stop_tasks(std::mem::take(&mut self.background_tasks)).await;
@@ -973,10 +973,8 @@ mod tests {
             let runtime_options = options(root.path(), Listeners::Sockets);
             let config = runtime_options.service_config();
             let runtime = start(runtime_options).await.unwrap();
-            let channel = crate::client::connect_existing_client_service(&config)
-                .await
-                .unwrap();
-            let client = Client::from_client_service_channel(channel);
+            let channel = client::connect_socket(&config.socket_path).await.unwrap();
+            let client = Client::from_channel(channel);
             let dump = client
                 .debug_dump(crate::debug::DebugFormat::Json)
                 .await
@@ -1005,10 +1003,8 @@ mod tests {
             let opts = options(root.path(), Listeners::Sockets);
             let config = opts.service_config();
             let runtime = start(opts).await.unwrap();
-            let channel = crate::client::connect_existing_client_service(&config)
-                .await
-                .unwrap();
-            let client = Client::from_client_service_channel(channel);
+            let channel = client::connect_socket(&config.socket_path).await.unwrap();
+            let client = Client::from_channel(channel);
             client.list_agents().await.unwrap();
             runtime.stop(ShutdownReason::UserRequested).await;
             assert!(client.list_agents().await.is_err());

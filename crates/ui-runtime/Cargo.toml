@@ -1,0 +1,24 @@
+[package]
+name = "ui-runtime"
+version = "0.4.0"
+edition.workspace = true
+description = "Resource-owning effect runtime for amux UI state"
+publish = false
+
+[dependencies]
+client = { workspace = true }
+artifacts = { workspace = true }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+model = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+ui-state = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+amux = { workspace = true }
+tempfile = { workspace = true }

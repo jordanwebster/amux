@@ -9,15 +9,15 @@ use std::process::ExitCode;
 use std::{fs, io};
 
 use amux::{Config, DebugFormat};
-use amux_tui::replay::{self, Replay};
-use amux_ui::report::{
-    self, ReplayVerdict, ReportHeader, ReportKind, ReportStatus, read_frame, set_verdict,
-};
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use clap::{Subcommand, ValueEnum};
 use replay_support::{Redaction, RedactionSummary, redact_text, redact_value};
 use serde::{Deserialize, Serialize};
+use tui::replay::{self, Replay};
+use ui_runtime::report::{
+    self, ReplayVerdict, ReportHeader, ReportKind, ReportStatus, read_frame, set_verdict,
+};
 
 #[derive(Debug, Subcommand)]
 pub enum DebugCommands {
@@ -76,7 +76,7 @@ pub enum ReportCommands {
         /// Fixture name in surface_subject form
         name: String,
 
-        /// Fixture root; defaults to ./crates/amux-tui/tests/reports when it exists
+        /// Fixture root; defaults to ./crates/tui/tests/reports when it exists
         #[arg(long)]
         into: Option<PathBuf>,
     },
@@ -92,7 +92,7 @@ pub struct FixtureManifest {
     pub kind: ReportKind,
     pub original_stamp: String,
     pub note: String,
-    pub marks: Vec<amux_ui::report::Mark>,
+    pub marks: Vec<ui_runtime::report::Mark>,
     pub graduated_at: DateTime<Utc>,
     pub redaction: RedactionSummary,
 }
@@ -187,7 +187,7 @@ fn graduate(
     let fixture_root = match into {
         Some(path) => path.to_path_buf(),
         None => {
-            let default = PathBuf::from("crates/amux-tui/tests/reports");
+            let default = PathBuf::from("crates/tui/tests/reports");
             if !default.is_dir() {
                 bail!(
                     "default fixture directory {} does not exist; pass --into",
@@ -583,17 +583,18 @@ fn verdict_name(verdict: &ReplayVerdict) -> &'static str {
 mod tests {
     use std::fs;
 
-    use amux_tui::chrome::TraceEvent;
-    use amux_tui::trace::{Snapshot, TraceWindow};
-    use amux_tui::{Notice, Theme, ViewState};
-    use amux_ui::report::{
-        FrameCapture, Mark, PartState, Parts, REPORT_SCHEMA_VERSION, ReportDraft, ReportParts,
-        ReportWriter,
-    };
-    use amux_ui::{BUILD, Model};
     use chrono::{TimeZone, Utc};
     use clap::Parser;
     use tempfile::tempdir;
+    use tui::chrome::TraceEvent;
+    use tui::trace::{Snapshot, TraceWindow};
+    use tui::{Notice, Theme, ViewState};
+    use ui_runtime::BUILD;
+    use ui_runtime::report::{
+        FrameCapture, Mark, PartState, Parts, REPORT_SCHEMA_VERSION, ReportDraft, ReportParts,
+        ReportWriter,
+    };
+    use ui_state::Model;
 
     use super::*;
 
@@ -805,7 +806,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let reports_dir = temp.path().join("reports");
         fs::create_dir_all(&reports_dir).unwrap();
-        for index in 0..=amux_ui::report::RETAINED_AUTOMATIC_REPORTS {
+        for index in 0..=ui_runtime::report::RETAINED_AUTOMATIC_REPORTS {
             let stamp = format!("{index:04}");
             write_header(
                 &reports_dir,

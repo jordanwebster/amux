@@ -19,13 +19,11 @@ pub mod agent_tools;
 mod agents;
 mod audit;
 mod auth;
-mod client;
 mod config;
 mod connection;
 mod debug;
 mod dispatcher;
-#[path = "agents/envelope.rs"]
-pub mod envelope;
+use model::envelope;
 mod identity;
 pub mod installation;
 mod pairing;
