@@ -8843,3 +8843,9 @@ signed into another account, while the installation front door filters all of
 its own profile identities from pairing candidates. A multi-profile desktop no
 longer offers its personal, work, or spare identities to one another as nearby
 hosts.
+
+2026-09-11 — **LAN advertisements contain dialable interface addresses.** A
+listener bound to all interfaces now expands its ephemeral port across the
+host's interface addresses before publishing discovery. The wildcard addresses
+`0.0.0.0` and `[::]` therefore cannot reach found-host inventories, pairing
+candidates, or direct-link dialing; QR generation uses the same expansion.

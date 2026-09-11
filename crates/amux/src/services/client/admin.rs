@@ -6,6 +6,7 @@ use crate::client::{
     pairing_start_from_wire, peer_entry_from_wire, peer_ref, public_key_fingerprint,
     status_to_client_error, status_to_pairing_error, uuid_from_wire_bytes,
 };
+use crate::discovery::local_pairing_addrs;
 use crate::{
     ClientError, PairingCandidate, PairingStart, PeerEntry, PeerIdentifier, SshPairingPeer,
 };
@@ -773,24 +774,6 @@ impl ProfileAdmin {
             removed_peer: Some(peer_entry_to_wire(host_id, &entry)),
         }))
     }
-}
-
-#[cfg(not(target_os = "ios"))]
-fn local_pairing_addrs(port: u16) -> Vec<SocketAddr> {
-    let mut addrs = if_addrs::get_if_addrs()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|interface| SocketAddr::new(interface.ip(), port))
-        .filter(|addr| !addr.ip().is_unspecified())
-        .collect::<Vec<_>>();
-    addrs.sort_unstable();
-    addrs.dedup();
-    addrs
-}
-
-#[cfg(target_os = "ios")]
-fn local_pairing_addrs(_port: u16) -> Vec<SocketAddr> {
-    Vec::new()
 }
 
 fn peer_via_from_wire(via: i32) -> Result<PeerVia, PairingError> {

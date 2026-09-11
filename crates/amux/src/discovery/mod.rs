@@ -33,6 +33,24 @@ pub const WAKE_GAP: Duration = Duration::from_secs(30);
 
 pub(crate) const EVENT_CAPACITY: usize = 128;
 
+#[cfg(not(target_os = "ios"))]
+pub(crate) fn local_pairing_addrs(port: u16) -> Vec<SocketAddr> {
+    let mut addrs = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|interface| SocketAddr::new(interface.ip(), port))
+        .filter(|addr| !addr.ip().is_unspecified())
+        .collect::<Vec<_>>();
+    addrs.sort_unstable();
+    addrs.dedup();
+    addrs
+}
+
+#[cfg(target_os = "ios")]
+pub(crate) fn local_pairing_addrs(_port: u16) -> Vec<SocketAddr> {
+    Vec::new()
+}
+
 /// The untrusted connection hints published by one host.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Advertisement {

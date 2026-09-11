@@ -15,7 +15,7 @@ use super::status::{Observed, RuntimeStatus};
 use crate::auth::CredentialProvider;
 use crate::client::Client;
 use crate::config::{ClaudeSettings, Config, ConfigError, Keybinds, LanConfig, UiSettings};
-use crate::discovery::{Advertisement, Discovery, DiscoveryError, FoundHosts};
+use crate::discovery::{Advertisement, Discovery, DiscoveryError, FoundHosts, local_pairing_addrs};
 use crate::identity;
 use crate::protocol::wire;
 use crate::server::ShutdownReason;
@@ -410,11 +410,16 @@ async fn build(
     });
     if let Some(listener) = lan_listener {
         let addr = lan_addr.expect("LAN listener address captured before serving");
+        let addrs = if addr.ip().is_unspecified() {
+            local_pairing_addrs(addr.port())
+        } else {
+            vec![addr]
+        };
         discovery.advertise(Advertisement {
             host_id,
             name: options.shared.host_name.clone(),
             version: crate::PROTOCOL_VERSION,
-            addrs: vec![addr],
+            addrs,
         })?;
         #[cfg(testnet)]
         if let Some(tracked) = &options.fixtures.tracked_tcp {
@@ -921,6 +926,30 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("trust.json"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_advertises_interface_addresses_not_the_unspecified_listener() {
+        let root = tempdir().unwrap();
+        let discovery = Arc::new(crate::discovery::ScriptedDiscovery::new());
+        let mut browser = discovery.browse();
+        let mut runtime_options = options(root.path(), Listeners::Sockets);
+        runtime_options.discovery = discovery;
+
+        let runtime = start(runtime_options).await.unwrap();
+        let advert = match browser.recv().await.unwrap() {
+            crate::discovery::DiscoveryEvent::Found(advert) => advert,
+            crate::discovery::DiscoveryEvent::Lost { host_id } => {
+                panic!("listener unexpectedly withdrew {host_id}")
+            }
+        };
+        let port = runtime.state.read().await.config.lan.port;
+
+        assert!(!advert.addrs.is_empty());
+        assert!(advert.addrs.iter().all(|addr| addr.port() == port));
+        assert!(advert.addrs.iter().all(|addr| !addr.ip().is_unspecified()));
+
+        runtime.stop(ShutdownReason::UserRequested).await;
     }
 
     struct StaticCredentials;
