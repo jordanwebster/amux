@@ -4,10 +4,15 @@ version = "0.6.0"
 edition.workspace = true
 description = "Identity, routing, and supervised node services for amux"
 publish = false
+autotests = false
+autoexamples = false
 
-[features]
-default = []
-local-agents = []
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(testnet)',
+    'cfg(test_fixtures)',
+    'cfg(feature, values("local-agents"))',
+] }
 
 [dependencies]
 anyhow = { workspace = true }
@@ -76,32 +81,3 @@ codex = { path = "../codex" }
 replay-support = { path = "../replay-support" }
 tokio-tungstenite = { workspace = true }
 nix = { workspace = true }
-
-[[test]]
-name = "spec"
-path = "tests/spec/main.rs"
-required-features = ["local-agents"]
-
-# Maintained opt-in real-Claude PTY backend suite. With no arguments it prints
-# usage and exits without live work; see tests/claude_pty_live.rs.
-[[test]]
-name = "claude_pty_live"
-path = "tests/claude_pty_live.rs"
-harness = false
-test = false
-
-# Maintained opt-in real-Codex backend suite. With no arguments it prints usage
-# and exits without live work; see tests/codex_live.rs.
-[[test]]
-name = "codex_live"
-path = "tests/codex_live.rs"
-harness = false
-test = false
-
-# Maintained opt-in real-Claude SDK backend suite. With no arguments it prints
-# usage and exits without live work; see tests/claude_sdk_live.rs.
-[[test]]
-name = "claude_sdk_live"
-path = "tests/claude_sdk_live.rs"
-harness = false
-test = false

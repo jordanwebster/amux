@@ -553,6 +553,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "claude-specs"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "client"
 version = "0.1.0"
 dependencies = [
@@ -599,6 +606,13 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "codex-specs"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -3964,6 +3978,15 @@ name = "test-agent"
 version = "0.1.0"
 
 [[package]]
+name = "testnet"
+version = "0.1.0"
+dependencies = [
+ "node",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4426,6 +4449,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tui-fixtures",
  "ui-runtime",
  "ui-state",
  "unicode-segmentation",
@@ -4433,6 +4457,10 @@ dependencies = [
  "uuid",
  "vt100",
 ]
+
+[[package]]
+name = "tui-fixtures"
+version = "0.1.0"
 
 [[package]]
 name = "tungstenite"

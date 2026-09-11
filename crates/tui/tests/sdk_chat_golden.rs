@@ -66,22 +66,22 @@ fn an_sdk_agent() -> Agent {
 /// The recorded rows of one session, exactly as the daemon wrote them.
 fn recorded(name: &str) -> Vec<Value> {
     let raw = match name {
-        "text" => include_str!("../../amux/tests/fixtures/rows/claude-sdk/text_turn.rows.jsonl"),
+        "text" => include_str!("../../claude-specs/fixtures/claude-sdk/text_turn.rows.jsonl"),
         "streamed" => {
-            include_str!("../../amux/tests/fixtures/rows/claude-sdk/streamed_turn.rows.jsonl")
+            include_str!("../../claude-specs/fixtures/claude-sdk/streamed_turn.rows.jsonl")
         }
         "tasks" => {
-            include_str!("../../amux/tests/fixtures/rows/claude-sdk/subagent_task.rows.jsonl")
+            include_str!("../../claude-specs/fixtures/claude-sdk/subagent_task.rows.jsonl")
         }
-        "messaged" => include_str!("../../amux/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
+        "messaged" => include_str!("../../node/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
         "introspection" => {
-            include_str!("../../amux/tests/fixtures/rows/claude-sdk/introspection.rows.jsonl")
+            include_str!("../../claude-specs/fixtures/claude-sdk/introspection.rows.jsonl")
         }
         "interrupted" => {
-            include_str!("../../amux/tests/fixtures/rows/claude-sdk/interrupted.rows.jsonl")
+            include_str!("../../claude-specs/fixtures/claude-sdk/interrupted.rows.jsonl")
         }
         "max_turns" => {
-            include_str!("../../amux/tests/fixtures/rows/claude-sdk/max_turns.rows.jsonl")
+            include_str!("../../claude-specs/fixtures/claude-sdk/max_turns.rows.jsonl")
         }
         other => panic!("unknown recording {other}"),
     };

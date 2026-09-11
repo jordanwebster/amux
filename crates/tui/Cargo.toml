@@ -7,6 +7,7 @@ publish = false
 
 # Rendering consumes pure UI state; the event loop uses ui-runtime for effects.
 [dependencies]
+tui-fixtures = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
 ratatui = { workspace = true }

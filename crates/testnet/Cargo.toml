@@ -1,0 +1,10 @@
+[package]
+name = "testnet"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+node = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }

@@ -8835,3 +8835,13 @@ their intended names: `node` is the provider free service library, while
 `amux` is the CLI product that composes node, runtime and TUI. Declared checks
 compile `node` and `agent-runtime` independently and compile the complete host
 product successfully.
+
+2026-09-11 — **Test data now has explicit package owners.** `claude-specs` and
+`codex-specs` own and validate the recorded provider row corpora,
+`tui-fixtures` owns the stable named-state registry consumed by TUI renders,
+and `testnet` owns public-API installation fixtures with independent temporary
+roots. The node no longer runs a profile-sensitive build script or auto-builds
+provider probes and examples as part of ordinary package tests. A declared
+infrastructure recipe validates both provider corpora and exercises two
+isolated embedded node owners; the existing TUI golden harnesses read their
+provider rows from the new package locations.

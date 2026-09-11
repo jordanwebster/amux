@@ -63,13 +63,13 @@ fn an_sdk_agent() -> Agent {
 /// The recorded rows of one session, exactly as the daemon wrote them.
 fn recorded(name: &str) -> Vec<Value> {
     let raw = match name {
-        "text" => include_str!("../../amux/tests/fixtures/rows/claude-sdk/text_turn.rows.jsonl"),
+        "text" => include_str!("../../claude-specs/fixtures/claude-sdk/text_turn.rows.jsonl"),
         "permission" => {
-            include_str!("../../amux/tests/fixtures/rows/claude-sdk/permission_callback.rows.jsonl")
+            include_str!("../../claude-specs/fixtures/claude-sdk/permission_callback.rows.jsonl")
         }
         "elicitation" => {
             include_str!(
-                "../../amux/tests/fixtures/rows/claude-sdk/elicitation_accepted.rows.jsonl"
+                "../../claude-specs/fixtures/claude-sdk/elicitation_accepted.rows.jsonl"
             )
         }
         other => panic!("unknown recording {other}"),

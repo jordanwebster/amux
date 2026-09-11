@@ -89,6 +89,9 @@ run = "timeout 900 cargo test -p tui"
 [task.test-shot]
 run = "timeout 900 cargo test -p shot"
 
+[task.test-infrastructure]
+run = "timeout 600 cargo test -p testnet -p claude-specs -p codex-specs -p tui-fixtures"
+
 [task.dependency-policy]
 run = "timeout 60 python3 scripts/check-dependency-policy.py"
 

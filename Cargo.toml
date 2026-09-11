@@ -10,7 +10,9 @@ members = [
     "crates/ui-state",
     "crates/artifacts",
     "crates/claude",
+    "crates/claude-specs",
     "crates/codex",
+    "crates/codex-specs",
     "crates/client",
     "crates/e2e-runner",
     "crates/host-api",
@@ -19,6 +21,8 @@ members = [
     "crates/replay-support",
     "crates/settings",
     "crates/test-agent",
+    "crates/testnet",
+    "crates/tui-fixtures",
     "crates/wire",
     "crates/xtask",
 ]
@@ -39,6 +43,7 @@ artifacts = { path = "crates/artifacts" }
 ui-runtime = { path = "crates/ui-runtime" }
 ui-state = { path = "crates/ui-state" }
 tui = { path = "crates/tui" }
+tui-fixtures = { path = "crates/tui-fixtures" }
 pty-host = { path = "crates/pty-host" }
 claude = { path = "crates/claude" }
 
