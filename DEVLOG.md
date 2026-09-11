@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **Source icon checks read device PNG headers correctly.** The
+icon test walks PNG chunks to IHDR, matching the release scope audit instead
+of assuming a fixed offset. Tests cover plain and CgBI-prefixed headers,
+including RGB and RGBA colour types, plus non-PNG and missing-header refusals.
+`wt run test-recipes` passes (104 tests), and `wt fmt` passes.
+`wt run ios-scope-audit` passes in an isolated checkout: the release bundle
+has its named 120x120 icon and no excluded resources, APIs or dependencies.
+
 2026-09-11 — **Fixture-panel smoke checks stay within their own exchange block.**
 The check now reads the six states after the two text-size queries instead of
 counting every plus or settings screen in the exchange. Regression tests add

@@ -16,6 +16,7 @@ rather than a step that has to be re-run.
 import json
 from pathlib import Path
 import struct
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,14 +28,43 @@ SPEC = ROOT / "ios/project.yml"
 def png_header(path: Path) -> tuple[int, int, int, int]:
     """A PNG's width, height, bit depth and colour type.
 
-    Read from the IHDR chunk directly. An image library would be a dependency
-    this repository does not otherwise need for four numbers at fixed
-    offsets."""
+    Walk chunks as the release scope audit does: device PNGs carry Apple's
+    CgBI chunk before IHDR, so the header has no fixed file offset."""
     raw = path.read_bytes()
     if raw[:8] != b"\x89PNG\r\n\x1a\n":
         raise AssertionError(f"{path} is not a PNG")
-    width, height, depth, colour = struct.unpack(">IIBB", raw[16:26])
-    return width, height, depth, colour
+    at = 8
+    while at + 8 <= len(raw):
+        length, kind = struct.unpack(">I4s", raw[at:at + 8])
+        if kind == b"IHDR":
+            return struct.unpack(">IIBB", raw[at + 8:at + 18])
+        at += 12 + length
+    raise AssertionError(f"{path} has no IHDR chunk")
+
+
+class PNGHeaders(unittest.TestCase):
+    def test_plain_and_device_headers_preserve_dimensions_and_colour(self):
+        def chunk(kind, body):
+            return struct.pack(">I", len(body)) + kind + body + bytes(4)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "icon.png"
+            for leading in (b"", chunk(b"CgBI", bytes(4))):
+                for colour in (2, 6):
+                    with self.subTest(device=bool(leading), colour=colour):
+                        header = struct.pack(">IIBBBBB", 120, 180, 8, colour, 0, 0, 0)
+                        path.write_bytes(b"\x89PNG\r\n\x1a\n" + leading + chunk(b"IHDR", header))
+                        self.assertEqual((120, 180, 8, colour), png_header(path))
+
+    def test_non_png_and_missing_header_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "icon.png"
+            for raw, message in ((b"not a PNG", "is not a PNG"),
+                                 (b"\x89PNG\r\n\x1a\n", "has no IHDR chunk")):
+                with self.subTest(raw=raw):
+                    path.write_bytes(raw)
+                    with self.assertRaisesRegex(AssertionError, message):
+                        png_header(path)
 
 
 class TheIconSet(unittest.TestCase):
