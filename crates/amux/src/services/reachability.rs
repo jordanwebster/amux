@@ -22,7 +22,10 @@ use crate::transport::spawn_ssh_relay;
 use crate::trust::{Reachability, SharedTrustStore};
 
 const DIRECT_LINK_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
-const DIRECT_QUIC_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
+// Quinn's first Initial PTO is about one second with its default initial RTT.
+// Two seconds lets one lost handshake packet retransmit while still moving
+// through several black-holed candidate addresses in a few seconds.
+const DIRECT_QUIC_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub(crate) struct ReachabilityLinkConnector {

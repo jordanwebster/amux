@@ -9106,3 +9106,8 @@ and closes every open stream on revocation. It also proves full handshakes when
 a client offers a cached ticket, admission limits under handshake floods,
 session delivery with five-percent loss and 200 ms latency, and direct presence
 loss when a peer's UDP path is blocked.
+
+2026-09-11 — **Direct QUIC dialing tolerates one lost handshake packet.** Each
+candidate address now gets two seconds to complete the QUIC handshake. That
+budget reaches Quinn's first Initial retransmission without making several
+black-holed addresses hold connection attempts for more than a few seconds.
