@@ -1,7 +1,7 @@
 mod error;
 
-/// Protocol version for the generated `LinkService.Connect` handshake.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Protocol version for the native-stream link handshake.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 pub use error::ProtocolError;
 pub(crate) use error::{protocol_error_from_status_details, protocol_status};
@@ -105,9 +105,7 @@ mod tests {
             "HelloAck",
             "NeighborUp",
             "NeighborDown",
-            "TunnelOpen",
-            "TunnelData",
-            "TunnelClose",
+            "StreamPreface",
             "BeginPairRequest",
             "PendingPairResponse",
             "TrustSshPeerRequest",
@@ -155,7 +153,6 @@ mod tests {
         let expected_services = std::collections::BTreeSet::from([
             "AgentService",
             "ClientService",
-            "LinkService",
             "PairingService",
             "ProfileService",
             "InstallationService",
@@ -178,10 +175,6 @@ mod tests {
                 )
             })
             .collect::<std::collections::BTreeMap<_, _>>();
-        assert_eq!(
-            service_methods.get("LinkService").cloned(),
-            Some(std::collections::BTreeSet::from(["Connect"]))
-        );
         assert_eq!(
             service_methods.get("PairingService").cloned(),
             Some(std::collections::BTreeSet::from(["Pair"]))
@@ -246,28 +239,56 @@ mod tests {
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(
-            message_fields.get("TunnelOpen").cloned(),
+            message_fields.get("Message").cloned(),
             Some(std::collections::BTreeMap::from([
-                ("tunnel_id", 1),
-                ("src", 2),
-                ("dst", 3)
+                ("hello", 1),
+                ("hello_ack", 2),
+                ("neighbor_up", 3),
+                ("neighbor_down", 4),
+                ("reauth", 8),
+                ("link_close", 9),
             ]))
         );
         assert_eq!(
-            message_fields.get("TunnelData").cloned(),
+            message_fields.get("Hello").cloned(),
             Some(std::collections::BTreeMap::from([
-                ("tunnel_id", 1),
-                ("dst", 2),
-                ("payload", 3)
+                ("supported_protocol_versions", 1),
+                ("host", 2),
+                ("neighbors", 3),
+                ("auth_token", 4),
             ]))
         );
         assert_eq!(
-            message_fields.get("TunnelClose").cloned(),
-            Some(std::collections::BTreeMap::from([
-                ("tunnel_id", 1),
-                ("dst", 2),
-                ("error", 3)
-            ]))
+            message_fields.get("StreamPreface").cloned(),
+            Some(std::collections::BTreeMap::from([("dst", 1)]))
+        );
+
+        let enum_values = descriptor
+            .file
+            .iter()
+            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .flat_map(|file| file.enum_type.iter())
+            .map(|enumeration| {
+                (
+                    enumeration.name.as_deref().unwrap_or_default(),
+                    enumeration
+                        .value
+                        .iter()
+                        .filter_map(|value| value.name.as_deref())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            enum_values.get("StreamRefusal").cloned(),
+            Some(vec![
+                "STREAM_REFUSAL_UNSPECIFIED",
+                "NO_ROUTE",
+                "PAYMENT_REQUIRED",
+                "RATE_LIMITED",
+                "NOT_ADJACENT",
+                "SHUTTING_DOWN",
+            ])
         );
 
         let pairing_methods = descriptor
@@ -291,7 +312,6 @@ mod tests {
     #[test]
     fn generated_service_clients_are_available() {
         let clients = [
-            std::any::type_name::<super::wire::link_service_client::LinkServiceClient<()>>(),
             std::any::type_name::<super::wire::agent_service_client::AgentServiceClient<()>>(),
             std::any::type_name::<super::wire::client_service_client::ClientServiceClient<()>>(),
             std::any::type_name::<super::wire::pairing_service_client::PairingServiceClient<()>>(),

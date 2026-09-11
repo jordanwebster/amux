@@ -1,3 +1,10 @@
+2026-09-11 — **Start the native-stream link protocol.** Protocol version 2
+keeps hello, neighbor, reauthentication, and close events on the control
+stream. The relay token now travels in hello, while each application stream
+names only its destination in a preface and uses reset codes for routing,
+payment, rate, adjacency, and shutdown refusals. The old tunnel frame messages
+and gRPC link service have left the wire schema.
+
 2026-09-11 — **Announce the current profile binding on direct links.** Direct
 and SSH handshakes now read the profile's live signed-in state instead of the
 value captured when routing started. A paired peer sees login and logout in

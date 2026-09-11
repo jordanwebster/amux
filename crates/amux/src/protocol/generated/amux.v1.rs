@@ -651,10 +651,10 @@ pub struct AmbiguousAgentName {
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub agent_ids: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
-/// Host-to-host link stream envelope exchanged by LinkService.Connect.
+/// Host-to-host control envelope exchanged on the link's control stream.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Message {
-    #[prost(oneof = "message::Body", tags = "1, 2, 3, 4, 5, 6, 7, 8, 9")]
+    #[prost(oneof = "message::Body", tags = "1, 2, 3, 4, 8, 9")]
     pub body: ::core::option::Option<message::Body>,
 }
 /// Nested message and enum types in `Message`.
@@ -669,12 +669,6 @@ pub mod message {
         NeighborUp(super::NeighborUp),
         #[prost(message, tag = "4")]
         NeighborDown(super::NeighborDown),
-        #[prost(message, tag = "5")]
-        TunnelOpen(super::TunnelOpen),
-        #[prost(message, tag = "6")]
-        TunnelData(super::TunnelData),
-        #[prost(message, tag = "7")]
-        TunnelClose(super::TunnelClose),
         #[prost(message, tag = "8")]
         Reauth(super::Reauth),
         #[prost(message, tag = "9")]
@@ -691,6 +685,8 @@ pub struct Hello {
     pub host: ::core::option::Option<Host>,
     #[prost(message, repeated, tag = "3")]
     pub neighbors: ::prost::alloc::vec::Vec<Host>,
+    #[prost(string, optional, tag = "4")]
+    pub auth_token: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HelloAck {
@@ -731,49 +727,13 @@ pub struct NeighborDown {
     #[prost(string, optional, tag = "2")]
     pub reason: ::core::option::Option<::prost::alloc::string::String>,
 }
-/// Opens a tunnel: the only frame that allocates endpoint state. The reply
-/// address (`src`) travels exactly once, here; replies leave on the link the
-/// tunnel's frames arrive on, addressed `dst = src`. There is no open-ack —
-/// the pinned mTLS handshake inside the tunnel is the acknowledgement, and
-/// rejection is TunnelClose.
+/// Written by the opener as the first bytes of every non-control stream. The
+/// destination is routing information only; the pinned handshake inside the
+/// stream establishes the caller's authority.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TunnelOpen {
-    /// A plain 16-byte UUID minted by the initiator.
+pub struct StreamPreface {
     #[prost(bytes = "vec", tag = "1")]
-    pub tunnel_id: ::prost::alloc::vec::Vec<u8>,
-    /// The initiator's host_id: where replies go.
-    #[prost(bytes = "vec", tag = "2")]
-    pub src: ::prost::alloc::vec::Vec<u8>,
-    /// The destination host_id. A relay forwards iff it has a direct link to
-    /// dst; otherwise the frame is dropped. dst == self delivers locally.
-    #[prost(bytes = "vec", tag = "3")]
     pub dst: ::prost::alloc::vec::Vec<u8>,
-}
-/// Carries tunnel bytes (payload \<= 64 KiB). Data for an unknown tunnel_id is
-/// a protocol violation by a confused or stale peer: it is dropped without
-/// allocating anything, and the link stays up.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TunnelData {
-    #[prost(bytes = "vec", tag = "1")]
-    pub tunnel_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", tag = "2")]
-    pub dst: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", tag = "3")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
-}
-/// Ends a tunnel. Sent proactively on normal teardown from either endpoint;
-/// a TunnelClose for an unknown tunnel_id is dropped. Tunnels also die with
-/// the link they are pinned to.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct TunnelClose {
-    #[prost(bytes = "vec", tag = "1")]
-    pub tunnel_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", tag = "2")]
-    pub dst: ::prost::alloc::vec::Vec<u8>,
-    /// Present when the peer or relay refused the tunnel. An ordinary close
-    /// carries no error.
-    #[prost(message, optional, tag = "3")]
-    pub error: ::core::option::Option<Error>,
 }
 /// Fire-and-forget credential refresh on the cloud link, sent before the
 /// current token expires. There is no acknowledgement — the protocol never
@@ -2210,6 +2170,45 @@ impl ErrorCode {
         }
     }
 }
+/// A stream reset before acceptance carries one of these refusal reasons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum StreamRefusal {
+    Unspecified = 0,
+    NoRoute = 1,
+    PaymentRequired = 2,
+    RateLimited = 3,
+    NotAdjacent = 4,
+    ShuttingDown = 5,
+}
+impl StreamRefusal {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "STREAM_REFUSAL_UNSPECIFIED",
+            Self::NoRoute => "NO_ROUTE",
+            Self::PaymentRequired => "PAYMENT_REQUIRED",
+            Self::RateLimited => "RATE_LIMITED",
+            Self::NotAdjacent => "NOT_ADJACENT",
+            Self::ShuttingDown => "SHUTTING_DOWN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "STREAM_REFUSAL_UNSPECIFIED" => Some(Self::Unspecified),
+            "NO_ROUTE" => Some(Self::NoRoute),
+            "PAYMENT_REQUIRED" => Some(Self::PaymentRequired),
+            "RATE_LIMITED" => Some(Self::RateLimited),
+            "NOT_ADJACENT" => Some(Self::NotAdjacent),
+            "SHUTTING_DOWN" => Some(Self::ShuttingDown),
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum LinkCloseReason {
@@ -2610,304 +2609,6 @@ impl SuspendReason {
             "SUSPEND_REASON_UPDATE" => Some(Self::Update),
             _ => None,
         }
-    }
-}
-/// Generated client implementations.
-pub mod link_service_client {
-    #![allow(
-        unused_variables,
-        dead_code,
-        missing_docs,
-        clippy::wildcard_imports,
-        clippy::let_unit_value,
-    )]
-    use tonic::codegen::*;
-    use tonic::codegen::http::Uri;
-    #[derive(Debug, Clone)]
-    pub struct LinkServiceClient<T> {
-        inner: tonic::client::Grpc<T>,
-    }
-    impl<T> LinkServiceClient<T>
-    where
-        T: tonic::client::GrpcService<tonic::body::Body>,
-        T::Error: Into<StdError>,
-        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
-        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
-    {
-        pub fn new(inner: T) -> Self {
-            let inner = tonic::client::Grpc::new(inner);
-            Self { inner }
-        }
-        pub fn with_origin(inner: T, origin: Uri) -> Self {
-            let inner = tonic::client::Grpc::with_origin(inner, origin);
-            Self { inner }
-        }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> LinkServiceClient<InterceptedService<T, F>>
-        where
-            F: tonic::service::Interceptor,
-            T::ResponseBody: Default,
-            T: tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-                Response = http::Response<
-                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
-                >,
-            >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
-        {
-            LinkServiceClient::new(InterceptedService::new(inner, interceptor))
-        }
-        /// Compress requests with the given encoding.
-        ///
-        /// This requires the server to support it otherwise it might respond with an
-        /// error.
-        #[must_use]
-        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.inner = self.inner.send_compressed(encoding);
-            self
-        }
-        /// Enable decompressing responses.
-        #[must_use]
-        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.inner = self.inner.accept_compressed(encoding);
-            self
-        }
-        /// Limits the maximum size of a decoded message.
-        ///
-        /// Default: `4MB`
-        #[must_use]
-        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
-            self.inner = self.inner.max_decoding_message_size(limit);
-            self
-        }
-        /// Limits the maximum size of an encoded message.
-        ///
-        /// Default: `usize::MAX`
-        #[must_use]
-        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
-            self.inner = self.inner.max_encoding_message_size(limit);
-            self
-        }
-        /// Host-to-host link. The bidi stream IS the link: opening it (after
-        /// successful auth + handshake) brings the link up; closing it tears the
-        /// link down. Neighbor events and tunnel frames flow inside the Message
-        /// envelope after the handshake completes.
-        pub async fn connect(
-            &mut self,
-            request: impl tonic::IntoStreamingRequest<Message = super::Message>,
-        ) -> std::result::Result<
-            tonic::Response<tonic::codec::Streaming<super::Message>>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
-            let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/amux.v1.LinkService/Connect",
-            );
-            let mut req = request.into_streaming_request();
-            req.extensions_mut()
-                .insert(GrpcMethod::new("amux.v1.LinkService", "Connect"));
-            self.inner.streaming(req, path, codec).await
-        }
-    }
-}
-/// Generated server implementations.
-pub mod link_service_server {
-    #![allow(
-        unused_variables,
-        dead_code,
-        missing_docs,
-        clippy::wildcard_imports,
-        clippy::let_unit_value,
-    )]
-    use tonic::codegen::*;
-    /// Generated trait containing gRPC methods that should be implemented for use with LinkServiceServer.
-    #[async_trait]
-    pub trait LinkService: std::marker::Send + std::marker::Sync + 'static {
-        /// Server streaming response type for the Connect method.
-        type ConnectStream: tonic::codegen::tokio_stream::Stream<
-                Item = std::result::Result<super::Message, tonic::Status>,
-            >
-            + std::marker::Send
-            + 'static;
-        /// Host-to-host link. The bidi stream IS the link: opening it (after
-        /// successful auth + handshake) brings the link up; closing it tears the
-        /// link down. Neighbor events and tunnel frames flow inside the Message
-        /// envelope after the handshake completes.
-        async fn connect(
-            &self,
-            request: tonic::Request<tonic::Streaming<super::Message>>,
-        ) -> std::result::Result<tonic::Response<Self::ConnectStream>, tonic::Status>;
-    }
-    #[derive(Debug)]
-    pub struct LinkServiceServer<T> {
-        inner: Arc<T>,
-        accept_compression_encodings: EnabledCompressionEncodings,
-        send_compression_encodings: EnabledCompressionEncodings,
-        max_decoding_message_size: Option<usize>,
-        max_encoding_message_size: Option<usize>,
-    }
-    impl<T> LinkServiceServer<T> {
-        pub fn new(inner: T) -> Self {
-            Self::from_arc(Arc::new(inner))
-        }
-        pub fn from_arc(inner: Arc<T>) -> Self {
-            Self {
-                inner,
-                accept_compression_encodings: Default::default(),
-                send_compression_encodings: Default::default(),
-                max_decoding_message_size: None,
-                max_encoding_message_size: None,
-            }
-        }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> InterceptedService<Self, F>
-        where
-            F: tonic::service::Interceptor,
-        {
-            InterceptedService::new(Self::new(inner), interceptor)
-        }
-        /// Enable decompressing requests with the given encoding.
-        #[must_use]
-        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.accept_compression_encodings.enable(encoding);
-            self
-        }
-        /// Compress responses with the given encoding, if the client supports it.
-        #[must_use]
-        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
-            self.send_compression_encodings.enable(encoding);
-            self
-        }
-        /// Limits the maximum size of a decoded message.
-        ///
-        /// Default: `4MB`
-        #[must_use]
-        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
-            self.max_decoding_message_size = Some(limit);
-            self
-        }
-        /// Limits the maximum size of an encoded message.
-        ///
-        /// Default: `usize::MAX`
-        #[must_use]
-        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
-            self.max_encoding_message_size = Some(limit);
-            self
-        }
-    }
-    impl<T, B> tonic::codegen::Service<http::Request<B>> for LinkServiceServer<T>
-    where
-        T: LinkService,
-        B: Body + std::marker::Send + 'static,
-        B::Error: Into<StdError> + std::marker::Send + 'static,
-    {
-        type Response = http::Response<tonic::body::Body>;
-        type Error = std::convert::Infallible;
-        type Future = BoxFuture<Self::Response, Self::Error>;
-        fn poll_ready(
-            &mut self,
-            _cx: &mut Context<'_>,
-        ) -> Poll<std::result::Result<(), Self::Error>> {
-            Poll::Ready(Ok(()))
-        }
-        fn call(&mut self, req: http::Request<B>) -> Self::Future {
-            match req.uri().path() {
-                "/amux.v1.LinkService/Connect" => {
-                    #[allow(non_camel_case_types)]
-                    struct ConnectSvc<T: LinkService>(pub Arc<T>);
-                    impl<T: LinkService> tonic::server::StreamingService<super::Message>
-                    for ConnectSvc<T> {
-                        type Response = super::Message;
-                        type ResponseStream = T::ConnectStream;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::ResponseStream>,
-                            tonic::Status,
-                        >;
-                        fn call(
-                            &mut self,
-                            request: tonic::Request<tonic::Streaming<super::Message>>,
-                        ) -> Self::Future {
-                            let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as LinkService>::connect(&inner, request).await
-                            };
-                            Box::pin(fut)
-                        }
-                    }
-                    let accept_compression_encodings = self.accept_compression_encodings;
-                    let send_compression_encodings = self.send_compression_encodings;
-                    let max_decoding_message_size = self.max_decoding_message_size;
-                    let max_encoding_message_size = self.max_encoding_message_size;
-                    let inner = self.inner.clone();
-                    let fut = async move {
-                        let method = ConnectSvc(inner);
-                        let codec = tonic_prost::ProstCodec::default();
-                        let mut grpc = tonic::server::Grpc::new(codec)
-                            .apply_compression_config(
-                                accept_compression_encodings,
-                                send_compression_encodings,
-                            )
-                            .apply_max_message_size_config(
-                                max_decoding_message_size,
-                                max_encoding_message_size,
-                            );
-                        let res = grpc.streaming(method, req).await;
-                        Ok(res)
-                    };
-                    Box::pin(fut)
-                }
-                _ => {
-                    Box::pin(async move {
-                        let mut response = http::Response::new(
-                            tonic::body::Body::default(),
-                        );
-                        let headers = response.headers_mut();
-                        headers
-                            .insert(
-                                tonic::Status::GRPC_STATUS,
-                                (tonic::Code::Unimplemented as i32).into(),
-                            );
-                        headers
-                            .insert(
-                                http::header::CONTENT_TYPE,
-                                tonic::metadata::GRPC_CONTENT_TYPE,
-                            );
-                        Ok(response)
-                    })
-                }
-            }
-        }
-    }
-    impl<T> Clone for LinkServiceServer<T> {
-        fn clone(&self) -> Self {
-            let inner = self.inner.clone();
-            Self {
-                inner,
-                accept_compression_encodings: self.accept_compression_encodings,
-                send_compression_encodings: self.send_compression_encodings,
-                max_decoding_message_size: self.max_decoding_message_size,
-                max_encoding_message_size: self.max_encoding_message_size,
-            }
-        }
-    }
-    /// Generated gRPC service name
-    pub const SERVICE_NAME: &str = "amux.v1.LinkService";
-    impl<T> tonic::server::NamedService for LinkServiceServer<T> {
-        const NAME: &'static str = SERVICE_NAME;
     }
 }
 /// Generated client implementations.
