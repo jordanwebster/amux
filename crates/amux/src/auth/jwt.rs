@@ -12,7 +12,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
-use crate::auth::claims::ConnectionClaims;
+use crate::auth::claims::{ConnectionClaims, Tier};
 
 /// How long to cache JWKS keys before re-fetching.
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(3600);
@@ -36,6 +36,19 @@ pub(crate) enum JwtError {
 
     #[error("Missing client_id in token")]
     MissingClientId,
+
+    #[error("Missing or unrecognised tier in token")]
+    MissingTier,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawConnectionClaims {
+    sub: String,
+    client_id: String,
+    host: String,
+    port: u16,
+    exp: u64,
+    tier: Option<serde_json::Value>,
 }
 
 /// JWKS key set structure
@@ -95,8 +108,21 @@ impl JwtValidator {
         validation.set_required_spec_claims(&["exp", "aud"]);
         validation.set_audience(&["amux_token"]);
 
-        let token_data = decode::<ConnectionClaims>(token, key, &validation)?;
-        let claims = token_data.claims;
+        let token_data = decode::<RawConnectionClaims>(token, key, &validation)?;
+        let raw = token_data.claims;
+        let tier = match raw.tier.as_ref().and_then(serde_json::Value::as_str) {
+            Some("free") => Tier::Free,
+            Some("pro") => Tier::Pro,
+            _ => return Err(JwtError::MissingTier),
+        };
+        let claims = ConnectionClaims {
+            sub: raw.sub,
+            client_id: raw.client_id,
+            host: raw.host,
+            port: raw.port,
+            exp: raw.exp,
+            tier,
+        };
 
         if claims.client_id.is_empty() {
             return Err(JwtError::MissingClientId);
@@ -144,6 +170,51 @@ impl JwtValidator {
     }
 }
 
+#[cfg(testnet)]
+pub(crate) async fn relay_rejects_test_token_without_tier() -> bool {
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct Claims<'a> {
+        sub: &'a str,
+        client_id: &'a str,
+        host: &'a str,
+        port: u16,
+        exp: u64,
+        aud: &'a str,
+    }
+
+    let secret = b"testnet-tier-claim";
+    let validator = JwtValidator::new("http://cloud.test");
+    validator
+        .keys
+        .write()
+        .await
+        .insert("test-key".to_string(), DecodingKey::from_secret(secret));
+    *validator.last_fetch.write().await = Some(Instant::now());
+    let mut header = Header::new(Algorithm::HS256);
+    header.kid = Some("test-key".to_string());
+    let token = encode(
+        &header,
+        &Claims {
+            sub: "00000000-0000-0000-0000-000000000001",
+            client_id: "spec",
+            host: "relay",
+            port: 9443,
+            exp: 4_102_444_800,
+            aud: "amux_token",
+        },
+        &EncodingKey::from_secret(secret),
+    )
+    .expect("encode testnet routing token");
+
+    matches!(
+        validator.validate(&token, "relay", 9443).await,
+        Err(JwtError::MissingTier)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -160,6 +231,8 @@ mod tests {
         exp: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         aud: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tier: Option<&'a str>,
     }
 
     async fn validator_with_hs256_key(secret: &[u8]) -> JwtValidator {
@@ -173,7 +246,7 @@ mod tests {
         validator
     }
 
-    fn token(secret: &[u8], aud: Option<&str>) -> String {
+    fn token(secret: &[u8], aud: Option<&str>, tier: Option<&str>) -> String {
         let mut header = Header::new(Algorithm::HS256);
         header.kid = Some("test-key".to_string());
         encode(
@@ -185,6 +258,7 @@ mod tests {
                 port: 9443,
                 exp: 4_102_444_800,
                 aud,
+                tier,
             },
             &EncodingKey::from_secret(secret),
         )
@@ -197,16 +271,44 @@ mod tests {
         let validator = validator_with_hs256_key(secret).await;
 
         let error = validator
-            .validate(&token(secret, None), "relay", 9443)
+            .validate(&token(secret, None, Some("pro")), "relay", 9443)
             .await
             .unwrap_err();
 
         assert!(matches!(error, JwtError::Jwt(_)));
         assert!(
             validator
-                .validate(&token(secret, Some("amux_token")), "relay", 9443)
+                .validate(
+                    &token(secret, Some("amux_token"), Some("pro")),
+                    "relay",
+                    9443,
+                )
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn validator_requires_a_recognised_tier_claim() {
+        let secret = b"secret";
+        let validator = validator_with_hs256_key(secret).await;
+
+        for tier in [None, Some("enterprise")] {
+            let error = validator
+                .validate(&token(secret, Some("amux_token"), tier), "relay", 9443)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, JwtError::MissingTier));
+        }
+
+        let claims = validator
+            .validate(
+                &token(secret, Some("amux_token"), Some("free")),
+                "relay",
+                9443,
+            )
+            .await
+            .unwrap();
+        assert_eq!(claims.tier, Tier::Free);
     }
 }

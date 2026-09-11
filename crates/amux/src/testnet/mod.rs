@@ -71,6 +71,17 @@ use crate::discovery::{Advertisement, Discovery, DiscoveryEvent, ScriptedDiscove
 use crate::identity::{DeviceIdentity, load_or_create_device_identity_in};
 use crate::trust::{Reachability, TrustEntry, TrustStore};
 
+/// Exercises the production JWT validator used at the relay boundary.
+pub async fn relay_refuses_token_without_tier() -> bool {
+    crate::auth::jwt::relay_rejects_test_token_without_tier().await
+}
+
+/// Reports the entitlement seen by one cloned live-link session before and
+/// after same-user reauthentication replaces its claims.
+pub async fn link_tier_across_reauth() -> (crate::Tier, crate::Tier) {
+    crate::routing::link_reauth_tier_probe().await
+}
+
 /// How a pre-paired fixture pair reaches each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Via {
@@ -180,6 +191,12 @@ impl TestNet {
     pub fn reject_cloud_user(&self, user: &str, error: Option<crate::ProtocolError>) {
         self.cloud()
             .reject_user(user, error.map(crate::protocol::protocol_status));
+    }
+
+    /// Changes the entitlement used by tokens minted for `user` after this
+    /// call. Existing links keep their admitted tier until their next reauth.
+    pub fn cloud_user_tier(&self, user: &str, tier: crate::Tier) {
+        self.cloud().set_user_tier(user, tier);
     }
 
     /// Takes the cloud relay down hard: accepted sockets are severed, so
@@ -780,6 +797,7 @@ impl TestNetBuilder {
                             name: Some(format!("{sub} Example")),
                             email: Some(format!("{sub}@example.test")),
                             sub,
+                            tier: crate::Tier::Pro,
                         })
                         .collect(),
                     cloud.as_ref().map(|relay| relay.addr),

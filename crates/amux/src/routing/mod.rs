@@ -16,6 +16,8 @@ mod wire;
 
 pub(crate) use core::{RouteUpdateOutcome, RoutingCore, RoutingDebug};
 
+#[cfg(testnet)]
+pub(crate) use connect::link_reauth_tier_probe;
 #[cfg(test)]
 pub(crate) use connect::spawn_connector_to_channel;
 #[cfg(test)]

@@ -138,6 +138,7 @@ async fn login_and_profile_resume_cannot_wake_a_suspended_host() {
             sub: "work".into(),
             name: Some("Work".into()),
             email: Some("work@example.test".into()),
+            tier: crate::Tier::Pro,
         }],
         None,
     )

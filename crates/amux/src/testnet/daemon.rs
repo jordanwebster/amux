@@ -13,7 +13,7 @@ use tonic::transport::{Channel, Endpoint};
 
 use super::NetInner;
 use super::assertions::eventually;
-use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries};
+use super::net::{RegisteredToken, TokenRegistry, UserTierRegistry, bind_addr_with_retries};
 use crate::HostId;
 use crate::client::Client;
 use crate::connection::ConnectionManager;
@@ -1191,6 +1191,7 @@ impl Daemon {
             LinkConnectorToken { token, expires_at },
             Arc::new(RegistryTokenRefresher {
                 tokens: cloud_relay.token_registry(),
+                user_tiers: cloud_relay.user_tier_registry(),
                 user_id: attachment.user_id,
             }),
         );
@@ -1435,6 +1436,7 @@ const REFRESHED_JWT_TTL: std::time::Duration = std::time::Duration::from_secs(36
 /// observable shape of fetching a new JWT from the cloud API.
 struct RegistryTokenRefresher {
     tokens: TokenRegistry,
+    user_tiers: UserTierRegistry,
     user_id: uuid::Uuid,
 }
 
@@ -1443,6 +1445,13 @@ impl LinkConnectorTokenRefresher for RegistryTokenRefresher {
     async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
         let token = format!("jwt-refreshed-{}", uuid::Uuid::new_v4().simple());
         let expires_at = std::time::SystemTime::now() + REFRESHED_JWT_TTL;
+        let tier = self
+            .user_tiers
+            .read()
+            .expect("testnet user tier registry poisoned")
+            .get(&self.user_id)
+            .copied()
+            .unwrap_or(crate::Tier::Pro);
         self.tokens
             .write()
             .expect("testnet token registry poisoned")
@@ -1451,6 +1460,7 @@ impl LinkConnectorTokenRefresher for RegistryTokenRefresher {
                 RegisteredToken {
                     user_id: self.user_id,
                     ttl: REFRESHED_JWT_TTL,
+                    tier,
                 },
             );
         Ok(LinkConnectorToken { token, expires_at })

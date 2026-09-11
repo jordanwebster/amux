@@ -10,6 +10,7 @@ async fn identity_fixture_drives_device_refresh_and_userinfo_flows() {
             sub: "alice".to_string(),
             name: Some("Alice Example".to_string()),
             email: Some("alice@example.test".to_string()),
+            tier: amux::Tier::Pro,
         }],
         None,
     )

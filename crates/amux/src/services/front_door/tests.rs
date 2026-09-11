@@ -611,6 +611,7 @@ async fn binding_reports_identity_labels_and_named_account_refusals_over_grpc() 
                 sub: sub.into(),
                 name: Some(format!("{sub} Example")),
                 email: Some(format!("{sub}@example.test")),
+                tier: crate::Tier::Pro,
             })
             .collect(),
         None,
@@ -840,6 +841,7 @@ async fn front_door_adoption_response_identifies_confirmation_and_retries_staged
             sub: "alice".into(),
             name: Some("Alice Example".into()),
             email: Some("alice@example.test".into()),
+            tier: crate::Tier::Pro,
         }],
         None,
     )

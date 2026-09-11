@@ -1,6 +1,31 @@
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountTier {
+    Free,
+    #[default]
+    Pro,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum AccountConfig {
+    Name(String),
+    Detailed {
+        name: String,
+        #[serde(default)]
+        tier: AccountTier,
+    },
+}
+
+impl From<&str> for AccountConfig {
+    fn from(value: &str) -> Self {
+        Self::Name(value.to_string())
+    }
+}
 
 /// Directory definition in test environment
 #[derive(Debug, Clone, Deserialize)]
@@ -22,7 +47,7 @@ pub struct TestConfig {
     pub cloud_account: Option<String>,
     /// Ordered auto-approved identities for successive device logins.
     #[serde(default)]
-    pub accounts: Vec<String>,
+    pub accounts: Vec<AccountConfig>,
     /// Unbound profiles belonging to this installation.
     #[serde(default)]
     pub profiles: Vec<String>,
@@ -87,6 +112,8 @@ pub enum TestStep {
     Sleep(u64),
     /// Retry the next expected output by rerunning the last one-shot command.
     RetryNextExpect(RetryPolicy),
+    /// Change a fixture account's tier for subsequent connection tokens.
+    SetTier { account: String, tier: AccountTier },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -331,6 +358,31 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     steps.push(TestStep::ProcessExited(rest.to_string()));
                     continue;
                 }
+                if let Some(rest) = trimmed.strip_prefix("@@tier ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 2 {
+                        return Err(ParseError {
+                            line: line_num,
+                            message: "@@tier requires <account> <free|pro>".into(),
+                        });
+                    }
+                    let tier = match parts[1] {
+                        "free" => AccountTier::Free,
+                        "pro" => AccountTier::Pro,
+                        _ => {
+                            return Err(ParseError {
+                                line: line_num,
+                                message: "@@tier requires free or pro".into(),
+                            });
+                        }
+                    };
+                    steps.push(TestStep::SetTier {
+                        account: parts[0].to_string(),
+                        tier,
+                    });
+                    continue;
+                }
                 if let Some(rest) = trimmed.strip_prefix("@@contains ") {
                     flush_pending_output(&mut pending_output_lines, &mut steps);
                     steps.push(TestStep::ExpectContains(rest.to_string()));
@@ -554,6 +606,45 @@ No agents running.
             }
             _ => panic!("Expected RetryNextExpect"),
         }
+    }
+
+    #[test]
+    fn parses_account_tiers_and_the_tier_directive() {
+        let content = r#"# test: tier
+
+## Environment
+
+config:
+  name: cloud
+  cloud_relay: true
+  accounts:
+    - name: alice
+      tier: free
+
+terminal:
+  name: T1
+  config: cloud
+
+## Test
+
+@@tier alice pro
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+        assert!(matches!(
+            &test_case.configs[0].accounts[0],
+            AccountConfig::Detailed {
+                name,
+                tier: AccountTier::Free,
+            } if name == "alice"
+        ));
+        assert!(matches!(
+            &test_case.steps[0],
+            TestStep::SetTier {
+                account,
+                tier: AccountTier::Pro,
+            } if account == "alice"
+        ));
     }
 
     #[test]

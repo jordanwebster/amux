@@ -61,6 +61,7 @@ pub use agents::{
     SubscribeSessionEvent, TerminalSize, WorkingOn, attachments_row,
 };
 pub use amux_artifacts::{ArtifactId, ArtifactKind};
+pub use auth::claims::Tier;
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{

@@ -1043,6 +1043,7 @@ mod tests {
                     user_id: self.user,
                     client_id: "runtime-test".into(),
                     expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+                    tier: crate::Tier::Pro,
                 })
             }
         }

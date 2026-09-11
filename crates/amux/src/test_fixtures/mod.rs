@@ -42,6 +42,7 @@ pub struct TestAccount {
     pub sub: String,
     pub name: Option<String>,
     pub email: Option<String>,
+    pub tier: crate::Tier,
 }
 
 #[derive(Clone, Debug)]
@@ -379,13 +380,15 @@ fn api_connect_response(
             serde_json::json!({ "error": "no_relay" }),
         );
     };
+    let account = state.accounts.get(sub).expect("access token account");
     json_response(
         StatusCode::OK,
         serde_json::json!({
             "host": relay.ip().to_string(),
             "port": relay.port(),
             "token": relay_token(sub),
-            "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339()
+            "expires_at": (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            "tier": account.tier,
         }),
     )
 }
@@ -485,6 +488,7 @@ impl LinkTokenAuthenticator for RelayAuthenticator {
             user_id,
             client_id: "test-fixture".to_string(),
             expires_at: SystemTime::now() + Duration::from_secs(3600),
+            tier: crate::Tier::Pro,
         })
     }
 }

@@ -41,11 +41,13 @@ type TrackedConnections = Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
 pub(crate) struct RegisteredToken {
     pub(crate) user_id: Uuid,
     pub(crate) ttl: Duration,
+    pub(crate) tier: crate::Tier,
 }
 
 /// Shared token → user/TTL registry; the relay's authenticator reads it and
 /// test verbs (different cloud users, short-lived JWTs) write it.
 pub(crate) type TokenRegistry = Arc<std::sync::RwLock<HashMap<String, RegisteredToken>>>;
+pub(crate) type UserTierRegistry = Arc<std::sync::RwLock<HashMap<Uuid, crate::Tier>>>;
 
 /// TTL for ordinary (non-expiring-test) testnet tokens.
 const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(3600);
@@ -57,6 +59,7 @@ pub(crate) struct CloudRelay {
     pub(crate) token: String,
     user_id: Uuid,
     tokens: TokenRegistry,
+    user_tiers: UserTierRegistry,
     failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
     /// builder `cloud_user` label → that user's `(user_id, token)`.
     user_labels: std::sync::Mutex<HashMap<String, (Uuid, String)>>,
@@ -103,6 +106,11 @@ impl CloudRelay {
         let token = format!("spec-token-{}", Uuid::new_v4().simple());
         let user_id = Uuid::new_v4();
         let tokens: TokenRegistry = Arc::default();
+        let user_tiers: UserTierRegistry = Arc::default();
+        user_tiers
+            .write()
+            .expect("testnet user tier registry poisoned")
+            .insert(user_id, crate::Tier::Pro);
         tokens
             .write()
             .expect("testnet token registry poisoned")
@@ -111,6 +119,7 @@ impl CloudRelay {
                 RegisteredToken {
                     user_id,
                     ttl: DEFAULT_TOKEN_TTL,
+                    tier: crate::Tier::Pro,
                 },
             );
         let relay = Self {
@@ -119,6 +128,7 @@ impl CloudRelay {
             token,
             user_id,
             tokens,
+            user_tiers,
             failures: Arc::default(),
             user_labels: std::sync::Mutex::new(HashMap::new()),
             server: Mutex::new(None),
@@ -172,6 +182,10 @@ impl CloudRelay {
             .or_insert_with(|| {
                 let user_id = Uuid::new_v4();
                 let token = format!("spec-token-{label}-{}", Uuid::new_v4().simple());
+                self.user_tiers
+                    .write()
+                    .expect("testnet user tier registry poisoned")
+                    .insert(user_id, crate::Tier::Pro);
                 self.register_token(&token, user_id, DEFAULT_TOKEN_TTL);
                 (user_id, token)
             })
@@ -181,14 +195,37 @@ impl CloudRelay {
     /// Registers a bearer token the relay will accept for `user_id`, with
     /// authenticated sessions that expire `ttl` after each validation.
     pub(crate) fn register_token(&self, token: &str, user_id: Uuid, ttl: Duration) {
+        let tier = self
+            .user_tiers
+            .read()
+            .expect("testnet user tier registry poisoned")
+            .get(&user_id)
+            .copied()
+            .unwrap_or(crate::Tier::Pro);
         self.tokens
             .write()
             .expect("testnet token registry poisoned")
-            .insert(token.to_string(), RegisteredToken { user_id, ttl });
+            .insert(token.to_string(), RegisteredToken { user_id, ttl, tier });
     }
 
     pub(crate) fn token_registry(&self) -> TokenRegistry {
         self.tokens.clone()
+    }
+
+    pub(crate) fn user_tier_registry(&self) -> UserTierRegistry {
+        self.user_tiers.clone()
+    }
+
+    pub(crate) fn set_user_tier(&self, label: &str, tier: crate::Tier) {
+        let user_id = if label == "default" {
+            self.user_id
+        } else {
+            self.credentials_for_user(label).0
+        };
+        self.user_tiers
+            .write()
+            .expect("testnet user tier registry poisoned")
+            .insert(user_id, tier);
     }
 
     /// Attempts a routed `ClientService.ListAgents` call from the relay's
@@ -334,6 +371,32 @@ impl LinkTokenAuthenticator for RegistryTokenAuthenticator {
             user_id: registered.user_id,
             client_id: "test-client".to_string(),
             expires_at: SystemTime::now() + registered.ttl,
+            tier: registered.tier,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn changed_cloud_user_tier_is_minted_into_subsequent_tokens() {
+        let relay = CloudRelay::start().await;
+        let (user_id, _) = relay.credentials_for_user("alice");
+
+        relay.set_user_tier("alice", crate::Tier::Free);
+        relay.register_token("after-tier-change", user_id, DEFAULT_TOKEN_TTL);
+
+        assert_eq!(
+            relay
+                .tokens
+                .read()
+                .unwrap()
+                .get("after-tier-change")
+                .unwrap()
+                .tier,
+            crate::Tier::Free
+        );
     }
 }

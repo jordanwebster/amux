@@ -1,4 +1,6 @@
-use crate::parser::{Directory, RetryPolicy, Terminal, TestCase, TestConfig, TestStep};
+use crate::parser::{
+    AccountConfig, AccountTier, Directory, RetryPolicy, Terminal, TestCase, TestConfig, TestStep,
+};
 
 type PreparedEnvironment = (Vec<Directory>, Vec<TestConfig>, Vec<Terminal>);
 use std::collections::{HashMap, VecDeque};
@@ -411,6 +413,7 @@ struct RoutingClaims<'a> {
     port: u16,
     exp: u64,
     aud: &'a str,
+    tier: &'a str,
 }
 
 fn allocate_local_port() -> Result<u16, String> {
@@ -470,7 +473,7 @@ impl CloudFixture {
     fn start(
         routing_host: String,
         routing_port: u16,
-        accounts: &[String],
+        accounts: &[AccountConfig],
         update_version: Option<&str>,
         executable: &Path,
     ) -> Result<Self, String> {
@@ -543,24 +546,41 @@ impl CloudFixture {
 
 #[derive(Clone, Copy)]
 struct FixtureAccount {
+    name: &'static str,
     sub: &'static str,
     display: &'static str,
     email: &'static str,
+    tier: AccountTier,
 }
 
 fn fixture_account(name: &str) -> Result<FixtureAccount, String> {
     match name {
         "alice" => Ok(FixtureAccount {
+            name: "alice",
             sub: E2E_USER_ID,
             display: "Alice Example",
             email: "alice@example.test",
+            tier: AccountTier::Pro,
         }),
         "bob" => Ok(FixtureAccount {
+            name: "bob",
             sub: "22222222-2222-4222-8222-222222222222",
             display: "Bob Example",
             email: "bob@example.test",
+            tier: AccountTier::Pro,
         }),
         _ => Err(format!("Unknown fixture account {name:?}")),
+    }
+}
+
+fn configured_fixture_account(config: &AccountConfig) -> Result<FixtureAccount, String> {
+    match config {
+        AccountConfig::Name(name) => fixture_account(name),
+        AccountConfig::Detailed { name, tier } => {
+            let mut account = fixture_account(name)?;
+            account.tier = *tier;
+            Ok(account)
+        }
     }
 }
 
@@ -573,10 +593,10 @@ struct IdentityState {
 }
 
 impl IdentityState {
-    fn new(accounts: &[String]) -> Result<Self, String> {
+    fn new(accounts: &[AccountConfig]) -> Result<Self, String> {
         let accounts = accounts
             .iter()
-            .map(|name| fixture_account(name))
+            .map(configured_fixture_account)
             .collect::<Result<VecDeque<_>, _>>()?;
         Ok(Self {
             fallback: accounts
@@ -588,6 +608,42 @@ impl IdentityState {
             refresh: HashMap::new(),
             access: HashMap::new(),
         })
+    }
+
+    fn set_tier(&mut self, name: &str, tier: AccountTier) -> Result<(), String> {
+        fixture_account(name)?;
+        let mut found = false;
+        for account in self
+            .accounts
+            .iter_mut()
+            .chain(std::iter::once(&mut self.fallback))
+            .chain(self.devices.values_mut())
+            .chain(self.refresh.values_mut())
+            .chain(self.access.values_mut())
+        {
+            if account.name == name {
+                account.tier = tier;
+                found = true;
+            }
+        }
+        found
+            .then_some(())
+            .ok_or_else(|| format!("Fixture account {name:?} is not configured"))
+    }
+
+    fn queue_account(&mut self, name: &str) -> Result<(), String> {
+        let account = self
+            .accounts
+            .iter()
+            .chain(std::iter::once(&self.fallback))
+            .chain(self.devices.values())
+            .chain(self.refresh.values())
+            .chain(self.access.values())
+            .find(|account| account.name == name)
+            .copied()
+            .ok_or_else(|| format!("Fixture account {name:?} is not configured"))?;
+        self.accounts.push_front(account);
+        Ok(())
     }
 
     fn tokens(&mut self, account: FixtureAccount) -> serde_json::Value {
@@ -664,7 +720,7 @@ impl IdentityState {
                 } else {
                     (
                         "200 OK",
-                        serde_json::json!({"host": "localhost", "port": routing_port, "token": routing_token(routing_host, routing_port, account.sub), "expires_at": (Utc::now() + ChronoDuration::hours(1)).to_rfc3339()}),
+                        serde_json::json!({"host": "localhost", "port": routing_port, "token": routing_token(routing_host, routing_port, account.sub, account.tier), "expires_at": (Utc::now() + ChronoDuration::hours(1)).to_rfc3339(), "tier": account.tier}),
                     )
                 }
             }
@@ -761,7 +817,12 @@ fn handle_cloud_request(
     let _ = stream.write_all(response.as_bytes());
 }
 
-fn routing_token(routing_host: &str, routing_port: u16, subject: &str) -> String {
+fn routing_token(
+    routing_host: &str,
+    routing_port: u16,
+    subject: &str,
+    tier: AccountTier,
+) -> String {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(E2E_JWT_KID.to_string());
     let claims = RoutingClaims {
@@ -771,6 +832,10 @@ fn routing_token(routing_host: &str, routing_port: u16, subject: &str) -> String
         port: routing_port,
         exp: (Utc::now() + ChronoDuration::hours(1)).timestamp() as u64,
         aud: "amux_token",
+        tier: match tier {
+            AccountTier::Free => "free",
+            AccountTier::Pro => "pro",
+        },
     };
     encode(
         &header,
@@ -832,6 +897,13 @@ impl VariableContext {
 /// Test executor
 pub struct Executor {
     pub config: ExecutorConfig,
+}
+
+struct StepEnvironment<'a> {
+    terminal_configs: &'a HashMap<String, (String, PathBuf, bool)>,
+    config_paths: &'a HashMap<String, PathBuf>,
+    config_envs: &'a HashMap<String, HashMap<String, String>>,
+    cloud_fixture: Option<&'a CloudFixture>,
 }
 
 impl Executor {
@@ -1260,9 +1332,12 @@ impl Executor {
             .and_then(|()| {
                 self.execute_steps(
                     &test_case.steps,
-                    &terminal_configs,
-                    &config_paths,
-                    &config_envs,
+                    &StepEnvironment {
+                        terminal_configs: &terminal_configs,
+                        config_paths: &config_paths,
+                        config_envs: &config_envs,
+                        cloud_fixture: cloud_fixture.as_ref(),
+                    },
                     &mut var_ctx,
                     &mut transcript,
                 )
@@ -1338,8 +1413,7 @@ impl Executor {
                     .identity
                     .lock()
                     .unwrap()
-                    .accounts
-                    .push_front(fixture_account(account)?);
+                    .queue_account(account)?;
                 commands.push(vec!["login".to_string()]);
             }
             for args in commands {
@@ -1365,9 +1439,7 @@ impl Executor {
     fn execute_steps(
         &self,
         steps: &[TestStep],
-        terminal_configs: &HashMap<String, (String, PathBuf, bool)>,
-        config_paths: &HashMap<String, PathBuf>,
-        config_envs: &HashMap<String, HashMap<String, String>>,
+        environment: &StepEnvironment<'_>,
         var_ctx: &mut VariableContext,
         transcript: &mut String,
     ) -> Result<(), String> {
@@ -1382,6 +1454,17 @@ impl Executor {
 
         for step in steps {
             match step {
+                TestStep::SetTier { account, tier } => {
+                    let fixture = environment
+                        .cloud_fixture
+                        .ok_or("@@tier requires a cloud fixture")?;
+                    fixture
+                        .identity
+                        .lock()
+                        .map_err(|_| "cloud identity fixture is poisoned")?
+                        .set_tier(account, *tier)?;
+                    transcript.push_str(&format!("[tier {account} {tier:?}]\n"));
+                }
                 TestStep::ProcessExited(pid) => {
                     let pid: i32 = var_ctx
                         .substitute(pid)
@@ -1544,13 +1627,16 @@ impl Executor {
                 }
                 TestStep::Input(input) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
-                    let (config_name, cwd, installation) = terminal_configs
+                    let (config_name, cwd, installation) = environment
+                        .terminal_configs
                         .get(term_name)
                         .ok_or(format!("Unknown terminal: {}", term_name))?;
-                    let config_path = config_paths
+                    let config_path = environment
+                        .config_paths
                         .get(config_name)
                         .ok_or(format!("Unknown config: {}", config_name))?;
-                    let env = config_envs
+                    let env = environment
+                        .config_envs
                         .get(config_name)
                         .ok_or(format!("Missing env for config: {}", config_name))?;
 
@@ -1862,5 +1948,45 @@ mod tests {
             .0,
             "401 Unauthorized"
         );
+    }
+
+    #[test]
+    fn cloud_fixture_mints_each_accounts_current_tier_in_body_and_token() {
+        let mut state = IdentityState::new(&[AccountConfig::Detailed {
+            name: "alice".into(),
+            tier: AccountTier::Free,
+        }])
+        .unwrap();
+        let account = configured_fixture_account(&AccountConfig::Detailed {
+            name: "alice".into(),
+            tier: AccountTier::Free,
+        })
+        .unwrap();
+        state.access.insert("access".into(), account);
+
+        for expected in [AccountTier::Free, AccountTier::Pro] {
+            state.set_tier("alice", expected).unwrap();
+            let (status, response) = state.respond(
+                "/api/connect",
+                &HashMap::new(),
+                Some("access"),
+                "relay",
+                1234,
+            );
+            assert_eq!(status, "200 OK");
+            assert_eq!(response["tier"], serde_json::json!(expected));
+
+            let token = response["token"].as_str().unwrap();
+            let mut validation = jsonwebtoken::Validation::new(Algorithm::RS256);
+            validation.set_audience(&["amux_token"]);
+            let claims = jsonwebtoken::decode::<serde_json::Value>(
+                token,
+                &jsonwebtoken::DecodingKey::from_rsa_components(E2E_JWK_N, E2E_JWK_E).unwrap(),
+                &validation,
+            )
+            .unwrap()
+            .claims;
+            assert_eq!(claims["tier"], serde_json::json!(expected));
+        }
     }
 }

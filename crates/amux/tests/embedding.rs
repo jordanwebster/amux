@@ -194,6 +194,7 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
                     sub: subject.into(),
                     name: Some(subject.into()),
                     email: Some(format!("{subject}@example.test")),
+                    tier: amux::Tier::Pro,
                 }],
                 Some(relay.addr),
             )

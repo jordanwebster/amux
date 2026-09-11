@@ -106,6 +106,7 @@ impl LinkTokenAuthenticator for JwtCloudLinkAuthenticator {
             user_id,
             client_id: claims.client_id,
             expires_at,
+            tier: claims.tier,
         })
     }
 }
@@ -1127,6 +1128,7 @@ mod tests {
                         user_id,
                         client_id: "test-client".to_string(),
                         expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+                        tier: crate::Tier::Pro,
                     },
                 )])),
             }

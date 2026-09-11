@@ -374,6 +374,7 @@ async fn profile_selector_cli_login_and_logout_preserve_the_device() {
             sub: "alice".into(),
             name: Some("Alice Example".into()),
             email: Some("alice@example.test".into()),
+            tier: amux::Tier::Pro,
         }],
         None,
     )
@@ -420,6 +421,7 @@ async fn profile_selector_cli_non_pristine_login_requires_confirmation() {
             sub: "alice".into(),
             name: Some("Alice Example".into()),
             email: Some("alice@example.test".into()),
+            tier: amux::Tier::Pro,
         }],
         None,
     )

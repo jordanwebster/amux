@@ -1,4 +1,11 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tier {
+    Free,
+    Pro,
+}
 
 /// Claims from a cloud routing connection token.
 #[derive(Debug, Deserialize)]
@@ -13,4 +20,6 @@ pub(crate) struct ConnectionClaims {
     pub(crate) port: u16,
     /// Expiration time as seconds since Unix epoch.
     pub(crate) exp: u64,
+    /// Relay entitlement carried by this token.
+    pub(crate) tier: Tier,
 }

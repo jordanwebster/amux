@@ -16,9 +16,11 @@ A config with `cloud_relay: true` supplies the identity fixture and relay TLS
 material. Start its relay with `amux server start --cloud --foreground` in a
 terminal. Its `accounts: [alice, bob]` list determines successive auto-approved
 device logins; once exhausted, the last account repeats (Alice by default).
-Both accounts have a name and email. Missing requested scopes, reused device
-codes or refresh tokens, and invalid access tokens are refused. An optional
-`cloud_account: alice` on a device logs it in through the CLI during setup.
+Both accounts have a name and email. Accounts default to pro; use
+`accounts: [{ name: alice, tier: free }]` to choose another starting tier.
+Missing requested scopes, reused device codes or refresh tokens, and invalid
+access tokens are refused. An optional `cloud_account: alice` on a device logs
+it in through the CLI during setup.
 
 Set `update_version: 999.0.0` on the relay config to serve a higher-version
 manifest at `/update/manifest.json` and the current executable at `/update/amux`.
@@ -44,6 +46,8 @@ or multicast-disabled runners.
 
 Output lines compare exactly. Additional directives:
 
+- `@@tier <account> <free|pro>` changes the named fixture account's tier for
+  subsequently minted relay tokens.
 - `@@retry <timeout-ms> <interval-ms>` retries a one-shot command until the next
   exact output comparison succeeds.
 - `@@capture <name> <prefix>` captures the remainder of one output line.

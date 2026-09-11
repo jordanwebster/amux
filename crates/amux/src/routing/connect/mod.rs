@@ -9,7 +9,7 @@
 
 use std::future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::{Duration, SystemTime};
 
 use bytes::Bytes;
@@ -47,6 +47,7 @@ pub(crate) struct AuthenticatedLinkUser {
     pub(crate) user_id: Uuid,
     pub(crate) client_id: String,
     pub(crate) expires_at: SystemTime,
+    pub(crate) tier: crate::Tier,
 }
 
 #[tonic::async_trait]
@@ -70,9 +71,15 @@ where
 
 #[derive(Clone)]
 pub(crate) struct LinkAuthSession {
-    user: AuthenticatedLinkUser,
+    user: Arc<StdRwLock<AuthenticatedLinkUser>>,
     authenticator: Arc<dyn LinkTokenAuthenticator>,
     minimum_client_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReauthError {
+    pub(crate) original_user_id: Uuid,
+    pub(crate) reauth_user_id: Uuid,
 }
 
 impl LinkAuthSession {
@@ -85,11 +92,83 @@ impl LinkAuthSession {
         T: LinkTokenAuthenticator,
     {
         Self {
-            user,
+            user: Arc::new(StdRwLock::new(user)),
             authenticator: Arc::new(authenticator),
             minimum_client_version,
         }
     }
+
+    pub(crate) fn tier(&self) -> crate::Tier {
+        self.user().tier
+    }
+
+    pub(crate) fn apply_reauth(&self, user: AuthenticatedLinkUser) -> Result<(), ReauthError> {
+        let mut current = self
+            .user
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if current.user_id != user.user_id {
+            return Err(ReauthError {
+                original_user_id: current.user_id,
+                reauth_user_id: user.user_id,
+            });
+        }
+        *current = user;
+        Ok(())
+    }
+
+    fn user(&self) -> AuthenticatedLinkUser {
+        self.user
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+#[cfg(testnet)]
+pub(crate) async fn link_reauth_tier_probe() -> (crate::Tier, crate::Tier) {
+    #[derive(Clone)]
+    struct TierAuthenticator(AuthenticatedLinkUser);
+
+    #[tonic::async_trait]
+    impl LinkTokenAuthenticator for TierAuthenticator {
+        async fn authenticate_token(
+            &self,
+            _token: &str,
+        ) -> Result<AuthenticatedLinkUser, tonic::Status> {
+            Ok(self.0.clone())
+        }
+    }
+
+    let user_id = Uuid::new_v4();
+    let initial = AuthenticatedLinkUser {
+        user_id,
+        client_id: "testnet".to_string(),
+        expires_at: SystemTime::now() + Duration::from_secs(60),
+        tier: crate::Tier::Free,
+    };
+    let refreshed = AuthenticatedLinkUser {
+        user_id,
+        client_id: "testnet".to_string(),
+        expires_at: SystemTime::now() + Duration::from_secs(3600),
+        tier: crate::Tier::Pro,
+    };
+    let session = LinkAuthSession::new(initial, TierAuthenticator(refreshed), None);
+    let live_link = session.clone();
+    let before = live_link.tier();
+    let mut established = EstablishedLinkAuth::new(session);
+    let (out_tx, _out_rx) = mpsc::channel(1);
+    assert!(
+        handle_reauth(
+            Some(&mut established),
+            &out_tx,
+            wire::pb::Reauth {
+                auth_token: "refreshed".to_string(),
+            },
+        )
+        .await
+    );
+    (before, live_link.tier())
 }
 
 #[derive(Debug, Clone)]
@@ -944,7 +1023,7 @@ fn validate_minimum_client_version(
     };
     if reject {
         tracing::warn!(
-            client_id = %auth_session.user.client_id,
+            client_id = %auth_session.user().client_id,
             client_version = %host.version,
             minimum_version = %minimum_version,
             "link client version below minimum"
@@ -1157,20 +1236,16 @@ fn link_close_status(close: &wire::pb::LinkClose) -> Option<tonic::Status> {
 }
 
 struct EstablishedLinkAuth {
-    user: AuthenticatedLinkUser,
-    authenticator: Arc<dyn LinkTokenAuthenticator>,
+    session: LinkAuthSession,
 }
 
 impl EstablishedLinkAuth {
     fn new(session: LinkAuthSession) -> Self {
-        Self {
-            user: session.user,
-            authenticator: session.authenticator,
-        }
+        Self { session }
     }
 
     fn expiry_deadline(&self) -> tokio::time::Instant {
-        instant_for_system_time(self.user.expires_at, Duration::ZERO)
+        instant_for_system_time(self.session.user().expires_at, Duration::ZERO)
     }
 }
 
@@ -1192,23 +1267,32 @@ async fn handle_reauth(
         return false;
     };
     match auth
+        .session
         .authenticator
         .authenticate_token(&reauth.auth_token)
         .await
     {
-        Ok(user) if user.user_id == auth.user.user_id => {
-            auth.user = user;
-            true
-        }
         Ok(user) => {
-            audit::auth_jwt_failure("link reauth user mismatch");
-            tracing::warn!(
-                original_user_id = %auth.user.user_id,
-                reauth_user_id = %user.user_id,
-                "link reauth user mismatch"
-            );
-            let _ = try_send_outbound(out_tx, auth_expired_link_close());
-            false
+            let previous_tier = auth.session.tier();
+            match auth.session.apply_reauth(user) {
+                Ok(()) => {
+                    let tier = auth.session.tier();
+                    if tier != previous_tier {
+                        tracing::info!(?previous_tier, ?tier, "link entitlement changed on reauth");
+                    }
+                    true
+                }
+                Err(error) => {
+                    audit::auth_jwt_failure("link reauth user mismatch");
+                    tracing::warn!(
+                        original_user_id = %error.original_user_id,
+                        reauth_user_id = %error.reauth_user_id,
+                        "link reauth user mismatch"
+                    );
+                    let _ = try_send_outbound(out_tx, auth_expired_link_close());
+                    false
+                }
+            }
         }
         Err(status) => {
             audit::auth_jwt_failure(&status);
@@ -1414,10 +1498,20 @@ mod tests {
     }
 
     fn auth_user(user_id: u128, client_id: &str, expires_in: Duration) -> AuthenticatedLinkUser {
+        auth_user_with_tier(user_id, client_id, expires_in, crate::Tier::Pro)
+    }
+
+    fn auth_user_with_tier(
+        user_id: u128,
+        client_id: &str,
+        expires_in: Duration,
+        tier: crate::Tier,
+    ) -> AuthenticatedLinkUser {
         AuthenticatedLinkUser {
             user_id: uuid::Uuid::from_u128(user_id),
             client_id: client_id.to_string(),
             expires_at: SystemTime::now() + expires_in,
+            tier,
         }
     }
 
@@ -1747,13 +1841,21 @@ mod tests {
     async fn authenticated_acceptor_silently_extends_auth_on_reauth_for_same_user() {
         let (ctx, _routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
-        let initial_user = auth_user(100, "client-a", Duration::from_millis(500));
-        let refreshed_user = auth_user(100, "client-a", Duration::from_secs(7200));
+        let initial_user = auth_user_with_tier(
+            100,
+            "client-a",
+            Duration::from_millis(500),
+            crate::Tier::Free,
+        );
+        let refreshed_user =
+            auth_user_with_tier(100, "client-a", Duration::from_secs(7200), crate::Tier::Pro);
         let authenticator = Arc::new(TestTokenAuthenticator::new(vec![(
             "token-b",
             refreshed_user,
         )]));
-        let ctx = ctx.with_auth_session(LinkAuthSession::new(initial_user, authenticator, None));
+        let session = LinkAuthSession::new(initial_user, authenticator, None);
+        let live_link = session.clone();
+        let ctx = ctx.with_auth_session(session);
 
         let (input_tx, mut output_rx) = establish(ctx, &peer).await;
         input_tx
@@ -1764,6 +1866,7 @@ mod tests {
             .unwrap();
 
         assert_link_silence(&mut output_rx, Duration::from_millis(1200)).await;
+        assert_eq!(live_link.tier(), crate::Tier::Pro);
         drop(input_tx);
     }
 

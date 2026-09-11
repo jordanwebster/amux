@@ -24,6 +24,7 @@
 // release-profile test build compiles this crate empty rather than failing.
 #![cfg(testnet)]
 mod discovery;
+mod entitlement;
 mod smoke; // the harness in one test: the canonical TestNet example // Chapter 0 — Local-network listener discovery
 
 mod agents; // Chapter 7 — Agent messaging & relationships

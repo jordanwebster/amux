@@ -1,3 +1,11 @@
+2026-09-11 — **Carry relay entitlement in authenticated link state.** Cloud
+connection tokens now require a recognised `free` or `pro` tier, and the relay
+rejects a signed token that omits or invents the claim. Same-account reauth
+replaces the complete shared link claims so a changed tier takes effect without
+reconnecting. Testnet tokens retain each account's tier, while the end-to-end
+identity fixture accepts tiered account declarations and an `@@tier` directive
+that changes subsequent API responses and signed routing tokens.
+
 2026-09-11 — **Prepare relay UDP ingress without applying it.** The relay's
 infrastructure role now opens UDP 9001 beside the TCP fallback, renders both
 listeners into the service configuration, and requires both sockets to be
