@@ -29,6 +29,7 @@ mod dispatcher;
 pub mod envelope;
 mod identity;
 pub mod installation;
+mod link;
 mod pairing;
 mod paths;
 mod profile;

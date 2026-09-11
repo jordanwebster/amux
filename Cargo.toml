@@ -17,7 +17,7 @@ claude = { path = "crates/claude" }
 # Shared
 portable-pty = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "sync", "time", "process", "fs", "signal", "test-util"] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["compat"] }
 libc = "0.2"
 signal-hook = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
@@ -38,6 +38,7 @@ http-body-util = "0.1"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
 futures-util = "0.3"
+yamux = "0.14"
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 gethostname = "1"
 oauth2 = "5"

@@ -1,3 +1,11 @@
+2026-09-11 — **Multiplex ordered links into native byte streams.** A link
+carrier now exposes its control channel and independently flow-controlled
+application streams through one transport-neutral interface. The first yamux
+stream carries length-prefixed control messages; later streams carry a
+destination preface, preserve refusal reasons during reset, and use their own
+finish semantics. The connector and acceptor can both open streams over any
+Tokio ordered byte stream, ready for relay TCP and SSH links.
+
 2026-09-11 — **Start the native-stream link protocol.** Protocol version 2
 keeps hello, neighbor, reauthentication, and close events on the control
 stream. The relay token now travels in hello, while each application stream
