@@ -10,6 +10,9 @@ shape, and CLI profile tests verify the current sign-in copy separately from
 the adopted profile's stored account name and label.
 The TUI's early attachment-refusal check now follows the shared 32 MiB artifact
 cap instead of retaining its former 10 MiB fixture.
+The host-overlay goldens use the standard combined text-and-style envelope, so
+viewport validation checks each 120-by-40 plane instead of counting both as
+one 82-row image.
 
 2026-09-11 — **Prove session and bulk isolation on the ordered relay fallback.**
 Session subscriptions and artifact fetches now have black-box coverage showing

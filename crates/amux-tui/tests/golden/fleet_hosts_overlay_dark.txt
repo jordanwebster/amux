@@ -1,3 +1,4 @@
+--- text ---
 ┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ /                                                                                                        5 agents    │
 │                                                                                                                      │
@@ -38,8 +39,7 @@
 │ ⚠ hetzner is away · subscribe at amux.sh/account to reach agents from anywhere                                       │
 │ ● connected · 6 hosts  any key to close                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-
--- styles --
+--- styles ---
 mmeeeemmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
 m.m........................................................................................................mmmmmmmm....m
 m......................................................................................................................m

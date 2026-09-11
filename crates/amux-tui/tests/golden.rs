@@ -540,7 +540,10 @@ fn fleet_hosts_overlay_dark() {
     }
     assert_golden(
         "fleet_hosts_overlay_dark",
-        &format!("{}\n-- styles --\n{}", capture.text, capture.styles),
+        &format!(
+            "--- text ---\n{}--- styles ---\n{}",
+            capture.text, capture.styles
+        ),
     );
 }
 
@@ -553,7 +556,10 @@ fn fleet_hosts_overlay_light() {
     let capture = capture_frame(&buffer, theme);
     assert_golden(
         "fleet_hosts_overlay_light",
-        &format!("{}\n-- styles --\n{}", capture.text, capture.styles),
+        &format!(
+            "--- text ---\n{}--- styles ---\n{}",
+            capture.text, capture.styles
+        ),
     );
 }
 
