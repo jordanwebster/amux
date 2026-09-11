@@ -1,14 +1,14 @@
 ┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ /                                                                                                        8 agents    │
 │                                                                                                                      │
-│ ▎ ⋯ refactor-tunnels      claude   nova       12s   working    split the tunnel supervisor 15m                       │
-│   ✓   write-the-docs      claude   nova       5m    finished   document the new handshake 4m                         │
-│   ⋯   test-runner         codex    nova       30s   working    run the tunnel suite end to end 1m                    │
-│   !     flake-hunter      codex    nova       20s   permission                                                       │
-│   ! fix-auth-bug          claude   nova       2m    permission                                                       │
-│   ? migration-plan        claude   hetzner    45s   question                                                         │
-│   ✓ nightly-refactor      codex    hetzner    3m    finished                                                         │
-│     docs-cleanup          claude   nova       1h    idle                                                             │
+│ ▎ ⋯ refactor-tunnels      claude   nova ·direct       12s   working    split the tunnel supervisor 15m               │
+│   ✓   write-the-docs      claude   nova ·direct       5m    finished   document the new handshake 4m                 │
+│   ⋯   test-runner         codex    nova ·direct       30s   working    run the tunnel suite end to end 1m            │
+│   !     flake-hunter      codex    nova ·direct       20s   permission                                               │
+│   ! fix-auth-bug          claude   nova ·direct       2m    permission                                               │
+│   ? migration-plan        claude   hetzner ·direct    45s   question                                                 │
+│   ✓ nightly-refactor      codex    hetzner ·direct    3m    finished                                                 │
+│     docs-cleanup          claude   nova ·direct       1h    idle                                                     │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

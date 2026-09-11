@@ -1,3 +1,11 @@
+2026-09-11 — **Name every desktop host route and account state.** Fleet rows
+now append direct, relay, SSH, away, or offline to the host name, and a hosts
+overlay lists trusted routes alongside nearby unpaired machines and the pairing
+command. Account banners distinguish free relay presence from signed-out
+offline access, while CLI login explains relay presence and subscription
+tunnels, peer listings use the live route and tier, and profile status names
+the connected entitlement tier.
+
 2026-09-11 — **Drive reachability from one cloud status stream.** The UI
 runtime now consumes the selected profile's installation status and records a
 single signed-out, connecting, connected, retrying, or authentication-required

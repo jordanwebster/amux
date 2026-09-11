@@ -7,7 +7,11 @@ config:
   name: relay
   cloud_relay: true
   tcp_port: 0
-  accounts: [alice, bob]
+  accounts:
+    - name: alice
+      tier: free
+    - name: bob
+      tier: free
 
 config:
   name: local
@@ -32,13 +36,13 @@ terminal:
 > amux --profile work profile rename --clear
 > amux --profile $local.personal.id login
 @@contains To authenticate, visit:
-@@contains $local.personal.id  Alice Example  alice@example.test  bound /
+@@contains Signed in as alice@example.test. The relay shows which hosts are up; a subscription carries agents through it. Hosts on your network and over SSH work without either.
 
 > amux --profile $local.work.id login
-@@contains $local.work.id  Bob Example  bob@example.test  bound /
+@@contains Signed in as bob@example.test. The relay shows which hosts are up; a subscription carries agents through it. Hosts on your network and over SSH work without either.
 
 > amux profiles
 @@retry 8000 100
 Profiles:
-  $local.work.id  Bob Example  bob@example.test  bound / connected
-  $local.personal.id  Alice Example  alice@example.test  bound / connected
+  $local.work.id  Bob Example  bob@example.test  bound / connected (free)
+  $local.personal.id  Alice Example  alice@example.test  bound / connected (free)

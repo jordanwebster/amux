@@ -810,7 +810,8 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                     let peers = client.list_peers().await?;
                     let daemon = client_common::require_running_client(&config, None).await?;
                     let hosts = daemon.list_hosts().await?;
-                    print!("{}", format_peer_list(&peers, &hosts, &candidates));
+                    let tier = profiles::current_tier(&config).await?;
+                    print!("{}", format_peer_list(&peers, &hosts, &candidates, tier));
                 }
                 PeerCommands::Info { peer } => {
                     let peer = client.get_peer(peer.as_str()).await?;

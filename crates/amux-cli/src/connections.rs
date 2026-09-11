@@ -80,18 +80,16 @@ pub fn format_peer_list(
     peers: &[amux::PeerEntry],
     hosts: &[amux::HostEntry],
     candidates: &[amux::PairingCandidate],
+    tier: Option<amux::Tier>,
 ) -> String {
     let mut rows = peers
         .iter()
         .map(|peer| {
-            let online = hosts
-                .iter()
-                .find(|host| host.id == peer.host_id)
-                .is_some_and(|host| host.online);
+            let host = hosts.iter().find(|host| host.id == peer.host_id);
             vec![
                 peer.name.clone(),
                 peer.host_id.to_string(),
-                trusted_peer_via(peer, online).to_string(),
+                trusted_peer_via(host, tier).to_string(),
                 "yes".to_string(),
             ]
         })
@@ -164,30 +162,19 @@ fn plural(value: u64, unit: &str) -> String {
     format!("{value} {unit}{}", if value == 1 { "" } else { "s" })
 }
 
-fn trusted_peer_via(peer: &amux::PeerEntry, online: bool) -> &'static str {
-    if !online {
+fn trusted_peer_via(host: Option<&amux::HostEntry>, tier: Option<amux::Tier>) -> &'static str {
+    let Some(host) = host else {
         return "offline";
-    }
-    if peer
-        .reachabilities
-        .iter()
-        .any(|route| matches!(route, amux::PeerReachability::DirectTcp { .. }))
-    {
-        "direct"
-    } else if peer
-        .reachabilities
-        .iter()
-        .any(|route| matches!(route, amux::PeerReachability::Ssh { .. }))
-    {
-        "ssh"
-    } else if peer
-        .reachabilities
-        .iter()
-        .any(|route| matches!(route, amux::PeerReachability::Cloud))
-    {
-        "relay"
-    } else {
-        "offline"
+    };
+    match host.via {
+        amux::HostVia::Direct => "direct",
+        amux::HostVia::Relay if tier == Some(amux::Tier::Free) && host.signed_in != Some(false) => {
+            "away"
+        }
+        amux::HostVia::Relay => "relay",
+        amux::HostVia::Ssh => "ssh",
+        amux::HostVia::Offline if host.signed_in == Some(false) => "offline, not signed in",
+        amux::HostVia::Offline => "offline",
     }
 }
 
@@ -283,7 +270,7 @@ mod tests {
         let relay = peer(2, "relay-host", amux::PeerReachability::Cloud);
         let hosts = vec![host(1, "desktop", true), host(2, "relay-host", false)];
         let candidates = vec![candidate(3, "phone", amux::PeerVia::Direct)];
-        let output = format_peer_list(&[direct, relay], &hosts, &candidates);
+        let output = format_peer_list(&[direct, relay], &hosts, &candidates, None);
 
         assert!(output.starts_with("HOST"));
         assert!(output.contains("ID"));
@@ -299,11 +286,44 @@ mod tests {
 
     #[test]
     fn onramp_peer_table_formats_relay_candidates_and_empty_tables() {
-        let output = format_peer_list(&[], &[], &[candidate(4, "away", amux::PeerVia::Relay)]);
+        let output = format_peer_list(
+            &[],
+            &[],
+            &[candidate(4, "away", amux::PeerVia::Relay)],
+            None,
+        );
         assert!(output.contains("seen · through the relay"));
-        assert_eq!(format_peer_list(&[], &[], &[]), "HOST  ID  VIA  PAIRED\n");
-        let spaced = format_peer_list(&[], &[], &[candidate(7, "My Mac", amux::PeerVia::Direct)]);
+        assert_eq!(
+            format_peer_list(&[], &[], &[], None),
+            "HOST  ID  VIA  PAIRED\n"
+        );
+        let spaced = format_peer_list(
+            &[],
+            &[],
+            &[candidate(7, "My Mac", amux::PeerVia::Direct)],
+            None,
+        );
         assert!(spaced.contains("pair with: amux pair 'My Mac'"));
+    }
+
+    #[test]
+    fn peer_table_distinguishes_free_relay_presence_and_unsigned_offline_hosts() {
+        let away_peer = peer(8, "away-host", amux::PeerReachability::Cloud);
+        let unsigned_peer = peer(9, "unsigned-host", amux::PeerReachability::Cloud);
+        let mut away = host(8, "away-host", true);
+        away.via = amux::HostVia::Relay;
+        let mut unsigned = host(9, "unsigned-host", false);
+        unsigned.signed_in = Some(false);
+
+        let output = format_peer_list(
+            &[away_peer, unsigned_peer],
+            &[away, unsigned],
+            &[],
+            Some(amux::Tier::Free),
+        );
+        assert!(output.contains("away-host"));
+        assert!(output.contains("away"));
+        assert!(output.contains("offline, not signed in"));
     }
 
     #[test]

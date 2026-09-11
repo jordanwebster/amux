@@ -153,6 +153,7 @@ fn fleet_modes_round_trip() {
         Mode::Normal,
         Mode::Filter,
         Mode::Help,
+        Mode::Hosts,
         Mode::Rename {
             agent: uuid::Uuid::from_u128(7),
             draft: "renamed".to_string(),

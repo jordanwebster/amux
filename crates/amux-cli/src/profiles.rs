@@ -191,6 +191,29 @@ pub async fn configuration(path: Option<&Path>, selector: Option<&str>) -> Resul
     Ok(config)
 }
 
+/// Connected entitlement for the profile selected by this resolved config.
+pub async fn current_tier(config: &Config) -> Result<Option<amux::Tier>> {
+    let Some(path) = config.path.as_deref() else {
+        return Ok(None);
+    };
+    let resolved = amux::load_profile_config(&std::fs::canonicalize(path)?)?;
+    let mut front = crate::front_door::connect(&resolved.installation, true).await?;
+    let profiles = directory(&mut front).await?;
+    let Some(profile) = profiles
+        .iter()
+        .find(|profile| profile.id == resolved.profile_id.to_string())
+    else {
+        return Ok(None);
+    };
+    Ok(
+        match rpc::Tier::try_from(profile.tier).unwrap_or(rpc::Tier::Unspecified) {
+            rpc::Tier::Free => Some(amux::Tier::Free),
+            rpc::Tier::Pro => Some(amux::Tier::Pro),
+            rpc::Tier::Unspecified => None,
+        },
+    )
+}
+
 /// Record the profile a command has settled on, before it does its work.
 ///
 /// Opening the fleet is an explicit selection in the same way a login is:
@@ -410,8 +433,10 @@ pub async fn login(
     // A successful login is an explicit selection, even if cloud connection
     // establishment is still in progress.
     remember(&last_used(installation), &info.id)?;
-    println!("Logged in:");
-    print_profile(&info);
+    println!(
+        "Signed in as {}. The relay shows which hosts are up; a subscription carries agents through it. Hosts on your network and over SSH work without either.",
+        info.email
+    );
     Ok(())
 }
 

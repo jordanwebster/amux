@@ -1,11 +1,11 @@
 ┌ amux ────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ /                                                                                                        5 agents    │
 │                                                                                                                      │
-│ ▎ ! fix-auth-bug          claude   nova       2m    permission                                                       │
-│   ⋯ refactor-tunnels      claude   nova       12s   working                                                          │
-│   – migration-plan        claude   hetzner    45s   –                                                                │
-│   – nightly-refactor      codex    hetzner    3m    –                                                                │
-│     docs-cleanup          claude   nova       1h    idle                                                             │
+│ ▎ ! fix-auth-bug          claude   nova ·direct       2m    permission                                               │
+│   ⋯ refactor-tunnels      claude   nova ·direct       12s   working                                                  │
+│   – migration-plan        claude   hetzner ·offline   45s   –                                                        │
+│   – nightly-refactor      codex    hetzner ·offline   3m    –                                                        │
+│     docs-cleanup          claude   nova ·direct       1h    idle                                                     │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
