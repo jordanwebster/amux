@@ -9073,10 +9073,10 @@ forwarding away from their control loop, keeping neighbor updates and link
 expiry responsive when a destination is saturated or slow.
 
 2026-09-11 — **Handshake floods leave established links alone.** Wire
-conformance once again spends the real TCP listener's per-source TLS handshake
-budget and observes a later connection refused before TLS, then proves a paired
-link established before the flood can still make calls through the rewritten
-native-stream dispatcher path.
+conformance spends the real QUIC listener's per-source handshake budget and
+observes a later Initial refused before TLS state, then proves a paired link
+established before the flood can still make calls through the native-stream
+dispatcher path.
 
 2026-09-11 — **QUIC links use pinned device identities without resumption.**
 Device certificates now produce TLS 1.3 QUIC configurations with the amux
@@ -9085,6 +9085,12 @@ and device-shaped liveness timers. Session tickets and early data are disabled.
 The carrier reserves the first bidirectional stream for control, carries stream
 refusals in QUIC reset codes, and keeps a responsive stream beside a blocked
 reader.
+
+2026-09-11 — **The LAN front door is QUIC-only.** Profiles bind their LAN port
+as a UDP QUIC endpoint, advertise that port through discovery, and use it for
+found-host and QR pairing as well as trusted device links. The direct TCP
+listener, keepalive plumbing, pairing channel, and tracked TCP device channel
+have been removed; TCP remains only as the cloud relay fallback.
 
 2026-09-11 — **Spec networks can shape direct QUIC traffic.** Every TestNet
 daemon now places its production QUIC endpoint behind a stable loopback UDP

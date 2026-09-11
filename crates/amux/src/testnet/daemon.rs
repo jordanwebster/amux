@@ -406,8 +406,17 @@ impl Daemon {
         )
         .await
         .expect("device authentication must finish with a refusal");
+        let rejected = match result {
+            Err(_) => true,
+            Ok(carrier) => tokio::time::timeout(
+                super::assertions::DEFAULT_TIMEOUT,
+                crate::link::LinkCarrier::closed(&carrier),
+            )
+            .await
+            .is_ok(),
+        };
         assert!(
-            result.is_err(),
+            rejected,
             "{} authenticated into {} without a pin",
             self.name(),
             other.name()
