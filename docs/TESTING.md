@@ -42,6 +42,9 @@ owned output sizes, live task leases, and unowned roots. Add
 whole output directories after rechecking their marker and lease. The helper
 never removes an unmarked output or a symbolic-link root. Run `wt run
 test-output-budget` to exercise admission, cancellation, and reclamation.
+`wt run retention-workload` creates and removes three disposable worktrees for
+the ten-cycle concurrent edit/build/test acceptance workload; its measurements
+are written under the ignored `notes/build-foundations/measurements/` directory.
 
 ## Recorded PTY tests
 

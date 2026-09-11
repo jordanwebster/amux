@@ -8929,3 +8929,14 @@ and excluded from the experiment.
 disposable tree labels stay within wt's derived-resource name limit, and a
 failed `wt new` now includes the captured diagnostic instead of surfacing only
 Python's subprocess exception.
+
+2026-09-12 — **Concurrent output retention passes its controlled workload.**
+All ten cycles overlapped across three independent trees. The first compile and
+test took 11.99–12.30 seconds per tree; warm edited cycles took 0.91–1.29
+seconds. Reclaiming one owned output after cycle five forced a 4.65-second
+rebuild. The final three outputs occupied 335,929,344 allocated bytes under a
+4 GiB pool, and their combined size varied by 221,184 bytes across the final
+three cycles. Cancellation cleared its lease, and a one-byte pool refused
+admission with exit 75. The daemon resource probe now requires the tree socket
+before invoking the client, so never-started disposable trees are not mistaken
+for live external daemons during teardown.

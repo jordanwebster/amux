@@ -631,6 +631,9 @@ tree reports the absent resource probe as `DESTROY_FAILED`; the caller must use
 `--keep-orphans` and then target the stale record with `wt prune --records`.
 Wt should treat a never-created tree resource as already absent, or provide one
 removal operation that safely forgets that record after the tree disappears.
+The repository now guards its daemon probe with the tree's Unix-socket presence,
+which prevents `amux profiles` from falsely classifying these never-started
+workload trees as live.
 
 The last capability is a scope decision for wt. Do not grow a compiler dependency
 scanner, remote executor, sandbox, or general CAS protocol inside it. If amux

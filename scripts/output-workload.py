@@ -73,12 +73,7 @@ def remove_tree(name: str):
             "--force",
             "--yes",
             "--keep-branch",
-            "--keep-orphans",
         ],
-        check=False,
-    )
-    invoke(
-        ["wt", "prune", "--records", f"amux/{name}", "--yes"],
         check=False,
     )
 

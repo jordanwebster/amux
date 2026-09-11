@@ -196,6 +196,6 @@ run = "scripts/with-output-budget.sh 5368709120 e2e-build timeout 900 cargo buil
 tied_to = "tree"
 name = "{{name_short()}}"
 needs = ["build"]
-exists = "amux profiles >/dev/null 2>&1"
+exists = 'test -S "{{root()}}/.wt/amux/amux.sock" && amux profiles >/dev/null 2>&1'
 run = "amux server start"
 destroy = "amux server stop"
