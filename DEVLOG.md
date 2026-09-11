@@ -8866,3 +8866,14 @@ removing a coherent target directory. Existing unmarked and active worktree
 outputs are reported but never deleted. A controlled proof refused 2 bytes
 under a 1-byte budget, admitted 1 MiB under 1 GiB, and listed the resulting
 4 KiB owned output only in dry-run mode.
+
+2026-09-11 — **Architecture boundaries are checked and documented.** The
+dependency policy now covers node, agent runtime and production access to test
+support, alongside the value, wire, client and UI layers. Crate documentation
+describes explicit connection and lifecycle ownership, and the native handoff
+names the concrete `app-runtime`, `embedded-client` and `client-ffi` extraction
+responsibilities without adding empty packages. Device and ARM64-simulator iOS
+checks pass for the provider-free node/client/UI graph. The comparable after
+benchmark measured a 41.52 s clean product build, 0.226 s median warm build,
+33.73 s focused test, 4.06 s private edit rebuild and 3.22 GB logical clean
+output. Generator freshness and workspace doctests pass.

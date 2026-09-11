@@ -15,11 +15,17 @@ ALLOWED_LOCAL = {
     "artifacts": {"model"},
     "client": {"model", "wire"},
     "host-api": {"model"},
+    # Reviewed temporary edge: node constructs its profile-scoped RPC client
+    # after opening an in-process channel. Native integration moves that
+    # construction to the composition layer.
+    "node": {"client", "host-api", "model", "settings", "wire"},
+    "agent-runtime": {"artifacts", "claude", "codex", "host-api", "model", "pty-host"},
     "ui-state": {"model"},
     "ui-runtime": {"artifacts", "client", "model", "ui-state"},
-    "tui": {"ui-runtime", "ui-state"},
+    "tui": {"tui-fixtures", "ui-runtime", "ui-state"},
     "e2e-runner": {"wire"},
 }
+TEST_SUPPORT = {"testnet", "claude-specs", "codex-specs", "test-agent"}
 MODEL_BANNED_DEPENDENCIES = {
     "tokio",
     "tonic",
@@ -78,6 +84,18 @@ def main() -> int:
             for token in MODEL_BANNED_SOURCE:
                 if token in text:
                     failures.append(f"model: {source.relative_to(ROOT)} contains banned API {token}")
+
+    for name, package in packages.items():
+        if name in TEST_SUPPORT:
+            continue
+        edges = {
+            dependency["name"] for dependency in package["dependencies"]
+            if dependency.get("path") is not None
+            and dependency["kind"] in (None, "build")
+            and dependency["name"] in TEST_SUPPORT
+        }
+        if edges:
+            failures.append(f"{name}: production/build edges reach test support: {sorted(edges)}")
 
     for name in ALLOWED_LOCAL:
         package = packages.get(name)
