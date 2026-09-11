@@ -161,6 +161,13 @@ impl ChannelPool {
             .retain(|key, _| key.peer != host && route_link_peer(key.route) != host);
     }
 
+    pub(crate) fn drop_route(&self, peer: HostId, route: Route) {
+        self.by_key
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|key, _| key.peer != peer || key.route != route);
+    }
+
     pub(crate) fn debug_view(&self) -> Vec<ChannelDebug> {
         let state = self
             .by_key

@@ -223,7 +223,7 @@ impl ConnectionManager {
                 }
             }
             RoutingEvent::ClaimDown { relay, host_id } => {
-                self.channels.drop_host(host_id);
+                self.channels.drop_route(host_id, Route::Via(relay));
                 let mut state = self.state.write().await;
                 if state.active.get(&host_id) == Some(&Route::Via(relay)) {
                     state.active.remove(&host_id);
@@ -256,8 +256,10 @@ impl ConnectionManager {
                 _ => state.active.insert(peer, route),
             }
         };
-        if old.is_some_and(|old| old != route) {
-            self.channels.drop_host(peer);
+        if let Some(old_route) = old
+            && old_route != route
+        {
+            self.channels.drop_route(peer, old_route);
         }
         self.clear_reachability_error(peer).await;
         Ok(channel)

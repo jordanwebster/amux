@@ -190,28 +190,6 @@ impl TunnelDispatcher {
         })
     }
 
-    pub(crate) fn serve_tunnel_receiver(
-        &self,
-        mut incoming_rx: mpsc::Receiver<crate::tunnel::TunnelTransport>,
-    ) -> JoinHandle<()> {
-        let dispatcher = self.clone();
-        tokio::spawn(async move {
-            while let Some(transport) = incoming_rx.recv().await {
-                let dispatcher = dispatcher.clone();
-                tokio::spawn(async move {
-                    let pairing_reachability = if transport.has_cloud_pairing_reachability() {
-                        PreTrustPairingReachability::Cloud
-                    } else {
-                        PreTrustPairingReachability::NoReusableReachability
-                    };
-                    if let Err(error) = dispatcher.dispatch(transport, pairing_reachability).await {
-                        tracing::warn!(error = %error, "dispatcher rejected tunnel stream");
-                    }
-                });
-            }
-        })
-    }
-
     pub(crate) async fn dispatch_link_stream(
         &self,
         adjacent_peer: HostId,

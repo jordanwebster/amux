@@ -26,8 +26,7 @@ pub(crate) use link::{
     protocol_error_link_close,
 };
 pub(crate) use link_registry::{
-    LinkAdmission, LinkCarrier, LinkCloseRequest, LinkOutputTx, LinkProperties, LinkRegistry,
-    LinkRole, LinkUnavailable,
+    LinkAdmission, LinkCarrier, LinkCloseRequest, LinkProperties, LinkRegistry, LinkRole,
 };
 pub use types::{Capabilities, Host, SupportedAgentType};
 pub(crate) use types::{

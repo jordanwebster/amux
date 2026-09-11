@@ -27,9 +27,6 @@ use crate::agents::{
 use crate::envelope::Envelope;
 use crate::protocol::{ProtocolError, protocol_status, wire};
 use crate::server::ShutdownReason;
-#[cfg(test)]
-use crate::tunnel::TunnelTransport;
-
 #[cfg(feature = "local-agents")]
 mod state;
 #[cfg(feature = "local-agents")]
@@ -379,11 +376,11 @@ impl AgentServiceCtx {
 #[cfg(test)]
 pub(crate) fn spawn_agent_tonic_server(
     ctx: AgentServiceCtx,
-    incoming_rx: mpsc::Receiver<TunnelTransport>,
+    incoming_rx: mpsc::Receiver<crate::transport::BoxedGrpcIo>,
 ) -> tokio::task::JoinHandle<Result<(), tonic::transport::Error>> {
     let incoming = futures_util::stream::unfold(
         incoming_rx,
-        |mut rx: mpsc::Receiver<TunnelTransport>| async {
+        |mut rx: mpsc::Receiver<crate::transport::BoxedGrpcIo>| async {
             rx.recv()
                 .await
                 .map(|transport| (Ok::<_, std::io::Error>(transport), rx))
@@ -1211,11 +1208,11 @@ mod tests {
 
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         incoming_tx
-            .send(TunnelTransport::new(server_io, Uuid::from_u128(20)))
+            .send(crate::transport::BoxedGrpcIo::local_trusted(server_io))
             .await
             .unwrap();
 
-        let channel = channel_from_transport(TunnelTransport::new(client_io, Uuid::from_u128(10)));
+        let channel = channel_from_transport(client_io);
         let mut client = wire::agent_service_client(channel);
         let mut stream = client
             .subscribe_agent_events(wire::SubscribeAgentEventsRequest::default())
@@ -1247,7 +1244,7 @@ mod tests {
         server_task.abort();
     }
 
-    fn channel_from_transport(transport: TunnelTransport) -> Channel {
+    fn channel_from_transport(transport: tokio::io::DuplexStream) -> Channel {
         let transport = Arc::new(Mutex::new(Some(transport)));
         Endpoint::from_static("http://tunnel").connect_with_connector_lazy(service_fn(
             move |_uri: Uri| {
@@ -1261,7 +1258,7 @@ mod tests {
                         .ok_or_else(|| {
                             io::Error::new(
                                 io::ErrorKind::AlreadyExists,
-                                "TunnelTransport already consumed",
+                                "test transport already consumed",
                             )
                         })
                 }

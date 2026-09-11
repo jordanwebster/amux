@@ -2525,12 +2525,13 @@ mod tests {
     };
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
+    use crate::link::ChannelPool;
     use crate::routing::{
-        Capabilities, LinkCloseRequest, LinkId, LinkRole, RoutingCore, SupportedAgentType,
+        Capabilities, LinkCloseRequest, LinkId, LinkRegistry, LinkRole, RoutingCore,
+        SupportedAgentType,
     };
     use crate::services::agent::{LocalAgentHost, PtyAgentHost, spawn_agent_tonic_server};
     use crate::trust::{TrustEntry, TrustStore};
-    use crate::tunnel::TunnelPool;
     use crate::user_state::ServerState;
 
     fn host(id: u128, supported_agent_types: Vec<SupportedAgentType>) -> Host {
@@ -2765,7 +2766,7 @@ mod tests {
     fn client_service_with_agent_and_tunnels(
         agent_service: AgentServiceCtx,
         routing: Arc<RoutingCore>,
-        tunnels: Arc<TunnelPool>,
+        channels: Arc<ChannelPool>,
     ) -> ClientService {
         let host_id = agent_service.host_id();
 
@@ -2775,19 +2776,16 @@ mod tests {
             None,
             None,
         )));
-        client_service_from_parts(agent_service, server_state, routing, tunnels)
+        client_service_from_parts(agent_service, server_state, routing, channels)
     }
 
     fn client_service_from_parts(
         agent_service: AgentServiceCtx,
         server_state: Arc<RwLock<ServerState>>,
         routing: Arc<RoutingCore>,
-        tunnels: Arc<TunnelPool>,
+        channels: Arc<ChannelPool>,
     ) -> ClientService {
-        let connections = Arc::new(ConnectionManager::new(
-            routing,
-            Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
-        ));
+        let connections = Arc::new(ConnectionManager::new(routing, channels));
         let identity = DeviceIdentity::for_test(agent_service.host_id());
         ClientService::new(
             agent_service,
@@ -2821,14 +2819,11 @@ mod tests {
             None,
             None,
         )));
-        let (routing, tunnels) = test_routing_and_tunnels(local_identity.host_id);
+        let (routing, channels) = test_routing_and_tunnels(local_identity.host_id);
         ClientService::new(
             agent_service,
             server_state,
-            Arc::new(ConnectionManager::new(
-                routing,
-                Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
-            )),
+            Arc::new(ConnectionManager::new(routing, channels)),
             PairingTrustAccess::new(
                 local_identity.public_key().to_vec(),
                 trust_store,
@@ -2840,11 +2835,10 @@ mod tests {
         )
     }
 
-    fn test_routing_and_tunnels(host_id: Uuid) -> (Arc<RoutingCore>, Arc<TunnelPool>) {
+    fn test_routing_and_tunnels(_host_id: Uuid) -> (Arc<RoutingCore>, Arc<ChannelPool>) {
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        let tunnels = Arc::new(TunnelPool::new(host_id, routing.clone(), incoming_tx));
-        (routing, tunnels)
+        let channels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
+        (routing, channels)
     }
 
     struct RemoteDispatchHarness {
@@ -2876,7 +2870,6 @@ mod tests {
 
         let local_routing = Arc::new(RoutingCore::new());
         let remote_routing = Arc::new(RoutingCore::new());
-        let relay_routing = Arc::new(RoutingCore::new());
         local_routing
             .apply_claim_up(relay_host_id, host(2, non_relay_types()))
             .await;
@@ -2884,24 +2877,10 @@ mod tests {
             .apply_claim_up(relay_host_id, host(1, non_relay_types()))
             .await;
 
-        let (local_incoming_tx, _local_incoming_rx) = mpsc::channel(8);
-        let (remote_incoming_tx, remote_incoming_rx) = mpsc::channel(8);
-        let (relay_incoming_tx, _relay_incoming_rx) = mpsc::channel(8);
-        let local_tunnels = Arc::new(TunnelPool::new(
-            local_host_id,
-            local_routing.clone(),
-            local_incoming_tx,
-        ));
-        let remote_tunnels = Arc::new(TunnelPool::new(
-            remote_host_id,
-            remote_routing,
-            remote_incoming_tx,
-        ));
-        let relay_tunnels = Arc::new(TunnelPool::new(
-            relay_host_id,
-            relay_routing,
-            relay_incoming_tx,
-        ));
+        let (_remote_incoming_tx, remote_incoming_rx) = mpsc::channel(8);
+        let local_tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
+        let remote_tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
+        let relay_tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
 
         let (local_to_relay_tx, local_to_relay_rx) = mpsc::channel(32);
         let (relay_to_remote_tx, relay_to_remote_rx) = mpsc::channel(32);
@@ -2982,7 +2961,7 @@ mod tests {
 
     fn spawn_tunnel_bridge(
         _rx: mpsc::Receiver<wire::pb::Message>,
-        _target_pool: Arc<TunnelPool>,
+        _target_pool: Arc<ChannelPool>,
         _arrival_link: LinkId,
     ) -> JoinHandle<()> {
         tokio::spawn(async {})
@@ -3274,8 +3253,7 @@ mod tests {
                 .apply_claim_up(relay, host(id, non_relay_types()))
                 .await;
         }
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        let tunnels = Arc::new(TunnelPool::new(local_host_id, routing.clone(), incoming_tx));
+        let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
         let service = client_service_with_agent_and_tunnels(
             agent_service_ctx(local_host_id),
             routing.clone(),
@@ -3315,8 +3293,7 @@ mod tests {
                 .apply_claim_up(relay, host(id, non_relay_types()))
                 .await;
         }
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        let tunnels = Arc::new(TunnelPool::new(local_host_id, routing.clone(), incoming_tx));
+        let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
         let service = client_service_with_agent_and_tunnels(
             agent_service_ctx(local_host_id),
             routing.clone(),
@@ -4241,8 +4218,7 @@ mod tests {
     async fn tonic_list_hosts_cloud_routable_filter_matches_connection_manager() {
         let host_id = Uuid::from_u128(1);
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(8);
-        let tunnels = Arc::new(TunnelPool::new(host_id, routing.clone(), incoming_tx));
+        let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
         let service = client_service_with_agent_and_tunnels(
             agent_service_ctx(host_id),
             routing.clone(),
@@ -5458,10 +5434,7 @@ mod tests {
         let service = ClientService::new(
             agent_service,
             server_state,
-            Arc::new(ConnectionManager::new(
-                routing.clone(),
-                Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
-            )),
+            Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone())),
             PairingTrustAccess::new(
                 local.public_key().to_vec(),
                 trust_store.clone(),
@@ -5648,7 +5621,7 @@ mod tests {
         use super::*;
 
         #[tokio::test]
-        async fn dump_reports_live_peer_route_link_and_tunnel() {
+        async fn dump_reports_live_peer_route_link_and_channels() {
             let local = Uuid::from_u128(1);
             let peer = host(2, non_relay_types());
             let (routing, tunnels) = test_routing_and_tunnels(local);
@@ -5664,30 +5637,26 @@ mod tests {
                 .register(link, peer.clone(), link_tx, LinkRole::Peer, &[])
                 .await;
             routing.apply_direct_up(peer.clone(), link).await;
-            let _channel = tunnels.channel_on_link(peer.id, link).await.unwrap();
-
             let dump = service.debug_dump(DebugFormat::Json, true).await;
             let dump: serde_json::Value = serde_json::from_str(&dump).unwrap();
 
             assert_eq!(dump["host_count"], 1);
             assert_eq!(dump["route_count"], 1);
             assert_eq!(dump["peer_link_count"], 1);
-            assert_eq!(dump["tunnel_count"], 1);
+            assert_eq!(dump["channel_count"], 0);
             assert_eq!(dump["hosts"][0]["id"], peer.id.to_string());
             assert_eq!(dump["routes"][0]["dst"], peer.id.to_string());
             assert_eq!(dump["routes"][0]["via"]["kind"], "direct");
             assert_eq!(dump["routes"][0]["via"]["link"], link.to_string());
             assert_eq!(dump["links"][0]["peer"], peer.id.to_string());
             assert_eq!(dump["links"][0]["id"], link.to_string());
-            assert_eq!(dump["tunnels"][0]["peer"], peer.id.to_string());
-            assert_eq!(dump["tunnels"][0]["link"], link.to_string());
-            assert_eq!(dump["tunnels"][0]["state"], "open_initiated");
+            assert_eq!(dump["channels"], serde_json::json!([]));
 
             let user = &dump["users"][0];
             assert_eq!(user["hosts"], dump["hosts"]);
             assert_eq!(user["routes"], dump["routes"]);
             assert_eq!(user["links"], dump["links"]);
-            assert_eq!(user["tunnels"], dump["tunnels"]);
+            assert_eq!(user["channels"], dump["channels"]);
         }
     }
 

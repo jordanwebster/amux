@@ -23,12 +23,6 @@ use crate::{HostId, Tier, audit};
 
 pub(crate) type LinkOutputTx = mpsc::Sender<pb::Message>;
 
-#[derive(Debug, thiserror::Error)]
-#[error("no live link to host {host_id}")]
-pub(crate) struct LinkUnavailable {
-    pub(crate) host_id: HostId,
-}
-
 #[derive(Default)]
 pub(crate) struct LinkRegistry {
     state: RwLock<LinkRegistryState>,
@@ -68,13 +62,6 @@ pub(crate) struct LinkProperties {
     pub(crate) role: LinkRole,
     pub(crate) admission: LinkAdmission,
     pub(crate) carrier: LinkCarrier,
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum TunnelOpenForward {
-    Forwarded,
-    NoLink,
-    PaymentRequired,
 }
 
 #[derive(Clone)]
@@ -321,23 +308,6 @@ impl LinkRegistry {
         closing.into_iter().map(|(link, _)| link).collect()
     }
 
-    /// The writer for one specific link.
-    pub(crate) async fn outgoing_tx(&self, link: &LinkId) -> Result<LinkOutputTx, LinkUnavailable> {
-        self.state
-            .read()
-            .await
-            .writers
-            .get(link)
-            .map(|writer| writer.tx.clone())
-            .ok_or(LinkUnavailable {
-                host_id: link.peer(),
-            })
-    }
-
-    pub(crate) async fn has_link(&self, link: &LinkId) -> bool {
-        self.state.read().await.writers.contains_key(link)
-    }
-
     pub(crate) async fn admission(&self, link: &LinkId) -> Option<LinkAdmission> {
         self.state
             .read()
@@ -428,74 +398,6 @@ impl LinkRegistry {
             .map(|(link, writer)| (*link, writer.tx.clone()))
     }
 
-    /// Rule 2's action: enqueue `message` on any live link to `peer`,
-    /// applying the full-queue close policy — forwarding never awaits a
-    /// congested link (a slow peer must not stall the origin link's
-    /// inbound processing). Returns false when no direct link to `peer`
-    /// exists.
-    pub(crate) async fn forward_to_peer(&self, peer: HostId, message: pb::Message) -> bool {
-        let state = self.state.read().await;
-        let Some(writer) = state.writers.values().find(|writer| writer.host.id == peer) else {
-            return false;
-        };
-        try_send_or_request_close(&writer.tx, &writer.close_tx, message);
-        true
-    }
-
-    /// Chooses the destination writer and applies the cloud entitlement gate
-    /// under the same registry read lock, so the checked link is exactly the
-    /// link that receives the Open.
-    pub(crate) async fn forward_tunnel_open(
-        &self,
-        origin: &LinkId,
-        peer: HostId,
-        message: pb::Message,
-    ) -> TunnelOpenForward {
-        let state = self.state.read().await;
-        let origin_is_free = state.writers.get(origin).is_some_and(|writer| {
-            matches!(
-                writer.admission,
-                LinkAdmission::CloudToken { tier: Tier::Free }
-            )
-        });
-        if origin_is_free {
-            return TunnelOpenForward::PaymentRequired;
-        }
-        let Some(writer) = state.writers.values().find(|writer| writer.host.id == peer) else {
-            return TunnelOpenForward::NoLink;
-        };
-        if matches!(
-            writer.admission,
-            LinkAdmission::CloudToken { tier: Tier::Free }
-        ) {
-            return TunnelOpenForward::PaymentRequired;
-        }
-        try_send_or_request_close(&writer.tx, &writer.close_tx, message);
-        TunnelOpenForward::Forwarded
-    }
-
-    /// Best-effort enqueue on one specific link (proactive `TunnelClose`):
-    /// never awaits a full queue inline and never escalates — a close the
-    /// peer misses is recovered by the unknown-id drop rule or link death.
-    pub(crate) async fn send_best_effort(&self, link: &LinkId, message: pb::Message) {
-        let outgoing = self
-            .state
-            .read()
-            .await
-            .writers
-            .get(link)
-            .map(|writer| writer.tx.clone());
-        if let Some(outgoing_tx) = outgoing {
-            try_send_or_spawn(outgoing_tx, message);
-        }
-    }
-
-    pub(crate) async fn is_cloud_relay(&self, link: &LinkId) -> bool {
-        self.link_role(link)
-            .await
-            .is_some_and(|role| role == LinkRole::CloudRelay)
-    }
-
     pub(crate) async fn link_role(&self, link: &LinkId) -> Option<LinkRole> {
         self.state
             .read()
@@ -550,17 +452,6 @@ impl LinkRegistry {
         for outgoing_tx in outgoing {
             try_send_or_spawn(outgoing_tx, message.clone());
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn outgoing_writers(&self) -> Vec<LinkOutputTx> {
-        self.state
-            .read()
-            .await
-            .writers
-            .values()
-            .map(|writer| writer.tx.clone())
-            .collect()
     }
 }
 
@@ -905,8 +796,11 @@ mod tests {
             .register(link(2, 1), host(2), peer_tx, LinkRole::Peer, &[])
             .await;
 
-        assert!(registry.is_cloud_relay(&link(1, 1)).await);
-        assert!(!registry.is_cloud_relay(&link(2, 1)).await);
+        assert_eq!(
+            registry.link_role(&link(1, 1)).await,
+            Some(LinkRole::CloudRelay)
+        );
+        assert_eq!(registry.link_role(&link(2, 1)).await, Some(LinkRole::Peer));
         assert!(registry.has_cloud_relay_link_to(Uuid::from_u128(1)).await);
         assert!(!registry.has_cloud_relay_link_to(Uuid::from_u128(2)).await);
     }

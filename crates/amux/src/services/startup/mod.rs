@@ -882,7 +882,6 @@ mod tests {
     use crate::protocol::ProtocolError;
     use crate::routing::{Capabilities, Host, Route, SupportedAgentType};
     use crate::trust::{Reachability, TrustEntry};
-    use crate::tunnel::TunnelTransport;
     use crate::{HostId, SessionCloseReason, SubscribeSessionEvent};
 
     fn test_state(host_id: Uuid) -> Arc<RwLock<ServerState>> {
@@ -1217,14 +1216,11 @@ mod tests {
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         services
             .trusted_incoming_tx
-            .send(BoxedGrpcIo::local_trusted(TunnelTransport::new(
-                server_io,
-                Uuid::from_u128(20),
-            )))
+            .send(BoxedGrpcIo::local_trusted(server_io))
             .await
             .unwrap();
 
-        let channel = channel_from_transport(TunnelTransport::new(client_io, Uuid::from_u128(10)));
+        let channel = channel_from_transport(client_io);
         let mut client = wire::agent_service_client(channel);
         let mut stream = client
             .subscribe_agent_events(wire::SubscribeAgentEventsRequest::default())
@@ -1249,16 +1245,13 @@ mod tests {
         services
             .trusted_incoming_tx
             .send(
-                BoxedGrpcIo::tls_trusted(
-                    TunnelTransport::new(server_io, peer.host_id),
-                    peer.host_id,
-                )
-                .track_trusted_peer(&services.connections.trusted_connections()),
+                BoxedGrpcIo::tls_trusted(server_io, peer.host_id)
+                    .track_trusted_peer(&services.connections.trusted_connections()),
             )
             .await
             .unwrap();
 
-        let channel = channel_from_transport(TunnelTransport::new(client_io, Uuid::from_u128(10)));
+        let channel = channel_from_transport(client_io);
         let mut client = wire::agent_service_client(channel);
         let mut stream = client
             .subscribe_agent_events(wire::SubscribeAgentEventsRequest::default())
@@ -1291,14 +1284,10 @@ mod tests {
         let (trusted_client_io, trusted_server_io) = tokio::io::duplex(64 * 1024);
         services
             .trusted_incoming_tx
-            .send(BoxedGrpcIo::local_trusted(TunnelTransport::new(
-                trusted_server_io,
-                Uuid::from_u128(20),
-            )))
+            .send(BoxedGrpcIo::local_trusted(trusted_server_io))
             .await
             .unwrap();
-        let trusted_channel =
-            channel_from_transport(TunnelTransport::new(trusted_client_io, Uuid::from_u128(10)));
+        let trusted_channel = channel_from_transport(trusted_client_io);
         let mut trusted_pairing_client =
             wire::pairing_service_client::PairingServiceClient::new(trusted_channel);
         let trusted_error = trusted_pairing_client
@@ -1311,13 +1300,12 @@ mod tests {
         services
             .pairing_incoming_tx
             .send(BoxedGrpcIo::pre_trust_pairing(
-                TunnelTransport::new(pairing_server_io, Uuid::from_u128(30)),
+                pairing_server_io,
                 PreTrustPairingReachability::Cloud,
             ))
             .await
             .unwrap();
-        let pairing_channel =
-            channel_from_transport(TunnelTransport::new(pairing_client_io, Uuid::from_u128(10)));
+        let pairing_channel = channel_from_transport(pairing_client_io);
         let mut pairing_client =
             wire::pairing_service_client::PairingServiceClient::new(pairing_channel);
         let pairing_error = pairing_client
@@ -1334,13 +1322,12 @@ mod tests {
         services
             .pairing_incoming_tx
             .send(BoxedGrpcIo::pre_trust_pairing(
-                TunnelTransport::new(active_server_io, Uuid::from_u128(31)),
+                active_server_io,
                 PreTrustPairingReachability::Cloud,
             ))
             .await
             .unwrap();
-        let active_pairing_channel =
-            channel_from_transport(TunnelTransport::new(active_client_io, Uuid::from_u128(11)));
+        let active_pairing_channel = channel_from_transport(active_client_io);
         let mut active_pairing_client =
             wire::pairing_service_client::PairingServiceClient::new(active_pairing_channel);
         let active_pairing_stream = active_pairing_client
@@ -2372,7 +2359,7 @@ mod tests {
         .expect("timed out waiting for host entry removal");
     }
 
-    fn channel_from_transport(transport: TunnelTransport) -> Channel {
+    fn channel_from_transport(transport: tokio::io::DuplexStream) -> Channel {
         let transport = Arc::new(Mutex::new(Some(transport)));
         Endpoint::from_static("http://tunnel").connect_with_connector_lazy(service_fn(
             move |_uri: Uri| {
@@ -2386,7 +2373,7 @@ mod tests {
                         .ok_or_else(|| {
                             io::Error::new(
                                 io::ErrorKind::AlreadyExists,
-                                "TunnelTransport already consumed",
+                                "test transport already consumed",
                             )
                         })
                 }

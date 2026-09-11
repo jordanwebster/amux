@@ -49,7 +49,6 @@ pub mod test_fixtures;
 pub mod testnet;
 mod transport;
 mod trust;
-mod tunnel;
 pub mod update;
 mod user_state;
 

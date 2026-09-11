@@ -1345,11 +1345,11 @@ mod tests {
 
     use super::*;
     use crate::routing::{
-        Capabilities, Host, LinkId, LinkRole, Route, RoutingCore, SupportedAgentType,
+        Capabilities, Host, LinkCloseRequest, LinkId, LinkRole, Route, RoutingCore,
+        SupportedAgentType,
     };
     use crate::transport::{BoxedGrpcIo, in_process_channel, in_process_transport_pair};
     use crate::trust::{TrustEntry, TrustStore};
-    use crate::tunnel::TunnelPool;
 
     fn service_fixture() -> (
         TempDir,
@@ -1365,16 +1365,10 @@ mod tests {
         let pair_mode = Arc::new(PairMode::new());
         let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
-        let tunnels = Arc::new(TunnelPool::new(
-            responder.host_id,
-            routing.clone(),
-            incoming_tx,
-        ));
-        let connections = Arc::new(ConnectionManager::new(
-            routing,
-            Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
-        ));
+        let channels = Arc::new(crate::link::ChannelPool::new(Arc::new(
+            crate::routing::LinkRegistry::default(),
+        )));
+        let connections = Arc::new(ConnectionManager::new(routing, channels));
         let service = PairingService::new(
             pair_mode.clone(),
             LocalPairingIdentity::from_device_identity(&responder),
@@ -2384,12 +2378,10 @@ mod tests {
         task.abort();
     }
 
-    /// D10: committing a same-host_id/different-pubkey replacement tears
-    /// down *everything* for that host — including the in-flight pairing
-    /// tunnel that carried the pairing RPC itself. Nothing is preserved; an
-    /// initiator that misses the response simply re-pairs.
+    /// Committing a same-host-id replacement tears down every existing link
+    /// before the new key becomes active.
     #[tokio::test]
-    async fn pairing_replacement_retires_the_in_flight_pairing_tunnel() {
+    async fn pairing_replacement_retires_the_existing_peer_link() {
         let data_dir = tempfile::tempdir().unwrap();
         let responder = DeviceIdentity::for_test(HostId::from_u128(1));
         let peer = DeviceIdentity::for_test(HostId::from_u128(2));
@@ -2407,23 +2399,15 @@ mod tests {
             },
         );
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
-        let tunnels = Arc::new(TunnelPool::new(
-            responder.host_id,
-            routing.clone(),
-            incoming_tx,
-        ));
-        // Host an inbound tunnel initiated by the pairing peer over a relay
-        // link — the stand-in for the tunnel carrying this very pairing RPC.
+        let links = Arc::new(crate::routing::LinkRegistry::default());
         let (link_tx, _link_rx) = mpsc::channel(8);
-        let relay_link = LinkId::new(HostId::from_u128(99));
-        tunnels
-            .link_registry()
+        let peer_link = LinkId::new(peer.host_id);
+        let mut close_rx = links
             .register(
-                relay_link,
+                peer_link,
                 Host {
-                    id: HostId::from_u128(99),
-                    name: "relay".to_string(),
+                    id: peer.host_id,
+                    name: "old".to_string(),
                     version: "test".to_string(),
                     capabilities: Capabilities::default(),
                     signed_in: Some(true),
@@ -2433,23 +2417,15 @@ mod tests {
                 &[],
             )
             .await;
-        tunnels
-            .handle_inbound_open(
-                crate::tunnel::standin::TunnelOpen {
-                    tunnel_id: uuid::Uuid::from_u128(42).as_bytes().to_vec(),
-                    src: peer.host_id.as_bytes().to_vec(),
-                    dst: responder.host_id.as_bytes().to_vec(),
-                },
-                &relay_link,
-            )
-            .await
-            .unwrap();
-        let _pairing_transport = incoming_rx.recv().await.unwrap();
-        assert_eq!(tunnels.active_count().await, 1);
+        let links_for_close = links.clone();
+        tokio::spawn(async move {
+            assert_eq!(close_rx.recv().await, Some(LinkCloseRequest::TrustReplaced));
+            links_for_close.remove(&peer_link).await;
+        });
 
         let connections = Arc::new(ConnectionManager::new(
             routing,
-            Arc::new(crate::link::ChannelPool::new(tunnels.link_registry())),
+            Arc::new(crate::link::ChannelPool::new(links.clone())),
         ));
         let service = PairingService::new(
             pair_mode.clone(),
@@ -2470,11 +2446,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(
-            tunnels.active_count().await,
-            0,
-            "the replacement commit must retire the in-flight pairing tunnel"
-        );
+        assert!(links.link_to_peer(peer.host_id).await.is_none());
         assert_eq!(
             trust_store
                 .read()

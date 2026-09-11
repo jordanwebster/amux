@@ -621,7 +621,7 @@ mod tests {
     use std::time::Duration;
 
     use tokio::io::AsyncReadExt;
-    use tokio::sync::{RwLock, mpsc, oneshot};
+    use tokio::sync::{RwLock, oneshot};
     use uuid::Uuid;
 
     use super::{
@@ -634,8 +634,7 @@ mod tests {
     use crate::config::Config;
     use crate::profile::status::{Observed, RelayCarrier, RuntimeStatus};
     use crate::protocol::{ProtocolError, protocol_status};
-    use crate::routing::{Capabilities, Host, LinkConnectorCtx, RoutingCore};
-    use crate::tunnel::TunnelPool;
+    use crate::routing::{Capabilities, Host, LinkConnectorCtx, LinkRegistry, RoutingCore};
     use crate::update::{UpdateReporter, UpdateStatus};
     use crate::user_state::ServerState;
 
@@ -846,8 +845,7 @@ mod tests {
             None,
         )));
         let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
-        let tunnels = Arc::new(TunnelPool::new(host_id, routing.clone(), incoming_tx));
+        let links = Arc::new(LinkRegistry::default());
         let connector_ctx = LinkConnectorCtx::new(
             Host {
                 id: host_id,
@@ -857,7 +855,7 @@ mod tests {
                 signed_in: Some(true),
             },
             routing,
-            tunnels.link_registry(),
+            links,
         );
         let connector = establish_cloud_link(
             config,

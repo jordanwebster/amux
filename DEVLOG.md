@@ -1,3 +1,12 @@
+2026-09-11 — **Replace framed tunnels with native link channels.** Application
+RPCs now open independently flow-controlled streams through the selected link,
+with shared call channels and fresh session and bulk channels. Relays forward
+opaque byte streams only after route, entitlement, adjacency, and per-source
+rate checks, preserving each refusal as a stream reset; paired self-hosted links
+remain tier-independent. Route changes establish the replacement first and
+retire only the old route's cached channel. The obsolete framed tunnel module
+and pool are gone.
+
 2026-09-11 — **Carry channel setup through the native link registry.** The
 connection manager and test network now share the carrier-backed link registry
 when opening application and pairing streams. Cached channel lookup releases
