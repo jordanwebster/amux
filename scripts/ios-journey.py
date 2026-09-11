@@ -1142,6 +1142,9 @@ def asks(journey: Journey, udid: str, ready: dict) -> None:
                 f"{', '.join(sorted(running))} in a repository this journey left for it")
 
     photographs = {
+        "ask-place-before.png": "place-before.png",
+        "ask-place-after.png": "place-after.png",
+        "ask-place-after-child.png": "place-after-child.png",
         "ask-permission.png": "permission.png",
         "ask-question.png": "question.png",
         "ask-plan.png": "plan.png",
@@ -1203,6 +1206,27 @@ def asks(journey: Journey, udid: str, ready: dict) -> None:
     journey.say(f"the permission read {permission['head']!r} over {permission['subject']!r}; "
                 f"the standing grant read {scope['title']!r}; the question offered "
                 f"{', '.join(seen['question'])}")
+
+    # What answering costs the person who was interrupted, which is nothing.
+    #
+    # The draft is a sentence nobody sent and the place is a coordinate: the
+    # row that was being read has to be drawn where it was, and the newest row
+    # — the one a feed snaps to when it loses somebody's place — has to still
+    # be off the screen. Twelve points is a row's own rounding, not a scroll.
+    place = seen.get("place", {})
+    returned = place.get("afterChild", {})
+    journey.expect(place.get("draft") and place.get("reading")
+                   and abs(place.get("afterDenying", -10_000) - place.get("before", 0)) <= 12,
+                   f"answering the permission moved the reader or lost the draft: {place}")
+    journey.expect(returned.get("reading")
+                   and abs(returned.get("after", -10_000) - returned.get("before", 0)) <= 12,
+                   f"coming back from the child's ask and answering the finished turn moved "
+                   f"the reader: {place}")
+    journey.say(f"the phone was left holding {place['draft']!r} unsent and reading "
+                f"{place['reading']!r}, and after the permission was denied it was still "
+                f"holding it at the same point on the screen; after the child's ask was "
+                f"answered and the parent's finished turn deferred it was still reading "
+                f"{returned['reading']!r} where it was")
 
     # A decision made earlier in the session, reopened.
     journey.expect(seen.get("verdict") == "Plan approved" and seen.get("reopened") is True,

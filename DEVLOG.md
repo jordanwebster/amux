@@ -14092,3 +14092,29 @@ switch that warned on every build, and a doc comment written twice.
 
 Green: `wt run ios-journey -- conversation` — passed, with the head and the end
 of the turn photographed at their own ends and the chip reading '+154 −23' once.
+
+## Answering an agent keeps the sentence you were writing and the place you were reading
+
+An unanswered ask takes the composer's place while it is up, and the feed is
+relaid out underneath it. Nothing proved the reader got either back: the asks
+journey opened an empty conversation, typed nothing and stayed at the tail, so
+a build that cleared the box or snapped the feed to the newest row would have
+passed every assertion in it.
+
+The journey now begins with a dozen messages from the agent, a sentence started
+in the box and never sent, and the feed scrolled back until the newest row is
+off the screen. After the permission is denied, and again after the excursion
+into the child's own conversation and the finished turn deferred, the same
+sentence is read back out of the box through the app's own door and the row
+that was being read is found at the same coordinate, with the newest row still
+off the screen. Both readings are photographed beside the panels themselves.
+
+The keyboard is put down between writing and reading by opening the fleet over
+the conversation and closing it again — the app's own way out of the box, and
+the one that does not tear the conversation down — because a keyboard standing
+over the feed in one reading and gone in the next would move every row between
+them for a reason that has nothing to do with any answer.
+
+Green: `wt run ios-journey -- asks` — passed; the row being read was drawn at
+the same point before and after each answer, and the host's account of the six
+answers is unchanged.

@@ -22,7 +22,7 @@
       "id": "asks",
       "stage": 7,
       "topology": "e2e-tests/topologies/asks.json",
-      "claim": "Everything an agent can be waiting to be told, answered on the phone against a machine the runner is really running: a permission refused and another allowed, the standing grant the host itself offered taken by the name the host gave it, the agent's own question answered with one of the agent's own answers, a plan read out and approved and a second sent back with what should change, a plan judged earlier reopened onto the document that was judged, an agent this one started answered in its own conversation and the provider's own subagent saying why it has none, and a finished turn deferred and then read. The host is asked afterwards what it received, and every answer is exactly what was pressed."
+      "claim": "Everything an agent can be waiting to be told, answered on the phone against a machine the runner is really running: a permission refused and another allowed, the standing grant the host itself offered taken by the name the host gave it, the agent's own question answered with one of the agent's own answers, a plan read out and approved and a second sent back with what should change, a plan judged earlier reopened onto the document that was judged, an agent this one started answered in its own conversation and the provider's own subagent saying why it has none, and a finished turn deferred and then read. A sentence started and never sent, and a feed scrolled back off its newest row, are both exactly as they were after a panel has been answered over them — including after the excursion to the child. The host is asked afterwards what it received, and every answer is exactly what was pressed."
     },
     {
       "id": "review",

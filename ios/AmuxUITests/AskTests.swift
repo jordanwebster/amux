@@ -37,6 +37,62 @@ final class AskTests: JourneyCase {
         press(app, "home.row.\(runner.agent)")
         waitFor(app, "conversation", "opening the row did not lead to a conversation")
 
+        // MARK: What was half written and where the reader had got to.
+        //
+        // A panel takes the composer's place while it is up, so what was
+        // being written disappears behind it and the feed is relaid out
+        // underneath. Both are set up here — a sentence nobody sent, and a
+        // transcript scrolled back off its newest row — and read back after
+        // every answer, because answering an agent must never cost a reader
+        // either of them.
+        var telling: [Any] = Self.reading.map { line in
+            ["Markdown": ["text": "\(line)\n\n" + Self.saidUnder]]
+        }
+        telling.append("EndTurn")
+        try control.ask(["AgentPlay": ["agent": "mind-the-gap", "steps": telling]])
+        let newest = try XCTUnwrap(Self.reading.last)
+        XCTAssertTrue(waitUntil { self.onScreen(app, newest) != nil },
+                      "the run this reader is part way through never arrived: "
+                      + "\(self.transcriptRows(app))")
+
+        let writing = try XCTUnwrap(
+            app.textViews.matching(identifier: "composer.field")
+                .allElementsBoundByIndex.first { $0.isHittable },
+            "the conversation offered nowhere to write")
+        writing.tap()
+        writing.typeText(Self.halfWritten)
+        // The keys are put down the way the app puts them down — by reaching
+        // for something else, here the fleet over the conversation — because a
+        // keyboard standing over the feed in one reading and gone in the next
+        // would move every row between them for a reason that has nothing to
+        // do with any answer. The conversation underneath is not torn down, so
+        // coming back out of the drawer comes back to this one.
+        press(app, "conversation.drawer")
+        waitFor(app, "drawer.row.\(runner.agent)", "the drawer did not list this agent")
+        press(app, "drawer.row.\(runner.agent)")
+        waitForNo(app, "drawer.row.\(runner.agent)", "picking this agent left the drawer out")
+        XCTAssertEqual(said(try declared(runner), "composer.field")?.value, Self.halfWritten,
+                       "what was being written did not survive the fleet being opened over it")
+
+        // Scrolled back until the newest row is off the screen, which is what
+        // reading something that happened earlier means.
+        var anchor = ""
+        XCTAssertTrue(
+            waitUntil {
+                if self.onScreen(app, newest) == nil,
+                   let held = Self.reading.first(where: { self.onScreen(app, $0) != nil }) {
+                    anchor = held
+                    return true
+                }
+                app.swipeDown(velocity: .slow)
+                return false
+            },
+            "scrolling back from the newest row never settled on an earlier one")
+        let before = try XCTUnwrap(onScreen(app, anchor), "the row being read left the screen")
+        record["place"] = ["reading": anchor, "draft": Self.halfWritten,
+                           "before": Int(before.minY.rounded())]
+        photograph(app, "ask-place-before")
+
         // MARK: A permission, refused.
         //
         // Every permission here offers one standing grant, because Claude
@@ -56,6 +112,13 @@ final class AskTests: JourneyCase {
         ]
         photograph(app, "ask-permission")
         answer(app, "ask.deny", "denying the permission left the panel up")
+        let afterDenying = try placeKept(
+            app, runner, reading: anchor, at: before, newest: newest,
+            after: "denying the permission")
+        var kept = record["place"] as? [String: Any] ?? [:]
+        kept["afterDenying"] = Int(afterDenying.minY.rounded())
+        record["place"] = kept
+        photograph(app, "ask-place-after")
 
         // MARK: A permission, allowed.
         try control.ask(["AgentRaiseAsk": ["agent": "mind-the-gap", "ask": ["Permission": [
@@ -204,6 +267,8 @@ final class AskTests: JourneyCase {
         press(app, "drawer.row.\(runner.agent)")
         XCTAssertEqual(try waitForValue(runner, "conversation", runner.agent), runner.agent,
                        "coming back did not come back to the parent")
+        XCTAssertEqual(said(try declared(runner), "composer.field")?.value, Self.halfWritten,
+                       "answering the child's ask lost what was being written to its parent")
 
         // MARK: A child that runs inside the session, which is nowhere to go.
         try control.ask(["AgentPlay": ["agent": "mind-the-gap",
@@ -233,6 +298,23 @@ final class AskTests: JourneyCase {
         // the overflow are later work; the host computes the patch and sends
         // it back as an ordinary event, so the panel gets it the way every
         // other fact reaches this screen.
+        // Reading history again, so that what the finished turn's panel is
+        // answered over is a reader who is not at the tail.
+        var stillReading = ""
+        XCTAssertTrue(
+            waitUntil {
+                if self.onScreen(app, newest) == nil,
+                   let held = Self.reading.first(where: { self.onScreen(app, $0) != nil }) {
+                    stillReading = held
+                    return true
+                }
+                app.swipeDown(velocity: .slow)
+                return false
+            },
+            "scrolling back from the newest row never settled on an earlier one")
+        let beforeFinishing = try XCTUnwrap(
+            onScreen(app, stillReading), "the row being read left the screen")
+
         try door(runner, .init(kind: "requestChanges", agent: runner.agent, base: ""))
         try control.ask(["AgentPlay": ["agent": "mind-the-gap", "steps": [
             ["Prompt": ["text": "Tidy the parser."]],
@@ -247,6 +329,15 @@ final class AskTests: JourneyCase {
         // visit; the chip in the chrome is still the way to the changes.
         press(app, "ask.later")
         waitForNo(app, "conversation.finished", "Later left the panel where it was")
+        let afterLater = try placeKept(
+            app, runner, reading: stillReading, at: beforeFinishing, newest: newest,
+            after: "deferring the finished turn")
+        kept = record["place"] as? [String: Any] ?? [:]
+        kept["afterChild"] = ["reading": stillReading,
+                              "before": Int(beforeFinishing.minY.rounded()),
+                              "after": Int(afterLater.minY.rounded())]
+        record["place"] = kept
+        photograph(app, "ask-place-after-child")
         XCTAssertTrue(element(app, "conversation.changes").exists,
                       "deferring the review took the way to the changes away too")
 
@@ -265,4 +356,60 @@ final class AskTests: JourneyCase {
     }
 
     private static let sentBack = "Keep the round-trip test; rewrite it instead."
+
+    /// A sentence somebody started writing and never sent. It stays in the
+    /// box for the whole journey: nothing here presses Send, so every reading
+    /// of the field afterwards is a reading of the same unsent draft.
+    private static let halfWritten = "Before you go further, check the span on"
+
+    /// A run of the agent's own messages, each taking a line or two, so the
+    /// feed is taller than the phone and there is somewhere earlier to be.
+    private static let reading = (1...12).map { "Reading mark \(String(format: "%02d", $0))" }
+
+    private static let saidUnder =
+        "so the tokenizer keeps the trailing newline and the round trip stops "
+        + "passing for the wrong reason."
+
+    /// What answering must leave exactly as it found it: the sentence nobody
+    /// sent, and the row the reader was on.
+    ///
+    /// The draft is read from the screen through the app's own door rather
+    /// than from the field, because a panel that has just been answered has
+    /// only now given the box back. Where the reader is, is read as a
+    /// coordinate: the row being read has to still be drawn where it was, and
+    /// the newest row — the one a feed snaps to when it loses somebody's
+    /// place — has to still be off the screen.
+    @discardableResult
+    private func placeKept(
+        _ app: XCUIApplication, _ runner: Runner, reading anchor: String, at before: CGRect,
+        newest: String, after answering: String
+    ) throws -> CGRect {
+        XCTAssertEqual(said(try declared(runner), "composer.field")?.value, Self.halfWritten,
+                       "\(answering) lost what was being written")
+        let now = try XCTUnwrap(onScreen(app, anchor),
+                                "\(answering) took the reader off the row they were reading")
+        XCTAssertEqual(now.minY, before.minY, accuracy: 12,
+                       "\(answering) moved the feed under the reader: "
+                       + "\(anchor) was drawn at \(before.minY) and is now at \(now.minY)")
+        XCTAssertNil(onScreen(app, newest),
+                     "\(answering) threw the reader forward to the newest row")
+        return now
+    }
+
+    /// Where the row saying this sits on the screen, or nothing where the
+    /// screen is not showing it.
+    ///
+    /// Found by what it says: prose carries no name of its own, and the one
+    /// name every prose row shares cannot tell one from another. A row that
+    /// has scrolled off is either absent from the tree the system builds or
+    /// lies outside the window, and both mean nobody is reading it.
+    private func onScreen(_ app: XCUIApplication, _ saying: String) -> CGRect? {
+        let matching = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", saying))
+            .allElementsBoundByIndex
+        guard let row = matching.first(where: { $0.exists && $0.frame.height > 0 }) else {
+            return nil
+        }
+        return row.frame.intersects(app.frame) ? row.frame : nil
+    }
 }
