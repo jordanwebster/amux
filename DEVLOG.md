@@ -8855,3 +8855,9 @@ relay pairing chapter now gives both peers cloud-only topology and verifies the
 responder's QR contains no LAN addresses before pairing. The resulting trusted
 link is asserted to use the cloud route, so the chapter fails if QR pairing can
 no longer traverse the relay.
+
+2026-09-11 — **Restart recovery is proven from stored reachability alone.** The
+direct-link restart chapter now keeps both peers outside scripted discovery.
+Restarting the dialing peer therefore has no fresh found-host event to lean on:
+the saved address in its trust store must re-establish the direct link and carry
+the next call.

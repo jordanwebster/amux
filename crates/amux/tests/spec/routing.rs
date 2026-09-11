@@ -181,6 +181,8 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
         .daemon("laptop")
         .daemon("desktop")
         .paired("laptop", "desktop", Via::Direct)
+        .outside_discovery("laptop")
+        .outside_discovery("desktop")
         .start()
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
