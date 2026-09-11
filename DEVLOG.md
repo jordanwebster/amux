@@ -8,6 +8,8 @@ Unix socket boundary coverage now accounts for the longer adjacent link socket.
 Committed diagnostic reports now replay the unified cloud state and host-route
 shape, and CLI profile tests verify the current sign-in copy separately from
 the adopted profile's stored account name and label.
+The TUI's early attachment-refusal check now follows the shared 32 MiB artifact
+cap instead of retaining its former 10 MiB fixture.
 
 2026-09-11 — **Prove session and bulk isolation on the ordered relay fallback.**
 Session subscriptions and artifact fetches now have black-box coverage showing

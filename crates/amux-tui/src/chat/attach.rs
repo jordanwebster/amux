@@ -124,12 +124,12 @@ mod tests {
             &mut composer,
             ClipboardContent::Image {
                 mime: "image/png".into(),
-                bytes: vec![0; 12 * 1024 * 1024],
+                bytes: vec![0; 33 * 1024 * 1024],
             },
         );
         assert_eq!(
             stated.as_deref(),
-            Some("clipboard.png is 12.0 MiB and the limit is 10.0 MiB")
+            Some("clipboard.png is 33.0 MiB and the limit is 32.0 MiB")
         );
         assert!(composer.tokens().is_empty());
     }
