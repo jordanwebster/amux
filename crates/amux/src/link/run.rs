@@ -628,20 +628,8 @@ async fn run_established(
                 }
             }
             stream = carrier.accept_stream() => {
-                let Some((preface, mut stream)) = stream else { break };
-                let destination = HostId::from_slice(&preface.dst).ok();
-                if destination == Some(ctx.local_host.id()) {
-                    if let Some(sender) = &ctx.incoming_streams_tx {
-                        if let Err(error) = sender.send((peer_host.id, stream)).await {
-                            let (_, mut stream) = error.0;
-                            let _ = stream.reset(wire::pb::StreamRefusal::ShuttingDown).await;
-                        }
-                    } else {
-                        let _ = stream.reset(wire::pb::StreamRefusal::ShuttingDown).await;
-                    }
-                } else {
-                    let _ = ctx.piper.pipe(link, preface, stream).await;
-                }
+                let Some((preface, stream)) = stream else { break };
+                spawn_inbound_dispatch(ctx.clone(), link, peer_host.id, preface, stream);
             }
             _ = maybe_sleep_until(auth_expiry), if auth_expiry.is_some() => {
                 audit::auth_jwt_failure("link authorization expired");
@@ -723,6 +711,30 @@ async fn run_established(
         Some(status) => Err(status.into()),
         None => Ok(()),
     }
+}
+
+fn spawn_inbound_dispatch(
+    ctx: LinkCtx,
+    link: LinkId,
+    peer: HostId,
+    preface: wire::pb::StreamPreface,
+    mut stream: super::ByteStream,
+) {
+    tokio::spawn(async move {
+        let destination = HostId::from_slice(&preface.dst).ok();
+        if destination == Some(ctx.local_host.id()) {
+            if let Some(sender) = &ctx.incoming_streams_tx {
+                if let Err(error) = sender.send((peer, stream)).await {
+                    let (_, mut stream) = error.0;
+                    let _ = stream.reset(wire::pb::StreamRefusal::ShuttingDown).await;
+                }
+            } else {
+                let _ = stream.reset(wire::pb::StreamRefusal::ShuttingDown).await;
+            }
+        } else {
+            let _ = ctx.piper.pipe(link, preface, stream).await;
+        }
+    });
 }
 
 enum ControlAction {
@@ -1234,4 +1246,177 @@ pub(crate) async fn link_reauth_tier_probe() -> (crate::Tier, crate::Tier) {
         .unwrap();
     session.apply_reauth(user).unwrap();
     (before, session.tier())
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::future::BoxFuture;
+    use tokio::sync::{Notify, mpsc};
+
+    use super::*;
+    use crate::link::{
+        ByteStream, CarrierKind, ControlSink, ControlSource, LinkCarrier, MuxCarrier, MuxRole,
+        OpenError,
+    };
+    use crate::routing::{Capabilities, LinkProperties};
+
+    struct BlockingOpenCarrier {
+        opened: Notify,
+    }
+
+    impl BlockingOpenCarrier {
+        fn new() -> Self {
+            Self {
+                opened: Notify::new(),
+            }
+        }
+    }
+
+    impl LinkCarrier for BlockingOpenCarrier {
+        fn kind(&self) -> CarrierKind {
+            CarrierKind::RelayTcp
+        }
+
+        fn control(&self) -> (ControlSink, ControlSource) {
+            panic!("registered destination carrier does not run a control loop")
+        }
+
+        fn open_stream(
+            &self,
+            _preface: wire::pb::StreamPreface,
+        ) -> BoxFuture<'_, Result<ByteStream, OpenError>> {
+            Box::pin(async move {
+                self.opened.notify_one();
+                future::pending().await
+            })
+        }
+
+        fn accept_stream(&self) -> BoxFuture<'_, Option<(wire::pb::StreamPreface, ByteStream)>> {
+            Box::pin(future::pending())
+        }
+
+        fn close(&self, _reason: wire::pb::LinkCloseReason) {}
+
+        fn closed(&self) -> BoxFuture<'_, wire::pb::LinkCloseReason> {
+            Box::pin(future::pending())
+        }
+    }
+
+    fn host(id: u128) -> Host {
+        Host {
+            id: HostId::from_u128(id),
+            name: format!("host-{id}"),
+            version: "test".to_string(),
+            capabilities: Capabilities::default(),
+            signed_in: Some(false),
+        }
+    }
+
+    #[tokio::test]
+    async fn blocked_destination_open_does_not_stall_origin_control_messages() {
+        let local = host(1);
+        let origin = host(2);
+        let destination = host(3);
+        let announced = host(4);
+        let routing = Arc::new(RoutingCore::new());
+        let links = Arc::new(LinkRegistry::default());
+        let destination_carrier = Arc::new(BlockingOpenCarrier::new());
+        let destination_link = LinkId::new(destination.id);
+        let (destination_messages, _destination_rx) = mpsc::channel(8);
+        let _destination_close = links
+            .register_with_details(
+                destination_link,
+                destination.clone(),
+                destination_messages,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: RoutingCarrier::Direct,
+                },
+                &[],
+                Some(destination_carrier.clone()),
+            )
+            .await;
+
+        let (origin_io, local_io) = tokio::io::duplex(1024 * 1024);
+        let origin_carrier = Arc::new(MuxCarrier::new(
+            origin_io,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ));
+        let local_carrier = Arc::new(MuxCarrier::new(
+            local_io,
+            MuxRole::Acceptor,
+            CarrierKind::RelayTcp,
+        ));
+        let ctx =
+            LinkCtx::new(local.clone(), routing.clone(), links).with_authenticated_peer(origin.id);
+        let link_task = tokio::spawn(run_link(
+            ctx,
+            local_carrier,
+            crate::routing::ConnectRole::Acceptor,
+        ));
+        let (mut sink, mut source) = origin_carrier.control();
+        write_message(
+            &mut sink,
+            &wire::pb::Message {
+                body: Some(wire::pb::message::Body::Hello(wire::pb::Hello {
+                    supported_protocol_versions: vec![PROTOCOL_VERSION],
+                    host: Some(host_to_wire(&origin)),
+                    neighbors: Vec::new(),
+                    auth_token: None,
+                })),
+            },
+        )
+        .await
+        .unwrap();
+        let ack = read_message(&mut source).await.unwrap().unwrap();
+        assert!(matches!(
+            ack.body,
+            Some(wire::pb::message::Body::HelloAck(wire::pb::HelloAck {
+                outcome: Some(wire::pb::hello_ack::Outcome::Accepted(_)),
+            }))
+        ));
+
+        let stream_open = tokio::spawn({
+            let carrier = origin_carrier.clone();
+            async move {
+                carrier
+                    .open_stream(wire::pb::StreamPreface {
+                        dst: destination.id.as_bytes().to_vec(),
+                    })
+                    .await
+            }
+        });
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            destination_carrier.opened.notified(),
+        )
+        .await
+        .expect("origin stream did not reach the blocked destination");
+
+        write_message(
+            &mut sink,
+            &wire::pb::Message {
+                body: Some(wire::pb::message::Body::NeighborUp(wire::pb::NeighborUp {
+                    host: Some(host_to_wire(&announced)),
+                })),
+            },
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if routing.host_entry(announced.id).await.is_some() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("blocked stream dispatch stalled the origin control loop");
+
+        stream_open.abort();
+        link_task.abort();
+    }
 }

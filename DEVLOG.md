@@ -9049,3 +9049,10 @@ immediately, and both paths reauthorize the existing link without restarting.
 The subscription-required marker, its reporter, and the disconnected status it
 represented are deleted; the installation front door now carries tier and
 carrier with its connected profile status.
+
+2026-09-11 — **Slow stream opens cannot stall a link.** Yamux prefaces are now
+read concurrently before streams enter the accept queue, so cancelling an
+accept cannot discard a half-open stream and one peer withholding a preface
+cannot block later streams. Established links dispatch local delivery and relay
+forwarding away from their control loop, keeping neighbor updates and link
+expiry responsive when a destination is saturated or slow.

@@ -42,7 +42,7 @@ pub(crate) struct MuxCarrier {
     kind: CarrierKind,
     commands: mpsc::UnboundedSender<DriverCommand>,
     driver: tokio::task::AbortHandle,
-    inbound: tokio::sync::Mutex<mpsc::UnboundedReceiver<yamux::Stream>>,
+    inbound: tokio::sync::Mutex<mpsc::UnboundedReceiver<(pb::StreamPreface, ByteStream)>>,
     control: Mutex<Option<(ControlSink, ControlSource)>>,
     control_ready: watch::Receiver<bool>,
     closed: watch::Sender<Option<pb::LinkCloseReason>>,
@@ -111,7 +111,7 @@ impl MuxCarrier {
         }
     }
 
-    async fn next_inbound(&self) -> Option<yamux::Stream> {
+    async fn next_inbound(&self) -> Option<(pb::StreamPreface, ByteStream)> {
         self.inbound.lock().await.recv().await
     }
 
@@ -195,25 +195,7 @@ impl LinkCarrier for MuxCarrier {
     }
 
     fn accept_stream(&self) -> BoxFuture<'_, Option<(pb::StreamPreface, ByteStream)>> {
-        Box::pin(async move {
-            loop {
-                let stream = self.next_inbound().await?;
-                let mut stream = stream.compat();
-                match read_proto::<_, pb::StreamPreface>(&mut stream, wire::MESSAGE_SIZE_LIMIT)
-                    .await
-                {
-                    Ok(Some(preface)) => {
-                        return Some((
-                            preface,
-                            Box::new(MuxByteStream::pending(stream)) as ByteStream,
-                        ));
-                    }
-                    Ok(None) | Err(_) => {
-                        let _ = refuse_stream(&mut stream, pb::StreamRefusal::NotAdjacent).await;
-                    }
-                }
-            }
-        })
+        Box::pin(self.next_inbound())
     }
 
     fn close(&self, reason: pb::LinkCloseReason) {
@@ -249,7 +231,7 @@ enum DriverEvent {
 async fn drive_connection<IO>(
     mut connection: yamux::Connection<tokio_util::compat::Compat<IO>>,
     mut commands: mpsc::UnboundedReceiver<DriverCommand>,
-    inbound: mpsc::UnboundedSender<yamux::Stream>,
+    inbound: mpsc::UnboundedSender<(pb::StreamPreface, ByteStream)>,
     first_inbound: &mut Option<oneshot::Sender<Result<yamux::Stream, DriverOpenError>>>,
     closed: watch::Sender<Option<pb::LinkCloseReason>>,
 ) where
@@ -313,8 +295,11 @@ async fn drive_connection<IO>(
             DriverEvent::Inbound(stream) => {
                 if let Some(control) = first_inbound.take() {
                     let _ = control.send(Ok(stream));
-                } else if inbound.send(stream).is_err() {
-                    break;
+                } else {
+                    let inbound = inbound.clone();
+                    tokio::spawn(async move {
+                        prepare_inbound_stream(stream, inbound).await;
+                    });
                 }
             }
             DriverEvent::Closed => break,
@@ -329,6 +314,25 @@ async fn drive_connection<IO>(
     }
     if closed.borrow().is_none() {
         closed.send_replace(Some(pb::LinkCloseReason::Unspecified));
+    }
+}
+
+async fn prepare_inbound_stream(
+    stream: yamux::Stream,
+    inbound: mpsc::UnboundedSender<(pb::StreamPreface, ByteStream)>,
+) {
+    let mut stream = stream.compat();
+    match read_proto::<_, pb::StreamPreface>(&mut stream, wire::MESSAGE_SIZE_LIMIT).await {
+        Ok(Some(preface)) => {
+            let stream = Box::new(MuxByteStream::pending(stream)) as ByteStream;
+            if let Err(error) = inbound.send((preface, stream)) {
+                let (_, mut stream) = error.0;
+                let _ = stream.reset(pb::StreamRefusal::ShuttingDown).await;
+            }
+        }
+        Ok(None) | Err(_) => {
+            let _ = refuse_stream(&mut stream, pb::StreamRefusal::NotAdjacent).await;
+        }
     }
 }
 
@@ -677,6 +681,18 @@ mod tests {
         pb::StreamPreface { dst: vec![dst; 16] }
     }
 
+    async fn open_with_partial_preface(
+        carrier: &MuxCarrier,
+        preface: &pb::StreamPreface,
+    ) -> (tokio_util::compat::Compat<yamux::Stream>, Vec<u8>) {
+        let mut stream = carrier.request_stream().await.unwrap().compat();
+        let bytes = prost::Message::encode_to_vec(preface);
+        let header = u32::try_from(bytes.len()).unwrap().to_be_bytes();
+        stream.write_all(&header[..2]).await.unwrap();
+        stream.flush().await.unwrap();
+        (stream, [header[2..].to_vec(), bytes].concat())
+    }
+
     #[tokio::test]
     async fn both_sides_open_streams() {
         let (connector, acceptor) = carriers().await;
@@ -735,6 +751,61 @@ mod tests {
         let mut outbound = opening.await.unwrap();
         let mut byte = [0];
         assert_eq!(outbound.read(&mut byte).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn inbound_stream_survives_a_cancelled_accept_before_its_preface_arrives() {
+        let (connector, acceptor) = carriers().await;
+        let expected = preface(5);
+        let (mut outbound, rest) = open_with_partial_preface(&connector, &expected).await;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), acceptor.accept_stream())
+                .await
+                .is_err()
+        );
+
+        outbound.write_all(&rest).await.unwrap();
+        outbound.flush().await.unwrap();
+        let (received, mut inbound) =
+            tokio::time::timeout(Duration::from_secs(1), acceptor.accept_stream())
+                .await
+                .expect("cancelled accept must not consume the pending stream")
+                .unwrap();
+        assert_eq!(received, expected);
+        inbound.flush().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stream_withholding_its_preface_does_not_block_later_accepts() {
+        let (connector, acceptor) = carriers().await;
+        let blocked_preface = preface(6);
+        let (mut blocked, rest) = open_with_partial_preface(&connector, &blocked_preface).await;
+
+        let expected = preface(7);
+        let opening = {
+            let connector = connector.clone();
+            let expected = expected.clone();
+            tokio::spawn(async move { connector.open_stream(expected).await.unwrap() })
+        };
+        let (received, mut inbound) =
+            tokio::time::timeout(Duration::from_secs(1), acceptor.accept_stream())
+                .await
+                .expect("later stream must overtake a stream withholding its preface")
+                .unwrap();
+        assert_eq!(received, expected);
+        inbound.flush().await.unwrap();
+        opening.await.unwrap();
+
+        blocked.write_all(&rest).await.unwrap();
+        blocked.flush().await.unwrap();
+        let (received, mut inbound) =
+            tokio::time::timeout(Duration::from_secs(1), acceptor.accept_stream())
+                .await
+                .expect("withheld stream must be delivered once its preface arrives")
+                .unwrap();
+        assert_eq!(received, blocked_preface);
+        inbound.flush().await.unwrap();
     }
 
     #[tokio::test]
