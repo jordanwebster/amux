@@ -110,6 +110,11 @@ pub(crate) enum DirectDialPolicy {
 #[derive(Clone)]
 pub(crate) enum CloudFixtureAuth {
     Refreshing(crate::routing::LinkConnectorAuth),
+    RefreshingQuic {
+        auth: crate::routing::LinkConnectorAuth,
+        client_config: quinn::ClientConfig,
+        server_name: String,
+    },
 }
 
 #[cfg(testnet)]
@@ -634,9 +639,24 @@ impl ProfileRuntime {
             }
             let ctx = self.services.link_connector_ctx_with_signed_in(signed_in);
             *connector = Some(match auth {
-                CloudFixtureAuth::Refreshing(auth) => {
-                    CloudLink::testnet_with_auth(ctx, *address, auth.clone(), self.status.clone())
-                }
+                CloudFixtureAuth::Refreshing(auth) => CloudLink::testnet_with_auth(
+                    ctx,
+                    *address,
+                    auth.clone(),
+                    self.status.clone(),
+                    None,
+                ),
+                CloudFixtureAuth::RefreshingQuic {
+                    auth,
+                    client_config,
+                    server_name,
+                } => CloudLink::testnet_with_auth(
+                    ctx,
+                    *address,
+                    auth.clone(),
+                    self.status.clone(),
+                    Some((client_config.clone(), server_name.clone())),
+                ),
             });
             return Ok(());
         }

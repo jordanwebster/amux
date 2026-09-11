@@ -98,7 +98,18 @@ impl QuicCarrier {
                 host: host.to_string(),
                 port,
             })?;
-        let connection = endpoint.connect(addr, host)?.await?;
+        let config = crate::transport::relay_quic_client_config()
+            .map_err(|error| IdentityError::TlsConfig(error.to_string()))?;
+        Self::connect_relay_with_config(endpoint, addr, host, config).await
+    }
+
+    pub(crate) async fn connect_relay_with_config(
+        endpoint: &quinn::Endpoint,
+        addr: SocketAddr,
+        server_name: &str,
+        config: quinn::ClientConfig,
+    ) -> Result<Self, ConnectError> {
+        let connection = endpoint.connect_with(config, addr, server_name)?.await?;
         let control = connection.open_bi().await?;
         Ok(Self::new(connection, CarrierKind::RelayQuic, Some(control)))
     }

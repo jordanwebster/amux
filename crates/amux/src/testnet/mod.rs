@@ -95,6 +95,14 @@ pub enum Via {
     Cloud,
 }
 
+/// Carrier a fixture daemon uses for its authenticated cloud-relay link.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RelayTransport {
+    Quic,
+    #[default]
+    Tcp,
+}
+
 /// A running testnet: the daemons and optional cloud relay declared through
 /// [`TestNet::builder`], plus the network-operator verbs that disturb them.
 /// Dropping the net tears everything down (runtimes, sockets, data dirs).
@@ -443,6 +451,7 @@ struct DaemonSpec {
     cloud_user: Option<String>,
     cloud_tier: crate::Tier,
     cloud_refresh_interval: Option<std::time::Duration>,
+    relay_transport: RelayTransport,
 }
 
 /// Declares a topology for [`TestNetBuilder::start`]: daemons, an optional
@@ -540,6 +549,7 @@ impl TestNetBuilder {
             cloud_user: None,
             cloud_tier: crate::Tier::Pro,
             cloud_refresh_interval: None,
+            relay_transport: RelayTransport::Tcp,
         });
         self
     }
@@ -616,6 +626,16 @@ impl TestNetBuilder {
         );
         self.last_daemon("cloud_refresh_interval")
             .cloud_refresh_interval = Some(interval);
+        self
+    }
+
+    /// Uses a specific carrier for the selected daemon's cloud-relay link.
+    pub fn relay_transport(mut self, transport: RelayTransport) -> Self {
+        assert!(
+            !self.selecting_profile,
+            "relay_transport currently requires a standalone daemon"
+        );
+        self.last_daemon("relay_transport").relay_transport = transport;
         self
     }
 
@@ -840,6 +860,8 @@ impl TestNetBuilder {
                         tokens: cloud.token_registry(),
                         user_tiers: cloud.user_tier_registry(),
                         refresh_interval: spec.cloud_refresh_interval,
+                        relay_transport: spec.relay_transport,
+                        quic_client_config: cloud.quic_client_config(),
                     }
                 }),
                 runtime: Mutex::new(None),

@@ -60,6 +60,8 @@ pub(crate) struct CloudRelay {
     tokens: TokenRegistry,
     user_tiers: UserTierRegistry,
     failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
+    quic_server_config: quinn::ServerConfig,
+    quic_client_config: quinn::ClientConfig,
     /// builder `cloud_user` label → that user's `(user_id, token)`.
     user_labels: std::sync::Mutex<HashMap<String, (Uuid, String)>>,
     server: Mutex<Option<RunningCloud>>,
@@ -67,15 +69,20 @@ pub(crate) struct CloudRelay {
 
 struct RunningCloud {
     service: CloudLinkServer,
-    task: JoinHandle<()>,
+    tasks: Vec<JoinHandle<()>>,
+    quic_endpoint: quinn::Endpoint,
     connections: TrackedConnections,
 }
 
 impl RunningCloud {
     /// Kills the accept loop and severs every accepted socket. Daemons see
     /// their relay links fail like a genuine outage, not a graceful drain.
-    fn sever(self) {
-        self.task.abort();
+    fn sever(mut self) {
+        self.quic_endpoint
+            .close(quinn::VarInt::from_u32(0), b"test relay offline");
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
         let connections = std::mem::take(
             &mut *self
                 .connections
@@ -90,7 +97,11 @@ impl RunningCloud {
 
 impl Drop for RunningCloud {
     fn drop(&mut self) {
-        self.task.abort();
+        self.quic_endpoint
+            .close(quinn::VarInt::from_u32(0), b"test relay dropped");
+        for task in &self.tasks {
+            task.abort();
+        }
     }
 }
 
@@ -102,6 +113,7 @@ impl CloudRelay {
         let addr = listener
             .local_addr()
             .expect("testnet cloud relay listener address");
+        let (quic_server_config, quic_client_config) = testnet_quic_configs();
         let token = format!("spec-token-{}", Uuid::new_v4().simple());
         let user_id = Uuid::new_v4();
         let tokens: TokenRegistry = Arc::default();
@@ -129,6 +141,8 @@ impl CloudRelay {
             tokens,
             user_tiers,
             failures: Arc::default(),
+            quic_server_config,
+            quic_client_config,
             user_labels: std::sync::Mutex::new(HashMap::new()),
             server: Mutex::new(None),
         };
@@ -147,12 +161,21 @@ impl CloudRelay {
             }),
         );
         let connections: TrackedConnections = Arc::default();
-        let task = service.serve_on_incoming(tracked_tcp_incoming(listener, connections.clone()));
+        let tcp_task =
+            service.serve_on_incoming(tracked_tcp_incoming(listener, connections.clone()));
+        let quic_endpoint =
+            bind_quic_addr_with_retries(self.quic_server_config.clone(), self.addr).await;
+        let quic_task = service.serve_on_quic_endpoint(quic_endpoint.clone());
         *self.server.lock().await = Some(RunningCloud {
             service,
-            task,
+            tasks: vec![tcp_task, quic_task],
+            quic_endpoint,
             connections,
         });
+    }
+
+    pub(crate) fn quic_client_config(&self) -> quinn::ClientConfig {
+        self.quic_client_config.clone()
     }
 
     pub(crate) fn reject_user(&self, label: &str, error: Option<tonic::Status>) {
@@ -293,6 +316,30 @@ impl CloudRelay {
     }
 }
 
+fn testnet_quic_configs() -> (quinn::ServerConfig, quinn::ClientConfig) {
+    let rcgen::CertifiedKey { cert, signing_key } =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("generate testnet relay certificate");
+    let server = crate::transport::relay_quic_server_config_from_der(
+        vec![rustls::pki_types::CertificateDer::from(
+            cert.der().as_ref().to_vec(),
+        )],
+        rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+            signing_key.serialize_der(),
+        )),
+    )
+    .expect("configure testnet relay QUIC server");
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(
+            cert.der().as_ref().to_vec(),
+        ))
+        .expect("trust testnet relay certificate");
+    let client = crate::transport::relay_quic_client_config_with_roots(roots)
+        .expect("configure testnet relay QUIC client");
+    (server, client)
+}
+
 /// Accepts TCP connections like the production relay, but keeps an OS-level
 /// duplicate handle to each socket so [`RunningCloud::sever`] can cut them.
 fn tracked_tcp_incoming(
@@ -333,6 +380,24 @@ pub(crate) async fn bind_addr_with_retries(addr: SocketAddr) -> TcpListener {
             Err(error) => {
                 if tokio::time::Instant::now() >= deadline {
                     panic!("failed to rebind {addr}: {error}");
+                }
+                tokio::time::sleep(POLL_INTERVAL).await;
+            }
+        }
+    }
+}
+
+async fn bind_quic_addr_with_retries(
+    config: quinn::ServerConfig,
+    addr: SocketAddr,
+) -> quinn::Endpoint {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match quinn::Endpoint::server(config.clone(), addr) {
+            Ok(endpoint) => return endpoint,
+            Err(error) => {
+                if tokio::time::Instant::now() >= deadline {
+                    panic!("failed to rebind QUIC {addr}: {error}");
                 }
                 tokio::time::sleep(POLL_INTERVAL).await;
             }

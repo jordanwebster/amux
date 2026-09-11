@@ -619,6 +619,8 @@ pub(super) async fn start(
                             tokens: cloud.token_registry(),
                             user_tiers: cloud.user_tier_registry(),
                             refresh_interval: None,
+                            relay_transport: super::RelayTransport::Tcp,
+                            quic_client_config: cloud.quic_client_config(),
                         }
                     }),
                     runtime: tokio::sync::Mutex::new(None),

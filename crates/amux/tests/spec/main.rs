@@ -35,6 +35,7 @@ mod identity; // Chapter 1 — Identity & trust
 mod pairing; // Chapter 2 — Pairing
 mod presence; // Chapter 3 — Presence
 mod quic; // Chapter 5 — Direct QUIC behavior and network conditions
+mod relay; // Chapter 6 — Relay carriers and opaque stream forwarding
 mod routing; // Chapter 4 — Routing & failover
 mod sessions; // Chapter 6 — Remote sessions & authority
 mod wire; // Chapter 7 — Wire conformance (WirePeer)

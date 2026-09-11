@@ -1,3 +1,13 @@
+2026-09-11 — **Serve cloud links over QUIC beside the TCP fallback.** Cloud
+relay startup now binds UDP and TCP listeners from the same WebPKI certificate,
+with TLS 1.3, the version-2 ALPN, disabled resumption and 0-RTT, and QUIC
+migration enabled. Both fronts authenticate the token carried in the link hello
+and register into the same per-account routing state, so the relay's opaque
+piper can copy a native stream between QUIC and yamux in either direction. The
+test network serves both carriers on one port number and covers relayed
+sessions, mixed-carrier callbacks, and rejecting streams addressed to the relay
+itself.
+
 2026-09-11 — **Move direct device connections to QUIC.** Each listening
 profile now binds and advertises its UDP port, requires stateless address
 validation and bounded per-source admission before allocating handshake state,

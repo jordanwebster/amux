@@ -43,6 +43,8 @@ pub(crate) struct CloudAttachment {
     pub(crate) tokens: TokenRegistry,
     pub(crate) user_tiers: UserTierRegistry,
     pub(crate) refresh_interval: Option<std::time::Duration>,
+    pub(crate) relay_transport: super::RelayTransport,
+    pub(crate) quic_client_config: quinn::ClientConfig,
 }
 
 /// Marks a testnet daemon with a cloud attachment as account-bound. The
@@ -80,6 +82,21 @@ impl CloudAttachment {
                     .unwrap_or(crate::services::FREE_TIER_REFRESH_INTERVAL),
             ),
         )
+    }
+
+    fn fixture_auth(&self) -> CloudFixtureAuth {
+        self.fixture_auth_with(self.refreshing_auth())
+    }
+
+    fn fixture_auth_with(&self, auth: LinkConnectorAuth) -> CloudFixtureAuth {
+        match self.relay_transport {
+            super::RelayTransport::Quic => CloudFixtureAuth::RefreshingQuic {
+                auth,
+                client_config: self.quic_client_config.clone(),
+                server_name: "localhost".to_string(),
+            },
+            super::RelayTransport::Tcp => CloudFixtureAuth::Refreshing(auth),
+        }
     }
 }
 
@@ -135,16 +152,21 @@ impl DaemonRuntime {
         self.profile
             .as_mut()
             .unwrap()
-            .set_test_cloud_auth(CloudFixtureAuth::Refreshing(cloud.refreshing_auth()))
+            .set_test_cloud_auth(cloud.fixture_auth())
             .await;
         self.start_cloud().await.expect("start test cloud");
     }
 
-    pub(crate) async fn spawn_cloud_connector_with_auth(&mut self, auth: LinkConnectorAuth) {
+    pub(crate) async fn spawn_cloud_connector_with_auth(
+        &mut self,
+        inner: &DaemonInner,
+        auth: LinkConnectorAuth,
+    ) {
+        let cloud = inner.cloud.as_ref().expect("daemon has cloud attachment");
         self.profile
             .as_mut()
             .unwrap()
-            .set_test_cloud_auth(CloudFixtureAuth::Refreshing(auth))
+            .set_test_cloud_auth(cloud.fixture_auth_with(auth))
             .await;
         self.start_cloud().await.expect("start test cloud");
     }
@@ -229,12 +251,10 @@ pub(crate) async fn start_daemon_runtime(
         artifact_clock: Some(inner.artifact_clock.clone()),
         cloud_transport: None,
         cloud_refresh_interval: None,
-        cloud: inner.cloud.as_ref().map(|cloud| {
-            (
-                cloud.addr,
-                CloudFixtureAuth::Refreshing(cloud.refreshing_auth()),
-            )
-        }),
+        cloud: inner
+            .cloud
+            .as_ref()
+            .map(|cloud| (cloud.addr, cloud.fixture_auth())),
     };
     let profile = runtime::start(options)
         .await
@@ -374,6 +394,64 @@ impl Daemon {
                 crate::link::OpenError::Refused(wire::pb::StreamRefusal::NoRoute)
             ),
             "cross-tenant relay stream was not refused as NO_ROUTE: {refused}"
+        );
+    }
+
+    /// Asserts this daemon's adjacent cloud link is the relay's QUIC front.
+    pub async fn uses_quic_relay(&self) {
+        self.assert_relay_carrier(CarrierKind::RelayQuic).await;
+    }
+
+    /// Asserts this daemon's adjacent cloud link is the relay's TCP fallback.
+    pub async fn uses_tcp_relay(&self) {
+        self.assert_relay_carrier(CarrierKind::RelayTcp).await;
+    }
+
+    async fn assert_relay_carrier(&self, expected: CarrierKind) {
+        let parts = self.try_parts().await.expect("profile is running");
+        let carrier = parts
+            .channels
+            .link_registry()
+            .cloud_relay_carrier()
+            .await
+            .expect("profile has a cloud relay carrier");
+        assert_eq!(carrier.kind(), expected);
+    }
+
+    /// Opens a stream whose destination is the adjacent relay itself. A
+    /// relay is only a byte-forwarder between neighboring devices, so this
+    /// address must be rejected before any bytes are admitted.
+    pub async fn relay_itself_is_not_adjacent(&self) {
+        let parts = self.try_parts().await.expect("profile is running");
+        let carrier = parts
+            .channels
+            .link_registry()
+            .cloud_relay_carrier()
+            .await
+            .expect("profile has a cloud relay carrier");
+        let relay_id = self
+            .net
+            .upgrade()
+            .expect("testnet already dropped")
+            .cloud
+            .as_ref()
+            .expect("testnet has no cloud relay")
+            .host_id;
+        let refused = match carrier
+            .open_stream(wire::pb::StreamPreface {
+                dst: relay_id.as_bytes().to_vec(),
+            })
+            .await
+        {
+            Ok(_) => panic!("a stream addressed to the relay itself must be refused"),
+            Err(refused) => refused,
+        };
+        assert!(
+            matches!(
+                refused,
+                crate::link::OpenError::Refused(wire::pb::StreamRefusal::NotAdjacent)
+            ),
+            "relay-self stream was not refused as NOT_ADJACENT: {refused}"
         );
     }
 
@@ -1454,7 +1532,9 @@ impl Daemon {
             let runtime = guard
                 .as_mut()
                 .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-            runtime.spawn_cloud_connector_with_auth(auth).await;
+            runtime
+                .spawn_cloud_connector_with_auth(&self.inner, auth)
+                .await;
         }
         let assertion = format!(
             "'{}' reattaches to the cloud relay under the short-lived JWT",

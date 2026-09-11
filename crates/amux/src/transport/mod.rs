@@ -29,7 +29,8 @@ pub(crate) use tcp::tcp_incoming;
 use thiserror::Error;
 pub(crate) use tls::{
     create_tls_acceptor, pairing_channel_from_io, pairing_quic_channel, pairing_quic_client_config,
-    tls_connect_stream,
+    relay_quic_client_config, relay_quic_client_config_with_roots, relay_quic_server_config,
+    relay_quic_server_config_from_der, tls_connect_stream,
 };
 use tonic::transport::{Endpoint, Server};
 #[cfg(unix)]

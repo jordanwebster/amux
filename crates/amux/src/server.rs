@@ -27,7 +27,7 @@ use crate::profile::runtime::{
 };
 use crate::protocol::wire;
 use crate::services::{CloudLinkServer, DeviceRuntimeSecurity};
-use crate::transport::{TransportError, create_tls_acceptor};
+use crate::transport::{TransportError, create_tls_acceptor, relay_quic_server_config};
 use crate::update::{UpdateReporter, UpdateStatus};
 use crate::user_state::ServerState;
 
@@ -220,10 +220,11 @@ impl Server {
     #[cfg(feature = "local-agents")]
     pub(crate) async fn run(&mut self) -> Result<()> {
         let is_cloud_server = self.is_cloud_relay();
-        let (tcp_port, cloud_url, prevent_idle_sleep) = {
+        let (tcp_port, udp_port, cloud_url, prevent_idle_sleep) = {
             let state = self.state.read().await;
             (
                 state.config.tcp_port,
+                state.config.udp_port,
                 state.config.cloud_url.clone(),
                 state.config.prevent_idle_sleep.unwrap_or(false),
             )
@@ -231,6 +232,9 @@ impl Server {
 
         if is_cloud_server && tcp_port.is_none() {
             return Err(ConfigError::Invalid("cloud relay requires tcp_port".into()).into());
+        }
+        if is_cloud_server && udp_port.is_none() {
+            return Err(ConfigError::Invalid("cloud relay requires udp_port".into()).into());
         }
 
         // Validate shared settings before creating runtime services.
@@ -276,7 +280,7 @@ impl Server {
         }
 
         // Configure cloud server: enable JWT validation and TLS.
-        let tls_acceptor = {
+        let (tls_acceptor, quic_server_config) = {
             let mut state = self.state.write().await;
             state.is_cloud_server = true;
             state.jwt_validator = Some(Arc::new(JwtValidator::new(&cloud_url)));
@@ -307,8 +311,9 @@ impl Server {
             })?;
 
             let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
+            let quic = relay_quic_server_config(&cert_pem, &key_pem)?;
             tracing::info!("TLS configured for cloud mode");
-            acceptor
+            (acceptor, quic)
         };
 
         let cloud_routing = CloudLinkServer::new(self.state.clone());
@@ -318,8 +323,15 @@ impl Server {
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
         let listener = TcpListener::bind(addr).await?;
         tracing::info!(addr = %addr, "listening for cloud TLS carriers");
-        let cloud_routing_task =
+        let cloud_tcp_task =
             cloud_routing.serve_on_tls_tcp_listener(listener, tls_acceptor, TLS_HANDSHAKE_TIMEOUT);
+        let Some(udp_port) = udp_port else {
+            unreachable!("cloud server config validation requires udp_port");
+        };
+        let quic_addr = SocketAddr::from(([0, 0, 0, 0], udp_port));
+        let quic_endpoint = quinn::Endpoint::server(quic_server_config, quic_addr)?;
+        tracing::info!(addr = %quic_addr, "listening for cloud QUIC carriers");
+        let cloud_quic_task = cloud_routing.serve_on_quic_endpoint(quic_endpoint.clone());
 
         tokio::signal::ctrl_c().await?;
         cloud_routing
@@ -328,7 +340,9 @@ impl Server {
             ))
             .await;
         tokio::time::sleep(SERVER_LINK_CLOSE_FLUSH_TIMEOUT).await;
-        cloud_routing_task.abort();
+        quic_endpoint.close(quinn::VarInt::from_u32(0), b"relay shutting down");
+        cloud_tcp_task.abort();
+        cloud_quic_task.abort();
         tracing::info!("server exiting");
 
         Ok(())

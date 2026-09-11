@@ -722,7 +722,7 @@ fn spawn_inbound_dispatch(
 ) {
     tokio::spawn(async move {
         let destination = HostId::from_slice(&preface.dst).ok();
-        if destination == Some(ctx.local_host.id()) {
+        if destination == Some(ctx.local_host.id()) && ctx.link_role != LinkRole::CloudRelay {
             if let Some(sender) = &ctx.incoming_streams_tx {
                 if let Err(error) = sender.send((peer, stream)).await {
                     let (_, mut stream) = error.0;

@@ -23,7 +23,9 @@ use crate::agents::ArtifactOwners;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
-use crate::link::{CarrierKind, ChannelPool, MuxCarrier, MuxRole, run_link, serve_inbound_streams};
+use crate::link::{
+    CarrierKind, ChannelPool, MuxCarrier, MuxRole, QuicCarrier, run_link, serve_inbound_streams,
+};
 use crate::pairing::PairMode;
 use crate::protocol::wire;
 use crate::routing::{
@@ -160,6 +162,34 @@ impl CloudLinkServer {
     ) -> JoinHandle<()> {
         let incoming = cloud_tls_incoming(listener, acceptor, handshake_timeout);
         spawn_cloud_carrier_server(self.clone(), incoming)
+    }
+
+    pub(crate) fn serve_on_quic_endpoint(&self, endpoint: quinn::Endpoint) -> JoinHandle<()> {
+        let service = self.clone();
+        tokio::spawn(async move {
+            while let Some(incoming) = endpoint.accept().await {
+                let service = service.clone();
+                tokio::spawn(async move {
+                    match incoming.await {
+                        Ok(connection) => {
+                            let ctx = service.accepting_link_ctx().await;
+                            let carrier = Arc::new(QuicCarrier::from_accepted_with_kind(
+                                connection,
+                                CarrierKind::RelayQuic,
+                            ));
+                            if let Err(error) =
+                                run_link(ctx, carrier, crate::routing::ConnectRole::Acceptor).await
+                            {
+                                tracing::warn!(error = %error, "cloud QUIC link exited with error");
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "cloud QUIC handshake failed");
+                        }
+                    }
+                });
+            }
+        })
     }
 
     async fn link_ctx_for_user(&self, user_id: Uuid) -> LinkCtx {

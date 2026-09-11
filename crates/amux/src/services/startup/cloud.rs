@@ -19,7 +19,7 @@ use crate::auth::cloud::{
     CloudError, CloudRoutingConnectionDetails, fetch_routing_connection_details,
 };
 use crate::config::Config;
-use crate::link::{CarrierKind, MuxCarrier, MuxRole};
+use crate::link::{CarrierKind, LinkCarrier, MuxCarrier, MuxRole, QuicCarrier};
 use crate::profile::status::{Observed, RelayCarrier, RuntimeStatus};
 use crate::protocol::{ProtocolError, protocol_error_from_status_details};
 use crate::routing::{
@@ -98,6 +98,7 @@ impl CloudLink {
         address: std::net::SocketAddr,
         auth: LinkConnectorAuth,
         status: RuntimeStatus,
+        quic: Option<(quinn::ClientConfig, String)>,
     ) -> Self {
         let (stop_tx, stop_rx) = watch::channel(false);
         let tier = auth.tier();
@@ -113,19 +114,48 @@ impl CloudLink {
         let task_status = status.clone();
         let task_stop_tx = stop_tx.clone();
         let task = tokio::spawn(async move {
-            let stream = match TcpStream::connect(address).await {
-                Ok(stream) => stream,
-                Err(error) => {
-                    tracing::warn!(%error, "test cloud TCP connection failed");
-                    task_status.report(Observed::Retrying);
-                    return;
+            let carrier: Arc<dyn LinkCarrier> = match quic {
+                Some((client_config, server_name)) => {
+                    let endpoint = match quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()) {
+                        Ok(endpoint) => endpoint,
+                        Err(error) => {
+                            tracing::warn!(%error, "test cloud QUIC endpoint failed");
+                            task_status.report(Observed::Retrying);
+                            return;
+                        }
+                    };
+                    match QuicCarrier::connect_relay_with_config(
+                        &endpoint,
+                        address,
+                        &server_name,
+                        client_config,
+                    )
+                    .await
+                    {
+                        Ok(carrier) => Arc::new(carrier),
+                        Err(error) => {
+                            tracing::warn!(%error, "test cloud QUIC connection failed");
+                            task_status.report(Observed::Retrying);
+                            return;
+                        }
+                    }
+                }
+                None => {
+                    let stream = match TcpStream::connect(address).await {
+                        Ok(stream) => stream,
+                        Err(error) => {
+                            tracing::warn!(%error, "test cloud TCP connection failed");
+                            task_status.report(Observed::Retrying);
+                            return;
+                        }
+                    };
+                    Arc::new(MuxCarrier::new(
+                        stream,
+                        MuxRole::Connector,
+                        CarrierKind::RelayTcp,
+                    ))
                 }
             };
-            let carrier = Arc::new(MuxCarrier::new(
-                stream,
-                MuxRole::Connector,
-                CarrierKind::RelayTcp,
-            ));
             let (connector_task, established_rx) =
                 spawn_connector_with_auth_establishment_and_shutdown(
                     connector_ctx,

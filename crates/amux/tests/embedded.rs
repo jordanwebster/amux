@@ -300,6 +300,20 @@ async fn config_split_relay_still_requires_a_tcp_listener() {
 }
 
 #[tokio::test]
+async fn config_split_relay_also_requires_a_udp_listener() {
+    let error = Server::builder()
+        .config(Config {
+            tcp_port: Some(0),
+            ..Config::default()
+        })
+        .as_cloud_relay()
+        .run()
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("cloud relay requires udp_port"));
+}
+
+#[tokio::test]
 async fn server_builder_rejects_credentials_for_cloud_relay() {
     let dir = short_tempdir();
     let config = Config {
