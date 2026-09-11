@@ -93,8 +93,20 @@ final class Composition {
         // which one it is of.
         freezer = ReportFreeze(
             route: { router.top?.name ?? router.tab.rawValue },
-            screen: { Self.catalogueName(for: router) },
+            place: { Self.place(for: router) },
+            account: { [accounts] in accounts.selectedAccount },
+            ordered: { [accounts, signedOut] in (accounts.stores ?? signedOut).fleet.orderedAt },
             runtimeFailure: { [runtime] in runtime.failure })
+        // Where somebody goes is recorded as they go there, rather than only
+        // where they ended up: a report is replayed by walking the same trail,
+        // and a recording that held one destination could not put back a
+        // conversation reached from a tab that had been left somewhere else.
+        // Set here and nowhere in the shell, because the recording belongs to
+        // a build with the reporting tools in it.
+        router.arrived = { [weak router] in
+            guard let router else { return }
+            DoorHost.shared.arrived(at: Self.place(for: router))
+        }
         #endif
         router.loads(with: self)
         rememberedFleet()
@@ -102,24 +114,31 @@ final class Composition {
         settleOutstandingPurchases()
     }
 
-    /// What the screen catalogue calls the page on show, where it has a name
-    /// for it.
+    #if AMUX_DEBUG_TOOLS
+    /// Where the app is, in the words a recording of what somebody was looking
+    /// at names places by.
     ///
-    /// A report's view-state recording is replayed against the catalogue, so
-    /// this is the vocabulary that decides whether a bundle can be put back on
-    /// the page its picture was taken on. Most pages are named the same in
-    /// both, and a tab with nothing pushed on it is the screen at its root.
-    /// A conversation, an agent's changes and one host have no catalogue name
-    /// yet; a report taken there says so rather than naming a screen that
-    /// would come back as the wrong thing.
-    private static func catalogueName(for router: Router) -> String? {
-        if let top = router.top { return Screen(rawValue: top.name)?.rawValue }
-        return switch router.tab {
-        case .agents: Screen.home.rawValue
-        case .hosts: Screen.hosts.rawValue
-        case .you: Screen.you.rawValue
+    /// A report's view-state recording is replayed into the shell, so this is
+    /// the vocabulary that decides where a bundle can be put back. A tab with
+    /// nothing pushed on it is that tab's own root; a conversation and an
+    /// agent's changes carry the agent, because that is what they are about
+    /// and the fleet may rename it before anybody reads the report. Anything
+    /// else is named the way the report header names it, which is the name the
+    /// screen catalogue uses where it has one.
+    private static func place(for router: Router) -> Place {
+        switch router.top {
+        case .conversation(let agent): return .conversation(agent)
+        case .changes(let agent): return .review(agent)
+        case .some(let top): return .screen(top.name)
+        case .none:
+            return switch router.tab {
+            case .agents: .home
+            case .hosts: .hosts
+            case .you: .settings
+            }
         }
     }
+    #endif
 
     /// Puts the fleet the account on screen saw last time in front of it,
     /// before anything has been reached.

@@ -4,6 +4,51 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **A report of the home replays as the home.**
+
+A bug report's view-state recording now says where in the app the person was,
+what the screen was reading time from and whose account it was drawn for, and
+a replay rebuilds all three before it folds a single message.
+
+Places replaced screen names. The recording used to hold only names out of the
+screen catalogue, which a capture run drives the app to, so a report taken by
+somebody using the app recorded at best the name of a picture and at worst
+nothing a replay could put back. A route now names a tab root, a conversation
+or an agent's changes by agent id, keeping the catalogue's own vocabulary for a
+report frozen while a capture run was driving. The navigation records them as
+the person walks: the router tells whoever is listening that it has arrived,
+and only a build with the reporting tools in it listens.
+
+Two facts go in beside them. The instant the frozen screen was reading — both
+when it was frozen and when the fleet on it was last put in order, which is
+what every "8s ago" on a row is measured from — and the account on screen with
+whether it was signed in and what it could reach, with no credential of any
+kind. A replay pins its stores to that instant and puts that account back, so
+the ages and the signed-in header come back as they were rather than as a fresh
+account under today's clock.
+
+The replay draws the real shell, with its tab bar and its stack, instead of the
+isolated surface a capture run photographs one screen on.
+
+Two defects fell out of doing it. Arriving at the home re-orders the fleet, and
+that re-ordering reached for the system clock rather than the clock its own
+bundle was built with, so a pinned bundle was un-pinned by the first frame that
+drew it. And the Mac-side replay compared its photograph with a second picture
+this repository had written beside the report, which could always be made to
+pass by writing it again; it now compares with the report's own frame, and
+`--update` writes only what the recording rebuilds and never the frame.
+
+`ios/Fixtures/reports/sample` is that bundle: a phone signed in as one account,
+paired with one machine, drawing the two agents it runs, written by the app
+during the reports journey. It replaces the probe screen that was there before.
+
+Green: `wt run ios-journey -- reports`, then `wt run ios-replay --
+ios/Fixtures/reports/sample` reproducing the phone's own `frame.png` at the
+goldens' tolerance with nothing rebaselined; `wt run ios-goldens` 124/124,
+`wt run ios-unit`, `wt run ios-lint`.
+
+---
+
 2026-09-11 — **Retain Xcode's reason when a quiet iOS run fails.**
 
 Every journey UI test now writes a fresh result bundle beside its journey log.

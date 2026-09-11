@@ -1,6 +1,7 @@
 import AmuxCore
 import AmuxDesign
 import AmuxFeatures
+import AmuxShell
 import SwiftUI
 
 /// Which screens the door can show, and how each one is built from the stores
@@ -213,7 +214,20 @@ struct DrivenRoot<Content: View>: View {
 
     var body: some View {
         Group {
-            if let screen = host.screen {
+            if let replayed = host.replayed {
+                // The app itself, from a recording. Drawn before the
+                // catalogue is asked anything, because a replay is not a
+                // picture of one screen: it is the shell with the rebuilt
+                // stores in it, and the tab bar under the page is part of
+                // what the report was of.
+                Shell(
+                    router: replayed.router, accounts: replayed.accounts,
+                    stores: replayed.stores, signIn: host.signIn,
+                    paywall: host.paywall, deletion: host.deletion,
+                    appearance: host.appearance, report: nil,
+                    actions: { _ in })
+                    .preferredColorScheme(host.appearance == .dark ? .dark : .light)
+            } else if let screen = host.screen {
                 DoorScreens.view(for: screen, host: host)
                     // Opening a fixture replaces its stores and must also
                     // discard view-local state, such as the previous
@@ -232,7 +246,7 @@ struct DrivenRoot<Content: View>: View {
         // A screen the door is showing is being photographed, not used: what
         // blinks on a timer of its own draws its resting state so two runs
         // take the same picture.
-        .environment(\.photographed, host.screen != nil)
+        .environment(\.photographed, host.screen != nil || host.replayed != nil)
         // Built afresh on every appearance request rather than moved into the
         // new one: a material already on screen cross-fades over a length of
         // time nobody publishes, and a still of that fade is a picture of

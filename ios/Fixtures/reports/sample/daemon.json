@@ -3,33 +3,15 @@
   "has_credential_provider": true,
   "user_count": 1,
   "agent_count": 0,
-  "remote_agent_count": 0,
-  "host_count": 3,
-  "route_count": 3,
+  "remote_agent_count": 2,
+  "host_count": 2,
+  "route_count": 2,
   "peer_link_count": 1,
-  "tunnel_count": 0,
+  "tunnel_count": 1,
   "hosts": [
     {
-      "id": "5c6984bf-7a04-4628-987e-7544cc1b96fe",
-      "name": "laptop",
-      "version": "0.6.0",
-      "capabilities": {
-        "supported_agent_types": [
-          {
-            "agent_type": "claude"
-          },
-          {
-            "agent_type": "codex"
-          },
-          {
-            "agent_type": "test-agent"
-          }
-        ]
-      }
-    },
-    {
-      "id": "5dd1f378-9c94-4c39-b29c-3832b72003fb",
-      "name": "cloud",
+      "id": "353de77d-b8bd-4d22-83ac-0ac363493071",
+      "name": "relay",
       "version": "0.6.0",
       "capabilities": {
         "features": [
@@ -38,8 +20,8 @@
       }
     },
     {
-      "id": "860faf7f-77c5-4e3b-b71b-5ef8d03946fd",
-      "name": "desktop",
+      "id": "aabd0ee9-58db-4d14-a123-4690ad459a09",
+      "name": "studio",
       "version": "0.6.0",
       "capabilities": {
         "supported_agent_types": [
@@ -58,47 +40,47 @@
   ],
   "routes": [
     {
-      "dst": "5c6984bf-7a04-4628-987e-7544cc1b96fe",
-      "via": {
-        "kind": "relay",
-        "host": "5dd1f378-9c94-4c39-b29c-3832b72003fb"
-      },
-      "hops": 2
-    },
-    {
-      "dst": "5dd1f378-9c94-4c39-b29c-3832b72003fb",
+      "dst": "353de77d-b8bd-4d22-83ac-0ac363493071",
       "via": {
         "kind": "direct",
-        "link": "5dd1f3789c944c39b29c3832b72003fb#e893d7c1"
+        "link": "353de77db8bd4d2283ac0ac363493071#bc553cf5"
       },
       "hops": 1
     },
     {
-      "dst": "860faf7f-77c5-4e3b-b71b-5ef8d03946fd",
+      "dst": "aabd0ee9-58db-4d14-a123-4690ad459a09",
       "via": {
         "kind": "relay",
-        "host": "5dd1f378-9c94-4c39-b29c-3832b72003fb"
+        "host": "353de77d-b8bd-4d22-83ac-0ac363493071"
       },
       "hops": 2
     }
   ],
   "links": [
     {
-      "id": "5dd1f3789c944c39b29c3832b72003fb#e893d7c1",
-      "peer": "5dd1f378-9c94-4c39-b29c-3832b72003fb",
+      "id": "353de77db8bd4d2283ac0ac363493071#bc553cf5",
+      "peer": "353de77d-b8bd-4d22-83ac-0ac363493071",
       "direction": "bidirectional",
       "transport": "cloud_relay",
       "established_at": null
     }
   ],
-  "tunnels": [],
+  "tunnels": [
+    {
+      "id": "e7d5bfe9c8e24d33ba2e655634d9ffe9",
+      "peer": "aabd0ee9-58db-4d14-a123-4690ad459a09",
+      "link": "353de77db8bd4d2283ac0ac363493071#bc553cf5",
+      "state": "open_initiated",
+      "opened_at": "2026-09-11T04:24:37.583919Z"
+    }
+  ],
   "config": {
-    "host_name": "door-smoke",
-    "cloud_url": "http://127.0.0.1:52625",
-    "socket_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3C5C10C8-12DC-4476-9B42-E23E2DE4AE31/tmp/door-data/door-smoke/installation/profiles/ef0da11f-642a-4e32-8821-fa8867e505fe.sock",
-    "state_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3C5C10C8-12DC-4476-9B42-E23E2DE4AE31/tmp/door-data/door-smoke/installation/profiles/ef0da11f-642a-4e32-8821-fa8867e505fe/state/state.yaml",
-    "data_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3C5C10C8-12DC-4476-9B42-E23E2DE4AE31/tmp/door-data/door-smoke/installation/profiles/ef0da11f-642a-4e32-8821-fa8867e505fe/data",
-    "reports_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/3C5C10C8-12DC-4476-9B42-E23E2DE4AE31/tmp/door-data/door-smoke/installation/profiles/ef0da11f-642a-4e32-8821-fa8867e505fe/data/reports",
+    "host_name": "amux-golden",
+    "cloud_url": "https://amux.sh",
+    "socket_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/2583395A-D7B0-4C5F-B791-9A4CC4AC41B9/Library/Application Support/amux/installation/profiles/5948df12-8691-4d90-8d43-122bf7f65d24.sock",
+    "state_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/2583395A-D7B0-4C5F-B791-9A4CC4AC41B9/Library/Application Support/amux/installation/profiles/5948df12-8691-4d90-8d43-122bf7f65d24/state/state.yaml",
+    "data_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/2583395A-D7B0-4C5F-B791-9A4CC4AC41B9/Library/Application Support/amux/installation/profiles/5948df12-8691-4d90-8d43-122bf7f65d24/data",
+    "reports_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/2583395A-D7B0-4C5F-B791-9A4CC4AC41B9/Library/Application Support/amux/installation/profiles/5948df12-8691-4d90-8d43-122bf7f65d24/data/reports",
     "prevent_idle_sleep": false,
     "repository_roots": [],
     "keybinds": {

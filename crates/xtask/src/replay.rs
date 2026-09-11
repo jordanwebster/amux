@@ -3,10 +3,9 @@
 //! A report bundle from a phone holds the shared runtime's own recording and
 //! the view-state trace beside it. This hands both to a debug build on the
 //! pinned simulator, which folds the first into stores and applies the second,
-//! then photographs what came back and compares it with the picture the bundle
-//! was written with. A bundle that no longer replays to its own screen is a
-//! projection or a view that has changed under it, and this is where that is
-//! noticed.
+//! then photographs what came back and compares it with the frame the phone
+//! froze. A bundle that no longer replays to its own frame is a projection or
+//! a view that has changed under it, and this is where that is noticed.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -16,8 +15,14 @@ use serde_json::{Value, json};
 use crate::door;
 use crate::golden::{GoldenVerdict, diff};
 
-/// What the bundle was written with, and what a replay of it is compared with.
-const SCREEN: &str = "screen.png";
+/// The picture the phone took when the report was frozen, and what a replay of
+/// the bundle is compared with.
+///
+/// The report's own frame rather than a second picture beside it. A replay
+/// that were compared with something this repository had written could be made
+/// to pass by writing it again; compared with the frame, the only thing that
+/// makes it pass is putting the phone's screen back.
+const FRAME: &str = "frame.png";
 /// What the bundle's recording rebuilds: its fleet, its conversations and
 /// whether it had been confirmed by a host. Pinned beside the picture because
 /// a screen that does not draw the fleet yet would look identical whether the
@@ -44,8 +49,8 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--simulator" => simulator = arguments.next().unwrap_or_default(),
             "--bundle-id" => bundle_id = arguments.next().unwrap_or_default(),
             "--install" => install = arguments.next().map(PathBuf::from),
-            // Writes the screen the bundle replays to, for a bundle that has
-            // never had one. The commit message says why it was rewritten.
+            // Writes what the recording rebuilds, for a bundle that has never
+            // had it pinned. The frame is never written: it is the report's.
             "--update" => update = true,
             other => bundle = Some(PathBuf::from(other)),
         }
@@ -63,7 +68,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let out = Path::new(OUT);
     std::fs::create_dir_all(out)?;
-    let taken = out.join(SCREEN);
+    let taken = out.join(FRAME);
     std::fs::remove_file(&taken).ok();
     let replies = door::door(
         &simulator,
@@ -82,12 +87,15 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("the door did not replay the bundle: {replies:?}"))?;
     describe(&bundle, replayed);
 
-    let screen = bundle.join(SCREEN);
+    let screen = bundle.join(FRAME);
     let rebuilt = bundle.join(REBUILT);
     if update {
-        std::fs::copy(&taken, &screen)?;
+        // The frame is the report's, not this repository's. What `--update`
+        // writes is what the recording rebuilds; a replay that no longer draws
+        // the frame is answered by recording a new report, never by painting
+        // over the picture the phone took.
         std::fs::write(&rebuilt, serde_json::to_string_pretty(replayed)? + "\n")?;
-        println!("wrote {} and {}", screen.display(), rebuilt.display());
+        println!("wrote {}", rebuilt.display());
         return Ok(());
     }
     if rebuilt.is_file() {
@@ -105,7 +113,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !screen.is_file() {
         return Err(format!(
-            "{} has no {SCREEN} to compare the replay with; `--update` writes one",
+            "{} has no {FRAME}, so there is no picture to compare the replay with",
             bundle.display()
         )
         .into());
@@ -113,7 +121,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let verdict = diff(
         &screen,
         &taken,
-        &out.join("screen"),
+        &out.join("frame"),
         TOLERANCE,
         MAX_DIFFERING_PIXELS,
     )?;
@@ -121,9 +129,9 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     match verdict {
         GoldenVerdict::Same => Ok(()),
         other => Err(format!(
-            "the replayed screen is not the one the bundle was written with: {other}; \
+            "the replayed screen is not the frame the phone froze: {other}; \
              expected, actual and difference under {}",
-            out.join("screen").display()
+            out.join("frame").display()
         )
         .into()),
     }

@@ -198,7 +198,7 @@ final class DoorTests: XCTestCase {
             .replayed(ReplayedState(
                 events: 4, agents: ["aurora"], hosts: ["desktop"],
                 entries: ["6f1c1f8e-0000-4000-8000-000000000001": 12],
-                reconciled: true, trace: 3, screen: "probe")),
+                reconciled: true, trace: 3, screen: "home", ages: ["aurora": "8s"])),
             .paired(host: "workstation"),
             .states([
                 DrawnState(screen: "home", state: "home", typeSize: nil),

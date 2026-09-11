@@ -321,16 +321,25 @@ public struct ReplayedState: Codable, Sendable, Equatable {
     public let trace: Int
     /// The screen the trace left showing.
     public let screen: String
+    /// How long ago the rebuilt fleet says each of its agents last did
+    /// anything, by name, in the words the row says it.
+    ///
+    /// Pinned beside the picture because it is the one thing on the screen
+    /// that is a function of a clock rather than of the recording: a rebuild
+    /// that read the wrong instant draws every other pixel correctly and puts
+    /// the wrong number on every row.
+    public let ages: [String: String]
 
     public init(
         events: Int, agents: [String], hosts: [String], entries: [String: Int],
-        reconciled: Bool, trace: Int, screen: String
+        reconciled: Bool, trace: Int, screen: String, ages: [String: String]
     ) {
         self.events = events
         self.agents = agents
         self.hosts = hosts
         self.entries = entries
         self.reconciled = reconciled
+        self.ages = ages
         self.trace = trace
         self.screen = screen
     }

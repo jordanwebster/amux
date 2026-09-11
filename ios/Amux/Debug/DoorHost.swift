@@ -129,11 +129,34 @@ final class DoorHost {
 
     /// What has been done to the view, in order, since the app started.
     ///
-    /// The app has no navigation of its own yet, so everything here arrives
-    /// through the door. When the screens land, they record their own routes,
-    /// sheets and scroll positions into the same list and a report written by
-    /// somebody using the app carries what they were looking at.
+    /// Both kinds of navigation land here. A driver opening a screen by name
+    /// records the picture it opened; a person walking through the app records
+    /// the places they walked through, because the shell is wired to say so in
+    /// a build with these tools in it. A report frozen at any point carries
+    /// whichever of the two happened.
     @ObservationIgnored private var trace: [TraceEvent] = []
+
+    /// Where the app is now, in the words a recording names places by.
+    private(set) var placeOnShow: Place?
+
+    /// Records that the app has arrived somewhere.
+    ///
+    /// Repeats are dropped. The tab bar is the system's control and writes the
+    /// tab back whenever it is touched, so one tap on the tab already showing
+    /// would otherwise record the same place several times and a reader could
+    /// not tell it from somebody going back and forth.
+    func arrived(at place: Place) {
+        placeOnShow = place
+        guard trace.last != .route(place) else { return }
+        trace.append(.route(place))
+    }
+
+    /// The account the screen is drawn for, as a report records it: the app's
+    /// own when the door is driving the app, and the driven one otherwise.
+    var accountOnScreen: AccountEntry? { (composed ?? accounts).selectedAccount }
+
+    /// The app put back from a recording, when one is being replayed.
+    private(set) var replayed: ReplayedApp?
 
     /// What has been recorded so far, for a report being frozen right now.
     ///
@@ -293,6 +316,7 @@ final class DoorHost {
         Scenario.reading = Scenario.now
         stores = StoreBundle(account: AccountId("door"), clock: { Scenario.reading })
         accounts = AccountRegistry()
+        replayed = nil
         // Whole entries rather than one sign-in each: a declared state says
         // which accounts are signed out and what each has reached, and adding
         // them one at a time would sign every one of them in.
@@ -369,7 +393,7 @@ final class DoorHost {
     /// out of the recording.
     private func show(_ screen: Screen) {
         self.screen = screen
-        trace.append(.route(screen.rawValue))
+        arrived(at: .screen(screen.rawValue))
     }
 
     private func connect(relay: String, token: String, user: String) async -> DoorReply {
@@ -984,19 +1008,46 @@ final class DoorHost {
     private func replay(from path: String) -> DoorReply {
         stop()
         let directory = URL(fileURLWithPath: path, isDirectory: true)
-        let rebuilt = StoreBundle(account: AccountId("replay"), clock: { Scenario.now })
-        let events: [Event]
         let recorded: [TraceEvent]
-        do {
-            events = try DoorRecording.replay(directory, into: rebuilt)
-            recorded = try DoorRecording.trace(directory)
-        } catch {
+        do { recorded = try DoorRecording.trace(directory) } catch {
+            return .error("\(error)")
+        }
+        // The clock and the account are read out of the recording before a
+        // single message is folded, because the stores are built from them
+        // rather than changed by them. Every age on the rebuilt rows is
+        // measured from the instant the recorded fleet was ordered, and
+        // whether the phone could reach anything at all is the account's — a
+        // replay under a fresh account with today's clock rebuilds the right
+        // rows under nobody's name with every age wrong.
+        var ordered = Scenario.now
+        var signedIn: AccountEntry?
+        for event in recorded {
+            switch event {
+            case .frozen(_, let at): ordered = at
+            case .account(let entry): signedIn = entry
+            default: break
+            }
+        }
+        let pinned = ordered
+        let registry = AccountRegistry()
+        if let signedIn { registry.restore([signedIn]) }
+        let rebuilt = StoreBundle(
+            account: signedIn?.id ?? AccountId("replay"), clock: { pinned })
+        let events: [Event]
+        do { events = try DoorRecording.replay(directory, into: rebuilt) } catch {
             return .error("\(error)")
         }
         isolatedState = true
         stores = rebuilt
+        accounts = registry
         screen = nil
+        placeOnShow = nil
         trace = []
+        // The app itself, drawn from what came out of the recording. A report
+        // is of a screen inside the app — with its tab bar, and whatever was
+        // pushed under it — so it is put back there rather than onto the
+        // isolated surface a capture run photographs one screen on.
+        replayed = ReplayedApp(stores: rebuilt, accounts: registry)
         for event in recorded {
             if case .error(let why) = apply(event) { return .error(why) }
         }
@@ -1009,7 +1060,10 @@ final class DoorHost {
             }),
             reconciled: rebuilt.fleet.reconciled,
             trace: recorded.count,
-            screen: screen?.rawValue ?? "none"))
+            screen: placeOnShow?.described ?? "none",
+            ages: Dictionary(uniqueKeysWithValues: rebuilt.fleet.rows.map {
+                ($0.name, $0.age(at: rebuilt.fleet.orderedAt))
+            })))
     }
 
     /// Puts one recorded view-state event back.
@@ -1020,15 +1074,11 @@ final class DoorHost {
     /// and be showing the wrong thing.
     private func apply(_ event: TraceEvent) -> DoorReply {
         switch event {
-        case .route(let name):
-            guard let screen = Screen(rawValue: name) else { return .error("no screen named \(name)") }
-            // A route names a screen and nothing else, so the state it means
-            // is that screen's own — the same rule opening one by name uses.
-            guard Fixtures.isBuilt(screen, state: name) else {
-                return .error("unimplemented: \(name)")
-            }
-            show(screen)
-            return .ack
+        case .route(let place): return route(to: place)
+        // Neither is something that happened to the view: they are what the
+        // frozen screen was reading, and the stores being replayed were built
+        // from them before the first message was folded.
+        case .frozen, .account: return .ack
         case .appearance(let appearance):
             Task { await wear(appearance) }
             trace.append(event)
@@ -1048,6 +1098,38 @@ final class DoorHost {
             return .ack
         case .sheet(.some(let name)): return .error("unimplemented sheet: \(name)")
         case .scroll: return .error("unimplemented: scrolling a transcript")
+        }
+    }
+
+    /// Puts one recorded place back.
+    ///
+    /// A place in the app goes into the app, which is where a report of it was
+    /// taken; a picture out of the screen catalogue goes onto the surface a
+    /// capture run photographs one screen on, which is where that report was
+    /// taken. A recording that walks out of one and into the other — a driver
+    /// opened a fixture and then a report was frozen on the app — swaps
+    /// surfaces as it goes, so what is on screen at the end is what was on
+    /// screen at the end.
+    private func route(to place: Place) -> DoorReply {
+        switch place {
+        case .screen(let name):
+            guard let screen = Screen(rawValue: name) else { return .error("no screen named \(name)") }
+            // A route names a screen and nothing else, so the state it means
+            // is that screen's own — the same rule opening one by name uses.
+            guard Fixtures.isBuilt(screen, state: name) else {
+                return .error("unimplemented: \(name)")
+            }
+            replayed = nil
+            show(screen)
+            return .ack
+        case .home, .hosts, .settings, .conversation, .review:
+            guard let replayed else {
+                return .error("\(place.described) can only be put back inside the app")
+            }
+            screen = nil
+            replayed.go(to: place)
+            arrived(at: place)
+            return .ack
         }
     }
 
@@ -1296,5 +1378,66 @@ final class DoorHost {
             return nil
         }
         return window.hitTest(CGPoint(x: declared.frame.midX, y: declared.frame.midY), with: nil)
+    }
+}
+
+/// The app as a report recorded it, put back.
+///
+/// A report is of a screen somebody was inside the app on: the tab bar was
+/// under it, something may have been pushed over it, and the account it was
+/// drawn for decided half of what it said. So a replay is the real shell with
+/// the rebuilt stores in it, navigated to the place the recording ended at —
+/// not the isolated surface a capture run photographs one screen on, which has
+/// no tab bar and no stack and could never be the picture a phone took.
+///
+/// Nothing here reaches anything. The router has no loader, so a page put back
+/// loads nothing; the stores were folded out of the recording and the work
+/// they once asked for was carried out on the phone that wrote it.
+@MainActor
+@Observable
+final class ReplayedApp {
+    let stores: StoreBundle
+    let accounts: AccountRegistry
+    let router = Router()
+
+    init(stores: StoreBundle, accounts: AccountRegistry) {
+        self.stores = stores
+        self.accounts = accounts
+    }
+
+    /// Walks to one recorded place, the way the person walked to it.
+    ///
+    /// A tab root empties its own stack, because that is what reaching for a
+    /// tab and going back to the top of it leaves behind. A conversation
+    /// pushes, unless the page it is leaving is another conversation — two
+    /// conversations are peers, so the second replaces the first rather than
+    /// building a trail of every agent that was looked at.
+    func go(to place: Place) {
+        switch place {
+        case .home: root(.agents)
+        case .hosts: root(.hosts)
+        case .settings: root(.you)
+        case .conversation(let agent):
+            stores.openConversation(agent)
+            router.tab = .agents
+            if case .conversation = router.agentsPath.last {
+                router.show(.conversation(agent))
+            } else {
+                router.open(.conversation(agent))
+            }
+        case .review(let agent):
+            stores.openConversation(agent)
+            router.tab = .agents
+            guard router.agentsPath.last != .changes(agent) else { return }
+            router.open(.changes(agent))
+        // A picture from the screen catalogue is not somewhere in the app and
+        // is never put back here; the door draws it on its own surface.
+        case .screen: break
+        }
+    }
+
+    private func root(_ tab: AmuxShell.Tab) {
+        router.tab = tab
+        router.setPath([], for: tab)
     }
 }

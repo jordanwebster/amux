@@ -61,13 +61,22 @@ public final class StoreBundle {
     @ObservationIgnored public var store: (@MainActor (PickedAttachment, Data) -> OpId?)?
 
     /// The clock every store in the bundle reads. A photograph pins it, so
-    /// two runs of the same fixture put the same time on the screen.
+    /// two runs of the same fixture put the same time on the screen, and a
+    /// replay of a report reads the instant that report was frozen at.
+    ///
+    /// Kept as well as read, because the fleet is put in order again while the
+    /// screen is up — arriving at the home is what re-dates every row on it —
+    /// and a re-ordering that reached for the system clock would put today's
+    /// ages on a screen rebuilt out of last week's recording.
+    @ObservationIgnored public let now: @MainActor () -> Date
+
     public init(
         account: AccountId,
         clock: @escaping @MainActor () -> Date = { Date() },
         unread: UnreadWeights = UnreadWeights()
     ) {
         self.account = account
+        self.now = clock
         self.fleet = FleetStore(now: clock(), unread: unread)
         self.hosts = HostsStore(clock: clock)
         self.pairing = PairingStore(clock: clock)

@@ -329,16 +329,26 @@ def check_bundle(written: dict) -> None:
     for expected in ("route", "appearance", "dynamicType"):
         if expected not in kinds:
             raise SystemExit(f"the trace beside msgs.jsonl recorded no {expected}: {trace}")
-    # A report says which screen it was taken on, in the trace, as its last
-    # entry — so whoever opens the bundle knows what the picture is of before
-    # they open it. The appearance the door left the view in is the change
-    # before that one.
-    if trace[-1] != {"kind": "route", "screen": "probe"}:
+    # A report says where it was taken, in the trace, as the last thing that
+    # happened to the view — so whoever opens the bundle knows what the picture
+    # is of before they open it. The appearance the door left the view in is
+    # the change before that one.
+    if trace[-3] != {"kind": "route", "place": "screen", "screen": "probe"}:
         raise SystemExit(
-            f"the trace does not end on the screen the report was taken on: {trace[-1]}")
-    if trace[-2] != {"kind": "appearance", "appearance": "dark"}:
+            f"the trace does not end on the screen the report was taken on: {trace[-3]}")
+    if trace[-4] != {"kind": "appearance", "appearance": "dark"}:
         raise SystemExit(
-            f"the trace does not record where the door left the view: {trace[-2]}")
+            f"the trace does not record where the door left the view: {trace[-4]}")
+    # Then the two facts the frozen screen was standing on rather than things
+    # that happened to it: the clock every age on it was read from, and who
+    # was signed in. A replay builds its stores from these before it folds a
+    # message, so a bundle without them cannot come back as the same screen.
+    if trace[-2].get("kind") != "frozen" or not trace[-2].get("ordered"):
+        raise SystemExit(
+            f"the trace records no instant for a replay to read ages from: {trace[-2]}")
+    if trace[-1].get("kind") != "account":
+        raise SystemExit(
+            f"the trace records nothing about who was signed in: {trace[-1]}")
     print(
         f"{BUNDLE}: {', '.join(written['parts'])}; "
         f"{len(messages)} recorded messages, {len(trace)} view-state events ({', '.join(kinds)})",

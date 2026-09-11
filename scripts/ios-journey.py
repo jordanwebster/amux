@@ -2939,7 +2939,7 @@ def reports(journey: Journey, udid: str, ready: dict) -> None:
         shutil.copytree(helped, deliberate, dirs_exist_ok=True)
         helped_parts = report_parts(journey, deliberate, "the report asked for under Help")
         trace_says_where(
-            journey, deliberate, "the report asked for under Help", "you", helped_parts)
+            journey, deliberate, "the report asked for under Help", "settings", helped_parts)
         header = json.loads((deliberate / "report.json").read_text())
         journey.expect(header.get("detail") == "you",
                        f"the report asked for on the You page says it is of "
@@ -2973,10 +2973,48 @@ def trace_says_where(journey: Journey, bundle: Path, what: str, screen: str,
               if line.strip()]
     journey.expect(events,
                    f"{what} declares a view-state recording and carries an empty file")
-    journey.expect(any(event.get("kind") == "route" and event.get("screen") == screen
+    journey.expect(any(event.get("kind") == "route" and event.get("place") == screen
                        for event in events),
                    f"{what} was taken on {screen} and its view-state recording says {events}")
-    journey.say(f"{what} records the view it was taken on: {events}")
+    # What the replay rebuilds its stores from, before it folds a message: the
+    # instant every age on the frozen screen was measured from, and who was
+    # signed in. A recording without them replays the right rows under nobody's
+    # name with every age wrong, and the replay has no way to notice.
+    frozen = next((event for event in events if event.get("kind") == "frozen"), None)
+    journey.expect(frozen and frozen.get("at") and frozen.get("ordered"),
+                   f"{what} records no instant to read its ages from: {events}")
+    account = next((event for event in events if event.get("kind") == "account"), None)
+    journey.expect(account is not None,
+                   f"{what} records nothing about who was signed in: {events}")
+    signed_in = (account or {}).get("account") or {}
+    journey.expect(signed_in.get("signedIn") is True and signed_in.get("entitlement"),
+                   f"{what} was taken on a signed-in phone and records {signed_in}")
+    journey.expect(not _secrets(account or {}),
+                   f"{what} carries a credential in its view-state recording: "
+                   f"{sorted(_secrets(account or {}))}")
+    journey.say(f"{what} records the view it was taken on, the instant its ages were read "
+                f"from, and the account behind it with no credential in it: {events}")
+
+
+def _secrets(event: dict) -> set[str]:
+    """Any field of a recorded account that reads like something private.
+
+    A report leaves the phone, so the account fact in it is the address, the
+    name and what the account service says the account may do — never anything
+    that could be presented to anybody.
+    """
+    words = ("token", "bearer", "refresh", "secret", "password", "key", "credential")
+    found = set()
+
+    def walk(value, path: str) -> None:
+        if isinstance(value, dict):
+            for name, inner in value.items():
+                walk(inner, f"{path}.{name}" if path else name)
+        elif any(word in path.lower() for word in words):
+            found.add(path)
+
+    walk(event, "")
+    return found
 
 
 def report_parts(journey: Journey, bundle: Path, what: str) -> dict[str, str]:

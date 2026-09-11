@@ -27,7 +27,17 @@ public protocol RouteLoader: AnyObject {
 public final class Router {
     /// The tab on show. Each tab keeps its own stack, so coming back to one
     /// finds it where it was left.
-    public var tab: Tab = .agents
+    public var tab: Tab = .agents { didSet { arrived?() } }
+
+    /// Told after every arrival: a tab reached for, a page pushed, a page
+    /// gone back from.
+    ///
+    /// Nothing in the shipping app sets this. It exists so a build with the
+    /// reporting tools in it can keep a recording of where somebody has been,
+    /// which is what a report of a screen is replayed from — and it is a
+    /// closure rather than a recorder this file knows about, because the
+    /// recording is a debug build's and navigation must not link it.
+    @ObservationIgnored public var arrived: (@MainActor () -> Void)?
 
     /// One stack per tab, written to by the shell's navigation as well as
     /// read: the back gesture and the tab bar are the system's to drive, and
@@ -115,6 +125,7 @@ public final class Router {
     /// stack it was in.
     private func departed(_ before: [Route], _ now: [Route]) {
         for route in before where !now.contains(route) { loader?.left(route) }
+        arrived?()
     }
 
     public func pop() {

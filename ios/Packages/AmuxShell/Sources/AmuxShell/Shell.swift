@@ -455,7 +455,7 @@ private struct AgentsTab: View {
             case .subscribe: actions(.subscribe)
             // The one place the list is allowed to regroup. Data arriving
             // never reorders what a thumb is already travelling towards.
-            case .refresh: stores.fleet.refreshOrder(now: Date())
+            case .refresh: stores.fleet.refreshOrder(now: stores.now())
             }
         }
         // The screen draws its own header, so the bar would be a second one.

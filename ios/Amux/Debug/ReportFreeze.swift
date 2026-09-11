@@ -24,22 +24,34 @@ final class ReportFreeze: ReportFreezing {
     /// What page the person was looking at, in the words the app names its
     /// pages by.
     private let route: () -> String?
-    /// The same page by the screen catalogue's name for it, where the
-    /// catalogue has one. A replay puts a report back by that name, so this is
-    /// what decides whether a bundle can be replayed to the page its picture
-    /// was taken on.
-    private let screen: () -> String?
+    /// Where in the app that was. A replay puts the report back there, inside
+    /// the shell, so this is the vocabulary that decides whether a bundle can
+    /// be replayed to the place its picture was taken.
+    private let place: () -> Place?
+    /// Whose phone this was: the account on screen with whether its session is
+    /// still good and what it may reach, or nothing when nobody was signed in.
+    /// Never a credential.
+    private let account: () -> AccountEntry?
+    /// When the fleet on screen was last put in order, which is what every
+    /// "11s ago" on it was measured from.
+    private let ordered: () -> Date
     private let runtimeFailure: () -> String?
 
     init(
         window: @escaping () -> UIWindow? = { ReportFreeze.foreground },
         route: @escaping () -> String? = { DoorHost.shared.screen?.rawValue },
-        screen: @escaping () -> String? = { DoorHost.shared.screen?.rawValue },
+        place: @escaping () -> Place? = {
+            DoorHost.shared.screen.map { Place.screen($0.rawValue) }
+        },
+        account: @escaping () -> AccountEntry? = { DoorHost.shared.accountOnScreen },
+        ordered: @escaping () -> Date = { DoorHost.shared.stores.fleet.orderedAt },
         runtimeFailure: @escaping () -> String? = { nil }
     ) {
         self.window = window
         self.route = route
-        self.screen = screen
+        self.place = place
+        self.account = account
+        self.ordered = ordered
         self.runtimeFailure = runtimeFailure
     }
 
@@ -58,25 +70,27 @@ final class ReportFreeze: ReportFreezing {
     }
 
     /// The view-state recording a bundle carries: what has been done to the
-    /// view since launch, ending with the screen the freeze happened on.
+    /// view since launch, ending with the place the freeze happened in and the
+    /// two facts that place was standing on — the clock and the account.
     ///
-    /// The screen on show is written even when nothing has changed the view.
+    /// The place on show is written even when nothing has changed the view.
     /// Somebody who opens the app and photographs the first thing they see has
     /// changed nothing, and a trace declared present but empty says "nothing
     /// was recorded" and "nothing happened" in the same breath — while a
-    /// replay of it puts back no screen at all. Where the page has no name in
-    /// the screen catalogue there is nothing a replay could put back, and the
-    /// part is declared absent with that as its reason rather than carried
-    /// empty.
+    /// replay of it puts back no screen at all.
+    ///
+    /// The clock and the account go last because they are what the frozen
+    /// screen was reading, not something that happened: a replay builds its
+    /// stores from them before it folds a single message, and without them it
+    /// rebuilds the right rows under the wrong name with the wrong ages on
+    /// them.
     private func traceLines() -> Result<String, PartAbsent> {
         var events = DoorHost.shared.traceEvents
-        if let screen = screen(), events.last != .route(screen) {
-            events.append(.route(screen))
+        if let place = place(), events.last != .route(place) {
+            events.append(.route(place))
         }
-        guard !events.isEmpty else {
-            return .failure(PartAbsent(
-                "\(route() ?? "the page on screen") has no recorded view state to replay"))
-        }
+        events.append(.frozen(at: Date(), ordered: ordered()))
+        events.append(.account(account()))
         do { return .success(try Trace.lines(events)) } catch {
             return .failure(PartAbsent("the view-state recording could not be written: \(error)"))
         }

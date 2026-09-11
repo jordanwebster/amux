@@ -1,9 +1,21 @@
 {
-  "agents": [],
-  "entries": {},
-  "events": 2,
-  "hosts": [],
+  "agents": [
+    "fix-login",
+    "port-the-parser"
+  ],
+  "ages": {
+    "fix-login": "8s",
+    "port-the-parser": "8s"
+  },
+  "entries": {
+    "317208a5-a5e8-4709-9e61-21b1098b0911": 0,
+    "51efe87c-855d-48a1-a199-89dcf1a48a9e": 0
+  },
+  "events": 3,
+  "hosts": [
+    "studio"
+  ],
   "reconciled": true,
-  "screen": "probe",
-  "trace": 4
+  "screen": "home",
+  "trace": 3
 }

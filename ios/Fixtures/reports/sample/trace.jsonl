@@ -1,4 +1,3 @@
-{"kind":"route","screen":"probe"}
-{"appearance":"light","kind":"appearance"}
-{"kind":"dynamicType","size":"large"}
-{"appearance":"dark","kind":"appearance"}
+{"kind":"route","place":"home"}
+{"at":"2026-09-11T04:24:42.474874973Z","kind":"frozen","ordered":"2026-09-11T04:24:36.381424904Z"}
+{"account":{"account":{"displayName":"journey-phone","email":"journey-phone@example.com","id":"journey-phone"},"entitlement":{"active":{"grant":{"purchased":{"_0":"appStore"}}}},"hosts":1,"signedIn":true},"kind":"account"}
