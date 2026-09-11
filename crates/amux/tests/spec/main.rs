@@ -5,7 +5,7 @@
 //! top-to-bottom works as documentation; the modules below are declared in
 //! that reading order.
 //!
-//! Run with: `timeout 600 cargo test --workspace --test spec`
+//! Run with: `timeout 1200 wt run spec`
 //!
 //! Adding a test: build a topology with `TestNet::builder()` —
 //! `.daemon(name)`, `.cloud()`, `.paired(a, b, Via::Direct | Via::Cloud)`,
@@ -23,21 +23,20 @@
 // Test scaffolding exists only in debug profiles (see build.rs); a
 // release-profile test build compiles this crate empty rather than failing.
 #![cfg(testnet)]
-mod discovery;
-mod entitlement;
-mod smoke; // the harness in one test: the canonical TestNet example // Chapter 0 — Local-network listener discovery
-
-mod agents; // Chapter 7 — Agent messaging & relationships
-mod attachments; // Chapter 9 — Artifact routing, persistence & lifetime
-mod channels; // Chapter 5 — Native stream classes & lifecycle
-mod debug; // Chapter 8 — Live daemon diagnostics
-mod identity; // Chapter 1 — Identity & trust
+mod discovery; // Chapter 0 — Discovery
+mod identity; // Chapter 1 — Profiles, identity and trust
+mod profiles; // Chapter 1 — Profiles, identity and trust
 mod pairing; // Chapter 2 — Pairing
 mod presence; // Chapter 3 — Presence
-mod quic; // Chapter 5 — Direct QUIC behavior and network conditions
-mod relay; // Chapter 6 — Relay carriers and opaque stream forwarding
-mod routing; // Chapter 4 — Routing & failover
-mod sessions; // Chapter 6 — Remote sessions & authority
-mod wire; // Chapter 7 — Wire conformance (WirePeer)
+mod routing; // Chapter 4 — Routing and failover
+mod channels; // Chapter 5 — Carriers, links, streams and channels
+mod quic; // Chapter 5 — Carriers, links, streams and channels
+mod wire; // Chapter 5 — Carriers, links, streams and channels
+mod entitlement; // Chapter 6 — Relay forwarding and entitlement
+mod relay; // Chapter 6 — Relay forwarding and entitlement
+mod agents; // Chapter 7 — Agent messaging and remote sessions
+mod sessions; // Chapter 7 — Agent messaging and remote sessions
+mod debug; // Chapter 8 — Diagnostics
+mod attachments; // Chapter 9 — Artifact routing, persistence and lifetime
 
-mod profiles;
+mod smoke; // The canonical TestNet harness example

@@ -1,3 +1,12 @@
+2026-09-11 — **Document the native-stream protocol from discovery through
+relay fallback.** The protocol guide now distinguishes carriers, adjacent
+links, native streams, and end-to-end authenticated channels; enumerates the
+version-2 control and refusal vocabulary; and states the two routing rules that
+make presence a derivation. It also records that discovery is never authority,
+that only cloud-token links carry tiers, and that yamux cannot remove TCP's
+head-of-line blocking or add connection migration. The prose spec chapters now
+follow the guide's reading order.
+
 2026-09-11 — **Exercise the relay's QUIC-to-TCP fallback through real daemon
 boundaries.** The end-to-end runner can model one daemon whose relay UDP path is
 blocked while TCP remains available. Its mixed-carrier scenario checks the
