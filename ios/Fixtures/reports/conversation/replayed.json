@@ -8,14 +8,14 @@
     "ran-its-course": "0s"
   },
   "entries": {
-    "691efed0-441e-45a6-8c7f-d71f2635b8c3": 0,
-    "74b1d09a-1324-46a6-9a2b-e81839fb4e77": 185
+    "3997df22-8e12-4742-9d47-b2d084029d5a": 0,
+    "4dd7167c-367d-4ef6-8824-bc17f8531109": 185
   },
   "events": 7,
   "hosts": [
     "studio"
   ],
   "reconciled": true,
-  "screen": "conversation 74b1d09a-1324-46a6-9a2b-e81839fb4e77",
-  "trace": 8
+  "screen": "conversation 4dd7167c-367d-4ef6-8824-bc17f8531109",
+  "trace": 9
 }

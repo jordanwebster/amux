@@ -1686,7 +1686,7 @@
       {"literal": "\"transcript.\\(kind)\"", "context": "\"transcript.\\(kind)\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"questionmark.square.dashed\"", "context": "Image(systemName: \"questionmark.square.dashed\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"transcript.unsupported\"", "context": ".identified(\"transcript.unsupported\", label: \"This build cannot read \\(layer)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"transcript.feed\"", "context": "nonisolated static let space = \"transcript.feed\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
+      {"literal": "\"transcript.page\"", "context": "nonisolated static let space = \"transcript.page\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "ios/Packages/AmuxShell/Sources/AmuxShell/ConversationRecording.swift": [
       {"literal": "\"drawer\"", "context": "public static let drawer = \"drawer\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
