@@ -499,20 +499,23 @@ fn socket_allocation_checks_platform_byte_limit_without_truncation() {
         Err(InstallationError::SocketPathTooLong(_))
     ));
     assert!(!long_root.join("profiles").exists());
-    // Profile sockets at the platform limit still leave room for the shorter
-    // Codex socket alongside them, without falling back to a shared /tmp path.
+    // The longest adjacent socket can reach the platform limit while the
+    // profile and Codex sockets remain beside it, without falling back to a
+    // shared /tmp path.
     let id = ProfileId::new();
     let canonical = fs::canonicalize(root.path()).unwrap();
     let overhead = canonical.as_os_str().as_bytes().len()
         + 1
         + "/profiles/".len()
         + id.to_string().len()
-        + ".sock".len();
+        + ".link.sock".len();
     let boundary_root = canonical.join("y".repeat(limit - overhead));
     let registry = open(&boundary_root);
     let paths = ProfilePaths::for_id(registry.path().unwrap(), id).unwrap();
-    assert_eq!(paths.socket_path.as_os_str().as_bytes().len(), limit);
+    let link = crate::installation::adjacent_link_socket_path(&paths.socket_path);
+    assert_eq!(link.as_os_str().as_bytes().len(), limit);
     validate_socket_path(&paths.socket_path).unwrap();
+    validate_socket_path(&link).unwrap();
     let codex = crate::installation::adjacent_codex_socket_path(&paths.socket_path);
     assert_eq!(codex.parent(), paths.socket_path.parent());
     assert!(codex.as_os_str().as_bytes().len() <= crate::installation::MAX_CODEX_SOCKET_PATH_BYTES);

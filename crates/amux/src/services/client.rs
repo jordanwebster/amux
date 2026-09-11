@@ -2524,11 +2524,15 @@ mod tests {
         TEST_ECHO_COMMAND, TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
     };
     use crate::config::Config;
+    use crate::dispatcher::TunnelDispatcher;
     use crate::identity::DeviceIdentity;
-    use crate::link::ChannelPool;
+    use crate::link::{
+        CarrierKind, ChannelPool, ControlSink, ControlSource, LinkCarrier as NativeLinkCarrier,
+        MuxCarrier, MuxRole, Piper, read_message, write_message,
+    };
     use crate::routing::{
-        Capabilities, LinkCloseRequest, LinkId, LinkRegistry, LinkRole, RoutingCore,
-        SupportedAgentType,
+        Capabilities, LinkAdmission, LinkCloseRequest, LinkId, LinkProperties, LinkRegistry,
+        LinkRole, RoutingCore, SupportedAgentType,
     };
     use crate::services::agent::{LocalAgentHost, PtyAgentHost, spawn_agent_tonic_server};
     use crate::trust::{TrustEntry, TrustStore};
@@ -2752,9 +2756,9 @@ mod tests {
             None,
             None,
         )));
-        let (routing, tunnels) = test_routing_and_tunnels(host_id);
+        let (routing, channels) = test_routing_and_channels(host_id);
         (
-            client_service_from_parts(agent_service, server_state, routing, tunnels),
+            client_service_from_parts(agent_service, server_state, routing, channels),
             host,
         )
     }
@@ -2763,7 +2767,7 @@ mod tests {
         AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false)
     }
 
-    fn client_service_with_agent_and_tunnels(
+    fn client_service_with_agent_and_channels(
         agent_service: AgentServiceCtx,
         routing: Arc<RoutingCore>,
         channels: Arc<ChannelPool>,
@@ -2819,7 +2823,7 @@ mod tests {
             None,
             None,
         )));
-        let (routing, channels) = test_routing_and_tunnels(local_identity.host_id);
+        let (routing, channels) = test_routing_and_channels(local_identity.host_id);
         ClientService::new(
             agent_service,
             server_state,
@@ -2835,7 +2839,7 @@ mod tests {
         )
     }
 
-    fn test_routing_and_tunnels(_host_id: Uuid) -> (Arc<RoutingCore>, Arc<ChannelPool>) {
+    fn test_routing_and_channels(_host_id: Uuid) -> (Arc<RoutingCore>, Arc<ChannelPool>) {
         let routing = Arc::new(RoutingCore::new());
         let channels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
         (routing, channels)
@@ -2846,6 +2850,7 @@ mod tests {
         _remote_server: JoinHandle<Result<(), tonic::transport::Error>>,
         _remote_data_dir: TempDir,
         bridges: Vec<JoinHandle<()>>,
+        _controls: Vec<(ControlSink, ControlSource)>,
     }
 
     impl Drop for RemoteDispatchHarness {
@@ -2861,78 +2866,86 @@ mod tests {
         let local_host_id = Uuid::from_u128(1);
         let remote_host_id = Uuid::from_u128(2);
         let relay_host_id = Uuid::from_u128(3);
-        // Each daemon's own link to its neighbor, plus the relay's links to
-        // both endpoints. The relay forwards by adjacency alone.
+        let local_identity = DeviceIdentity::for_test(local_host_id);
+        let remote_identity = DeviceIdentity::for_test(remote_host_id);
+
+        // The local endpoint opens through its adjacent relay, which pipes the
+        // native stream to the remote endpoint without interpreting gRPC.
         let local_to_relay = LinkId::new(relay_host_id);
-        let remote_to_relay = LinkId::new(relay_host_id);
         let relay_to_remote = LinkId::new(remote_host_id);
         let relay_to_local = LinkId::new(local_host_id);
 
         let local_routing = Arc::new(RoutingCore::new());
-        let remote_routing = Arc::new(RoutingCore::new());
         local_routing
             .apply_claim_up(relay_host_id, host(2, non_relay_types()))
             .await;
-        remote_routing
-            .apply_claim_up(relay_host_id, host(1, non_relay_types()))
-            .await;
 
-        let (_remote_incoming_tx, remote_incoming_rx) = mpsc::channel(8);
-        let local_tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
-        let remote_tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
-        let relay_tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
+        let local_links = Arc::new(LinkRegistry::default());
+        let relay_links = Arc::new(LinkRegistry::default());
+        let local_trust = Arc::new(std::sync::RwLock::new(TrustStore::default()));
+        let mut remote_entry = trust_entry("remote", 0);
+        remote_entry.pubkey = remote_identity.public_key().to_vec();
+        local_trust
+            .write()
+            .unwrap()
+            .insert_for_test(remote_host_id, remote_entry);
+        let local_channels = Arc::new(ChannelPool::with_device_tls(
+            local_links.clone(),
+            local_identity.clone(),
+            local_trust,
+        ));
 
-        let (local_to_relay_tx, local_to_relay_rx) = mpsc::channel(32);
-        let (relay_to_remote_tx, relay_to_remote_rx) = mpsc::channel(32);
-        let (remote_to_relay_tx, remote_to_relay_rx) = mpsc::channel(32);
-        let (relay_to_local_tx, relay_to_local_rx) = mpsc::channel(32);
-        local_tunnels
-            .link_registry()
-            .register(
+        let (local_carrier, relay_from_local, mut controls) = native_carrier_pair().await;
+        let (relay_to_remote_carrier, remote_carrier, remote_controls) =
+            native_carrier_pair().await;
+        controls.extend(remote_controls);
+
+        let (local_control_tx, _) = mpsc::channel(32);
+        local_links
+            .register_with_details(
                 local_to_relay,
                 host(3, Vec::new()),
-                local_to_relay_tx,
-                LinkRole::Peer,
+                local_control_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: crate::routing::LinkCarrier::Direct,
+                },
                 &[],
+                Some(local_carrier),
             )
             .await;
-        remote_tunnels
-            .link_registry()
-            .register(
-                remote_to_relay,
-                host(3, Vec::new()),
-                remote_to_relay_tx,
-                LinkRole::Peer,
-                &[],
-            )
-            .await;
-        relay_tunnels
-            .link_registry()
-            .register(
-                relay_to_remote,
-                host(2, non_relay_types()),
-                relay_to_remote_tx,
-                LinkRole::Peer,
-                &[],
-            )
-            .await;
-        relay_tunnels
-            .link_registry()
-            .register(
+        let (relay_local_control_tx, _) = mpsc::channel(32);
+        relay_links
+            .register_with_details(
                 relay_to_local,
                 host(1, non_relay_types()),
-                relay_to_local_tx,
-                LinkRole::Peer,
+                relay_local_control_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: crate::routing::LinkCarrier::Direct,
+                },
                 &[],
+                Some(relay_from_local.clone()),
+            )
+            .await;
+        let (relay_remote_control_tx, _) = mpsc::channel(32);
+        relay_links
+            .register_with_details(
+                relay_to_remote,
+                host(2, non_relay_types()),
+                relay_remote_control_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: crate::routing::LinkCarrier::Direct,
+                },
+                &[],
+                Some(relay_to_remote_carrier),
             )
             .await;
 
-        let bridges = vec![
-            spawn_tunnel_bridge(local_to_relay_rx, relay_tunnels.clone(), relay_to_local),
-            spawn_tunnel_bridge(relay_to_remote_rx, remote_tunnels.clone(), remote_to_relay),
-            spawn_tunnel_bridge(remote_to_relay_rx, relay_tunnels, relay_to_remote),
-            spawn_tunnel_bridge(relay_to_local_rx, local_tunnels.clone(), local_to_relay),
-        ];
         let remote_data_dir = tempfile::tempdir().unwrap();
         let remote_owners = Arc::new(
             ArtifactOwners::open(
@@ -2943,12 +2956,41 @@ mod tests {
         );
         let remote_agent_service =
             agent_service_ctx(remote_host_id).with_artifact_owners(remote_owners);
+        let (remote_incoming_tx, remote_incoming_rx) = mpsc::channel(8);
         let remote_server = spawn_agent_tonic_server(remote_agent_service, remote_incoming_rx);
+        let remote_trust = Arc::new(std::sync::RwLock::new(TrustStore::default()));
+        let mut local_entry = trust_entry("local", 0);
+        local_entry.pubkey = local_identity.public_key().to_vec();
+        remote_trust
+            .write()
+            .unwrap()
+            .insert_for_test(local_host_id, local_entry);
+        let (pairing_tx, _pairing_rx) = mpsc::channel(1);
+        let dispatcher = Arc::new(
+            TunnelDispatcher::new(
+                &remote_identity,
+                remote_trust,
+                Arc::new(PairMode::new()),
+                crate::transport::TrustedPeerConnections::default(),
+                remote_incoming_tx,
+                pairing_tx,
+                Duration::from_secs(1),
+            )
+            .unwrap(),
+        );
+        let bridges = vec![
+            spawn_piper_bridge(
+                relay_from_local,
+                Piper::new(relay_host_id, relay_links),
+                relay_to_local,
+            ),
+            spawn_remote_dispatch_bridge(remote_carrier, dispatcher, relay_host_id, remote_host_id),
+        ];
 
-        let service = client_service_with_agent_and_tunnels(
+        let service = client_service_with_agent_and_channels(
             agent_service_ctx(local_host_id),
             local_routing.clone(),
-            local_tunnels,
+            local_channels,
         );
 
         RemoteDispatchHarness {
@@ -2956,15 +2998,75 @@ mod tests {
             _remote_server: remote_server,
             _remote_data_dir: remote_data_dir,
             bridges,
+            _controls: controls,
         }
     }
 
-    fn spawn_tunnel_bridge(
-        _rx: mpsc::Receiver<wire::pb::Message>,
-        _target_pool: Arc<ChannelPool>,
-        _arrival_link: LinkId,
+    async fn native_carrier_pair() -> (
+        Arc<MuxCarrier>,
+        Arc<MuxCarrier>,
+        Vec<(ControlSink, ControlSource)>,
+    ) {
+        let (connector_io, acceptor_io) = tokio::io::duplex(2 * 1024 * 1024);
+        let connector = Arc::new(MuxCarrier::new(
+            connector_io,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ));
+        let acceptor = Arc::new(MuxCarrier::new(
+            acceptor_io,
+            MuxRole::Acceptor,
+            CarrierKind::RelayTcp,
+        ));
+        let (mut connector_sink, connector_source) = connector.control();
+        let (acceptor_sink, mut acceptor_source) = acceptor.control();
+        write_message(&mut connector_sink, &wire::pb::Message { body: None })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_message(&mut acceptor_source).await.unwrap(),
+            Some(wire::pb::Message { body: None })
+        );
+        (
+            connector,
+            acceptor,
+            vec![
+                (connector_sink, connector_source),
+                (acceptor_sink, acceptor_source),
+            ],
+        )
+    }
+
+    fn spawn_piper_bridge(
+        incoming: Arc<dyn NativeLinkCarrier>,
+        piper: Piper,
+        origin: LinkId,
     ) -> JoinHandle<()> {
-        tokio::spawn(async {})
+        tokio::spawn(async move {
+            while let Some((preface, stream)) = incoming.accept_stream().await {
+                let _ = piper.pipe(origin, preface, stream).await;
+            }
+        })
+    }
+
+    fn spawn_remote_dispatch_bridge(
+        incoming: Arc<dyn NativeLinkCarrier>,
+        dispatcher: Arc<TunnelDispatcher>,
+        adjacent_peer: HostId,
+        destination_host: HostId,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            while let Some((preface, mut stream)) = incoming.accept_stream().await {
+                if HostId::from_slice(&preface.dst).ok() != Some(destination_host) {
+                    let _ = stream.reset(wire::pb::StreamRefusal::NotAdjacent).await;
+                    continue;
+                }
+                let dispatcher = dispatcher.clone();
+                tokio::spawn(async move {
+                    let _ = dispatcher.dispatch_link_stream(adjacent_peer, stream).await;
+                });
+            }
+        })
     }
 
     async fn recv_agent_event(rx: &mut mpsc::Receiver<AgentEvent>) -> AgentEvent {
@@ -3254,7 +3356,7 @@ mod tests {
                 .await;
         }
         let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
-        let service = client_service_with_agent_and_tunnels(
+        let service = client_service_with_agent_and_channels(
             agent_service_ctx(local_host_id),
             routing.clone(),
             tunnels,
@@ -3294,7 +3396,7 @@ mod tests {
                 .await;
         }
         let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
-        let service = client_service_with_agent_and_tunnels(
+        let service = client_service_with_agent_and_channels(
             agent_service_ctx(local_host_id),
             routing.clone(),
             tunnels,
@@ -4219,7 +4321,7 @@ mod tests {
         let host_id = Uuid::from_u128(1);
         let routing = Arc::new(RoutingCore::new());
         let tunnels = Arc::new(ChannelPool::new(Arc::new(LinkRegistry::default())));
-        let service = client_service_with_agent_and_tunnels(
+        let service = client_service_with_agent_and_channels(
             agent_service_ctx(host_id),
             routing.clone(),
             tunnels.clone(),
@@ -4741,8 +4843,8 @@ mod tests {
         );
         let agent_service = AgentServiceCtx::new(Some(host.clone()), host_id, false)
             .with_artifact_owners(owners.clone());
-        let (routing, tunnels) = test_routing_and_tunnels(host_id);
-        let service = client_service_with_agent_and_tunnels(agent_service, routing, tunnels);
+        let (routing, tunnels) = test_routing_and_channels(host_id);
+        let service = client_service_with_agent_and_channels(agent_service, routing, tunnels);
         let agent_id = Uuid::from_u128(126);
         <ClientService as wire::client_service_server::ClientService>::create_agent(
             &service,
@@ -4788,7 +4890,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_client_service_dispatches_remote_agent_methods_over_tunnel() {
+    async fn tonic_client_service_dispatches_remote_agent_methods_over_native_link() {
         let harness = remote_dispatch_harness().await;
         let service = &harness.service;
         let remote_host_id = Uuid::from_u128(2);
@@ -5040,7 +5142,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn paired_host_added_starts_remote_agent_subscription_over_tunnel() {
+    async fn paired_host_added_starts_remote_agent_subscription_over_native_link() {
         let harness = remote_dispatch_harness().await;
         let service = &harness.service;
         let remote_host_id = Uuid::from_u128(2);
@@ -5112,7 +5214,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_client_service_remote_lifecycle_dispatch_requires_reachable_tunnel_route() {
+    async fn tonic_client_service_remote_lifecycle_dispatch_requires_reachable_link_route() {
         let service = client_service_for_tests();
         service
             .apply_host_event(HostReachabilityEvent::Added {
@@ -5430,7 +5532,7 @@ mod tests {
             None,
             None,
         )));
-        let (routing, tunnels) = test_routing_and_tunnels(local.host_id);
+        let (routing, tunnels) = test_routing_and_channels(local.host_id);
         let service = ClientService::new(
             agent_service,
             server_state,
@@ -5624,8 +5726,8 @@ mod tests {
         async fn dump_reports_live_peer_route_link_and_channels() {
             let local = Uuid::from_u128(1);
             let peer = host(2, non_relay_types());
-            let (routing, tunnels) = test_routing_and_tunnels(local);
-            let service = client_service_with_agent_and_tunnels(
+            let (routing, tunnels) = test_routing_and_channels(local);
+            let service = client_service_with_agent_and_channels(
                 agent_service_ctx(local),
                 routing.clone(),
                 tunnels.clone(),
@@ -5673,7 +5775,7 @@ mod tests {
         let agent_service = AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false);
 
         let server_state = Arc::new(RwLock::new(ServerState::new(config, host_id, None, None)));
-        let (routing, tunnels) = test_routing_and_tunnels(host_id);
+        let (routing, tunnels) = test_routing_and_channels(host_id);
         let service = client_service_from_parts(agent_service, server_state, routing, tunnels);
         let suspended = crate::suspend::SuspendedAgent::TestAgent {
             agent_id: Uuid::new_v4(),

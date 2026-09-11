@@ -1225,7 +1225,7 @@ mod tests {
             ),
             (
                 crate::protocol::protocol_status(ProtocolError::PaymentRequired),
-                Observed::Retrying,
+                Observed::AuthenticationRequired,
             ),
             (
                 crate::protocol::protocol_status(ProtocolError::UpdateRequired {
@@ -1238,11 +1238,12 @@ mod tests {
             ),
             (
                 tonic::Status::failed_precondition("amux update required"),
-                Observed::UpdateRequired {
-                    minimum_version: None,
-                },
+                Observed::AuthenticationRequired,
             ),
-            (tonic::Status::unavailable("try again"), Observed::Retrying),
+            (
+                tonic::Status::unavailable("try again"),
+                Observed::AuthenticationRequired,
+            ),
         ] {
             *auth.rejection.lock().unwrap() = Some(error);
             runtime.start_cloud().await.unwrap();

@@ -1,3 +1,11 @@
+2026-09-11 — **Exercise remote client calls through native relay streams.**
+The remote client test harness now opens real yamux streams, forwards them
+through the relay piper, and completes the pinned inner TLS handshake at the
+target dispatcher. Independent sessions and the remote agent lifecycle no
+longer rely on the deleted frame bridge. Relay handshake rejections report
+authentication failure unless they carry the structured update error, and
+Unix socket boundary coverage now accounts for the longer adjacent link socket.
+
 2026-09-11 — **Prove session and bulk isolation on the ordered relay fallback.**
 Session subscriptions and artifact fetches now have black-box coverage showing
 that their fresh native streams coexist on one relay link, that either endpoint
