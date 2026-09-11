@@ -71,6 +71,7 @@ impl AgentRuntime {
     /// The private Codex fallback socket lives beside the configured amux
     /// socket; its short filename preserves as much `SUN_LEN` headroom as
     /// possible.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn new_with_mcp_launch_route(
         route: McpLaunchRoute,
         claude_user_keymap_dir: PathBuf,

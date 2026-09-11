@@ -8948,3 +8948,18 @@ the development-only agent-runtime edge and passes its factory into each
 embedded installation it creates. Production UI runtime dependencies remain
 client-side, while the integration still proves real agent, artifact, account,
 and independent-view lifetimes under focused and workspace feature graphs.
+
+2026-09-12 — **Ordinary product builds remain warning-free after test support
+extraction.** The internal prepared-state re-export and direct MCP-route
+constructor now compile only for their actual test-support consumers. Desktop
+composition continues through `AgentRuntimeFactory`; the product build no longer
+retains imports or constructors used solely by cross-crate fixtures.
+
+2026-09-12 — **Output reservations follow observed feature-graph transitions.**
+The first final full-suite-to-product transition added about 13.37 GB because
+the product removes test-support feature unification and therefore needs its
+own dependency artifacts. The 4 GiB product reservation was too small; periodic
+measurement warned when the owned target reached 64,825,675,776 bytes, about
+401 MB above the 60 GiB pool. Product, full-suite, lint, release, E2E, and cross
+target reservations are raised from this evidence before rebuilding a clean
+managed target. The pool limit remains unchanged.

@@ -27,29 +27,29 @@ run = ["python3", "scripts/worktree-profile.py", "{{root()}}/.wt/amux", "{{name(
 exists = 'test -f "$AMUX_CONFIG"'
 
 [task.build]
-run = "scripts/with-output-budget.sh 4294967296 build timeout 900 cargo build -p amux -p shot --bins"
+run = "scripts/with-output-budget.sh 17179869184 build timeout 900 cargo build -p amux -p shot --bins"
 needs = ["profile-config"]
 
 [task.check]
-run = "scripts/with-output-budget.sh 4294967296 check timeout 900 cargo check --workspace --lib --bins"
+run = "scripts/with-output-budget.sh 8589934592 check timeout 900 cargo check --workspace --lib --bins"
 
 [task.test-build]
-run = "scripts/with-output-budget.sh 8589934592 test-build timeout 1200 cargo test --workspace --lib --tests --no-run"
+run = "scripts/with-output-budget.sh 21474836480 test-build timeout 1200 cargo test --workspace --lib --tests --no-run"
 
 [task.doctest]
-run = "scripts/with-output-budget.sh 4294967296 doctest timeout 600 cargo test --workspace --doc"
+run = "scripts/with-output-budget.sh 8589934592 doctest timeout 600 cargo test --workspace --doc"
 
 [task.full-debug]
-run = "scripts/with-output-budget.sh 6442450944 full-debug timeout 900 cargo build -p amux -p shot --bins --profile full-debug"
+run = "scripts/with-output-budget.sh 12884901888 full-debug timeout 900 cargo build -p amux -p shot --bins --profile full-debug"
 
 [task.ci-check]
-run = "scripts/with-output-budget.sh 4294967296 ci-check timeout 900 cargo check --workspace --lib --bins --profile ci"
+run = "scripts/with-output-budget.sh 8589934592 ci-check timeout 900 cargo check --workspace --lib --bins --profile ci"
 
 [task.ci-test]
-run = "scripts/with-output-budget.sh 8589934592 ci-test timeout 1200 cargo test --workspace --lib --tests --profile ci-test"
+run = "scripts/with-output-budget.sh 21474836480 ci-test timeout 1200 cargo test --workspace --lib --tests --profile ci-test"
 
 [task.release-check]
-run = "scripts/with-output-budget.sh 6442450944 release-check timeout 1200 cargo build --release -p amux -p shot --bins"
+run = "scripts/with-output-budget.sh 12884901888 release-check timeout 1200 cargo build --release -p amux -p shot --bins"
 
 [task.format-check]
 run = "cargo +nightly-2026-08-30 fmt --all -- --check"
@@ -61,7 +61,7 @@ run = "cargo +nightly-2026-08-30 fmt --all"
 run = "scripts/with-output-budget.sh 2147483648 codegen-check timeout 600 scripts/codegen-check.sh"
 
 [task.offline-test]
-run = "scripts/with-output-budget.sh 8589934592 offline-test timeout 1200 scripts/offline-check.sh cargo test --workspace --lib --tests"
+run = "scripts/with-output-budget.sh 21474836480 offline-test timeout 1200 scripts/offline-check.sh cargo test --workspace --lib --tests"
 
 [task.build-report]
 run = 'python3 scripts/build-foundations-run.py report "$@"'
@@ -93,7 +93,7 @@ run = 'timeout 1200 python3 scripts/output-workload.py "$@"'
 run = 'python3 scripts/build-foundations-run.py benchmark "$@"'
 
 [task.test]
-run = 'scripts/with-output-budget.sh 8589934592 test scripts/workspace-test.sh "$@"'
+run = 'scripts/with-output-budget.sh 21474836480 test scripts/workspace-test.sh "$@"'
 needs = ["test-recipes"]
 
 [task.test-recipes]
@@ -124,7 +124,7 @@ run = "scripts/with-output-budget.sh 2147483648 check-agent-runtime timeout 600 
 run = "scripts/with-output-budget.sh 2147483648 check-node-boundary timeout 600 cargo check -p node --lib"
 
 [task.check-products]
-run = "scripts/with-output-budget.sh 4294967296 check-products timeout 900 cargo check -p node -p agent-runtime -p amux --bins"
+run = "scripts/with-output-budget.sh 8589934592 check-products timeout 900 cargo check -p node -p agent-runtime -p amux --bins"
 
 [task.test-node-lifecycle]
 run = "scripts/with-output-budget.sh 2147483648 test-node-lifecycle timeout 600 cargo test -p node --lib installation::supervisor::tests::lifecycle_waits_for_profile_mutations_and_closed_gate_rejects_late_agent_work"
@@ -151,7 +151,7 @@ run = "scripts/with-output-budget.sh 2147483648 test-infrastructure timeout 600 
 run = "timeout 60 python3 scripts/check-dependency-policy.py"
 
 [task.lint]
-run = "scripts/with-output-budget.sh 4294967296 lint cargo clippy --workspace --all-targets -- -D warnings"
+run = "scripts/with-output-budget.sh 12884901888 lint cargo clippy --workspace --all-targets -- -D warnings"
 
 [task.fix-lints]
 run = "scripts/with-output-budget.sh 4294967296 fix-lints cargo fix -p node -p agent-runtime --lib --allow-dirty"
@@ -160,11 +160,11 @@ run = "scripts/with-output-budget.sh 4294967296 fix-lints cargo fix -p node -p a
 # a `-p` selection unifies dependency features differently from the
 # workspace build and would compile a second copy of every shared crate.
 [task.spec]
-run = 'scripts/with-output-budget.sh 4294967296 spec scripts/spec-test.sh "$@"'
+run = 'scripts/with-output-budget.sh 8589934592 spec scripts/spec-test.sh "$@"'
 
 # Opt-in real-Codex scenarios. The CLI must match the current sources.
 [task.codex-live]
-run = 'scripts/with-output-budget.sh 4294967296 codex-live timeout 900 cargo test --workspace --test codex_live -- "$@"'
+run = 'scripts/with-output-budget.sh 8589934592 codex-live timeout 900 cargo test --workspace --test codex_live -- "$@"'
 needs = ["build"]
 
 # Regenerates the committed protobuf code (crates/wire/src/generated)
@@ -172,7 +172,7 @@ needs = ["build"]
 # fails when it goes stale.
 # The iOS check names its targets so it never produces desktop-only packages.
 [task.mobile-check]
-run = "scripts/with-output-budget.sh 6442450944 mobile-device timeout 1200 cargo check -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios && scripts/with-output-budget.sh 6442450944 mobile-simulator timeout 1200 cargo check -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios-sim"
+run = "scripts/with-output-budget.sh 8589934592 mobile-device timeout 1200 cargo check -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios && scripts/with-output-budget.sh 8589934592 mobile-simulator timeout 1200 cargo check -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios-sim"
 
 # Match CI's embedded library suite without unifying desktop features.
 [task.client-test]
@@ -189,7 +189,7 @@ run = 'timeout 900 target/debug/e2e-runner run --amux-binary target/debug/amux -
 needs = ["e2e-build"]
 
 [task.e2e-build]
-run = "scripts/with-output-budget.sh 5368709120 e2e-build timeout 900 cargo build -p amux -p e2e-runner -p test-agent --bins"
+run = "scripts/with-output-budget.sh 12884901888 e2e-build timeout 900 cargo build -p amux -p e2e-runner -p test-agent --bins"
 
 # This checkout's daemon. A resource: `wt remove` stops it.
 [task.daemon]
