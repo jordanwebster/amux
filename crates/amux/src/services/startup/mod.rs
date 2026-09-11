@@ -303,8 +303,7 @@ fn cloud_tls_incoming(
             if let Err(error) = stream.set_nodelay(true) {
                 tracing::warn!(error = %error, "failed to set TCP_NODELAY");
             }
-            crate::transport::configure_tcp_keepalive(&stream);
-
+            crate::transport::configure_relay_tcp_keepalive(&stream);
             let acceptor = acceptor.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
@@ -457,6 +456,10 @@ impl DeviceRuntimeSecurity {
 
     pub(crate) fn shared_trust_store(&self) -> SharedTrustStore {
         self.trust_store.clone()
+    }
+
+    pub(crate) fn quic_server_config(&self) -> Result<quinn::ServerConfig, IdentityError> {
+        self.identity.quic_server_config(self.trust_store.clone())
     }
 }
 
@@ -649,9 +652,10 @@ impl StartedUserServices {
         data_dir: PathBuf,
         discovery: Arc<dyn crate::discovery::Discovery>,
         found_hosts: Arc<crate::discovery::FoundHosts>,
+        quic_endpoint: quinn::Endpoint,
     ) {
         self.reachability_links
-            .configure(data_dir, discovery, found_hosts);
+            .configure(data_dir, discovery, found_hosts, quic_endpoint);
     }
 
     pub(crate) fn spawn_dial_on_found(
@@ -745,28 +749,10 @@ impl StartedUserServices {
         })
     }
 
-    pub(crate) fn serve_external_tcp_listener(&mut self, listener: TcpListener) {
+    pub(crate) fn serve_external_quic_endpoint(&mut self, endpoint: quinn::Endpoint) {
         let task = self
             .dispatcher
-            .serve_tcp_listener(listener, self.external_links_shutdown.subscribe());
-        self.external_accept_task = Some(task);
-    }
-
-    /// Test seam: serves the external TCP listener while registering every
-    /// accepted socket in `connections`, so an in-process restart can sever
-    /// them like a real process exit (see
-    /// [`crate::dispatcher::TunnelDispatcher::serve_tcp_listener_tracked`]).
-    #[cfg(any(test, testnet))]
-    pub(crate) fn serve_external_tcp_listener_tracked(
-        &mut self,
-        listener: TcpListener,
-        connections: crate::dispatcher::TrackedTcpConnections,
-    ) {
-        let task = self.dispatcher.serve_tcp_listener_tracked(
-            listener,
-            connections,
-            self.external_links_shutdown.subscribe(),
-        );
+            .serve_quic_endpoint(endpoint, self.external_links_shutdown.subscribe());
         self.external_accept_task = Some(task);
     }
 
@@ -824,7 +810,7 @@ impl StartedRoutingServices {
             .with_incoming_streams(self.incoming_streams_tx.clone())
     }
 
-    fn link_ctx(&self) -> LinkCtx {
+    pub(crate) fn link_ctx(&self) -> LinkCtx {
         LinkCtx::new_live(
             self.local_host.clone(),
             self.routing.clone(),
@@ -1086,6 +1072,27 @@ mod tests {
             reachabilities,
             signed_in: None,
         }
+    }
+
+    fn serve_test_quic(
+        services: &mut StartedUserServices,
+        identity: &DeviceIdentity,
+        trust: SharedTrustStore,
+    ) -> (quinn::Endpoint, std::net::SocketAddr) {
+        let endpoint = quinn::Endpoint::server(
+            identity.quic_server_config(trust).unwrap(),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .unwrap();
+        let addr = endpoint.local_addr().unwrap();
+        services.configure_reachability(
+            tempfile::tempdir().unwrap().keep(),
+            Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            Arc::new(crate::discovery::FoundHosts::default()),
+            endpoint.clone(),
+        );
+        services.serve_external_quic_endpoint(endpoint.clone());
+        (endpoint, addr)
     }
 
     fn remote_host(id: u128) -> Host {
@@ -1459,7 +1466,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_pin_pairing_over_tcp_updates_both_trust_stores() {
+    async fn direct_pin_pairing_over_quic_updates_both_trust_stores() {
         let initiator_dir = tempfile::tempdir().unwrap();
         let responder_dir = tempfile::tempdir().unwrap();
         let initiator_identity =
@@ -1502,11 +1509,17 @@ mod tests {
             .pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        responder.serve_external_tcp_listener(listener);
+        let (_responder_endpoint, addr) =
+            serve_test_quic(&mut responder, &responder_identity, responder_trust.clone());
+        let initiator_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        initiator.configure_reachability(
+            initiator_dir.path().to_path_buf(),
+            Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            Arc::new(crate::discovery::FoundHosts::default()),
+            initiator_endpoint,
+        );
 
-        let paired_peer = crate::pair_via_pin_direct_tcp(
+        let paired_peer = crate::pair_via_pin_direct_quic(
             initiator_dir.path(),
             "initiator",
             addr,
@@ -1542,13 +1555,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_tcp_reachability_establishes_runtime_link_from_trust_store() {
+    async fn direct_quic_reachability_establishes_runtime_link_from_trust_store() {
         let identity_a = DeviceIdentity::for_test(Uuid::from_u128(21));
         let identity_b = DeviceIdentity::for_test(Uuid::from_u128(22));
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
         let mut trust_a = TrustStore::default();
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = socket.local_addr().unwrap();
         trust_a.insert_for_test(
             identity_b.host_id,
             trust_entry(
@@ -1563,7 +1575,30 @@ mod tests {
             test_started_services_with_identity_and_trust(identity_a.clone(), trust_a).await;
         let mut host_b =
             test_started_services_with_identity_and_trust(identity_b.clone(), trust_b).await;
-        host_b.serve_external_tcp_listener(listener);
+        let endpoint_b = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(
+                identity_b
+                    .quic_server_config(host_b.reachability_links.trust_store().unwrap())
+                    .unwrap(),
+            ),
+            socket,
+            Arc::new(quinn::TokioRuntime),
+        )
+        .unwrap();
+        host_b.configure_reachability(
+            tempfile::tempdir().unwrap().keep(),
+            Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            Arc::new(crate::discovery::FoundHosts::default()),
+            endpoint_b.clone(),
+        );
+        host_b.serve_external_quic_endpoint(endpoint_b);
+        host_a.configure_reachability(
+            tempfile::tempdir().unwrap().keep(),
+            Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            Arc::new(crate::discovery::FoundHosts::default()),
+            quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap(),
+        );
 
         let tasks = host_a.spawn_reachability_links();
         wait_for_host_entry(&host_a.routing, identity_b.host_id).await;
@@ -1608,13 +1643,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_tcp_reachabilities_on_both_peers_establish_two_outbound_links() {
+    async fn direct_quic_reachabilities_on_both_peers_establish_two_outbound_links() {
         let identity_a = DeviceIdentity::for_test(Uuid::from_u128(23));
         let identity_b = DeviceIdentity::for_test(Uuid::from_u128(24));
-        let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr_a = listener_a.local_addr().unwrap();
-        let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr_b = listener_b.local_addr().unwrap();
+        let socket_a = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr_a = socket_a.local_addr().unwrap();
+        let socket_b = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr_b = socket_b.local_addr().unwrap();
 
         let mut trust_a = TrustStore::default();
         trust_a.insert_for_test(
@@ -1641,8 +1676,42 @@ mod tests {
             test_started_services_with_identity_and_trust(identity_a.clone(), trust_a).await;
         let mut host_b =
             test_started_services_with_identity_and_trust(identity_b.clone(), trust_b).await;
-        host_a.serve_external_tcp_listener(listener_a);
-        host_b.serve_external_tcp_listener(listener_b);
+        let endpoint_a = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(
+                identity_a
+                    .quic_server_config(host_a.reachability_links.trust_store().unwrap())
+                    .unwrap(),
+            ),
+            socket_a,
+            Arc::new(quinn::TokioRuntime),
+        )
+        .unwrap();
+        let endpoint_b = quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(
+                identity_b
+                    .quic_server_config(host_b.reachability_links.trust_store().unwrap())
+                    .unwrap(),
+            ),
+            socket_b,
+            Arc::new(quinn::TokioRuntime),
+        )
+        .unwrap();
+        host_a.configure_reachability(
+            tempfile::tempdir().unwrap().keep(),
+            Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            Arc::new(crate::discovery::FoundHosts::default()),
+            endpoint_a.clone(),
+        );
+        host_b.configure_reachability(
+            tempfile::tempdir().unwrap().keep(),
+            Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            Arc::new(crate::discovery::FoundHosts::default()),
+            endpoint_b.clone(),
+        );
+        host_a.serve_external_quic_endpoint(endpoint_a);
+        host_b.serve_external_quic_endpoint(endpoint_b);
 
         let tasks_a = host_a.spawn_reachability_links();
         let tasks_b = host_b.spawn_reachability_links();

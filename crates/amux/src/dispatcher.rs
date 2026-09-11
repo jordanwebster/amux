@@ -2,23 +2,21 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use rustls::pki_types::CertificateDer;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Semaphore, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
 use crate::identity::{self, DeviceIdentity, IdentityError};
-use crate::link::{ByteStream, CarrierKind, LinkCtx, MuxCarrier, MuxRole, run_link};
+use crate::link::{ByteStream, LinkCtx, QuicCarrier, accepted_quic_bidi_stream, run_link};
 use crate::pairing::PairMode;
 use crate::resource_limits::{
-    EXTERNAL_TCP_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_TCP_TLS_HANDSHAKE_RATE_LIMIT,
-    EXTERNAL_TCP_TLS_HANDSHAKE_RATE_WINDOW, SlidingWindowRateLimiter,
+    EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
+    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW, SlidingWindowRateLimiter,
 };
-use crate::transport::{
-    BoxedGrpcIo, PreTrustPairingReachability, TrustedPeerConnections, configure_tcp_keepalive,
-};
+use crate::transport::{BoxedGrpcIo, PreTrustPairingReachability, TrustedPeerConnections};
 use crate::trust::SharedTrustStore;
 use crate::{HostId, audit};
 
@@ -48,27 +46,6 @@ fn take_mtls_audit_emitted() -> bool {
     MTLS_AUDIT_EMITTED.with(|emitted| emitted.swap(false, Ordering::Relaxed))
 }
 
-/// OS-level duplicates of accepted external-TCP sockets, kept so test
-/// harnesses can sever every live connection at once (see
-/// [`TunnelDispatcher::serve_tcp_listener_tracked`]).
-pub(crate) type TrackedTcpConnections = std::sync::Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
-
-pub(crate) fn track_tcp_stream(
-    stream: tokio::net::TcpStream,
-    track: Option<&TrackedTcpConnections>,
-) -> std::io::Result<tokio::net::TcpStream> {
-    let Some(connections) = track else {
-        return Ok(stream);
-    };
-    let std_stream = stream.into_std()?;
-    let duplicate = std_stream.try_clone()?;
-    connections
-        .lock()
-        .expect("tracked TCP connection registry poisoned")
-        .push(duplicate);
-    tokio::net::TcpStream::from_std(std_stream)
-}
-
 #[derive(Clone)]
 pub(crate) struct TunnelDispatcher {
     acceptor: TlsAcceptor,
@@ -78,12 +55,12 @@ pub(crate) struct TunnelDispatcher {
     trusted_tx: mpsc::Sender<BoxedGrpcIo>,
     pairing_tx: mpsc::Sender<BoxedGrpcIo>,
     handshake_timeout: Duration,
-    external_tcp_handshake_limiter: std::sync::Arc<Mutex<SlidingWindowRateLimiter<IpAddr>>>,
-    external_tcp_handshake_slots: std::sync::Arc<Semaphore>,
+    external_quic_handshake_limiter: std::sync::Arc<Mutex<SlidingWindowRateLimiter<IpAddr>>>,
+    external_quic_handshake_slots: std::sync::Arc<Semaphore>,
     link_ctx: Option<LinkCtx>,
 }
 
-enum DispatchTarget {
+pub(crate) enum DispatchTarget {
     Trusted(HostId),
     Pairing,
     Close,
@@ -110,14 +87,14 @@ impl TunnelDispatcher {
             trusted_tx,
             pairing_tx,
             handshake_timeout,
-            external_tcp_handshake_limiter: std::sync::Arc::new(Mutex::new(
+            external_quic_handshake_limiter: std::sync::Arc::new(Mutex::new(
                 SlidingWindowRateLimiter::new(
-                    EXTERNAL_TCP_TLS_HANDSHAKE_RATE_LIMIT,
-                    EXTERNAL_TCP_TLS_HANDSHAKE_RATE_WINDOW,
+                    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
+                    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW,
                 ),
             )),
-            external_tcp_handshake_slots: std::sync::Arc::new(Semaphore::new(
-                EXTERNAL_TCP_TLS_HANDSHAKE_CONCURRENCY,
+            external_quic_handshake_slots: std::sync::Arc::new(Semaphore::new(
+                EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY,
             )),
             link_ctx: None,
         })
@@ -128,99 +105,85 @@ impl TunnelDispatcher {
         self
     }
 
-    pub(crate) fn serve_tcp_listener(
+    pub(crate) fn serve_quic_endpoint(
         &self,
-        listener: TcpListener,
-        shutdown_rx: watch::Receiver<bool>,
-    ) -> JoinHandle<()> {
-        self.serve_tcp_listener_inner(listener, None, shutdown_rx)
-    }
-
-    /// Test seam: like [`Self::serve_tcp_listener`], but registers an
-    /// OS-level duplicate of every accepted socket in `connections` so an
-    /// in-process daemon "restart" can sever them the way a real process
-    /// exit would (per-connection tasks are detached and would otherwise
-    /// keep serving the old runtime).
-    #[cfg(any(test, testnet))]
-    pub(crate) fn serve_tcp_listener_tracked(
-        &self,
-        listener: TcpListener,
-        connections: TrackedTcpConnections,
-        shutdown_rx: watch::Receiver<bool>,
-    ) -> JoinHandle<()> {
-        self.serve_tcp_listener_inner(listener, Some(connections), shutdown_rx)
-    }
-
-    fn serve_tcp_listener_inner(
-        &self,
-        listener: TcpListener,
-        track: Option<TrackedTcpConnections>,
+        endpoint: quinn::Endpoint,
         mut shutdown_rx: watch::Receiver<bool>,
     ) -> JoinHandle<()> {
         let dispatcher = self.clone();
         tokio::spawn(async move {
             let mut connection_tasks = tokio::task::JoinSet::new();
             loop {
-                let accepted = tokio::select! {
-                    accepted = listener.accept() => Some(accepted),
+                let incoming = tokio::select! {
+                    incoming = endpoint.accept() => incoming,
                     completed = connection_tasks.join_next(), if !connection_tasks.is_empty() => {
                         if let Some(Err(error)) = completed
                             && !error.is_cancelled()
                         {
-                            tracing::warn!(error = %error, "external TCP connection task failed");
+                            tracing::warn!(error = %error, "external QUIC connection task failed");
                         }
-                        None
+                        continue;
                     }
                     _ = wait_for_shutdown(&mut shutdown_rx) => {
                         connection_tasks.detach_all();
                         break;
                     }
                 };
-                let Some(accepted) = accepted else { continue };
-                let (stream, addr) = match accepted {
-                    Ok(accepted) => accepted,
-                    Err(error) => {
-                        tracing::warn!(error = %error, "external TCP accept failed");
+                let Some(incoming) = incoming else { break };
+                let addr = incoming.remote_address();
+
+                // Stateless address validation and per-source admission both
+                // happen before accepting the Incoming, so quinn has not yet
+                // allocated connection or TLS handshake state.
+                if !incoming.remote_address_validated() {
+                    if !dispatcher.allow_external_quic_handshake(addr.ip()).await {
+                        tracing::warn!(peer = %addr, "external QUIC handshake rate limit exceeded");
+                        incoming.ignore();
                         continue;
                     }
-                };
-                let stream = match track_tcp_stream(stream, track.as_ref()) {
-                    Ok(stream) => stream,
-                    Err(error) => {
-                        tracing::warn!(error = %error, "failed to track accepted TCP stream");
-                        continue;
+                    if let Err(error) = incoming.retry() {
+                        tracing::debug!(peer = %addr, error = %error, "QUIC address was already validated");
+                        error.into_incoming().ignore();
                     }
-                };
-                if !dispatcher.allow_external_tcp_handshake(addr.ip()).await {
-                    tracing::warn!(peer = %addr, "external TCP TLS handshake rate limit exceeded");
                     continue;
-                }
+                };
                 let permit = match dispatcher
-                    .external_tcp_handshake_slots
+                    .external_quic_handshake_slots
                     .clone()
-                    .acquire_owned()
-                    .await
+                    .try_acquire_owned()
                 {
                     Ok(permit) => permit,
-                    Err(_) => break,
+                    Err(_) => {
+                        tracing::warn!(peer = %addr, "external QUIC handshake concurrency limit exceeded");
+                        incoming.refuse();
+                        continue;
+                    }
                 };
-                if let Err(error) = stream.set_nodelay(true) {
-                    tracing::warn!(error = %error, "failed to set TCP_NODELAY");
-                }
-                configure_tcp_keepalive(&stream);
                 let dispatcher = dispatcher.clone();
                 let connection_shutdown = shutdown_rx.clone();
                 connection_tasks.spawn(async move {
                     let _permit = permit;
-                    if let Err(error) = dispatcher
-                        .dispatch_external(
-                            stream,
-                            PreTrustPairingReachability::NoReusableReachability,
-                            connection_shutdown,
-                        )
-                        .await
+                    let connection = match tokio::time::timeout(
+                        dispatcher.handshake_timeout,
+                        incoming,
+                    )
+                    .await
                     {
-                        tracing::warn!(peer = %addr, error = %error, "dispatcher rejected TCP stream");
+                        Ok(Ok(connection)) => connection,
+                        Ok(Err(error)) => {
+                            audit::auth_mtls_handshake_failure(&error);
+                            tracing::warn!(peer = %addr, error = %error, "QUIC handshake failed");
+                            return;
+                        }
+                        Err(_) => {
+                            audit::auth_mtls_handshake_failure("QUIC handshake timed out");
+                            tracing::warn!(peer = %addr, "QUIC handshake timed out");
+                            return;
+                        }
+                    };
+                    drop(_permit);
+                    if let Err(error) = dispatcher.dispatch_quic(connection, connection_shutdown).await {
+                        tracing::warn!(peer = %addr, error = %error, "dispatcher rejected QUIC connection");
                     }
                 });
             }
@@ -246,11 +209,69 @@ impl TunnelDispatcher {
         self.dispatch(stream, pairing_reachability).await
     }
 
-    async fn allow_external_tcp_handshake(&self, source: IpAddr) -> bool {
-        self.external_tcp_handshake_limiter
+    async fn allow_external_quic_handshake(&self, source: IpAddr) -> bool {
+        self.external_quic_handshake_limiter
             .lock()
             .await
             .allow(source)
+    }
+
+    async fn dispatch_quic(
+        &self,
+        connection: quinn::Connection,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> Result<(), DispatchError> {
+        match self.classify_quic(&connection)? {
+            DispatchTarget::Trusted(peer) => {
+                let ctx = self.link_ctx.clone().ok_or_else(|| {
+                    DispatchError::Link("native link context is not configured".into())
+                })?;
+                run_link(
+                    ctx.with_authenticated_peer(peer).with_shutdown(shutdown_rx),
+                    std::sync::Arc::new(QuicCarrier::from_accepted(connection)),
+                    crate::routing::ConnectRole::Acceptor,
+                )
+                .await
+                .map_err(|error| DispatchError::Link(error.to_string()))
+            }
+            DispatchTarget::Pairing => {
+                let (send, recv) =
+                    tokio::time::timeout(self.handshake_timeout, connection.accept_bi())
+                        .await
+                        .map_err(|_| DispatchError::Timeout)?
+                        .map_err(|error| DispatchError::Link(error.to_string()))?;
+                self.pairing_tx
+                    .send(BoxedGrpcIo::pre_trust_pairing(
+                        accepted_quic_bidi_stream(send, recv),
+                        PreTrustPairingReachability::NoReusableReachability,
+                    ))
+                    .await
+                    .map_err(|_| DispatchError::ChannelClosed)
+            }
+            DispatchTarget::Close => {
+                connection.close(0_u32.into(), b"connection is not admitted");
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn classify_quic(
+        &self,
+        connection: &quinn::Connection,
+    ) -> Result<DispatchTarget, IdentityError> {
+        let peer_certificates = connection
+            .peer_identity()
+            .map(|identity| {
+                identity
+                    .downcast::<Vec<CertificateDer<'static>>>()
+                    .map_err(|_| {
+                        IdentityError::TlsConfig(
+                            "QUIC peer identity was not a certificate chain".into(),
+                        )
+                    })
+            })
+            .transpose()?;
+        self.dispatch_target_for_certificate(peer_certificates.as_deref().and_then(|c| c.first()))
     }
 
     async fn dispatch<IO>(
@@ -272,53 +293,6 @@ impl TunnelDispatcher {
                 )
                 .await
                 .map_err(|_| DispatchError::ChannelClosed),
-            DispatchTarget::Pairing => self
-                .pairing_tx
-                .send(BoxedGrpcIo::pre_trust_pairing(
-                    tls_stream,
-                    pairing_reachability,
-                ))
-                .await
-                .map_err(|_| DispatchError::ChannelClosed),
-            DispatchTarget::Close => Ok(()),
-        }
-    }
-
-    async fn dispatch_external<IO>(
-        &self,
-        stream: IO,
-        pairing_reachability: PreTrustPairingReachability,
-        shutdown_rx: watch::Receiver<bool>,
-    ) -> Result<(), DispatchError>
-    where
-        IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
-    {
-        let tls_stream = self.accept_tls(stream).await?;
-        match self.dispatch_target(&tls_stream)? {
-            DispatchTarget::Trusted(peer) => {
-                let Some(ctx) = self.link_ctx.clone() else {
-                    return self
-                        .trusted_tx
-                        .send(
-                            BoxedGrpcIo::tls_trusted(tls_stream, peer)
-                                .track_trusted_peer(&self.trusted_connections),
-                        )
-                        .await
-                        .map_err(|_| DispatchError::ChannelClosed);
-                };
-                let carrier = std::sync::Arc::new(MuxCarrier::new(
-                    tls_stream,
-                    MuxRole::Acceptor,
-                    CarrierKind::Quic,
-                ));
-                run_link(
-                    ctx.with_authenticated_peer(peer).with_shutdown(shutdown_rx),
-                    carrier,
-                    crate::routing::ConnectRole::Acceptor,
-                )
-                .await
-                .map_err(|error| DispatchError::Link(error.to_string()))
-            }
             DispatchTarget::Pairing => self
                 .pairing_tx
                 .send(BoxedGrpcIo::pre_trust_pairing(
@@ -363,6 +337,13 @@ impl TunnelDispatcher {
             .peer_certificates()
             .and_then(|certs| certs.first());
 
+        self.dispatch_target_for_certificate(peer_cert)
+    }
+
+    fn dispatch_target_for_certificate(
+        &self,
+        peer_cert: Option<&CertificateDer<'_>>,
+    ) -> Result<DispatchTarget, IdentityError> {
         if let Some(cert) = peer_cert {
             let trust_store = self
                 .trust_store
@@ -678,7 +659,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn external_tcp_handshake_limiter_is_per_source_ip() {
+    async fn external_quic_handshake_limiter_is_per_source_ip() {
         let (_server_dir, server_identity) = temp_identity();
         let (trusted_tx, _trusted_rx) = mpsc::channel(1);
         let (pairing_tx, _pairing_rx) = mpsc::channel(1);
@@ -695,10 +676,10 @@ mod tests {
         let source = "127.0.0.1".parse::<IpAddr>().unwrap();
         let other = "127.0.0.2".parse::<IpAddr>().unwrap();
 
-        for _ in 0..EXTERNAL_TCP_TLS_HANDSHAKE_RATE_LIMIT {
-            assert!(dispatcher.allow_external_tcp_handshake(source).await);
+        for _ in 0..EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT {
+            assert!(dispatcher.allow_external_quic_handshake(source).await);
         }
-        assert!(!dispatcher.allow_external_tcp_handshake(source).await);
-        assert!(dispatcher.allow_external_tcp_handshake(other).await);
+        assert!(!dispatcher.allow_external_quic_handshake(source).await);
+        assert!(dispatcher.allow_external_quic_handshake(other).await);
     }
 }

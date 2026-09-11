@@ -37,7 +37,6 @@ const ED25519_PKCS8_V1_PREFIX: [u8; 16] = [
 const ED25519_SPKI_PREFIX: [u8; 12] = [
     0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
 ];
-#[allow(dead_code)]
 pub(crate) const QUIC_ALPN: &[u8] = b"amux/2";
 
 #[derive(Debug, thiserror::Error)]
@@ -80,7 +79,6 @@ pub(crate) struct DeviceIdentity {
 }
 
 impl DeviceIdentity {
-    #[allow(dead_code)]
     pub(crate) fn public_key(&self) -> &[u8] {
         &self.pubkey
     }
@@ -158,7 +156,6 @@ impl DeviceIdentity {
         Ok(config)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn quic_server_config(
         &self,
         trust_store: SharedTrustStore,
@@ -177,7 +174,6 @@ impl DeviceIdentity {
         Ok(config)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn quic_client_config_for_peer(
         &self,
         trust_store: SharedTrustStore,
@@ -196,7 +192,6 @@ impl DeviceIdentity {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn quic_transport_config() -> std::sync::Arc<quinn::TransportConfig> {
     #[cfg(target_os = "ios")]
     let (keep_alive, idle_timeout) = (

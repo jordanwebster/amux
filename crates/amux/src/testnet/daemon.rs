@@ -7,20 +7,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex, Weak};
 
 use chrono::{DateTime, TimeDelta, Utc};
-use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
 use super::NetInner;
 use super::assertions::eventually;
-use super::net::{RegisteredToken, TokenRegistry, UserTierRegistry, bind_addr_with_retries};
+use super::net::{RegisteredToken, TokenRegistry, UserTierRegistry};
 use crate::HostId;
 use crate::auth::{AccessToken, AuthError, CredentialProvider};
 use crate::client::Client;
 use crate::connection::ConnectionManager;
 use crate::discovery::{Discovery, ScriptedDiscovery};
-use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};
-use crate::link::{CarrierKind, ChannelPool, MuxCarrier, MuxRole};
+use crate::link::{CarrierKind, ChannelPool, MuxCarrier, MuxRole, QuicCarrier};
 use crate::profile::runtime::{
     self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
 };
@@ -89,16 +87,12 @@ pub(crate) struct DaemonInner {
     pub(crate) host_id: HostId,
     pub(crate) data_dir: PathBuf,
     pub(crate) artifact_clock: Arc<TestArtifactClock>,
-    /// Direct-TCP listener address; stable across restarts so stored
+    /// Direct QUIC listener address; stable across restarts so stored
     /// reachabilities keep working. `None` for cloud-only daemons.
-    pub(crate) tcp_addr: Option<SocketAddr>,
+    pub(crate) direct_addr: Option<SocketAddr>,
     pub(crate) cloud: Option<CloudAttachment>,
     pub(crate) runtime: Mutex<Option<DaemonRuntime>>,
     pub(crate) installation: Option<super::installation::ProfileOwner>,
-    /// OS-level duplicates of every TCP socket this daemon's runtime holds
-    /// open to direct peers. Only explicit outage simulation severs these;
-    /// normal stop and restart use the production runtime cleanup.
-    pub(crate) tracked_tcp: TrackedTcpConnections,
 }
 
 pub(crate) struct TestArtifactClock(StdMutex<DateTime<Utc>>);
@@ -118,17 +112,6 @@ impl TestArtifactClock {
 impl amux_artifacts::Clock for TestArtifactClock {
     fn now(&self) -> DateTime<Utc> {
         *self.0.lock().unwrap_or_else(|error| error.into_inner())
-    }
-}
-
-fn sever_registry(registry: &TrackedTcpConnections) {
-    let connections = std::mem::take(
-        &mut *registry
-            .lock()
-            .expect("tracked TCP connection registry poisoned"),
-    );
-    for connection in connections {
-        let _ = connection.shutdown(std::net::Shutdown::Both);
     }
 }
 
@@ -193,7 +176,7 @@ const CALL_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 
 /// Boots the daemon's user services from its data dir. Identity and trust
 /// persist on disk, so a restart reuses them; `listener` carries the
-/// pre-bound direct-TCP listener on first boot (restarts rebind the
+/// pre-bound direct-QUIC socket on first boot (restarts rebind the
 /// recorded address).
 ///
 /// The cloud connector is *not* spawned here: callers attach the cloud
@@ -204,12 +187,12 @@ const CALL_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// activation no longer demotes an active direct route.)
 pub(crate) async fn start_daemon_runtime(
     inner: &Arc<DaemonInner>,
-    listener: Option<TcpListener>,
+    listener: Option<std::net::UdpSocket>,
     discovery: ScriptedDiscovery,
 ) -> DaemonRuntime {
-    let listener = match (listener, inner.tcp_addr) {
+    let listener = match (listener, inner.direct_addr) {
         (Some(listener), _) => Some(listener),
-        (None, Some(addr)) => Some(bind_addr_with_retries(addr).await),
+        (None, Some(addr)) => Some(bind_udp_with_retries(addr).await),
         (None, None) => None,
     };
     let config = crate::config::Config {
@@ -218,8 +201,8 @@ pub(crate) async fn start_daemon_runtime(
         state_path: inner.data_dir.join("state.yaml"),
         data_dir: inner.data_dir.clone(),
         lan: crate::config::LanConfig {
-            listen: inner.tcp_addr.is_some(),
-            port: inner.tcp_addr.map_or(0, |addr| addr.port()),
+            listen: inner.direct_addr.is_some(),
+            port: inner.direct_addr.map_or(0, |addr| addr.port()),
         },
 
         prevent_idle_sleep: Some(false),
@@ -238,7 +221,6 @@ pub(crate) async fn start_daemon_runtime(
     options.fixtures = RuntimeFixtures {
         listener,
         discovery: None,
-        tracked_tcp: Some(inner.tracked_tcp.clone()),
         artifact_clock: Some(inner.artifact_clock.clone()),
         cloud_transport: None,
         cloud_refresh_interval: None,
@@ -254,6 +236,21 @@ pub(crate) async fn start_daemon_runtime(
         .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
     DaemonRuntime {
         profile: Some(profile),
+    }
+}
+
+async fn bind_udp_with_retries(addr: SocketAddr) -> std::net::UdpSocket {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match std::net::UdpSocket::bind(addr) {
+            Ok(socket) => return socket,
+            Err(error) => {
+                if tokio::time::Instant::now() >= deadline {
+                    panic!("failed to rebind QUIC socket {addr}: {error}");
+                }
+                tokio::time::sleep(super::assertions::POLL_INTERVAL).await;
+            }
+        }
     }
 }
 
@@ -322,7 +319,7 @@ impl RuntimeGuard<'_> {
 impl Daemon {
     pub fn direct_addr(&self) -> SocketAddr {
         self.inner
-            .tcp_addr
+            .direct_addr
             .expect("daemon does not expose a direct listener")
     }
 
@@ -406,21 +403,17 @@ impl Daemon {
                 signed_in: None,
             },
         );
-        let channel = crate::transport::trusted_device_channel_tracked(
-            other
-                .inner
-                .tcp_addr
-                .expect("responder needs a LAN listener"),
-            identity,
-            Arc::new(std::sync::RwLock::new(trust)),
-            other.host_id(),
-            None,
+        let endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let result = tokio::time::timeout(
+            super::assertions::DEFAULT_TIMEOUT,
+            QuicCarrier::connect_direct(
+                &endpoint,
+                other.direct_addr(),
+                &identity,
+                Arc::new(std::sync::RwLock::new(trust)),
+                other.host_id(),
+            ),
         )
-        .unwrap();
-        let result = tokio::time::timeout(super::assertions::DEFAULT_TIMEOUT, async {
-            let mut client = wire::client_service_client(channel);
-            client.list_hosts(wire::ListHostsRequest {}).await
-        })
         .await
         .expect("device authentication must finish with a refusal");
         assert!(
@@ -882,13 +875,7 @@ impl Daemon {
                     .debug_view()
                     .into_iter()
                     .any(|channel| channel.peer == other_id);
-                let no_direct_connection = other
-                    .inner
-                    .tracked_tcp
-                    .lock()
-                    .map(|connections| connections.is_empty())
-                    .unwrap_or(false);
-                host_entry_is_safe && no_tunnel && no_direct_connection
+                host_entry_is_safe && no_tunnel
             },
             self.failure_dump(),
         )
@@ -985,7 +972,6 @@ impl Daemon {
         );
         let runtime = self.inner.runtime.lock().await.take();
         if let Some(runtime) = runtime {
-            sever_registry(&self.inner.tracked_tcp);
             runtime.stop().await;
         }
         self.wait_until_peers_see_us_down().await;
@@ -993,15 +979,17 @@ impl Daemon {
 
     /// Simulates an abrupt direct-transport outage without a graceful link close.
     pub async fn sever_direct_connections(&self) {
-        sever_registry(&self.inner.tracked_tcp);
+        if let Some(parts) = self.try_parts().await {
+            parts.channels.link_registry().close_peer_links().await;
+        }
     }
 
     /// Stop and restart with the same data dir; identity, trust, and the
-    /// direct-TCP listener address all persist. Direct links are
+    /// direct QUIC listener address all persist. Direct links are
     /// re-established from stored reachabilities before the cloud is
     /// reattached (see [`start_daemon_runtime`]).
     pub async fn restart(&self) {
-        // Stop first so the old runtime's tasks abort and the TCP listener
+        // Stop first so the old runtime's tasks abort and the QUIC socket
         // port is released before the new runtime rebinds it.
         self.stop().await;
         let discovery = self.net.upgrade().unwrap().discovery.clone();
@@ -1214,34 +1202,41 @@ impl Daemon {
         .await;
     }
 
-    /// Opens the production link protocol over a tracked TCP stream while
-    /// tagging that stream as the test stand-in for SSH stdio.
+    /// Opens the production link protocol over an in-memory stream standing
+    /// in for SSH stdio.
     pub async fn connect_via_ssh_fixture(&self, other: &Daemon) {
-        let identity = load_or_create_device_identity_in(&self.inner.data_dir)
-            .expect("load daemon identity for SSH fixture");
-        let (connector_ctx, trust_store) = {
+        let connector_ctx = {
             let runtime = self.runtime().await;
             let runtime = runtime
                 .as_ref()
                 .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-            (
-                runtime
-                    .services
-                    .link_connector_ctx()
-                    .with_expected_peer(other.host_id())
-                    .with_carrier(LinkCarrier::Ssh),
-                runtime.trust.clone(),
-            )
+            runtime
+                .services
+                .link_connector_ctx()
+                .with_expected_peer(other.host_id())
+                .with_carrier(LinkCarrier::Ssh)
         };
-        let stream = crate::transport::trusted_device_stream_tracked(
-            other.direct_addr(),
-            identity,
-            trust_store,
-            other.host_id(),
-            Some(other.inner.tracked_tcp.clone()),
-        )
-        .await
-        .expect("prepare SSH fixture transport");
+        let acceptor_ctx = {
+            let runtime = other.runtime().await;
+            runtime
+                .as_ref()
+                .unwrap_or_else(|| panic!("daemon '{}' is not running", other.name()))
+                .services
+                .link_ctx()
+                .with_authenticated_peer(self.host_id())
+                .with_carrier(LinkCarrier::Ssh)
+        };
+        let (stream, accepted) = tokio::io::duplex(1024 * 1024);
+        tokio::spawn(async move {
+            let carrier = Arc::new(MuxCarrier::new(
+                accepted,
+                MuxRole::Acceptor,
+                CarrierKind::Ssh,
+            ));
+            let _ =
+                crate::link::run_link(acceptor_ctx, carrier, crate::routing::ConnectRole::Acceptor)
+                    .await;
+        });
         let carrier = Arc::new(MuxCarrier::new(
             stream,
             MuxRole::Connector,
@@ -1401,7 +1396,7 @@ impl Daemon {
         }
     }
 
-    /// Looks up a stored direct-TCP reachability for `peer` in this daemon's
+    /// Looks up a stored direct QUIC reachability for `peer` in this daemon's
     /// trust store.
     pub(crate) async fn direct_reachability_to(&self, peer: HostId) -> Option<Reachability> {
         let parts = self.try_parts().await?;

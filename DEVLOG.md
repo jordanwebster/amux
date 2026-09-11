@@ -1,3 +1,12 @@
+2026-09-11 — **Move direct device connections to QUIC.** Each listening
+profile now binds and advertises its UDP port, requires stateless address
+validation and bounded per-source admission before allocating handshake state,
+and classifies the resulting pinned identity into a native device link or one
+anonymous pairing stream. Discovery, typed-address pairing, QR pairing, and
+stored reachability all dial through the profile's QUIC endpoint. The direct
+TCP listener, dial helpers, socket tracking, and public `DirectTcp` shape are
+gone; TCP keepalive remains scoped to the relay fallback.
+
 2026-09-11 — **Lock the link runtime's admission refusals to native carriers.**
 In-memory multiplexed link tests now cover token expiry without
 reauthentication, rejection of a reauthentication token for another user

@@ -387,8 +387,8 @@ mod tests {
     }
 
     fn direct_route() -> amux::PeerReachability {
-        amux::PeerReachability::DirectTcp {
-            addr: "127.0.0.1:4242".parse().unwrap(),
+        amux::PeerReachability::Direct {
+            addrs: vec!["127.0.0.1:4242".parse().unwrap()],
         }
     }
 }

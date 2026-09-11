@@ -19,7 +19,7 @@ pub(crate) fn tcp_incoming(
                 if let Err(error) = stream.set_nodelay(true) {
                     tracing::warn!(error = %error, "failed to set TCP_NODELAY");
                 }
-                configure_tcp_keepalive(&stream);
+                configure_relay_tcp_keepalive(&stream);
                 Ok(stream)
             }
             Err(error) => Err(error),
@@ -28,8 +28,9 @@ pub(crate) fn tcp_incoming(
     })
 }
 
-/// Configure TCP keepalive on a stream: 30s idle before first probe, 10s between probes.
-pub(crate) fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
+/// Keep the relay's ordered-stream fallback alive across idle network gear.
+/// Device-to-device LAN connections never use this TCP-only helper.
+pub(crate) fn configure_relay_tcp_keepalive(stream: &tokio::net::TcpStream) {
     use std::time::Duration;
 
     use socket2::SockRef;
@@ -39,6 +40,6 @@ pub(crate) fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
         .with_time(Duration::from_secs(30))
         .with_interval(Duration::from_secs(10));
     if let Err(error) = sock.set_tcp_keepalive(&keepalive) {
-        tracing::warn!(error = %error, "failed to set TCP keepalive");
+        tracing::warn!(error = %error, "failed to set relay TCP keepalive");
     }
 }

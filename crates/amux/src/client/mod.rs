@@ -224,8 +224,8 @@ pub enum PeerReachability {
         target: String,
         profile: crate::installation::ProfileId,
     },
-    DirectTcp {
-        addr: SocketAddr,
+    Direct {
+        addrs: Vec<SocketAddr>,
     },
 }
 
@@ -1121,14 +1121,17 @@ fn peer_reachability_from_wire(
             )?),
             target: target.target,
         }),
-        wire::peer_reachability::Kind::DirectTcpAddr(addr) => {
-            let addr = addr
-                .parse::<SocketAddr>()
+        wire::peer_reachability::Kind::Direct(direct) => {
+            let addrs = direct
+                .addrs
+                .into_iter()
+                .map(|addr| addr.parse::<SocketAddr>())
+                .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| ClientError::Decode {
                     method,
-                    message: format!("PeerReachability.direct_tcp_addr is invalid: {error}"),
+                    message: format!("PeerReachability.direct.addrs is invalid: {error}"),
                 })?;
-            Ok(PeerReachability::DirectTcp { addr })
+            Ok(PeerReachability::Direct { addrs })
         }
     }
 }

@@ -13,16 +13,16 @@ use tracing::Instrument;
 use crate::HostId;
 use crate::connection::ConnectionManager;
 use crate::discovery::{Discovery, DiscoveryEvent, FoundHosts};
-use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::DeviceIdentity;
 use crate::link::{
-    CarrierKind, ChannelPool, LinkCarrier as NativeLinkCarrier, MuxCarrier, MuxRole,
+    CarrierKind, ChannelPool, LinkCarrier as NativeLinkCarrier, MuxCarrier, MuxRole, QuicCarrier,
 };
 use crate::routing::{Host, LinkCarrier, LinkConnectorCtx, LiveLocalHost, Route, RoutingCore};
-use crate::transport::{spawn_ssh_relay, trusted_device_stream_tracked};
+use crate::transport::spawn_ssh_relay;
 use crate::trust::{Reachability, SharedTrustStore};
 
 const DIRECT_LINK_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
+const DIRECT_QUIC_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone)]
 pub(crate) struct ReachabilityLinkConnector {
@@ -55,7 +55,7 @@ struct ReachabilityLinkContext {
     connections: Arc<ConnectionManager>,
     incoming_streams_tx: tokio::sync::mpsc::Sender<(HostId, crate::link::ByteStream)>,
     runtime: Arc<Mutex<Option<ReachabilityRuntime>>>,
-    dialed_tcp_tracker: Arc<Mutex<Option<TrackedTcpConnections>>>,
+    quic_endpoint: Arc<Mutex<Option<quinn::Endpoint>>>,
 }
 
 #[derive(Clone)]
@@ -94,7 +94,7 @@ impl ReachabilityLinkConnector {
                         connections,
                         incoming_streams_tx,
                         runtime: Arc::new(Mutex::new(None)),
-                        dialed_tcp_tracker: Arc::new(Mutex::new(None)),
+                        quic_endpoint: Arc::new(Mutex::new(None)),
                     },
                     retained_tasks: Mutex::new(Vec::new()),
                     dialing: Arc::new(Mutex::new(HashSet::new())),
@@ -111,6 +111,7 @@ impl ReachabilityLinkConnector {
         data_dir: PathBuf,
         discovery: Arc<dyn Discovery>,
         found_hosts: Arc<FoundHosts>,
+        quic_endpoint: quinn::Endpoint,
     ) {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return;
@@ -120,16 +121,22 @@ impl ReachabilityLinkConnector {
             discovery,
             found_hosts,
         });
+        *inner.context.quic_endpoint.lock().unwrap() = Some(quic_endpoint);
     }
 
-    #[cfg(testnet)]
-    pub(crate) fn track_dialed_tcp(&self, tracker: TrackedTcpConnections) {
+    pub(crate) fn quic_endpoint(&self) -> Option<quinn::Endpoint> {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
-            return;
+            return None;
         };
-        if let Ok(mut slot) = inner.context.dialed_tcp_tracker.lock() {
-            *slot = Some(tracker);
-        }
+        inner.context.quic_endpoint.lock().unwrap().clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trust_store(&self) -> Option<SharedTrustStore> {
+        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
+            return None;
+        };
+        Some(inner.context.trust_store.clone())
     }
 
     #[cfg(test)]
@@ -479,15 +486,18 @@ async fn establish_reachability_link(
         Reachability::Direct { addrs } => {
             let mut last_error = None;
             for addr in addrs {
-                match prepare_direct_stream(&context, attempt.peer, addr).await {
-                    Ok(stream) => match establish_carrier(
+                let prepared = tokio::time::timeout(
+                    DIRECT_QUIC_HANDSHAKE_TIMEOUT,
+                    prepare_direct_carrier(&context, attempt.peer, addr),
+                )
+                .await
+                .map_err(|_| format!("direct QUIC handshake to {addr} timed out"))
+                .and_then(|result| result);
+                match prepared {
+                    Ok(carrier) => match establish_carrier(
                         &context,
                         attempt.peer,
-                        Arc::new(MuxCarrier::new(
-                            stream,
-                            MuxRole::Connector,
-                            CarrierKind::Quic,
-                        )),
+                        carrier,
                         LinkCarrier::Direct,
                         shutdown_rx.clone(),
                     )
@@ -560,24 +570,26 @@ async fn establish_reachability_link(
     }
 }
 
-async fn prepare_direct_stream(
+async fn prepare_direct_carrier(
     context: &ReachabilityLinkContext,
     peer: HostId,
     addr: std::net::SocketAddr,
-) -> Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>, String> {
-    let tracker = context
-        .dialed_tcp_tracker
+) -> Result<Arc<dyn NativeLinkCarrier>, String> {
+    let endpoint = context
+        .quic_endpoint
         .lock()
-        .ok()
-        .and_then(|tracker| tracker.clone());
-    trusted_device_stream_tracked(
+        .unwrap()
+        .clone()
+        .ok_or_else(|| "direct QUIC endpoint is not configured".to_string())?;
+    QuicCarrier::connect_direct(
+        &endpoint,
         addr,
-        context.identity.clone(),
+        &context.identity,
         context.trust_store.clone(),
         peer,
-        tracker,
     )
     .await
+    .map(|carrier| Arc::new(carrier) as Arc<dyn NativeLinkCarrier>)
     .map_err(|error| error.to_string())
 }
 

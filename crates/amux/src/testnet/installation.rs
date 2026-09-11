@@ -30,8 +30,7 @@ pub(super) struct ProfileSpec {
 }
 
 struct ProfileFixture {
-    tcp_addr: Option<SocketAddr>,
-    tracked_tcp: crate::dispatcher::TrackedTcpConnections,
+    direct_addr: Option<SocketAddr>,
     clock: Arc<TestArtifactClock>,
 }
 
@@ -502,7 +501,7 @@ fn fixture_factory(
     Arc::new(move |id| {
         let mut fixtures = fixtures.lock().unwrap();
         let cloud_only = if let Some(fixture) = fixtures.profiles.get(&id) {
-            fixture.tcp_addr.is_none()
+            fixture.direct_addr.is_none()
         } else {
             fixtures.cloud_only.pop_front().unwrap_or(false)
         };
@@ -512,27 +511,24 @@ fn fixture_factory(
             let addr = fixtures
                 .profiles
                 .get(&id)
-                .and_then(|fixture| fixture.tcp_addr)
+                .and_then(|fixture| fixture.direct_addr)
                 .unwrap_or_else(|| "127.0.0.1:0".parse().unwrap());
             let listener =
-                std::net::TcpListener::bind(addr).expect("bind profile fixture LAN listener");
-            listener.set_nonblocking(true).unwrap();
+                std::net::UdpSocket::bind(addr).expect("bind profile fixture QUIC socket");
             Some(listener)
         };
         let fixture = fixtures
             .profiles
             .entry(id)
             .or_insert_with(|| ProfileFixture {
-                tcp_addr: listener
+                direct_addr: listener
                     .as_ref()
                     .map(|listener| listener.local_addr().unwrap()),
-                tracked_tcp: Default::default(),
                 clock: Arc::new(TestArtifactClock::new()),
             });
         RuntimeFixtures {
-            listener: listener.map(|listener| tokio::net::TcpListener::from_std(listener).unwrap()),
+            listener,
             discovery: Some(Arc::new(discovery.clone()) as Arc<dyn Discovery>),
-            tracked_tcp: Some(fixture.tracked_tcp.clone()),
             artifact_clock: Some(fixture.clock.clone()),
             cloud: None,
             cloud_transport: cloud_addr,
@@ -606,7 +602,7 @@ pub(super) async fn start(
                     host_id: record.host_id,
                     data_dir: paths.data_dir.clone(),
                     artifact_clock: fixture.clock.clone(),
-                    tcp_addr: fixture.tcp_addr,
+                    direct_addr: fixture.direct_addr,
                     cloud: profile.cloud_user.as_ref().map(|user| {
                         let cloud = cloud.expect("cloud_user requires .cloud()");
                         let (user_id, token) = cloud.credentials_for_user(user);
@@ -626,7 +622,6 @@ pub(super) async fn start(
                         id,
                         paths,
                     }),
-                    tracked_tcp: fixture.tracked_tcp.clone(),
                 });
                 (profile.name.clone(), (id, daemon))
             })

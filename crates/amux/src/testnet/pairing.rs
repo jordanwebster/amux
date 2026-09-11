@@ -2,7 +2,7 @@
 //!
 //! Responder verbs (`start_pairing`, `start_qr_pairing`, `cancel_pairing`)
 //! use the profile owner's in-process administration handle. Initiator verbs
-//! run the real bootstrap flows: the one SPAKE2 protocol over direct TCP or a cloud-routed tunnel
+//! run the real bootstrap flows: the one SPAKE2 protocol over direct QUIC or a cloud-routed stream
 //! (the secret typed as a PIN or scanned from a QR), and the SSH identity
 //! exchange (over an in-memory stream in place of a real `ssh` child).
 
@@ -11,7 +11,7 @@ use std::time::Duration;
 use super::Daemon;
 use super::assertions::eventually;
 use crate::client::PairingSecret;
-use crate::{HostId, pair_via_pin_direct_tcp, pair_via_ssh_initiator, pair_via_ssh_responder};
+use crate::{HostId, pair_via_pin_direct_quic, pair_via_ssh_initiator, pair_via_ssh_responder};
 
 /// A 6-digit pairing PIN handed out by [`Daemon::start_pairing`].
 /// Dereferences to the PIN string for `pair(..).with_pin(&pin)`.
@@ -200,14 +200,14 @@ impl PairAttempt<'_> {
     /// PIN pairing to a typed address. The responder's host id is learned
     /// from the authenticated pairing handshake.
     pub async fn with_pin(self, pin: &str) -> anyhow::Result<()> {
-        let addr = self.to.inner.tcp_addr.unwrap_or_else(|| {
+        let addr = self.to.inner.direct_addr.unwrap_or_else(|| {
             panic!(
-                "with_pin: responder '{}' has no direct-TCP listener (cloud_only)",
+                "with_pin: responder '{}' has no direct QUIC listener (cloud_only)",
                 self.to.name()
             )
         });
         let client = self.from.pairing_admin().await;
-        pair_via_pin_direct_tcp(
+        pair_via_pin_direct_quic(
             &self.from.inner.data_dir,
             self.from.name(),
             addr,
@@ -287,18 +287,10 @@ impl PairAttempt<'_> {
         // In production the initiator's commit immediately dials its stored
         // SSH reachability (`ssh <target> amux relay`) and brings the Link
         // up. The hermetic harness cannot spawn `ssh`, so the responder's
-        // test TCP transport stands in for the SSH stdio link — the Link
+        // in-memory transport stands in for the SSH stdio link — the Link
         // semantics under test (a live, bidirectional, tunnel-carrying
         // stream) are transport-agnostic.
-        let addr = self.to.inner.tcp_addr.expect(
-            "over_ssh: the responder needs a TCP listener to stand in for the SSH stdio link",
-        );
-        self.from
-            .spawn_direct_link(
-                self.to.host_id(),
-                crate::trust::Reachability::Direct { addrs: vec![addr] },
-            )
-            .await;
+        self.from.connect_via_ssh_fixture(self.to).await;
         Ok(())
     }
 }

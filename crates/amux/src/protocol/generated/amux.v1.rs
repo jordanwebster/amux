@@ -1864,9 +1864,14 @@ pub mod peer_reachability {
         Cloud(super::Empty),
         #[prost(message, tag = "2")]
         SshTarget(super::SshTarget),
-        #[prost(string, tag = "3")]
-        DirectTcpAddr(::prost::alloc::string::String),
+        #[prost(message, tag = "3")]
+        Direct(super::DirectReachability),
     }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DirectReachability {
+    #[prost(string, repeated, tag = "1")]
+    pub addrs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PeerEntry {

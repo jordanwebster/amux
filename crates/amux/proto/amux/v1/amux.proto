@@ -1048,8 +1048,12 @@ message PeerReachability {
   oneof kind {
     Empty cloud = 1;
     SshTarget ssh_target = 2;
-    string direct_tcp_addr = 3;
+    DirectReachability direct = 3;
   }
+}
+
+message DirectReachability {
+  repeated string addrs = 1;
 }
 
 message PeerEntry {

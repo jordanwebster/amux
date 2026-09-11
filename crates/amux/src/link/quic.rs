@@ -26,6 +26,7 @@ pub(crate) enum ConnectError {
     #[error("device identity configuration failed: {0}")]
     Identity(#[from] IdentityError),
     #[error("could not resolve {host}:{port}: {source}")]
+    #[allow(dead_code)]
     Resolve {
         host: String,
         port: u16,
@@ -33,6 +34,7 @@ pub(crate) enum ConnectError {
         source: io::Error,
     },
     #[error("{host}:{port} resolved to no addresses")]
+    #[allow(dead_code)]
     NoAddress { host: String, port: u16 },
     #[error("QUIC connection setup failed: {0}")]
     Setup(#[from] quinn::ConnectError),
@@ -64,6 +66,7 @@ impl QuicCarrier {
         Ok(Self::new(connection, CarrierKind::Quic, Some(control)))
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn connect_relay(
         endpoint: &quinn::Endpoint,
         host: &str,
@@ -97,6 +100,7 @@ impl QuicCarrier {
         Self::new(connection, kind, None)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn rebind(endpoint: &quinn::Endpoint, socket: UdpSocket) -> io::Result<()> {
         endpoint.rebind(socket)
     }
@@ -162,6 +166,17 @@ impl QuicCarrier {
     async fn next_inbound(&self) -> Option<(pb::StreamPreface, ByteStream)> {
         self.inbound.lock().await.recv().await
     }
+}
+
+/// Adapts one already-accepted QUIC bidirectional stream to Tokio IO without
+/// the native-link stream admission marker. The direct pairing server uses
+/// this for its single HTTP/2 connection after the QUIC handshake itself has
+/// classified the peer as pre-trust pairing traffic.
+pub(crate) fn accepted_quic_bidi_stream(
+    send: quinn::SendStream,
+    recv: quinn::RecvStream,
+) -> ByteStream {
+    Box::new(QuicByteStream::accepted(send, recv))
 }
 
 impl LinkCarrier for QuicCarrier {

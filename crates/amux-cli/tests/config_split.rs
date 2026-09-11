@@ -586,7 +586,7 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     let peers = local.run(&["peer", "list", "--profile", "work"]);
     assert!(String::from_utf8_lossy(&peers.stdout).contains("cli-installation"));
     let info = local.run(&["peer", "info", "cli-installation", "--profile", "work"]);
-    assert!(String::from_utf8_lossy(&info.stdout).contains(&format!("direct-tcp:{address}")));
+    assert!(String::from_utf8_lossy(&info.stdout).contains(&format!("direct:{address}")));
     local.run(&["unpair", "cli-installation", "--profile", "work", "--force"]);
     let peers = local.run(&["peer", "list", "--profile", "work"]);
     assert_eq!(

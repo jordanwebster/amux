@@ -1471,10 +1471,11 @@ fn peer_reachabilities_to_wire(reachability: &Reachability) -> Vec<wire::PeerRea
                 profile_id: profile.to_string(),
             })]
         }
-        Reachability::Direct { addrs } => addrs
-            .iter()
-            .map(|addr| wire::peer_reachability::Kind::DirectTcpAddr(addr.to_string()))
-            .collect(),
+        Reachability::Direct { addrs } => vec![wire::peer_reachability::Kind::Direct(
+            wire::DirectReachability {
+                addrs: addrs.iter().map(ToString::to_string).collect(),
+            },
+        )],
     };
     targets
         .into_iter()

@@ -82,7 +82,7 @@ pub use installation::{
     ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
     SuspendReason, SuspendReport,
 };
-pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
+pub use pairing::pin::{PinPairingError, pair_via_pin_direct_quic};
 pub use pairing::qr::{
     QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
 };

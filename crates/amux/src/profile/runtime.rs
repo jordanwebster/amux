@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use thiserror::Error;
-use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock, watch};
 use tokio::task::JoinHandle;
 
@@ -116,9 +115,8 @@ pub(crate) enum CloudFixtureAuth {
 #[cfg(testnet)]
 #[derive(Default)]
 pub(crate) struct RuntimeFixtures {
-    pub(crate) listener: Option<TcpListener>,
+    pub(crate) listener: Option<std::net::UdpSocket>,
     pub(crate) discovery: Option<Arc<dyn Discovery>>,
-    pub(crate) tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
     pub(crate) artifact_clock: Option<Arc<dyn amux_artifacts::Clock>>,
     pub(crate) cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
     pub(crate) cloud_transport: Option<std::net::SocketAddr>,
@@ -238,8 +236,6 @@ pub(crate) struct ProfileRuntime {
     pub(crate) trust: crate::trust::SharedTrustStore,
     #[cfg(testnet)]
     test_cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
-    #[cfg(testnet)]
-    tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
     #[cfg(test_fixtures)]
     pub(crate) test_cloud_transport: Option<std::net::SocketAddr>,
     #[cfg(test_fixtures)]
@@ -349,15 +345,24 @@ async fn build(
     let mut service_config = options.service_config();
     service_config.validate()?;
 
-    let mut bound = BoundListeners::bind(&options).await?;
-    let mut lan_listener = bound.tcp_listener.take();
+    let quic_server_config = security
+        .quic_server_config()
+        .map_err(|error| ProfileStartError::State(error.to_string()))?;
+    let mut bound = BoundListeners::bind(&options, quic_server_config.clone()).await?;
+    let mut lan_endpoint = bound.quic_endpoint.take();
     #[cfg(testnet)]
-    if let Some(fixture_listener) = options.fixtures.listener.take() {
-        lan_listener = Some(fixture_listener);
+    if let Some(socket) = options.fixtures.listener.take() {
+        socket.set_nonblocking(true)?;
+        lan_endpoint = Some(quinn::Endpoint::new(
+            quinn::EndpointConfig::default(),
+            Some(quic_server_config),
+            socket,
+            Arc::new(quinn::TokioRuntime),
+        )?);
     }
-    let lan_addr = lan_listener
+    let lan_addr = lan_endpoint
         .as_ref()
-        .map(TcpListener::local_addr)
+        .map(quinn::Endpoint::local_addr)
         .transpose()?;
     if let Some(addr) = lan_addr {
         service_config.lan.port = addr.port();
@@ -402,10 +407,15 @@ async fn build(
     .map_err(|error| ProfileStartError::State(error.to_string()))?;
 
     let found_hosts = Arc::new(FoundHosts::default());
+    let direct_endpoint = match &lan_endpoint {
+        Some(endpoint) => endpoint.clone(),
+        None => quinn::Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?,
+    };
     services.configure_reachability(
         options.paths.data_dir.clone(),
         discovery.clone(),
         found_hosts,
+        direct_endpoint,
     );
 
     #[cfg(unix)]
@@ -423,7 +433,7 @@ async fn build(
         );
         task
     });
-    if let Some(listener) = lan_listener {
+    if let Some(endpoint) = lan_endpoint {
         let addr = lan_addr.expect("LAN listener address captured before serving");
         let addrs = if addr.ip().is_unspecified() {
             local_pairing_addrs(addr.port())
@@ -436,22 +446,8 @@ async fn build(
             version: crate::PROTOCOL_VERSION,
             addrs,
         })?;
-        #[cfg(testnet)]
-        if let Some(tracked) = &options.fixtures.tracked_tcp {
-            services.serve_external_tcp_listener_tracked(listener, tracked.clone());
-        } else {
-            services.serve_external_tcp_listener(listener);
-        }
-        #[cfg(not(testnet))]
-        services.serve_external_tcp_listener(listener);
-        tracing::info!(addr = %addr, "listening on profile direct dispatcher TCP");
-    }
-
-    #[cfg(testnet)]
-    if let Some(tracked) = &options.fixtures.tracked_tcp {
-        services
-            .reachability_link_connector()
-            .track_dialed_tcp(tracked.clone());
+        services.serve_external_quic_endpoint(endpoint);
+        tracing::info!(addr = %addr, "listening on profile direct dispatcher QUIC");
     }
 
     let mut background_tasks = vec![crate::agents::spawn_artifact_sweeper(
@@ -494,8 +490,6 @@ async fn build(
         trust,
         #[cfg(testnet)]
         test_cloud: options.fixtures.cloud,
-        #[cfg(testnet)]
-        tracked_tcp: options.fixtures.tracked_tcp,
         #[cfg(testnet)]
         test_cloud_transport: options.fixtures.cloud_transport,
         #[cfg(testnet)]
@@ -694,13 +688,6 @@ impl ProfileRuntime {
     pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
         self.discovery.withdraw();
         self.services.stop_accepting_external_links().await;
-        #[cfg(testnet)]
-        if let Some(connections) = &self.tracked_tcp {
-            let connections = std::mem::take(&mut *connections.lock().unwrap());
-            for connection in connections {
-                let _ = connection.shutdown(std::net::Shutdown::Both);
-            }
-        }
         self.stop_accepting_local_clients().await;
         self.services
             .channels
@@ -793,7 +780,7 @@ fn link_close_reason(reason: ShutdownReason) -> wire::pb::LinkCloseReason {
 }
 
 struct BoundListeners {
-    tcp_listener: Option<TcpListener>,
+    quic_endpoint: Option<quinn::Endpoint>,
     #[cfg(unix)]
     unix_listener: Option<tokio::net::UnixListener>,
     #[cfg(unix)]
@@ -805,10 +792,13 @@ struct BoundListeners {
 }
 
 impl BoundListeners {
-    async fn bind(options: &ProfileRuntimeOptions) -> std::io::Result<Self> {
+    async fn bind(
+        options: &ProfileRuntimeOptions,
+        quic_server_config: quinn::ServerConfig,
+    ) -> std::io::Result<Self> {
         if options.listeners == Listeners::InProcessOnly {
             return Ok(Self {
-                tcp_listener: None,
+                quic_endpoint: None,
                 #[cfg(unix)]
                 unix_listener: None,
                 #[cfg(unix)]
@@ -849,7 +839,7 @@ impl BoundListeners {
         };
 
         let mut bound = Self {
-            tcp_listener: None,
+            quic_endpoint: None,
             #[cfg(unix)]
             unix_listener: Some(unix_listener),
             #[cfg(unix)]
@@ -861,8 +851,10 @@ impl BoundListeners {
         };
         if options.config.lan.listen {
             let port = options.config.lan.port;
-            bound.tcp_listener =
-                Some(TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).await?);
+            bound.quic_endpoint = Some(quinn::Endpoint::server(
+                quic_server_config,
+                SocketAddr::from(([0, 0, 0, 0], port)),
+            )?);
         }
         Ok(bound)
     }
@@ -930,6 +922,7 @@ mod tests {
     use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream};
 
     use tempfile::tempdir;
+    use tokio::net::TcpListener;
 
     use super::*;
     use crate::ProtocolError;
@@ -1383,7 +1376,7 @@ mod tests {
     async fn profile_runtime_start_failure_removes_its_bound_socket() {
         let root = tempdir().unwrap();
         let socket_path = root.path().join("profile.sock");
-        let occupied = TcpListener::bind(("0.0.0.0", 0)).await.unwrap();
+        let occupied = std::net::UdpSocket::bind(("0.0.0.0", 0)).unwrap();
         let mut options = options(root.path(), Listeners::Sockets);
         options.config.lan.port = occupied.local_addr().unwrap().port();
 

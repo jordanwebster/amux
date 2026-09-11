@@ -21,7 +21,7 @@ pub enum PinPairingError {
     Client(String),
 }
 
-pub async fn pair_via_pin_direct_tcp<P, N>(
+pub async fn pair_via_pin_direct_quic<P, N>(
     data_dir: P,
     local_name: N,
     addr: SocketAddr,

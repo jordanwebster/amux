@@ -18,15 +18,12 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
-use tonic::codegen::http::Uri;
 use tonic::transport::{Channel, Endpoint};
-use tower::service_fn;
 
-use super::{channel_from_single_io, configure_tcp_keepalive, configure_tonic_endpoint_keepalive};
-use crate::HostId;
-use crate::identity::DeviceIdentity;
+use super::{
+    channel_from_single_io, configure_relay_tcp_keepalive, configure_tonic_endpoint_keepalive,
+};
 use crate::transport::{Result, TransportError};
-use crate::trust::SharedTrustStore;
 
 pub(crate) async fn tls_connect_stream(
     host: &str,
@@ -43,7 +40,7 @@ pub(crate) async fn tls_connect_stream(
     let addr = format!("{}:{}", host, port);
     let stream = TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
-    configure_tcp_keepalive(&stream);
+    configure_relay_tcp_keepalive(&stream);
 
     let domain = ServerName::try_from(host.to_string())
         .map_err(|_| TransportError::Config(format!("Invalid DNS name: {}", host)))?;
@@ -94,92 +91,24 @@ fn add_debug_cloud_root(_root_store: &mut rustls::RootCertStore) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn pairing_channel(addr: SocketAddr) -> Result<Channel> {
-    let endpoint = Endpoint::from_shared(format!("https://{addr}"))
-        .map_err(|error| TransportError::Config(error.to_string()))?;
-    let config = pairing_client_config();
-    Ok(
-        configure_tonic_endpoint_keepalive(endpoint).connect_with_connector_lazy(service_fn(
-            move |_uri: Uri| {
-                let connector = TlsConnector::from(Arc::new(config.clone()));
-                async move {
-                    let stream = TcpStream::connect(addr).await?;
-                    stream.set_nodelay(true)?;
-                    configure_tcp_keepalive(&stream);
-                    let server_name = ServerName::try_from("amux-pairing.local")
-                        .expect("static pairing server name is valid");
-                    connector
-                        .connect(server_name, stream)
-                        .await
-                        .map(hyper_util::rt::TokioIo::new)
-                        .map_err(|error| std::io::Error::other(error.to_string()))
-                }
-            },
-        )),
-    )
-}
-
-/// A device-mTLS channel to a trusted peer's external TCP listener, with an
-/// optional OS-level socket tracker: test harnesses register the dialed TCP
-/// socket so an in-process "process exit" can sever it the way a real exit
-/// would (the same discipline as `serve_tcp_listener_tracked` on the
-/// accepting side). Pass `None` outside tests.
-pub(crate) fn trusted_device_channel_tracked(
+pub(crate) async fn pairing_quic_channel(
+    endpoint: &quinn::Endpoint,
     addr: SocketAddr,
-    identity: DeviceIdentity,
-    trust_store: SharedTrustStore,
-    peer: HostId,
-    dialed_tracker: Option<crate::dispatcher::TrackedTcpConnections>,
 ) -> Result<Channel> {
-    let endpoint = Endpoint::from_shared(format!("https://{addr}"))
-        .map_err(|error| TransportError::Config(error.to_string()))?;
-    let config = identity
-        .client_tls_config_for_peer(trust_store, peer)
-        .map_err(|error| TransportError::Config(error.to_string()))?;
-    Ok(
-        configure_tonic_endpoint_keepalive(endpoint).connect_with_connector_lazy(service_fn(
-            move |_uri: Uri| {
-                let connector = TlsConnector::from(Arc::new(config.clone()));
-                let dialed_tracker = dialed_tracker.clone();
-                async move {
-                    let stream = TcpStream::connect(addr).await?;
-                    stream.set_nodelay(true)?;
-                    configure_tcp_keepalive(&stream);
-                    let stream =
-                        crate::dispatcher::track_tcp_stream(stream, dialed_tracker.as_ref())?;
-                    let server_name = ServerName::try_from("amux-device.local")
-                        .expect("static device server name is valid");
-                    connector
-                        .connect(server_name, stream)
-                        .await
-                        .map(hyper_util::rt::TokioIo::new)
-                        .map_err(|error| std::io::Error::other(error.to_string()))
-                }
-            },
-        )),
-    )
-}
-
-pub(crate) async fn trusted_device_stream_tracked(
-    addr: SocketAddr,
-    identity: DeviceIdentity,
-    trust_store: SharedTrustStore,
-    peer: HostId,
-    dialed_tracker: Option<crate::dispatcher::TrackedTcpConnections>,
-) -> Result<ClientTlsStream<TcpStream>> {
-    let config = identity
-        .client_tls_config_for_peer(trust_store, peer)
-        .map_err(|error| TransportError::Config(error.to_string()))?;
-    let stream = TcpStream::connect(addr).await?;
-    stream.set_nodelay(true)?;
-    configure_tcp_keepalive(&stream);
-    let stream = crate::dispatcher::track_tcp_stream(stream, dialed_tracker.as_ref())?;
-    let server_name =
-        ServerName::try_from("amux-device.local").expect("static device server name is valid");
-    TlsConnector::from(Arc::new(config))
-        .connect(server_name, stream)
+    let connection = endpoint
+        .connect_with(pairing_quic_client_config()?, addr, "amux-pairing.local")
+        .map_err(|error| TransportError::Config(error.to_string()))?
         .await
-        .map_err(TransportError::Io)
+        .map_err(|error| TransportError::Config(error.to_string()))?;
+    let (send, recv) = connection
+        .open_bi()
+        .await
+        .map_err(|error| TransportError::Config(error.to_string()))?;
+    Ok(channel_from_single_io(
+        configure_tonic_endpoint_keepalive(Endpoint::from_static("https://pairing")),
+        "pairing QUIC stream",
+        crate::link::accepted_quic_bidi_stream(send, recv),
+    ))
 }
 
 pub(crate) async fn pairing_channel_from_io<IO>(io: IO) -> Result<Channel>
@@ -207,6 +136,18 @@ fn pairing_client_config() -> ClientConfig {
         .with_no_client_auth();
     config.alpn_protocols = vec![b"h2".to_vec()];
     config
+}
+
+pub(crate) fn pairing_quic_client_config() -> Result<quinn::ClientConfig> {
+    let mut tls = pairing_client_config();
+    tls.alpn_protocols = vec![crate::identity::QUIC_ALPN.to_vec()];
+    tls.resumption = rustls::client::Resumption::disabled();
+    tls.enable_early_data = false;
+    let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
+        .map_err(|error| TransportError::Config(error.to_string()))?;
+    let mut config = quinn::ClientConfig::new(Arc::new(crypto));
+    config.transport_config(crate::identity::quic_transport_config());
+    Ok(config)
 }
 
 #[derive(Clone)]

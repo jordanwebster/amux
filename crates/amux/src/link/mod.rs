@@ -2,7 +2,6 @@ pub(crate) mod carrier;
 pub(crate) mod channels;
 pub(crate) mod mux;
 pub(crate) mod piper;
-#[allow(dead_code)]
 pub(crate) mod quic;
 pub(crate) mod run;
 
@@ -15,4 +14,5 @@ pub(crate) use channels::{
 };
 pub(crate) use mux::{MuxCarrier, MuxRole};
 pub(crate) use piper::Piper;
+pub(crate) use quic::{QuicCarrier, accepted_quic_bidi_stream};
 pub(crate) use run::{AuthenticatedLinkUser, LinkCtx, LinkTokenAuthenticator, run_link};

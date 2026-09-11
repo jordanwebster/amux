@@ -1,7 +1,7 @@
 //! TestNet: the in-process spec-test harness.
 //!
 //! [`TestNet`] builds a declared topology of *whole daemons* — real
-//! identities, real trust stores, real localhost TCP with device mTLS, and
+//! identities, real trust stores, real localhost QUIC with device mTLS, and
 //! an optional in-process cloud relay — then hands out [`Daemon`] handles
 //! whose verbs are user-meaningful (`sees`, `trusts`, `can_call`, `pair`,
 //! `attach`, …). The net itself carries the network-operator verbs
@@ -34,7 +34,7 @@
 //!   connector's cleanup, then sever direct sockets whose detached dispatcher
 //!   tasks model process-owned connections. Aborting an established connector
 //!   task skips its asynchronous link cleanup and must not be used as stop.
-//!   Identity, trust, and the TCP address persist across restarts.
+//!   Identity, trust, and the QUIC address persist across restarts.
 //! - **Sever = real outage.** `sever_direct`/`cloud_offline` cut sockets (or
 //!   close links) hard and return only once the affected daemons have
 //!   observed the loss, so follow-up assertions start from a settled net.
@@ -63,7 +63,6 @@ pub use daemon::{Daemon, ExpiringJwt, RouteAssertion, RoutedStream};
 use net::CloudRelay;
 pub use pairing::{PairAttempt, Pin, QrPayload};
 pub use session::EchoSession;
-use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 pub use wire::{LinkCloseReason, WirePeer, native_stream_lifecycle};
 
@@ -85,8 +84,8 @@ pub async fn link_tier_across_reauth() -> (crate::Tier, crate::Tier) {
 /// How a pre-paired fixture pair reaches each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Via {
-    /// Direct TCP: the first daemon stores a direct reachability for
-    /// the second (mirroring real PIN pairing over TCP, where only the
+    /// Direct QUIC: the first daemon stores a direct reachability for
+    /// the second (mirroring real PIN pairing over QUIC, where only the
     /// initiator learns an address).
     Direct,
     /// Both daemons store a `Cloud` reachability and meet at the relay.
@@ -162,7 +161,7 @@ impl TestNet {
             addrs: vec![
                 daemon
                     .inner
-                    .tcp_addr
+                    .direct_addr
                     .expect("cannot announce a profile whose LAN listener is off"),
             ],
         });
@@ -665,7 +664,7 @@ impl TestNetBuilder {
             None
         };
 
-        // Identities and direct-TCP listeners first, so trust seeding can
+        // Identities and direct-QUIC sockets first, so trust seeding can
         // reference peer pubkeys and listener addresses.
         let mut preps = Vec::with_capacity(self.daemons.len());
         for spec in &self.daemons {
@@ -688,12 +687,11 @@ impl TestNetBuilder {
             std::fs::create_dir_all(&data_dir).expect("create daemon data dir");
             let identity = load_or_create_device_identity_in(&data_dir)
                 .unwrap_or_else(|error| panic!("create identity for '{}': {error}", spec.name));
-            let (listener, tcp_addr) = if spec.cloud_only {
+            let (listener, direct_addr) = if spec.cloud_only {
                 (None, None)
             } else {
-                let listener = TcpListener::bind(("127.0.0.1", 0))
-                    .await
-                    .expect("bind daemon direct-TCP listener");
+                let listener = std::net::UdpSocket::bind(("127.0.0.1", 0))
+                    .expect("bind daemon direct-QUIC socket");
                 let addr = listener.local_addr().expect("daemon listener address");
                 (Some(listener), Some(addr))
             };
@@ -701,7 +699,7 @@ impl TestNetBuilder {
                 identity,
                 data_dir,
                 listener,
-                tcp_addr,
+                direct_addr,
                 trust: TrustStore::default(),
                 attaches_to_cloud: self.cloud && !spec.no_cloud,
             });
@@ -715,10 +713,10 @@ impl TestNetBuilder {
             let host_id_b = preps[ib].identity.host_id;
             let (reach_a_to_b, reach_b_to_a) = match via {
                 Via::Direct => {
-                    let actual_addr_b = preps[ib].tcp_addr.unwrap_or_else(|| {
+                    let actual_addr_b = preps[ib].direct_addr.unwrap_or_else(|| {
                         panic!(
                             "paired('{a}', '{b}', Via::Direct) requires '{b}' to expose a \
-                             direct-TCP listener, but it is cloud_only"
+                             direct QUIC listener, but it is cloud_only"
                         )
                     });
                     let addr_b = if self.stale_direct_pairs.contains(&(a.clone(), b.clone())) {
@@ -726,7 +724,7 @@ impl TestNetBuilder {
                     } else {
                         actual_addr_b
                     };
-                    // Mirrors real PIN pairing over TCP: only the initiator
+                    // Mirrors real PIN pairing over QUIC: only the initiator
                     // stores the peer's address.
                     (
                         vec![Reachability::Direct {
@@ -778,7 +776,7 @@ impl TestNetBuilder {
                 host_id: prep.identity.host_id,
                 data_dir: prep.data_dir,
                 artifact_clock: Arc::new(daemon::TestArtifactClock::new()),
-                tcp_addr: prep.tcp_addr,
+                direct_addr: prep.direct_addr,
                 cloud: prep.attaches_to_cloud.then(|| {
                     let cloud = cloud.as_ref().expect("cloud attachment without cloud");
                     let (user_id, shared_token) = match &spec.cloud_user {
@@ -815,7 +813,6 @@ impl TestNetBuilder {
                 }),
                 runtime: Mutex::new(None),
                 installation: None,
-                tracked_tcp: Default::default(),
             });
             let runtime = start_daemon_runtime(&inner, prep.listener, discovery.clone()).await;
             *inner.runtime.lock().await = Some(runtime);
@@ -889,10 +886,10 @@ impl TestNetBuilder {
             for profile in installation.daemon_inners() {
                 let _ = writeln!(
                     topology,
-                    "    profile '{}' host={} tcp={:?} cloud_user={:?}",
+                    "    profile '{}' host={} quic={:?} cloud_user={:?}",
                     profile.name,
                     profile.host_id,
-                    profile.tcp_addr,
+                    profile.direct_addr,
                     profile.cloud.as_ref().map(|cloud| cloud.user_id)
                 );
             }
@@ -952,8 +949,8 @@ impl TestNetBuilder {
 struct DaemonPrep {
     identity: DeviceIdentity,
     data_dir: std::path::PathBuf,
-    listener: Option<TcpListener>,
-    tcp_addr: Option<SocketAddr>,
+    listener: Option<std::net::UdpSocket>,
+    direct_addr: Option<SocketAddr>,
     trust: TrustStore,
     attaches_to_cloud: bool,
 }
@@ -991,8 +988,8 @@ fn render_topology(
         );
     }
     for (spec, inner) in specs.iter().zip(inners) {
-        let tcp = inner
-            .tcp_addr
+        let direct = inner
+            .direct_addr
             .map_or_else(|| "none".to_string(), |addr| addr.to_string());
         let cloud_attachment = if spec.cloud_only {
             "cloud-only"
@@ -1008,7 +1005,7 @@ fn render_topology(
             .unwrap_or_default();
         let _ = writeln!(
             out,
-            "  daemon '{}' (host_id {}) tcp={tcp} {cloud_attachment}{cloud_user}",
+            "  daemon '{}' (host_id {}) quic={direct} {cloud_attachment}{cloud_user}",
             spec.name, inner.host_id
         );
     }

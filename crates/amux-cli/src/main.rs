@@ -917,7 +917,14 @@ fn format_peer_reachabilities(reachabilities: &[amux::PeerReachability]) -> Stri
             amux::PeerReachability::Ssh { target, profile } => {
                 format!("ssh:{target} (profile {profile})")
             }
-            amux::PeerReachability::DirectTcp { addr } => format!("direct-tcp:{addr}"),
+            amux::PeerReachability::Direct { addrs } => format!(
+                "direct:{}",
+                addrs
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
         })
         .collect::<Vec<_>>()
         .join(", ")

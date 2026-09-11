@@ -551,8 +551,13 @@ impl ProfileAdmin {
         );
         let mut last_unreachable = None;
         let mut selected = None;
+        let direct_endpoint = self.service.reachability_links.quic_endpoint();
         for addr in direct_addrs {
-            let channel = match crate::transport::pairing_channel(addr) {
+            let Some(endpoint) = &direct_endpoint else {
+                last_unreachable = Some("direct QUIC endpoint is not configured".to_string());
+                break;
+            };
+            let channel = match crate::transport::pairing_quic_channel(endpoint, addr).await {
                 Ok(channel) => channel,
                 Err(error) => {
                     last_unreachable = Some(error.to_string());
