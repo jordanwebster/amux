@@ -1,3 +1,13 @@
+2026-09-11 — **Prove free relay presence becomes paid reachability.** A local
+two-daemon relay scenario now starts with free account presence and denied
+remote inventory, flips the fixture account to pro, and observes relay access
+without restarting either daemon. Debug builds can shorten entitlement refresh
+for this proof, cloud hellos use the current account binding, available relay
+routes remain visible before tunnel materialization, trusted agents survive
+route loss, and the CLI refuses an incomplete remote list with the structured
+payment error. A live desktop recorder captures the away state, hosts overlay,
+and post-upgrade fleet.
+
 2026-09-11 — **Name every desktop host route and account state.** Fleet rows
 now append direct, relay, SSH, away, or offline to the host name, and a hosts
 overlay lists trusted routes alongside nearby unpaired machines and the pairing

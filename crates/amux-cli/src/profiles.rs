@@ -550,6 +550,7 @@ mod tests {
                 data_dir: paths.data_dir.clone(),
                 cloud_url: amux::Config::default().cloud_url,
                 lan: Default::default(),
+                cloud_refresh_secs: None,
             })
             .unwrap(),
         )

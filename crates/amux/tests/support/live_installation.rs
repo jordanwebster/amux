@@ -32,6 +32,7 @@ pub fn configure(root: &Path, name: &str) -> Result<(Config, PathBuf)> {
         state_path: paths.state_path.clone(),
         data_dir: paths.data_dir.clone(),
         cloud_url: Config::default().cloud_url,
+        cloud_refresh_secs: None,
         lan: Default::default(),
     };
     let path = paths.config_path.unwrap();

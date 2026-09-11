@@ -303,6 +303,10 @@ impl TestTerminal {
         }
     }
 
+    pub fn terminate(&mut self) -> Result<(), TerminalError> {
+        Ok(self.child.kill()?)
+    }
+
     /// Send input to the terminal (with newline)
     pub fn send_line(&mut self, input: &str) -> Result<(), TerminalError> {
         self.writer.write_all(input.as_bytes())?;

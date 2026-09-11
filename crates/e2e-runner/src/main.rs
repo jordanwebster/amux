@@ -95,6 +95,16 @@ enum Commands {
         #[arg(long, default_value = "e2e-tests")]
         test_dir: PathBuf,
     },
+    /// Run the local cloud identity fixture used by the opt-in desktop capture.
+    #[command(hide = true)]
+    FreeTierFixture {
+        #[arg(long)]
+        state_dir: PathBuf,
+        #[arg(long)]
+        relay_port: u16,
+        #[arg(long)]
+        amux_binary: PathBuf,
+    },
 }
 
 fn find_test_files(test_dir: &Path, filter: &str) -> Vec<PathBuf> {
@@ -296,6 +306,18 @@ fn main() {
         }
         Commands::Update { filter, test_dir } => {
             update_tests(test_dir, filter);
+        }
+        Commands::FreeTierFixture {
+            state_dir,
+            relay_port,
+            amux_binary,
+        } => {
+            if let Err(error) =
+                executor::run_free_tier_fixture(&state_dir, relay_port, &amux_binary)
+            {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
         }
     }
 }

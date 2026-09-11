@@ -67,11 +67,16 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     }
 }
 
-fn run_oneshot_command(
+struct OneShotOutput {
+    text: String,
+    exit_code: i32,
+}
+
+fn run_oneshot_command_outcome(
     command: &ResolvedCommand,
     cwd: &Path,
     env: &HashMap<String, String>,
-) -> Result<String, String> {
+) -> Result<OneShotOutput, String> {
     let output = Command::new(&command.program)
         .args(&command.args)
         .current_dir(cwd)
@@ -82,20 +87,32 @@ fn run_oneshot_command(
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if !output.status.success() {
-        return Err(format!(
-            "Command exited with {}:\n{stdout}{stderr}",
-            output.status
-        ));
-    }
-
-    Ok(if stderr.is_empty() {
+    let text = if stderr.is_empty() {
         stdout
     } else if stdout.is_empty() {
         stderr
     } else {
         format!("{}{}", stdout, stderr)
+    };
+    Ok(OneShotOutput {
+        text,
+        exit_code: output.status.code().unwrap_or(1),
     })
+}
+
+fn run_oneshot_command(
+    command: &ResolvedCommand,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+) -> Result<String, String> {
+    let output = run_oneshot_command_outcome(command, cwd, env)?;
+    if output.exit_code != 0 {
+        return Err(format!(
+            "Command exited with code {}:\n{}",
+            output.exit_code, output.text
+        ));
+    }
+    Ok(output.text)
 }
 
 fn retry_oneshot_until_expected(
@@ -125,16 +142,16 @@ fn retry_oneshot_until_contains(
     env: &HashMap<String, String>,
     expected: &str,
     policy: RetryPolicy,
-    first_output: String,
-) -> Result<String, String> {
+    first_output: OneShotOutput,
+) -> Result<OneShotOutput, String> {
     let started = Instant::now();
     let timeout = Duration::from_millis(policy.timeout_ms);
     let interval = Duration::from_millis(policy.interval_ms);
     let mut actual = first_output;
 
-    while !actual.contains(expected) && started.elapsed() < timeout {
+    while !actual.text.contains(expected) && started.elapsed() < timeout {
         thread::sleep(interval);
-        actual = run_oneshot_command(command, cwd, env)?;
+        actual = run_oneshot_command_outcome(command, cwd, env)?;
     }
 
     Ok(actual)
@@ -541,6 +558,73 @@ impl CloudFixture {
             running,
             thread: Some(thread),
         })
+    }
+}
+
+pub(crate) fn run_free_tier_fixture(
+    state_dir: &Path,
+    routing_port: u16,
+    executable: &Path,
+) -> Result<(), String> {
+    std::fs::create_dir_all(state_dir).map_err(|error| error.to_string())?;
+    let fixture = CloudFixture::start(
+        "relay".to_string(),
+        routing_port,
+        &[AccountConfig::Detailed {
+            name: "alice".to_string(),
+            tier: AccountTier::Free,
+        }],
+        None,
+        executable,
+    )?;
+    let ca = state_dir.join("cloud-routing-ca.pem");
+    let cert = state_dir.join("cloud-routing-cert.pem");
+    let key = state_dir.join("cloud-routing-key.pem");
+    std::fs::copy(&fixture.routing_tls_ca, &ca).map_err(|error| error.to_string())?;
+    std::fs::copy(&fixture.routing_tls_cert, &cert).map_err(|error| error.to_string())?;
+    std::fs::copy(&fixture.routing_tls_key, &key).map_err(|error| error.to_string())?;
+    std::fs::write(
+        state_dir.join("fixture.env"),
+        format!(
+            "CLOUD_URL='{}'\nAMUX_CLOUD_TLS_CA='{}'\nAMUX_TLS_CERT='{}'\nAMUX_TLS_KEY='{}'\n",
+            fixture.url,
+            ca.display(),
+            cert.display(),
+            key.display()
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(state_dir.join("tier-current"), "free\n").map_err(|error| error.to_string())?;
+    std::fs::write(state_dir.join("ready"), "ready\n").map_err(|error| error.to_string())?;
+
+    let mut tier = AccountTier::Free;
+    loop {
+        if state_dir.join("stop").exists() {
+            return Ok(());
+        }
+        if let Ok(requested) = std::fs::read_to_string(state_dir.join("tier")) {
+            let requested = match requested.trim() {
+                "free" => AccountTier::Free,
+                "pro" => AccountTier::Pro,
+                other => return Err(format!("unknown requested fixture tier {other:?}")),
+            };
+            if requested != tier {
+                fixture
+                    .identity
+                    .lock()
+                    .map_err(|_| "cloud identity fixture is poisoned")?
+                    .set_tier("alice", requested)?;
+                tier = requested;
+                let label = if tier == AccountTier::Free {
+                    "free"
+                } else {
+                    "pro"
+                };
+                std::fs::write(state_dir.join("tier-current"), format!("{label}\n"))
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -1177,6 +1261,9 @@ impl Executor {
                         if let Some(cloud_url) = &cfg.cloud_url {
                             profile["cloud_url"] = serde_json::Value::String(cloud_url.clone());
                         }
+                        if let Some(seconds) = cfg.cloud_refresh_secs {
+                            profile["cloud_refresh_secs"] = seconds.into();
+                        }
                         write_fixture_yaml(&path, &profile)?;
                         if profile_index == 0
                             && let Some(name) = &cfg.suspended_agent
@@ -1445,6 +1532,7 @@ impl Executor {
     ) -> Result<(), String> {
         let mut active_terminals: HashMap<String, TestTerminal> = HashMap::new();
         let mut oneshot_outputs: HashMap<String, String> = HashMap::new();
+        let mut oneshot_failures: HashMap<String, i32> = HashMap::new();
         let mut last_oneshot_commands: HashMap<
             String,
             (ResolvedCommand, PathBuf, HashMap<String, String>),
@@ -1508,14 +1596,23 @@ impl Executor {
                         let (command, cwd, env) = last_oneshot_commands
                             .get(term_name)
                             .ok_or("Retry directive requires a previous one-shot amux command")?;
-                        retry_oneshot_until_contains(
+                        let outcome = retry_oneshot_until_contains(
                             command,
                             cwd,
                             env,
                             &expected,
                             policy,
-                            first_output,
-                        )?
+                            OneShotOutput {
+                                text: first_output,
+                                exit_code: oneshot_failures.get(term_name).copied().unwrap_or(0),
+                            },
+                        )?;
+                        if outcome.exit_code == 0 {
+                            oneshot_failures.remove(term_name);
+                        } else {
+                            oneshot_failures.insert(term_name.clone(), outcome.exit_code);
+                        }
+                        outcome.text
                     } else {
                         first_output
                     };
@@ -1530,13 +1627,28 @@ impl Executor {
                 }
                 TestStep::Exit(code) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
+                    if let Some(mut terminal) = active_terminals.remove(term_name) {
+                        terminal
+                            .wait_exit(*code, Duration::from_secs(5))
+                            .map_err(|e| e.to_string())?;
+                    } else if let Some(actual) = oneshot_failures.remove(term_name) {
+                        if actual != *code as i32 {
+                            return Err(format!(
+                                "one-shot command exited {actual}, expected {code}"
+                            ));
+                        }
+                    } else {
+                        return Err("@@exit requires a PTY or failed one-shot command".into());
+                    }
+                    transcript.push_str(&format!("[exit {code}]\n"));
+                }
+                TestStep::Terminate => {
+                    let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
                     let mut terminal = active_terminals
                         .remove(term_name)
-                        .ok_or("@@exit requires a PTY command")?;
-                    terminal
-                        .wait_exit(*code, Duration::from_secs(5))
-                        .map_err(|e| e.to_string())?;
-                    transcript.push_str(&format!("[exit {code}]\n"));
+                        .ok_or("@@terminate requires an active PTY command")?;
+                    terminal.terminate().map_err(|e| e.to_string())?;
+                    transcript.push_str("[terminated]\n");
                 }
                 TestStep::SwitchTerminal(name) => {
                     transcript.push_str(&format!("\n@{name}\n"));
@@ -1647,6 +1759,11 @@ impl Executor {
                         || input_substituted.starts_with("e2e-runner client ");
 
                     if is_amux_command && !active_terminals.contains_key(term_name) {
+                        if let Some(code) = oneshot_failures.remove(term_name) {
+                            return Err(format!(
+                                "previous one-shot command exited {code}; assert it with `@@exit {code}` before starting another command"
+                            ));
+                        }
                         oneshot_outputs.remove(term_name);
                         last_oneshot_commands.remove(term_name);
                         let transformed = self.transform_command(
@@ -1655,11 +1772,14 @@ impl Executor {
                         )?;
 
                         if is_oneshot_amux_command(&transformed) {
-                            let combined = run_oneshot_command(&transformed, cwd, env)?;
-                            transcript.push_str(&combined);
+                            let output = run_oneshot_command_outcome(&transformed, cwd, env)?;
+                            transcript.push_str(&output.text);
+                            if output.exit_code != 0 {
+                                oneshot_failures.insert(term_name.clone(), output.exit_code);
+                            }
                             last_oneshot_commands
                                 .insert(term_name.clone(), (transformed, cwd.clone(), env.clone()));
-                            oneshot_outputs.insert(term_name.clone(), combined);
+                            oneshot_outputs.insert(term_name.clone(), output.text);
                         } else {
                             let terminal = TestTerminal::spawn(
                                 &transformed.program,
@@ -1736,6 +1856,11 @@ impl Executor {
             }
         }
 
+        if let Some((terminal, code)) = oneshot_failures.into_iter().next() {
+            return Err(format!(
+                "one-shot command in terminal {terminal} exited {code} without a matching `@@exit {code}`"
+            ));
+        }
         Ok(())
     }
 
@@ -1772,6 +1897,7 @@ impl Executor {
                 lan_port: None,
                 lan_discovery: false,
                 multicast_blocked: false,
+                cloud_refresh_secs: None,
                 cloud_relay: false,
                 update_version: None,
                 suspended_agent: None,
@@ -1831,6 +1957,55 @@ impl Executor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn one_shot_failures_keep_their_output_for_an_expected_exit_assertion() {
+        let command = ResolvedCommand {
+            program: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "printf 'payment required\\n' >&2; exit 7".into(),
+            ],
+        };
+        let output = run_oneshot_command_outcome(
+            &command,
+            &std::env::current_dir().unwrap(),
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(output.exit_code, 7);
+        assert_eq!(output.text, "payment required\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn contains_retry_can_match_an_expected_failed_command() {
+        let command = ResolvedCommand {
+            program: "sh".into(),
+            args: vec![
+                "-c".into(),
+                "printf 'payment required\\n' >&2; exit 7".into(),
+            ],
+        };
+        let output = retry_oneshot_until_contains(
+            &command,
+            &std::env::current_dir().unwrap(),
+            &HashMap::new(),
+            "payment required",
+            RetryPolicy {
+                timeout_ms: 100,
+                interval_ms: 1,
+            },
+            OneShotOutput {
+                text: "not ready\n".into(),
+                exit_code: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(output.exit_code, 7);
+        assert_eq!(output.text, "payment required\n");
+    }
 
     #[test]
     fn cloud_fixture_reads_fragmented_requests_on_accepted_nonblocking_streams() {

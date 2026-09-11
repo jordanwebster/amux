@@ -158,7 +158,12 @@ impl ConnectionManager {
     }
 
     pub(crate) async fn via_for(&self, peer: HostId) -> HostVia {
-        match self.state.read().await.active.get(&peer).copied() {
+        let active = self.state.read().await.active.get(&peer).copied();
+        let route = match active {
+            Some(route) => Some(route),
+            None => self.routing.route_to(peer).await,
+        };
+        match route {
             Some(Route::Via(_)) => HostVia::Relay,
             Some(Route::Direct(link)) => match self.tunnels.link_registry().carrier(&link).await {
                 Some(LinkCarrier::Ssh) => HostVia::Ssh,
@@ -584,6 +589,7 @@ mod tests {
             manager.active_route(peer.id).await.is_none(),
             "cloud claims must not auto-activate a trusted route"
         );
+        assert_eq!(manager.via_for(peer.id).await, HostVia::Relay);
         assert_eq!(tunnels.active_count().await, 0);
     }
 

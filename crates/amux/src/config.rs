@@ -393,6 +393,10 @@ pub struct ProfileConfig {
     pub cloud_url: String,
     #[serde(default)]
     pub lan: LanConfig,
+    /// Debug/test override for free-tier entitlement refreshes. Release
+    /// runtimes parse the key for config compatibility but never use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_refresh_secs: Option<u64>,
 }
 
 impl ProfileConfig {

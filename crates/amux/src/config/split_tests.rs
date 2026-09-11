@@ -40,6 +40,7 @@ impl Fixture {
             state_path: paths.state_path.clone(),
             cloud_url: "https://account.example".into(),
             lan: Default::default(),
+            cloud_refresh_secs: None,
         };
         write(paths.config_path.as_ref().unwrap(), &profile);
         Self {

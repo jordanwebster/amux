@@ -54,6 +54,7 @@ impl Fixture {
                 data_dir: paths.data_dir,
                 state_path: paths.state_path,
                 cloud_url: "https://amux.sh".into(),
+                cloud_refresh_secs: None,
                 lan: Default::default(),
             },
         );

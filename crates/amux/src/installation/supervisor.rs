@@ -3,6 +3,8 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+#[cfg(all(test_fixtures, debug_assertions))]
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex as AsyncMutex, RwLock, broadcast, watch};
@@ -844,6 +846,8 @@ impl Inner {
                 config: RuntimeConfig {
                     cloud_url,
                     lan: Default::default(),
+                    #[cfg(test_fixtures)]
+                    cloud_refresh_interval: None,
                 },
                 shared: self.settings.clone(),
                 credentials,
@@ -865,6 +869,11 @@ impl Inner {
                     options.config.cloud_url = config.cloud_url;
                 }
                 options.config.lan = config.lan;
+                #[cfg(all(test_fixtures, debug_assertions))]
+                {
+                    options.config.cloud_refresh_interval =
+                        config.cloud_refresh_secs.map(Duration::from_secs);
+                }
             } else {
                 let config = ProfileConfig {
                     installation_config: self.config.file_path(),
@@ -873,6 +882,7 @@ impl Inner {
                     state_path: paths.state_path.clone(),
                     cloud_url: options.config.cloud_url.clone(),
                     lan: options.config.lan,
+                    cloud_refresh_secs: None,
                 };
                 write_yaml(config_path, &config)?;
             }

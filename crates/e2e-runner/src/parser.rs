@@ -66,6 +66,9 @@ pub struct TestConfig {
     /// Disable discovery for this daemon, modelling a network that blocks multicast.
     #[serde(default)]
     pub multicast_blocked: bool,
+    /// Debug-build-only free-tier refresh interval.
+    #[serde(default)]
+    pub cloud_refresh_secs: Option<u64>,
     #[serde(default)]
     pub cloud_relay: bool,
     /// Serve a release manifest and a disposable copy of the current executable.
@@ -102,6 +105,8 @@ pub enum TestStep {
     ExpectContains(String),
     /// Wait for a PTY command to exit successfully and release the terminal.
     Exit(u32),
+    /// Terminate a long-running PTY command and release the terminal.
+    Terminate,
     /// Require a captured agent process to disappear from the OS.
     ProcessExited(String),
     /// Capture one output line suffix after a required prefix into a variable.
@@ -401,6 +406,11 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     steps.push(TestStep::Exit(code));
                     continue;
                 }
+                if trimmed == "@@terminate" {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    steps.push(TestStep::Terminate);
+                    continue;
+                }
 
                 // Sleep directive: @@sleep <ms>
                 if let Some(rest) = trimmed.strip_prefix("@@sleep ") {
@@ -606,6 +616,26 @@ No agents running.
             }
             _ => panic!("Expected RetryNextExpect"),
         }
+    }
+
+    #[test]
+    fn parses_terminate_directive() {
+        let content = r#"# test: terminate
+
+## Environment
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux server start --foreground
+@@terminate
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+        assert!(matches!(test_case.steps[2], TestStep::Terminate));
     }
 
     #[test]

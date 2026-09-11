@@ -454,6 +454,10 @@ pub(crate) async fn attach_for_ui(
 pub async fn list_agents(all: bool, config: &Config) -> Result<()> {
     let rpc = require_running_client(config, Some("amux list")).await?;
     let agents = rpc.list_agents().await?;
+    let hosts = rpc.list_hosts().await?;
+    if list_has_payment_blocked_host(&hosts) {
+        return Err(anyhow!(amux::ProtocolError::PaymentRequired));
+    }
     if agents.is_empty() {
         println!("No agents running.");
     } else {
@@ -465,6 +469,13 @@ pub async fn list_agents(all: bool, config: &Config) -> Result<()> {
 
     print_update_banner(&config.state_path);
     Ok(())
+}
+
+fn list_has_payment_blocked_host(hosts: &[amux::HostEntry]) -> bool {
+    let payment_message = amux::ProtocolError::PaymentRequired.to_string();
+    hosts
+        .iter()
+        .any(|host| host.last_dial_error.as_deref() == Some(payment_message.as_str()))
 }
 
 type AgentKey = (Uuid, Uuid);
@@ -1335,6 +1346,30 @@ mod attach {
             host_id: Uuid::from_u128(99),
         });
         agent
+    }
+
+    #[test]
+    fn list_refuses_cached_agents_that_the_relay_will_not_carry() {
+        let agent = listed_agent(1, "away-agent");
+        let away_host = amux::HostEntry {
+            id: agent.host_id,
+            name: "host-b".to_string(),
+            online: true,
+            version: Some("test".to_string()),
+            capabilities: Some(amux::Capabilities::default()),
+            trust_status: amux::HostTrustStatus::Trusted,
+            last_dial_error: Some(amux::ProtocolError::PaymentRequired.to_string()),
+            via: amux::HostVia::Relay,
+            signed_in: Some(true),
+        };
+
+        assert!(super::list_has_payment_blocked_host(std::slice::from_ref(
+            &away_host
+        ),));
+
+        let mut reachable = away_host;
+        reachable.last_dial_error = None;
+        assert!(!super::list_has_payment_blocked_host(&[reachable]));
     }
 
     #[test]

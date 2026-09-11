@@ -64,6 +64,8 @@ use crate::installation::ProfilePaths;
 pub(crate) struct RuntimeConfig {
     pub(crate) cloud_url: String,
     pub(crate) lan: LanConfig,
+    #[cfg(test_fixtures)]
+    pub(crate) cloud_refresh_interval: Option<Duration>,
 }
 
 /// Installation-owned settings shared by every profile runtime.
@@ -154,6 +156,8 @@ impl ProfileRuntimeOptions {
         let profile = RuntimeConfig {
             cloud_url: config.cloud_url.clone(),
             lan: config.lan,
+            #[cfg(test_fixtures)]
+            cloud_refresh_interval: None,
         };
         let shared = InstallationSettings {
             host_name: config.host_name,
@@ -479,11 +483,14 @@ async fn build(
         #[cfg(testnet)]
         test_cloud_transport: options.fixtures.cloud_transport,
         #[cfg(testnet)]
-        test_cloud_refresh_interval: options.fixtures.cloud_refresh_interval,
+        test_cloud_refresh_interval: options
+            .fixtures
+            .cloud_refresh_interval
+            .or(options.config.cloud_refresh_interval),
         #[cfg(all(test_fixtures, not(testnet)))]
         test_cloud_transport: None,
         #[cfg(all(test_fixtures, not(testnet)))]
-        test_cloud_refresh_interval: None,
+        test_cloud_refresh_interval: options.config.cloud_refresh_interval,
         client,
         #[cfg(testnet)]
         client_channel,
@@ -578,6 +585,7 @@ impl ProfileRuntime {
     }
 
     pub(crate) async fn start_cloud(&self) -> Result<(), CloudStartError> {
+        let signed_in = self.state.read().await.credentials.is_some();
         #[cfg(testnet)]
         if let Some((channel, auth)) = &self.test_cloud {
             let mut connector = self.cloud_link.lock().await;
@@ -590,7 +598,7 @@ impl ProfileRuntime {
             if let Some(finished) = connector.take() {
                 finished.stop().await;
             }
-            let ctx = self.services.link_connector_ctx();
+            let ctx = self.services.link_connector_ctx_with_signed_in(signed_in);
             *connector = Some(match auth {
                 CloudFixtureAuth::Refreshing(auth) => CloudLink::testnet_with_auth(
                     ctx,
@@ -601,7 +609,7 @@ impl ProfileRuntime {
             });
             return Ok(());
         }
-        if self.state.read().await.credentials.is_none() {
+        if !signed_in {
             self.status.report(Observed::AuthenticationRequired);
             return Err(CloudStartError::MissingCredentials);
         }
@@ -617,12 +625,14 @@ impl ProfileRuntime {
             finished.stop().await;
         }
 
-        let config = self.state.read().await.config.clone();
+        let state = self.state.read().await;
+        let config = state.config.clone();
+        drop(state);
         self.status.report(Observed::Connecting);
         *connector = Some(establish_cloud_link(
             config,
             self.state.clone(),
-            self.services.link_connector_ctx(),
+            self.services.link_connector_ctx_with_signed_in(signed_in),
             self.status.clone(),
             #[cfg(test_fixtures)]
             self.test_cloud_transport.clone(),
@@ -872,6 +882,8 @@ mod tests {
             config: RuntimeConfig {
                 cloud_url: "http://127.0.0.1:1".to_string(),
                 lan: LanConfig::default(),
+                #[cfg(test_fixtures)]
+                cloud_refresh_interval: None,
             },
             shared: Arc::new(InstallationSettings {
                 host_name: "profile-runtime-test".to_string(),

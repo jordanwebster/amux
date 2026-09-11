@@ -847,6 +847,12 @@ impl StartedRoutingServices {
         )
     }
 
+    pub(crate) fn link_connector_ctx_with_signed_in(&self, signed_in: bool) -> LinkConnectorCtx {
+        let mut host = self.local_host.clone();
+        host.signed_in = Some(signed_in);
+        LinkConnectorCtx::new(host, self.routing.clone(), self.tunnels.clone())
+    }
+
     fn link_service_ctx(&self) -> LinkServiceCtx {
         LinkServiceCtx::new(
             self.local_host.clone(),

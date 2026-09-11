@@ -734,18 +734,23 @@ impl ClientService {
             remote_agent_sub.abort();
         }
 
-        let mut removed_agent_ids = state
-            .agents_model
-            .values()
-            .filter_map(|agent| (agent.host_id == host_id).then_some(agent.id))
-            .collect::<Vec<_>>();
-        removed_agent_ids.sort_unstable();
-        for agent_id in &removed_agent_ids {
-            state.agents_model.remove(agent_id);
-            state.agent_events.emit(AgentEvent::AgentDown {
-                agent_id: *agent_id,
-            });
-        }
+        let removed_agents = if trusted_replacement.is_none() {
+            let mut removed_agent_ids = state
+                .agents_model
+                .values()
+                .filter_map(|agent| (agent.host_id == host_id).then_some(agent.id))
+                .collect::<Vec<_>>();
+            removed_agent_ids.sort_unstable();
+            for agent_id in &removed_agent_ids {
+                state.agents_model.remove(agent_id);
+                state.agent_events.emit(AgentEvent::AgentDown {
+                    agent_id: *agent_id,
+                });
+            }
+            removed_agent_ids.len()
+        } else {
+            0
+        };
         if let Some(host) = trusted_replacement {
             state.host_events.emit(HostEvent::HostUpdated { host });
         } else {
@@ -753,9 +758,7 @@ impl ClientService {
                 .host_events
                 .emit(HostEvent::HostRemoved { id: host_id });
         }
-        HostEventOutcome::Removed {
-            removed_agents: removed_agent_ids.len(),
-        }
+        HostEventOutcome::Removed { removed_agents }
     }
 
     async fn upsert_agent(&self, agent: Agent, kind: AgentChangeKind) -> AgentEventOutcome {
@@ -4164,6 +4167,12 @@ mod tests {
                     && host.online
                     && host.trust_status == HostTrustStatus::Trusted
         ));
+        let cached = agent(20, 2, "cached-remote");
+        service
+            .apply_agent_event(AgentEvent::AgentUp {
+                agent: cached.clone(),
+            })
+            .await;
 
         service
             .apply_host_event(HostReachabilityEvent::Removed { host_id: peer.id })
@@ -4177,6 +4186,7 @@ mod tests {
                     && host.trust_status == HostTrustStatus::Trusted
                     && host.last_dial_error.is_none()
         ));
+        assert_eq!(service.list_agents().await, vec![cached]);
     }
 
     #[tokio::test]
