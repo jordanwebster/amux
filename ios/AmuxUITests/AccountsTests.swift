@@ -163,6 +163,13 @@ final class AccountsTests: JourneyCase {
         record["gateAtLaunch"] = try says("home")
         record["homeOffersAtLaunch"] = try called("home.empty.action")
         record["homeSaysAtLaunch"] = try says("home.empty.title")
+        // One action, because there is one thing to do. New Agent needs a
+        // host, a host needs pairing and pairing needs an account, so the
+        // header does not draw it until the gate in front of it is open —
+        // offering it here would be offering a door that opens onto nothing.
+        record["homeNewAgentAtLaunch"] = element(app, "home.newAgent").exists
+        XCTAssertFalse(element(app, "home.newAgent").exists,
+                       "the signed-out home offered New Agent beside Sign In")
 
         pressTab(app, "You")
         waitFor(app, "you", "the You page never appeared")
@@ -205,6 +212,9 @@ final class AccountsTests: JourneyCase {
         waitFor(app, "home", "signing in did not come back to the home")
         record["gateAfterSigningIn"] = try waitForValue(runner, "home", "unsubscribed")
         record["homeOffersAfterSigningIn"] = try called("home.empty.action")
+        record["homeNewAgentAfterSigningIn"] = element(app, "home.newAgent").exists
+        XCTAssertFalse(element(app, "home.newAgent").exists,
+                       "the home offered New Agent to an account with nothing bought")
         record["accountsAfterSigningIn"] = try accountsKnown()
     }
 
@@ -403,6 +413,11 @@ final class AccountsTests: JourneyCase {
         try pair(with: "studio", cast.studio)
         pressTab(app, "Agents")
         record["workFleet"] = try fleetOnScreen()
+        // And with the gate open it is there: the account can reach a host,
+        // so starting an agent on one is a thing this screen can offer.
+        record["homeNewAgentWithAccess"] = element(app, "home.newAgent").exists
+        XCTAssertTrue(element(app, "home.newAgent").exists,
+                      "a subscribed account's home did not offer New Agent")
 
         // Somebody has to be reading a conversation for what an agent needs to
         // be known at all: nothing runs on a phone.

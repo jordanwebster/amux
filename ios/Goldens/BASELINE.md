@@ -116,6 +116,12 @@ would teach that it is a service you subscribe to.
 
 No departures.
 
+The header has no New Agent button. Starting an agent needs a host, a host
+needs pairing and pairing needs an account that may reach one, so the control
+is not drawn until that is true; the baselines were retaken on 2026-09-11 when
+it stopped being drawn here, and the screen is left with the one action that
+leads somewhere.
+
 The title's own control changed under these two on 2026-09-08 and the baselines
 were retaken. The account list used to be a system menu hanging off the word
 "Agents"; it is now the app's own panel, because the rows carry what this phone
@@ -130,8 +136,10 @@ Signed in and stopped at the second gate. The same empty screen with one word
 changed on the button and one line changed in the caption, because the state is
 the same: nothing is reachable yet.
 
-No departures. The title's control changed with `first-run`'s, and this
-baseline was retaken for the same reason.
+No departures. The header has no New Agent button for the same reason as
+`first-run`: nothing is reachable until the subscription is, and this baseline
+was retaken with it. The title's control changed with `first-run`'s, and this
+baseline was retaken for that reason too.
 
 ## sign-in
 

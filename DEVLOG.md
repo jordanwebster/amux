@@ -14203,3 +14203,26 @@ reported as that.
 Green: `wt run ios-perf` — passed, every Baseline cell filled. Proven refusing a
 regression too: with the recorded echo figure deliberately set to 5.00, a median
 of 7.59 — comfortably inside its budget of 17 — failed the run.
+
+## The empty home offers the one thing that leads somewhere
+
+The Agents home drew its New Agent button on every launch, including the two
+launches where nothing is reachable: nobody signed in, and signed in with
+nothing bought. Pressing it opened the new-agent screen over an account that
+cannot reach a host, which is a door onto an empty room — starting an agent
+needs a host, a host needs pairing, and pairing needs an account the relay
+accepts.
+
+The header now draws that button only once the account gate is open, so the
+signed-out home offers Sign In and nothing else, and the subscribed-nowhere
+home offers Subscribe and nothing else. Everything else on those screens is
+unchanged: the tabs, the account disc and the account switcher are where they
+were, and an account with access gets its New Agent back.
+
+The accounts journey now reads the header in all three states rather than only
+the one action, and the `first-run` and `first-run-paid` baselines were retaken
+for the button that is no longer drawn.
+
+Green: `wt run ios-journey -- accounts` — passed, with the home offering
+Sign In and no New Agent at launch, Subscribe and no New Agent once signed in,
+and New Agent again under an account that has access.

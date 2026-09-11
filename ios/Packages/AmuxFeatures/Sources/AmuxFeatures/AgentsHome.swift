@@ -102,11 +102,18 @@ public struct AgentsHome: View {
                     .identified("home.subtitle", value: subtitle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Button { actions(.newAgent) } label: {
-                GlassIcon(glyph: "plus", prominent: true)
+            // Starting an agent needs a host, a host needs pairing, and
+            // pairing needs an account that may reach one. Until that is true
+            // the button would open onto a screen with nothing on it, so the
+            // header leaves it out and the screen keeps the one action that
+            // does lead somewhere.
+            if accounts.gate == .ready {
+                Button { actions(.newAgent) } label: {
+                    GlassIcon(glyph: "plus", prominent: true)
+                }
+                .accessibilityLabel("New Agent")
+                .identified("home.newAgent", label: "New Agent")
             }
-            .accessibilityLabel("New Agent")
-            .identified("home.newAgent", label: "New Agent")
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.vertical, 10)
