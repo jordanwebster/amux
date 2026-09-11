@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
 use crate::identity::{self, DeviceIdentity, IdentityError};
+use crate::link::ByteStream;
 use crate::pairing::PairMode;
 use crate::resource_limits::{
     EXTERNAL_TCP_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_TCP_TLS_HANDSHAKE_RATE_LIMIT,
@@ -209,6 +210,25 @@ impl TunnelDispatcher {
                 });
             }
         })
+    }
+
+    pub(crate) async fn dispatch_link_stream(
+        &self,
+        adjacent_peer: HostId,
+        stream: ByteStream,
+    ) -> Result<(), DispatchError> {
+        let directly_paired = self
+            .trust_store
+            .read()
+            .map_err(|_| IdentityError::TrustStorePoisoned)?
+            .entry(adjacent_peer)
+            .is_some();
+        let pairing_reachability = if directly_paired {
+            PreTrustPairingReachability::NoReusableReachability
+        } else {
+            PreTrustPairingReachability::Cloud
+        };
+        self.dispatch(stream, pairing_reachability).await
     }
 
     async fn allow_external_tcp_handshake(&self, source: IpAddr) -> bool {

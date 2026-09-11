@@ -25,7 +25,7 @@ use crate::transport::{
     trusted_device_channel_tracked,
 };
 use crate::trust::{Reachability, SharedTrustStore};
-use crate::tunnel::TunnelPool;
+use crate::link::ChannelPool;
 
 const DIRECT_LINK_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -55,7 +55,7 @@ struct ReachabilityLinkContext {
     trust_store: SharedTrustStore,
     local_host: LiveLocalHost,
     routing: Arc<RoutingCore>,
-    tunnels: Arc<TunnelPool>,
+    channels: Arc<ChannelPool>,
     connections: Arc<ConnectionManager>,
     runtime: Arc<Mutex<Option<ReachabilityRuntime>>>,
     dialed_tcp_tracker: Arc<Mutex<Option<TrackedTcpConnections>>>,
@@ -81,7 +81,7 @@ impl ReachabilityLinkConnector {
         trust_store: SharedTrustStore,
         local_host: LiveLocalHost,
         routing: Arc<RoutingCore>,
-        tunnels: Arc<TunnelPool>,
+        channels: Arc<ChannelPool>,
         connections: Arc<ConnectionManager>,
     ) -> Self {
         Self {
@@ -92,7 +92,7 @@ impl ReachabilityLinkConnector {
                         trust_store,
                         local_host,
                         routing,
-                        tunnels,
+                        channels,
                         connections,
                         runtime: Arc::new(Mutex::new(None)),
                         dialed_tcp_tracker: Arc::new(Mutex::new(None)),
@@ -298,7 +298,7 @@ impl ReachabilityLinkConnector {
         inner.direct_enabled.store(false, Ordering::SeqCst);
         inner
             .context
-            .tunnels
+            .channels
             .link_registry()
             .close_peer_links()
             .await;
@@ -568,7 +568,7 @@ async fn establish_channel(
     let connector_ctx = LinkConnectorCtx::new_live(
         context.local_host.clone(),
         context.routing.clone(),
-        context.tunnels.clone(),
+        context.channels.link_registry(),
     )
     .with_expected_peer(peer)
     .with_carrier(carrier);

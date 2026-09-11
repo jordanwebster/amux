@@ -24,7 +24,6 @@ use crate::routing::{
     neighbor_down_from_wire, neighbor_up_from_wire, protocol_error_hello_ack,
     protocol_error_link_close, validate_remote_host,
 };
-use crate::tunnel::TunnelPool;
 use crate::{HostId, audit};
 
 const LINK_AUTH_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(300);
@@ -223,8 +222,9 @@ fn refresh_deadline(
 pub(crate) struct LinkCtx {
     local_host: LiveLocalHost,
     routing: Arc<RoutingCore>,
-    tunnels: Arc<TunnelPool>,
     links: Arc<LinkRegistry>,
+    incoming_streams_tx: Option<mpsc::Sender<(HostId, super::ByteStream)>>,
+    piper: super::Piper,
     expected_peer: Option<HostId>,
     authenticated_peer: Option<HostId>,
     link_role: LinkRole,
@@ -247,21 +247,23 @@ impl LinkCtx {
     pub(crate) fn new(
         local_host: Host,
         routing: Arc<RoutingCore>,
-        tunnels: Arc<TunnelPool>,
+        links: Arc<LinkRegistry>,
     ) -> Self {
-        Self::new_live(LiveLocalHost::new(local_host), routing, tunnels)
+        Self::new_live(LiveLocalHost::new(local_host), routing, links)
     }
 
     pub(crate) fn new_live(
         local_host: LiveLocalHost,
         routing: Arc<RoutingCore>,
-        tunnels: Arc<TunnelPool>,
+        links: Arc<LinkRegistry>,
     ) -> Self {
+        let piper = super::Piper::new(local_host.id(), links.clone());
         Self {
             local_host,
             routing,
-            links: tunnels.link_registry(),
-            tunnels,
+            links,
+            incoming_streams_tx: None,
+            piper,
             expected_peer: None,
             authenticated_peer: None,
             link_role: LinkRole::Peer,
@@ -293,6 +295,14 @@ impl LinkCtx {
 
     pub(crate) fn with_carrier(mut self, carrier: RoutingCarrier) -> Self {
         self.routing_carrier = carrier;
+        self
+    }
+
+    pub(crate) fn with_incoming_streams(
+        mut self,
+        sender: mpsc::Sender<(HostId, super::ByteStream)>,
+    ) -> Self {
+        self.incoming_streams_tx = Some(sender);
         self
     }
 
@@ -483,6 +493,7 @@ async fn run_established(
                 carrier: carrier_tag,
             },
             &sent_snapshot,
+            Some(carrier.clone()),
         )
         .await;
 
@@ -566,8 +577,20 @@ async fn run_established(
                 }
             }
             stream = carrier.accept_stream() => {
-                let Some((_preface, mut stream)) = stream else { break };
-                let _ = stream.reset(wire::pb::StreamRefusal::NotAdjacent).await;
+                let Some((preface, mut stream)) = stream else { break };
+                let destination = HostId::from_slice(&preface.dst).ok();
+                if destination == Some(ctx.local_host.id()) {
+                    if let Some(sender) = &ctx.incoming_streams_tx {
+                        if let Err(error) = sender.send((peer_host.id, stream)).await {
+                            let (_, mut stream) = error.0;
+                            let _ = stream.reset(wire::pb::StreamRefusal::Shutdown).await;
+                        }
+                    } else {
+                        let _ = stream.reset(wire::pb::StreamRefusal::Shutdown).await;
+                    }
+                } else {
+                    let _ = ctx.piper.pipe(link, preface, stream).await;
+                }
             }
             _ = maybe_sleep_until(auth_expiry), if auth_expiry.is_some() => {
                 audit::auth_jwt_failure("link authorization expired");
@@ -941,7 +964,6 @@ fn should_audit_auth_refresh_failure(status: &tonic::Status) -> bool {
 async fn cleanup_link(ctx: &LinkCtx, link: LinkId) {
     let peer = link.peer();
     ctx.links.remove(&link).await;
-    ctx.tunnels.remove_link(&link).await;
     ctx.routing.apply_direct_down(link).await;
     if ctx.links.link_to_peer(peer).await.is_none() {
         ctx.routing.remove_relay_claims(peer).await;

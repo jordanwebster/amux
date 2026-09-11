@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use tokio::sync::{Notify, RwLock, mpsc};
 
+use crate::link::LinkCarrier as NativeLinkCarrier;
 use crate::protocol::wire::pb;
 use crate::routing::types::{Host, LinkId};
 use crate::routing::wire::{neighbor_down_message, neighbor_up_message};
@@ -85,6 +86,7 @@ struct LinkWriter {
     role: LinkRole,
     admission: LinkAdmission,
     carrier: LinkCarrier,
+    native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
 }
 
 /// A local request for the link's connect task to close the link. Distinct
@@ -132,6 +134,7 @@ impl LinkRegistry {
                 carrier: LinkCarrier::Direct,
             },
             advertised_snapshot,
+            None,
         )
         .await
     }
@@ -156,6 +159,7 @@ impl LinkRegistry {
                 carrier: LinkCarrier::Direct,
             },
             advertised_snapshot,
+            None,
         )
         .await
     }
@@ -167,6 +171,7 @@ impl LinkRegistry {
         outgoing_tx: LinkOutputTx,
         properties: LinkProperties,
         advertised_snapshot: &[HostId],
+        native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
     ) -> mpsc::Receiver<LinkCloseRequest> {
         let LinkProperties {
             role,
@@ -218,6 +223,7 @@ impl LinkRegistry {
                 role,
                 admission,
                 carrier,
+                native_carrier,
             },
         );
         drop(state);
@@ -348,6 +354,54 @@ impl LinkRegistry {
             .writers
             .get(link)
             .map(|writer| writer.carrier)
+    }
+
+    pub(crate) async fn native_carrier(
+        &self,
+        link: &LinkId,
+    ) -> Option<Arc<dyn NativeLinkCarrier>> {
+        self.state
+            .read()
+            .await
+            .writers
+            .get(link)
+            .and_then(|writer| writer.native_carrier.clone())
+    }
+
+    pub(crate) async fn native_carrier_to_peer(
+        &self,
+        peer: HostId,
+    ) -> Option<(LinkId, Arc<dyn NativeLinkCarrier>)> {
+        self.state
+            .read()
+            .await
+            .writers
+            .iter()
+            .find_map(|(link, writer)| {
+                (writer.host.id == peer)
+                    .then(|| writer.native_carrier.clone().map(|carrier| (*link, carrier)))
+                    .flatten()
+            })
+    }
+
+    pub(crate) async fn native_route_to_peer(
+        &self,
+        peer: HostId,
+    ) -> Option<(LinkId, Arc<dyn NativeLinkCarrier>, LinkAdmission)> {
+        self.state
+            .read()
+            .await
+            .writers
+            .iter()
+            .find_map(|(link, writer)| {
+                if writer.host.id != peer {
+                    return None;
+                }
+                writer
+                    .native_carrier
+                    .clone()
+                    .map(|carrier| (*link, carrier, writer.admission))
+            })
     }
 
     pub(crate) async fn update_cloud_tier(&self, link: &LinkId, tier: Tier) {

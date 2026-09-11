@@ -27,6 +27,7 @@ use crate::client::{PairingCandidate, PeerVia};
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
 use crate::identity::IdentityError;
+use crate::link::ChannelError;
 use crate::pairing::{PAIR_MODE_TTL, PairMode, PairModeError};
 use crate::protocol::{ProtocolError, protocol_status, wire};
 use crate::routing::{
@@ -44,7 +45,6 @@ use crate::services::pairing::{
 };
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
-use crate::tunnel::TunnelPoolError;
 use crate::user_state::ServerState;
 use crate::{AgentParent, audit, envelope};
 
@@ -1838,7 +1838,7 @@ impl ClientService {
         crate::debug::dump_server_debug_info(
             &self.server_state,
             self.remote_agent_connections.routing(),
-            self.remote_agent_connections.tunnels(),
+            self.remote_agent_connections.channels(),
             remote_agent_count,
             format,
             verbose,
@@ -1866,7 +1866,17 @@ impl ClientService {
         method: &'static str,
         host_id: Uuid,
     ) -> Result<wire::agent_service_client::AgentServiceClient<Channel>, tonic::Status> {
-        let channel = match self.remote_agent_connections.channel_to(host_id).await {
+        let result = self.remote_agent_connections.channel_to(host_id).await;
+        self.remote_agent_client_with_channel(method, host_id, result).await
+    }
+
+    async fn remote_agent_client_with_channel(
+        &self,
+        method: &'static str,
+        host_id: Uuid,
+        result: Result<Channel, ChannelError>,
+    ) -> Result<wire::agent_service_client::AgentServiceClient<Channel>, tonic::Status> {
+        let channel = match result {
             Ok(channel) => {
                 self.remote_agent_connections
                     .clear_reachability_error(host_id)
@@ -1874,7 +1884,7 @@ impl ClientService {
                 channel
             }
             Err(error) => {
-                let status = remote_tunnel_status(method, host_id, error);
+                let status = remote_channel_status(method, host_id, error);
                 self.remote_agent_connections
                     .record_reachability_error(host_id, status.message().to_string())
                     .await;
@@ -2027,8 +2037,11 @@ impl ClientService {
         host_id: Uuid,
         request: wire::pb::SubscribeSessionRequest,
     ) -> TonicResult<ResponseStream<wire::SubscribeSessionResponse>> {
+        let agent = Uuid::from_slice(&request.agent_id)
+            .map_err(|_| tonic::Status::invalid_argument("invalid agent_id"))?;
+        let channel = self.remote_agent_connections.session_channel_to(host_id, agent).await;
         let mut client = match self
-            .remote_agent_client("ClientService.SubscribeSession", host_id)
+            .remote_agent_client_with_channel("ClientService.SubscribeSession", host_id, channel)
             .await
         {
             Ok(client) => client,
@@ -2086,9 +2099,10 @@ impl ClientService {
         host_id: Uuid,
         request: wire::GetArtifactRequest,
     ) -> TonicResult<wire::GetArtifactResponse> {
-        let mut client = self
-            .remote_agent_client("ClientService.GetArtifact", host_id)
-            .await?;
+        let channel = self.remote_agent_connections.bulk_channel_to(host_id).await;
+        let mut client = self.remote_agent_client_with_channel(
+            "ClientService.GetArtifact", host_id, channel,
+        ).await?;
         let response = client.get_artifact(request).await?.into_inner();
         Ok(tonic::Response::new(response))
     }
@@ -2098,9 +2112,10 @@ impl ClientService {
         host_id: Uuid,
         request: wire::DiffRequest,
     ) -> TonicResult<wire::DiffResponse> {
-        let mut client = self
-            .remote_agent_client("ClientService.Diff", host_id)
-            .await?;
+        let channel = self.remote_agent_connections.bulk_channel_to(host_id).await;
+        let mut client = self.remote_agent_client_with_channel(
+            "ClientService.Diff", host_id, channel,
+        ).await?;
         let response = client.diff(request).await?.into_inner();
         Ok(tonic::Response::new(response))
     }
@@ -2394,23 +2409,24 @@ fn decode_remote_status(error: wire::DecodeError) -> tonic::Status {
     tonic::Status::internal(error.to_string())
 }
 
-fn remote_tunnel_status(
+fn remote_channel_status(
     method: &'static str,
     host_id: Uuid,
-    error: TunnelPoolError,
+    error: ChannelError,
 ) -> tonic::Status {
     let message = format!("{method} remote dispatch to host {host_id} failed: {error}");
     match error {
-        TunnelPoolError::NotFound { .. } => protocol_status(ProtocolError::Unreachable { message }),
-        TunnelPoolError::Rejected(error) => protocol_status(error),
-        TunnelPoolError::LinkUnavailable { .. }
-        | TunnelPoolError::Identity(_)
-        | TunnelPoolError::Tls(_) => tonic::Status::unavailable(message),
-        TunnelPoolError::InvalidDestination { .. }
-        | TunnelPoolError::InvalidSource { .. }
-        | TunnelPoolError::InvalidTunnelId(_)
-        | TunnelPoolError::PayloadTooLarge { .. }
-        | TunnelPoolError::DeviceTlsRequired => tonic::Status::internal(message),
+        ChannelError::NoRoute { .. } => protocol_status(ProtocolError::Unreachable { message }),
+        ChannelError::Refused(crate::protocol::wire::pb::StreamRefusal::PaymentRequired) => {
+            protocol_status(ProtocolError::PaymentRequired)
+        }
+        ChannelError::Refused(crate::protocol::wire::pb::StreamRefusal::RateLimited) => {
+            protocol_status(ProtocolError::ResourceExhausted { message })
+        }
+        ChannelError::Refused(_) | ChannelError::LinkUnavailable { .. }
+        | ChannelError::Identity(_) | ChannelError::Tls(_) | ChannelError::Handshake(_) => {
+            tonic::Status::unavailable(message)
+        }
     }
 }
 

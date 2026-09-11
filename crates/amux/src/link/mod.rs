@@ -1,9 +1,16 @@
 pub(crate) mod carrier;
+pub(crate) mod channels;
 pub(crate) mod mux;
+pub(crate) mod piper;
 pub(crate) mod run;
 
 pub(crate) use carrier::{
-    CarrierKind, ControlSink, ControlSource, LinkCarrier, read_message, write_message,
+    ByteStream, CarrierKind, ControlSink, ControlSource, LinkCarrier, OpenError, read_message,
+    write_message,
+};
+pub(crate) use channels::{
+    ChannelClass, ChannelDebug, ChannelError, ChannelKey, ChannelPool, serve_inbound_streams,
 };
 pub(crate) use mux::{MuxCarrier, MuxRole};
+pub(crate) use piper::Piper;
 pub(crate) use run::{AuthenticatedLinkUser, LinkCtx, LinkTokenAuthenticator, run_link};

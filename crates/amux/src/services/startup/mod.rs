@@ -24,6 +24,7 @@ use crate::agents::ArtifactOwners;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
+use crate::link::{ChannelPool, serve_inbound_streams};
 use crate::pairing::PairMode;
 use crate::protocol::wire;
 use crate::routing::{
@@ -48,7 +49,6 @@ use crate::transport::{
     managed_in_process_transport_pair,
 };
 use crate::trust::{SharedTrustStore, TrustStore};
-use crate::tunnel::{TunnelPool, TunnelTransport};
 use crate::user_state::ServerState;
 
 const DEVICE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -207,7 +207,7 @@ impl CloudLinkServer {
             .read()
             .await
             .get(&user_id)
-            .map(|services| services.tunnels.clone());
+            .map(|services| services.channels.clone());
         match tunnels {
             Some(tunnels) => tunnels
                 .link_registry()
@@ -223,7 +223,7 @@ impl CloudLinkServer {
             let users = self.inner.users.read().await;
             users
                 .values()
-                .map(|services| services.tunnels.clone())
+                .map(|services| services.channels.clone())
                 .collect::<Vec<_>>()
         };
         for tunnels in tunnels {
@@ -298,16 +298,16 @@ fn cloud_tls_incoming(
 
 pub(crate) struct StartedRoutingServices {
     pub(crate) routing: Arc<RoutingCore>,
-    pub(crate) tunnels: Arc<TunnelPool>,
+    pub(crate) channels: Arc<ChannelPool>,
     pub(crate) connections: Arc<ConnectionManager>,
     local_host: LiveLocalHost,
-    _incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
+    incoming_streams_tx: mpsc::Sender<(HostId, crate::link::ByteStream)>,
     tasks: Vec<JoinHandle<()>>,
 }
 
 struct StartedRoutingParts {
     runtime: StartedRoutingServices,
-    incoming_tunnels_rx: mpsc::Receiver<TunnelTransport>,
+    incoming_streams_rx: mpsc::Receiver<(HostId, crate::link::ByteStream)>,
 }
 
 async fn start_routing_services_parts(
@@ -332,31 +332,30 @@ async fn start_routing_services_parts(
         ),
         None => RoutingCore::new(),
     });
-    let (incoming_tunnels_tx, incoming_tunnels_rx) = mpsc::channel(64);
-    let tunnels = Arc::new(match device_security {
-        Some(security) => TunnelPool::with_device_tls(
-            host_id,
-            routing.clone(),
-            incoming_tunnels_tx.clone(),
+    let links = Arc::new(crate::routing::LinkRegistry::default());
+    let (incoming_streams_tx, incoming_streams_rx) = mpsc::channel(64);
+    let channels = Arc::new(match device_security {
+        Some(security) => ChannelPool::with_device_tls(
+            links,
             security.identity.clone(),
             security.trust_store.clone(),
         ),
-        None => TunnelPool::new(host_id, routing.clone(), incoming_tunnels_tx.clone()),
+        None => ChannelPool::new(links),
     });
-    let connections = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
+    let connections = Arc::new(ConnectionManager::new(routing.clone(), channels.clone()));
 
     let tasks = vec![connections.clone().attach_routing_events().await];
 
     StartedRoutingParts {
         runtime: StartedRoutingServices {
             routing,
-            tunnels,
+            channels,
             connections,
             local_host: host,
-            _incoming_tunnels_tx: incoming_tunnels_tx,
+            incoming_streams_tx,
             tasks,
         },
-        incoming_tunnels_rx,
+        incoming_streams_rx,
     }
 }
 
@@ -364,12 +363,10 @@ pub(crate) async fn start_routing_services(
     state: Arc<RwLock<ServerState>>,
 ) -> StartedRoutingServices {
     let mut parts = start_routing_services_parts(state, None).await;
-    parts
-        .runtime
-        .tasks
-        .push(spawn_discard_incoming_tunnels_task(
-            parts.incoming_tunnels_rx,
-        ));
+    let mut incoming_streams_rx = parts.incoming_streams_rx;
+    parts.runtime.tasks.push(tokio::spawn(async move {
+        while incoming_streams_rx.recv().await.is_some() {}
+    }));
     parts.runtime
 }
 
@@ -484,7 +481,7 @@ async fn start_user_services_with_clock(
         device_security.trust_store.clone(),
         parts.runtime.local_host.clone(),
         parts.runtime.routing.clone(),
-        parts.runtime.tunnels.clone(),
+        parts.runtime.channels.clone(),
         parts.runtime.connections.clone(),
     );
     let client = ClientService::new(
@@ -541,7 +538,7 @@ async fn start_user_services_with_clock(
     parts
         .runtime
         .tasks
-        .push(dispatcher.serve_tunnel_receiver(parts.incoming_tunnels_rx));
+        .push(serve_inbound_streams(Arc::new(dispatcher), parts.incoming_streams_rx));
     parts.runtime.tasks.push(
         client
             .attach_routing_events(parts.runtime.routing.clone())
@@ -724,22 +721,25 @@ impl StartedRoutingServices {
         LinkConnectorCtx::new_live(
             self.local_host.clone(),
             self.routing.clone(),
-            self.tunnels.clone(),
+            self.channels.link_registry(),
         )
+        .with_incoming_streams(self.incoming_streams_tx.clone())
     }
 
     pub(crate) fn link_connector_ctx_with_signed_in(&self, signed_in: bool) -> LinkConnectorCtx {
         let mut host = self.local_host.snapshot();
         host.signed_in = Some(signed_in);
-        LinkConnectorCtx::new(host, self.routing.clone(), self.tunnels.clone())
+        LinkConnectorCtx::new(host, self.routing.clone(), self.channels.link_registry())
+            .with_incoming_streams(self.incoming_streams_tx.clone())
     }
 
     fn link_ctx(&self) -> LinkCtx {
         LinkCtx::new_live(
             self.local_host.clone(),
             self.routing.clone(),
-            self.tunnels.clone(),
+            self.channels.link_registry(),
         )
+        .with_incoming_streams(self.incoming_streams_tx.clone())
     }
 }
 
@@ -749,12 +749,6 @@ impl Drop for StartedRoutingServices {
             task.abort();
         }
     }
-}
-
-fn spawn_discard_incoming_tunnels_task(
-    mut incoming_rx: mpsc::Receiver<TunnelTransport>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move { while incoming_rx.recv().await.is_some() {} })
 }
 
 fn spawn_trusted_service_server(

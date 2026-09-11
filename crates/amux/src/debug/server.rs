@@ -6,22 +6,22 @@ use tokio::sync::RwLock;
 
 use crate::agents::AgentRecord;
 use crate::debug::{DebugFormat, LossyPath};
+use crate::link::{ChannelDebug, ChannelPool};
 use crate::routing::{RoutingCore, RoutingDebug};
 use crate::services::DebugAgent;
-use crate::tunnel::{TunnelDebug, TunnelPool};
 use crate::user_state::ServerState;
 
 pub(crate) async fn dump_server_debug_info(
     state: &Arc<RwLock<ServerState>>,
     routing: &RoutingCore,
-    tunnel_pool: &TunnelPool,
+    channel_pool: &ChannelPool,
     remote_agent_count: usize,
     format: DebugFormat,
     verbose: bool,
 ) -> String {
-    let link_registry = tunnel_pool.link_registry();
+    let link_registry = channel_pool.link_registry();
     let routing = routing.debug_view(&link_registry).await;
-    let tunnels = tunnel_pool.debug_view().await;
+    let channels = channel_pool.debug_view();
     let state_guard = state.read().await;
     // A profile is given a credential store whether or not it holds a token,
     // so this reports that a provider is installed, never that a login exists.
@@ -40,7 +40,7 @@ pub(crate) async fn dump_server_debug_info(
         agent_count,
         remote_agent_count,
         routing: &routing,
-        tunnels: &tunnels,
+        channels: &channels,
         verbose,
     };
 
@@ -58,7 +58,7 @@ struct ServerDebugView<'a> {
     agent_count: usize,
     remote_agent_count: usize,
     routing: &'a RoutingDebug,
-    tunnels: &'a [TunnelDebug],
+    channels: &'a [ChannelDebug],
     verbose: bool,
 }
 
@@ -73,11 +73,11 @@ impl Serialize for ServerDebugView<'_> {
         map.serialize_entry("host_count", &self.routing.hosts.len())?;
         map.serialize_entry("route_count", &self.routing.routes.len())?;
         map.serialize_entry("peer_link_count", &self.routing.links.len())?;
-        map.serialize_entry("tunnel_count", &self.tunnels.len())?;
+        map.serialize_entry("channel_count", &self.channels.len())?;
         map.serialize_entry("hosts", &self.routing.hosts)?;
         map.serialize_entry("routes", &self.routing.routes)?;
         map.serialize_entry("links", &self.routing.links)?;
-        map.serialize_entry("tunnels", &self.tunnels)?;
+        map.serialize_entry("channels", &self.channels)?;
         map.serialize_entry("config", &self.state.config)?;
 
         if self.verbose {
@@ -97,7 +97,7 @@ impl Serialize for ServerDebugView<'_> {
                     agent_count: self.agent_count,
                     remote_agent_count: self.remote_agent_count,
                     routing: self.routing,
-                    tunnels: self.tunnels,
+                    channels: self.channels,
                     verbose: self.verbose,
                 },
             )?;
@@ -129,7 +129,7 @@ struct UsersListView<'a> {
     agent_count: usize,
     remote_agent_count: usize,
     routing: &'a RoutingDebug,
-    tunnels: &'a [TunnelDebug],
+    channels: &'a [ChannelDebug],
     verbose: bool,
 }
 
@@ -144,7 +144,7 @@ impl Serialize for UsersListView<'_> {
             agent_count: self.agent_count,
             remote_agent_count: self.remote_agent_count,
             routing: self.routing,
-            tunnels: self.tunnels,
+            channels: self.channels,
             verbose: self.verbose,
         })?;
         seq.end()
@@ -158,7 +158,7 @@ struct UserView<'a> {
     agent_count: usize,
     remote_agent_count: usize,
     routing: &'a RoutingDebug,
-    tunnels: &'a [TunnelDebug],
+    channels: &'a [ChannelDebug],
     verbose: bool,
 }
 
@@ -171,11 +171,11 @@ impl Serialize for UserView<'_> {
         map.serialize_entry("host_count", &self.routing.hosts.len())?;
         map.serialize_entry("route_count", &self.routing.routes.len())?;
         map.serialize_entry("peer_link_count", &self.routing.links.len())?;
-        map.serialize_entry("tunnel_count", &self.tunnels.len())?;
+        map.serialize_entry("channel_count", &self.channels.len())?;
         map.serialize_entry("hosts", &self.routing.hosts)?;
         map.serialize_entry("routes", &self.routing.routes)?;
         map.serialize_entry("links", &self.routing.links)?;
-        map.serialize_entry("tunnels", &self.tunnels)?;
+        map.serialize_entry("channels", &self.channels)?;
         map.serialize_entry(
             "agents",
             &AgentsView {
