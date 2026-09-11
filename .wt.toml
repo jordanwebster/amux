@@ -170,7 +170,7 @@ run = "scripts/ios-verify.sh"
 # docs/RELEASE.md holds the contract, including the one-time App Store Connect
 # setup behind it.
 [task.release]
-run = 'timeout 5400 python3 -B scripts/release.py "$@"'
+run = 'timeout 8100 python3 -B scripts/release.py "$@"'
 needs = ["ios-rust", "ios-scope-audit"]
 
 # Signs a QA account into the real amux.sh from this Mac, with no app, the

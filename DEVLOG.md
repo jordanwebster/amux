@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **Release steps can report their own timeouts.** The release
+recipe now allows 8100 seconds: the archive, export and validation budgets
+total 7200 seconds, with 900 seconds left for setup and recovery reporting.
+The former 5400-second wrapper could kill a slow run before its step timeout.
+Verified the configured budget against all three subprocess timeouts.
+
 2026-09-11 — **A report of a conversation replays as that conversation.**
 
 Four of the things on a conversation screen are in no message the shared
