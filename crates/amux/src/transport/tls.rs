@@ -178,6 +178,28 @@ pub(crate) fn trusted_device_channel_tracked(
     )
 }
 
+pub(crate) async fn trusted_device_stream_tracked(
+    addr: SocketAddr,
+    identity: DeviceIdentity,
+    trust_store: SharedTrustStore,
+    peer: HostId,
+    dialed_tracker: Option<crate::dispatcher::TrackedTcpConnections>,
+) -> Result<ClientTlsStream<TcpStream>> {
+    let config = identity
+        .client_tls_config_for_peer(trust_store, peer)
+        .map_err(|error| TransportError::Config(error.to_string()))?;
+    let stream = TcpStream::connect(addr).await?;
+    stream.set_nodelay(true)?;
+    configure_tcp_keepalive(&stream);
+    let stream = crate::dispatcher::track_tcp_stream(stream, dialed_tracker.as_ref())?;
+    let server_name =
+        ServerName::try_from("amux-device.local").expect("static device server name is valid");
+    TlsConnector::from(Arc::new(config))
+        .connect(server_name, stream)
+        .await
+        .map_err(TransportError::Io)
+}
+
 pub(crate) async fn pairing_channel_from_io<IO>(io: IO) -> Result<Channel>
 where
     IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,

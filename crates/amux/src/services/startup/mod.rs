@@ -483,6 +483,7 @@ async fn start_user_services_with_clock(
         parts.runtime.routing.clone(),
         parts.runtime.channels.clone(),
         parts.runtime.connections.clone(),
+        parts.runtime.incoming_streams_tx.clone(),
     );
     let client = ClientService::new(
         agent.clone(),
@@ -534,7 +535,8 @@ async fn start_user_services_with_clock(
         trusted_incoming_tx.clone(),
         pairing_incoming_tx.clone(),
         DEVICE_TLS_HANDSHAKE_TIMEOUT,
-    )?;
+    )?
+    .with_link_ctx(parts.runtime.link_ctx());
     parts.runtime.tasks.push(serve_inbound_streams(
         Arc::new(dispatcher.clone()),
         parts.incoming_streams_rx,

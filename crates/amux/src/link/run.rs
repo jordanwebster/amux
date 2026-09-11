@@ -1028,8 +1028,63 @@ fn signal_establishment(sender: Option<EstablishmentSender>, result: Result<Host
     }
 }
 
-// These compatibility entry points keep transport call sites compiling while
-// native carrier attachment moves outward into the connection boundaries.
+pub(crate) fn spawn_connector_with_establishment(
+    ctx: LinkConnectorCtx,
+    carrier: Arc<dyn Carrier>,
+) -> (ConnectorTask, EstablishmentReceiver) {
+    spawn_connector(ctx, carrier, None, None, None)
+}
+
+pub(crate) fn spawn_connector_with_auth_establishment_and_shutdown(
+    ctx: LinkConnectorCtx,
+    carrier: Arc<dyn Carrier>,
+    auth: LinkConnectorAuth,
+    shutdown_rx: watch::Receiver<bool>,
+    refresh_rx: Option<LinkConnectorRefreshReceiver>,
+) -> (ConnectorTask, EstablishmentReceiver) {
+    spawn_connector(ctx, carrier, Some(auth), Some(shutdown_rx), refresh_rx)
+}
+
+fn spawn_connector(
+    mut ctx: LinkConnectorCtx,
+    carrier: Arc<dyn Carrier>,
+    auth: Option<LinkConnectorAuth>,
+    shutdown_rx: Option<watch::Receiver<bool>>,
+    refresh_rx: Option<LinkConnectorRefreshReceiver>,
+) -> (ConnectorTask, EstablishmentReceiver) {
+    let (established_tx, established_rx) = oneshot::channel();
+    let established = Arc::new(StdRwLock::new(Some(established_tx)));
+    ctx.connector_auth = auth;
+    ctx.established_tx = Some(established.clone());
+    ctx.shutdown_rx = shutdown_rx;
+    ctx.refresh_rx = refresh_rx;
+    let task = tokio::spawn(async move {
+        let result = run_link(ctx, carrier, crate::routing::ConnectRole::Connector)
+            .await
+            .map_err(link_error_status);
+        if let Some(sender) = established
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            let status =
+                result.as_ref().err().map(clone_status).unwrap_or_else(|| {
+                    tonic::Status::unavailable("link closed before establishment")
+                });
+            let _ = sender.send(Err(status));
+        }
+        result
+    });
+    (task, established_rx)
+}
+
+fn link_error_status(error: LinkError) -> tonic::Status {
+    match error {
+        LinkError::Status(status) => status,
+        LinkError::Io(error) => tonic::Status::unavailable(error.to_string()),
+    }
+}
+
 pub(crate) fn spawn_connector_to_channel_with_establishment(
     _ctx: LinkConnectorCtx,
     _channel: tonic::transport::Channel,

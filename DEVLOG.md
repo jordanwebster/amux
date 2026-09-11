@@ -1,3 +1,10 @@
+2026-09-11 — **Attach trusted TCP links to the native carrier runtime.** A
+trusted device connection now completes its pinned TLS handshake and then runs
+the version-2 control protocol plus independent application streams over one
+yamux carrier. Both dialed and accepted links feed inbound streams back through
+the existing pinned application handshake, and connector establishment reports
+the real hello result instead of a transition placeholder.
+
 2026-09-11 — **Replace framed tunnels with native link channels.** Application
 RPCs now open independently flow-controlled streams through the selected link,
 with shared call channels and fresh session and bulk channels. Relays forward

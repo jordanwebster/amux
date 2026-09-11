@@ -21,7 +21,7 @@ use crate::connection::ConnectionManager;
 use crate::discovery::{Discovery, ScriptedDiscovery};
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};
-use crate::link::ChannelPool;
+use crate::link::{CarrierKind, ChannelPool, MuxCarrier, MuxRole};
 use crate::profile::runtime::{
     self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
 };
@@ -1168,16 +1168,22 @@ impl Daemon {
                 runtime.trust.clone(),
             )
         };
-        let channel = crate::transport::trusted_device_channel_tracked(
+        let stream = crate::transport::trusted_device_stream_tracked(
             other.direct_addr(),
             identity,
             trust_store,
             other.host_id(),
             Some(other.inner.tracked_tcp.clone()),
         )
+        .await
         .expect("prepare SSH fixture transport");
+        let carrier = Arc::new(MuxCarrier::new(
+            stream,
+            MuxRole::Connector,
+            CarrierKind::Ssh,
+        ));
         let (_task, established) =
-            crate::routing::spawn_connector_to_channel_with_establishment(connector_ctx, channel);
+            crate::routing::spawn_connector_with_establishment(connector_ctx, carrier);
         tokio::time::timeout(super::assertions::DEFAULT_TIMEOUT, established)
             .await
             .expect("SSH fixture link establishment timed out")

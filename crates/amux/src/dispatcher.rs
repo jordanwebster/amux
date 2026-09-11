@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
 use crate::identity::{self, DeviceIdentity, IdentityError};
-use crate::link::ByteStream;
+use crate::link::{ByteStream, CarrierKind, LinkCtx, MuxCarrier, MuxRole, run_link};
 use crate::pairing::PairMode;
 use crate::resource_limits::{
     EXTERNAL_TCP_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_TCP_TLS_HANDSHAKE_RATE_LIMIT,
@@ -78,6 +78,7 @@ pub(crate) struct TunnelDispatcher {
     handshake_timeout: Duration,
     external_tcp_handshake_limiter: std::sync::Arc<Mutex<SlidingWindowRateLimiter<IpAddr>>>,
     external_tcp_handshake_slots: std::sync::Arc<Semaphore>,
+    link_ctx: Option<LinkCtx>,
 }
 
 enum DispatchTarget {
@@ -116,7 +117,13 @@ impl TunnelDispatcher {
             external_tcp_handshake_slots: std::sync::Arc::new(Semaphore::new(
                 EXTERNAL_TCP_TLS_HANDSHAKE_CONCURRENCY,
             )),
+            link_ctx: None,
         })
+    }
+
+    pub(crate) fn with_link_ctx(mut self, link_ctx: LinkCtx) -> Self {
+        self.link_ctx = Some(link_ctx);
+        self
     }
 
     pub(crate) fn serve_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
@@ -180,7 +187,10 @@ impl TunnelDispatcher {
                 tokio::spawn(async move {
                     let _permit = permit;
                     if let Err(error) = dispatcher
-                        .dispatch(stream, PreTrustPairingReachability::NoReusableReachability)
+                        .dispatch_external(
+                            stream,
+                            PreTrustPairingReachability::NoReusableReachability,
+                        )
                         .await
                     {
                         tracing::warn!(peer = %addr, error = %error, "dispatcher rejected TCP stream");
@@ -224,24 +234,7 @@ impl TunnelDispatcher {
     where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
-        let tls_stream = match tokio::time::timeout(
-            self.handshake_timeout,
-            self.acceptor.accept(stream),
-        )
-        .await
-        {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(error)) => {
-                if !take_mtls_audit_emitted() {
-                    audit::auth_mtls_handshake_failure(&error);
-                }
-                return Err(DispatchError::Tls(error));
-            }
-            Err(_) => {
-                audit::auth_mtls_handshake_failure("TLS handshake timed out");
-                return Err(DispatchError::Timeout);
-            }
-        };
+        let tls_stream = self.accept_tls(stream).await?;
 
         match self.dispatch_target(&tls_stream)? {
             DispatchTarget::Trusted(peer) => self
@@ -261,6 +254,79 @@ impl TunnelDispatcher {
                 .await
                 .map_err(|_| DispatchError::ChannelClosed),
             DispatchTarget::Close => Ok(()),
+        }
+    }
+
+    async fn dispatch_external<IO>(
+        &self,
+        stream: IO,
+        pairing_reachability: PreTrustPairingReachability,
+    ) -> Result<(), DispatchError>
+    where
+        IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        let tls_stream = self.accept_tls(stream).await?;
+        match self.dispatch_target(&tls_stream)? {
+            DispatchTarget::Trusted(peer) => {
+                let Some(ctx) = self.link_ctx.clone() else {
+                    return self
+                        .trusted_tx
+                        .send(
+                            BoxedGrpcIo::tls_trusted(tls_stream, peer)
+                                .track_trusted_peer(&self.trusted_connections),
+                        )
+                        .await
+                        .map_err(|_| DispatchError::ChannelClosed);
+                };
+                let carrier = std::sync::Arc::new(MuxCarrier::new(
+                    tls_stream,
+                    MuxRole::Acceptor,
+                    CarrierKind::Quic,
+                ));
+                tokio::spawn(async move {
+                    if let Err(error) = run_link(
+                        ctx.with_authenticated_peer(peer),
+                        carrier,
+                        crate::routing::ConnectRole::Acceptor,
+                    )
+                    .await
+                    {
+                        tracing::warn!(%peer, %error, "inbound direct link ended with an error");
+                    }
+                });
+                Ok(())
+            }
+            DispatchTarget::Pairing => self
+                .pairing_tx
+                .send(BoxedGrpcIo::pre_trust_pairing(
+                    tls_stream,
+                    pairing_reachability,
+                ))
+                .await
+                .map_err(|_| DispatchError::ChannelClosed),
+            DispatchTarget::Close => Ok(()),
+        }
+    }
+
+    async fn accept_tls<IO>(
+        &self,
+        stream: IO,
+    ) -> Result<tokio_rustls::server::TlsStream<IO>, DispatchError>
+    where
+        IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        match tokio::time::timeout(self.handshake_timeout, self.acceptor.accept(stream)).await {
+            Ok(Ok(stream)) => Ok(stream),
+            Ok(Err(error)) => {
+                if !take_mtls_audit_emitted() {
+                    audit::auth_mtls_handshake_failure(&error);
+                }
+                Err(DispatchError::Tls(error))
+            }
+            Err(_) => {
+                audit::auth_mtls_handshake_failure("TLS handshake timed out");
+                Err(DispatchError::Timeout)
+            }
         }
     }
 

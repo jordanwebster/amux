@@ -43,4 +43,5 @@ pub(crate) use crate::link::run::{
     LinkConnectorRefreshRequest, LinkConnectorToken, LinkConnectorTokenRefresher, LinkCtx,
     LinkTokenAuthenticator, spawn_connector_to_channel_with_auth_establishment_and_shutdown,
     spawn_connector_to_channel_with_establishment,
+    spawn_connector_with_auth_establishment_and_shutdown, spawn_connector_with_establishment,
 };

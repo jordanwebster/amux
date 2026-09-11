@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
-use tonic::transport::Endpoint;
 use tracing::Instrument;
 
 use crate::HostId;
@@ -16,15 +15,14 @@ use crate::connection::ConnectionManager;
 use crate::discovery::{Discovery, DiscoveryEvent, FoundHosts};
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::DeviceIdentity;
-use crate::link::ChannelPool;
+use crate::link::{
+    CarrierKind, ChannelPool, LinkCarrier as NativeLinkCarrier, MuxCarrier, MuxRole,
+};
 use crate::routing::{
     Host, LinkCarrier, LinkConnectorCtx, LiveLocalHost, Route, RoutingCore,
-    spawn_connector_to_channel_with_establishment,
+    spawn_connector_with_establishment,
 };
-use crate::transport::{
-    channel_from_single_io, configure_tonic_endpoint_keepalive, spawn_ssh_relay,
-    trusted_device_channel_tracked,
-};
+use crate::transport::{spawn_ssh_relay, trusted_device_stream_tracked};
 use crate::trust::{Reachability, SharedTrustStore};
 
 const DIRECT_LINK_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -57,6 +55,7 @@ struct ReachabilityLinkContext {
     routing: Arc<RoutingCore>,
     channels: Arc<ChannelPool>,
     connections: Arc<ConnectionManager>,
+    incoming_streams_tx: tokio::sync::mpsc::Sender<(HostId, crate::link::ByteStream)>,
     runtime: Arc<Mutex<Option<ReachabilityRuntime>>>,
     dialed_tcp_tracker: Arc<Mutex<Option<TrackedTcpConnections>>>,
 }
@@ -83,6 +82,7 @@ impl ReachabilityLinkConnector {
         routing: Arc<RoutingCore>,
         channels: Arc<ChannelPool>,
         connections: Arc<ConnectionManager>,
+        incoming_streams_tx: tokio::sync::mpsc::Sender<(HostId, crate::link::ByteStream)>,
     ) -> Self {
         Self {
             mode: ReachabilityLinkConnectorMode::Enabled(Arc::new(
@@ -94,6 +94,7 @@ impl ReachabilityLinkConnector {
                         routing,
                         channels,
                         connections,
+                        incoming_streams_tx,
                         runtime: Arc::new(Mutex::new(None)),
                         dialed_tcp_tracker: Arc::new(Mutex::new(None)),
                     },
@@ -462,11 +463,15 @@ async fn establish_reachability_link(
         Reachability::Direct { addrs } => {
             let mut last_error = None;
             for addr in addrs {
-                match prepare_direct_channel(&context, attempt.peer, addr) {
-                    Ok(channel) => match establish_channel(
+                match prepare_direct_stream(&context, attempt.peer, addr).await {
+                    Ok(stream) => match establish_carrier(
                         &context,
                         attempt.peer,
-                        channel,
+                        Arc::new(MuxCarrier::new(
+                            stream,
+                            MuxRole::Connector,
+                            CarrierKind::Quic,
+                        )),
                         LinkCarrier::Direct,
                     )
                     .await
@@ -495,19 +500,10 @@ async fn establish_reachability_link(
             false
         }
         Reachability::Ssh { target, profile } => {
-            let channel = match spawn_ssh_relay(&target, profile)
-                .map(|io| {
-                    channel_from_single_io(
-                        configure_tonic_endpoint_keepalive(Endpoint::from_static(
-                            "http://ssh-relay",
-                        )),
-                        "SSH relay transport",
-                        io,
-                    )
-                })
-                .map_err(|error| error.to_string())
+            let carrier = match spawn_ssh_relay(&target, profile).map_err(|error| error.to_string())
             {
-                Ok(channel) => channel,
+                Ok(io) => Arc::new(MuxCarrier::new(io, MuxRole::Connector, CarrierKind::Ssh))
+                    as Arc<dyn NativeLinkCarrier>,
                 Err(error) => {
                     context
                         .connections
@@ -517,7 +513,7 @@ async fn establish_reachability_link(
                     return false;
                 }
             };
-            match establish_channel(&context, attempt.peer, channel, LinkCarrier::Ssh).await {
+            match establish_carrier(&context, attempt.peer, carrier, LinkCarrier::Ssh).await {
                 Ok((host, connector_task, abort_on_drop)) => {
                     context
                         .connections
@@ -539,30 +535,31 @@ async fn establish_reachability_link(
     }
 }
 
-fn prepare_direct_channel(
+async fn prepare_direct_stream(
     context: &ReachabilityLinkContext,
     peer: HostId,
     addr: std::net::SocketAddr,
-) -> Result<tonic::transport::Channel, String> {
+) -> Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>, String> {
     let tracker = context
         .dialed_tcp_tracker
         .lock()
         .ok()
         .and_then(|tracker| tracker.clone());
-    trusted_device_channel_tracked(
+    trusted_device_stream_tracked(
         addr,
         context.identity.clone(),
         context.trust_store.clone(),
         peer,
         tracker,
     )
+    .await
     .map_err(|error| error.to_string())
 }
 
-async fn establish_channel(
+async fn establish_carrier(
     context: &ReachabilityLinkContext,
     peer: HostId,
-    channel: tonic::transport::Channel,
+    native_carrier: Arc<dyn NativeLinkCarrier>,
     carrier: LinkCarrier,
 ) -> Result<(Host, JoinHandle<Result<(), tonic::Status>>, AbortTaskOnDrop), String> {
     let connector_ctx = LinkConnectorCtx::new_live(
@@ -571,9 +568,10 @@ async fn establish_channel(
         context.channels.link_registry(),
     )
     .with_expected_peer(peer)
-    .with_carrier(carrier);
+    .with_carrier(carrier)
+    .with_incoming_streams(context.incoming_streams_tx.clone());
     let (connector_task, established_rx) =
-        spawn_connector_to_channel_with_establishment(connector_ctx, channel);
+        spawn_connector_with_establishment(connector_ctx, native_carrier);
     let abort_on_failure = AbortTaskOnDrop(connector_task.abort_handle());
     let host = match tokio::time::timeout(DIRECT_LINK_ESTABLISHMENT_TIMEOUT, established_rx).await {
         Ok(Ok(Ok(host))) => host,
