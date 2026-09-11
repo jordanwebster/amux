@@ -103,11 +103,18 @@ final class ReportFreeze: ReportFreezing {
     /// them.
     private func traceLines() -> Result<String, PartAbsent> {
         var events = DoorHost.shared.traceEvents
-        let place = place()
-        if let place, events.last != .route(place) {
+        if let place = place(), events.last != .route(place) {
             events.append(.route(place))
         }
-        if case .conversation(let agent)? = place {
+        // Where the recording ends, read off the trail rather than asked for
+        // again. A freeze asked for through the driving door is not told where
+        // the app is — it is given no page to ask — and the trail is the one
+        // account of it that is right either way.
+        let ended: Place? = events.reversed().compactMap {
+            if case .route(let place) = $0 { return place }
+            return nil
+        }.first
+        if case .conversation(let agent)? = ended {
             events.append(.sheet(DoorHost.shared.panels[agent]))
         }
         let readings = DoorHost.shared.readings
