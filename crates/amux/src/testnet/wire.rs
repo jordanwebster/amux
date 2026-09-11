@@ -8,7 +8,13 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, DigitallySignedStruct, Error as TlsError, SignatureScheme, version};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
 
 use super::TestNet;
 use super::assertions::DEFAULT_TIMEOUT;
@@ -476,5 +482,96 @@ impl WirePeer {
             .await
             .unwrap_or_else(|_| panic!("timed out waiting for '{}'", self.victim_name))
             .unwrap_or_else(|error| panic!("control stream failed: {error}"))
+    }
+
+    /// Spends the victim's per-source external-TCP handshake budget and
+    /// returns after the listener refuses a later connection before TLS.
+    pub async fn flood_handshakes_until_rate_limited(net: &TestNet, victim: &str) {
+        const MAX_FLOOD_ATTEMPTS: usize = 20;
+        let mut admitted = 0;
+        for _ in 0..MAX_FLOOD_ATTEMPTS {
+            if Self::anonymous_tls_handshake_succeeds(net, victim).await {
+                admitted += 1;
+            } else if admitted > 0 {
+                return;
+            }
+        }
+        panic!(
+            "expected '{victim}'s per-source handshake rate limiter to refuse a \
+             handshake after {admitted} were admitted"
+        );
+    }
+
+    async fn anonymous_tls_handshake_succeeds(net: &TestNet, victim: &str) -> bool {
+        const HANDSHAKE_PROBE_TIMEOUT: Duration = Duration::from_millis(750);
+        let addr = net.daemon(victim).inner.tcp_addr.unwrap_or_else(|| {
+            panic!("anonymous TLS handshake probe: victim '{victim}' has no TCP listener")
+        });
+        let Ok(stream) = TcpStream::connect(addr).await else {
+            return false;
+        };
+        let _ = stream.set_nodelay(true);
+        let connector = TlsConnector::from(Arc::new(anonymous_device_client_config()));
+        let server_name =
+            ServerName::try_from("amux-device.local").expect("static server name is valid");
+        tokio::time::timeout(
+            HANDSHAKE_PROBE_TIMEOUT,
+            connector.connect(server_name, stream),
+        )
+        .await
+        .map(|result| result.is_ok())
+        .unwrap_or(false)
+    }
+}
+
+fn anonymous_device_client_config() -> ClientConfig {
+    let verifier = Arc::new(NoServerVerification {
+        supported_algs: rustls::crypto::ring::default_provider().signature_verification_algorithms,
+    });
+    let mut config = ClientConfig::builder_with_protocol_versions(&[&version::TLS13])
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec()];
+    config
+}
+
+#[derive(Debug)]
+struct NoServerVerification {
+    supported_algs: WebPkiSupportedAlgorithms,
+}
+
+impl ServerCertVerifier for NoServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, TlsError> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        verify_tls12_signature(message, cert, dss, &self.supported_algs)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        verify_tls13_signature(message, cert, dss, &self.supported_algs)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.supported_algs.supported_schemes()
     }
 }

@@ -4,7 +4,7 @@
 //! multiplexer used by the TCP fallback. These chapters exercise the
 //! carrier-independent control runtime rather than a gRPC service.
 
-use amux::testnet::{LinkCloseReason, TestNet, WirePeer};
+use amux::testnet::{LinkCloseReason, TestNet, Via, WirePeer};
 
 #[tokio::test]
 async fn the_same_link_runtime_establishes_both_roles() {
@@ -130,4 +130,22 @@ async fn hello_neighbor_snapshot_and_later_deltas_drive_presence() {
     victim.sees(&delta).await;
     wire.send_neighbor_down(snapshot.host_id()).await;
     victim.cannot_see(&snapshot).await;
+}
+
+/// Fresh TLS handshakes from one source are bounded before the dispatcher
+/// allocates link state. A paired link established before the flood remains
+/// usable because admission limits only new connections.
+#[tokio::test]
+async fn handshake_floods_are_rate_limited_without_disturbing_existing_links() {
+    let net = TestNet::builder()
+        .daemon("ally")
+        .daemon("victim")
+        .paired("ally", "victim", Via::Direct)
+        .start()
+        .await;
+    let [ally, victim] = net.daemons(["ally", "victim"]);
+
+    ally.can_call(&victim).await;
+    WirePeer::flood_handshakes_until_rate_limited(&net, "victim").await;
+    ally.can_call(&victim).await;
 }

@@ -9056,3 +9056,9 @@ accept cannot discard a half-open stream and one peer withholding a preface
 cannot block later streams. Established links dispatch local delivery and relay
 forwarding away from their control loop, keeping neighbor updates and link
 expiry responsive when a destination is saturated or slow.
+
+2026-09-11 — **Handshake floods leave established links alone.** Wire
+conformance once again spends the real TCP listener's per-source TLS handshake
+budget and observes a later connection refused before TLS, then proves a paired
+link established before the flood can still make calls through the rewritten
+native-stream dispatcher path.
