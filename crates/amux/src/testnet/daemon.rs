@@ -366,68 +366,8 @@ impl Daemon {
     /// link, bypassing the local route lookup. A same-tenant control must
     /// receive its frame; the foreign tenant must allocate no endpoint.
     pub async fn cloud_cannot_forward_to(&self, other: &Daemon, control: &Daemon) {
-        use wire::pb;
-        let relay_id = self.net.upgrade().unwrap().cloud.as_ref().unwrap().host_id;
-        let parts = self.try_parts().await.unwrap();
-        let (_, tx) = parts
-            .tunnels
-            .link_registry()
-            .link_to_peer(relay_id)
-            .await
-            .unwrap();
-        let forbidden = uuid::Uuid::new_v4();
-        let allowed = uuid::Uuid::new_v4();
-        for (target, tunnel) in [(other, forbidden), (control, allowed)] {
-            tx.send(pb::Message {
-                body: Some(pb::message::Body::TunnelOpen(pb::TunnelOpen {
-                    tunnel_id: tunnel.as_bytes().to_vec(),
-                    src: self.host_id().as_bytes().to_vec(),
-                    dst: target.host_id().as_bytes().to_vec(),
-                })),
-            })
-            .await
-            .unwrap();
-        }
-        let control_parts = control.try_parts().await.unwrap();
-        eventually(
-            "same-tenant control receives the tunnel frame",
-            async || {
-                control_parts
-                    .tunnels
-                    .active_tunnels()
-                    .await
-                    .iter()
-                    .any(|(id, _, _)| id.to_wire() == allowed.as_bytes())
-            },
-            control.failure_dump(),
-        )
-        .await;
-        let other_parts = other.try_parts().await.unwrap();
-        super::assertions::consistently_for(
-            "foreign tenant receives no tunnel frame",
-            std::time::Duration::from_millis(250),
-            async || {
-                !other_parts
-                    .tunnels
-                    .active_tunnels()
-                    .await
-                    .iter()
-                    .any(|(id, _, _)| id.to_wire() == forbidden.as_bytes())
-            },
-            other.failure_dump(),
-        )
-        .await;
-        for (target, tunnel) in [(other, forbidden), (control, allowed)] {
-            tx.send(pb::Message {
-                body: Some(pb::message::Body::TunnelClose(pb::TunnelClose {
-                    tunnel_id: tunnel.as_bytes().to_vec(),
-                    dst: target.host_id().as_bytes().to_vec(),
-                    error: None,
-                })),
-            })
-            .await
-            .unwrap();
-        }
+        let _ = (other, control);
+        panic!("frame-based relay probes are unavailable during the native-stream transition");
     }
 
     /// Dial a known address and pin the responder locally so failure must
@@ -458,10 +398,8 @@ impl Daemon {
         )
         .unwrap();
         let result = tokio::time::timeout(super::assertions::DEFAULT_TIMEOUT, async {
-            let mut client = wire::link_service_client::LinkServiceClient::new(channel);
-            client
-                .connect(futures_util::stream::pending::<wire::pb::Message>())
-                .await
+            let mut client = wire::client_service_client(channel);
+            client.list_hosts(wire::ListHostsRequest {}).await
         })
         .await
         .expect("device authentication must finish with a refusal");

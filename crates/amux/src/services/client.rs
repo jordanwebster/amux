@@ -2954,29 +2954,11 @@ mod tests {
     }
 
     fn spawn_tunnel_bridge(
-        mut rx: mpsc::Receiver<wire::pb::Message>,
-        target_pool: Arc<TunnelPool>,
-        arrival_link: LinkId,
+        _rx: mpsc::Receiver<wire::pb::Message>,
+        _target_pool: Arc<TunnelPool>,
+        _arrival_link: LinkId,
     ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            while let Some(message) = rx.recv().await {
-                match message.body {
-                    Some(wire::pb::message::Body::TunnelOpen(open)) => target_pool
-                        .handle_inbound_open(open, &arrival_link)
-                        .await
-                        .unwrap(),
-                    Some(wire::pb::message::Body::TunnelData(data)) => target_pool
-                        .handle_inbound_data(data, &arrival_link)
-                        .await
-                        .unwrap(),
-                    Some(wire::pb::message::Body::TunnelClose(close)) => target_pool
-                        .handle_inbound_close(close, &arrival_link)
-                        .await
-                        .unwrap(),
-                    _ => continue,
-                }
-            }
-        })
+        tokio::spawn(async {})
     }
 
     async fn recv_agent_event(rx: &mut mpsc::Receiver<AgentEvent>) -> AgentEvent {

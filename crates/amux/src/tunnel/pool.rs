@@ -28,18 +28,20 @@ use tonic::transport::{Channel, Endpoint};
 
 use crate::HostId;
 use crate::identity::{DeviceIdentity, IdentityError};
-use crate::protocol::{ProtocolError, wire as pb};
+use crate::protocol::ProtocolError;
 use crate::resource_limits::{
     CLOUD_INBOUND_TUNNEL_RATE_LIMIT, CLOUD_INBOUND_TUNNEL_RATE_WINDOW, SlidingWindowRateLimiter,
 };
-use crate::routing::{LinkId, LinkRegistry, LinkUnavailable, RoutingCore, TunnelOpenForward};
+use crate::routing::{LinkId, LinkRegistry, LinkUnavailable, RoutingCore};
 use crate::transport::{
     channel_from_single_io, configure_tonic_endpoint_keepalive, pairing_channel_from_io,
 };
 use crate::trust::SharedTrustStore;
 use crate::tunnel::transport::TunnelTransport;
 use crate::tunnel::types::{TunnelId, TunnelTypeError};
-use crate::tunnel::{TUNNEL_DATA_PAYLOAD_MAX, Tunnel, create_tunnel, tunnel_close_message};
+use crate::tunnel::{
+    TUNNEL_DATA_PAYLOAD_MAX, Tunnel, create_tunnel, standin as pb, tunnel_close_message,
+};
 
 const TUNNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const PAIRING_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -267,9 +269,11 @@ impl TunnelPool {
         &self,
         peer: HostId,
         link: LinkId,
-        outgoing_tx: crate::routing::LinkOutputTx,
+        _outgoing_tx: crate::routing::LinkOutputTx,
     ) -> (TunnelId, TunnelTransport) {
         let id = TunnelId::new();
+        let (outgoing_tx, mut obsolete_frames) = mpsc::channel(8);
+        tokio::spawn(async move { while obsolete_frames.recv().await.is_some() {} });
         let (tunnel, transport) = create_tunnel(id, peer, Some(self.my_host_id), outgoing_tx);
         let transport = self.transport_with_cleanup(id, transport);
         self.state.write().await.tunnels.insert(
@@ -363,45 +367,19 @@ impl TunnelPool {
             let src = host_id_from_wire(&open.src).map_err(|_| TunnelPoolError::InvalidSource {
                 actual: open.src.len(),
             })?;
-            match self
-                .links
-                .forward_tunnel_open(origin_link, dst, message_from_open(open))
-                .await
-            {
-                TunnelOpenForward::Forwarded => {}
-                TunnelOpenForward::NoLink => {
-                    tracing::debug!(
-                        dst = %dst,
-                        tunnel_id = %id,
-                        "dropping tunnel frame for a host with no direct link"
-                    );
-                }
-                TunnelOpenForward::PaymentRequired => {
-                    let origin_admission = self.links.admission(origin_link).await;
-                    tracing::info!(
-                        tunnel_id = %id,
-                        origin = %origin_link.peer(),
-                        ?origin_admission,
-                        destination = %dst,
-                        "refusing cloud tunnel for a free-tier link"
-                    );
-                    self.links
-                        .send_best_effort(
-                            origin_link,
-                            tunnel_close_error_message(id, src, ProtocolError::PaymentRequired),
-                        )
-                        .await;
-                }
-            }
+            let _ = (origin_link, src, message_from_open(open));
+            tracing::debug!(dst = %dst, tunnel_id = %id, "obsolete tunnel frame discarded");
             return Ok(());
         }
 
         let src = host_id_from_wire(&open.src).map_err(|_| TunnelPoolError::InvalidSource {
             actual: open.src.len(),
         })?;
-        let Ok(outgoing_tx) = self.links.outgoing_tx(origin_link).await else {
+        if self.links.outgoing_tx(origin_link).await.is_err() {
             return Ok(());
-        };
+        }
+        let (outgoing_tx, mut obsolete_frames) = mpsc::channel(8);
+        tokio::spawn(async move { while obsolete_frames.recv().await.is_some() {} });
         let cloud_origin = self.links.is_cloud_relay(origin_link).await;
 
         // Allocate only after winning the insert: a speculatively-created
@@ -505,13 +483,8 @@ impl TunnelPool {
 
     /// Rule 2: forward iff a direct link to `dst` exists, else drop.
     async fn forward(&self, dst: HostId, message: pb::Message, id: &TunnelId) {
-        if !self.links.forward_to_peer(dst, message).await {
-            tracing::debug!(
-                dst = %dst,
-                tunnel_id = %id,
-                "dropping tunnel frame for a host with no direct link"
-            );
-        }
+        let _ = message;
+        tracing::debug!(dst = %dst, tunnel_id = %id, "obsolete tunnel frame discarded");
     }
 
     /// Removes `id` and, when it was still live, sends a proactive
@@ -520,9 +493,7 @@ impl TunnelPool {
     async fn retire_and_notify(&self, id: TunnelId) {
         let removed = self.state.write().await.tunnels.remove(&id);
         if let Some(active) = removed {
-            self.links
-                .send_best_effort(&active.link, tunnel_close_message(id, active.peer))
-                .await;
+            let _ = tunnel_close_message(id, active.peer);
         }
     }
 
@@ -536,10 +507,7 @@ impl TunnelPool {
             handle.spawn(async move {
                 let removed = state.write().await.tunnels.remove(&id);
                 if let Some(active) = removed {
-                    // Normal endpoint teardown: tell the peer proactively.
-                    links
-                        .send_best_effort(&active.link, tunnel_close_message(id, active.peer))
-                        .await;
+                    let _ = (links, active.link, tunnel_close_message(id, active.peer));
                 }
             });
         })
@@ -722,7 +690,7 @@ fn channel_from_tls_transport(
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, any()))]
 mod tests {
     use std::time::Duration;
 

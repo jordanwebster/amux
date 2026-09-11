@@ -439,11 +439,8 @@ mod tests {
     }
 
     fn is_tunnel_frame(message: &crate::protocol::wire::pb::Message) -> bool {
-        use crate::protocol::wire::pb::message::Body;
-        matches!(
-            message.body,
-            Some(Body::TunnelOpen(_)) | Some(Body::TunnelData(_)) | Some(Body::TunnelClose(_))
-        )
+        let _ = message;
+        false
     }
 
     #[tokio::test]

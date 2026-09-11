@@ -1069,7 +1069,7 @@ mod tests {
                 })
             }
         }
-        use crate::services::CloudLinkService;
+        use crate::services::CloudLinkServer;
 
         struct RelayAuth {
             user: uuid::Uuid,
@@ -1105,7 +1105,7 @@ mod tests {
             None,
         )));
         state.write().await.is_cloud_server = true;
-        let relay = CloudLinkService::with_authenticator(state, auth.clone());
+        let relay = CloudLinkServer::with_authenticator(state, auth.clone());
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let channel = tonic::transport::Endpoint::from_shared(format!(
             "http://{}",

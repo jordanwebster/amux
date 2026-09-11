@@ -8,6 +8,7 @@
 //! first frame used and dies with that link.
 
 mod pool;
+pub(crate) mod standin;
 mod transport;
 mod types;
 
@@ -18,8 +19,8 @@ use tokio::sync::mpsc;
 pub(crate) use transport::TunnelTransport;
 
 use crate::HostId;
-use crate::protocol::{ProtocolError, wire as pb};
-use crate::routing::LinkOutputTx;
+use crate::protocol::ProtocolError;
+use crate::tunnel::standin as pb;
 pub(crate) use crate::tunnel::types::TunnelId;
 
 pub(crate) const TUNNEL_DATA_PAYLOAD_MAX: usize = 64 * 1024;
@@ -62,7 +63,7 @@ pub(crate) fn create_tunnel(
     id: TunnelId,
     peer: HostId,
     open_as: Option<HostId>,
-    outbound_link_tx: LinkOutputTx,
+    outbound_link_tx: mpsc::Sender<pb::Message>,
 ) -> (Tunnel, TunnelTransport) {
     let (grpc_half, routing_half) = tokio::io::duplex(BUF_SIZE);
     let (mut routing_read, mut routing_write) = tokio::io::split(routing_half);

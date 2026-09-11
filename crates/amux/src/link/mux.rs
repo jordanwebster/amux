@@ -1,12 +1,11 @@
 use std::collections::VecDeque;
-use std::future::poll_fn;
+use std::future::{self, poll_fn};
 use std::io;
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll};
 
 use futures_util::future::BoxFuture;
-use prost::Message as _;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
@@ -43,6 +42,7 @@ pub(crate) struct MuxCarrier {
     commands: mpsc::UnboundedSender<DriverCommand>,
     inbound: tokio::sync::Mutex<mpsc::UnboundedReceiver<yamux::Stream>>,
     control: Mutex<Option<(ControlSink, ControlSource)>>,
+    control_ready: watch::Receiver<bool>,
     closed: watch::Sender<Option<pb::LinkCloseReason>>,
 }
 
@@ -55,6 +55,7 @@ impl MuxCarrier {
         let (inbound_tx, inbound) = mpsc::unbounded_channel();
         let (control_stream_tx, control_stream_rx) = oneshot::channel();
         let (closed, _) = watch::channel(None);
+        let (control_ready_tx, control_ready) = watch::channel(false);
 
         let mut first_inbound = match role {
             MuxRole::Connector => {
@@ -87,6 +88,7 @@ impl MuxCarrier {
             control_stream_rx,
             control_write_rx,
             control_read_tx,
+            control_ready_tx,
         ));
 
         Self {
@@ -101,6 +103,7 @@ impl MuxCarrier {
                     rx: control_read_rx,
                 },
             ))),
+            control_ready,
             closed,
         }
     }
@@ -110,6 +113,10 @@ impl MuxCarrier {
     }
 
     async fn request_stream(&self) -> Result<yamux::Stream, OpenError> {
+        let mut ready = self.control_ready.clone();
+        while !*ready.borrow_and_update() {
+            ready.changed().await.map_err(|_| OpenError::LinkClosed)?;
+        }
         let (result, opened) = oneshot::channel();
         self.commands
             .send(DriverCommand::Open(result))
@@ -119,6 +126,27 @@ impl MuxCarrier {
             Ok(Err(DriverOpenError::Closed)) | Err(_) => Err(OpenError::LinkClosed),
             Ok(Err(DriverOpenError::Io(error))) => Err(OpenError::Io(io::Error::other(error))),
         }
+    }
+
+    #[cfg(testnet)]
+    pub(crate) async fn open_without_preface(&self) -> io::Result<pb::StreamRefusal> {
+        let mut stream = self
+            .request_stream()
+            .await
+            .map_err(|error| io::Error::other(error.to_string()))?
+            .compat();
+        // A zero-length protobuf frame contains no StreamPreface destination.
+        stream.write_all(&0_u32.to_be_bytes()).await?;
+        stream.flush().await?;
+        let status = stream.read_u8().await?;
+        if status != STREAM_REFUSED {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("expected stream refusal, got status {status}"),
+            ));
+        }
+        let code = stream.read_u8().await?;
+        Ok(pb::StreamRefusal::try_from(i32::from(code)).unwrap_or(pb::StreamRefusal::Unspecified))
     }
 }
 
@@ -172,11 +200,13 @@ impl LinkCarrier for MuxCarrier {
                     .await
                 {
                     Ok(Some(preface)) => {
-                        return Some((preface, Box::new(MuxByteStream::pending(stream))));
+                        return Some((
+                            preface,
+                            Box::new(MuxByteStream::pending(stream)) as ByteStream,
+                        ));
                     }
                     Ok(None) | Err(_) => {
-                        // Dropping an unclosed yamux stream resets it and isolates a malformed
-                        // stream from the rest of the link.
+                        let _ = refuse_stream(&mut stream, pb::StreamRefusal::NotAdjacent).await;
                     }
                 }
             }
@@ -298,10 +328,12 @@ async fn run_control_stream(
     stream: oneshot::Receiver<Result<yamux::Stream, DriverOpenError>>,
     writes: mpsc::Receiver<ControlWrite>,
     reads: mpsc::Sender<io::Result<pb::Message>>,
+    ready: watch::Sender<bool>,
 ) {
     let Ok(Ok(stream)) = stream.await else {
         return;
     };
+    ready.send_replace(true);
     let (reader, writer) = tokio::io::split(stream.compat());
     let read = read_control_messages(reader, reads);
     let write = write_control_messages(writer, writes);
@@ -311,6 +343,15 @@ async fn run_control_stream(
         _ = &mut read => {}
         _ = &mut write => {}
     }
+}
+
+async fn refuse_stream(
+    stream: &mut tokio_util::compat::Compat<yamux::Stream>,
+    reason: pb::StreamRefusal,
+) -> io::Result<()> {
+    stream.write_all(&[STREAM_REFUSED, reason as u8]).await?;
+    stream.flush().await?;
+    stream.shutdown().await
 }
 
 async fn read_control_messages<R>(mut reader: R, sender: mpsc::Sender<io::Result<pb::Message>>)
@@ -327,7 +368,7 @@ where
             Ok(None) => return,
             Err(error) => {
                 let _ = sender.send(Err(error)).await;
-                return;
+                future::pending::<()>().await;
             }
         }
     }
@@ -337,8 +378,13 @@ async fn write_control_messages<W>(mut writer: W, mut receiver: mpsc::Receiver<C
 where
     W: AsyncWrite + Unpin,
 {
-    while let Some(ControlWrite { bytes, result }) = receiver.recv().await {
-        let write_result = write_frame(&mut writer, &bytes).await;
+    while let Some(ControlWrite {
+        bytes,
+        declared_len,
+        result,
+    }) = receiver.recv().await
+    {
+        let write_result = write_frame(&mut writer, &bytes, declared_len).await;
         match write_result {
             Ok(()) => {
                 let _ = result.send(Ok(()));
@@ -359,12 +405,15 @@ where
     let _ = writer.shutdown().await;
 }
 
-async fn write_frame<W>(writer: &mut W, bytes: &[u8]) -> io::Result<()>
+async fn write_frame<W>(writer: &mut W, bytes: &[u8], declared_len: Option<u32>) -> io::Result<()>
 where
     W: AsyncWrite + Unpin,
 {
-    let len = u32::try_from(bytes.len())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame is too large"))?;
+    let len = match declared_len {
+        Some(len) => len,
+        None => u32::try_from(bytes.len())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "frame is too large"))?,
+    };
     writer.write_all(&len.to_be_bytes()).await?;
     writer.write_all(bytes).await?;
     writer.flush().await
@@ -386,7 +435,7 @@ where
     message
         .encode(&mut bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    write_frame(writer, &bytes).await
+    write_frame(writer, &bytes, None).await
 }
 
 async fn read_proto<R, M>(reader: &mut R, limit: usize) -> io::Result<Option<M>>
@@ -558,11 +607,11 @@ impl AsyncStream for MuxByteStream {
 
     fn reset(&mut self, code: pb::StreamRefusal) -> BoxIoFuture<'_, ()> {
         Box::pin(async move {
-            if self.admission == Admission::Pending {
-                if let Some(stream) = self.stream.as_mut() {
-                    stream.write_all(&[STREAM_REFUSED, code as u8]).await?;
-                    stream.flush().await?;
-                }
+            if self.admission == Admission::Pending
+                && let Some(stream) = self.stream.as_mut()
+            {
+                stream.write_all(&[STREAM_REFUSED, code as u8]).await?;
+                stream.flush().await?;
             }
             self.admission = Admission::Closed;
             self.stream.take();
@@ -586,7 +635,7 @@ mod tests {
     use crate::link::carrier::{read_message, write_message};
     use crate::protocol::wire::pb::message;
 
-    fn carriers() -> (Arc<MuxCarrier>, Arc<MuxCarrier>) {
+    fn new_carriers() -> (Arc<MuxCarrier>, Arc<MuxCarrier>) {
         let (connector_io, acceptor_io) = tokio::io::duplex(2 * 1024 * 1024);
         (
             Arc::new(MuxCarrier::new(
@@ -602,13 +651,27 @@ mod tests {
         )
     }
 
+    async fn carriers() -> (Arc<MuxCarrier>, Arc<MuxCarrier>) {
+        let (connector, acceptor) = new_carriers();
+        let (mut connector_sink, _connector_source) = connector.control();
+        let (_acceptor_sink, mut acceptor_source) = acceptor.control();
+        write_message(&mut connector_sink, &pb::Message { body: None })
+            .await
+            .unwrap();
+        assert_eq!(
+            read_message(&mut acceptor_source).await.unwrap(),
+            Some(pb::Message { body: None })
+        );
+        (connector, acceptor)
+    }
+
     fn preface(dst: u8) -> pb::StreamPreface {
         pb::StreamPreface { dst: vec![dst; 16] }
     }
 
     #[tokio::test]
     async fn both_sides_open_streams() {
-        let (connector, acceptor) = carriers();
+        let (connector, acceptor) = carriers().await;
         let connector_open = {
             let connector = connector.clone();
             tokio::spawn(async move { connector.open_stream(preface(1)).await.unwrap() })
@@ -642,7 +705,7 @@ mod tests {
 
     #[tokio::test]
     async fn refusal_code_survives_the_reset() {
-        let (connector, acceptor) = carriers();
+        let (connector, acceptor) = carriers().await;
         let opening = tokio::spawn(async move { connector.open_stream(preface(3)).await });
         let (_, mut inbound) = acceptor.accept_stream().await.unwrap();
         inbound
@@ -657,7 +720,7 @@ mod tests {
 
     #[tokio::test]
     async fn finished_stream_reads_eof() {
-        let (connector, acceptor) = carriers();
+        let (connector, acceptor) = carriers().await;
         let opening = tokio::spawn(async move { connector.open_stream(preface(4)).await.unwrap() });
         let (_, mut inbound) = acceptor.accept_stream().await.unwrap();
         inbound.finish().await.unwrap();
@@ -668,7 +731,7 @@ mod tests {
 
     #[tokio::test]
     async fn ten_concurrent_streams_do_not_block_behind_a_slow_reader() {
-        let (connector, acceptor) = carriers();
+        let (connector, acceptor) = carriers().await;
         let slow_open = {
             let connector = connector.clone();
             tokio::spawn(async move { connector.open_stream(preface(0)).await.unwrap() })
@@ -719,7 +782,7 @@ mod tests {
 
     #[tokio::test]
     async fn control_frames_round_trip_under_message_size_limit() {
-        let (connector, acceptor) = carriers();
+        let (connector, acceptor) = new_carriers();
         let (mut connector_sink, mut connector_source) = connector.control();
         let (mut acceptor_sink, mut acceptor_source) = acceptor.control();
         let hello = pb::Message {

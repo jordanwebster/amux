@@ -52,6 +52,7 @@ pub(crate) trait LinkCarrier: Send + Sync + 'static {
 
 pub(super) struct ControlWrite {
     pub(super) bytes: Vec<u8>,
+    pub(super) declared_len: Option<u32>,
     pub(super) result: oneshot::Sender<io::Result<()>>,
 }
 
@@ -81,7 +82,11 @@ pub(crate) async fn write_message(sink: &mut ControlSink, message: &pb::Message)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let (result, completed) = oneshot::channel();
     sink.tx
-        .send(ControlWrite { bytes, result })
+        .send(ControlWrite {
+            bytes,
+            declared_len: None,
+            result,
+        })
         .await
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "control stream closed"))?;
     completed
@@ -91,6 +96,25 @@ pub(crate) async fn write_message(sink: &mut ControlSink, message: &pb::Message)
 
 pub(crate) async fn read_message(source: &mut ControlSource) -> io::Result<Option<pb::Message>> {
     source.rx.recv().await.transpose()
+}
+
+#[cfg(testnet)]
+pub(crate) async fn write_raw_control_frame(
+    sink: &mut ControlSink,
+    declared_len: u32,
+) -> io::Result<()> {
+    let (result, completed) = oneshot::channel();
+    sink.tx
+        .send(ControlWrite {
+            bytes: Vec::new(),
+            declared_len: Some(declared_len),
+            result,
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "control stream closed"))?;
+    completed
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "control stream closed"))?
 }
 
 pub(super) type BoxIoFuture<'a, T> = Pin<Box<dyn Future<Output = io::Result<T>> + Send + 'a>>;

@@ -1,7 +1,7 @@
 //! In-process cloud relay for testnet topologies.
 //!
 //! Mirrors the assembly used by the startup tests: a real
-//! [`CloudLinkService`] served over localhost TCP, with a bearer-token
+//! [`CloudLinkServer`] served over localhost TCP, with a token in `Hello`
 //! registry standing in for JWT validation. Daemons in a `TestNet` share one
 //! cloud user by default, so the relay bridges them exactly like production
 //! cloud routing does for one account; the builder's `cloud_user` verb
@@ -25,7 +25,7 @@ use crate::config::Config;
 use crate::connection::ConnectionManager;
 use crate::protocol::wire;
 use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
-use crate::services::CloudLinkService;
+use crate::services::CloudLinkServer;
 use crate::transport::TcpServerTransport;
 use crate::user_state::ServerState;
 
@@ -67,7 +67,7 @@ pub(crate) struct CloudRelay {
 }
 
 struct RunningCloud {
-    service: CloudLinkService,
+    service: CloudLinkServer,
     task: JoinHandle<()>,
     connections: TrackedConnections,
 }
@@ -140,7 +140,7 @@ impl CloudRelay {
     async fn serve(&self, listener: TcpListener) {
         let state = testnet_server_state("cloud", self.host_id, None);
         state.write().await.is_cloud_server = true;
-        let service = CloudLinkService::with_authenticator(
+        let service = CloudLinkServer::with_authenticator(
             state,
             Arc::new(RegistryTokenAuthenticator {
                 tokens: self.tokens.clone(),

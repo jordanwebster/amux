@@ -2432,7 +2432,7 @@ mod tests {
             .await;
         tunnels
             .handle_inbound_open(
-                wire::pb::TunnelOpen {
+                crate::tunnel::standin::TunnelOpen {
                     tunnel_id: uuid::Uuid::from_u128(42).as_bytes().to_vec(),
                     src: peer.host_id.as_bytes().to_vec(),
                     dst: responder.host_id.as_bytes().to_vec(),

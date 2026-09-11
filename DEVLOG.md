@@ -1,3 +1,14 @@
+2026-09-11 — **Run link control directly on every carrier.** The shared link
+runtime now performs both sides of the version-2 hello handshake, binds the
+announced host to the carrier-authenticated peer, exchanges neighbor snapshots
+and deltas, refreshes cloud authorization from tokens carried in hello and
+reauthentication messages, and sends structured close reasons on failure. The
+scripted wire peer now drives the same yamux carrier as relay TCP and exercises
+control-frame limits and native-stream preface refusal. The old gRPC link
+service, metadata authentication, and routing-side link runtime are gone;
+obsolete tunnel structs remain private only until native channels replace the
+tunnel pool.
+
 2026-09-11 — **Multiplex ordered links into native byte streams.** A link
 carrier now exposes its control channel and independently flow-controlled
 application streams through one transport-neutral interface. The first yamux

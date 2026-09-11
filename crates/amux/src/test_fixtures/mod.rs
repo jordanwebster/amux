@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
-use crate::services::CloudLinkService;
+use crate::services::CloudLinkServer;
 use crate::user_state::ServerState;
 
 /// A caller-owned on-disk root for tests that allocate installation sockets.
@@ -514,7 +514,7 @@ impl TestRelay {
             None,
         )));
         state.write().await.is_cloud_server = true;
-        let service = CloudLinkService::with_authenticator(state, authenticator.clone());
+        let service = CloudLinkServer::with_authenticator(state, authenticator.clone());
         let task = service.serve_on_tcp_listener(listener);
         Self {
             addr,

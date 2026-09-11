@@ -26,7 +26,7 @@ use crate::profile::runtime::{
     Listeners, ProfileRuntimeOptions, platform_discovery, start_with_security,
 };
 use crate::protocol::wire;
-use crate::services::{CloudLinkService, DeviceRuntimeSecurity};
+use crate::services::{CloudLinkServer, DeviceRuntimeSecurity};
 use crate::transport::{TransportError, create_tls_acceptor};
 use crate::update::{UpdateReporter, UpdateStatus};
 use crate::user_state::ServerState;
@@ -311,13 +311,13 @@ impl Server {
             acceptor
         };
 
-        let cloud_routing = CloudLinkService::new(self.state.clone());
+        let cloud_routing = CloudLinkServer::new(self.state.clone());
         let Some(port) = tcp_port else {
             unreachable!("cloud server config validation requires tcp_port");
         };
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
         let listener = TcpListener::bind(addr).await?;
-        tracing::info!(addr = %addr, "listening on cloud TLS LinkService");
+        tracing::info!(addr = %addr, "listening for cloud TLS carriers");
         let cloud_routing_task =
             cloud_routing.serve_on_tls_tcp_listener(listener, tls_acceptor, TLS_HANDSHAKE_TIMEOUT);
 
