@@ -12,7 +12,7 @@ use amux_tui::{
     ColorPreference, TerminalColors, Theme, ThemeError, TuiConfig, detect_color_mode,
     parse_theme_file, query_terminal_colors, run_fleet, theme_from_file,
 };
-use amux_ui::{ConnectFailure, Connector, Runtime, RuntimeOptions};
+use amux_ui::{ConnectFailure, Connector, ProfileDirectory, Runtime, RuntimeOptions};
 use anyhow::{Context, Result};
 
 use crate::client_common::get_client;
@@ -95,7 +95,7 @@ async fn run_inner(
             &config,
             #[cfg(debug_assertions)]
             trace.clone(),
-        ),
+        )?,
     );
     // A panic anywhere in the TUI leaves a report: the terminal.rs panic
     // hook calls amux_ui::write_panic_report after restoring the
@@ -129,7 +129,7 @@ async fn run_inner(
                         &selected,
                         #[cfg(debug_assertions)]
                         trace.clone(),
-                    ),
+                    )?,
                     diagnostics: profile_diagnostics(&selected),
                 })
             })
@@ -192,7 +192,7 @@ fn profile_diagnostics(config: &Config) -> Option<amux_tui::DiagnosticsSource> {
 fn runtime_options(
     config: &Config,
     #[cfg(debug_assertions)] trace: Option<amux_tui::trace::SharedTrace>,
-) -> RuntimeOptions {
+) -> Result<RuntimeOptions> {
     // The local host id comes from the stored device identity — the wire
     // does not mark the local host (see docs/UI.md, subscription policy).
     let local_host_id = amux::setup::local_host_id(config);
@@ -205,17 +205,27 @@ fn runtime_options(
             amux_tui::trace::record_shared(&trace, &amux_tui::chrome::TraceEvent::Msg(msg.clone()));
         }) as amux_ui::MsgTap
     });
-    RuntimeOptions {
+    let selected = amux::load_profile_config(
+        config
+            .path
+            .as_deref()
+            .context("selected profile config is missing")?,
+    )?;
+    Ok(RuntimeOptions {
         local_host_id,
         report_dir: Some(config.reports_dir()),
         log_path: Some(amux_cli::diagnostics::resolved_log_path()),
         git_sha: GIT_SHA,
         artifact_cache: Some(config.artifact_cache_dir()),
         artifact_cache_bound: config.ui.artifact_cache_mib.saturating_mul(1024 * 1024),
+        cloud_status: Some(ProfileDirectory::cloud_status(
+            selected.installation.front_door_socket,
+            selected.profile_id,
+        )),
         #[cfg(debug_assertions)]
         msg_tap,
         ..RuntimeOptions::default()
-    }
+    })
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

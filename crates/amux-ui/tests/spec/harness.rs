@@ -570,6 +570,7 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::attachments::sequences());
     sequences.extend(crate::draft::sequences());
     sequences.extend(crate::connection::sequences());
+    sequences.extend(crate::cloud_state::sequences());
     sequences.extend(crate::inventory::sequences());
     sequences.extend(crate::ops::sequences());
     sequences.extend(crate::sessions::sequences());

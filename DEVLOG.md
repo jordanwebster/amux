@@ -1,3 +1,12 @@
+2026-09-11 — **Drive reachability from one cloud status stream.** The UI
+runtime now consumes the selected profile's installation status and records a
+single signed-out, connecting, connected, retrying, or authentication-required
+state with the connected tier and relay carrier. Account prompts derive from
+that state and each trusted host's live route. Agent inventory remains visible
+but non-live while its host is offline or unreachable on the free relay, then
+becomes live only after fresh host inventory; removing trust removes the cached
+agents.
+
 2026-09-11 — **Report each host's live route and account binding.** Device
 hellos now state whether their profile is account-bound, and paired peers
 retain that fact in the trust store when the device goes offline. Host

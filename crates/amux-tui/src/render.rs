@@ -609,14 +609,18 @@ fn banner_line(model: &Model, width: usize, theme: Theme) -> Line<'static> {
         return invariant_warning_line(width, theme);
     }
     let mut line = new_line(theme);
-    if model.cloud_subscription_required() && model.is_connected() {
+    if model.needs_account_prompt() == Some(amux_ui::AccountPrompt::Subscribe)
+        && model.is_connected()
+    {
         push_span(
             &mut line,
             MARKER_COL,
             "⚠ subscription required · amux.sh/account · local agents fine",
             theme.warn(),
         );
-    } else if model.cloud_auth_required() && model.is_connected() {
+    } else if model.needs_account_prompt() == Some(amux_ui::AccountPrompt::SignIn)
+        && model.is_connected()
+    {
         push_span(
             &mut line,
             MARKER_COL,

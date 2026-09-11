@@ -23,14 +23,15 @@ use amux::{
 };
 use amux_artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
 use chrono::{DateTime, Utc};
-use futures_util::FutureExt;
+use futures_util::stream::BoxStream;
+use futures_util::{FutureExt, StreamExt, stream};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::codex::CodexInput;
 use crate::effect::{DumpReason, Effect, InputPayload};
-use crate::model::{Model, StructuredProtocol};
+use crate::model::{CloudState, Model, StructuredProtocol};
 use crate::msg::{
     Command, DisconnectReason, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason,
     StreamEntry, StreamMsg,
@@ -198,6 +199,116 @@ impl ProfileDirectory {
             })
             .collect()
     }
+
+    /// Follow one selected profile's status through the installation front
+    /// door. The task reconnects to the watch after a front-door restart;
+    /// the last folded state remains authoritative between observations.
+    pub fn cloud_status(socket: PathBuf, profile: ProfileId) -> BoxStream<'static, CloudState> {
+        let (tx, rx) = mpsc::channel(16);
+        tokio::spawn(async move {
+            loop {
+                let mut front = match FrontDoorClient::connect(&socket).await {
+                    Ok(front) => front,
+                    Err(error) => {
+                        tracing::debug!(%error, "cloud status front door unavailable");
+                        tokio::select! {
+                            _ = tx.closed() => return,
+                            _ = tokio::time::sleep(RECONNECT_BACKOFF_INITIAL) => {}
+                        }
+                        continue;
+                    }
+                };
+                let mut watch = match front
+                    .profiles
+                    .watch_profiles(rpc::WatchProfilesRequest {})
+                    .await
+                {
+                    Ok(response) => response.into_inner(),
+                    Err(error) => {
+                        tracing::debug!(%error, "cloud status watch unavailable");
+                        tokio::select! {
+                            _ = tx.closed() => return,
+                            _ = tokio::time::sleep(RECONNECT_BACKOFF_INITIAL) => {}
+                        }
+                        continue;
+                    }
+                };
+                loop {
+                    let event = match tokio::select! {
+                        _ = tx.closed() => return,
+                        event = watch.message() => event,
+                    } {
+                        Ok(Some(event)) => event,
+                        Ok(None) => break,
+                        Err(error) => {
+                            tracing::debug!(%error, "cloud status watch ended");
+                            break;
+                        }
+                    };
+                    let state = match event.event {
+                        Some(rpc::watch_profiles_response::Event::Upserted(info))
+                            if info.id == profile.to_string() =>
+                        {
+                            cloud_state_from_profile(&info)
+                        }
+                        Some(rpc::watch_profiles_response::Event::RemovedId(id))
+                            if id == profile.to_string() =>
+                        {
+                            Some(CloudState::SignedOut)
+                        }
+                        _ => None,
+                    };
+                    if let Some(state) = state
+                        && tx.send(state).await.is_err()
+                    {
+                        return;
+                    }
+                }
+                tokio::select! {
+                    _ = tx.closed() => return,
+                    _ = tokio::time::sleep(RECONNECT_BACKOFF_INITIAL) => {}
+                }
+            }
+        });
+        stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|state| (state, rx))
+        })
+        .boxed()
+    }
+}
+
+fn cloud_state_from_profile(info: &rpc::ProfileInfo) -> Option<CloudState> {
+    let intent = rpc::Intent::try_from(info.intent).ok()?;
+    if matches!(intent, rpc::Intent::Unbound | rpc::Intent::LoggedOut) {
+        return Some(CloudState::SignedOut);
+    }
+    if intent == rpc::Intent::Paused {
+        return Some(CloudState::Retrying);
+    }
+    if intent != rpc::Intent::Bound {
+        return None;
+    }
+    match rpc::Observed::try_from(info.observed).ok()? {
+        rpc::Observed::Local | rpc::Observed::Connecting => Some(CloudState::Connecting),
+        rpc::Observed::Connected => {
+            let tier = match rpc::Tier::try_from(info.tier).ok()? {
+                rpc::Tier::Free => amux::Tier::Free,
+                rpc::Tier::Pro => amux::Tier::Pro,
+                rpc::Tier::Unspecified => return None,
+            };
+            let carrier = match rpc::RelayCarrier::try_from(info.relay_carrier).ok()? {
+                rpc::RelayCarrier::Quic => amux::installation::RelayCarrier::Quic,
+                rpc::RelayCarrier::Tcp => amux::installation::RelayCarrier::Tcp,
+                rpc::RelayCarrier::Unspecified => return None,
+            };
+            Some(CloudState::Connected { tier, carrier })
+        }
+        rpc::Observed::Retrying | rpc::Observed::UpdateRequired | rpc::Observed::StartupFailed => {
+            Some(CloudState::Retrying)
+        }
+        rpc::Observed::AuthenticationRequired => Some(CloudState::AuthRequired),
+        rpc::Observed::Unspecified => None,
+    }
 }
 
 /// Which profile selection a shell task belongs to.
@@ -311,6 +422,8 @@ pub struct RuntimeOptions {
     pub artifact_cache_bound: u64,
     /// Platform opener override. Embedders normally leave this at its default.
     pub attachment_opener: AttachmentOpener,
+    /// Selected-profile cloud status supplied by the embedding shell.
+    pub cloud_status: Option<BoxStream<'static, CloudState>>,
 }
 
 impl Default for RuntimeOptions {
@@ -326,6 +439,7 @@ impl Default for RuntimeOptions {
             artifact_cache: None,
             artifact_cache_bound: DEFAULT_ARTIFACT_CACHE_BOUND,
             attachment_opener: Arc::new(open_with_platform_viewer),
+            cloud_status: None,
         }
     }
 }
@@ -472,7 +586,7 @@ impl Runtime {
 
     fn start_on_channel(
         connector: Connector,
-        options: RuntimeOptions,
+        mut options: RuntimeOptions,
         msg_tx: mpsc::Sender<(Generation, Msg)>,
         msg_rx: mpsc::Receiver<(Generation, Msg)>,
         generation: Generation,
@@ -499,6 +613,22 @@ impl Runtime {
             client.clone(),
             options.local_host_id,
         ));
+        let cloud_status_task = options.cloud_status.take().map(|mut statuses| {
+            let tx = msg_sink.clone();
+            tokio::spawn(async move {
+                while let Some(state) = statuses.next().await {
+                    if tx
+                        .send(Msg::Server(ServerMsg::CloudState(state)))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            })
+        });
+        let mut tasks = vec![connection_task];
+        tasks.extend(cloud_status_task);
 
         Self {
             model,
@@ -506,7 +636,7 @@ impl Runtime {
             msg_sink,
             msg_rx,
             client,
-            tasks: vec![connection_task],
+            tasks,
             streams: HashMap::new(),
             report_dir: options.report_dir,
             log_path: options.log_path,
@@ -1836,6 +1966,138 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cloud_state_profile(
+        intent: rpc::Intent,
+        observed: rpc::Observed,
+        tier: rpc::Tier,
+        carrier: rpc::RelayCarrier,
+    ) -> rpc::ProfileInfo {
+        rpc::ProfileInfo {
+            id: ProfileId::new().to_string(),
+            label: String::new(),
+            email: String::new(),
+            account_name: String::new(),
+            socket_path: String::new(),
+            host_id: String::new(),
+            intent: intent as i32,
+            observed: observed as i32,
+            revision: 0,
+            startup_error: String::new(),
+            available: true,
+            minimum_version: None,
+            tier: tier as i32,
+            relay_carrier: carrier as i32,
+        }
+    }
+
+    #[test]
+    fn cloud_state_maps_every_profile_status_transition() {
+        let cases = [
+            (
+                cloud_state_profile(
+                    rpc::Intent::Unbound,
+                    rpc::Observed::Local,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::SignedOut,
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::Connecting,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::Connecting,
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::Connected,
+                    rpc::Tier::Free,
+                    rpc::RelayCarrier::Tcp,
+                ),
+                CloudState::Connected {
+                    tier: amux::Tier::Free,
+                    carrier: amux::installation::RelayCarrier::Tcp,
+                },
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::Connected,
+                    rpc::Tier::Pro,
+                    rpc::RelayCarrier::Quic,
+                ),
+                CloudState::Connected {
+                    tier: amux::Tier::Pro,
+                    carrier: amux::installation::RelayCarrier::Quic,
+                },
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::Retrying,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::Retrying,
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Bound,
+                    rpc::Observed::AuthenticationRequired,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::AuthRequired,
+            ),
+            (
+                cloud_state_profile(
+                    rpc::Intent::Paused,
+                    rpc::Observed::Local,
+                    rpc::Tier::Unspecified,
+                    rpc::RelayCarrier::Unspecified,
+                ),
+                CloudState::Retrying,
+            ),
+        ];
+        for (profile, expected) in cases {
+            assert_eq!(cloud_state_from_profile(&profile), Some(expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_state_runtime_folds_the_shell_supplied_stream() {
+        let statuses = stream::iter([CloudState::Connected {
+            tier: amux::Tier::Free,
+            carrier: amux::installation::RelayCarrier::Quic,
+        }])
+        .boxed();
+        let connector: Connector =
+            Box::new(|| Box::pin(std::future::pending::<Result<Client, ConnectFailure>>()));
+        let mut runtime = Runtime::start(
+            connector,
+            RuntimeOptions {
+                cloud_status: Some(statuses),
+                ..RuntimeOptions::default()
+            },
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), runtime.next())
+            .await
+            .expect("cloud status reaches the reducer before the daemon connects");
+
+        assert_eq!(
+            runtime.model().cloud_state(),
+            &CloudState::Connected {
+                tier: amux::Tier::Free,
+                carrier: amux::installation::RelayCarrier::Quic,
+            }
+        );
+    }
 
     #[test]
     fn claude_sdk_stream_wire_preserves_tail_sequence_and_json() {

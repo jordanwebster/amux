@@ -11,7 +11,8 @@ pub mod rpc {
         InstallationInfo, InstallationShutdownRequest, Intent, ListProfilesRequest,
         ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RelayCarrier,
         RenameProfileRequest, ResumeAllRequest, SuspendAllRequest, SuspendReason, Tier,
-        installation_service_client, profile_service_client,
+        WatchProfilesRequest, WatchProfilesResponse, installation_service_client,
+        profile_service_client, watch_profiles_response,
     };
 }
 

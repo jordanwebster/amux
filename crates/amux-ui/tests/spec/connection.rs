@@ -1,43 +1,11 @@
-//! Chapter 1 — Connection: epochs, snapshots, auth expiry, and subscription state.
+//! Chapter 1 — Connection epochs and snapshots.
 //!
 //! Reconnect replaces state by snapshot under a new epoch, with an explicit
-//! synchronized marker separating catch-up from live. Cloud-auth expiry is a
-//! degraded state, never a dead app.
+//! synchronized marker separating catch-up from live.
 
-use amux_ui::{Connection, DisconnectReason, Effect, Msg, ServerMsg, StreamMsg};
+use amux_ui::{DisconnectReason, Effect, Msg, StreamMsg};
 
 use crate::harness::*;
-
-fn degraded_auth_sequence() -> Vec<Msg> {
-    seq([
-        vec![connected("nova"), host_up(&a_host("nova"))],
-        synced(),
-        vec![
-            agent_up(&an_agent("fix-auth-bug", "nova")),
-            command(op(1), rename_cmd("fix-auth-bug", "auth-fix")),
-            op_failed_auth(op(1)),
-        ],
-    ])
-}
-
-fn auth_disconnect_sequence() -> Vec<Msg> {
-    seq([
-        degraded_auth_sequence(),
-        vec![disconnected(DisconnectReason::AuthenticationRequired)],
-    ])
-}
-
-fn degraded_subscription_sequence() -> Vec<Msg> {
-    seq([
-        vec![connected("nova"), host_up(&a_host("nova"))],
-        synced(),
-        vec![
-            agent_up(&an_agent("local-agent", "nova")),
-            command(op(1), rename_cmd("local-agent", "still-local")),
-            op_failed_subscription(op(1)),
-        ],
-    ])
-}
 
 fn reconnect_sequence() -> Vec<Msg> {
     seq([
@@ -59,57 +27,6 @@ fn reconnect_sequence() -> Vec<Msg> {
         ],
         synced(),
     ])
-}
-
-/// An RPC failing with invalid credentials degrades the fleet to the
-/// cloud-auth banner while the daemon link stays connected and local agents
-/// keep working; a connection-level credential failure names itself.
-#[test]
-fn auth_expiry_surfaces_authentication_required() {
-    let model = fold(degraded_auth_sequence());
-    assert!(model.cloud_auth_required());
-    assert!(model.is_connected(), "auth expiry must not kill the app");
-    assert!(model.agent(agent_id("fix-auth-bug")).is_some());
-
-    let model = fold(auth_disconnect_sequence());
-    assert_eq!(
-        model.connection(),
-        &Connection::Disconnected {
-            reason: DisconnectReason::AuthenticationRequired
-        }
-    );
-}
-
-#[test]
-fn payment_error_surfaces_subscription_required_without_auth_required() {
-    let model = fold(degraded_subscription_sequence());
-
-    assert!(model.cloud_subscription_required());
-    assert!(!model.cloud_auth_required());
-    assert!(
-        model.is_connected(),
-        "subscription state must not kill the app"
-    );
-    assert!(model.agent(agent_id("local-agent")).is_some());
-}
-
-#[test]
-fn subscription_status_clears_when_cloud_recovers_or_daemon_reconnects() {
-    let required = Msg::Server(ServerMsg::CloudSubscriptionStatus { required: true });
-    let healthy = Msg::Server(ServerMsg::CloudSubscriptionStatus { required: false });
-
-    let model = fold(vec![connected("nova"), required.clone(), healthy]);
-    assert!(!model.cloud_subscription_required());
-
-    let model = fold(vec![
-        connected("nova"),
-        required,
-        disconnected(DisconnectReason::TransportError {
-            message: "connection reset".to_string(),
-        }),
-        connected("nova"),
-    ]);
-    assert!(!model.cloud_subscription_required());
 }
 
 fn reconnect_stream_prune_sequence() -> Vec<Msg> {
@@ -208,8 +125,6 @@ fn epoch_prune_emits_close_stream_for_dropped_streams() {
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
-        ("connection::degraded_auth", degraded_auth_sequence()),
-        ("connection::auth_disconnect", auth_disconnect_sequence()),
         ("connection::reconnect", reconnect_sequence()),
         (
             "connection::reconnect_stream_prune",

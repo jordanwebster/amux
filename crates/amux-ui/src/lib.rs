@@ -29,11 +29,11 @@ mod update;
 // The profile a runtime is bound to. Renderers name accounts, so the id
 // travels with the rest of the entity vocabulary rather than making the
 // TUI depend on the kernel crate.
-pub use amux::installation::ProfileId;
+pub use amux::installation::{ProfileId, RelayCarrier};
 pub use amux::{
     Agent, AgentId, AgentKind, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef,
     BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, DiffResponse, HostEntry, HostId,
-    HostTrustStatus, HostVia, Protocol, WorkingOn, claude_io,
+    HostTrustStatus, HostVia, Protocol, Tier, WorkingOn, claude_io,
 };
 pub use attachments::{
     ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention,
@@ -44,11 +44,11 @@ pub use claude_sdk::{ClaudeSdkCommand, ClaudeSdkInput, SdkAnswer};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};
 pub use effect::{DumpReason, Effect, InputPayload};
 pub use model::{
-    AgentCard, AgentLayer, AgentMessageKind, AgentMessagePresentation, AgentMessageSender,
-    AgentPhase, Attention, ClaudeSdkLayer, Connection, FamilyMember, FamilyNeed, FinishedOp,
-    FleetItem, HostState, MessageDigest, Model, PendingOp, StreamPhase, StreamState,
-    StructuredProtocol, Violation, Why, agent_type_label, display_name_fallback,
-    format_relative_age, message_digest,
+    AccountPrompt, AgentCard, AgentLayer, AgentMessageKind, AgentMessagePresentation,
+    AgentMessageSender, AgentPhase, Attention, ClaudeSdkLayer, CloudState, Connection,
+    FamilyMember, FamilyNeed, FinishedOp, FleetItem, HostState, MessageDigest, Model, PendingOp,
+    StreamPhase, StreamState, StructuredProtocol, Violation, Why, agent_type_label,
+    display_name_fallback, format_relative_age, message_digest,
 };
 pub use msg::{
     Command, DisconnectReason, Ephemeral, FlowClass, Msg, OpError, OpId, OpOutcome, ServerMsg,

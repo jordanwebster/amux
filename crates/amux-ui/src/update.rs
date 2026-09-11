@@ -321,16 +321,6 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
     let Some(pending) = model.pending_ops.remove(&op) else {
         return Vec::new();
     };
-    if let OpOutcome::Error { error } = &outcome
-        && error.auth_required()
-    {
-        model.cloud_auth_required = true;
-    }
-    if let OpOutcome::Error { error } = &outcome
-        && error.subscription_required()
-    {
-        model.cloud_subscription_required = true;
-    }
     // A failed input send resurfaces its optimistic state with the failure
     // stated (C5): the echo leaves (the draft resurfaces from ViewState;
     // this finished op carries the fact), the ask flips to SendFailed. An
@@ -434,12 +424,22 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 agents_synchronized: false,
             };
             model.local_host_id = local_host_id.or(model.local_host_id);
-            model.cloud_auth_required = false;
-            model.cloud_subscription_required = false;
             Vec::new()
         }
-        ServerMsg::CloudSubscriptionStatus { required } => {
-            model.cloud_subscription_required = required;
+        ServerMsg::CloudState(state) => {
+            model.cloud_state = state;
+            let away_hosts = model
+                .hosts
+                .values()
+                .filter_map(|host| model.host_is_away(host.entry.id).then_some(host.entry.id))
+                .collect::<std::collections::BTreeSet<_>>();
+            for card in model
+                .agents
+                .values_mut()
+                .filter(|card| away_hosts.contains(&card.agent.host_id))
+            {
+                card.live = false;
+            }
             Vec::new()
         }
         ServerMsg::Disconnected { reason } => {
@@ -450,6 +450,16 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if !model.is_connected() {
                 return tripwire("host upsert while not connected");
             }
+            let host_id = host.id;
+            let live = host.online
+                && !(host.via == amux::HostVia::Relay
+                    && matches!(
+                        model.cloud_state(),
+                        crate::model::CloudState::Connected {
+                            tier: amux::Tier::Free,
+                            ..
+                        }
+                    ));
             model.hosts.insert(
                 host.id,
                 HostState {
@@ -457,6 +467,15 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                     epoch: model.epoch,
                 },
             );
+            if !live {
+                for card in model
+                    .agents
+                    .values_mut()
+                    .filter(|card| card.agent.host_id == host_id)
+                {
+                    card.live = false;
+                }
+            }
             Vec::new()
         }
         ServerMsg::HostRemoved { id } => {
@@ -464,7 +483,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 return tripwire("host removal while not connected");
             }
             model.hosts.remove(&id);
-            Vec::new()
+            remove_host_agents(model, id)
         }
         ServerMsg::HostsSynchronized => {
             let Connection::Connected {
@@ -483,15 +502,20 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             let epoch = model.epoch;
             let agent_id = agent.id;
             let is_local = model.local_host_id == Some(agent.host_id);
+            let live = model.host(agent.host_id).is_none_or(|_| {
+                model.host_online(agent.host_id) && !model.host_is_away(agent.host_id)
+            });
             match model.agents.get_mut(&agent_id) {
                 Some(card) => {
                     // Facts update; UI-layer derived state persists across
                     // upserts of the same entity.
                     card.agent = agent;
                     card.epoch = epoch;
+                    card.live = live;
                 }
                 None => {
                     let card = AgentCard {
+                        live,
                         last_activity: agent.created_at,
                         provider_label: None,
                         attention: Attention::Unknown,
@@ -517,13 +541,19 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if !model.is_connected() {
                 return tripwire("agent removal while not connected");
             }
-            model.agents.remove(&id);
-            if let Some(stream) = model.streams.remove(&id)
-                && !matches!(stream.phase, StreamPhase::Closed { .. })
-            {
-                return vec![Effect::CloseStream { agent: id }];
+            let retain_offline = model.agents.get(&id).is_some_and(|card| {
+                model.host(card.agent.host_id).is_some()
+                    && (!model.host_online(card.agent.host_id)
+                        || model.host_is_away(card.agent.host_id))
+            });
+            if retain_offline {
+                if let Some(card) = model.agents.get_mut(&id) {
+                    card.live = false;
+                }
+                return close_stream(model, id);
             }
-            Vec::new()
+            model.agents.remove(&id);
+            close_stream(model, id)
         }
         ServerMsg::AgentsSynchronized => {
             let Connection::Connected {
@@ -584,12 +614,6 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             with_layer(model, agent, AgentLayer::observe_replay_complete);
         }
         StreamMsg::Closed { reason } => {
-            if reason == StreamCloseReason::AuthenticationRequired {
-                model.cloud_auth_required = true;
-            }
-            if reason == StreamCloseReason::PaymentRequired {
-                model.cloud_subscription_required = true;
-            }
             match &reason {
                 StreamCloseReason::AgentExited { exit_code } => {
                     let exit_code = *exit_code;
@@ -654,18 +678,60 @@ fn tripwire(detail: &str) -> Vec<Effect> {
     }]
 }
 
-/// Reconnect replaces state by snapshot: once both snapshots for the new
-/// epoch are complete, entities not re-upserted under it are gone. Streams
-/// dropped here still have a shell task behind them — each one leaves as a
-/// `CloseStream` effect so no task is orphaned across reconnects (both
-/// synchronized arms call this and must propagate the effects).
+fn close_stream(model: &mut Model, id: amux::AgentId) -> Vec<Effect> {
+    if let Some(stream) = model.streams.remove(&id)
+        && !matches!(stream.phase, StreamPhase::Closed { .. })
+    {
+        return vec![Effect::CloseStream { agent: id }];
+    }
+    Vec::new()
+}
+
+fn remove_host_agents(model: &mut Model, host: amux::HostId) -> Vec<Effect> {
+    let removed = model
+        .agents
+        .values()
+        .filter_map(|card| (card.agent.host_id == host).then_some(card.agent.id))
+        .collect::<Vec<_>>();
+    let mut effects = Vec::new();
+    for id in removed {
+        model.agents.remove(&id);
+        effects.extend(close_stream(model, id));
+    }
+    effects
+}
+
+/// Reconnect replaces reachable inventory by snapshot. Agents on an offline
+/// or away trusted host remain as non-live cached inventory until that host
+/// can reconcile them; removing the host from trust removes them immediately.
+/// Streams dropped here still have a shell task behind them — each one leaves
+/// as a `CloseStream` effect so no task is orphaned across reconnects.
 fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
     if !model.is_synchronized() {
         return Vec::new();
     }
     let epoch = model.epoch;
     model.hosts.retain(|_, host| host.epoch == epoch);
-    model.agents.retain(|_, card| card.epoch == epoch);
+    let cached_hosts = model
+        .hosts
+        .values()
+        .filter_map(|host| {
+            (!host.entry.online || model.host_is_away(host.entry.id)).then_some(host.entry.id)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    model.agents.retain(|_, card| {
+        let cached = cached_hosts.contains(&card.agent.host_id);
+        if cached {
+            card.live = false;
+            card.epoch = epoch;
+            true
+        } else if card.epoch == epoch {
+            card.live = true;
+            true
+        } else {
+            false
+        }
+    });
     let stale: Vec<amux::AgentId> = model
         .streams
         .keys()
