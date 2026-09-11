@@ -1,3 +1,9 @@
+2026-09-11 — **Keep desktop update notices across installation profiles.**
+Installation-managed profile runtimes again report available and required
+updates through each profile's state directory, so every CLI selection sees
+the installation release and required-version banner. Subscription entitlement
+continues to travel only through the live profile status stream.
+
 2026-09-11 — **Prove free relay presence becomes paid reachability.** A local
 two-daemon relay scenario now starts with free account presence and denied
 remote inventory, flips the fixture account to pro, and observes relay access
