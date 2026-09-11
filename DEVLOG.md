@@ -13,6 +13,8 @@ cap instead of retaining its former 10 MiB fixture.
 The host-overlay goldens use the standard combined text-and-style envelope, so
 viewport validation checks each 120-by-40 plane instead of counting both as
 one 82-row image.
+Remaining fleet snapshots now include each host's direct route, and the help
+overlay documents the host browser shortcut.
 
 2026-09-11 — **Prove session and bulk isolation on the ordered relay fallback.**
 Session subscriptions and artifact fetches now have black-box coverage showing
