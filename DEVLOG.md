@@ -1,3 +1,9 @@
+2026-09-11 — **Bound unauthenticated work on the relay's QUIC front.** The
+relay now requires stateless address validation, rate-limits Initial packets
+per source, refuses validated handshakes beyond the shared concurrency cap, and
+times out incomplete handshakes before creating per-account routing state. The
+accept loop reaps handshake tasks and continues serving after overload.
+
 2026-09-11 — **Try every usable relay address before remembering UDP as
 blocked.** Cloud QUIC dials now skip DNS results from a socket family the
 profile's endpoint cannot use and give each remaining address its own bounded

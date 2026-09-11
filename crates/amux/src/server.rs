@@ -32,7 +32,7 @@ use crate::update::{UpdateReporter, UpdateStatus};
 use crate::user_state::ServerState;
 
 /// Maximum time allowed for a TLS handshake to complete.
-const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Local grace before aborting routing tasks so queued LinkClose frames can
 /// flush onto the sockets. Purely local; nothing on the wire mentions it.
 const SERVER_LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
@@ -331,7 +331,8 @@ impl Server {
         let quic_addr = SocketAddr::from(([0, 0, 0, 0], udp_port));
         let quic_endpoint = quinn::Endpoint::server(quic_server_config, quic_addr)?;
         tracing::info!(addr = %quic_addr, "listening for cloud QUIC carriers");
-        let cloud_quic_task = cloud_routing.serve_on_quic_endpoint(quic_endpoint.clone());
+        let cloud_quic_task =
+            cloud_routing.serve_on_quic_endpoint(quic_endpoint.clone(), TLS_HANDSHAKE_TIMEOUT);
 
         tokio::signal::ctrl_c().await?;
         cloud_routing

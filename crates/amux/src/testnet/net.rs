@@ -165,7 +165,8 @@ impl CloudRelay {
             service.serve_on_incoming(tracked_tcp_incoming(listener, connections.clone()));
         let quic_endpoint =
             bind_quic_addr_with_retries(self.quic_server_config.clone(), self.addr).await;
-        let quic_task = service.serve_on_quic_endpoint(quic_endpoint.clone());
+        let quic_task = service
+            .serve_on_quic_endpoint(quic_endpoint.clone(), crate::server::TLS_HANDSHAKE_TIMEOUT);
         *self.server.lock().await = Some(RunningCloud {
             service,
             tasks: vec![tcp_task, quic_task],

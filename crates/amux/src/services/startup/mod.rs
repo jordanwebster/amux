@@ -33,6 +33,10 @@ use crate::link::{
 };
 use crate::pairing::PairMode;
 use crate::protocol::wire;
+use crate::resource_limits::{
+    EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY, EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
+    EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW, SlidingWindowRateLimiter,
+};
 use crate::routing::{
     AuthenticatedLinkContextProvider, AuthenticatedLinkUser, HostReachabilityEvent,
     LinkConnectorCtx, LinkCtx, LinkTokenAuthenticator, LiveLocalHost, RoutingCore, local_host,
@@ -169,31 +173,94 @@ impl CloudLinkServer {
         spawn_cloud_carrier_server(self.clone(), incoming)
     }
 
-    pub(crate) fn serve_on_quic_endpoint(&self, endpoint: quinn::Endpoint) -> JoinHandle<()> {
+    pub(crate) fn serve_on_quic_endpoint(
+        &self,
+        endpoint: quinn::Endpoint,
+        handshake_timeout: Duration,
+    ) -> JoinHandle<()> {
+        self.serve_on_quic_endpoint_with_admission(
+            endpoint,
+            handshake_timeout,
+            Arc::new(Semaphore::new(EXTERNAL_QUIC_TLS_HANDSHAKE_CONCURRENCY)),
+        )
+    }
+
+    fn serve_on_quic_endpoint_with_admission(
+        &self,
+        endpoint: quinn::Endpoint,
+        handshake_timeout: Duration,
+        slots: Arc<Semaphore>,
+    ) -> JoinHandle<()> {
         let service = self.clone();
+        let limiter = Arc::new(tokio::sync::Mutex::new(SlidingWindowRateLimiter::new(
+            EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_LIMIT,
+            EXTERNAL_QUIC_TLS_HANDSHAKE_RATE_WINDOW,
+        )));
         tokio::spawn(async move {
-            while let Some(incoming) = endpoint.accept().await {
+            let mut connection_tasks = tokio::task::JoinSet::new();
+            loop {
+                let incoming = tokio::select! {
+                    incoming = endpoint.accept() => incoming,
+                    completed = connection_tasks.join_next(), if !connection_tasks.is_empty() => {
+                        if let Some(Err(error)) = completed
+                            && !error.is_cancelled()
+                        {
+                            tracing::warn!(error = %error, "cloud QUIC connection task failed");
+                        }
+                        continue;
+                    }
+                };
+                let Some(incoming) = incoming else { break };
+                let addr = incoming.remote_address();
+
+                if !incoming.remote_address_validated() {
+                    if !limiter.lock().await.allow(addr.ip()) {
+                        tracing::warn!(peer = %addr, "cloud QUIC handshake rate limit exceeded");
+                        incoming.ignore();
+                        continue;
+                    }
+                    if let Err(error) = incoming.retry() {
+                        tracing::debug!(peer = %addr, error = %error, "cloud QUIC address was already validated");
+                        error.into_incoming().ignore();
+                    }
+                    continue;
+                }
+                let permit = match slots.clone().try_acquire_owned() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        tracing::warn!(peer = %addr, "cloud QUIC handshake concurrency limit exceeded");
+                        incoming.refuse();
+                        continue;
+                    }
+                };
                 let service = service.clone();
-                tokio::spawn(async move {
-                    match incoming.await {
-                        Ok(connection) => {
-                            let ctx = service.accepting_link_ctx().await;
-                            let carrier = Arc::new(QuicCarrier::from_accepted_with_kind(
-                                connection,
-                                CarrierKind::RelayQuic,
-                            ));
-                            if let Err(error) =
-                                run_link(ctx, carrier, crate::routing::ConnectRole::Acceptor).await
-                            {
-                                tracing::warn!(error = %error, "cloud QUIC link exited with error");
-                            }
+                connection_tasks.spawn(async move {
+                    let _permit = permit;
+                    let connection = match tokio::time::timeout(handshake_timeout, incoming).await {
+                        Ok(Ok(connection)) => connection,
+                        Ok(Err(error)) => {
+                            tracing::warn!(peer = %addr, error = %error, "cloud QUIC handshake failed");
+                            return;
                         }
-                        Err(error) => {
-                            tracing::warn!(error = %error, "cloud QUIC handshake failed");
+                        Err(_) => {
+                            tracing::warn!(peer = %addr, "cloud QUIC handshake timed out");
+                            return;
                         }
+                    };
+                    drop(_permit);
+                    let ctx = service.accepting_link_ctx().await;
+                    let carrier = Arc::new(QuicCarrier::from_accepted_with_kind(
+                        connection,
+                        CarrierKind::RelayQuic,
+                    ));
+                    if let Err(error) =
+                        run_link(ctx, carrier, crate::routing::ConnectRole::Acceptor).await
+                    {
+                        tracing::warn!(peer = %addr, error = %error, "cloud QUIC link exited with error");
                     }
                 });
             }
+            connection_tasks.detach_all();
         })
     }
 
@@ -1274,11 +1341,162 @@ mod tests {
         drop(fast_client);
     }
 
-    fn no_verify_client_config() -> ClientConfig {
-        let verifier = Arc::new(NoServerVerification {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cloud_quic_handshake_timeout_releases_the_slot_after_cap_refusal() {
+        const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(500);
+
+        let rcgen::CertifiedKey { cert, signing_key } =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let server_config = crate::transport::relay_quic_server_config_from_der(
+            vec![CertificateDer::from(cert.der().as_ref().to_vec())],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der())),
+        )
+        .unwrap();
+        let server_endpoint =
+            quinn::Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let server_addr = server_endpoint.local_addr().unwrap();
+        let service = CloudLinkServer::new(test_state(Uuid::new_v4()));
+        let slots = Arc::new(Semaphore::new(1));
+        let server_task = service.serve_on_quic_endpoint_with_admission(
+            server_endpoint.clone(),
+            HANDSHAKE_TIMEOUT,
+            slots.clone(),
+        );
+
+        let regular_config = relay_quic_test_client_config(Arc::new(no_server_verification()));
+        let (proxy_addr, second_initial_rx, proxy_task) =
+            quic_stall_after_retry_proxy(server_addr).await;
+        let stalled_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let stalled_config = regular_config.clone();
+        let stalled = tokio::spawn(async move {
+            stalled_endpoint
+                .connect_with(stalled_config, proxy_addr, "localhost")
+                .unwrap()
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), second_initial_rx)
+            .await
+            .expect("stalled client did not answer the relay's Retry")
+            .expect("stalled-client proxy dropped its readiness signal");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while slots.available_permits() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stalled client never occupied the handshake slot");
+        let slot_occupied_at = tokio::time::Instant::now();
+
+        let capped_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let capped = tokio::time::timeout(
+            Duration::from_secs(1),
+            capped_endpoint
+                .connect_with(regular_config.clone(), server_addr, "localhost")
+                .unwrap(),
+        )
+        .await
+        .expect("connection at the handshake cap did not get a prompt refusal");
+        assert!(
+            capped.is_err(),
+            "connection at the handshake cap was admitted"
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while slots.available_permits() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stalled handshake did not release its slot at the timeout");
+        assert!(
+            slot_occupied_at.elapsed()
+                >= HANDSHAKE_TIMEOUT.saturating_sub(Duration::from_millis(50))
+        );
+
+        let healthy_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let healthy = tokio::time::timeout(
+            Duration::from_secs(1),
+            healthy_endpoint
+                .connect_with(regular_config, server_addr, "localhost")
+                .unwrap(),
+        )
+        .await
+        .expect("accept loop stopped serving after the handshake cap")
+        .expect("healthy connection was refused after the stalled handshake timed out");
+        healthy.close(0_u32.into(), b"test complete");
+
+        let stalled = tokio::time::timeout(Duration::from_secs(1), stalled)
+            .await
+            .expect("stalled client task did not resolve")
+            .expect("stalled client task panicked")
+            .expect("client side did not receive the relay handshake");
+        tokio::time::timeout(Duration::from_secs(1), stalled.closed())
+            .await
+            .expect("relay kept the stalled connection after its handshake timeout");
+        proxy_task.abort();
+        server_endpoint.close(0_u32.into(), b"test complete");
+        server_task.abort();
+        let _ = server_task.await;
+    }
+
+    async fn quic_stall_after_retry_proxy(
+        server_addr: std::net::SocketAddr,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::sync::oneshot::Receiver<()>,
+        JoinHandle<()>,
+    ) {
+        let socket = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let addr = socket.local_addr().unwrap();
+        let (second_initial_tx, second_initial_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let mut client_addr = None;
+            let mut retry_forwarded = false;
+            let mut second_initial_tx = Some(second_initial_tx);
+            let mut buffer = vec![0_u8; 65_535];
+            loop {
+                let (len, source) = socket.recv_from(&mut buffer).await.unwrap();
+                if source == server_addr {
+                    if let Some(client_addr) = client_addr {
+                        socket.send_to(&buffer[..len], client_addr).await.unwrap();
+                        retry_forwarded = true;
+                    }
+                    continue;
+                }
+
+                client_addr = Some(source);
+                if !retry_forwarded || second_initial_tx.is_some() {
+                    socket.send_to(&buffer[..len], server_addr).await.unwrap();
+                    if retry_forwarded && let Some(ready) = second_initial_tx.take() {
+                        let _ = ready.send(());
+                    }
+                }
+            }
+        });
+        (addr, second_initial_rx, task)
+    }
+
+    fn relay_quic_test_client_config(verifier: Arc<dyn ServerCertVerifier>) -> quinn::ClientConfig {
+        let mut tls = ClientConfig::builder_with_protocol_versions(&[&version::TLS13])
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_no_client_auth();
+        tls.alpn_protocols = vec![crate::identity::QUIC_ALPN.to_vec()];
+        tls.resumption = rustls::client::Resumption::disabled();
+        tls.enable_early_data = false;
+        let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls).unwrap();
+        quinn::ClientConfig::new(Arc::new(crypto))
+    }
+
+    fn no_server_verification() -> NoServerVerification {
+        NoServerVerification {
             supported_algs: rustls::crypto::ring::default_provider()
                 .signature_verification_algorithms,
-        });
+        }
+    }
+
+    fn no_verify_client_config() -> ClientConfig {
+        let verifier = Arc::new(no_server_verification());
         let mut config = ClientConfig::builder_with_protocol_versions(&[&version::TLS13])
             .dangerous()
             .with_custom_certificate_verifier(verifier)
