@@ -1,3 +1,12 @@
+2026-09-11 — **Audit codebase and build foundations.** Record a proposed Rust
+crate graph, native bridge/build changes, reproducible test and toolchain policy,
+worktree resource/cache ownership, and a bounded Bazel evaluation. The native
+worktree's target inventory reports 171.12 GiB, including 101.57 GiB of retained
+Rust objects and 39.34 GiB of incremental state; the plan makes aggregate disk
+budgets and repeated-workload storage stability acceptance requirements.
+This is an architecture proposal grounded in source and existing artifacts;
+no product changes, cleanup, or fresh performance qualification were performed.
+
 2026-09-06 — **Integrate fast provider tests with current main.** Keep the
 existing-shell subprocess fixture and main's separate five-second initialization
 budget; the bounded-output close assertion retains its one-second deadline.
