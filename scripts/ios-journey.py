@@ -1134,8 +1134,9 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect((left / "frame.png").stat().st_size > 0,
                    f"{left} has no picture of the screen the recording is of")
     journey.say(f"the conversation was left with {seen.get('halfWritten')!r} half written, the "
-                f"overflow open over it and the feed scrolled back from row "
-                f"{seen.get('readingAtTheTail')} to row {seen.get('readingScrolledBack')}; the "
+                f"overflow open over it and the feed scrolled back off its tail — from row "
+                f"{seen.get('readingAtTheTail')} of the turn that had just arrived to row "
+                f"{seen.get('readingScrolledBack')}; the "
                 f"report frozen there records all three — the draft, the open card, and the "
                 f"entry the reader was resting on ({resting[-1]['entry']}, "
                 f"{resting[-1]['into']:.0f} points into it) — none of which is in any message "

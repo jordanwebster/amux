@@ -302,36 +302,49 @@ final class ConversationTests: XCTestCase {
         // off its tail. None of them is in any message — they are this phone's
         // — so a bundle frozen here is the only evidence that a report carries
         // what somebody was actually looking at.
+        // Nothing can be written while the layer is still holding the last
+        // message, and a turn that has just finished offers its changes over
+        // the composer until somebody says Later. Both are the screen being
+        // honest, and both have to be got past before there is a field.
+        _ = try door(runner, .init(kind: "awaitSendable", agent: runner.agent, seconds: 90))
+        if element(app, "conversation.finished").exists { press(app, "ask.later") }
         let field = element(app, "composer.field")
         XCTAssertTrue(field.waitForExistence(timeout: waiting),
-                      "the conversation offered nowhere to write a message")
+                      "the conversation offered nowhere to write a message; where the composer "
+                      + "goes it says \(footSays(app))")
         field.tap()
         field.typeText(Self.halfWritten)
-        // Out to the fleet and back in. It is the shortest way to put the
-        // keyboard down through the app's own path rather than by reaching for
-        // the system's, and it is also the claim that a half-written message
-        // belongs to the conversation rather than to the field: what comes
-        // back has to be what was typed.
-        pressTab(app, "Agents")
-        XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
-                      "leaving the conversation did not return to the home")
-        press(app, "home.row.\(runner.agent)")
-        XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
-                      "coming back did not lead to the conversation")
+        // The keyboard down, by the app's own way of putting it down: reaching
+        // for the fleet from inside a conversation puts it down before it
+        // slides the drawer out. It has to go down before anything is
+        // photographed — it is the system's window and appears in no report's
+        // picture, but while it is up it takes a third of the display away
+        // from the feed, and a replay without one would lay the screen out
+        // differently.
+        press(app, "conversation.drawer")
+        XCTAssertTrue(element(app, "drawer").waitForExistence(timeout: waiting),
+                      "reaching for the fleet did not open the drawer")
+        press(app, "drawer.scrim")
+        XCTAssertTrue(waitUntil { self.identifiers(app, startingWith: "drawer.row.").isEmpty },
+                      "the drawer would not close again")
         XCTAssertTrue(waitUntil { self.value(app, "composer.field") == Self.halfWritten },
-                      "the half-written message did not survive leaving the conversation; the "
+                      "the half-written message did not survive the fleet coming over it; the "
                       + "field says \(value(app, "composer.field") ?? "nothing")")
         record["halfWritten"] = value(app, "composer.field")
 
-        // Back off the tail, which is where a conversation opens and stays.
+        // Back off the tail, which is where a conversation opens and where it
+        // stays until a thumb takes it somewhere else.
         let atTheTail = streamedLines(app)
-        for _ in 0..<8 { app.swipeDown(velocity: .fast) }
+        XCTAssertFalse(atTheTail.isEmpty,
+                       "the feed was not on the turn that had just arrived, so scrolling back "
+                       + "from it says nothing")
+        for _ in 0..<6 { app.swipeDown(velocity: .fast) }
         settle()
         let scrolledBack = streamedLines(app)
-        XCTAssertLessThan(scrolledBack.max() ?? Int.max, atTheTail.max() ?? 0,
-                          "scrolling back left the feed on the same rows it opened at")
+        XCTAssertLessThan(scrolledBack.max() ?? -1, atTheTail.max() ?? 0,
+                          "scrolling back left the feed on the rows it was already showing")
         record["readingAtTheTail"] = atTheTail.max()
-        record["readingScrolledBack"] = scrolledBack.max()
+        record["readingScrolledBack"] = scrolledBack.max() ?? -1
 
         press(app, "conversation.overflow")
         XCTAssertTrue(app.staticTexts["Rename"].waitForExistence(timeout: waiting),

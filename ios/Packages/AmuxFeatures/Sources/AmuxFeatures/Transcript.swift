@@ -217,8 +217,9 @@ struct TranscriptContainer<Content: View>: View {
 @MainActor
 private final class TranscriptPage {
     /// How many corrections a restored position may take before it is left
-    /// where it is.
-    static let corrections = 16
+    /// where it is. Generous, because the first several are spent asking for
+    /// an entry that has not been laid out yet and buy no movement at all.
+    static let corrections = 64
 
     /// Where the top of the page has reached, measured in the feed.
     var top: CGFloat = 0
