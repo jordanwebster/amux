@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **Fixture-panel smoke checks stay within their own exchange block.**
+The check now reads the six states after the two text-size queries instead of
+counting every plus or settings screen in the exchange. Regression tests add
+later visits to both screens and still reject a wrong screen or leaked panel
+at each fixture position. `wt run test-recipes` passes (104 tests), as does
+`wt fmt`.
+
 2026-09-11 — **A timed-out release explains how to recover.** Archive, export
 and validation now catch TimeoutExpired alongside failed subprocess exits.
 The diagnostic names the step and says whether version numbers were written,

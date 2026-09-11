@@ -218,7 +218,9 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
         f"{ordinary['typeSize']} for the one after it",
         flush=True)
 
-    panels = [state for state in states if state["screen"] in {"plus", "settings"}]
+    # The fixture block follows the two text-size queries in exchange().
+    # Later visits to these screens are separate checks.
+    panels = states[2:2 + len(PANELS)]
     if len(panels) != len(PANELS):
         raise SystemExit(f"expected {len(PANELS)} panel states, received {len(panels)}")
     for (screen, fixture, expected), state in zip(PANELS, panels):
