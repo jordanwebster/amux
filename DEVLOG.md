@@ -1,3 +1,9 @@
+2026-09-11 — **Make build-foundation measurements reproducible and owned.**
+Added named wt recipes for structured build reports, target inventory, and the
+controlled before/after workload. Reports bind tool and source identities,
+commands, timings, cache snapshots, lock observations, and output sizes to
+explicitly owned compiler directories and disposable checkouts.
+
 2026-09-11 — **Name shared client foundations for desktop and mobile reuse.**
 Revise the build proposal and implementation brief to separate reusable rich-client
 sessions/projection from embedded-node ownership and C bindings. The intended

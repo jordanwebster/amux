@@ -31,6 +31,15 @@ exists = 'test -f "$AMUX_CONFIG"'
 run = "cargo build --workspace --all-targets"
 needs = ["profile-config"]
 
+[task.build-report]
+run = 'python3 scripts/build-foundations-run.py report "$@"'
+
+[task.build-inventory]
+run = 'python3 scripts/build-foundations-run.py inventory "$@"'
+
+[task.build-benchmark]
+run = 'python3 scripts/build-foundations-run.py benchmark "$@"'
+
 [task.test]
 run = 'scripts/workspace-test.sh "$@"'
 needs = ["test-recipes"]
