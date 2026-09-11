@@ -14172,3 +14172,34 @@ one step.
 
 Green: `wt run ios-journey -- conversation` — passed; five pictures between them
 hold all nineteen row kinds, each one checked against the band it was read in.
+
+## The pinned Mac now has a baseline to drift from
+
+Every performance run on this Mac was judged against its budgets alone. The
+drift check the measurement document describes — a median may exceed the
+recorded figure by 15% for timing, hitches and CPU, or 10% for memory — had
+nothing to compare with, because no baseline had ever been recorded here, and a
+run whose budgets all pass says nothing about a slow bleed towards them.
+
+A deliberate `wt run ios-perf -- --baseline` records this machine's medians,
+reviewed against the budgets before being committed: cold first frame 429.5 ms
+against a 460 ms simulator gate, echo 7.2 ms against 17, main-thread CPU 43.8%
+against 60, footprint 68.4 MB against 250. The simulator gate and the 400 ms a
+phone is held to are unchanged, and every workload is the same one. The next
+ordinary run passed with all twelve measurements judged against both.
+
+The pinned Mac's row in the measurement document now says its baseline is
+required rather than optional, so a run that cannot find the file stops and
+says so instead of quietly falling back to the budgets alone — losing the file
+is exactly how a drift check stops existing without anybody deciding to end it.
+
+A refused measurement also reports itself now. The measured suite fails its own
+test when a median is over budget or over the recorded figure, and the recipe
+turned that into a stack trace about xcodebuild; it now reads the numbers the
+app wrote either way, so the line says which measurement was refused and by how
+much. A run that failed for any other reason wrote no verdict and is still
+reported as that.
+
+Green: `wt run ios-perf` — passed, every Baseline cell filled. Proven refusing a
+regression too: with the recorded echo figure deliberately set to 5.00, a median
+of 7.59 — comfortably inside its budget of 17 — failed the run.

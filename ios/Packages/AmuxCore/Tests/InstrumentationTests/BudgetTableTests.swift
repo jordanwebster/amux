@@ -17,7 +17,7 @@ final class BudgetTableTests: XCTestCase {
         let pinned = try XCTUnwrap(table.machine("pinned-mac"))
         XCTAssertEqual(pinned.model, "Mac14,6")
         XCTAssertTrue(pinned.budgetsAreHard)
-        XCTAssertFalse(pinned.baselineRequired)
+        XCTAssertTrue(pinned.baselineRequired)
         let runner = try XCTUnwrap(table.machine("macos-26"))
         XCTAssertNil(runner.model)
         XCTAssertFalse(runner.budgetsAreHard)

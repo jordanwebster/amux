@@ -47,13 +47,21 @@ make a failing run pass. An invisible baseline lets performance ratchet
 downward unnoticed: replacing yesterday's number becomes cheaper than fixing
 the regression. Per-run output is disposable; the comparison history is not.
 
-Budgets always apply on the pinned Mac. A recorded baseline adds a drift check:
-the median may grow by at most 15% for timing, hitches and CPU, or 10% for memory.
-If `--describe` reports `baseline_present: false`, there is no recorded drift
-comparison for this machine; a passing budget alone does not establish one.
+Budgets always apply on the pinned Mac, and so does the drift check: the median
+may grow by at most 15% for timing, hitches and CPU, or 10% for memory over the
+number recorded in `ios/Perf/baselines/pinned-mac.json`. That file is the
+machine's history and an ordinary run needs it — a run that cannot find it stops
+and says so rather than quietly falling back to the budgets alone, which would
+leave a slow bleed unwatched for as long as nobody noticed the file was gone.
+`--describe` reports whether it is there without measuring anything.
 On the CI runner a missing baseline is reported as `no baseline for this runner`;
 verification still runs the hard budgets and never records a baseline on its
 own. A deliberate first baseline run also has to meet the hard budgets.
+
+A refused drift is reported where the numbers are: the line for the measurement
+says by how much it is over the recorded figure, and the run fails even where
+the metric is comfortably inside its budget — which is the whole point of
+recording one.
 
 Drift catches a slow bleed that a budget alone misses. Cold first frame grew
 from about 310 ms to about 439 ms across roughly 250 commits. Each incremental
@@ -273,7 +281,7 @@ checks this without running the suite.
 
 | Machine | Model | Budgets | Baseline |
 | --- | --- | --- | --- |
-| `pinned-mac` | `Mac14,6` | hard | optional |
+| `pinned-mac` | `Mac14,6` | hard | required |
 | `macos-26` | `—` | recorded | required |
 
 ## Budgets

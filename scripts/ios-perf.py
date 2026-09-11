@@ -595,6 +595,14 @@ def median(values: list[float]) -> float:
 
 
 def measure(udid: str) -> None:
+    """Runs the measured suite, and lets a refused measurement report itself.
+
+    The suite fails its test when a measurement is over budget or over its
+    recorded baseline, which is the suite doing its job. Raising the process
+    error here would bury the reason under a stack trace about xcodebuild; the
+    numbers the app wrote are read afterwards either way, and a run that failed
+    for any other reason wrote no verdict and is reported as that.
+    """
     subprocess.run([
         "xcodebuild", "test-without-building",
         "-project", "ios/Amux.xcodeproj",
@@ -610,7 +618,7 @@ def measure(udid: str) -> None:
         "-enableThreadSanitizer", "NO",
         "-enableUndefinedBehaviorSanitizer", "NO",
         *ARCHITECTURE,
-    ], check=True, timeout=2400)
+    ], check=False, timeout=2400)
 
 
 def collect(

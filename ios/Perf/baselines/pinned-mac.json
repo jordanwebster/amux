@@ -1,0 +1,14 @@
+{
+  "coldFirstFrameMs.cachedFleet40": 429.52001094818115,
+  "reconciliationMs.latency0": 7.5370073318481445,
+  "reconciliationMs.latency100": 114.34102058410645,
+  "reconciliationMs.putAwayAndPickedUp": 243.54179191868752,
+  "echoFrames.conversation1000": 7.196903228759766,
+  "hitchTimeRatioMsPerS.stream50PerSecond20s": 3.253470514488378e-06,
+  "mainThreadCpuPercent.stream50PerSecond20s": 43.754963167014886,
+  "footprintMB.conversation1000": 68.40851593017578,
+  "idleCommits.conversation1000": 0,
+  "connectionsPerHost.putAwayAndPickedUp": 1,
+  "backgroundConnections.putAwayAndPickedUp": 0,
+  "foregroundRecoveryMs.putAwayAndPickedUp": 242.97587492037565
+}
