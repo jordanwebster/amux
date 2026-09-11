@@ -10,7 +10,7 @@
   "tunnel_count": 1,
   "hosts": [
     {
-      "id": "3d1db3d1-f500-412a-abfb-d6d02bb64b0e",
+      "id": "76b23ca7-8710-480e-a60f-a60323ad5020",
       "name": "studio",
       "version": "0.6.0",
       "capabilities": {
@@ -28,7 +28,7 @@
       }
     },
     {
-      "id": "7cb8fa98-1d6e-44a1-8713-388d68943050",
+      "id": "f97269e5-e94d-4267-97d5-a2445c6d548d",
       "name": "relay",
       "version": "0.6.0",
       "capabilities": {
@@ -40,26 +40,26 @@
   ],
   "routes": [
     {
-      "dst": "3d1db3d1-f500-412a-abfb-d6d02bb64b0e",
+      "dst": "76b23ca7-8710-480e-a60f-a60323ad5020",
       "via": {
         "kind": "relay",
-        "host": "7cb8fa98-1d6e-44a1-8713-388d68943050"
+        "host": "f97269e5-e94d-4267-97d5-a2445c6d548d"
       },
       "hops": 2
     },
     {
-      "dst": "7cb8fa98-1d6e-44a1-8713-388d68943050",
+      "dst": "f97269e5-e94d-4267-97d5-a2445c6d548d",
       "via": {
         "kind": "direct",
-        "link": "7cb8fa981d6e44a18713388d68943050#1ce5e39b"
+        "link": "f97269e5e94d426797d5a2445c6d548d#19a5ecbb"
       },
       "hops": 1
     }
   ],
   "links": [
     {
-      "id": "7cb8fa981d6e44a18713388d68943050#1ce5e39b",
-      "peer": "7cb8fa98-1d6e-44a1-8713-388d68943050",
+      "id": "f97269e5e94d426797d5a2445c6d548d#19a5ecbb",
+      "peer": "f97269e5-e94d-4267-97d5-a2445c6d548d",
       "direction": "bidirectional",
       "transport": "cloud_relay",
       "established_at": null
@@ -67,20 +67,20 @@
   ],
   "tunnels": [
     {
-      "id": "b794bc17286647ff8c69daa0f24e3115",
-      "peer": "3d1db3d1-f500-412a-abfb-d6d02bb64b0e",
-      "link": "7cb8fa981d6e44a18713388d68943050#1ce5e39b",
+      "id": "33f26bedf29d4131a905756016732e58",
+      "peer": "76b23ca7-8710-480e-a60f-a60323ad5020",
+      "link": "f97269e5e94d426797d5a2445c6d548d#19a5ecbb",
       "state": "open_initiated",
-      "opened_at": "2026-09-11T06:03:26.941395Z"
+      "opened_at": "2026-09-11T06:21:38.398798Z"
     }
   ],
   "config": {
     "host_name": "amux-golden",
     "cloud_url": "https://amux.sh",
-    "socket_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/A84F703C-2866-45C8-BBA4-1247DED6C35E/Library/Application Support/amux/installation/profiles/c695ca5c-506c-463c-97a0-f825e03c2c1f.sock",
-    "state_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/A84F703C-2866-45C8-BBA4-1247DED6C35E/Library/Application Support/amux/installation/profiles/c695ca5c-506c-463c-97a0-f825e03c2c1f/state/state.yaml",
-    "data_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/A84F703C-2866-45C8-BBA4-1247DED6C35E/Library/Application Support/amux/installation/profiles/c695ca5c-506c-463c-97a0-f825e03c2c1f/data",
-    "reports_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/A84F703C-2866-45C8-BBA4-1247DED6C35E/Library/Application Support/amux/installation/profiles/c695ca5c-506c-463c-97a0-f825e03c2c1f/data/reports",
+    "socket_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/C1D83BA2-9333-494E-A91A-DE5AC9CAE693/Library/Application Support/amux/installation/profiles/d086f717-2022-4a9d-a1f3-fa6ad2c5d510.sock",
+    "state_path": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/C1D83BA2-9333-494E-A91A-DE5AC9CAE693/Library/Application Support/amux/installation/profiles/d086f717-2022-4a9d-a1f3-fa6ad2c5d510/state/state.yaml",
+    "data_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/C1D83BA2-9333-494E-A91A-DE5AC9CAE693/Library/Application Support/amux/installation/profiles/d086f717-2022-4a9d-a1f3-fa6ad2c5d510/data",
+    "reports_dir": "/Users/jlw/Library/Developer/CoreSimulator/Devices/75DE48D5-74BC-49D9-8A42-121B236E95F8/data/Containers/Data/Application/C1D83BA2-9333-494E-A91A-DE5AC9CAE693/Library/Application Support/amux/installation/profiles/d086f717-2022-4a9d-a1f3-fa6ad2c5d510/data/reports",
     "prevent_idle_sleep": false,
     "repository_roots": [],
     "keybinds": {

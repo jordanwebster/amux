@@ -307,12 +307,7 @@ final class ConversationTests: XCTestCase {
         // the composer until somebody says Later. Both are the screen being
         // honest, and both have to be got past before there is a field.
         _ = try door(runner, .init(kind: "awaitSendable", agent: runner.agent, seconds: 90))
-        var setAside = false
-        if element(app, "conversation.finished").exists {
-            press(app, "ask.later")
-            setAside = true
-        }
-        record["setAsideTheFinishedTurn"] = setAside
+        setAsideAnyFinishedTurn(app)
         let field = element(app, "composer.field")
         XCTAssertTrue(field.waitForExistence(timeout: waiting),
                       "the conversation offered nowhere to write a message; where the composer "
@@ -332,8 +327,19 @@ final class ConversationTests: XCTestCase {
         press(app, "drawer.scrim")
         XCTAssertTrue(waitUntil { self.identifiers(app, startingWith: "drawer.row.").isEmpty },
                       "the drawer would not close again")
+        // Out of the conversation altogether and back into it, which is what
+        // somebody who wrote half a message and went to look at something else
+        // does. What comes back has to be what was typed: a draft belongs to
+        // the conversation and not to the field it was typed into.
+        pressTab(app, "Agents")
+        XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
+                      "leaving the conversation did not return to the home")
+        press(app, "home.row.\(runner.agent)")
+        XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
+                      "coming back did not lead to the conversation")
+        setAsideAnyFinishedTurn(app)
         XCTAssertTrue(waitUntil { self.value(app, "composer.field") == Self.halfWritten },
-                      "the half-written message did not survive the fleet coming over it; the "
+                      "the half-written message did not survive leaving the conversation; the "
                       + "field says \(value(app, "composer.field") ?? "nothing")")
         record["halfWritten"] = value(app, "composer.field")
 
@@ -1149,6 +1155,15 @@ final class ConversationTests: XCTestCase {
             if attempt < 20 { app.swipeDown(velocity: .slow) } else { app.swipeUp(velocity: .slow) }
         }
         XCTFail("scrolling the feed never brought \(identifier) somewhere it could be pressed")
+    }
+
+    /// Says Later to a finished turn's offer of its changes, where there is
+    /// one. It stands in the composer's place until somebody answers it, and
+    /// what is wanted here is the composer.
+    private func setAsideAnyFinishedTurn(_ app: XCUIApplication) {
+        guard element(app, "conversation.finished").exists else { return }
+        press(app, "ask.later")
+        record["setAsideTheFinishedTurn"] = true
     }
 
     /// The message left half written in the composer for the report below. A
