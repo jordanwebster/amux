@@ -1,3 +1,10 @@
+2026-09-11 — **Prepare relay UDP ingress without applying it.** The relay's
+infrastructure role now opens UDP 9001 beside the TCP fallback, renders both
+listeners into the service configuration, and requires both sockets to be
+bound before a deploy is healthy. The matching change is committed locally on
+the infra repository's `relay-udp` branch and has not been pushed or applied;
+the operator applies it after this connection work lands.
+
 2026-09-11 — **Prove account-free pairing over real multicast.** The end-to-end
 runner now opts individual daemons into platform mDNS while keeping unrelated
 fixtures on isolated scripted discovery, can disable discovery on one daemon,
