@@ -11,7 +11,6 @@ use std::time::Duration;
 #[cfg(unix)]
 use client::connect_socket;
 use client::{Client, ConnectError};
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;

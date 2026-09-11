@@ -40,6 +40,8 @@ use std::path::PathBuf;
 
 pub use model::ProfileId;
 pub use paths::ProfilePaths;
+#[cfg(test)]
+pub(crate) use paths::adjacent_codex_socket_path;
 pub use registry::{Binding, InstallationRoot, ProfileLabel, ProfileRecord, Registry};
 
 #[derive(Debug, thiserror::Error)]

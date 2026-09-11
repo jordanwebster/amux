@@ -55,14 +55,12 @@ pub(super) async fn subscribe_session_stream(
 enum SessionOutputReader {
     Raw(RawSessionOutputReader),
     Structured {
-        protocol: Protocol,
         reader: crate::agents::MultiplexStructuredReader,
         replay_cursor: Option<u64>,
     },
 }
 
 struct RawSessionOutputReader {
-    protocol: Protocol,
     reader: crate::agents::MultiplexByteReader,
     #[cfg(unix)]
     _codex_lease: Option<CodexRawPtyLease>,
@@ -95,7 +93,6 @@ async fn prepare_direct_session_subscription(
                 .await
                 .map(|(reader, replay_cursor)| PreparedSessionSubscription {
                     output: SessionOutputReader::Structured {
-                        protocol,
                         reader,
                         replay_cursor,
                     },
@@ -139,7 +136,6 @@ async fn prepare_direct_raw_session_subscription(
         .await
         .ok_or(ProtocolError::NoAgentFound)?;
     Ok(RawSessionOutputReader {
-        protocol: Protocol::TerminalV1,
         reader,
         #[cfg(unix)]
         _codex_lease: subscription.codex_lease,
@@ -157,7 +153,6 @@ async fn prepare_direct_test_echo_session_subscription(
         .await
         .ok_or(ProtocolError::NoAgentFound)?;
     Ok(RawSessionOutputReader {
-        protocol: Protocol::TestEchoV1,
         reader,
         #[cfg(unix)]
         _codex_lease: subscription.codex_lease,
@@ -829,15 +824,6 @@ async fn recv_close_reason_for_agent(
     })
 }
 
-impl SessionOutputReader {
-    fn protocol(&self) -> Protocol {
-        match self {
-            Self::Raw(raw) => raw.protocol,
-            Self::Structured { protocol, .. } => *protocol,
-        }
-    }
-}
-
 async fn read_session_output_event(
     reader: &mut SessionOutputReader,
 ) -> Option<Result<HostSessionEvent, ProtocolError>> {
@@ -877,7 +863,7 @@ fn structured_output_event(
     Ok(HostSessionEvent::Output { sequence: Some(output.seq), payload: payload_json })
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 pub(super) async fn open_in_process_protocol_plane(
     kind: crate::agents::AgentKind,
     protocol: Protocol,
@@ -980,7 +966,7 @@ pub(super) async fn open_in_process_protocol_plane(
     Ok(())
 }
 
-#[cfg(debug_assertions)]
+#[cfg(test)]
 pub(super) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
     use crate::agents::{AgentType, ClaudeDriver, CreateAgentRequest, McpLaunchRoute, new_agent};
 

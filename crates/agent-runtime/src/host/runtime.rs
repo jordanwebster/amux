@@ -118,6 +118,7 @@ impl AgentRuntime {
     }
 
     #[cfg(all(debug_assertions, unix))]
+    #[allow(dead_code)] // Consumed only by opt-in recorded-provider harnesses.
     pub(crate) async fn register_sdk_fixture(
         &self,
         record: crate::agents::AgentRecord,

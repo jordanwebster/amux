@@ -192,7 +192,7 @@ pub(crate) struct ProfileRuntime {
     pub(crate) trust: crate::trust::SharedTrustStore,
     #[cfg(testnet)]
     test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
-    #[cfg(test_fixtures)]
+    #[cfg(test)]
     pub(crate) test_cloud_transport: Option<tonic::transport::Channel>,
     client: Client,
     #[cfg(testnet)]
@@ -209,6 +209,7 @@ pub(crate) struct ProfileRuntime {
 
 /// Start local services and listeners for one profile. Cloud attachment is
 /// intentionally a separate operation.
+#[cfg(any(test, testnet))]
 pub(crate) async fn start(
     options: ProfileRuntimeOptions,
 ) -> Result<ProfileRuntime, ProfileStartError> {
@@ -220,6 +221,7 @@ pub(crate) async fn start(
     start_observed(options, status).await
 }
 
+#[cfg(any(test, testnet))]
 pub(crate) async fn start_observed(
     options: ProfileRuntimeOptions,
     status: RuntimeStatus,
@@ -387,7 +389,7 @@ async fn build(
         test_cloud: options.fixtures.cloud,
         #[cfg(testnet)]
         test_cloud_transport: options.fixtures.cloud_transport,
-        #[cfg(all(test_fixtures, not(testnet)))]
+        #[cfg(all(test, not(testnet)))]
         test_cloud_transport: None,
         client,
         #[cfg(testnet)]
@@ -508,7 +510,7 @@ impl ProfileRuntime {
             self.state.clone(),
             self.services.link_connector_ctx(),
             self.status.clone(),
-            #[cfg(test_fixtures)]
+            #[cfg(test)]
             self.test_cloud_transport.clone(),
         ));
         Ok(())

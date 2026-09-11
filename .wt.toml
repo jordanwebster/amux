@@ -20,22 +20,60 @@ keymaps_dir: {{root()}}/.wt/amux/keymaps
 prevent_idle_sleep: false
 """
 
-# One dependency graph for everything below: `build` compiles tests and
-# examples too (without running them), so `test`, `lint` and `spec` reuse
-# its artifacts instead of producing variants of their own.
+# Product work does not compile test, example, generator or live-provider
+# targets. Those targets have explicit recipes below.
 [task.profile-config]
 run = ["python3", "scripts/worktree-profile.py", "{{root()}}/.wt/amux", "{{name()}}"]
 exists = 'test -f "$AMUX_CONFIG"'
 
 [task.build]
-run = "cargo build --workspace --all-targets"
+run = "timeout 900 cargo build -p amux -p shot --bins"
 needs = ["profile-config"]
+
+[task.check]
+run = "timeout 900 cargo check --workspace --lib --bins"
+
+[task.test-build]
+run = "timeout 1200 cargo test --workspace --lib --tests --no-run"
+
+[task.doctest]
+run = "timeout 600 cargo test --workspace --doc"
+
+[task.full-debug]
+run = "timeout 900 cargo build -p amux -p shot --bins --profile full-debug"
+
+[task.ci-check]
+run = "timeout 900 cargo check --workspace --lib --bins --profile ci"
+
+[task.ci-test]
+run = "timeout 1200 cargo test --workspace --lib --tests --profile ci-test"
+
+[task.release-check]
+run = "timeout 1200 cargo build --release -p amux -p shot --bins"
+
+[task.format-check]
+run = "cargo +nightly-2026-08-30 fmt --all -- --check"
+
+[task.codegen-check]
+run = "timeout 600 scripts/codegen-check.sh"
+
+[task.offline-test]
+run = "timeout 1200 scripts/offline-check.sh cargo test --workspace --lib --tests"
 
 [task.build-report]
 run = 'python3 scripts/build-foundations-run.py report "$@"'
 
 [task.build-inventory]
 run = 'python3 scripts/build-foundations-run.py inventory "$@"'
+
+[task.output-inventory]
+run = 'python3 scripts/output-budget.py inventory "$@"'
+
+[task.output-preflight]
+run = 'python3 scripts/output-budget.py preflight "$@"'
+
+[task.output-prune]
+run = 'python3 scripts/output-budget.py prune "$@"'
 
 [task.build-benchmark]
 run = 'python3 scripts/build-foundations-run.py benchmark "$@"'
@@ -96,7 +134,10 @@ run = "timeout 600 cargo test -p testnet -p claude-specs -p codex-specs -p tui-f
 run = "timeout 60 python3 scripts/check-dependency-policy.py"
 
 [task.lint]
-run = "cargo clippy --workspace --all-targets -- -D warnings"
+run = "cargo clippy --workspace --lib --bins -- -D warnings"
+
+[task.fix-lints]
+run = "cargo fix -p node -p agent-runtime --lib --allow-dirty"
 
 # Selected by target name across the workspace rather than by package:
 # a `-p` selection unifies dependency features differently from the
@@ -115,7 +156,7 @@ needs = ["build"]
 # The iOS library builds without `local-agents`. The check always names the
 # target so it never produces a host variant of the workspace.
 [task.mobile-check]
-run = "cargo check -p node --target aarch64-apple-ios"
+run = "timeout 1200 cargo check -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios && timeout 1200 cargo check -p node -p client -p ui-state -p ui-runtime --target aarch64-apple-ios-sim"
 
 # Match CI's embedded library suite without unifying desktop features.
 [task.client-test]
@@ -129,7 +170,10 @@ run = "cargo run -p xtask -- codegen"
 
 [task.e2e]
 run = 'timeout 900 target/debug/e2e-runner run --amux-binary target/debug/amux --test-agent-binary target/debug/test-agent "$@"'
-needs = ["build"]
+needs = ["e2e-build"]
+
+[task.e2e-build]
+run = "timeout 900 cargo build -p amux -p e2e-runner -p test-agent --bins"
 
 # This checkout's daemon. A resource: `wt remove` stops it.
 [task.daemon]

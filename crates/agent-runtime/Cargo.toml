@@ -5,6 +5,9 @@ edition.workspace = true
 description = "Desktop provider sessions and local agent hosting for amux"
 publish = false
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(testnet)'] }
+
 [dependencies]
 anyhow = { workspace = true }
 artifacts = { workspace = true }
@@ -33,6 +36,7 @@ uuid = { workspace = true }
 codex = { path = "../codex" }
 
 [dev-dependencies]
+tokio-tungstenite = { workspace = true }
 prost = { workspace = true }
 replay-support = { path = "../replay-support" }
 tonic = { workspace = true }

@@ -16,27 +16,27 @@ const AGENT: &str = "sdk-feed";
 fn rows(name: &str) -> Vec<Value> {
     let raw = match name {
         "streamed" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/streamed_turn.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/streamed_turn.rows.jsonl")
         }
-        "text" => include_str!("../../../amux/tests/fixtures/rows/claude-sdk/text_turn.rows.jsonl"),
+        "text" => include_str!("../../../claude-specs/fixtures/claude-sdk/text_turn.rows.jsonl"),
         "tools" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/max_turns.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/max_turns.rows.jsonl")
         }
         "tasks" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/subagent_task.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/subagent_task.rows.jsonl")
         }
         "compacted" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/compacted.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/compacted.rows.jsonl")
         }
         "cleared" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/cleared.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/cleared.rows.jsonl")
         }
         "interrupted" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/interrupted.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/interrupted.rows.jsonl")
         }
-        "recipient" => include_str!("../../../amux/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
-        "completed" => include_str!("../../../amux/tests/fixtures/a2a/sdk_completed.rows.jsonl"),
-        "exited" => include_str!("../../../amux/tests/fixtures/a2a/sdk_exited.rows.jsonl"),
+        "recipient" => include_str!("../../../node/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
+        "completed" => include_str!("../../../node/tests/fixtures/a2a/sdk_completed.rows.jsonl"),
+        "exited" => include_str!("../../../node/tests/fixtures/a2a/sdk_exited.rows.jsonl"),
         _ => panic!("unknown fixture"),
     };
     raw.lines()

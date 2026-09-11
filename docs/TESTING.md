@@ -4,10 +4,14 @@ Use the checkout's `wt` recipes so builds share one workspace dependency
 graph and tests have an outer timeout:
 
 ```sh
-wt build
-wt test
+wt build                 # desktop product binaries only
+wt run check             # workspace libraries and binaries
+wt run test-build        # compile ordinary test harnesses
+wt test                  # execute the full workspace selection
+wt run doctest
 wt lint
 wt run spec
+wt run offline-test      # isolated HOME/config and denied external network
 ```
 
 `wt test` runs every workspace target by default. To select test functions
@@ -23,8 +27,9 @@ Arguments after the first `--` go to Cargo. A second `--` separates Cargo's
 arguments from the test harness's arguments. A name alone filters functions
 inside every selected harness; it does not prevent unrelated harnesses from
 starting. Select a target when investigating one component. Target selection
-keeps `--workspace`; selecting a package with `-p` can change feature
-unification and compile a second dependency graph.
+keeps `--workspace`. For routine component work, use the declared focused
+recipes; their smaller dependency closures may compile a different feature
+variant than full verification.
 
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.

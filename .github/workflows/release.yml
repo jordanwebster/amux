@@ -28,14 +28,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release -p amux-cli --target ${{ matrix.target }}
+        run: cargo build --release -p amux --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

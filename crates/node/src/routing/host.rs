@@ -49,10 +49,11 @@ pub(crate) fn validate_remote_host(host: &Host) -> std::result::Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routing::SupportedAgentType;
 
     #[test]
     fn validate_remote_host_rejects_too_many_supported_agent_types() {
-        let mut host = local_host(Uuid::from_u128(1), "peer", false);
+        let mut host = local_host(Uuid::from_u128(1), "peer", Capabilities::default());
         host.capabilities.supported_agent_types = (0..=MAX_SUPPORTED_AGENT_TYPES)
             .map(|idx| SupportedAgentType {
                 agent_type: format!("agent-{idx}"),
@@ -69,7 +70,7 @@ mod tests {
         let host = local_host(
             Uuid::from_u128(1),
             &"a".repeat(MAX_HOST_NAME_BYTES + 1),
-            false,
+            Capabilities::default(),
         );
 
         let error = validate_remote_host(&host).expect_err("host name should exceed the cap");
@@ -79,7 +80,11 @@ mod tests {
 
     #[test]
     fn cloud_local_host_advertises_no_supported_agent_types() {
-        let host = local_host(Uuid::from_u128(1), "cloud", true);
+        let host = local_host(
+            Uuid::from_u128(1),
+            "cloud",
+            Capabilities { features: vec![FEATURE_CLOUD_RELAY.to_string()], ..Default::default() },
+        );
 
         assert!(host.capabilities.supported_agent_types.is_empty());
         assert!(
@@ -90,43 +95,9 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "local-agents")]
     #[test]
-    fn non_cloud_local_host_advertises_claude_agent_type() {
-        let host = local_host(Uuid::from_u128(1), "host", false);
-
-        assert!(
-            host.capabilities
-                .supported_agent_types
-                .iter()
-                .any(|agent| agent.agent_type == AGENT_TYPE_CLAUDE)
-        );
-        #[cfg(unix)]
-        assert!(
-            host.capabilities
-                .supported_agent_types
-                .iter()
-                .any(|agent| agent.agent_type == AGENT_TYPE_CODEX)
-        );
-    }
-
-    #[cfg(all(feature = "local-agents", not(unix)))]
-    #[test]
-    fn non_unix_local_host_does_not_advertise_codex_agent_type() {
-        let host = local_host(Uuid::from_u128(1), "host", false);
-
-        assert!(
-            host.capabilities
-                .supported_agent_types
-                .iter()
-                .all(|agent| agent.agent_type != "codex")
-        );
-    }
-
-    #[cfg(not(feature = "local-agents"))]
-    #[test]
-    fn non_cloud_local_host_advertises_no_agent_types_without_local_agents() {
-        let host = local_host(Uuid::from_u128(1), "host", false);
+    fn supplied_capabilities_are_advertised_verbatim() {
+        let host = local_host(Uuid::from_u128(1), "host", Capabilities::default());
 
         assert!(host.capabilities.supported_agent_types.is_empty());
     }

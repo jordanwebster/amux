@@ -8845,3 +8845,14 @@ provider probes and examples as part of ordinary package tests. A declared
 infrastructure recipe validates both provider corpora and exercises two
 isolated embedded node owners; the existing TUI golden harnesses read their
 provider rows from the new package locations.
+
+2026-09-11 — **Build intent is explicit and reproducible.** Rust 1.98.0 and
+its cross targets/components are pinned, while formatting uses the separately
+pinned 2026-08-30 nightly. Product build, workspace check, test compilation,
+doctest, offline, codegen, E2E prerequisite, release, iOS and full-debug work
+now have named wt recipes. Development uses line-table debug information with
+incremental compilation; CI uses matching non-incremental profiles. CI and
+release configurations use the pinned compiler and corrected `amux` package.
+The product/library Clippy recipe passes with warnings denied. Full test
+compilation currently identifies remaining monolith-era test imports, recorded
+in the build-foundations progress log for the integration verification.

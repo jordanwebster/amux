@@ -224,7 +224,7 @@ impl ClaudePtyBackend {
         backend
     }
 
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(test)]
     pub(crate) fn for_protocol_tests(
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
@@ -258,7 +258,7 @@ impl ClaudePtyBackend {
         )
     }
 
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(any(testnet, test))]
     pub(super) fn scripted(
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
@@ -546,11 +546,13 @@ impl ClaudePtyBackend {
     }
 
     #[cfg(debug_assertions)]
+    #[allow(dead_code)] // Consumed only by the opt-in derived-row recorder.
     pub(crate) async fn current_seq_for_derived_rows(&self) -> u64 {
         self.log.current_seq().await
     }
 
     #[cfg(debug_assertions)]
+    #[allow(dead_code)] // Consumed only by the opt-in derived-row recorder.
     pub(crate) async fn close_log_for_derived_rows(&self) {
         self.log.close().await;
     }
@@ -1044,7 +1046,7 @@ fn external_session() -> (Session, mpsc::Sender<HookPayload>) {
     (session, hook_tx)
 }
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(any(testnet, test))]
 fn scripted_session(keymaps: &KeymapSources) -> (Session, mpsc::Sender<HookPayload>) {
     use tokio::io::AsyncReadExt;
 

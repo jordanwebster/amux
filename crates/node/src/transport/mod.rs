@@ -20,10 +20,10 @@ pub(crate) use memory::{
 };
 #[cfg(test)]
 pub(crate) use memory::{in_process_incoming, in_process_transport_pair};
-pub(crate) use single_io::{channel_from_single_io, connect_single_io};
+pub(crate) use single_io::channel_from_single_io;
 #[allow(unused_imports)]
 pub(crate) use ssh::{SshRelayIo, spawn_ssh_pair_recv, spawn_ssh_relay};
-#[cfg(any(test, test_fixtures))]
+#[cfg(test)]
 pub(crate) use tcp::tcp_incoming;
 pub(crate) use tcp::{TcpServerTransport, configure_tcp_keepalive};
 use thiserror::Error;

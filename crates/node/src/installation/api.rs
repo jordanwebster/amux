@@ -128,7 +128,7 @@ async fn shutdown_yields_and_finishes_after_its_caller_is_cancelled() {
     );
 }
 
-#[cfg(test_fixtures)]
+#[cfg(test)]
 #[tokio::test]
 async fn login_and_profile_resume_cannot_wake_a_suspended_host() {
     use crate::installation::{BindTarget, Intent, Observed};

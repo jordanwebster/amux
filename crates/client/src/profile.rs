@@ -6,7 +6,6 @@ use std::time::Duration;
 use model::{DebugFormat, HostEntry, PeerIdentifier, ProfileId, SshPairingPeer, SshTarget};
 use tonic::transport::Channel;
 use uuid::Uuid;
-use wire;
 
 use crate::{
     ClientError, PairingStart, PeerEntry, debug_format_to_wire, host_entry_from_wire,

@@ -65,16 +65,16 @@ fn sequence(rows: Vec<Value>) -> Vec<Msg> {
 fn recorded(name: &str) -> Vec<Value> {
     let raw = match name {
         "permission" => include_str!(
-            "../../../amux/tests/fixtures/rows/claude-sdk/permission_callback.rows.jsonl"
+            "../../../claude-specs/fixtures/claude-sdk/permission_callback.rows.jsonl"
         ),
         "elicitation" => include_str!(
-            "../../../amux/tests/fixtures/rows/claude-sdk/elicitation_accepted.rows.jsonl"
+            "../../../claude-specs/fixtures/claude-sdk/elicitation_accepted.rows.jsonl"
         ),
         "streamed" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/streamed_turn.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/streamed_turn.rows.jsonl")
         }
         "interrupted" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/interrupted.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/interrupted.rows.jsonl")
         }
         _ => unreachable!(),
     };

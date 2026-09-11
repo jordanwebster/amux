@@ -64,6 +64,7 @@ where
     endpoint.connect_with_connector_lazy(SingleIoConnector::new(io, label))
 }
 
+#[cfg(test)]
 pub(crate) async fn connect_single_io<IO>(
     endpoint: Endpoint,
     label: &'static str,

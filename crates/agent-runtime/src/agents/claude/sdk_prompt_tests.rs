@@ -91,7 +91,7 @@ async fn prompt_publication(fail: bool) {
             assert_eq!(prompt["message"]["content"][0]["text"], "Look at the image");
             assert_eq!(prompt["message"]["content"][1]["type"], "image");
             let reply: Value =
-                include_str!("../../../tests/fixtures/rows/claude-sdk/text_turn.rows.jsonl")
+                include_str!("../../../../claude-specs/fixtures/claude-sdk/text_turn.rows.jsonl")
                     .lines()
                     .map(|line| serde_json::from_str::<Value>(line).unwrap())
                     .find(|row| row["type"] == "assistant")
@@ -135,7 +135,7 @@ async fn prompt_publication(fail: bool) {
         Some(id.as_bytes()),
         &[crate::ArtifactRef {
             id: model::id_of(b"image"),
-            kind: crate::ArtifactKind::Image,
+            kind: model::ArtifactKind::Image,
             name: "screen.png".into(),
             mime: "image/png".into(),
             size: 5,

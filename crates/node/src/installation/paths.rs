@@ -75,6 +75,7 @@ impl ProfilePaths {
 
 // Codex imposes the macOS pathname cap even on other Unix targets.
 #[cfg(unix)]
+#[cfg(test)]
 pub(crate) const MAX_CODEX_SOCKET_PATH_BYTES: usize = 103;
 
 #[cfg(unix)]

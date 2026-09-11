@@ -38,6 +38,7 @@ use super::{
 use crate::agents::{
     AgentKind, AgentParent, AgentType, ClaudeDriver, CreateAgentRequest, Protocol,
 };
+#[cfg(test)]
 use crate::config::Config;
 use model::envelope::Envelope;
 use crate::suspend::SuspendedAgent;
@@ -176,6 +177,7 @@ pub(crate) struct McpLaunchRoute {
 }
 
 impl McpLaunchRoute {
+    #[cfg(test)]
     pub(crate) fn for_current_process(config: &Config, host_id: Uuid) -> io::Result<Self> {
         Self::new(
             std::env::current_exe()?,

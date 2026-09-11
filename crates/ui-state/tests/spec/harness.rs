@@ -241,63 +241,63 @@ pub fn tick(at_seconds: i64) -> Msg {
 
 /// Rows of a committed Claude PTY fixture: a redacted, provenance-stamped
 /// stream derived from a canonical Claude PTY provider recording
-/// (`crates/amux/tests/fixtures/rows/claude-pty/`). Referenced across
+/// (`crates/claude-specs/fixtures/claude-pty/`). Referenced across
 /// crates by compile-time include so the spec suite stays IO-free.
 pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
     let raw = match fixture {
-        "pong" => include_str!("../../../amux/tests/fixtures/rows/claude-pty/pong.rows.jsonl"),
-        "tools" => include_str!("../../../amux/tests/fixtures/rows/claude-pty/tools.rows.jsonl"),
+        "pong" => include_str!("../../../claude-specs/fixtures/claude-pty/pong.rows.jsonl"),
+        "tools" => include_str!("../../../claude-specs/fixtures/claude-pty/tools.rows.jsonl"),
         "permission" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/permission.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/permission.rows.jsonl")
         }
         "question_single" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/question_single.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/question_single.rows.jsonl")
         }
         "question_multi" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/question_multi.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/question_multi.rows.jsonl")
         }
         "interrupt" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/interrupt.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/interrupt.rows.jsonl")
         }
         "plan_approve" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/plan_approve.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/plan_approve.rows.jsonl")
         }
         "plan_reject" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/plan_reject.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/plan_reject.rows.jsonl")
         }
         "compact" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/compact.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/compact.rows.jsonl")
         }
-        "clear" => include_str!("../../../amux/tests/fixtures/rows/claude-pty/clear.rows.jsonl"),
+        "clear" => include_str!("../../../claude-specs/fixtures/claude-pty/clear.rows.jsonl"),
         "mode_cycle" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/mode_cycle.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/mode_cycle.rows.jsonl")
         }
         "permission_session" => {
             include_str!(
-                "../../../amux/tests/fixtures/rows/claude-pty/permission_session.rows.jsonl"
+                "../../../claude-specs/fixtures/claude-pty/permission_session.rows.jsonl"
             )
         }
         "permission_deny_feedback" => {
             include_str!(
-                "../../../amux/tests/fixtures/rows/claude-pty/permission_deny_feedback.rows.jsonl"
+                "../../../claude-specs/fixtures/claude-pty/permission_deny_feedback.rows.jsonl"
             )
         }
         "question_tabs" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/question_tabs.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/question_tabs.rows.jsonl")
         }
         "question_mixed" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/question_mixed.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/question_mixed.rows.jsonl")
         }
         "question_other_single" => {
             include_str!(
-                "../../../amux/tests/fixtures/rows/claude-pty/question_other_single.rows.jsonl"
+                "../../../claude-specs/fixtures/claude-pty/question_other_single.rows.jsonl"
             )
         }
         "plan_auto" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/plan_auto.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/plan_auto.rows.jsonl")
         }
         "prompt_multiline" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-pty/prompt_multiline.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-pty/prompt_multiline.rows.jsonl")
         }
         other => panic!("unknown chat fixture {other}"),
     };
@@ -419,14 +419,14 @@ pub fn chat_session_id(fixture: &str) -> String {
 
 /// Rows of a graduated a2a carrier capture: a redacted, provenance-stamped
 /// recording of a real Claude 2.1.240 receiving an agent message over each
-/// carrier (`crates/amux/tests/fixtures/a2a/`).
+/// carrier (`crates/node/tests/fixtures/a2a/`).
 pub fn a2a_rows(fixture: &str) -> Vec<serde_json::Value> {
     let raw = match fixture {
         "socket_delivery" => {
-            include_str!("../../../amux/tests/fixtures/a2a/socket_delivery.jsonl")
+            include_str!("../../../node/tests/fixtures/a2a/socket_delivery.jsonl")
         }
-        "pty_delivery" => include_str!("../../../amux/tests/fixtures/a2a/pty_delivery.jsonl"),
-        "mcp_tools" => include_str!("../../../amux/tests/fixtures/a2a/mcp_tools.jsonl"),
+        "pty_delivery" => include_str!("../../../node/tests/fixtures/a2a/pty_delivery.jsonl"),
+        "mcp_tools" => include_str!("../../../node/tests/fixtures/a2a/mcp_tools.jsonl"),
         other => panic!("unknown a2a fixture {other}"),
     };
     raw.lines()
@@ -465,16 +465,16 @@ pub fn claude_layer<'m>(model: &'m Model, agent: &str) -> &'m ClaudeLayer {
 /// Backend rows derived from every recording in the canonical Codex corpus.
 pub fn codex_fixture_rows() -> Vec<serde_json::Value> {
     [
-        include_str!("../../../amux/tests/fixtures/rows/codex/initialize_and_start.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/turn_round_trip.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/approval_allow.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/approval_deny.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/interrupt.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/thread_list_and_resume.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/dynamic_tools.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/inject_idle.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/inject_busy.rows.jsonl"),
-        include_str!("../../../amux/tests/fixtures/rows/codex/two_assistant_messages.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/initialize_and_start.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/turn_round_trip.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/approval_allow.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/approval_deny.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/interrupt.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/thread_list_and_resume.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/dynamic_tools.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/inject_idle.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/inject_busy.rows.jsonl"),
+        include_str!("../../../codex-specs/fixtures/codex/two_assistant_messages.rows.jsonl"),
     ]
     .into_iter()
     .flat_map(str::lines)
@@ -487,7 +487,7 @@ pub fn codex_fixture_rows() -> Vec<serde_json::Value> {
 pub fn codex_rows(fixture: &str) -> Vec<serde_json::Value> {
     let raw = match fixture {
         "approval_deny" => {
-            include_str!("../../../amux/tests/fixtures/rows/codex/approval_deny.rows.jsonl")
+            include_str!("../../../codex-specs/fixtures/codex/approval_deny.rows.jsonl")
         }
         other => panic!("unknown Codex fixture: {other}"),
     };

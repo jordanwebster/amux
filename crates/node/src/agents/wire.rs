@@ -194,6 +194,7 @@ pub(crate) fn subscribe_protocol_to_agent_wire(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn subscribe_protocol_to_client_wire(
     protocol: Protocol,
     args: Option<&[u8]>,
@@ -339,6 +340,7 @@ pub(crate) fn send_input_event_to_agent_wire(
     Ok((input_id, event))
 }
 
+#[cfg(test)]
 pub(crate) fn send_input_event_to_client_wire(
     protocol: Protocol,
     event: &SessionInputEvent,
@@ -474,6 +476,7 @@ fn session_output_to_wire(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn session_output_payload_from_wire(
     output: pb::SessionOutput,
 ) -> Result<Vec<u8>, protocol_wire::DecodeError> {
@@ -862,7 +865,7 @@ mod tests {
             host_id: Uuid::new_v4(),
         };
         let updated_at = Utc.timestamp_millis_opt(1_777_777_777_777).unwrap();
-        let record = crate::agents::AgentRecord {
+        let dto = Agent {
             id: Uuid::new_v4(),
             host_id: Uuid::new_v4(),
             name: Some("child".to_string()),
@@ -879,7 +882,6 @@ mod tests {
             }),
         };
 
-        let dto = Agent::from(record);
         let wire = agent_to_wire(&dto).unwrap();
         let decoded = agent_from_wire(wire).unwrap();
 

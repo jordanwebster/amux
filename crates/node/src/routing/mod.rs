@@ -38,6 +38,6 @@ pub(crate) use link_registry::{
 };
 pub use model::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
 pub(crate) use types::{
-    LinkId, Route, capabilities_from_wire, capabilities_to_wire, host_from_wire, host_to_wire,
+    LinkId, Route, capabilities_to_wire, host_from_wire, host_to_wire,
 };
 pub(crate) use wire::{inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire};

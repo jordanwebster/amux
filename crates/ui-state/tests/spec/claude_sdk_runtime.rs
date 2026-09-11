@@ -194,7 +194,7 @@ fn claude_sdk_family_needs_tracks_asks_and_offline_hosts() {
 }
 fn facts() -> Vec<Msg> {
     let rows =
-        include_str!("../../../amux/tests/fixtures/rows/claude-sdk/introspection.rows.jsonl");
+        include_str!("../../../claude-specs/fixtures/claude-sdk/introspection.rows.jsonl");
     seq([
         claude_sdk_base(AGENT),
         rows.lines()

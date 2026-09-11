@@ -10,7 +10,7 @@
 //! the fold; renderers format these facts and never re-derive them.
 //!
 //! Grounding: `docs/CLAUDE_TRANSCRIPT.md` (the row survey) and the derived rows
-//! at `crates/amux/tests/fixtures/rows/claude-pty/`. Every
+//! at `crates/claude-specs/fixtures/claude-pty/`. Every
 //! derived value keeps the survey's FACT vs INFERRED discipline; comments
 //! below tag the rule they implement.
 //!

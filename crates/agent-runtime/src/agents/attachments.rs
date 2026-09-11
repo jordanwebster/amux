@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -881,7 +880,7 @@ mod materialise {
             assert_eq!(result.text.as_bytes(), text.as_bytes());
             assert!(result.refs.is_empty());
             assert!(result.image_blocks.is_empty());
-            #[cfg(all(feature = "local-agents", unix))]
+            #[cfg(unix)]
             assert!(result.codex_items.is_empty());
         }
     }
@@ -1042,7 +1041,7 @@ mod materialise {
             }])
         );
 
-        #[cfg(all(feature = "local-agents", unix))]
+        #[cfg(unix)]
         {
             let codex = materialise(
                 &owner,

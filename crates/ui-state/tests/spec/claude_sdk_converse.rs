@@ -21,13 +21,13 @@ const LIVE_ROWS: &str = include_str!("fixtures/claude_sdk/converse.rows.jsonl");
 fn rows(name: &str) -> Vec<Value> {
     let raw = match name {
         "streaming" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/streamed_turn.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/streamed_turn.rows.jsonl")
         }
         "tools" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/max_turns.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/max_turns.rows.jsonl")
         }
         "interrupt" => {
-            include_str!("../../../amux/tests/fixtures/rows/claude-sdk/interrupted.rows.jsonl")
+            include_str!("../../../claude-specs/fixtures/claude-sdk/interrupted.rows.jsonl")
         }
         "live" => LIVE_ROWS,
         _ => panic!("unknown conversation"),

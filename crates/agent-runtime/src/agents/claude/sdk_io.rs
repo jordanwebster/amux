@@ -5,7 +5,7 @@
 //! `amux.attachments` row is also synthesized here. Both are a closed enum so
 //! additions require a protocol change and a frozen-shape test.
 
-pub use claude::sdk::init::ContextUsage;
+#[cfg(test)]
 use model::ProtocolError;
 #[cfg(test)]
 use prost::Message as ProstMessage;
@@ -14,14 +14,18 @@ use serde_json::Value;
 
 use crate::agents::ArtifactRef;
 
+#[cfg(test)]
 pub const CLAUDE_SDK_V1: &str = "claude_sdk_v1";
+#[cfg(test)]
 const SYNTHESIZED_PREFIX: &str = "amux.claude_sdk.";
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClaudeSdkV1Args {
     pub replay_query: Option<ClaudeSdkV1ReplayQuery>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaudeSdkV1ReplayQuery {
     /// Last structured sequence observed by the client. Replay resumes after it.
@@ -33,6 +37,7 @@ pub enum ClaudeSdkV1ReplayQuery {
     },
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudeSdkV1Output {
     pub seq_id: u64,
@@ -162,6 +167,7 @@ pub struct McpServerFact {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClaudeSdkV1Row {
     Synthesized(ClaudeSdkSynthesized),
+    #[cfg(test)]
     Verbatim(Value),
 }
 
@@ -170,10 +176,12 @@ impl ClaudeSdkV1Row {
         match self {
             Self::Synthesized(row) => serde_json::to_value(row)
                 .expect("ClaudeSdkSynthesized contains only JSON-serializable fields"),
+            #[cfg(test)]
             Self::Verbatim(value) => value,
         }
     }
 
+    #[cfg(test)]
     pub fn from_json(value: Value) -> Result<Self, ProtocolError> {
         let synthesized = value
             .get("type")

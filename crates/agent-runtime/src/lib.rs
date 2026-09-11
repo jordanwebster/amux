@@ -13,6 +13,7 @@ pub use model::{
     Agent, AgentEvent, AgentKind, AgentType, ArtifactRef, CreateAgentRequest, Protocol,
 };
 
+#[cfg(test)]
 #[derive(Clone)]
 struct Config {
     path: Option<std::path::PathBuf>,
@@ -20,6 +21,7 @@ struct Config {
     data_dir: std::path::PathBuf,
 }
 
+#[cfg(test)]
 impl Default for Config {
     fn default() -> Self {
         let data_dir = std::env::temp_dir().join("amux-agent-runtime-test");
@@ -31,10 +33,12 @@ impl Default for Config {
     }
 }
 
+#[cfg(test)]
 mod config {
     pub(crate) use super::Config;
 }
 
+#[cfg(test)]
 fn keymap_dir(data_dir: &std::path::Path) -> std::path::PathBuf {
     data_dir.join("keymaps")
 }

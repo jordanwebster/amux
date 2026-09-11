@@ -96,6 +96,7 @@ impl AgentServiceCtx {
     // must hold a shared operation guard until storage preparation finishes,
     // so deletion drains accepted writes and closed profiles cannot recreate
     // storage. Release it before delivering prepared input to an agent.
+    #[cfg(test)]
     pub(crate) async fn agent(&self, agent_id: Uuid) -> Result<Agent, ProtocolError> {
         self.require_host()?.agent(agent_id).await
     }
@@ -151,11 +152,10 @@ impl AgentServiceCtx {
     pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
         let _operation = self.operations.barrier().await;
         self.operations.check_mutation()?;
-        let result = match self.host() {
+        match self.host() {
             Some(host) => host.delete(agent_id, _operation).await,
             None => Err(ProtocolError::NoAgentFound),
-        };
-        result
+        }
     }
 
     pub(crate) async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError> {

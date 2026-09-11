@@ -12,9 +12,9 @@ const AGENT: &str = "sdk-recipient";
 
 fn rows(name: &str) -> Vec<Value> {
     let raw = match name {
-        "message" => include_str!("../../../amux/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
-        "completed" => include_str!("../../../amux/tests/fixtures/a2a/sdk_completed.rows.jsonl"),
-        "exited" => include_str!("../../../amux/tests/fixtures/a2a/sdk_exited.rows.jsonl"),
+        "message" => include_str!("../../../node/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
+        "completed" => include_str!("../../../node/tests/fixtures/a2a/sdk_completed.rows.jsonl"),
+        "exited" => include_str!("../../../node/tests/fixtures/a2a/sdk_exited.rows.jsonl"),
         "send" => {
             // The PTY capture retained the tool body but omitted message IDs.
             // Add the SDK envelope identity; the captured call and result stay intact.

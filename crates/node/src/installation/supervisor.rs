@@ -483,7 +483,7 @@ impl Installation {
         &self.inner.root
     }
 
-    #[cfg(test_fixtures)]
+    #[cfg(test)]
     pub(crate) async fn use_test_cloud_transport(
         &self,
         id: ProfileId,
