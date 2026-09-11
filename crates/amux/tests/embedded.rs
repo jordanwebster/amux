@@ -120,7 +120,6 @@ async fn embedded_server_does_not_poll_for_updates() {
     options.settings.update_manifest_url = config.cloud_url.clone();
     options.settings.status_reporters = amux::update::StatusReporters::Host {
         update: Some(Arc::new(CapturingUpdateReporter { tx })),
-        subscription: None,
     };
     let installation = Installation::open(options).await.unwrap();
     installation.create(OperationId::new(), None).await.unwrap();

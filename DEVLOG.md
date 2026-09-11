@@ -8885,3 +8885,12 @@ direct-link restart chapter now keeps both peers outside scripted discovery.
 Restarting the dialing peer therefore has no fresh found-host event to lean on:
 the saved address in its trust store must re-establish the direct link and carry
 the next call.
+
+2026-09-11 — **Free accounts stay connected while entitlement changes.** Cloud
+connect responses now carry the account tier into one live-link manager and the
+profile status stream, alongside the active relay carrier. A free link refreshes
+its token every three minutes; a purchasing device can request the same refresh
+immediately, and both paths reauthorize the existing link without restarting.
+The subscription-required marker, its reporter, and the disconnected status it
+represented are deleted; the installation front door now carries tier and
+carrier with its connected profile status.

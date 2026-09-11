@@ -39,7 +39,6 @@ mod server;
 mod services;
 pub mod setup;
 mod sleep_inhibitor;
-mod subscription;
 mod suspend;
 #[cfg(test_fixtures)]
 #[doc(hidden)]
@@ -96,7 +95,6 @@ pub use paths::{default_data_dir, default_log_path, keymap_dir};
 pub use protocol::{PROTOCOL_VERSION, ProtocolError};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
 pub use server::{DaemonBuilder, Server, ServerBuilder, ServerError, ShutdownReason};
-pub use subscription::SubscriptionReporter;
 pub use transport::TransportError;
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 

@@ -740,9 +740,19 @@ enum Observed {
   OBSERVED_CONNECTED = 3;
   OBSERVED_RETRYING = 4;
   OBSERVED_AUTHENTICATION_REQUIRED = 5;
-  OBSERVED_SUBSCRIPTION_REQUIRED = 6;
+  reserved 6;
   OBSERVED_UPDATE_REQUIRED = 7;
   OBSERVED_STARTUP_FAILED = 8;
+}
+enum Tier {
+  TIER_UNSPECIFIED = 0;
+  TIER_FREE = 1;
+  TIER_PRO = 2;
+}
+enum RelayCarrier {
+  RELAY_CARRIER_UNSPECIFIED = 0;
+  RELAY_CARRIER_QUIC = 1;
+  RELAY_CARRIER_TCP = 2;
 }
 message ProfileInfo {
   string id = 1;
@@ -757,6 +767,8 @@ message ProfileInfo {
   string startup_error = 10;
   bool available = 11;
   optional string minimum_version = 12;
+  Tier tier = 13;
+  RelayCarrier relay_carrier = 14;
 }
 message ListProfilesRequest {}
 message ListProfilesResponse { repeated ProfileInfo profiles = 1; }

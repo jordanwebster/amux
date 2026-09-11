@@ -54,7 +54,6 @@ const DRAIN_BUDGET: usize = 256;
 
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(4);
-const SUBSCRIPTION_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Structured entries coalesced into one `Msg::Stream(Batch)` — the recorded
 /// Msg is the batch, so replay is independent of arrival timing.
@@ -75,9 +74,6 @@ pub type ConnectFuture = Pin<Box<dyn Future<Output = Result<Client, ConnectFailu
 /// embedding client (the CLI knows how to spawn the daemon); called again
 /// after every disconnect.
 pub type Connector = Box<dyn FnMut() -> ConnectFuture + Send>;
-
-/// Reads the daemon's durable subscription-required state.
-pub type SubscriptionStatusProvider = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// Debug-only frame and trace data supplied by an embedding UI when available.
 #[derive(Clone, Debug, Default)]
@@ -303,8 +299,6 @@ pub struct RuntimeOptions {
     /// Optional UI-owned capture hook for automatic reports.
     pub report_extras: Option<ReportExtrasProvider>,
     pub recorder_capacity: usize,
-    /// Provider polled while connected so marker transitions enter the reducer.
-    pub subscription_status_provider: Option<SubscriptionStatusProvider>,
     /// Called with every folded Msg, in fold order, before [`Runtime::next`]
     /// returns. The diagnostic trace uses it: a recording that reconstructs
     /// the fold order from the outside would have to guess how a drain
@@ -328,7 +322,6 @@ impl Default for RuntimeOptions {
             git_sha: "unknown",
             report_extras: None,
             recorder_capacity: DEFAULT_RECORDER_CAPACITY,
-            subscription_status_provider: None,
             msg_tap: None,
             artifact_cache: None,
             artifact_cache_bound: DEFAULT_ARTIFACT_CACHE_BOUND,
@@ -500,13 +493,11 @@ impl Runtime {
                 .map_err(|error| error.to_string())
         });
 
-        let subscription_status_provider = options.subscription_status_provider;
         let connection_task = tokio::spawn(connection_task(
             connector,
             msg_sink.clone(),
             client.clone(),
             options.local_host_id,
-            subscription_status_provider.clone(),
         ));
 
         Self {
@@ -1500,7 +1491,7 @@ fn disconnect_reason(error: &ClientError) -> DisconnectReason {
             detail: reason.to_string(),
         },
         error if is_auth_error(error) => DisconnectReason::AuthenticationRequired,
-        error if is_subscription_error(error) => DisconnectReason::SubscriptionRequired,
+        error if is_subscription_error(error) => DisconnectReason::PaymentRequired,
         error => DisconnectReason::TransportError {
             message: error.to_string(),
         },
@@ -1515,7 +1506,6 @@ async fn connection_task(
     tx: MsgSink,
     shared_client: Arc<StdMutex<Option<Client>>>,
     local_host_id: Option<HostId>,
-    subscription_status_provider: Option<SubscriptionStatusProvider>,
 ) {
     let mut backoff = RECONNECT_BACKOFF_INITIAL;
     loop {
@@ -1525,7 +1515,7 @@ async fn connection_task(
                 let reason = if failure.auth_required {
                     DisconnectReason::AuthenticationRequired
                 } else if failure.subscription_required {
-                    DisconnectReason::SubscriptionRequired
+                    DisconnectReason::PaymentRequired
                 } else {
                     DisconnectReason::TransportError {
                         message: failure.message,
@@ -1545,13 +1535,7 @@ async fn connection_task(
         };
 
         *shared_client.lock().expect("client mutex poisoned") = Some(client.clone());
-        let session_end = pump_inventory(
-            &client,
-            &tx,
-            local_host_id,
-            subscription_status_provider.as_ref(),
-        )
-        .await;
+        let session_end = pump_inventory(&client, &tx, local_host_id).await;
         *shared_client.lock().expect("client mutex poisoned") = None;
 
         let Some(reason) = session_end else {
@@ -1577,7 +1561,6 @@ async fn pump_inventory(
     client: &Client,
     tx: &MsgSink,
     local_host_id: Option<HostId>,
-    subscription_status_provider: Option<&SubscriptionStatusProvider>,
 ) -> Option<DisconnectReason> {
     let mut hosts_stream = match client.subscribe_hosts().await {
         Ok(stream) => stream,
@@ -1595,21 +1578,6 @@ async fn pump_inventory(
     {
         return None;
     }
-    let mut subscription_required = subscription_status_provider.map(|provider| provider());
-    if let Some(required) = subscription_required
-        && tx
-            .send(Msg::Server(ServerMsg::CloudSubscriptionStatus { required }))
-            .await
-            .is_err()
-    {
-        return None;
-    }
-    let mut subscription_poll = subscription_status_provider
-        .map(|_| tokio::time::interval(SUBSCRIPTION_STATUS_POLL_INTERVAL));
-    if let Some(poll) = subscription_poll.as_mut() {
-        poll.tick().await;
-    }
-
     loop {
         let event = tokio::select! {
             event = hosts_stream.recv() => match event {
@@ -1629,24 +1597,10 @@ async fn pump_inventory(
                 Ok(amux::AgentEvent::SnapshotComplete) => ServerMsg::AgentsSynchronized,
                 Err(error) => return Some(disconnect_reason(&error)),
             },
-            _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {
-                let required = subscription_status_provider.expect("poll requires provider")();
-                if subscription_required == Some(required) {
-                    continue;
-                }
-                subscription_required = Some(required);
-                ServerMsg::CloudSubscriptionStatus { required }
-            },
         };
         if tx.send(Msg::Server(event)).await.is_err() {
             return None;
         }
-    }
-}
-
-async fn maybe_interval_tick(interval: &mut Option<tokio::time::Interval>) {
-    if let Some(interval) = interval {
-        interval.tick().await;
     }
 }
 
@@ -1871,7 +1825,7 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
     if is_auth_error(error) {
         StreamCloseReason::AuthenticationRequired
     } else if is_subscription_error(error) {
-        StreamCloseReason::SubscriptionRequired
+        StreamCloseReason::PaymentRequired
     } else {
         StreamCloseReason::TransportError {
             message: error.to_string(),
@@ -1934,13 +1888,10 @@ mod tests {
 
         assert!(is_subscription_error(&error));
         assert!(!is_auth_error(&error));
-        assert_eq!(
-            disconnect_reason(&error),
-            DisconnectReason::SubscriptionRequired
-        );
+        assert_eq!(disconnect_reason(&error), DisconnectReason::PaymentRequired);
         assert_eq!(
             stream_close_from_client_error(&error),
-            StreamCloseReason::SubscriptionRequired
+            StreamCloseReason::PaymentRequired
         );
     }
 

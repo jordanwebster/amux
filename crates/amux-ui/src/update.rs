@@ -587,7 +587,7 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             if reason == StreamCloseReason::AuthenticationRequired {
                 model.cloud_auth_required = true;
             }
-            if reason == StreamCloseReason::SubscriptionRequired {
+            if reason == StreamCloseReason::PaymentRequired {
                 model.cloud_subscription_required = true;
             }
             match &reason {

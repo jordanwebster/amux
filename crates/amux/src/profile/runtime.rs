@@ -20,10 +20,9 @@ use crate::identity;
 use crate::protocol::wire;
 use crate::server::ShutdownReason;
 use crate::services::{
-    CloudConnector, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices,
-    establish_cloud_connection, start_user_services,
+    CloudLink, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices, establish_cloud_link,
+    start_user_services,
 };
-use crate::subscription::SubscriptionReporter;
 use crate::transport::InProcessConnection;
 use crate::update::UpdateReporter;
 use crate::user_state::{ServerState, new_local_agent_host};
@@ -109,7 +108,6 @@ pub(crate) enum DirectDialPolicy {
 #[cfg(testnet)]
 #[derive(Clone)]
 pub(crate) enum CloudFixtureAuth {
-    Bearer(String),
     Refreshing(crate::routing::LinkConnectorAuth),
 }
 
@@ -122,6 +120,7 @@ pub(crate) struct RuntimeFixtures {
     pub(crate) artifact_clock: Option<Arc<dyn amux_artifacts::Clock>>,
     pub(crate) cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
     pub(crate) cloud_transport: Option<tonic::transport::Channel>,
+    pub(crate) cloud_refresh_interval: Option<Duration>,
 }
 
 pub(crate) struct ProfileRuntimeOptions {
@@ -142,7 +141,6 @@ impl ProfileRuntimeOptions {
         config: Config,
         credentials: Option<Arc<dyn CredentialProvider>>,
         update_reporter: Option<Arc<dyn UpdateReporter>>,
-        subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
         listeners: Listeners,
         discovery: Arc<dyn Discovery>,
     ) -> Self {
@@ -168,7 +166,6 @@ impl ProfileRuntimeOptions {
             update_manifest_url: crate::InstallationConfig::default().update_manifest_url,
             status_reporters: crate::update::StatusReporters::Host {
                 update: update_reporter,
-                subscription: subscription_reporter,
             },
         };
         Self {
@@ -241,6 +238,8 @@ pub(crate) struct ProfileRuntime {
     tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
     #[cfg(test_fixtures)]
     pub(crate) test_cloud_transport: Option<tonic::transport::Channel>,
+    #[cfg(test_fixtures)]
+    pub(crate) test_cloud_refresh_interval: Option<Duration>,
     client: Client,
     #[cfg(testnet)]
     pub(crate) client_channel: tonic::transport::Channel,
@@ -248,7 +247,7 @@ pub(crate) struct ProfileRuntime {
     discovery: Arc<dyn Discovery>,
     dial: DirectDialPolicy,
     background_tasks: Vec<JoinHandle<()>>,
-    cloud_connector: Mutex<Option<CloudConnector>>,
+    cloud_link: Mutex<Option<CloudLink>>,
     status: RuntimeStatus,
     #[cfg(unix)]
     unix_accept_task: Option<JoinHandle<()>>,
@@ -265,7 +264,7 @@ pub(crate) async fn start(
         .shared
         .status_reporters
         .resolve(&options.paths.state_path);
-    let status = RuntimeStatus::new(reporters.update, reporters.subscription);
+    let status = RuntimeStatus::new(reporters.update);
     start_observed(options, status).await
 }
 
@@ -311,7 +310,7 @@ pub(crate) async fn start_with_security(
         .shared
         .status_reporters
         .resolve(&options.paths.state_path);
-    let status = RuntimeStatus::new(reporters.update, reporters.subscription);
+    let status = RuntimeStatus::new(reporters.update);
     let result = build(options, security, status.clone()).await;
     if result.is_err() {
         status.report(Observed::StartupFailed);
@@ -363,7 +362,6 @@ async fn build(
         options.credentials.clone(),
         reporters.update.clone(),
     )));
-    state.write().await.subscription_reporter = reporters.subscription.clone();
 
     let agent_host = new_local_agent_host(
         host_id,
@@ -480,8 +478,12 @@ async fn build(
         tracked_tcp: options.fixtures.tracked_tcp,
         #[cfg(testnet)]
         test_cloud_transport: options.fixtures.cloud_transport,
+        #[cfg(testnet)]
+        test_cloud_refresh_interval: options.fixtures.cloud_refresh_interval,
         #[cfg(all(test_fixtures, not(testnet)))]
         test_cloud_transport: None,
+        #[cfg(all(test_fixtures, not(testnet)))]
+        test_cloud_refresh_interval: None,
         client,
         #[cfg(testnet)]
         client_channel,
@@ -489,7 +491,7 @@ async fn build(
         discovery,
         dial: options.dial,
         background_tasks,
-        cloud_connector: Mutex::new(None),
+        cloud_link: Mutex::new(None),
         status,
         #[cfg(unix)]
         unix_accept_task,
@@ -578,7 +580,7 @@ impl ProfileRuntime {
     pub(crate) async fn start_cloud(&self) -> Result<(), CloudStartError> {
         #[cfg(testnet)]
         if let Some((channel, auth)) = &self.test_cloud {
-            let mut connector = self.cloud_connector.lock().await;
+            let mut connector = self.cloud_link.lock().await;
             if connector
                 .as_ref()
                 .is_some_and(|connector| !connector.is_finished())
@@ -590,13 +592,7 @@ impl ProfileRuntime {
             }
             let ctx = self.services.link_connector_ctx();
             *connector = Some(match auth {
-                CloudFixtureAuth::Bearer(token) => CloudConnector::testnet_bearer(
-                    ctx,
-                    channel.clone(),
-                    token.clone(),
-                    self.status.clone(),
-                ),
-                CloudFixtureAuth::Refreshing(auth) => CloudConnector::testnet_with_auth(
+                CloudFixtureAuth::Refreshing(auth) => CloudLink::testnet_with_auth(
                     ctx,
                     channel.clone(),
                     auth.clone(),
@@ -610,7 +606,7 @@ impl ProfileRuntime {
             return Err(CloudStartError::MissingCredentials);
         }
 
-        let mut connector = self.cloud_connector.lock().await;
+        let mut connector = self.cloud_link.lock().await;
         if connector
             .as_ref()
             .is_some_and(|connector| !connector.is_finished())
@@ -623,15 +619,28 @@ impl ProfileRuntime {
 
         let config = self.state.read().await.config.clone();
         self.status.report(Observed::Connecting);
-        *connector = Some(establish_cloud_connection(
+        *connector = Some(establish_cloud_link(
             config,
             self.state.clone(),
             self.services.link_connector_ctx(),
             self.status.clone(),
             #[cfg(test_fixtures)]
             self.test_cloud_transport.clone(),
+            #[cfg(test_fixtures)]
+            self.test_cloud_refresh_interval,
         ));
         Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn refresh_entitlement(
+        &self,
+    ) -> Result<crate::Tier, crate::auth::cloud::CloudError> {
+        let connector = self.cloud_link.lock().await;
+        let connector = connector.as_ref().ok_or_else(|| {
+            crate::auth::cloud::CloudError::Connection("cloud link is not running".into())
+        })?;
+        connector.refresh_entitlement().await
     }
 
     #[cfg(testnet)]
@@ -641,7 +650,7 @@ impl ProfileRuntime {
     }
 
     pub(crate) async fn stop_cloud(&self) {
-        let mut connector = self.cloud_connector.lock().await;
+        let mut connector = self.cloud_link.lock().await;
         if let Some(connector) = connector.take() {
             connector.stop().await;
         }
@@ -843,6 +852,13 @@ mod tests {
     use super::*;
     use crate::ProtocolError;
 
+    fn connected() -> Observed {
+        Observed::Connected {
+            tier: crate::Tier::Pro,
+            carrier: crate::profile::status::RelayCarrier::Tcp,
+        }
+    }
+
     fn options(root: &std::path::Path, listeners: Listeners) -> ProfileRuntimeOptions {
         let data_dir = root.join("profile-data");
         ProfileRuntimeOptions {
@@ -982,7 +998,7 @@ mod tests {
         // retry loop. Subscribe only after startup to prove retained state.
         for (response, expected) in [
             ("401 Unauthorized", Observed::AuthenticationRequired),
-            ("403 Forbidden", Observed::SubscriptionRequired),
+            ("403 Forbidden", Observed::AuthenticationRequired),
             ("503 Service Unavailable", Observed::Retrying),
         ] {
             let root = tempdir().unwrap();
@@ -1023,7 +1039,22 @@ mod tests {
     #[cfg(testnet)]
     #[tokio::test]
     async fn profile_runtime_reports_status_from_relay_and_outlives_cloud_clients() {
-        use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
+        use crate::routing::{
+            AuthenticatedLinkUser, LinkConnectorAuth, LinkConnectorToken,
+            LinkConnectorTokenRefresher, LinkTokenAuthenticator,
+        };
+
+        struct StaticRelayToken;
+        #[tonic::async_trait]
+        impl LinkConnectorTokenRefresher for StaticRelayToken {
+            async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
+                Ok(LinkConnectorToken {
+                    token: "runtime-token".into(),
+                    expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+                    tier: crate::Tier::Pro,
+                })
+            }
+        }
         use crate::services::CloudLinkService;
 
         struct RelayAuth {
@@ -1071,7 +1102,17 @@ mod tests {
         let server = relay.serve_on_tcp_listener(listener);
         let root = tempdir().unwrap();
         let mut options = options(root.path(), Listeners::InProcessOnly);
-        options.fixtures.cloud = Some((channel, CloudFixtureAuth::Bearer("runtime-token".into())));
+        options.fixtures.cloud = Some((
+            channel,
+            CloudFixtureAuth::Refreshing(LinkConnectorAuth::new(
+                LinkConnectorToken {
+                    token: "runtime-token".into(),
+                    expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
+                    tier: crate::Tier::Pro,
+                },
+                Arc::new(StaticRelayToken),
+            )),
+        ));
 
         let runtime = start(options).await.unwrap();
         let host_id = runtime.state.read().await.host_id();
@@ -1086,14 +1127,14 @@ mod tests {
         };
         runtime.start_cloud().await.unwrap();
         assert_eq!(*runtime.status().borrow(), Observed::Connecting);
-        wait_for_status(&runtime, Observed::Connected).await;
+        wait_for_status(&runtime, connected()).await;
         let client = runtime.client();
         client.list_agents().await.unwrap();
         drop(client);
         tokio::task::yield_now().await;
         assert!(relay.user_has_link_to(auth.user, host_id).await);
         runtime.client().list_agents().await.unwrap();
-        assert_eq!(*runtime.status().borrow(), Observed::Connected);
+        assert_eq!(*runtime.status().borrow(), connected());
         println!("last cloud client dropped: Connected; relay link and local calls survive");
         runtime.stop_cloud().await;
         wait_for_relay_detach().await;
@@ -1105,7 +1146,7 @@ mod tests {
             ),
             (
                 crate::protocol::protocol_status(ProtocolError::PaymentRequired),
-                Observed::SubscriptionRequired,
+                Observed::Retrying,
             ),
             (
                 crate::protocol::protocol_status(ProtocolError::UpdateRequired {
@@ -1135,7 +1176,7 @@ mod tests {
         }
         *auth.rejection.lock().unwrap() = None;
         runtime.start_cloud().await.unwrap();
-        wait_for_status(&runtime, Observed::Connected).await;
+        wait_for_status(&runtime, connected()).await;
         let weak_state = runtime.weak_state();
         runtime.stop(ShutdownReason::UserRequested).await;
         assert!(weak_state.upgrade().is_none());
@@ -1262,7 +1303,7 @@ mod tests {
         let mut options = options(root.path(), Listeners::Sockets);
         options.config.lan.port = occupied.local_addr().unwrap().port();
 
-        let status = RuntimeStatus::new(None, None);
+        let status = RuntimeStatus::new(None);
         let result = start_observed(options, status.clone()).await;
 
         assert!(result.is_err());

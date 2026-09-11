@@ -1357,6 +1357,10 @@ pub struct ProfileInfo {
     pub available: bool,
     #[prost(string, optional, tag = "12")]
     pub minimum_version: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(enumeration = "Tier", tag = "13")]
+    pub tier: i32,
+    #[prost(enumeration = "RelayCarrier", tag = "14")]
+    pub relay_carrier: i32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListProfilesRequest {}
@@ -2352,7 +2356,6 @@ pub enum Observed {
     Connected = 3,
     Retrying = 4,
     AuthenticationRequired = 5,
-    SubscriptionRequired = 6,
     UpdateRequired = 7,
     StartupFailed = 8,
 }
@@ -2369,7 +2372,6 @@ impl Observed {
             Self::Connected => "OBSERVED_CONNECTED",
             Self::Retrying => "OBSERVED_RETRYING",
             Self::AuthenticationRequired => "OBSERVED_AUTHENTICATION_REQUIRED",
-            Self::SubscriptionRequired => "OBSERVED_SUBSCRIPTION_REQUIRED",
             Self::UpdateRequired => "OBSERVED_UPDATE_REQUIRED",
             Self::StartupFailed => "OBSERVED_STARTUP_FAILED",
         }
@@ -2383,9 +2385,66 @@ impl Observed {
             "OBSERVED_CONNECTED" => Some(Self::Connected),
             "OBSERVED_RETRYING" => Some(Self::Retrying),
             "OBSERVED_AUTHENTICATION_REQUIRED" => Some(Self::AuthenticationRequired),
-            "OBSERVED_SUBSCRIPTION_REQUIRED" => Some(Self::SubscriptionRequired),
             "OBSERVED_UPDATE_REQUIRED" => Some(Self::UpdateRequired),
             "OBSERVED_STARTUP_FAILED" => Some(Self::StartupFailed),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum Tier {
+    Unspecified = 0,
+    Free = 1,
+    Pro = 2,
+}
+impl Tier {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "TIER_UNSPECIFIED",
+            Self::Free => "TIER_FREE",
+            Self::Pro => "TIER_PRO",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "TIER_UNSPECIFIED" => Some(Self::Unspecified),
+            "TIER_FREE" => Some(Self::Free),
+            "TIER_PRO" => Some(Self::Pro),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RelayCarrier {
+    Unspecified = 0,
+    Quic = 1,
+    Tcp = 2,
+}
+impl RelayCarrier {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RELAY_CARRIER_UNSPECIFIED",
+            Self::Quic => "RELAY_CARRIER_QUIC",
+            Self::Tcp => "RELAY_CARRIER_TCP",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RELAY_CARRIER_UNSPECIFIED" => Some(Self::Unspecified),
+            "RELAY_CARRIER_QUIC" => Some(Self::Quic),
+            "RELAY_CARRIER_TCP" => Some(Self::Tcp),
             _ => None,
         }
     }

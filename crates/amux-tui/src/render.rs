@@ -212,7 +212,7 @@ fn screen_state(
                 DisconnectReason::AuthenticationRequired => {
                     "✗ authentication required — run `amux init`".to_string()
                 }
-                DisconnectReason::SubscriptionRequired => {
+                DisconnectReason::PaymentRequired => {
                     "✗ subscription required — amux.sh/account".to_string()
                 }
                 DisconnectReason::ServerShutdown { detail } => {

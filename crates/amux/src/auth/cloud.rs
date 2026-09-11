@@ -17,24 +17,18 @@ pub(crate) enum CloudError {
     Connection(String),
     #[error("Authentication failed: {0}")]
     Auth(String),
-    #[error("Cloud subscription required")]
-    PaymentRequired,
     #[error("Cloud request rejected: {0}")]
     Rejected(String),
 }
 
-#[derive(Debug, Deserialize)]
-struct ApiErrorResponse {
-    error: String,
-}
-
 /// Response from the cloud `/api/connect` endpoint.
 #[derive(Debug, Deserialize)]
-struct ApiConnectResult {
+pub(crate) struct ApiConnectResult {
     host: String,
     port: u16,
     token: String,
     expires_at: DateTime<Utc>,
+    tier: crate::Tier,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +37,7 @@ pub(crate) struct CloudRoutingConnectionDetails {
     pub(crate) port: u16,
     pub(crate) token: String,
     pub(crate) expires_at: DateTime<Utc>,
+    pub(crate) tier: crate::Tier,
 }
 
 impl From<ApiConnectResult> for CloudRoutingConnectionDetails {
@@ -52,6 +47,7 @@ impl From<ApiConnectResult> for CloudRoutingConnectionDetails {
             port: result.port,
             token: result.token,
             expires_at: result.expires_at,
+            tier: result.tier,
         }
     }
 }
@@ -124,13 +120,6 @@ fn cloud_error_from_response(status: reqwest::StatusCode, body: &str) -> CloudEr
         return CloudError::Auth("invalid credentials".to_string());
     }
 
-    if status == reqwest::StatusCode::FORBIDDEN
-        && serde_json::from_str::<ApiErrorResponse>(body)
-            .is_ok_and(|response| response.error == "payment_required")
-    {
-        return CloudError::PaymentRequired;
-    }
-
     let detail = format!("API returned {status}: {body}");
     if status.is_client_error()
         && status != reqwest::StatusCode::REQUEST_TIMEOUT
@@ -169,13 +158,6 @@ mod tests {
     #[test]
     fn connect_response_classification_distinguishes_terminal_failures() {
         assert!(matches!(
-            cloud_error_from_response(
-                reqwest::StatusCode::FORBIDDEN,
-                r#"{"error":"payment_required"}"#,
-            ),
-            CloudError::PaymentRequired
-        ));
-        assert!(matches!(
             cloud_error_from_response(reqwest::StatusCode::UNAUTHORIZED, ""),
             CloudError::Auth(_)
         ));
@@ -204,6 +186,17 @@ mod tests {
                 other => panic!("unexpected 403 classification for {body:?}: {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn connect_response_carries_the_account_tier() {
+        let response: ApiConnectResult = serde_json::from_str(
+            r#"{"host":"relay.test","port":9001,"token":"jwt","expires_at":"2030-01-01T00:00:00Z","tier":"free"}"#,
+        )
+        .unwrap();
+
+        let details = CloudRoutingConnectionDetails::from(response);
+        assert_eq!(details.tier, crate::Tier::Free);
     }
 
     #[tokio::test]

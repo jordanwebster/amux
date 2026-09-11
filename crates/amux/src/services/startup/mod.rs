@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, UNIX_EPOCH};
 
-pub(crate) use cloud::{CloudConnector, establish_cloud_connection};
+pub(crate) use cloud::{CloudLink, FREE_TIER_REFRESH_INTERVAL, establish_cloud_link};
 use futures_util::{Stream, StreamExt, stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};

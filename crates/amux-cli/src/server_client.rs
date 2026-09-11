@@ -35,8 +35,7 @@ pub(crate) async fn run_relay_foreground(config: Config) -> Result<()> {
     let reporter = Arc::new(MarkerFileReporter::from_state_path(&config.state_path));
     Server::builder()
         .config(config)
-        .update_reporter(reporter.clone())
-        .subscription_reporter(reporter)
+        .update_reporter(reporter)
         .as_cloud_relay()
         .run()
         .await?;

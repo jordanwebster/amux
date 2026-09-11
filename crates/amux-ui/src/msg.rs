@@ -179,7 +179,7 @@ pub enum DisconnectReason {
     /// `AuthError::Unauthenticated`.
     AuthenticationRequired,
     /// Mapped from `ProtocolError::PaymentRequired`.
-    SubscriptionRequired,
+    PaymentRequired,
     ApplicationShutdown,
 }
 
@@ -349,7 +349,7 @@ pub enum StreamCloseReason {
         message: String,
     },
     AuthenticationRequired,
-    SubscriptionRequired,
+    PaymentRequired,
     /// Closed by the shell executing `Effect::CloseStream`.
     ClientClosed,
 }

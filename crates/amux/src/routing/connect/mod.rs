@@ -175,7 +175,15 @@ pub(crate) async fn link_reauth_tier_probe() -> (crate::Tier, crate::Tier) {
 pub(crate) struct LinkConnectorToken {
     pub(crate) token: String,
     pub(crate) expires_at: SystemTime,
+    pub(crate) tier: crate::Tier,
 }
+
+pub(crate) struct LinkConnectorRefreshRequest {
+    pub(crate) response: oneshot::Sender<Result<crate::Tier, tonic::Status>>,
+}
+
+pub(crate) type LinkConnectorRefreshReceiver =
+    Arc<tokio::sync::Mutex<mpsc::Receiver<LinkConnectorRefreshRequest>>>;
 
 #[tonic::async_trait]
 pub(crate) trait LinkConnectorTokenRefresher: Send + Sync + 'static {
@@ -188,18 +196,48 @@ pub(crate) trait LinkConnectorTokenRefresher: Send + Sync + 'static {
 pub(crate) struct LinkConnectorAuth {
     token: LinkConnectorToken,
     refresher: Arc<dyn LinkConnectorTokenRefresher>,
+    free_refresh_interval: Option<Duration>,
+    next_refresh_at: tokio::time::Instant,
+    on_refreshed: Option<Arc<dyn Fn(crate::Tier) + Send + Sync>>,
 }
 
 impl LinkConnectorAuth {
+    pub(crate) fn tier(&self) -> crate::Tier {
+        self.token.tier
+    }
+
     pub(crate) fn new(
         token: LinkConnectorToken,
         refresher: Arc<dyn LinkConnectorTokenRefresher>,
     ) -> Self {
-        Self { token, refresher }
+        Self::with_free_refresh_interval(token, refresher, None)
+    }
+
+    pub(crate) fn with_free_refresh_interval(
+        token: LinkConnectorToken,
+        refresher: Arc<dyn LinkConnectorTokenRefresher>,
+        free_refresh_interval: Option<Duration>,
+    ) -> Self {
+        let next_refresh_at = refresh_deadline(&token, free_refresh_interval);
+        Self {
+            token,
+            refresher,
+            free_refresh_interval,
+            next_refresh_at,
+            on_refreshed: None,
+        }
+    }
+
+    pub(crate) fn with_refresh_observer(
+        mut self,
+        observer: impl Fn(crate::Tier) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_refreshed = Some(Arc::new(observer));
+        self
     }
 
     fn refresh_deadline(&self) -> tokio::time::Instant {
-        instant_for_system_time(self.token.expires_at, LINK_AUTH_REFRESH_BEFORE_EXPIRY)
+        self.next_refresh_at
     }
 
     /// Mints a fresh token and sends `Reauth`, fire-and-forget: the protocol
@@ -211,7 +249,7 @@ impl LinkConnectorAuth {
     async fn send_refresh(
         &mut self,
         out_tx: &mpsc::Sender<wire::pb::Message>,
-    ) -> Result<(), tonic::Status> {
+    ) -> Result<crate::Tier, tonic::Status> {
         let token = self.refresher.refresh_routing_token().await?;
         try_send_outbound(
             out_tx,
@@ -223,8 +261,26 @@ impl LinkConnectorAuth {
         )
         .then_some(())
         .ok_or_else(|| tonic::Status::unavailable("link closed during reauth"))?;
+        let tier = token.tier;
         self.token = token;
-        Ok(())
+        self.next_refresh_at = refresh_deadline(&self.token, self.free_refresh_interval);
+        if let Some(observer) = &self.on_refreshed {
+            observer(tier);
+        }
+        Ok(tier)
+    }
+}
+
+fn refresh_deadline(
+    token: &LinkConnectorToken,
+    free_refresh_interval: Option<Duration>,
+) -> tokio::time::Instant {
+    if token.tier == crate::Tier::Free
+        && let Some(interval) = free_refresh_interval
+    {
+        tokio::time::Instant::now() + interval
+    } else {
+        instant_for_system_time(token.expires_at, LINK_AUTH_REFRESH_BEFORE_EXPIRY)
     }
 }
 
@@ -317,7 +373,7 @@ impl LinkConnectorCtx {
         self
     }
 
-    #[cfg(any(test, testnet))]
+    #[cfg(test)]
     pub(crate) fn with_link_role(mut self, link_role: LinkRole) -> Self {
         self.link_role = link_role;
         self
@@ -353,6 +409,7 @@ pub(crate) fn spawn_connector_to_channel_with_establishment(
         None,
         Some(established_tx),
         None,
+        None,
     );
     (task, established_rx)
 }
@@ -376,6 +433,7 @@ pub(crate) fn spawn_connector_to_channel_with_auth_establishment_and_shutdown(
     channel: Channel,
     auth: LinkConnectorAuth,
     shutdown_rx: watch::Receiver<bool>,
+    refresh_rx: Option<LinkConnectorRefreshReceiver>,
 ) -> (ConnectorTask, EstablishmentReceiver) {
     let (established_tx, established_rx) = oneshot::channel();
     let task = spawn_connector_to_channel_with_authorization_and_signal(
@@ -385,25 +443,7 @@ pub(crate) fn spawn_connector_to_channel_with_auth_establishment_and_shutdown(
         Some(auth),
         Some(established_tx),
         Some(shutdown_rx),
-    );
-    (task, established_rx)
-}
-
-#[cfg(testnet)]
-pub(crate) fn spawn_connector_to_channel_with_bearer_token_and_shutdown(
-    ctx: LinkConnectorCtx,
-    channel: Channel,
-    token: String,
-    shutdown_rx: watch::Receiver<bool>,
-) -> (ConnectorTask, EstablishmentReceiver) {
-    let (established_tx, established_rx) = oneshot::channel();
-    let task = spawn_connector_to_channel_with_authorization_and_signal(
-        ctx.with_link_role(LinkRole::CloudRelay),
-        channel,
-        Some(format!("Bearer {token}")),
-        None,
-        Some(established_tx),
-        Some(shutdown_rx),
+        refresh_rx,
     );
     (task, established_rx)
 }
@@ -422,6 +462,7 @@ fn spawn_connector_to_channel_with_authorization(
         connector_auth,
         None,
         None,
+        None,
     )
 }
 
@@ -432,6 +473,7 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
     shutdown_rx: Option<watch::Receiver<bool>>,
+    refresh_rx: Option<LinkConnectorRefreshReceiver>,
 ) -> ConnectorTask {
     tokio::spawn(async move {
         let mut shutdown_rx = shutdown_rx;
@@ -467,6 +509,7 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
             connector_auth,
             established_tx,
             shutdown_rx,
+            refresh_rx,
         )
         .await
     })
@@ -525,7 +568,7 @@ where
 {
     let (out_tx, out_rx) = mpsc::channel(256);
     tokio::spawn(async move {
-        let _ = run_connector_connect(ctx, input, out_tx, None, None, None).await;
+        let _ = run_connector_connect(ctx, input, out_tx, None, None, None, None).await;
     });
     out_rx
 }
@@ -601,6 +644,7 @@ async fn run_acceptor_connect<S>(
             connector_auth: None,
             established_tx: None,
             shutdown_rx: None,
+            refresh_rx: None,
         },
     )
     .await;
@@ -613,6 +657,7 @@ async fn run_connector_connect<S>(
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
     mut shutdown_rx: Option<watch::Receiver<bool>>,
+    refresh_rx: Option<LinkConnectorRefreshReceiver>,
 ) -> Result<(), tonic::Status>
 where
     S: Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send + 'static,
@@ -703,6 +748,7 @@ where
             connector_auth,
             established_tx,
             shutdown_rx,
+            refresh_rx,
         },
     )
     .await
@@ -746,6 +792,7 @@ struct EstablishedConnectArgs {
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
     shutdown_rx: Option<watch::Receiver<bool>>,
+    refresh_rx: Option<LinkConnectorRefreshReceiver>,
 }
 
 async fn run_established_connect(
@@ -762,6 +809,7 @@ async fn run_established_connect(
         connector_auth,
         established_tx,
         mut shutdown_rx,
+        refresh_rx,
     } = args;
 
     debug_assert!(handshake.is_established());
@@ -922,6 +970,29 @@ async fn run_established_connect(
                     break;
                 }
             }
+            request = receive_refresh_request(refresh_rx.as_ref()), if connector_auth.is_some() => {
+                let Some(request) = request else {
+                    continue;
+                };
+                let Some(connector_auth) = connector_auth.as_mut() else {
+                    continue;
+                };
+                match connector_auth.send_refresh(&out_tx).await {
+                    Ok(tier) => {
+                        let _ = request.response.send(Ok(tier));
+                    }
+                    Err(status) => {
+                        let response_status = clone_status(&status);
+                        let _ = request.response.send(Err(response_status));
+                        if should_audit_auth_refresh_failure(&status) {
+                            audit::auth_jwt_failure(&status);
+                        }
+                        let _ = try_send_outbound(&out_tx, protocol_error_link_close(status.to_string()));
+                        close_status = Some(status);
+                        break;
+                    }
+                }
+            }
             request = link_close_rx.recv() => {
                 match request {
                     Some(LinkCloseRequest::OutgoingQueueFull) => {
@@ -956,6 +1027,18 @@ async fn run_established_connect(
     match close_status {
         Some(status) => Err(status),
         None => Ok(()),
+    }
+}
+
+async fn receive_refresh_request(
+    refresh_rx: Option<&LinkConnectorRefreshReceiver>,
+) -> Option<LinkConnectorRefreshRequest> {
+    match refresh_rx {
+        Some(rx) => match rx.lock().await.recv().await {
+            Some(request) => Some(request),
+            None => future::pending().await,
+        },
+        None => future::pending().await,
     }
 }
 
@@ -1705,7 +1788,7 @@ mod tests {
     {
         let (out_tx, out_rx) = mpsc::channel(256);
         tokio::spawn(async move {
-            let _ = run_connector_connect(ctx, input, out_tx, Some(auth), None, None).await;
+            let _ = run_connector_connect(ctx, input, out_tx, Some(auth), None, None, None).await;
         });
         out_rx
     }
@@ -2062,6 +2145,7 @@ mod tests {
             token: LinkConnectorToken {
                 token: "token-b".to_string(),
                 expires_at: SystemTime::now() + Duration::from_secs(3600),
+                tier: crate::Tier::Pro,
             },
             calls: calls.clone(),
         });
@@ -2069,6 +2153,7 @@ mod tests {
             LinkConnectorToken {
                 token: "token-a".to_string(),
                 expires_at: SystemTime::now(),
+                tier: crate::Tier::Pro,
             },
             refresher,
         );
@@ -2096,6 +2181,7 @@ mod tests {
             token: LinkConnectorToken {
                 token: "token-b".to_string(),
                 expires_at: SystemTime::now(),
+                tier: crate::Tier::Pro,
             },
             calls: calls.clone(),
         });
@@ -2103,6 +2189,7 @@ mod tests {
             LinkConnectorToken {
                 token: "token-a".to_string(),
                 expires_at: SystemTime::now(),
+                tier: crate::Tier::Pro,
             },
             refresher,
         );

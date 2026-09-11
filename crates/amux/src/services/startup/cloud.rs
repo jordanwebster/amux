@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use tokio::sync::{RwLock, oneshot, watch};
+use tokio::sync::{RwLock, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -17,10 +17,11 @@ use crate::auth::cloud::{
     CloudError, CloudRoutingConnectionDetails, fetch_routing_connection_details,
 };
 use crate::config::Config;
-use crate::profile::status::{Observed, RuntimeStatus};
-use crate::protocol::{ProtocolError, protocol_error_from_status_details, protocol_status};
+use crate::profile::status::{Observed, RelayCarrier, RuntimeStatus};
+use crate::protocol::{ProtocolError, protocol_error_from_status_details};
 use crate::routing::{
-    Host, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher,
+    Host, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorRefreshReceiver,
+    LinkConnectorRefreshRequest, LinkConnectorToken, LinkConnectorTokenRefresher,
     spawn_connector_to_channel_with_auth_establishment_and_shutdown,
 };
 use crate::transport::tls_channel;
@@ -32,17 +33,29 @@ const RELATIVE_JITTER_RATIO: f64 = 0.25;
 const ABSOLUTE_JITTER_MAX: Duration = Duration::from_secs(5);
 const BACKOFF_RESET_AFTER_ESTABLISHED: Duration = Duration::from_secs(30);
 const CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
-/// Entitlement can change while the daemon is idle, so it probes periodically.
-/// The probe is one cheap token fetch; a short interval keeps a fresh
-/// purchase on the phone from looking broken while the desktop catches up.
-const SUBSCRIPTION_RECHECK_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const FREE_TIER_REFRESH_INTERVAL: Duration = Duration::from_secs(180);
 
-pub(crate) struct CloudConnector {
+#[allow(dead_code)]
+pub(crate) struct CloudLink {
     stop_tx: watch::Sender<bool>,
+    refresh_tx: Option<mpsc::Sender<LinkConnectorRefreshRequest>>,
+    status: RuntimeStatus,
     task: JoinHandle<()>,
 }
 
-impl CloudConnector {
+struct CloudConnectionContext {
+    config: Config,
+    state: Arc<RwLock<ServerState>>,
+    connector: LinkConnectorCtx,
+    status: RuntimeStatus,
+    refresh_rx: LinkConnectorRefreshReceiver,
+    #[cfg(test_fixtures)]
+    transport: Option<tonic::transport::Channel>,
+    #[cfg(test_fixtures)]
+    free_refresh_interval: Option<Duration>,
+}
+
+impl CloudLink {
     pub(crate) fn is_finished(&self) -> bool {
         self.task.is_finished()
     }
@@ -56,30 +69,24 @@ impl CloudConnector {
         let _ = self.task.await;
     }
 
-    #[cfg(testnet)]
-    pub(crate) fn testnet_bearer(
-        connector_ctx: LinkConnectorCtx,
-        channel: tonic::transport::Channel,
-        token: String,
-        status: RuntimeStatus,
-    ) -> Self {
-        let (stop_tx, stop_rx) = watch::channel(false);
-        status.report(Observed::Connecting);
-        let (connector_task, established_rx) =
-            crate::routing::spawn_connector_to_channel_with_bearer_token_and_shutdown(
-                connector_ctx,
-                channel,
-                token,
-                stop_rx.clone(),
-            );
-        let task = tokio::spawn(observe_fixture_connector(
-            connector_task,
-            established_rx,
-            stop_tx.clone(),
-            stop_rx,
-            status,
-        ));
-        Self { stop_tx, task }
+    pub(crate) async fn refresh_entitlement(&self) -> Result<crate::Tier, CloudError> {
+        let refresh_tx = self.refresh_tx.as_ref().ok_or_else(|| {
+            CloudError::Connection("cloud link does not support token refresh".into())
+        })?;
+        let (response, response_rx) = oneshot::channel();
+        refresh_tx
+            .send(LinkConnectorRefreshRequest { response })
+            .await
+            .map_err(|_| CloudError::Connection("cloud link is not connected".into()))?;
+        let tier = response_rx
+            .await
+            .map_err(|_| CloudError::Connection("cloud link closed during refresh".into()))?
+            .map_err(cloud_error_from_refresh_status)?;
+        self.status.report(Observed::Connected {
+            tier,
+            carrier: RelayCarrier::Tcp,
+        });
+        Ok(tier)
     }
 
     #[cfg(testnet)]
@@ -90,6 +97,15 @@ impl CloudConnector {
         status: RuntimeStatus,
     ) -> Self {
         let (stop_tx, stop_rx) = watch::channel(false);
+        let tier = auth.tier();
+        let refresh_status = status.clone();
+        let auth = auth.with_refresh_observer(move |tier| {
+            refresh_status.report(Observed::Connected {
+                tier,
+                carrier: RelayCarrier::Tcp,
+            });
+        });
+        let (refresh_tx, refresh_rx) = mpsc::channel(1);
         status.report(Observed::Connecting);
         let (connector_task, established_rx) =
             spawn_connector_to_channel_with_auth_establishment_and_shutdown(
@@ -97,15 +113,22 @@ impl CloudConnector {
                 channel,
                 auth,
                 stop_rx.clone(),
+                Some(Arc::new(tokio::sync::Mutex::new(refresh_rx))),
             );
         let task = tokio::spawn(observe_fixture_connector(
             connector_task,
             established_rx,
             stop_tx.clone(),
             stop_rx,
-            status,
+            status.clone(),
+            tier,
         ));
-        Self { stop_tx, task }
+        Self {
+            stop_tx,
+            refresh_tx: Some(refresh_tx),
+            status,
+            task,
+        }
     }
 }
 
@@ -116,6 +139,7 @@ async fn observe_fixture_connector(
     stop_tx: watch::Sender<bool>,
     stop_rx: watch::Receiver<bool>,
     status: RuntimeStatus,
+    tier: crate::Tier,
 ) {
     let connected_at = std::time::Instant::now();
     let established = await_cloud_establishment(
@@ -123,6 +147,7 @@ async fn observe_fixture_connector(
         established_rx,
         connected_at,
         CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT,
+        tier,
     )
     .await;
     let stopped = *stop_rx.borrow();
@@ -151,23 +176,35 @@ async fn observe_fixture_connector(
         return;
     }
     match result {
-        Err(CloudConnectionError::SubscriptionRequired) => {
-            status.report(Observed::SubscriptionRequired)
-        }
         Err(CloudConnectionError::NonRetriable(_)) => {}
         _ => status.report(Observed::Retrying),
     }
 }
 
-pub(crate) fn establish_cloud_connection(
+pub(crate) fn establish_cloud_link(
     config: Config,
     state: Arc<RwLock<ServerState>>,
     connector_ctx: LinkConnectorCtx,
     status: RuntimeStatus,
     #[cfg(test_fixtures)] transport: Option<tonic::transport::Channel>,
-) -> CloudConnector {
+    #[cfg(test_fixtures)] free_refresh_interval: Option<Duration>,
+) -> CloudLink {
     let (stop_tx, mut stop_rx) = watch::channel(false);
+    let (refresh_tx, refresh_rx) = mpsc::channel(1);
+    let refresh_rx = Arc::new(tokio::sync::Mutex::new(refresh_rx));
+    let task_status = status.clone();
     let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
+    let connection = CloudConnectionContext {
+        config,
+        state,
+        connector: connector_ctx,
+        status: task_status,
+        refresh_rx,
+        #[cfg(test_fixtures)]
+        transport,
+        #[cfg(test_fixtures)]
+        free_refresh_interval,
+    };
     let task = tokio::spawn(
         async move {
 
@@ -177,18 +214,9 @@ pub(crate) fn establish_cloud_connection(
                 if *stop_rx.borrow() {
                     return;
                 }
-                status.report(Observed::Connecting);
+                connection.status.report(Observed::Connecting);
                 tracing::info!("attempting cloud routing connection");
-                match run_cloud_connection(
-                    &config,
-                    state.clone(),
-                    connector_ctx.clone(),
-                    stop_rx.clone(),
-                    &status,
-                    #[cfg(test_fixtures)]
-                    transport.clone(),
-                )
-                .await
+                match run_cloud_connection(&connection, stop_rx.clone()).await
                 {
                     Ok(()) => {
                         tracing::info!("cloud routing connection closed cleanly");
@@ -197,20 +225,6 @@ pub(crate) fn establish_cloud_connection(
                     Err(CloudConnectionError::NonRetriable(msg)) => {
                         tracing::error!(error = %msg, "cloud non-retriable error, stopping");
                         return;
-                    }
-                    Err(CloudConnectionError::SubscriptionRequired) => {
-                        status.report(Observed::SubscriptionRequired);
-                        tracing::warn!(
-                            "cloud subscription required — manage at amux.sh/account; local agents remain available"
-                        );
-                        tracing::info!(
-                            retry_delay = ?SUBSCRIPTION_RECHECK_INTERVAL,
-                            "waiting to re-check cloud subscription"
-                        );
-                        if sleep_or_stop(SUBSCRIPTION_RECHECK_INTERVAL, &mut stop_rx).await {
-                            return;
-                        }
-                        continue;
                     }
                     Err(CloudConnectionError::Retriable { msg, reset_backoff }) => {
                         if reset_backoff {
@@ -223,7 +237,7 @@ pub(crate) fn establish_cloud_connection(
                 if *stop_rx.borrow() {
                     return;
                 }
-                status.report(Observed::Retrying);
+                connection.status.report(Observed::Retrying);
 
                 let retry_delay = jittered_backoff(backoff);
                 tracing::info!(base_backoff = ?backoff, retry_delay = ?retry_delay, "reconnecting to cloud");
@@ -235,7 +249,12 @@ pub(crate) fn establish_cloud_connection(
         }
         .instrument(cloud_span),
     );
-    CloudConnector { stop_tx, task }
+    CloudLink {
+        stop_tx,
+        refresh_tx: Some(refresh_tx),
+        status,
+        task,
+    }
 }
 
 /// Error type for cloud connection attempts
@@ -244,8 +263,6 @@ enum CloudConnectionError {
     Retriable { msg: String, reset_backoff: bool },
     /// Error that should stop reconnection attempts.
     NonRetriable(String),
-    /// Cloud access is unavailable until the user activates a subscription.
-    SubscriptionRequired,
 }
 
 fn cloud_connection_error_from_fetch(
@@ -259,7 +276,6 @@ fn cloud_connection_error_from_fetch(
                 "Authentication failed — run 'amux init' to re-authenticate".to_string(),
             )
         }
-        CloudError::PaymentRequired => CloudConnectionError::SubscriptionRequired,
         error @ CloudError::Rejected(_) => {
             status.report(Observed::AuthenticationRequired);
             CloudConnectionError::NonRetriable(error.to_string())
@@ -272,31 +288,17 @@ fn cloud_connection_error_from_fetch(
 }
 
 async fn run_cloud_connection(
-    config: &Config,
-    state: Arc<RwLock<ServerState>>,
-    connector_ctx: LinkConnectorCtx,
+    ctx: &CloudConnectionContext,
     mut stop_rx: watch::Receiver<bool>,
-    status: &RuntimeStatus,
-    #[cfg(test_fixtures)] transport: Option<tonic::transport::Channel>,
 ) -> std::result::Result<(), CloudConnectionError> {
     let prepared = tokio::select! {
         biased;
         _ = wait_for_stop(&mut stop_rx) => return Ok(()),
-        prepared = prepare_cloud_connection(config, &state, status) => prepared,
+        prepared = prepare_cloud_connection(&ctx.config, &ctx.state, &ctx.status) => prepared,
     };
     let (credentials, details) = prepared?;
 
-    run_cloud_connection_with_details(
-        config,
-        connector_ctx,
-        credentials,
-        details,
-        stop_rx,
-        status,
-        #[cfg(test_fixtures)]
-        transport,
-    )
-    .await
+    run_cloud_connection_with_details(ctx, credentials, details, stop_rx).await
 }
 
 async fn prepare_cloud_connection(
@@ -331,17 +333,16 @@ async fn prepare_cloud_connection(
 }
 
 async fn run_cloud_connection_with_details(
-    config: &Config,
-    connector_ctx: LinkConnectorCtx,
+    ctx: &CloudConnectionContext,
     credentials: Arc<dyn CredentialProvider>,
     details: CloudRoutingConnectionDetails,
     stop_rx: watch::Receiver<bool>,
-    status: &RuntimeStatus,
-    #[cfg(test_fixtures)] transport: Option<tonic::transport::Channel>,
 ) -> std::result::Result<(), CloudConnectionError> {
     tracing::info!(host = %details.host, port = details.port, "connecting to cloud routing");
     #[cfg(test_fixtures)]
-    let channel = transport
+    let channel = ctx
+        .transport
+        .clone()
         .map(Ok)
         .unwrap_or_else(|| cloud_routing_channel(details.host.clone(), details.port));
     #[cfg(not(test_fixtures))]
@@ -351,31 +352,53 @@ async fn run_cloud_connection_with_details(
         reset_backoff: false,
     })?;
     let connected_at = std::time::Instant::now();
-    let connector_auth = LinkConnectorAuth::new(
+    let tier = details.tier;
+    let refresh_status = ctx.status.clone();
+    let connector_auth = LinkConnectorAuth::with_free_refresh_interval(
         LinkConnectorToken {
             token: details.token,
             expires_at: SystemTime::from(details.expires_at),
+            tier,
         },
         Arc::new(CloudLinkTokenRefresher {
-            config: config.clone(),
+            config: ctx.config.clone(),
             credentials,
             current_host: details.host,
             current_port: details.port,
         }),
-    );
+        Some({
+            #[cfg(test_fixtures)]
+            {
+                ctx.free_refresh_interval
+                    .unwrap_or(FREE_TIER_REFRESH_INTERVAL)
+            }
+            #[cfg(not(test_fixtures))]
+            {
+                FREE_TIER_REFRESH_INTERVAL
+            }
+        }),
+    )
+    .with_refresh_observer(move |tier| {
+        refresh_status.report(Observed::Connected {
+            tier,
+            carrier: RelayCarrier::Tcp,
+        });
+    });
     let (connector_task, established_rx) =
         spawn_connector_to_channel_with_auth_establishment_and_shutdown(
-            connector_ctx,
+            ctx.connector.clone(),
             channel,
             connector_auth,
             stop_rx,
+            Some(ctx.refresh_rx.clone()),
         );
     let _abort_connector_on_drop = AbortTaskOnDrop(connector_task.abort_handle());
     await_cloud_establishment(
-        status,
+        &ctx.status,
         established_rx,
         connected_at,
         CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT,
+        tier,
     )
     .await?;
 
@@ -389,7 +412,10 @@ async fn run_cloud_connection_with_details(
     match result {
         Ok(()) => Ok(()),
         Err(error) => {
-            Err(cloud_connection_error_from_status(status, error, connected_at.elapsed()).await)
+            Err(
+                cloud_connection_error_from_status(&ctx.status, error, connected_at.elapsed())
+                    .await,
+            )
         }
     }
 }
@@ -429,10 +455,14 @@ async fn await_cloud_establishment(
     established_rx: oneshot::Receiver<Result<Host, tonic::Status>>,
     connected_at: std::time::Instant,
     timeout: Duration,
+    tier: crate::Tier,
 ) -> std::result::Result<(), CloudConnectionError> {
     match tokio::time::timeout(timeout, established_rx).await {
         Ok(Ok(Ok(_))) => {
-            observed.report(Observed::Connected);
+            observed.report(Observed::Connected {
+                tier,
+                carrier: RelayCarrier::Tcp,
+            });
             Ok(())
         }
         Ok(Ok(Err(status))) => {
@@ -470,17 +500,10 @@ async fn cloud_connection_error_from_status(
             "Invalid credentials — run 'amux init' to re-authenticate".to_string(),
         );
     }
-    if payment_required_from_status(&status) {
-        return CloudConnectionError::SubscriptionRequired;
-    }
     CloudConnectionError::Retriable {
         msg: status.to_string(),
         reset_backoff: should_reset_backoff_after_connection(connection_uptime),
     }
-}
-
-fn payment_required_from_status(status: &tonic::Status) -> bool {
-    protocol_error_from_status_details(status) == Some(ProtocolError::PaymentRequired)
 }
 
 fn is_update_required_status(status: &tonic::Status) -> bool {
@@ -524,9 +547,16 @@ fn cloud_token_refresh_status(error: CloudError) -> tonic::Status {
         CloudError::NotAuthenticated | CloudError::Auth(_) => {
             tonic::Status::unauthenticated("invalid cloud credentials")
         }
-        CloudError::PaymentRequired => protocol_status(ProtocolError::PaymentRequired),
         CloudError::Rejected(message) => tonic::Status::permission_denied(message),
         CloudError::Connection(message) => tonic::Status::unavailable(message),
+    }
+}
+
+fn cloud_error_from_refresh_status(status: tonic::Status) -> CloudError {
+    match status.code() {
+        tonic::Code::Unauthenticated => CloudError::Auth(status.message().to_string()),
+        tonic::Code::PermissionDenied => CloudError::Rejected(status.message().to_string()),
+        _ => CloudError::Connection(status.message().to_string()),
     }
 }
 
@@ -546,6 +576,7 @@ impl LinkConnectorTokenRefresher for CloudLinkTokenRefresher {
         Ok(LinkConnectorToken {
             token: details.token,
             expires_at: SystemTime::from(details.expires_at),
+            tier: details.tier,
         })
     }
 }
@@ -594,19 +625,16 @@ mod tests {
     use uuid::Uuid;
 
     use super::{
-        ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
-        SUBSCRIPTION_RECHECK_INTERVAL, await_cloud_establishment,
-        cloud_connection_error_from_fetch, cloud_connection_error_from_status,
-        cloud_token_refresh_status, establish_cloud_connection, jittered_backoff_with_samples,
-        next_backoff, payment_required_from_status, should_reset_backoff_after_connection,
-        sleep_or_stop,
+        ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, FREE_TIER_REFRESH_INTERVAL,
+        INITIAL_BACKOFF, MAX_BACKOFF, await_cloud_establishment, cloud_connection_error_from_fetch,
+        cloud_connection_error_from_status, establish_cloud_link, jittered_backoff_with_samples,
+        next_backoff, should_reset_backoff_after_connection, sleep_or_stop,
     };
     use crate::auth::{AccessToken, AuthError, CredentialProvider};
     use crate::config::Config;
-    use crate::profile::status::{Observed, RuntimeStatus};
+    use crate::profile::status::{Observed, RelayCarrier, RuntimeStatus};
     use crate::protocol::{ProtocolError, protocol_status};
     use crate::routing::{Capabilities, Host, LinkConnectorCtx, RoutingCore};
-    use crate::subscription::SubscriptionReporter;
     use crate::tunnel::TunnelPool;
     use crate::update::{UpdateReporter, UpdateStatus};
     use crate::user_state::ServerState;
@@ -620,11 +648,6 @@ mod tests {
         fn report(&self, status: UpdateStatus) {
             self.statuses.lock().unwrap().push(status);
         }
-    }
-
-    #[derive(Default)]
-    struct CapturingSubscriptionReporter {
-        required: Mutex<Vec<bool>>,
     }
 
     struct StaticCredentials;
@@ -641,70 +664,33 @@ mod tests {
         fn invalidate(&self, _token: &AccessToken) {}
     }
 
-    impl SubscriptionReporter for CapturingSubscriptionReporter {
-        fn report_subscription_required(&self, required: bool) {
-            self.required.lock().unwrap().push(required);
-        }
-    }
-
     #[test]
     fn fetch_error_classification_controls_retries() {
         assert!(matches!(
             cloud_connection_error_from_fetch(
-                crate::auth::cloud::CloudError::PaymentRequired,
-                &RuntimeStatus::new(None, None)
-            ),
-            super::CloudConnectionError::SubscriptionRequired
-        ));
-        assert!(matches!(
-            cloud_connection_error_from_fetch(
                 crate::auth::cloud::CloudError::Rejected("403 Forbidden".to_string()),
-                &RuntimeStatus::new(None, None)
+                &RuntimeStatus::new(None)
             ),
             super::CloudConnectionError::NonRetriable(_)
         ));
         assert!(matches!(
             cloud_connection_error_from_fetch(
                 crate::auth::cloud::CloudError::Connection("temporary".to_string()),
-                &RuntimeStatus::new(None, None)
+                &RuntimeStatus::new(None)
             ),
             super::CloudConnectionError::Retriable { .. }
         ));
     }
 
     #[test]
-    fn token_refresh_preserves_distinct_payment_required_protocol_error() {
-        let status = cloud_token_refresh_status(crate::auth::cloud::CloudError::PaymentRequired);
-
-        assert_eq!(status.code(), tonic::Code::PermissionDenied);
-        assert!(payment_required_from_status(&status));
-    }
-
-    #[test]
-    fn subscription_recheck_is_prompt_but_not_a_hot_loop() {
-        assert!(SUBSCRIPTION_RECHECK_INTERVAL >= Duration::from_secs(1));
-        assert!(SUBSCRIPTION_RECHECK_INTERVAL <= Duration::from_secs(30));
-    }
-
-    #[tokio::test]
-    async fn profile_runtime_subscription_status_reports_required_then_healthy() {
-        let reporter = Arc::new(CapturingSubscriptionReporter::default());
-        let state = RuntimeStatus::new(None, Some(reporter.clone()));
-
-        state.report(Observed::SubscriptionRequired);
-        assert_eq!(*state.subscribe().borrow(), Observed::SubscriptionRequired);
-        state.report(Observed::Retrying);
-        assert_eq!(*reporter.required.lock().unwrap(), [true]);
-        state.report(Observed::Connected);
-        assert_eq!(*state.subscribe().borrow(), Observed::Connected);
-
-        assert_eq!(*reporter.required.lock().unwrap(), [true, false]);
+    fn free_tier_refresh_uses_the_product_cadence() {
+        assert_eq!(FREE_TIER_REFRESH_INTERVAL, Duration::from_secs(180));
     }
 
     #[tokio::test]
     async fn profile_runtime_update_status_reports_through_configured_reporter() {
         let reporter = Arc::new(CapturingUpdateReporter::default());
-        let state = RuntimeStatus::new(Some(reporter.clone()), None);
+        let state = RuntimeStatus::new(Some(reporter.clone()));
 
         state.report(Observed::UpdateRequired {
             minimum_version: Some("0.4.0".to_string()),
@@ -717,7 +703,10 @@ mod tests {
         );
         state.report(Observed::Connecting);
         assert_eq!(reporter.statuses.lock().unwrap().len(), 1);
-        state.report(Observed::Connected);
+        state.report(Observed::Connected {
+            tier: crate::Tier::Pro,
+            carrier: RelayCarrier::Tcp,
+        });
 
         let statuses = reporter.statuses.lock().unwrap();
         assert_eq!(statuses.len(), 2);
@@ -736,7 +725,7 @@ mod tests {
     #[tokio::test]
     async fn update_required_status_reports_required_update_and_stops_retrying() {
         let reporter = Arc::new(CapturingUpdateReporter::default());
-        let state = RuntimeStatus::new(Some(reporter.clone()), None);
+        let state = RuntimeStatus::new(Some(reporter.clone()));
 
         let status = protocol_status(ProtocolError::UpdateRequired {
             minimum_version: "0.4.0".to_string(),
@@ -751,9 +740,6 @@ mod tests {
             super::CloudConnectionError::Retriable { .. } => {
                 panic!("update-required status must stop reconnecting")
             }
-            super::CloudConnectionError::SubscriptionRequired => {
-                panic!("update-required status must not become subscription-required")
-            }
         }
         let statuses = reporter.statuses.lock().unwrap();
         assert_eq!(statuses.len(), 1);
@@ -766,21 +752,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn payment_required_status_uses_dedicated_recheck_state() {
-        let state = RuntimeStatus::new(None, None);
-        let status = protocol_status(ProtocolError::PaymentRequired);
-
-        let error = cloud_connection_error_from_status(&state, status, Duration::ZERO).await;
-
-        assert!(matches!(
-            error,
-            super::CloudConnectionError::SubscriptionRequired
-        ));
-    }
-
-    #[tokio::test]
     async fn bare_permission_denied_status_remains_retriable() {
-        let state = RuntimeStatus::new(None, None);
+        let state = RuntimeStatus::new(None);
         let status = tonic::Status::permission_denied("cloud request rejected");
 
         let error = cloud_connection_error_from_status(&state, status, Duration::ZERO).await;
@@ -793,7 +766,7 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_establishment_wait_times_out() {
-        let state = RuntimeStatus::new(None, None);
+        let state = RuntimeStatus::new(None);
         let (_tx, rx) = oneshot::channel();
 
         let error = await_cloud_establishment(
@@ -801,6 +774,7 @@ mod tests {
             rx,
             std::time::Instant::now(),
             Duration::from_millis(10),
+            crate::Tier::Pro,
         )
         .await
         .unwrap_err();
@@ -812,9 +786,6 @@ mod tests {
             }
             super::CloudConnectionError::NonRetriable(message) => {
                 panic!("timeout must be retriable, got non-retriable: {message}");
-            }
-            super::CloudConnectionError::SubscriptionRequired => {
-                panic!("timeout must not become subscription-required")
             }
         }
     }
@@ -887,11 +858,13 @@ mod tests {
             routing,
             tunnels,
         );
-        let connector = establish_cloud_connection(
+        let connector = establish_cloud_link(
             config,
             state,
             connector_ctx,
-            RuntimeStatus::new(None, None),
+            RuntimeStatus::new(None),
+            #[cfg(test_fixtures)]
+            None,
             #[cfg(test_fixtures)]
             None,
         );

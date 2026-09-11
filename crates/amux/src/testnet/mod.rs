@@ -409,6 +409,7 @@ struct DaemonSpec {
     no_cloud: bool,
     cloud_user: Option<String>,
     cloud_tier: crate::Tier,
+    cloud_refresh_interval: Option<std::time::Duration>,
 }
 
 /// Declares a topology for [`TestNetBuilder::start`]: daemons, an optional
@@ -505,6 +506,7 @@ impl TestNetBuilder {
             no_cloud: false,
             cloud_user: None,
             cloud_tier: crate::Tier::Pro,
+            cloud_refresh_interval: None,
         });
         self
     }
@@ -570,6 +572,17 @@ impl TestNetBuilder {
             "cloud_tier currently requires a standalone daemon"
         );
         self.last_daemon("cloud_tier").cloud_tier = tier;
+        self
+    }
+
+    /// Overrides the free-tier refresh cadence for the selected daemon.
+    pub fn cloud_refresh_interval(mut self, interval: std::time::Duration) -> Self {
+        assert!(
+            !self.selecting_profile,
+            "cloud_refresh_interval currently requires a standalone daemon"
+        );
+        self.last_daemon("cloud_refresh_interval")
+            .cloud_refresh_interval = Some(interval);
         self
     }
 
@@ -781,10 +794,19 @@ impl TestNetBuilder {
                         );
                         token
                     };
+                    cloud
+                        .user_tier_registry()
+                        .write()
+                        .expect("testnet user tier registry poisoned")
+                        .insert(user_id, spec.cloud_tier);
                     CloudAttachment {
                         addr: cloud.addr,
                         token,
                         user_id,
+                        tier: spec.cloud_tier,
+                        tokens: cloud.token_registry(),
+                        user_tiers: cloud.user_tier_registry(),
+                        refresh_interval: spec.cloud_refresh_interval,
                     }
                 }),
                 runtime: Mutex::new(None),

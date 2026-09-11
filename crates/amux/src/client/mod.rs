@@ -151,7 +151,7 @@ pub enum PairingError {
     #[error("pairing target is unreachable: {0}")]
     Unreachable(String),
     #[error("a subscription is required for relay pairing")]
-    SubscriptionRequired,
+    PaymentRequired,
     #[error("SELF_PAIRING")]
     SelfPairing,
     #[error("pairing attempt expired")]
@@ -170,13 +170,13 @@ pub(crate) fn status_to_pairing_error(error: tonic::Status) -> PairingError {
     if crate::protocol::protocol_error_from_status_details(&error)
         == Some(ProtocolError::PaymentRequired)
     {
-        return PairingError::SubscriptionRequired;
+        return PairingError::PaymentRequired;
     }
     match error.code() {
         tonic::Code::NotFound => PairingError::NotFound,
         tonic::Code::Unavailable => PairingError::Unreachable(error.message().to_string()),
         tonic::Code::FailedPrecondition if error.message().contains("SUBSCRIPTION") => {
-            PairingError::SubscriptionRequired
+            PairingError::PaymentRequired
         }
         tonic::Code::InvalidArgument if error.message().contains("SELF_PAIRING") => {
             PairingError::SelfPairing

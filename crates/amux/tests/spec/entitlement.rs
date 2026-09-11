@@ -19,6 +19,44 @@ async fn a_reauth_that_changes_the_tier_takes_effect_on_the_link() {
     assert_eq!(link_tier_across_reauth().await, (Tier::Free, Tier::Pro));
 }
 
+/// The device completing a purchase refreshes immediately. Other free
+/// devices use the same live-link reauth path on the bounded background
+/// cadence, so neither daemon nor cloud link needs a restart.
+#[tokio::test]
+async fn a_free_daemon_refreshes_and_picks_up_pro_without_a_restart() {
+    let refresh_interval = std::time::Duration::from_millis(50);
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("phone")
+        .cloud_user("alice")
+        .cloud_only()
+        .cloud_tier(Tier::Free)
+        .cloud_refresh_interval(refresh_interval)
+        .daemon("desktop")
+        .cloud_user("alice")
+        .cloud_only()
+        .cloud_tier(Tier::Free)
+        .cloud_refresh_interval(refresh_interval)
+        .paired("phone", "desktop", Via::Cloud)
+        .start()
+        .await;
+    let [phone, desktop] = net.daemons(["phone", "desktop"]);
+    let phone_links = phone.cloud_link_ids().await;
+    let desktop_links = desktop.cloud_link_ids().await;
+
+    assert_eq!(
+        phone.refused_call_error(&desktop).await,
+        ProtocolError::PaymentRequired
+    );
+    net.cloud_user_tier("alice", Tier::Pro);
+    assert_eq!(phone.refresh_entitlement().await, Tier::Pro);
+    phone.can_call(&desktop).await;
+    desktop.can_call(&phone).await;
+
+    assert_eq!(phone.cloud_link_ids().await, phone_links);
+    assert_eq!(desktop.cloud_link_ids().await, desktop_links);
+}
+
 /// A free account retains cloud presence, including the route and pairing
 /// inventory, but the relay refuses its first attempt to open a tunnel.
 #[tokio::test]
@@ -69,7 +107,7 @@ async fn pairing_through_the_relay_on_a_free_link_is_refused_by_the_relay() {
         .unwrap_err();
     assert!(matches!(
         error.downcast_ref::<PairingError>(),
-        Some(PairingError::SubscriptionRequired)
+        Some(PairingError::PaymentRequired)
     ));
     desktop.pair_mode_active().await;
     free_phone.does_not_trust(&desktop).await;

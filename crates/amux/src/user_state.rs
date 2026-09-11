@@ -10,14 +10,12 @@ use crate::config::Config;
 use crate::services::LocalAgentHost;
 #[cfg(feature = "local-agents")]
 use crate::services::PtyAgentHost;
-use crate::subscription::SubscriptionReporter;
 use crate::update::UpdateReporter;
 
 pub(crate) struct ServerState {
     pub(crate) config: Config,
     pub(crate) host_id: Uuid,
     pub(crate) credentials: Option<Arc<dyn CredentialProvider>>,
-    pub(crate) subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
     pub(crate) update_reporter: Option<Arc<dyn UpdateReporter>>,
     pub(crate) is_cloud_server: bool,
     pub(crate) jwt_validator: Option<Arc<JwtValidator>>,
@@ -62,7 +60,6 @@ impl ServerState {
             config,
             host_id,
             credentials,
-            subscription_reporter: None,
             update_reporter,
             is_cloud_server: false,
             jwt_validator: None,

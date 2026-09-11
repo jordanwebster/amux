@@ -40,6 +40,31 @@ pub(crate) struct CloudAttachment {
     /// The cloud user this daemon attaches as (the relay's authenticator
     /// maps its bearer token to this user).
     pub(crate) user_id: uuid::Uuid,
+    pub(crate) tier: crate::Tier,
+    pub(crate) tokens: TokenRegistry,
+    pub(crate) user_tiers: UserTierRegistry,
+    pub(crate) refresh_interval: Option<std::time::Duration>,
+}
+
+impl CloudAttachment {
+    fn refreshing_auth(&self) -> LinkConnectorAuth {
+        LinkConnectorAuth::with_free_refresh_interval(
+            LinkConnectorToken {
+                token: self.token.clone(),
+                expires_at: std::time::SystemTime::now() + REFRESHED_JWT_TTL,
+                tier: self.tier,
+            },
+            Arc::new(RegistryTokenRefresher {
+                tokens: self.tokens.clone(),
+                user_tiers: self.user_tiers.clone(),
+                user_id: self.user_id,
+            }),
+            Some(
+                self.refresh_interval
+                    .unwrap_or(crate::services::FREE_TIER_REFRESH_INTERVAL),
+            ),
+        )
+    }
 }
 
 pub(crate) struct DaemonInner {
@@ -107,7 +132,7 @@ impl DaemonRuntime {
         self.profile
             .as_mut()
             .unwrap()
-            .set_test_cloud_auth(CloudFixtureAuth::Bearer(cloud.token.clone()))
+            .set_test_cloud_auth(CloudFixtureAuth::Refreshing(cloud.refreshing_auth()))
             .await;
         self.start_cloud().await.expect("start test cloud");
     }
@@ -195,7 +220,6 @@ pub(crate) async fn start_daemon_runtime(
         config,
         None,
         None,
-        None,
         Listeners::InProcessOnly,
         Arc::new(discovery) as Arc<dyn Discovery>,
     );
@@ -205,10 +229,11 @@ pub(crate) async fn start_daemon_runtime(
         tracked_tcp: Some(inner.tracked_tcp.clone()),
         artifact_clock: Some(inner.artifact_clock.clone()),
         cloud_transport: None,
+        cloud_refresh_interval: None,
         cloud: inner.cloud.as_ref().map(|cloud| {
             (
                 cloud_channel(cloud.addr),
-                CloudFixtureAuth::Bearer(cloud.token.clone()),
+                CloudFixtureAuth::Refreshing(cloud.refreshing_auth()),
             )
         }),
     };
@@ -1198,6 +1223,17 @@ impl Daemon {
         }
     }
 
+    /// Refreshes this daemon's relay entitlement on its existing cloud link.
+    pub async fn refresh_entitlement(&self) -> crate::Tier {
+        self.runtime()
+            .await
+            .as_ref()
+            .expect("daemon is not running")
+            .refresh_entitlement()
+            .await
+            .expect("refresh cloud entitlement")
+    }
+
     /// Credential rollover onto a short-lived cloud JWT: severs the current
     /// cloud link (the relay sees the same EOF a re-login would produce) and
     /// reattaches with a bearer token that expires `ttl` from now, plus the
@@ -1242,7 +1278,11 @@ impl Daemon {
         let expires_at = std::time::SystemTime::now() + ttl;
         cloud_relay.register_token(&token, attachment.user_id, ttl);
         let auth = LinkConnectorAuth::new(
-            LinkConnectorToken { token, expires_at },
+            LinkConnectorToken {
+                token,
+                expires_at,
+                tier: attachment.tier,
+            },
             Arc::new(RegistryTokenRefresher {
                 tokens: cloud_relay.token_registry(),
                 user_tiers: cloud_relay.user_tier_registry(),
@@ -1517,7 +1557,11 @@ impl LinkConnectorTokenRefresher for RegistryTokenRefresher {
                     tier,
                 },
             );
-        Ok(LinkConnectorToken { token, expires_at })
+        Ok(LinkConnectorToken {
+            token,
+            expires_at,
+            tier,
+        })
     }
 }
 

@@ -878,19 +878,18 @@ impl Inner {
             }
             let weak = Arc::downgrade(self);
             let reporters = options.shared.status_reporters.resolve(&paths.state_path);
-            let status = RuntimeStatus::new(reporters.update, reporters.subscription)
-                .with_observer(move |observed| {
-                    if let Some(inner) = weak.upgrade() {
-                        let mut state = inner.state.lock().unwrap();
-                        if let Some(entry) = state.profiles.get_mut(&id)
-                            && !entry.deleting
-                            && entry.status.observed != observed
-                        {
-                            entry.status.observed = observed;
-                            state.publish(id);
-                        }
+            let status = RuntimeStatus::new(reporters.update).with_observer(move |observed| {
+                if let Some(inner) = weak.upgrade() {
+                    let mut state = inner.state.lock().unwrap();
+                    if let Some(entry) = state.profiles.get_mut(&id)
+                        && !entry.deleting
+                        && entry.status.observed != observed
+                    {
+                        entry.status.observed = observed;
+                        state.publish(id);
                     }
-                });
+                }
+            });
             let runtime = runtime::start_supervised(options, status, slot.operations.clone())
                 .await
                 .map_err(|error| InstallationError::Unavailable(error.to_string()))?;

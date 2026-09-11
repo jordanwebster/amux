@@ -327,7 +327,7 @@ fn every_msg_variant_round_trips_through_serde() {
             message: "connection reset".to_string(),
         }),
         disconnected(DisconnectReason::AuthenticationRequired),
-        disconnected(DisconnectReason::SubscriptionRequired),
+        disconnected(DisconnectReason::PaymentRequired),
         disconnected(DisconnectReason::ApplicationShutdown),
         host_up(&a_host("nova")),
         host_up(&an_offline_host("hetzner")),
@@ -382,7 +382,7 @@ fn every_msg_variant_round_trips_through_serde() {
             message: "reset".to_string(),
         },
         StreamCloseReason::AuthenticationRequired,
-        StreamCloseReason::SubscriptionRequired,
+        StreamCloseReason::PaymentRequired,
         StreamCloseReason::ClientClosed,
     ] {
         variants.push(stream("fix-auth-bug", StreamMsg::Closed { reason }));

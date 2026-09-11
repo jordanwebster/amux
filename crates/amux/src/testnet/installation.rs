@@ -540,6 +540,7 @@ fn fixture_factory(
                     .unwrap()
                     .connect_lazy()
             }),
+            cloud_refresh_interval: None,
         }
     })
 }
@@ -617,6 +618,10 @@ pub(super) async fn start(
                             addr: cloud.addr,
                             user_id,
                             token,
+                            tier: crate::Tier::Pro,
+                            tokens: cloud.token_registry(),
+                            user_tiers: cloud.user_tier_registry(),
+                            refresh_interval: None,
                         }
                     }),
                     runtime: tokio::sync::Mutex::new(None),

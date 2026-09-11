@@ -27,7 +27,6 @@ use crate::profile::runtime::{
 };
 use crate::protocol::wire;
 use crate::services::{CloudLinkService, DeviceRuntimeSecurity};
-use crate::subscription::SubscriptionReporter;
 use crate::transport::{TransportError, create_tls_acceptor};
 use crate::update::{UpdateReporter, UpdateStatus};
 use crate::user_state::ServerState;
@@ -44,7 +43,6 @@ type BuilderParts = (
     Option<Arc<dyn CredentialProvider>>,
     bool,
     Option<Arc<dyn UpdateReporter>>,
-    Option<Arc<dyn SubscriptionReporter>>,
 );
 
 /// Reason for server shutdown notification.
@@ -134,7 +132,6 @@ enum ServerMode {
 pub struct ServerBuilder {
     config: Option<Config>,
     credentials: Option<Arc<dyn CredentialProvider>>,
-    subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
     update_reporter: Option<Arc<dyn UpdateReporter>>,
     as_cloud_relay: bool,
 }
@@ -148,7 +145,6 @@ impl Server {
         ServerBuilder {
             config: None,
             credentials: None,
-            subscription_reporter: None,
             update_reporter: None,
             as_cloud_relay: false,
         }
@@ -246,19 +242,12 @@ impl Server {
         let _sleep_inhibitor = crate::sleep_inhibitor::SleepInhibitor::new(prevent_idle_sleep);
 
         if !is_cloud_server {
-            let (
-                config,
-                credentials,
-                update_reporter,
-                subscription_reporter,
-                has_cloud_credentials,
-            ) = {
+            let (config, credentials, update_reporter, has_cloud_credentials) = {
                 let state = self.state.read().await;
                 (
                     state.config.clone(),
                     state.credentials.clone(),
                     state.update_reporter.clone(),
-                    state.subscription_reporter.clone(),
                     state.credentials.is_some(),
                 )
             };
@@ -266,7 +255,6 @@ impl Server {
                 config,
                 credentials,
                 update_reporter,
-                subscription_reporter,
                 Listeners::Sockets,
                 platform_discovery().map_err(|error| ServerError::State(error.to_string()))?,
             );
@@ -363,11 +351,6 @@ impl ServerBuilder {
         self
     }
 
-    pub fn subscription_reporter(mut self, reporter: Arc<dyn SubscriptionReporter>) -> Self {
-        self.subscription_reporter = Some(reporter);
-        self
-    }
-
     pub fn as_cloud_relay(mut self) -> Self {
         self.as_cloud_relay = true;
         self
@@ -379,15 +362,13 @@ impl ServerBuilder {
 
     #[cfg(feature = "local-agents")]
     pub async fn run(self) -> Result<()> {
-        let (config, credentials, as_cloud_relay, update_reporter, subscription_reporter) =
-            self.into_parts()?;
+        let (config, credentials, as_cloud_relay, update_reporter) = self.into_parts()?;
         let mut server = Server::with_config_and_credentials(
             config,
             credentials,
             update_reporter,
             as_cloud_relay,
         )?;
-        server.state.write().await.subscription_reporter = subscription_reporter;
         server.run().await
     }
 }
@@ -426,7 +407,6 @@ impl ServerBuilder {
             self.credentials,
             self.as_cloud_relay,
             self.update_reporter,
-            self.subscription_reporter,
         ))
     }
 }

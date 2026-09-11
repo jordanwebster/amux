@@ -9,9 +9,9 @@ pub mod rpc {
     pub use crate::protocol::amux::v1::{
         BindProfileRequest, CreateProfileRequest, DeleteProfileRequest, GetInfoRequest,
         InstallationInfo, InstallationShutdownRequest, Intent, ListProfilesRequest,
-        ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RenameProfileRequest,
-        ResumeAllRequest, SuspendAllRequest, SuspendReason, installation_service_client,
-        profile_service_client,
+        ListProfilesResponse, Observed, ProfileInfo, ProfileOperation, RelayCarrier,
+        RenameProfileRequest, ResumeAllRequest, SuspendAllRequest, SuspendReason, Tier,
+        installation_service_client, profile_service_client,
     };
 }
 
@@ -36,7 +36,7 @@ pub use supervisor::{
 };
 
 pub use crate::profile::runtime::{InstallationSettings, Listeners};
-pub use crate::profile::status::Observed;
+pub use crate::profile::status::{Observed, RelayCarrier};
 pub mod registry;
 
 use std::path::PathBuf;

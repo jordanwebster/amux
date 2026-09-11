@@ -6,7 +6,6 @@
 //! instantly and renders the degraded banner from Model state.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use amux::{ColorSetting, Config, DebugFormat, ThemeSetting, UiSettings};
 use amux_tui::{
@@ -18,7 +17,6 @@ use anyhow::{Context, Result};
 
 use crate::client_common::get_client;
 use crate::init::{self, InitContext};
-use crate::update::MarkerFileReporter;
 
 const GIT_SHA: &str = env!("GIT_SHA");
 
@@ -198,7 +196,6 @@ fn runtime_options(
     // The local host id comes from the stored device identity — the wire
     // does not mark the local host (see docs/UI.md, subscription policy).
     let local_host_id = amux::setup::local_host_id(config);
-    let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
     // The fold order is the runtime's to report. Reconstructing it from
     // outside would mean guessing how a drain batched, and a wrong guess is
     // a replay that diverges for no visible reason.
@@ -215,9 +212,6 @@ fn runtime_options(
         git_sha: GIT_SHA,
         artifact_cache: Some(config.artifact_cache_dir()),
         artifact_cache_bound: config.ui.artifact_cache_mib.saturating_mul(1024 * 1024),
-        subscription_status_provider: Some(Arc::new(move || {
-            subscription_reporter.subscription_required()
-        })),
         #[cfg(debug_assertions)]
         msg_tap,
         ..RuntimeOptions::default()

@@ -219,6 +219,42 @@ async fn lifecycle_replays_original_results_and_rejects_stale_and_deleted_ids() 
 }
 
 #[tokio::test]
+async fn profile_status_carries_connected_tier_and_carrier_over_grpc() {
+    let (front, _root) = front(Listeners::InProcessOnly).await;
+    let mut client = client(&front);
+    let profile = create(&mut client, "free").await;
+    let id = crate::ProfileId(profile.id.parse().unwrap());
+    crate::test_fixtures::report_profile_status(
+        &front.installation,
+        id,
+        crate::installation::Observed::Connected {
+            tier: crate::Tier::Free,
+            carrier: crate::installation::RelayCarrier::Tcp,
+        },
+    )
+    .await;
+
+    let profiles = client
+        .list_profiles(wire::ListProfilesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .profiles;
+    let profile = profiles
+        .iter()
+        .find(|profile| profile.id == id.to_string())
+        .unwrap();
+    assert_eq!(profile.observed, wire::Observed::Connected as i32);
+    assert_eq!(profile.tier, wire::Tier::Free as i32);
+    assert_eq!(profile.relay_carrier, wire::RelayCarrier::Tcp as i32);
+
+    front
+        .installation
+        .stop(crate::server::ShutdownReason::UserRequested)
+        .await;
+}
+
+#[tokio::test]
 async fn watch_delivers_snapshot_boundary_ordered_changes_and_removal() {
     use wire::watch_profiles_response::Event;
     let (front, _root) = front(Listeners::InProcessOnly).await;

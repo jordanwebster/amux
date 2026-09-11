@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use amux::installation::{BindTarget, Observed, ProfileStatus};
+use amux::installation::{BindTarget, Observed, ProfileStatus, RelayCarrier};
 use amux::test_fixtures::{Fault, IdentityServer, TestAccount, TestRelay};
 use amux::{
     AccessToken, AuthError, BindRequest, Client, CredentialProvider, CredentialSource, HostId,
@@ -14,6 +14,13 @@ use amux::{
     Listeners, OAuthError, OperationId, PairingSecret, ProfileId, ShutdownReason,
     refresh_access_token,
 };
+
+fn connected() -> Observed {
+    Observed::Connected {
+        tier: amux::Tier::Pro,
+        carrier: RelayCarrier::Tcp,
+    }
+}
 
 struct HostCredentials {
     url: String,
@@ -244,14 +251,14 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
     assert_ne!(hosts[0], hosts[1]);
     wait_status(
         &installation,
-        &[(ids[0], Observed::Connected), (ids[1], Observed::Connected)],
+        &[(ids[0], connected()), (ids[1], connected())],
     )
     .await;
     wait_status(
         &witnesses,
         &peers
             .iter()
-            .map(|p| (p.record.id, Observed::Connected))
+            .map(|p| (p.record.id, connected()))
             .collect::<Vec<_>>(),
     )
     .await;
@@ -342,13 +349,13 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         }
         installation.host_resume().await;
         let work_status = if cycle == 0 {
-            Observed::Connected
+            connected()
         } else {
             Observed::AuthenticationRequired
         };
         wait_status(
             &installation,
-            &[(ids[0], Observed::Connected), (ids[1], work_status)],
+            &[(ids[0], connected()), (ids[1], work_status)],
         )
         .await;
         for index in 0..2 {
@@ -373,7 +380,7 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         .unwrap();
     wait_status(
         &installation,
-        &[(ids[0], Observed::Connected), (ids[1], Observed::Connected)],
+        &[(ids[0], connected()), (ids[1], connected())],
     )
     .await;
     assert_eq!(credentials[0].calls.load(Ordering::SeqCst), 2);

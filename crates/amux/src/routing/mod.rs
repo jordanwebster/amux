@@ -22,11 +22,10 @@ pub(crate) use connect::link_reauth_tier_probe;
 pub(crate) use connect::spawn_connector_to_channel;
 #[cfg(test)]
 pub(crate) use connect::spawn_connector_to_channel_with_bearer_token;
-#[cfg(testnet)]
-pub(crate) use connect::spawn_connector_to_channel_with_bearer_token_and_shutdown;
 pub(crate) use connect::{
     AuthenticatedLinkUser, LinkAuthSession, LinkConnectorAuth, LinkConnectorCtx,
-    LinkConnectorToken, LinkConnectorTokenRefresher, LinkServiceCtx, LinkTokenAuthenticator,
+    LinkConnectorRefreshReceiver, LinkConnectorRefreshRequest, LinkConnectorToken,
+    LinkConnectorTokenRefresher, LinkServiceCtx, LinkTokenAuthenticator,
     spawn_connector_to_channel_with_auth_establishment_and_shutdown,
     spawn_connector_to_channel_with_establishment,
 };

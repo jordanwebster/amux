@@ -102,6 +102,19 @@ pub(super) fn profile_info(status: ProfileStatus) -> wire::ProfileInfo {
         Observed::UpdateRequired { minimum_version } => minimum_version.clone(),
         _ => None,
     };
+    let (tier, relay_carrier) = match &status.observed {
+        Observed::Connected { tier, carrier } => (
+            match tier {
+                crate::Tier::Free => wire::Tier::Free,
+                crate::Tier::Pro => wire::Tier::Pro,
+            },
+            match carrier {
+                crate::profile::status::RelayCarrier::Quic => wire::RelayCarrier::Quic,
+                crate::profile::status::RelayCarrier::Tcp => wire::RelayCarrier::Tcp,
+            },
+        ),
+        _ => (wire::Tier::Unspecified, wire::RelayCarrier::Unspecified),
+    };
     wire::ProfileInfo {
         id: record.id.to_string(),
         label,
@@ -122,10 +135,9 @@ pub(super) fn profile_info(status: ProfileStatus) -> wire::ProfileInfo {
         observed: match status.observed {
             Observed::Local => wire::Observed::Local,
             Observed::Connecting => wire::Observed::Connecting,
-            Observed::Connected => wire::Observed::Connected,
+            Observed::Connected { .. } => wire::Observed::Connected,
             Observed::Retrying => wire::Observed::Retrying,
             Observed::AuthenticationRequired => wire::Observed::AuthenticationRequired,
-            Observed::SubscriptionRequired => wire::Observed::SubscriptionRequired,
             Observed::UpdateRequired { .. } => wire::Observed::UpdateRequired,
             Observed::StartupFailed => wire::Observed::StartupFailed,
         }
@@ -134,6 +146,8 @@ pub(super) fn profile_info(status: ProfileStatus) -> wire::ProfileInfo {
         startup_error: status.startup_error.unwrap_or_default(),
         available: status.available,
         minimum_version,
+        tier: tier.into(),
+        relay_carrier: relay_carrier.into(),
     }
 }
 pub(super) fn watch_event(event: ProfileEvent) -> Result<wire::WatchProfilesResponse, Status> {
