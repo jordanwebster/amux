@@ -787,6 +787,11 @@ impl StartedUserServices {
     pub(crate) fn reachability_link_connector(&self) -> &ReachabilityLinkConnector {
         &self.reachability_links
     }
+
+    #[cfg(testnet)]
+    pub(crate) fn rebind_direct_quic(&self, socket: std::net::UdpSocket) -> std::io::Result<()> {
+        self.reachability_links.rebind_quic(socket)
+    }
 }
 
 impl StartedRoutingServices {

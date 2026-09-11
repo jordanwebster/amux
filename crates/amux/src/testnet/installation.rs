@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::daemon::{CloudAttachment, DaemonInner, TestArtifactClock};
+use super::udp_proxy::UdpProxy;
 use super::{Daemon, NetInner};
 use crate::discovery::{Discovery, ScriptedDiscovery};
 use crate::installation::{
@@ -86,6 +87,7 @@ struct InstallationInner {
     fixtures: Fixtures,
     cloud_addr: Option<SocketAddr>,
     discovery: ScriptedDiscovery,
+    udp_proxy: UdpProxy,
     root: PathBuf,
     persistent: bool,
     embedded: bool,
@@ -182,6 +184,7 @@ impl InstallationHandle {
                 self.inner.fixtures.clone(),
                 self.inner.cloud_addr,
                 self.inner.discovery.clone(),
+                self.inner.udp_proxy.clone(),
             ),
         )
         .await
@@ -497,6 +500,7 @@ fn fixture_factory(
     fixtures: Fixtures,
     cloud_addr: Option<SocketAddr>,
     discovery: ScriptedDiscovery,
+    udp_proxy: UdpProxy,
 ) -> Arc<dyn Fn(ProfileId) -> RuntimeFixtures + Send + Sync> {
     Arc::new(move |id| {
         let mut fixtures = fixtures.lock().unwrap();
@@ -505,29 +509,25 @@ fn fixture_factory(
         } else {
             fixtures.cloud_only.pop_front().unwrap_or(false)
         };
+        let existing = fixtures.profiles.contains_key(&id);
+        let binding = (!cloud_only && !existing).then(|| udp_proxy.register(id.0));
         let listener = if cloud_only {
             None
+        } else if existing {
+            Some(udp_proxy.rebind(id.0))
         } else {
-            let addr = fixtures
-                .profiles
-                .get(&id)
-                .and_then(|fixture| fixture.direct_addr)
-                .unwrap_or_else(|| "127.0.0.1:0".parse().unwrap());
-            let listener =
-                std::net::UdpSocket::bind(addr).expect("bind profile fixture QUIC socket");
-            Some(listener)
+            Some(binding.as_ref().unwrap().socket.try_clone().unwrap())
         };
         let fixture = fixtures
             .profiles
             .entry(id)
             .or_insert_with(|| ProfileFixture {
-                direct_addr: listener
-                    .as_ref()
-                    .map(|listener| listener.local_addr().unwrap()),
+                direct_addr: binding.as_ref().map(|binding| binding.public_addr),
                 clock: Arc::new(TestArtifactClock::new()),
             });
         RuntimeFixtures {
             listener,
+            advertised_addr: fixture.direct_addr,
             discovery: Some(Arc::new(discovery.clone()) as Arc<dyn Discovery>),
             artifact_clock: Some(fixture.clock.clone()),
             cloud: None,
@@ -542,6 +542,7 @@ pub(super) async fn start(
     identity: Arc<IdentityServer>,
     cloud: Option<&super::net::CloudRelay>,
     discovery: ScriptedDiscovery,
+    udp_proxy: UdpProxy,
 ) -> InstallationHandle {
     let disk_root = crate::test_fixtures::short_installation_root();
     let root = InstallationRoot::OnDisk(disk_root.path().into());
@@ -559,6 +560,7 @@ pub(super) async fn start(
             fixtures.clone(),
             cloud.map(|cloud| cloud.addr),
             discovery.clone(),
+            udp_proxy.clone(),
         ),
     )
     .await
@@ -603,6 +605,8 @@ pub(super) async fn start(
                     data_dir: paths.data_dir.clone(),
                     artifact_clock: fixture.clock.clone(),
                     direct_addr: fixture.direct_addr,
+                    proxy_id: id.0,
+                    udp_proxy: udp_proxy.clone(),
                     cloud: profile.cloud_user.as_ref().map(|user| {
                         let cloud = cloud.expect("cloud_user requires .cloud()");
                         let (user_id, token) = cloud.credentials_for_user(user);
@@ -632,6 +636,7 @@ pub(super) async fn start(
         fixtures,
         cloud_addr: cloud.map(|cloud| cloud.addr),
         discovery,
+        udp_proxy,
         root,
         persistent: spec.persistent,
         embedded: spec.embedded,

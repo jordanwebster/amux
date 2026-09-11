@@ -51,6 +51,7 @@ pub use installation::{
 };
 mod pairing;
 mod session;
+mod udp_proxy;
 mod wire;
 
 use std::fmt::Write as _;
@@ -64,6 +65,7 @@ use net::CloudRelay;
 pub use pairing::{PairAttempt, Pin, QrPayload};
 pub use session::EchoSession;
 use tokio::sync::Mutex;
+use udp_proxy::UdpProxy;
 pub use wire::{LinkCloseReason, WirePeer, native_stream_lifecycle};
 
 use crate::discovery::{Advertisement, Discovery, DiscoveryEvent, ScriptedDiscovery};
@@ -106,6 +108,7 @@ pub(crate) struct NetInner {
     installations: Vec<InstallationHandle>,
     pairs: Vec<(String, String, Via)>,
     pub(crate) discovery: ScriptedDiscovery,
+    pub(crate) udp_proxy: UdpProxy,
     discovery_events: StdMutex<tokio::sync::broadcast::Receiver<DiscoveryEvent>>,
     /// Owns every daemon's data dir; removed when the net is dropped.
     _data_root: tempfile::TempDir,
@@ -184,6 +187,32 @@ impl TestNet {
                 Err(tokio::sync::broadcast::error::TryRecvError::Closed) => return events,
             }
         }
+    }
+
+    /// Applies symmetric latency to every direct QUIC datagram.
+    pub fn latency(&self, millis: u64) {
+        self.inner.udp_proxy.latency(millis);
+    }
+
+    /// Drops this percentage of direct QUIC datagrams deterministically.
+    pub fn loss(&self, percent: u8) {
+        self.inner.udp_proxy.loss(percent);
+    }
+
+    /// Blocks or restores every direct QUIC datagram involving `daemon`.
+    pub fn udp_blocked(&self, daemon: &Daemon, blocked: bool) {
+        self.inner.udp_proxy.blocked(daemon.inner.proxy_id, blocked);
+    }
+
+    /// Moves a daemon's client-facing QUIC socket while preserving its proxy address.
+    pub async fn rebind_client(&self, daemon: &Daemon) {
+        let socket = self.inner.udp_proxy.rebind(daemon.inner.proxy_id);
+        let runtime = daemon.runtime().await;
+        runtime
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", daemon.name()))
+            .rebind_direct_quic(socket)
+            .expect("rebind testnet QUIC endpoint");
     }
 
     /// Rejects this account at the production relay authentication boundary.
@@ -657,6 +686,7 @@ impl TestNetBuilder {
             .expect("create testnet data root");
         let discovery = ScriptedDiscovery::new();
         let discovery_events = discovery.browse();
+        let udp_proxy = UdpProxy::new();
 
         let cloud = if self.cloud {
             Some(CloudRelay::start().await)
@@ -690,10 +720,8 @@ impl TestNetBuilder {
             let (listener, direct_addr) = if spec.cloud_only {
                 (None, None)
             } else {
-                let listener = std::net::UdpSocket::bind(("127.0.0.1", 0))
-                    .expect("bind daemon direct-QUIC socket");
-                let addr = listener.local_addr().expect("daemon listener address");
-                (Some(listener), Some(addr))
+                let binding = udp_proxy.register(identity.host_id);
+                (Some(binding.socket), Some(binding.public_addr))
             };
             preps.push(DaemonPrep {
                 identity,
@@ -777,6 +805,8 @@ impl TestNetBuilder {
                 data_dir: prep.data_dir,
                 artifact_clock: Arc::new(daemon::TestArtifactClock::new()),
                 direct_addr: prep.direct_addr,
+                proxy_id: prep.identity.host_id,
+                udp_proxy: udp_proxy.clone(),
                 cloud: prep.attaches_to_cloud.then(|| {
                     let cloud = cloud.as_ref().expect("cloud attachment without cloud");
                     let (user_id, shared_token) = match &spec.cloud_user {
@@ -855,9 +885,14 @@ impl TestNetBuilder {
                 .await,
             );
             for spec in self.installations {
-                let installation =
-                    installation::start(spec, identity.clone(), cloud.as_ref(), discovery.clone())
-                        .await;
+                let installation = installation::start(
+                    spec,
+                    identity.clone(),
+                    cloud.as_ref(),
+                    discovery.clone(),
+                    udp_proxy.clone(),
+                )
+                .await;
                 daemon_inners.extend(installation.daemon_inners());
                 installations.push(installation);
             }
@@ -913,6 +948,7 @@ impl TestNetBuilder {
                 .collect(),
             pairs: self.pairs,
             discovery,
+            udp_proxy,
             discovery_events: StdMutex::new(discovery_events),
             _data_root: data_root,
         });

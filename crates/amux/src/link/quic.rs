@@ -100,7 +100,6 @@ impl QuicCarrier {
         Self::new(connection, kind, None)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn rebind(endpoint: &quinn::Endpoint, socket: UdpSocket) -> io::Result<()> {
         endpoint.rebind(socket)
     }

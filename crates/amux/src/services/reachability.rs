@@ -131,6 +131,16 @@ impl ReachabilityLinkConnector {
         inner.context.quic_endpoint.lock().unwrap().clone()
     }
 
+    #[cfg(testnet)]
+    pub(crate) fn rebind_quic(&self, socket: std::net::UdpSocket) -> std::io::Result<()> {
+        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
+            return Ok(());
+        };
+        let endpoint = inner.context.quic_endpoint.lock().unwrap();
+        let endpoint = endpoint.as_ref().expect("QUIC endpoint is configured");
+        QuicCarrier::rebind(endpoint, socket)
+    }
+
     #[cfg(test)]
     pub(crate) fn trust_store(&self) -> Option<SharedTrustStore> {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {

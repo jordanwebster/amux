@@ -29,6 +29,22 @@ unification and compile a second dependency graph.
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
+## Scripted discovery and direct-QUIC faults
+
+Spec tests use one `TestNet` for both scripted LAN discovery and direct-QUIC
+network conditions. Every listening daemon is advertised at a stable loopback
+UDP proxy address while its real QUIC endpoint stays private to the harness.
+This keeps discovery deterministic and ensures pairing, trusted links, and
+session streams all traverse the same controllable datagram path.
+
+Use `TestNet::latency` and `TestNet::loss` to shape traffic in both directions,
+`TestNet::udp_blocked` to isolate one named daemon, and
+`TestNet::rebind_client` to move its endpoint behind the stable advertised
+address. The daemon helpers `connects_to_via_direct_quic`, `sees_away`, and
+`open_session_stream_to` assert the user-visible route and session behavior
+without sleeps. Keep discovery changes on `ScriptedDiscovery`; do not rely on
+the machine's multicast DNS state in a spec.
+
 ## Recorded PTY tests
 
 Each recorded Claude PTY scenario is a separate test. The standard Rust test

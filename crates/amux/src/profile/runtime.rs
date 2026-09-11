@@ -116,6 +116,7 @@ pub(crate) enum CloudFixtureAuth {
 #[derive(Default)]
 pub(crate) struct RuntimeFixtures {
     pub(crate) listener: Option<std::net::UdpSocket>,
+    pub(crate) advertised_addr: Option<SocketAddr>,
     pub(crate) discovery: Option<Arc<dyn Discovery>>,
     pub(crate) artifact_clock: Option<Arc<dyn amux_artifacts::Clock>>,
     pub(crate) cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
@@ -364,7 +365,11 @@ async fn build(
         .as_ref()
         .map(quinn::Endpoint::local_addr)
         .transpose()?;
-    if let Some(addr) = lan_addr {
+    #[cfg(testnet)]
+    let advertised_lan_addr = options.fixtures.advertised_addr.or(lan_addr);
+    #[cfg(not(testnet))]
+    let advertised_lan_addr = lan_addr;
+    if let Some(addr) = advertised_lan_addr {
         service_config.lan.port = addr.port();
     }
 
@@ -434,7 +439,7 @@ async fn build(
         task
     });
     if let Some(endpoint) = lan_endpoint {
-        let addr = lan_addr.expect("LAN listener address captured before serving");
+        let addr = advertised_lan_addr.expect("LAN listener address captured before serving");
         let addrs = if addr.ip().is_unspecified() {
             local_pairing_addrs(addr.port())
         } else {
@@ -524,6 +529,12 @@ async fn build(
 impl ProfileRuntime {
     pub(crate) fn client(&self) -> Client {
         self.client.clone()
+    }
+
+    #[cfg(testnet)]
+    pub(crate) fn rebind_direct_quic(&self, socket: std::net::UdpSocket) -> std::io::Result<()> {
+        socket.set_nonblocking(true)?;
+        self.services.rebind_direct_quic(socket)
     }
 
     pub(crate) async fn suspend_direct_links(&self) {

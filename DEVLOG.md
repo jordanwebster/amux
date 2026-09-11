@@ -9085,3 +9085,10 @@ and device-shaped liveness timers. Session tickets and early data are disabled.
 The carrier reserves the first bidirectional stream for control, carries stream
 refusals in QUIC reset codes, and keeps a responsive stream beside a blocked
 reader.
+
+2026-09-11 — **Spec networks can shape direct QUIC traffic.** Every TestNet
+daemon now places its production QUIC endpoint behind a stable loopback UDP
+proxy. Tests can apply symmetric latency and deterministic loss, isolate a
+named daemon, or rebind a client's private socket while its advertised address
+stays fixed. Scripted discovery, pairing, trusted links, and session streams all
+use the proxied path, including profiles owned by the installation supervisor.

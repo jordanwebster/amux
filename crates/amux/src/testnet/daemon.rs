@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 use super::NetInner;
 use super::assertions::eventually;
 use super::net::{RegisteredToken, TokenRegistry, UserTierRegistry};
+use super::udp_proxy::UdpProxy;
 use crate::HostId;
 use crate::auth::{AccessToken, AuthError, CredentialProvider};
 use crate::client::Client;
@@ -90,6 +91,8 @@ pub(crate) struct DaemonInner {
     /// Direct QUIC listener address; stable across restarts so stored
     /// reachabilities keep working. `None` for cloud-only daemons.
     pub(crate) direct_addr: Option<SocketAddr>,
+    pub(crate) proxy_id: HostId,
+    pub(crate) udp_proxy: UdpProxy,
     pub(crate) cloud: Option<CloudAttachment>,
     pub(crate) runtime: Mutex<Option<DaemonRuntime>>,
     pub(crate) installation: Option<super::installation::ProfileOwner>,
@@ -176,8 +179,8 @@ const CALL_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 
 /// Boots the daemon's user services from its data dir. Identity and trust
 /// persist on disk, so a restart reuses them; `listener` carries the
-/// pre-bound direct-QUIC socket on first boot (restarts rebind the
-/// recorded address).
+/// pre-bound direct-QUIC socket on first boot (restarts obtain a fresh
+/// private socket behind the same proxy address).
 ///
 /// The cloud connector is *not* spawned here: callers attach the cloud
 /// after direct links are up, which keeps initial topologies deterministic.
@@ -192,7 +195,7 @@ pub(crate) async fn start_daemon_runtime(
 ) -> DaemonRuntime {
     let listener = match (listener, inner.direct_addr) {
         (Some(listener), _) => Some(listener),
-        (None, Some(addr)) => Some(bind_udp_with_retries(addr).await),
+        (None, Some(_)) => Some(inner.udp_proxy.rebind(inner.proxy_id)),
         (None, None) => None,
     };
     let config = crate::config::Config {
@@ -220,6 +223,7 @@ pub(crate) async fn start_daemon_runtime(
     );
     options.fixtures = RuntimeFixtures {
         listener,
+        advertised_addr: inner.direct_addr,
         discovery: None,
         artifact_clock: Some(inner.artifact_clock.clone()),
         cloud_transport: None,
@@ -236,21 +240,6 @@ pub(crate) async fn start_daemon_runtime(
         .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
     DaemonRuntime {
         profile: Some(profile),
-    }
-}
-
-async fn bind_udp_with_retries(addr: SocketAddr) -> std::net::UdpSocket {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        match std::net::UdpSocket::bind(addr) {
-            Ok(socket) => return socket,
-            Err(error) => {
-                if tokio::time::Instant::now() >= deadline {
-                    panic!("failed to rebind QUIC socket {addr}: {error}");
-                }
-                tokio::time::sleep(super::assertions::POLL_INTERVAL).await;
-            }
-        }
     }
 }
 
@@ -538,6 +527,27 @@ impl Daemon {
         .await;
     }
 
+    /// Presence reached through another host rather than this LAN's direct link.
+    pub async fn sees_away(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' sees '{}' online through a relay",
+            self.name(),
+            other.name()
+        );
+        let other_id = other.host_id();
+        eventually(
+            &assertion,
+            async || {
+                self.host_table()
+                    .await
+                    .iter()
+                    .any(|host| host.id == other_id && host.online && host.via == HostVia::Relay)
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
     /// Presence negation: `other` is absent or offline on this daemon's
     /// host-listing surface.
     pub async fn cannot_see(&self, other: &Daemon) {
@@ -588,6 +598,62 @@ impl Daemon {
             from: self,
             to: other,
         }
+    }
+
+    /// Waits for a direct route and verifies its physical carrier is QUIC.
+    pub async fn connects_to_via_direct_quic(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' connects to '{}' via direct QUIC",
+            self.name(),
+            other.name()
+        );
+        let other_id = other.host_id();
+        eventually(
+            &assertion,
+            async || {
+                let Some(parts) = self.try_parts().await else {
+                    return false;
+                };
+                if !self
+                    .route_to(other_id)
+                    .await
+                    .is_some_and(|route| route.is_direct())
+                {
+                    return false;
+                }
+                parts
+                    .channels
+                    .link_registry()
+                    .native_carrier_to_peer(other_id)
+                    .await
+                    .is_some_and(|(_, carrier)| carrier.kind() == CarrierKind::Quic)
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    /// Opens the public session stream through this daemon's route to `peer`.
+    pub async fn open_session_stream_to(
+        &self,
+        peer: &Daemon,
+        agent: crate::AgentId,
+    ) -> crate::SessionStream {
+        self.routed_admin_client_to(peer)
+            .await
+            .subscribe_session(crate::SubscribeSessionRequest {
+                agent: agent.into(),
+                io_protocol: crate::agents::TEST_ECHO_V1.to_string(),
+                args: None,
+            })
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "'{}' could not open a session stream to '{}': {error}",
+                    self.name(),
+                    peer.name()
+                )
+            })
     }
 
     /// Trust-store check: this daemon holds a trust entry for `other`.
