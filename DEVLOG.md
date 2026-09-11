@@ -4,6 +4,56 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **A report of a conversation replays as that conversation.**
+
+Four of the things on a conversation screen are in no message the shared
+runtime carries. The message somebody has half written and never sent, the card
+they have open over it, the entry they have scrolled back to, and a finished
+turn whose offer of its changes they have set aside all belong to the phone and
+to the person holding it. A report that left them out replayed an empty
+composer over a transcript resting at its tail with nothing open — often not
+the screen the report was about at all. The recording now carries all four, and
+a replay puts each of them back.
+
+A draft is written down whole: the sentence, the caret in it, and every token
+standing in it. Each token holds one private character of the sentence, so a
+sentence restored without them would leave an invisible character where an
+attachment used to be.
+
+Where a reader has got to is the harder one, and it changed how a transcript
+measures itself. A position used to be a distance down the feed, which answers
+the question for exactly one layout: the rows are laid out from markdown, and
+markdown measures differently at another type size, in another appearance or
+under an older build, so a distance carried between any two of those points at
+a different row. A position is now the entry the top of the readable page is
+inside and how far into that entry it has reached. Entries report where they
+are on the page rather than where they sit in the feed, because a feed settles
+its rows as the markdown below them finishes measuring — an entry's place
+within the feed is a number that quietly moves after it is read, and reading a
+stale one put a reader back eleven rows from where they had been left, twice,
+in the same direction.
+
+The journey now leaves a conversation the way somebody would — a message half
+written, the fleet borrowed and given back, the feed scrolled off its tail and
+a menu open over it — and freezes a report there against a real relay and a
+real machine. That bundle is kept, and replaying it draws the picture the phone
+took, pixel for pixel, with nothing rebaselined.
+
+Three defects fell out of doing it. A report frozen through the driving door
+was not told where in the app it was, so the same conversation produced
+different bundles depending on which path froze it; the ending place is now
+read off the trail, which is right either way. Marking the feed as a layout of
+scroll targets — one way to reach an entry by name — also moves where every
+conversation comes to rest, which eight captures said plainly; a transcript is
+dragged wherever you like, not settled onto the nearest row. And text typed
+into the composer keeps the layout the keyboard gave it while the same draft
+put back into a rebuilt composer is laid out from the attributed string, a few
+pixels apart on the second line: invisible to a reader, carried by no
+recording, and the reason the reported screen is one whose composer was rebuilt
+before the picture was taken.
+
+---
+
 2026-09-11 — **A report of the home replays as the home.**
 
 A bug report's view-state recording now says where in the app the person was,

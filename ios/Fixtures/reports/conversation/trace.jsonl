@@ -1,9 +1,11 @@
-{"agent":"57ab03cf-ee4e-481b-b2d6-a055d1b76a65","kind":"route","place":"conversation"}
-{"agent":"57ab03cf-ee4e-481b-b2d6-a055d1b76a65","kind":"route","place":"review"}
-{"agent":"57ab03cf-ee4e-481b-b2d6-a055d1b76a65","kind":"route","place":"conversation"}
+{"agent":"e09315bf-2b11-4fab-9f71-6bcb3647dc9a","kind":"route","place":"conversation"}
+{"agent":"e09315bf-2b11-4fab-9f71-6bcb3647dc9a","kind":"route","place":"review"}
+{"agent":"e09315bf-2b11-4fab-9f71-6bcb3647dc9a","kind":"route","place":"conversation"}
+{"kind":"route","place":"home"}
+{"agent":"e09315bf-2b11-4fab-9f71-6bcb3647dc9a","kind":"route","place":"conversation"}
 {"kind":"sheet","sheet":"overflow"}
-{"agent":"57ab03cf-ee4e-481b-b2d6-a055d1b76a65","kind":"reading","reading":{"entry":"claude_pty:4","into":22.666666666666686}}
-{"agent":"57ab03cf-ee4e-481b-b2d6-a055d1b76a65","draft":{"body":"and then check the migration before you merge","caret":45,"tokens":[]},"kind":"draft"}
-{"agent":"57ab03cf-ee4e-481b-b2d6-a055d1b76a65","kind":"setAside"}
-{"at":"2026-09-11T06:26:05.481096029Z","kind":"frozen","ordered":"2026-09-11T06:21:37.19801712Z"}
+{"agent":"e09315bf-2b11-4fab-9f71-6bcb3647dc9a","kind":"reading","reading":{"entry":"claude_pty:2","into":45.33333333333333}}
+{"agent":"e09315bf-2b11-4fab-9f71-6bcb3647dc9a","draft":{"body":"and then check the migration before you merge","caret":45,"tokens":[]},"kind":"draft"}
+{"agent":"e09315bf-2b11-4fab-9f71-6bcb3647dc9a","kind":"setAside"}
+{"at":"2026-09-11T06:39:54.610960007Z","kind":"frozen","ordered":"2026-09-11T06:39:30.570858955Z"}
 {"account":{"account":{"displayName":"journey-phone","email":"journey-phone@example.com","id":"journey-phone"},"entitlement":{"active":{"grant":{"purchased":{"_0":"appStore"}}}},"hosts":1,"signedIn":true},"kind":"account"}

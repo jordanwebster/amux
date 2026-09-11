@@ -5,17 +5,17 @@
   ],
   "ages": {
     "carry-on": "0s",
-    "ran-its-course": "0s"
+    "ran-its-course": "3m"
   },
   "entries": {
-    "57ab03cf-ee4e-481b-b2d6-a055d1b76a65": 185,
-    "66e508f4-9ce3-4da9-bfad-406b14e5cf6c": 0
+    "0c4d5fc5-d65f-4af0-87f0-ee0129ae4837": 0,
+    "e09315bf-2b11-4fab-9f71-6bcb3647dc9a": 122
   },
   "events": 7,
   "hosts": [
     "studio"
   ],
   "reconciled": true,
-  "screen": "conversation 57ab03cf-ee4e-481b-b2d6-a055d1b76a65",
-  "trace": 9
+  "screen": "conversation e09315bf-2b11-4fab-9f71-6bcb3647dc9a",
+  "trace": 11
 }
