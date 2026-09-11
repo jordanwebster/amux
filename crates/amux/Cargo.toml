@@ -63,6 +63,7 @@ core-foundation = "0.9"
 
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 mdns-sd = "0.21"
+if-addrs = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [

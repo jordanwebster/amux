@@ -21,11 +21,15 @@ pub trait PairingAdmin: Sync {
         peer: ssh::SshPairingPeer,
         target: Option<ssh::SshTarget>,
     ) -> Result<(), crate::ClientError>;
-    async fn pair_direct_peer(
+    async fn begin_pair_pin_at(
         &self,
-        peer: ssh::SshPairingPeer,
         address: std::net::SocketAddr,
-    ) -> Result<(), crate::ClientError>;
+        pin: &str,
+    ) -> Result<crate::PendingPeer, crate::PairingError>;
+    async fn confirm_pair(
+        &self,
+        pending: crate::PendingPeer,
+    ) -> Result<crate::PeerEntry, crate::PairingError>;
 }
 
 #[async_trait::async_trait]
@@ -40,12 +44,18 @@ impl PairingAdmin for crate::installation::ProfileAdmin {
     ) -> Result<(), crate::ClientError> {
         self.pair_ssh_peer(peer, target).await
     }
-    async fn pair_direct_peer(
+    async fn begin_pair_pin_at(
         &self,
-        peer: ssh::SshPairingPeer,
         address: std::net::SocketAddr,
-    ) -> Result<(), crate::ClientError> {
-        self.pair_direct_peer(peer, address).await
+        pin: &str,
+    ) -> Result<crate::PendingPeer, crate::PairingError> {
+        self.begin_pair_pin_at(address, pin).await
+    }
+    async fn confirm_pair(
+        &self,
+        pending: crate::PendingPeer,
+    ) -> Result<crate::PeerEntry, crate::PairingError> {
+        self.confirm_pair(pending).await
     }
 }
 
@@ -61,17 +71,24 @@ impl PairingAdmin for crate::installation::ProfileAdminClient {
     ) -> Result<(), crate::ClientError> {
         self.pair_ssh_peer(peer, target).await
     }
-    async fn pair_direct_peer(
+    async fn begin_pair_pin_at(
         &self,
-        peer: ssh::SshPairingPeer,
         address: std::net::SocketAddr,
-    ) -> Result<(), crate::ClientError> {
-        self.pair_direct_peer(peer, address).await
+        pin: &str,
+    ) -> Result<crate::PendingPeer, crate::PairingError> {
+        self.begin_pair_pin_at(address, pin).await
+    }
+    async fn confirm_pair(
+        &self,
+        pending: crate::PendingPeer,
+    ) -> Result<crate::PeerEntry, crate::PairingError> {
+        self.confirm_pair(pending).await
     }
 }
 
 pub(crate) const QR_SECRET_LEN: usize = 32;
 pub(crate) const PAIR_MODE_TTL: Duration = Duration::from_secs(5 * 60);
+pub const ONRAMP_PAIR_MODE_TTL: Duration = Duration::from_secs(15 * 60);
 pub(crate) const PAIR_ATTEMPT_LIMIT: u8 = 5;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -128,6 +145,7 @@ pub(crate) struct PairModeAttempt {
     session_id: u64,
     secret: Vec<u8>,
     active: bool,
+    expires_at: Instant,
 }
 
 pub(crate) struct PairModeCommit {
@@ -241,6 +259,7 @@ impl PairMode {
             session_id: session.id,
             secret: secret.value.clone(),
             active: true,
+            expires_at: session.expires_at,
         })
     }
 
@@ -353,6 +372,10 @@ impl PairMode {
 }
 
 impl PairModeAttempt {
+    pub(crate) fn remaining(&self) -> Duration {
+        self.expires_at.saturating_duration_since(Instant::now())
+    }
+
     /// The SPAKE2 password bytes for this attempt: the PIN's ASCII digits
     /// or the QR secret's 32 raw bytes.
     pub(crate) fn secret(&self) -> &[u8] {

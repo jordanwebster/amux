@@ -2,10 +2,13 @@
 
 use super::*;
 use crate::client::{
-    pairing_identity_from_wire, pairing_start_from_wire, peer_entry_from_wire, peer_ref,
-    status_to_client_error,
+    DeviceIdentity, PairingError, PeerVia, PendingPeer, pairing_identity_from_wire,
+    pairing_start_from_wire, peer_entry_from_wire, peer_ref, public_key_fingerprint,
+    status_to_client_error, status_to_pairing_error, uuid_from_wire_bytes,
 };
-use crate::{ClientError, PairingStart, PeerEntry, PeerIdentifier, SshPairingPeer};
+use crate::{
+    ClientError, PairingCandidate, PairingStart, PeerEntry, PeerIdentifier, SshPairingPeer,
+};
 
 /// An in-process administration handle for one profile. It cannot be obtained
 /// through a profile socket or a peer tunnel.
@@ -17,16 +20,120 @@ pub struct ProfileAdmin {
 
 mod method {
     pub(super) const PROFILE_START_PAIRING_NAME: &str = "/amux.v1.ProfileService/StartPairing";
-    pub(super) const PROFILE_PAIR_PIN_CLOUD_PEER_NAME: &str =
-        "/amux.v1.ProfileService/PairPinCloudPeer";
-    pub(super) const PROFILE_PAIR_QR_CLOUD_PEER_NAME: &str =
-        "/amux.v1.ProfileService/PairQrCloudPeer";
     pub(super) const PROFILE_LIST_PEERS_NAME: &str = "/amux.v1.ProfileService/ListPeers";
     pub(super) const PROFILE_GET_PEER_NAME: &str = "/amux.v1.ProfileService/GetPeer";
     pub(super) const PROFILE_UNPAIR_NAME: &str = "/amux.v1.ProfileService/Unpair";
 }
 
 impl ProfileAdmin {
+    pub async fn begin_pair_pin(
+        &self,
+        host: crate::HostId,
+        pin: &str,
+    ) -> Result<PendingPeer, PairingError> {
+        self.begin_pair(wire::BeginPairRequest {
+            host_id: host.as_bytes().to_vec(),
+            secret: Some(wire::begin_pair_request::Secret::Pin(pin.to_string())),
+            addrs: Vec::new(),
+        })
+        .await
+    }
+
+    pub async fn begin_pair_pin_at(
+        &self,
+        addr: SocketAddr,
+        pin: &str,
+    ) -> Result<PendingPeer, PairingError> {
+        self.begin_pair(wire::BeginPairRequest {
+            host_id: Vec::new(),
+            secret: Some(wire::begin_pair_request::Secret::Pin(pin.to_string())),
+            addrs: vec![addr.to_string()],
+        })
+        .await
+    }
+
+    pub async fn begin_pair_qr(
+        &self,
+        payload: &crate::QrPairingPayload,
+    ) -> Result<PendingPeer, PairingError> {
+        self.begin_pair(wire::BeginPairRequest {
+            host_id: payload.host_id.as_bytes().to_vec(),
+            secret: Some(wire::begin_pair_request::Secret::QrSecret(
+                payload.secret.clone(),
+            )),
+            addrs: payload.addrs.iter().map(ToString::to_string).collect(),
+        })
+        .await
+    }
+
+    async fn begin_pair(
+        &self,
+        request: wire::BeginPairRequest,
+    ) -> Result<PendingPeer, PairingError> {
+        let response = self
+            .rpc_begin_pair(tonic::Request::new(request))
+            .await
+            .map_err(status_to_pairing_error)?
+            .into_inner();
+        let peer = response.peer.ok_or(PairingError::Refused)?;
+        let expires_at = chrono::DateTime::from_timestamp_millis(peer.expires_at_unix_ms)
+            .ok_or(PairingError::Refused)?;
+        let (host_id, pubkey, name) = pairing_identity_from_wire("BeginPair", peer)?;
+        let via = peer_via_from_wire(response.via)?;
+        Ok(PendingPeer {
+            host_id,
+            name,
+            fingerprint: public_key_fingerprint(&pubkey),
+            expires_at,
+            via,
+            token: response.token,
+        })
+    }
+
+    pub async fn confirm_pair(&self, pending: PendingPeer) -> Result<PeerEntry, PairingError> {
+        let response = self
+            .rpc_confirm_pair(tonic::Request::new(wire::PendingPairRequest {
+                token: pending.token,
+            }))
+            .await
+            .map_err(status_to_pairing_error)?
+            .into_inner();
+        Ok(peer_entry_from_wire(
+            "ConfirmPair",
+            response.peer.ok_or(PairingError::Refused)?,
+        )?)
+    }
+
+    pub async fn abandon_pair(&self, pending: PendingPeer) -> Result<(), PairingError> {
+        self.rpc_abandon_pair(tonic::Request::new(wire::PendingPairRequest {
+            token: pending.token,
+        }))
+        .await
+        .map_err(status_to_pairing_error)?;
+        Ok(())
+    }
+
+    pub async fn device_identity(&self) -> Result<DeviceIdentity, ClientError> {
+        let identity = self
+            .rpc_get_device_identity(tonic::Request::new(wire::GetDeviceIdentityRequest {}))
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let method = "/amux.v1.ProfileService/GetDeviceIdentity";
+        let host_id = uuid_from_wire_bytes(method, "DeviceIdentity.host_id", identity.host_id)?;
+        if identity.pubkey.len() != PUBKEY_LEN {
+            return Err(ClientError::Decode {
+                method,
+                message: "DeviceIdentity.pubkey must be 32 bytes".to_string(),
+            });
+        }
+        Ok(DeviceIdentity {
+            host_id,
+            name: identity.name,
+            fingerprint: public_key_fingerprint(&identity.pubkey),
+        })
+    }
+
     pub(crate) fn new(service: ClientService, id: crate::installation::ProfileId) -> Self {
         Self { service, id }
     }
@@ -35,7 +142,7 @@ impl ProfileAdmin {
         self.id
     }
 
-    pub async fn list_pairing_hosts(&self) -> Result<Vec<HostEntry>, ClientError> {
+    pub async fn list_pairing_hosts(&self) -> Result<Vec<PairingCandidate>, ClientError> {
         self.service
             .pairing_trust
             .trust_commit_lock
@@ -50,17 +157,29 @@ impl ProfileAdmin {
         Self::new(service, id)
     }
     pub async fn start_pin_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Pin, false, None)
+        self.start_pairing(wire::start_pairing_request::Mode::Pin, None, None)
             .await
     }
 
     pub async fn start_lan_pin_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Pin, true, None)
+        self.start_pairing(wire::start_pairing_request::Mode::Pin, None, None)
             .await
     }
 
+    pub async fn start_pin_pairing_with_ttl(
+        &self,
+        ttl: Duration,
+    ) -> Result<PairingStart, ClientError> {
+        self.start_pairing(
+            wire::start_pairing_request::Mode::Pin,
+            Some(ttl.as_secs()),
+            None,
+        )
+        .await
+    }
+
     pub async fn start_qr_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Qr, false, None)
+        self.start_pairing(wire::start_pairing_request::Mode::Qr, None, None)
             .await
     }
 
@@ -72,7 +191,7 @@ impl ProfileAdmin {
     ) -> Result<PairingStart, ClientError> {
         self.start_pairing(
             wire::start_pairing_request::Mode::Pin,
-            false,
+            None,
             Some(wire::DemoPairing {
                 pin,
                 ttl_seconds: ttl.as_secs(),
@@ -84,14 +203,14 @@ impl ProfileAdmin {
     async fn start_pairing(
         &self,
         mode: wire::start_pairing_request::Mode,
-        require_lan_direct: bool,
+        ttl_seconds: Option<u64>,
         demo: Option<wire::DemoPairing>,
     ) -> Result<PairingStart, ClientError> {
         let response = self
             .rpc_start_pairing(tonic::Request::new(wire::StartPairingRequest {
                 mode: mode as i32,
-                require_lan_direct,
                 demo,
+                ttl_seconds,
             }))
             .await
             .map_err(status_to_client_error)?
@@ -120,79 +239,38 @@ impl ProfileAdmin {
         peer: SshPairingPeer,
         ssh_target: Option<crate::SshTarget>,
     ) -> Result<(), ClientError> {
-        let reachability = ssh_target.map(|target| {
-            wire::pair_peer_request::Reachability::SshTarget(wire::SshTarget {
-                target: target.target,
-                profile_id: target.profile.to_string(),
-            })
+        let reachability = ssh_target.map(|target| Reachability::Ssh {
+            target: target.target,
+            profile: target.profile,
         });
-        self.pair_peer(peer, reachability).await
+        self.commit_peer(peer, reachability, "ssh").await
     }
 
-    pub async fn pair_direct_peer(
+    pub(crate) async fn rpc_trust_ssh_peer(
         &self,
-        peer: SshPairingPeer,
-        address: SocketAddr,
-    ) -> Result<(), ClientError> {
-        self.pair_peer(
-            peer,
-            Some(wire::pair_peer_request::Reachability::DirectTcpAddr(
-                address.to_string(),
-            )),
+        request: tonic::Request<wire::TrustSshPeerRequest>,
+    ) -> TonicResult<wire::Empty> {
+        let request = request.into_inner();
+        let identity = request.peer.ok_or_else(|| {
+            tonic::Status::invalid_argument("TrustSshPeerRequest.peer is required")
+        })?;
+        let (host_id, pubkey, name) = ssh_pairing_identity_from_wire(identity)?;
+        let reachability = request
+            .ssh_target
+            .map(ssh_reachability_from_wire)
+            .transpose()?;
+        self.commit_peer(
+            SshPairingPeer {
+                host_id,
+                pubkey,
+                name,
+            },
+            reachability,
+            "ssh",
         )
         .await
-    }
-
-    pub async fn pair_pin_cloud_peer(
-        &self,
-        host_id: uuid::Uuid,
-        pin: String,
-    ) -> Result<SshPairingPeer, ClientError> {
-        let response = self
-            .rpc_pair_pin_cloud_peer(tonic::Request::new(wire::PairPinCloudPeerRequest {
-                host_id: host_id.as_bytes().to_vec(),
-                pin,
-            }))
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let peer = response.peer.ok_or_else(|| ClientError::Decode {
-            method: method::PROFILE_PAIR_PIN_CLOUD_PEER_NAME,
-            message: "missing PairPinCloudPeerResponse.peer".to_string(),
-        })?;
-        let (host_id, pubkey, name) =
-            pairing_identity_from_wire(method::PROFILE_PAIR_PIN_CLOUD_PEER_NAME, peer)?;
-        Ok(SshPairingPeer {
-            host_id,
-            pubkey,
-            name,
-        })
-    }
-
-    pub async fn pair_qr_cloud_peer(
-        &self,
-        host_id: uuid::Uuid,
-        secret: Vec<u8>,
-    ) -> Result<SshPairingPeer, ClientError> {
-        let response = self
-            .rpc_pair_qr_cloud_peer(tonic::Request::new(wire::PairQrCloudPeerRequest {
-                host_id: host_id.as_bytes().to_vec(),
-                secret,
-            }))
-            .await
-            .map_err(status_to_client_error)?
-            .into_inner();
-        let peer = response.peer.ok_or_else(|| ClientError::Decode {
-            method: method::PROFILE_PAIR_QR_CLOUD_PEER_NAME,
-            message: "missing PairQrCloudPeerResponse.peer".to_string(),
-        })?;
-        let (host_id, pubkey, name) =
-            pairing_identity_from_wire(method::PROFILE_PAIR_QR_CLOUD_PEER_NAME, peer)?;
-        Ok(SshPairingPeer {
-            host_id,
-            pubkey,
-            name,
-        })
+        .map_err(|error| tonic::Status::internal(error.to_string()))?;
+        Ok(tonic::Response::new(wire::Empty {}))
     }
 
     pub async fn list_peers(&self) -> Result<Vec<PeerEntry>, ClientError> {
@@ -246,21 +324,39 @@ impl ProfileAdmin {
         peer_entry_from_wire(method::PROFILE_UNPAIR_NAME, peer)
     }
 
-    async fn pair_peer(
+    async fn commit_peer(
         &self,
         peer: SshPairingPeer,
-        reachability: Option<wire::pair_peer_request::Reachability>,
+        reachability: Option<Reachability>,
+        method: &'static str,
     ) -> Result<(), ClientError> {
-        self.rpc_pair_peer(tonic::Request::new(wire::PairPeerRequest {
-            peer: Some(wire::PairingIdentity {
-                host_id: peer.host_id.as_bytes().to_vec(),
-                pubkey: peer.pubkey,
-                name: peer.name,
-            }),
-            reachability,
-        }))
+        let trust = &self.service.pairing_trust;
+        if peer.host_id == self.service.local_agents.host_id() || peer.pubkey == trust.local_pubkey
+        {
+            return Err(status_to_client_error(tonic::Status::invalid_argument(
+                "SELF_PAIRING",
+            )));
+        }
+        let link_reachability = reachability.clone();
+        audit::pairing_start(method);
+        commit_peer_trust(
+            PeerTrustCommitContext::new(
+                trust.trust_store.clone(),
+                trust.trust_commit_lock.clone(),
+                self.service.remote_agent_connections.clone(),
+                trust.data_dir.clone(),
+            ),
+            PeerTrustUpdate::new(peer.host_id, peer.pubkey, peer.name, reachability),
+        )
         .await
         .map_err(status_to_client_error)?;
+        audit::pairing_success(method, peer.host_id);
+        self.service.publish_host_status_update(peer.host_id).await;
+        if let Some(reachability) = link_reachability {
+            self.service
+                .reachability_links
+                .spawn_pair_time_link(peer.host_id, reachability);
+        }
         Ok(())
     }
 
@@ -291,17 +387,15 @@ impl ProfileAdmin {
             (
                 state.config.host_name.clone(),
                 state.config.lan.listen.then_some(state.config.lan.port),
-                state.config.cloud_url.clone(),
+                state
+                    .credentials
+                    .is_some()
+                    .then(|| state.config.cloud_url.clone()),
             )
         };
         if name.len() > MAX_PAIRING_NAME_BYTES {
             return Err(tonic::Status::invalid_argument(
                 "host_name is too long for pairing",
-            ));
-        }
-        if request.require_lan_direct && lan_port.is_none() {
-            return Err(tonic::Status::failed_precondition(
-                "turn on the LAN listener in your config, or use cloud / SSH pairing",
             ));
         }
         self.service.reachability_links.requery();
@@ -333,22 +427,36 @@ impl ProfileAdmin {
                 wire::start_pairing_response::Secret::Pin(demo.pin),
             )
         } else {
+            let ttl = request
+                .ttl_seconds
+                .map(Duration::from_secs)
+                .unwrap_or(PAIR_MODE_TTL);
+            if ttl.is_zero() || ttl > DEMO_PAIR_MODE_MAX_TTL {
+                return Err(tonic::Status::invalid_argument(format!(
+                    "pairing ttl must be between 1 second and {} days",
+                    DEMO_PAIR_MODE_MAX_TTL.as_secs() / 86_400
+                )));
+            }
             let method = pairing_mode_name(mode);
-            let secret =
-                start_pairing_secret(&self.service.pair_mode, mode).inspect_err(|error| {
-                    audit::pairing_failure(method, error);
-                })?;
-            (method, PAIR_MODE_TTL, secret)
+            let secret = start_pairing_secret_for_duration(&self.service.pair_mode, mode, ttl)
+                .inspect_err(|error| audit::pairing_failure(method, error))?;
+            (method, ttl, secret)
         };
         audit::pairing_start(method);
         Ok(tonic::Response::new(wire::StartPairingResponse {
             identity: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: self.service.local_agents.host_id().as_bytes().to_vec(),
                 pubkey: self.service.pairing_trust.local_pubkey.clone(),
                 name,
             }),
             ttl_seconds: ttl.as_secs(),
-            tcp_port: lan_port.map(u32::from),
+            addrs: lan_port
+                .map(local_pairing_addrs)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|addr| addr.to_string())
+                .collect(),
             cloud_url,
             secret: Some(secret),
         }))
@@ -379,75 +487,247 @@ impl ProfileAdmin {
         Ok(tonic::Response::new(wire::CancelPairingResponse {}))
     }
 
-    pub(crate) async fn rpc_pair_peer(
+    pub(crate) async fn rpc_begin_pair(
         &self,
-        request: tonic::Request<wire::PairPeerRequest>,
-    ) -> TonicResult<wire::PairPeerResponse> {
-        let trust = &self.service.pairing_trust;
+        request: tonic::Request<wire::BeginPairRequest>,
+    ) -> TonicResult<wire::PendingPairResponse> {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(protocol_status)?;
         let request = request.into_inner();
-        let peer = request
-            .peer
-            .ok_or_else(|| tonic::Status::invalid_argument("PairPeerRequest.peer is required"))?;
-        let (host_id, pubkey, name) = ssh_pairing_identity_from_wire(peer)?;
-        if host_id == self.service.local_agents.host_id() || pubkey == trust.local_pubkey {
+        let invalid = || tonic::Status::permission_denied("INVALID_PIN");
+        let requested_host = if request.host_id.is_empty() {
+            None
+        } else {
+            Some(
+                uuid_from_bytes("BeginPairRequest.host_id", &request.host_id)
+                    .map_err(|_| invalid())?,
+            )
+        };
+        if requested_host == Some(self.service.local_agents.host_id()) {
             return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
         }
-        let reachability = pair_peer_reachability_from_wire(request.reachability)?;
-        let link_reachability = reachability.clone();
-        let method = pair_peer_audit_method(&link_reachability);
-
-        audit::pairing_start(method);
-        commit_peer_trust(
-            PeerTrustCommitContext::new(
-                trust.trust_store.clone(),
-                trust.trust_commit_lock.clone(),
-                self.service.remote_agent_connections.clone(),
-                trust.data_dir.clone(),
-            ),
-            PeerTrustUpdate::new(host_id, pubkey, name, reachability),
-        )
-        .await
-        .inspect_err(|error| {
-            audit::pairing_failure(method, error);
-        })?;
-        audit::pairing_success(method, host_id);
-        self.service.publish_host_status_update(host_id).await;
-        if let Some(reachability) = link_reachability {
-            self.service
-                .reachability_links
-                .spawn_pair_time_link(host_id, reachability);
+        let secret = match request.secret {
+            Some(wire::begin_pair_request::Secret::Pin(pin))
+                if pin.len() == 6 && pin.bytes().all(|byte| byte.is_ascii_digit()) =>
+            {
+                pin.into_bytes()
+            }
+            Some(wire::begin_pair_request::Secret::QrSecret(secret))
+                if secret.len() == QR_SECRET_LEN =>
+            {
+                secret
+            }
+            _ => return Err(invalid()),
+        };
+        let requested_addrs = request
+            .addrs
+            .into_iter()
+            .map(|addr| addr.parse::<SocketAddr>().map_err(|_| invalid()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let found_addrs = requested_host
+            .map(|host| self.service.reachability_links.found_addrs(host))
+            .unwrap_or_default();
+        let mut direct_addrs = found_addrs.clone();
+        for addr in requested_addrs {
+            if !direct_addrs.contains(&addr) {
+                direct_addrs.push(addr);
+            }
         }
-        Ok(tonic::Response::new(wire::PairPeerResponse {}))
+        let local_name = self
+            .service
+            .server_state
+            .read()
+            .await
+            .host_name()
+            .to_string();
+        let identity = LocalPairingIdentity::new(
+            self.service.local_agents.host_id(),
+            self.service.pairing_trust.local_pubkey.clone(),
+        );
+        let mut last_unreachable = None;
+        let mut selected = None;
+        for addr in direct_addrs {
+            let channel = match crate::transport::pairing_channel(addr) {
+                Ok(channel) => channel,
+                Err(error) => {
+                    last_unreachable = Some(error.to_string());
+                    continue;
+                }
+            };
+            let result = begin_pair_initiator(
+                &mut wire::pairing_service_client::PairingServiceClient::new(channel),
+                &identity,
+                &local_name,
+                &secret,
+            )
+            .await;
+            match result {
+                Ok(pending) => {
+                    selected = Some((
+                        pending,
+                        Reachability::Direct { addrs: vec![addr] },
+                        wire::PeerVia::Direct,
+                        found_addrs.contains(&addr),
+                    ));
+                    break;
+                }
+                Err(error)
+                    if matches!(
+                        error.code(),
+                        tonic::Code::Unavailable | tonic::Code::Internal
+                    ) =>
+                {
+                    last_unreachable = Some(error.to_string());
+                }
+                Err(error) => return Err(opaque_pairing_status(error)),
+            }
+        }
+        if selected.is_none()
+            && let Some(host) = requested_host
+            && self
+                .service
+                .remote_agent_connections
+                .has_cloud_route(host)
+                .await
+        {
+            let channel = self
+                .service
+                .remote_agent_connections
+                .cloud_pairing_channel_to(host)
+                .await
+                .map_err(|error| tonic::Status::unavailable(error.to_string()))?;
+            let pending = begin_pair_initiator(
+                &mut wire::pairing_service_client::PairingServiceClient::new(channel),
+                &identity,
+                &local_name,
+                &secret,
+            )
+            .await
+            .map_err(opaque_pairing_status)?;
+            selected = Some((pending, Reachability::Cloud, wire::PeerVia::Relay, false));
+        }
+        let (pending, reachability, via, from_discovery) = selected.ok_or_else(|| {
+            tonic::Status::unavailable(
+                last_unreachable.unwrap_or_else(|| "pairing target is not reachable".to_string()),
+            )
+        })?;
+        let peer_host = uuid_from_bytes("PairingIdentity.host_id", &pending.peer.host_id)
+            .map_err(|_| invalid())?;
+        if peer_host == self.service.local_agents.host_id()
+            || pending.peer.pubkey == self.service.pairing_trust.local_pubkey
+        {
+            return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
+        }
+        if requested_host.is_some_and(|host| host != peer_host) {
+            return Err(invalid());
+        }
+        if from_discovery
+            && let Ok(store) = self.service.pairing_trust.trust_store.read()
+            && let Some(pinned) = store.pubkey_for_host(peer_host)
+            && pinned != pending.peer.pubkey.as_slice()
+        {
+            return Err(invalid());
+        }
+        let remaining_ms = pending
+            .peer
+            .expires_at_unix_ms
+            .checked_sub(Utc::now().timestamp_millis())
+            .filter(|remaining| *remaining > 0)
+            .ok_or_else(invalid)?;
+        let token = Uuid::new_v4();
+        let response = wire::PendingPairResponse {
+            token: token.as_bytes().to_vec(),
+            peer: Some(pending.peer.clone()),
+            via: via as i32,
+        };
+        let mut state = self.service.state.write().await;
+        if state.pending_pairs.len() >= 32 {
+            return Err(tonic::Status::resource_exhausted(
+                "too many pending pairings",
+            ));
+        }
+        state.pending_pairs.insert(
+            token,
+            PendingAdminPair {
+                pairing: pending,
+                reachability,
+                via,
+            },
+        );
+        drop(state);
+        let state = Arc::downgrade(&self.service.state);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(remaining_ms as u64)).await;
+            if let Some(state) = state.upgrade() {
+                state.write().await.pending_pairs.remove(&token);
+            }
+        });
+        Ok(tonic::Response::new(response))
     }
 
-    pub(crate) async fn rpc_pair_pin_cloud_peer(
+    pub(crate) async fn rpc_confirm_pair(
         &self,
-        request: tonic::Request<wire::PairPinCloudPeerRequest>,
-    ) -> TonicResult<wire::PairPinCloudPeerResponse> {
-        let request = request.into_inner();
-        let peer_host_id = uuid_from_bytes("PairPinCloudPeerRequest.host_id", &request.host_id)?;
-        let peer = self
+        request: tonic::Request<wire::PendingPairRequest>,
+    ) -> TonicResult<wire::GetPeerResponse> {
+        let pending = self.service.take_pending_pair(request.into_inner()).await?;
+        let peer = tokio::time::timeout(PAIR_INITIATOR_TIMEOUT, pending.pairing.confirm())
+            .await
+            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?
+            .map_err(opaque_pairing_status)?;
+        let host_id = peer.host_id;
+        self.commit_peer(
+            peer,
+            Some(pending.reachability),
+            match pending.via {
+                wire::PeerVia::Direct => "direct_pin",
+                wire::PeerVia::Relay => "cloud",
+                wire::PeerVia::Ssh => "ssh",
+                wire::PeerVia::Unspecified => "pairing",
+            },
+        )
+        .await
+        .map_err(|error| tonic::Status::internal(error.to_string()))?;
+        let entry = self
             .service
-            .pair_cloud_peer_with_secret(peer_host_id, request.pin.as_bytes(), "cloud_pin")
-            .await?;
-        Ok(tonic::Response::new(wire::PairPinCloudPeerResponse {
-            peer: Some(peer),
+            .peer_entries()?
+            .into_iter()
+            .find(|(host, _)| *host == host_id)
+            .ok_or_else(|| tonic::Status::internal("paired peer missing"))?;
+        Ok(tonic::Response::new(wire::GetPeerResponse {
+            peer: Some(peer_entry_to_wire(entry.0, &entry.1)),
         }))
     }
 
-    pub(crate) async fn rpc_pair_qr_cloud_peer(
+    pub(crate) async fn rpc_abandon_pair(
         &self,
-        request: tonic::Request<wire::PairQrCloudPeerRequest>,
-    ) -> TonicResult<wire::PairQrCloudPeerResponse> {
-        let request = request.into_inner();
-        let peer_host_id = uuid_from_bytes("PairQrCloudPeerRequest.host_id", &request.host_id)?;
-        validate_pairing_qr_secret("PairQrCloudPeerRequest.secret", &request.secret)?;
-        let peer = self
-            .service
-            .pair_cloud_peer_with_secret(peer_host_id, &request.secret, "cloud_qr")
-            .await?;
-        Ok(tonic::Response::new(wire::PairQrCloudPeerResponse {
-            peer: Some(peer),
+        request: tonic::Request<wire::PendingPairRequest>,
+    ) -> TonicResult<wire::PairingAbandoned> {
+        let pending = self.service.take_pending_pair(request.into_inner()).await?;
+        tokio::time::timeout(PAIR_INITIATOR_TIMEOUT, pending.pairing.abandon())
+            .await
+            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?
+            .map_err(opaque_pairing_status)?;
+        Ok(tonic::Response::new(wire::PairingAbandoned {}))
+    }
+
+    pub(crate) async fn rpc_get_device_identity(
+        &self,
+        _request: tonic::Request<wire::GetDeviceIdentityRequest>,
+    ) -> TonicResult<wire::DeviceIdentity> {
+        Ok(tonic::Response::new(wire::DeviceIdentity {
+            host_id: self.service.local_agents.host_id().as_bytes().to_vec(),
+            name: self
+                .service
+                .server_state
+                .read()
+                .await
+                .config
+                .host_name
+                .clone(),
+            pubkey: self.service.pairing_trust.local_pubkey.clone(),
         }))
     }
 
@@ -492,4 +772,63 @@ impl ProfileAdmin {
             removed_peer: Some(peer_entry_to_wire(host_id, &entry)),
         }))
     }
+}
+
+#[cfg(not(target_os = "ios"))]
+fn local_pairing_addrs(port: u16) -> Vec<SocketAddr> {
+    let mut addrs = if_addrs::get_if_addrs()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|interface| SocketAddr::new(interface.ip(), port))
+        .filter(|addr| !addr.ip().is_unspecified())
+        .collect::<Vec<_>>();
+    addrs.sort_unstable();
+    addrs.dedup();
+    addrs
+}
+
+#[cfg(target_os = "ios")]
+fn local_pairing_addrs(_port: u16) -> Vec<SocketAddr> {
+    Vec::new()
+}
+
+fn peer_via_from_wire(via: i32) -> Result<PeerVia, PairingError> {
+    match wire::PeerVia::try_from(via) {
+        Ok(wire::PeerVia::Direct) => Ok(PeerVia::Direct),
+        Ok(wire::PeerVia::Relay) => Ok(PeerVia::Relay),
+        Ok(wire::PeerVia::Ssh) => Ok(PeerVia::Ssh),
+        _ => Err(PairingError::Internal("missing pairing route".to_string())),
+    }
+}
+
+fn ssh_pairing_identity_from_wire(
+    identity: wire::PairingIdentity,
+) -> Result<(crate::HostId, Vec<u8>, String), tonic::Status> {
+    let host_id = uuid_from_bytes("PairingIdentity.host_id", &identity.host_id)?;
+    if identity.pubkey.len() != PUBKEY_LEN {
+        return Err(tonic::Status::invalid_argument(
+            "PairingIdentity.pubkey must be 32 bytes",
+        ));
+    }
+    if identity.name.len() > MAX_PAIRING_NAME_BYTES {
+        return Err(tonic::Status::invalid_argument(
+            "PairingIdentity.name is too long",
+        ));
+    }
+    Ok((host_id, identity.pubkey, identity.name))
+}
+
+fn ssh_reachability_from_wire(target: wire::SshTarget) -> Result<Reachability, tonic::Status> {
+    if target.target.trim().is_empty() || target.target.starts_with('-') {
+        return Err(tonic::Status::invalid_argument(
+            "TrustSshPeerRequest.ssh_target is invalid",
+        ));
+    }
+    let profile = crate::installation::ProfileId(target.profile_id.parse().map_err(|_| {
+        tonic::Status::invalid_argument("TrustSshPeerRequest.ssh_target.profile_id must be a UUID")
+    })?);
+    Ok(Reachability::Ssh {
+        target: target.target,
+        profile,
+    })
 }

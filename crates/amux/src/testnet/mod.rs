@@ -138,8 +138,14 @@ impl TestNet {
 
     /// Emits a resolved advertisement for a daemon on this test network.
     pub fn announce(&self, daemon: &Daemon) {
-        self.inner.discovery.announce(Advertisement {
-            host_id: daemon.host_id(),
+        self.announce_as(daemon, daemon.host_id());
+    }
+
+    /// Emits an untrusted advertisement whose claimed host id differs from
+    /// the listener's identity. This models a LAN spoof at the TLS boundary.
+    pub fn announce_as(&self, daemon: &Daemon, claimed_host_id: crate::HostId) {
+        self.inner.discovery.announce_unchecked(Advertisement {
+            host_id: claimed_host_id,
             name: daemon.name().to_string(),
             version: crate::PROTOCOL_VERSION,
             addrs: vec![

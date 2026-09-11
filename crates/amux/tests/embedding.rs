@@ -157,7 +157,7 @@ async fn wait_pairing_host(installation: &Installation, id: ProfileId, peer: Hos
         loop {
             let hosts = admin.list_pairing_hosts().await.unwrap();
             assert!(
-                hosts.iter().all(|host| host.id == peer),
+                hosts.iter().all(|candidate| candidate.host.id == peer),
                 "cross-tenant discovery: {hosts:?}"
             );
             if hosts.len() == 1 {
@@ -282,14 +282,12 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         let PairingSecret::Pin(pin) = &pairings[index].secret else {
             panic!("expected PIN")
         };
-        let paired = witnesses
-            .admin(peers[index].record.id)
-            .await
-            .unwrap()
-            .pair_pin_cloud_peer(hosts[index], pin.clone())
-            .await
-            .unwrap();
-        assert_eq!(paired, pairings[index].identity);
+        let admin = witnesses.admin(peers[index].record.id).await.unwrap();
+        let pending = admin.begin_pair_pin(hosts[index], pin).await.unwrap();
+        let paired = admin.confirm_pair(pending).await.unwrap();
+        assert_eq!(paired.host_id, pairings[index].identity.host_id);
+        assert_eq!(paired.pubkey, pairings[index].identity.pubkey);
+        assert_eq!(paired.name, pairings[index].identity.name);
         let trust = installation
             .admin(ids[index])
             .await

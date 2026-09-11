@@ -10,13 +10,10 @@ use std::time::Duration;
 
 use amux::testnet::{TestNet, Via};
 
-/// PIN pairing over direct TCP establishes mutual trust; afterwards both
-/// sides can call each other over the new direct link — the initiator as
-/// its dialer, the responder back over the same inbound link.
+/// Discovery supplies the direct address, so no account or relay is needed.
 #[tokio::test]
-async fn pin_pairing_over_direct_tcp_establishes_mutual_trust() {
+async fn pin_pairing_with_a_found_host_needs_no_account() {
     let net = TestNet::builder()
-        .cloud()
         .daemon("laptop")
         .daemon("desktop")
         .start()
@@ -24,17 +21,115 @@ async fn pin_pairing_over_direct_tcp_establishes_mutual_trust() {
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
 
     let pin = desktop.start_pairing().await;
+    net.announce(&desktop);
+    laptop.sees_pairing_candidate(&desktop).await;
     laptop
         .pair(&desktop)
-        .with_pin(&pin)
+        .with_found_pin(&pin)
         .await
-        .expect("PIN pairing over direct TCP");
+        .expect("PIN pairing with a found host");
 
     laptop.trusts(&desktop).await;
     desktop.trusts(&laptop).await;
     laptop.connects_to(&desktop).via_direct().await;
     laptop.can_call(&desktop).await;
     desktop.can_call(&laptop).await;
+}
+
+/// A typed socket address is enough to begin pairing. The initiator leaves
+/// host_id empty and pins the identity returned by the SPAKE2 handshake.
+#[tokio::test]
+async fn a_typed_address_learns_the_host_id_from_the_handshake() {
+    let net = TestNet::builder()
+        .daemon("laptop")
+        .daemon("desktop")
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    let pin = desktop.start_pairing().await;
+    laptop.pair(&desktop).with_pin(&pin).await.unwrap();
+
+    laptop.trusts(&desktop).await;
+    desktop.trusts(&laptop).await;
+}
+
+/// The QR carries routable addresses, so it still works when discovery is
+/// suppressed and neither profile has a cloud account.
+#[tokio::test]
+async fn a_qr_with_addresses_pairs_with_multicast_blocked_and_no_cloud() {
+    let net = TestNet::builder()
+        .daemon("desktop")
+        .outside_discovery("desktop")
+        .daemon("phone")
+        .start()
+        .await;
+    let [desktop, phone] = net.daemons(["desktop", "phone"]);
+
+    let qr = desktop.start_qr_pairing().await;
+    assert!(!qr.addrs.is_empty(), "the QR must carry listener addresses");
+    assert_eq!(qr.cloud_url, None, "an unbound profile has no cloud URL");
+    phone.pair(&desktop).with_qr(&qr).await.unwrap();
+
+    phone.trusts(&desktop).await;
+    desktop.trusts(&phone).await;
+}
+
+/// An untrusted advertisement is offered to local callers as a direct
+/// candidate, but never enters the trusted host dial path.
+#[tokio::test]
+async fn a_found_unpinned_host_is_a_candidate_for_local_callers_only_and_never_dialed_for_a_trusted_channel()
+ {
+    let net = TestNet::builder()
+        .daemon("phone")
+        .daemon("desktop")
+        .start()
+        .await;
+    let [phone, desktop] = net.daemons(["phone", "desktop"]);
+
+    net.announce(&desktop);
+    phone
+        .sees_pairing_candidate_without_trusted_dial(&desktop)
+        .await;
+    let candidate = phone
+        .pairing_candidate_details()
+        .await
+        .into_iter()
+        .find(|candidate| candidate.host.id == desktop.host_id())
+        .expect("found host is a pairing candidate");
+    assert_eq!(candidate.via, amux::PeerVia::Direct);
+    assert!(!candidate.addrs.is_empty());
+    phone.does_not_trust(&desktop).await;
+}
+
+/// Discovery is only a dial hint. A spoof that claims a pinned host id but
+/// presents a stranger's key is rejected before any trust is replaced.
+#[tokio::test]
+async fn an_advertisement_claiming_a_pinned_hosts_id_with_a_strangers_key_is_refused_at_the_handshake_and_the_dialer_sends_no_certificate()
+ {
+    let net = TestNet::builder()
+        .daemon("phone")
+        .daemon("desktop")
+        .daemon("stranger")
+        .trusted_without_discovery("phone", "desktop")
+        .outside_discovery("stranger")
+        .start()
+        .await;
+    let [phone, desktop, stranger] = net.daemons(["phone", "desktop", "stranger"]);
+
+    let pin = stranger.start_pairing().await;
+    net.announce_as(&stranger, desktop.host_id());
+    phone.sees_found_address_for(&desktop).await;
+
+    let error = phone
+        .pair(&desktop)
+        .with_found_pin(&pin)
+        .await
+        .expect_err("a discovery claim cannot replace a pinned identity");
+    assert!(error.to_string().contains("INVALID_PIN"), "got: {error}");
+    phone.trusts(&desktop).await;
+    phone.does_not_trust(&stranger).await;
+    stranger.does_not_trust(&phone).await;
 }
 
 /// PIN pairing works between peers that share only the relay: SPAKE2 runs

@@ -356,6 +356,7 @@ message PairMessage {
     bytes sealed_identity = 3;
     PairingError error = 4;
     PairingComplete pairing_complete = 5;
+    PairingAbandoned pairing_abandoned = 6;
   }
 }
 
@@ -380,7 +381,11 @@ message PairingIdentity {
   bytes host_id = 1;
   bytes pubkey = 2;
   string name = 3;
+  // Authenticated along with the responder identity by SPAKE2 sealing.
+  int64 expires_at_unix_ms = 4;
 }
+
+message PairingAbandoned {}
 
 message ListHostsRequest {}
 message ListHostsResponse {
@@ -698,9 +703,11 @@ service ProfileService {
   rpc StartPairing(ProfileStartPairingRequest) returns (StartPairingResponse);
   rpc GetPairingStatus(ProfilePairingStatusRequest) returns (GetPairingStatusResponse);
   rpc CancelPairing(ProfileOperation) returns (CancelPairingResponse);
-  rpc PairPeer(ProfilePairPeerRequest) returns (PairPeerResponse);
-  rpc PairPinCloudPeer(ProfilePairPinCloudPeerRequest) returns (PairPinCloudPeerResponse);
-  rpc PairQrCloudPeer(ProfilePairQrCloudPeerRequest) returns (PairQrCloudPeerResponse);
+  rpc BeginPair(ProfileBeginPairRequest) returns (PendingPairResponse);
+  rpc ConfirmPair(ProfilePendingPairRequest) returns (GetPeerResponse);
+  rpc AbandonPair(ProfilePendingPairRequest) returns (PairingAbandoned);
+  rpc GetDeviceIdentity(ProfileRequest) returns (DeviceIdentity);
+  rpc TrustSshPeer(ProfileTrustSshPeerRequest) returns (Empty);
   rpc ListPeers(ProfileRequest) returns (ListPeersResponse);
   rpc GetPeer(ProfileGetPeerRequest) returns (GetPeerResponse);
   rpc Unpair(ProfileUnpairRequest) returns (UnpairResponse);
@@ -787,20 +794,20 @@ message ProfileStartPairingRequest {
   StartPairingRequest pairing = 3;
 }
 message ProfilePairingStatusRequest { string profile_id = 1; }
-message ProfilePairPeerRequest {
+message ProfileBeginPairRequest {
   string operation_id = 1;
   string profile_id = 2;
-  PairPeerRequest pairing = 3;
+  BeginPairRequest pairing = 3;
 }
-message ProfilePairPinCloudPeerRequest {
+message ProfilePendingPairRequest {
   string operation_id = 1;
   string profile_id = 2;
-  PairPinCloudPeerRequest pairing = 3;
+  PendingPairRequest pairing = 3;
 }
-message ProfilePairQrCloudPeerRequest {
+message ProfileTrustSshPeerRequest {
   string operation_id = 1;
   string profile_id = 2;
-  PairQrCloudPeerRequest pairing = 3;
+  TrustSshPeerRequest pairing = 3;
 }
 message ProfileGetPeerRequest { string profile_id = 1; PeerRef peer = 2; }
 message ProfileUnpairRequest {
@@ -809,7 +816,18 @@ message ProfileUnpairRequest {
   PeerRef peer = 3;
   string reason = 4;
 }
-message ListPairingCandidatesResponse { repeated HostEntry hosts = 1; }
+enum PeerVia {
+  PEER_VIA_UNSPECIFIED = 0;
+  PEER_VIA_DIRECT = 1;
+  PEER_VIA_RELAY = 2;
+  PEER_VIA_SSH = 3;
+}
+message PairingCandidate {
+  HostEntry host = 1;
+  PeerVia via = 2;
+  repeated string addrs = 3;
+}
+message ListPairingCandidatesResponse { repeated PairingCandidate candidates = 1; }
 message ProfileDebugRequest { string profile_id = 1; DebugRequest debug = 2; }
 message GetInfoRequest {}
 message InstallationInfo {
@@ -997,33 +1015,30 @@ message SshTarget {
   string profile_id = 2;
 }
 
-message PairPeerRequest {
-  PairingIdentity peer = 1;
-
-  oneof reachability {
-    SshTarget ssh_target = 2;
-    string direct_tcp_addr = 3;
+message BeginPairRequest {
+  bytes host_id = 1;
+  oneof secret {
+    string pin = 2;
+    bytes qr_secret = 3;
   }
+  repeated string addrs = 4;
 }
 
-message PairPeerResponse {}
-
-message PairPinCloudPeerRequest {
-  bytes host_id = 1;
-  string pin = 2;
+message PendingPairResponse {
+  bytes token = 1;
+  PairingIdentity peer = 2;
+  PeerVia via = 3;
 }
 
-message PairPinCloudPeerResponse {
+message PendingPairRequest {
+  bytes token = 1;
+}
+
+// SSH has already authenticated its peer outside the secret-based pairing
+// protocol, so its identity commit remains a separate, SSH-only operation.
+message TrustSshPeerRequest {
   PairingIdentity peer = 1;
-}
-
-message PairQrCloudPeerRequest {
-  bytes host_id = 1;
-  bytes secret = 2;
-}
-
-message PairQrCloudPeerResponse {
-  PairingIdentity peer = 1;
+  SshTarget ssh_target = 2;
 }
 
 message PeerRef {
@@ -1047,6 +1062,13 @@ message PeerEntry {
   bytes pubkey = 3;
   int64 paired_at_unix_ms = 4;
   repeated PeerReachability reachabilities = 5;
+}
+
+message GetDeviceIdentityRequest {}
+message DeviceIdentity {
+  bytes host_id = 1;
+  string name = 2;
+  bytes pubkey = 3;
 }
 
 message ListPeersRequest {}
@@ -1100,11 +1122,11 @@ message StartPairingRequest {
   }
 
   Mode mode = 1;
-  bool require_lan_direct = 2;
   // Operator-chosen reusable PIN for unattended demos. When set, `mode`
   // must be PIN; the session lasts `ttl_seconds` instead of the one-shot
   // window and is neither consumed by success nor locked out by failures.
   optional DemoPairing demo = 3;
+  optional uint64 ttl_seconds = 4;
 }
 
 message DemoPairing {
@@ -1115,8 +1137,8 @@ message DemoPairing {
 message StartPairingResponse {
   PairingIdentity identity = 1;
   uint64 ttl_seconds = 2;
-  optional uint32 tcp_port = 3;
-  string cloud_url = 4;
+  repeated string addrs = 3;
+  optional string cloud_url = 4;
 
   oneof secret {
     string pin = 10;

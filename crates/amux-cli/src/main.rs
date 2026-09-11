@@ -704,7 +704,14 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         ensure_initialized(&mut config).await?;
                         let client =
                             front_door::profile_admin(&config, Some("amux pair --connect")).await?;
-                        let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
+                        let hosts = sorted_pairing_hosts(
+                            client
+                                .list_pairing_hosts()
+                                .await?
+                                .into_iter()
+                                .map(|candidate| candidate.host)
+                                .collect(),
+                        );
                         let host = prompt_pairing_host(&hosts)?;
                         let peer = pair_cloud_host(&client, &host).await?;
                         println!("Paired with {} ({}) via cloud.", peer.name, peer.host_id);
@@ -715,7 +722,14 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         let retry_command = format!("amux pair --connect {target}");
                         let client =
                             front_door::profile_admin(&config, Some(&retry_command)).await?;
-                        let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
+                        let hosts = sorted_pairing_hosts(
+                            client
+                                .list_pairing_hosts()
+                                .await?
+                                .into_iter()
+                                .map(|candidate| candidate.host)
+                                .collect(),
+                        );
                         let host = resolve_pairing_host_by_name(&hosts, &target)?;
                         let peer = pair_cloud_host(&client, &host).await?;
                         println!("Paired with {} ({}) via cloud.", peer.name, peer.host_id);
@@ -1028,12 +1042,16 @@ fn validate_pair_qr_link_usage(link: bool, debug_build: bool) -> Result<()> {
 async fn pair_cloud_host(
     client: &amux::installation::ProfileAdminClient,
     host: &amux::HostEntry,
-) -> Result<amux::SshPairingPeer> {
+) -> Result<amux::PeerEntry> {
     let pin = prompt_pairing_pin()?;
-    client
-        .pair_pin_cloud_peer(host.id, pin)
+    let pending = client
+        .begin_pair_pin(host.id, &pin)
         .await
-        .with_context(|| format!("failed to pair with cloud host {} ({})", host.name, host.id))
+        .with_context(|| format!("failed to begin pairing with {} ({})", host.name, host.id))?;
+    client
+        .confirm_pair(pending)
+        .await
+        .with_context(|| format!("failed to pair with {} ({})", host.name, host.id))
 }
 
 fn sorted_pairing_hosts(mut hosts: Vec<amux::HostEntry>) -> Vec<amux::HostEntry> {
@@ -1111,8 +1129,16 @@ fn print_pairing_start(pairing: &PairingStart, print_link: bool) -> Result<()> {
     match &pairing.secret {
         PairingSecret::Pin(pin) => {
             println!("Pairing PIN: {pin}");
-            if let Some(port) = pairing.tcp_port {
-                println!("LAN direct listener: port {port}");
+            if !pairing.addrs.is_empty() {
+                println!(
+                    "LAN direct addresses: {}",
+                    pairing
+                        .addrs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
         }
         PairingSecret::QrSecret(secret) => {
@@ -1971,8 +1997,8 @@ mod tests {
                 name: "desktop".to_string(),
             },
             ttl_seconds: 300,
-            tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            addrs: vec!["192.0.2.4:9001".parse().unwrap()],
+            cloud_url: Some("https://relay.example".to_string()),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
         let PairingSecret::QrSecret(secret) = &pairing.secret else {
@@ -1996,7 +2022,8 @@ mod tests {
         assert!(value.get("pubkey").is_none());
         assert!(value.get("name").is_none());
         assert_eq!(parsed.host_id, uuid::Uuid::from_u128(1));
-        assert_eq!(parsed.cloud_url, "https://relay.example");
+        assert_eq!(parsed.cloud_url.as_deref(), Some("https://relay.example"));
+        assert_eq!(parsed.addrs, vec!["192.0.2.4:9001".parse().unwrap()]);
         assert_eq!(parsed.secret, vec![9; 32]);
         assert!(qr.lines().count() > 4);
     }

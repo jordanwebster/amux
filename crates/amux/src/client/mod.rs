@@ -108,8 +108,8 @@ pub struct AgentEventStream {
 pub struct PairingStart {
     pub identity: SshPairingPeer,
     pub ttl_seconds: u64,
-    pub tcp_port: Option<u16>,
-    pub cloud_url: String,
+    pub addrs: Vec<SocketAddr>,
+    pub cloud_url: Option<String>,
     pub secret: PairingSecret,
 }
 
@@ -117,6 +117,90 @@ pub struct PairingStart {
 pub enum PairingSecret {
     Pin(String),
     QrSecret(Vec<u8>),
+}
+
+/// Authenticated display identity awaiting an explicit trust decision.
+/// Dropping this value never grants trust; the host expires the attempt.
+pub struct PendingPeer {
+    pub host_id: crate::HostId,
+    pub name: String,
+    pub fingerprint: String,
+    pub expires_at: DateTime<Utc>,
+    pub via: PeerVia,
+    pub(crate) token: Vec<u8>,
+}
+
+impl std::fmt::Debug for PendingPeer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingPeer")
+            .field("host_id", &self.host_id)
+            .field("name", &self.name)
+            .field("fingerprint", &self.fingerprint)
+            .field("expires_at", &self.expires_at)
+            .field("via", &self.via)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum PairingError {
+    #[error("INVALID_PIN")]
+    Refused,
+    #[error("pairing target was not found")]
+    NotFound,
+    #[error("pairing target is unreachable: {0}")]
+    Unreachable(String),
+    #[error("a subscription is required for relay pairing")]
+    SubscriptionRequired,
+    #[error("SELF_PAIRING")]
+    SelfPairing,
+    #[error("pairing attempt expired")]
+    Expired,
+    #[error("internal pairing error: {0}")]
+    Internal(String),
+}
+
+impl From<ClientError> for PairingError {
+    fn from(error: ClientError) -> Self {
+        Self::Internal(error.to_string())
+    }
+}
+
+pub(crate) fn status_to_pairing_error(error: tonic::Status) -> PairingError {
+    match error.code() {
+        tonic::Code::NotFound => PairingError::NotFound,
+        tonic::Code::Unavailable => PairingError::Unreachable(error.message().to_string()),
+        tonic::Code::FailedPrecondition if error.message().contains("SUBSCRIPTION") => {
+            PairingError::SubscriptionRequired
+        }
+        tonic::Code::InvalidArgument if error.message().contains("SELF_PAIRING") => {
+            PairingError::SelfPairing
+        }
+        tonic::Code::DeadlineExceeded => PairingError::Expired,
+        tonic::Code::Internal => PairingError::Internal(error.message().to_string()),
+        _ => PairingError::Refused,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PeerVia {
+    Direct,
+    Relay,
+    Ssh,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairingCandidate {
+    pub host: HostEntry,
+    pub via: PeerVia,
+    pub addrs: Vec<SocketAddr>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceIdentity {
+    pub host_id: crate::HostId,
+    pub name: String,
+    pub fingerprint: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1249,17 +1333,27 @@ pub(crate) fn pairing_start_from_wire(
     Ok(PairingStart {
         identity: pairing_identity_to_peer(method, identity)?,
         ttl_seconds: response.ttl_seconds,
-        tcp_port: response
-            .tcp_port
-            .map(u16::try_from)
-            .transpose()
-            .map_err(|_| ClientError::Decode {
-                method,
-                message: "StartPairingResponse.tcp_port exceeds u16".to_string(),
-            })?,
+        addrs: response
+            .addrs
+            .into_iter()
+            .map(|addr| {
+                addr.parse().map_err(|error| ClientError::Decode {
+                    method,
+                    message: format!("invalid StartPairingResponse.addrs entry: {error}"),
+                })
+            })
+            .collect::<Result<_, _>>()?,
         cloud_url: response.cloud_url,
         secret,
     })
+}
+
+pub(crate) fn public_key_fingerprint(pubkey: &[u8]) -> String {
+    ring::digest::digest(&ring::digest::SHA256, pubkey)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub(crate) fn pairing_identity_from_wire(
@@ -1296,7 +1390,7 @@ fn pairing_identity_to_peer(
     })
 }
 
-fn uuid_from_wire_bytes(
+pub(crate) fn uuid_from_wire_bytes(
     method: &'static str,
     field: &'static str,
     bytes: Vec<u8>,
@@ -1519,13 +1613,14 @@ mod tests {
             method::PROFILE_START_PAIRING_NAME,
             wire::StartPairingResponse {
                 identity: Some(wire::PairingIdentity {
+                    expires_at_unix_ms: 0,
                     host_id: host_id.as_bytes().to_vec(),
                     pubkey: vec![7; 32],
                     name: "laptop".to_string(),
                 }),
                 ttl_seconds: 300,
-                tcp_port: Some(4242),
-                cloud_url: "https://cloud.example".to_string(),
+                addrs: vec!["192.0.2.4:4242".to_string()],
+                cloud_url: Some("https://cloud.example".to_string()),
                 secret: Some(wire::start_pairing_response::Secret::Pin(
                     "123456".to_string(),
                 )),
@@ -1537,29 +1632,30 @@ mod tests {
         assert_eq!(start.identity.pubkey, vec![7; 32]);
         assert_eq!(start.identity.name, "laptop");
         assert_eq!(start.ttl_seconds, 300);
-        assert_eq!(start.tcp_port, Some(4242));
-        assert_eq!(start.cloud_url, "https://cloud.example");
+        assert_eq!(start.addrs, vec!["192.0.2.4:4242".parse().unwrap()]);
+        assert_eq!(start.cloud_url.as_deref(), Some("https://cloud.example"));
         assert_eq!(start.secret, PairingSecret::Pin("123456".to_string()));
     }
 
     #[test]
-    fn pairing_start_response_rejects_invalid_tcp_port() {
+    fn pairing_start_response_rejects_invalid_address() {
         let error = pairing_start_from_wire(
             method::PROFILE_START_PAIRING_NAME,
             wire::StartPairingResponse {
                 identity: Some(wire::PairingIdentity {
+                    expires_at_unix_ms: 0,
                     host_id: Uuid::from_u128(42).as_bytes().to_vec(),
                     pubkey: vec![7; 32],
                     name: "laptop".to_string(),
                 }),
                 ttl_seconds: 300,
-                tcp_port: Some(u32::from(u16::MAX) + 1),
-                cloud_url: "https://cloud.example".to_string(),
+                addrs: vec!["not-an-address".to_string()],
+                cloud_url: Some("https://cloud.example".to_string()),
                 secret: Some(wire::start_pairing_response::Secret::QrSecret(vec![1; 32])),
             },
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("tcp_port"));
+        assert!(error.to_string().contains("addrs"));
     }
 }

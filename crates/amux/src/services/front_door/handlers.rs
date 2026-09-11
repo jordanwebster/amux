@@ -253,22 +253,22 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
             .await
             .map(Response::new)
     }
-    async fn pair_peer(
+    async fn begin_pair(
         &self,
-        request: Request<wire::ProfilePairPeerRequest>,
-    ) -> Rpc<wire::PairPeerResponse> {
+        request: Request<wire::ProfileBeginPairRequest>,
+    ) -> Rpc<wire::PendingPairResponse> {
         let request = request.into_inner();
         let op = operation_id(&request.operation_id)?;
         let encoded = request.encode_to_vec();
         let installation = self.installation.clone();
         self.operations
-            .run(op, "pair_peer", encoded, async move {
+            .run(op, "begin_pair", encoded, async move {
                 let admin = installation
                     .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .rpc_pair_peer(local(
+                    .rpc_begin_pair(local(
                         request
                             .pairing
                             .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
@@ -279,22 +279,22 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
             .await
             .map(Response::new)
     }
-    async fn pair_pin_cloud_peer(
+    async fn confirm_pair(
         &self,
-        request: Request<wire::ProfilePairPinCloudPeerRequest>,
-    ) -> Rpc<wire::PairPinCloudPeerResponse> {
+        request: Request<wire::ProfilePendingPairRequest>,
+    ) -> Rpc<wire::GetPeerResponse> {
         let request = request.into_inner();
         let op = operation_id(&request.operation_id)?;
         let encoded = request.encode_to_vec();
         let installation = self.installation.clone();
         self.operations
-            .run(op, "pair_pin_cloud_peer", encoded, async move {
+            .run(op, "confirm_pair", encoded, async move {
                 let admin = installation
                     .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .rpc_pair_pin_cloud_peer(local(
+                    .rpc_confirm_pair(local(
                         request
                             .pairing
                             .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
@@ -305,22 +305,61 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
             .await
             .map(Response::new)
     }
-    async fn pair_qr_cloud_peer(
+    async fn abandon_pair(
         &self,
-        request: Request<wire::ProfilePairQrCloudPeerRequest>,
-    ) -> Rpc<wire::PairQrCloudPeerResponse> {
+        request: Request<wire::ProfilePendingPairRequest>,
+    ) -> Rpc<wire::PairingAbandoned> {
         let request = request.into_inner();
         let op = operation_id(&request.operation_id)?;
         let encoded = request.encode_to_vec();
         let installation = self.installation.clone();
         self.operations
-            .run(op, "pair_qr_cloud_peer", encoded, async move {
+            .run(op, "abandon_pair", encoded, async move {
                 let admin = installation
                     .admin(profile_id(&request.profile_id)?)
                     .await
                     .map_err(installation_error)?;
                 admin
-                    .rpc_pair_qr_cloud_peer(local(
+                    .rpc_abandon_pair(local(
+                        request
+                            .pairing
+                            .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
+                    ))
+                    .await
+                    .map(Response::into_inner)
+            })
+            .await
+            .map(Response::new)
+    }
+    async fn get_device_identity(
+        &self,
+        request: Request<wire::ProfileRequest>,
+    ) -> Rpc<wire::DeviceIdentity> {
+        let admin = self
+            .installation
+            .admin(profile_id(&request.into_inner().profile_id)?)
+            .await
+            .map_err(installation_error)?;
+        admin
+            .rpc_get_device_identity(local(wire::GetDeviceIdentityRequest {}))
+            .await
+    }
+    async fn trust_ssh_peer(
+        &self,
+        request: Request<wire::ProfileTrustSshPeerRequest>,
+    ) -> Rpc<wire::Empty> {
+        let request = request.into_inner();
+        let op = operation_id(&request.operation_id)?;
+        let encoded = request.encode_to_vec();
+        let installation = self.installation.clone();
+        self.operations
+            .run(op, "trust_ssh_peer", encoded, async move {
+                let admin = installation
+                    .admin(profile_id(&request.profile_id)?)
+                    .await
+                    .map_err(installation_error)?;
+                admin
+                    .rpc_trust_ssh_peer(local(
                         request
                             .pairing
                             .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
@@ -417,13 +456,23 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
             .admin_service(profile_id(&request.into_inner().profile_id)?)
             .await
             .map_err(installation_error)?;
-        let hosts = admin
+        let candidates = admin
             .list_pairing_candidates()
             .await
             .iter()
-            .map(crate::services::client::host_entry_to_wire)
+            .map(|candidate| wire::PairingCandidate {
+                host: Some(crate::services::client::host_entry_to_wire(&candidate.host)),
+                via: match candidate.via {
+                    crate::PeerVia::Direct => wire::PeerVia::Direct as i32,
+                    crate::PeerVia::Relay => wire::PeerVia::Relay as i32,
+                    crate::PeerVia::Ssh => wire::PeerVia::Ssh as i32,
+                },
+                addrs: candidate.addrs.iter().map(ToString::to_string).collect(),
+            })
             .collect();
-        Ok(Response::new(wire::ListPairingCandidatesResponse { hosts }))
+        Ok(Response::new(wire::ListPairingCandidatesResponse {
+            candidates,
+        }))
     }
 }
 

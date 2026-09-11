@@ -2045,10 +2045,12 @@ mod tests {
             .pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
-        let paired_peer = crate::installation::ProfileAdmin::for_test(host_a.client.clone())
-            .pair_pin_cloud_peer(identity_b.host_id, "123456".to_string())
+        let admin = crate::installation::ProfileAdmin::for_test(host_a.client.clone());
+        let pending = admin
+            .begin_pair_pin(identity_b.host_id, "123456")
             .await
             .unwrap();
+        let paired_peer = admin.confirm_pair(pending).await.unwrap();
 
         assert_eq!(paired_peer.host_id, identity_b.host_id);
         assert_eq!(paired_peer.pubkey, identity_b.public_key());
@@ -2154,14 +2156,25 @@ mod tests {
             .pair_mode
             .start_qr_secret_for_duration(secret, Duration::from_secs(60))
             .unwrap();
-        crate::installation::ProfileAdmin::for_test(host_a.client.clone())
-            .pair_qr_cloud_peer(identity_b.host_id, vec![42; 32])
+        let admin = crate::installation::ProfileAdmin::for_test(host_a.client.clone());
+        let wrong = crate::QrPairingPayload {
+            host_id: identity_b.host_id,
+            secret: vec![42; 32],
+            addrs: Vec::new(),
+            cloud_url: None,
+        };
+        admin
+            .begin_pair_qr(&wrong)
             .await
             .expect_err("a wrong QR secret must fail without consuming the real one");
-        let paired_peer = crate::installation::ProfileAdmin::for_test(host_a.client.clone())
-            .pair_qr_cloud_peer(identity_b.host_id, secret.to_vec())
-            .await
-            .unwrap();
+        let payload = crate::QrPairingPayload {
+            host_id: identity_b.host_id,
+            secret: secret.to_vec(),
+            addrs: Vec::new(),
+            cloud_url: None,
+        };
+        let pending = admin.begin_pair_qr(&payload).await.unwrap();
+        let paired_peer = admin.confirm_pair(pending).await.unwrap();
 
         assert_eq!(paired_peer.host_id, identity_b.host_id);
         assert_eq!(paired_peer.pubkey, identity_b.public_key());

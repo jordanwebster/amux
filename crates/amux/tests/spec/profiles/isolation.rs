@@ -60,6 +60,8 @@ async fn concurrent_pairing_windows_share_no_secrets_limits_or_commits() {
     let wrong_qr = amux::testnet::QrPayload {
         host_id: b.host_id(),
         secret: qa.secret.clone(),
+        addrs: qb.addrs.clone(),
+        cloud_url: qb.cloud_url.clone(),
     };
     phone
         .pair(&b)

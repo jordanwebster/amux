@@ -1,3 +1,16 @@
+2026-09-11 — **Unify local and relay device pairing.** The installation front
+door now exposes one two-phase Begin/Confirm/Abandon flow for PIN and QR
+pairing. It tries freshly discovered addresses, caller-provided addresses, and
+then an available relay route; trust is written only after the caller confirms
+the authenticated name and key fingerprint. Pairing candidates merge untrusted
+LAN advertisements with relay-visible hosts and identify their route. QR codes
+carry listener addresses and include a cloud URL only for account-bound
+profiles, so a phone can pair on the LAN without discovery or an account. The
+generic trust-write RPC and route-specific cloud pairing RPCs are gone; SSH's
+separately authenticated exchange uses a narrowly scoped SSH trust operation.
+Specs cover found-host, typed-address, offline-discovery QR, untrusted-candidate,
+and spoofed pinned-identity behavior.
+
 2026-09-11 — **Dial discovered peers and refresh direct addresses.** Profiles
 now treat discovery as the first source of direct connection candidates and
 their persisted address set as fallback. A successful device-authenticated

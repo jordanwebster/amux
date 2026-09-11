@@ -332,8 +332,8 @@ async fn pairing_targets_one_profile_and_replays_its_original_secret() {
         profile_id: a.id.clone(),
         pairing: Some(wire::StartPairingRequest {
             mode: wire::start_pairing_request::Mode::Pin.into(),
-            require_lan_direct: false,
             demo: None,
+            ttl_seconds: None,
         }),
     };
     let pairing = client

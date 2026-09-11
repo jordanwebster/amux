@@ -683,7 +683,16 @@ impl Daemon {
 
     /// The pairing inventory behind the installation's administrative surface.
     pub async fn pairing_candidates(&self) -> Vec<HostId> {
-        let hosts = match &self.inner.installation {
+        self.pairing_candidate_details()
+            .await
+            .into_iter()
+            .map(|candidate| candidate.host.id)
+            .collect()
+    }
+
+    /// Pairing candidates including their selected route and direct addresses.
+    pub async fn pairing_candidate_details(&self) -> Vec<crate::PairingCandidate> {
+        match &self.inner.installation {
             Some(owner) => owner
                 .admin_client()
                 .list_pairing_hosts()
@@ -697,8 +706,7 @@ impl Daemon {
                     .list_pairing_candidates()
                     .await
             }
-        };
-        hosts.into_iter().map(|host| host.id).collect()
+        }
     }
 
     /// Pairing-candidate assertion: `other` (eventually) shows up in this
@@ -713,6 +721,31 @@ impl Daemon {
         eventually(
             &assertion,
             async || self.pairing_candidates().await.contains(&other_id),
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    /// Waits until this daemon has consumed a discovery address for `other`.
+    pub async fn sees_found_address_for(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' records a found address for '{}'",
+            self.name(),
+            other.name()
+        );
+        let other_id = other.host_id();
+        eventually(
+            &assertion,
+            async || {
+                let runtime = self.runtime().await;
+                runtime.as_ref().is_some_and(|runtime| {
+                    !runtime
+                        .services
+                        .reachability_link_connector()
+                        .found_addrs(other_id)
+                        .is_empty()
+                })
+            },
             self.failure_dump(),
         )
         .await;
@@ -734,29 +767,32 @@ impl Daemon {
             &assertion,
             std::time::Duration::from_millis(750),
             async || {
-                let Some(entry) = self
+                let host_entry_is_safe = self
                     .host_table()
                     .await
                     .into_iter()
                     .find(|host| host.id == other_id)
-                else {
-                    return false;
-                };
-                if entry.trust_status != HostTrustStatus::UntrustedButOnline
-                    || entry.last_dial_error.is_some()
-                {
-                    return false;
-                }
+                    .is_none_or(|entry| {
+                        entry.trust_status == HostTrustStatus::UntrustedButOnline
+                            && entry.last_dial_error.is_none()
+                    });
 
                 let Some(parts) = self.try_parts().await else {
                     return false;
                 };
-                !parts
+                let no_tunnel = !parts
                     .tunnels
                     .active_tunnels()
                     .await
                     .into_iter()
-                    .any(|(_, peer, _)| peer == other_id)
+                    .any(|(_, peer, _)| peer == other_id);
+                let no_direct_connection = other
+                    .inner
+                    .tracked_tcp
+                    .lock()
+                    .map(|connections| connections.is_empty())
+                    .unwrap_or(false);
+                host_entry_is_safe && no_tunnel && no_direct_connection
             },
             self.failure_dump(),
         )

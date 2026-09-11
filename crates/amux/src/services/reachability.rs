@@ -262,6 +262,34 @@ impl ReachabilityLinkConnector {
         }
     }
 
+    pub(crate) fn found_candidates(&self) -> Vec<crate::discovery::Advertisement> {
+        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
+            return Vec::new();
+        };
+        inner
+            .context
+            .runtime
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|runtime| runtime.found_hosts.candidates())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn found_addrs(&self, peer: HostId) -> Vec<std::net::SocketAddr> {
+        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
+            return Vec::new();
+        };
+        inner
+            .context
+            .runtime
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|runtime| runtime.found_hosts.addrs_for(peer))
+            .unwrap_or_default()
+    }
+
     pub(crate) async fn close_direct_links(&self) {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return;

@@ -55,6 +55,18 @@ impl ScriptedDiscovery {
             let _ = self.bus.events.send(DiscoveryEvent::Lost { host_id });
         }
     }
+
+    /// Injects a hostile claim even when its claimed id was suppressed from
+    /// the ordinary test LAN. Used only to exercise identity verification.
+    #[cfg(testnet)]
+    pub(crate) fn announce_unchecked(&self, advert: Advertisement) {
+        self.bus
+            .active
+            .lock()
+            .unwrap()
+            .insert(advert.host_id, advert.clone());
+        let _ = self.bus.events.send(DiscoveryEvent::Found(advert));
+    }
 }
 
 impl Default for ScriptedDiscovery {

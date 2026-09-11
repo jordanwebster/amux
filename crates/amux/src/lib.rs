@@ -64,8 +64,9 @@ pub use amux_artifacts::{ArtifactId, ArtifactKind};
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
-    AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, HostEventStream,
-    PairingSecret, PairingStart, PeerEntry, PeerReachability, SessionStream,
+    AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, DeviceIdentity,
+    HostEventStream, PairingCandidate, PairingError, PairingSecret, PairingStart, PeerEntry,
+    PeerReachability, PeerVia, PendingPeer, SessionStream,
 };
 pub use config::{
     ClaudeSettings, ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LanConfig,
@@ -79,11 +80,9 @@ pub use installation::{
     ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
     SuspendReason, SuspendReport,
 };
-pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
     QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
-    parse_qr_pairing_payload_for_cloud, validate_qr_payload_cloud_url,
 };
 pub use pairing::ssh::{
     SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_initiator,
@@ -91,6 +90,7 @@ pub use pairing::ssh::{
 };
 #[cfg(unix)]
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
+pub use pairing::{ONRAMP_PAIR_MODE_TTL, PairingAdmin};
 pub use paths::{default_data_dir, default_log_path, keymap_dir};
 pub use protocol::{PROTOCOL_VERSION, ProtocolError};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};

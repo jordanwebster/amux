@@ -55,6 +55,8 @@ pub struct QrPayload {
     /// The one-shot 256-bit SPAKE2 secret consumed by the first successful
     /// pairing; it never crosses the wire.
     pub secret: Vec<u8>,
+    pub addrs: Vec<std::net::SocketAddr>,
+    pub cloud_url: Option<String>,
 }
 
 impl Daemon {
@@ -95,6 +97,8 @@ impl Daemon {
             PairingSecret::QrSecret(secret) => Ok(QrPayload {
                 host_id: start.identity.host_id,
                 secret,
+                addrs: start.addrs,
+                cloud_url: start.cloud_url,
             }),
             PairingSecret::Pin(_) => anyhow::bail!("StartPairing(QR) returned a PIN"),
         }
@@ -193,9 +197,8 @@ pub struct PairAttempt<'a> {
 }
 
 impl PairAttempt<'_> {
-    /// PIN pairing over direct TCP: dial the responder's listener, run the
-    /// real SPAKE2 exchange, and commit trust through the initiator's
-    /// `PairPeer` operation.
+    /// PIN pairing to a typed address. The responder's host id is learned
+    /// from the authenticated pairing handshake.
     pub async fn with_pin(self, pin: &str) -> anyhow::Result<()> {
         let addr = self.to.inner.tcp_addr.unwrap_or_else(|| {
             panic!(
@@ -215,33 +218,42 @@ impl PairAttempt<'_> {
         Ok(())
     }
 
-    /// PIN pairing through the cloud: the `PairPinCloudPeer` operation
-    /// runs SPAKE2 over a cloud-routed pairing tunnel to `other`.
-    pub async fn with_cloud_pin(self, pin: &str) -> anyhow::Result<()> {
-        self.from
-            .pairing_admin()
-            .await
-            .pair_pin_cloud_peer(self.to.host_id(), pin.to_string())
-            .await?;
+    /// PIN pairing to a host selected from the discovery inventory.
+    pub async fn with_found_pin(self, pin: &str) -> anyhow::Result<()> {
+        let admin = self.from.pairing_admin().await;
+        let pending = admin.begin_pair_pin(self.to.host_id(), pin).await?;
+        admin.confirm_pair(pending).await?;
         Ok(())
     }
 
-    /// QR pairing through the cloud: the `PairQrCloudPeer` operation
-    /// feeds the QR's 256-bit secret into the same SPAKE2 stream the typed
-    /// PIN uses, over a cloud-routed pairing tunnel.
+    /// PIN pairing through the cloud runs SPAKE2 over a relay-routed pairing
+    /// tunnel to `other`.
+    pub async fn with_cloud_pin(self, pin: &str) -> anyhow::Result<()> {
+        let admin = self.from.pairing_admin().await;
+        let pending = admin.begin_pair_pin(self.to.host_id(), pin).await?;
+        admin.confirm_pair(pending).await?;
+        Ok(())
+    }
+
+    /// QR pairing feeds the QR's 256-bit secret and addresses into the same
+    /// route-selecting pairing operation the typed PIN uses.
     pub async fn with_qr(self, qr: &QrPayload) -> anyhow::Result<()> {
-        self.from
-            .pairing_admin()
-            .await
-            .pair_qr_cloud_peer(qr.host_id, qr.secret.clone())
-            .await?;
+        let admin = self.from.pairing_admin().await;
+        let payload = crate::QrPairingPayload {
+            host_id: qr.host_id,
+            secret: qr.secret.clone(),
+            addrs: qr.addrs.clone(),
+            cloud_url: qr.cloud_url.clone(),
+        };
+        let pending = admin.begin_pair_qr(&payload).await?;
+        admin.confirm_pair(pending).await?;
         Ok(())
     }
 
     /// SSH pairing: runs the real identity exchange (initiator on `self`,
     /// `amux pair-recv` responder on `other`) over an in-memory stream
     /// standing in for the authenticated SSH stdio. Both sides commit via
-    /// their own `PairPeer` operations, exactly like the CLI flow.
+    /// their own authenticated SSH trust commits, exactly like the CLI flow.
     pub async fn over_ssh(self) -> anyhow::Result<()> {
         let (initiator_io, responder_io) = tokio::io::duplex(64 * 1024);
         let initiator_client = self.from.pairing_admin().await;

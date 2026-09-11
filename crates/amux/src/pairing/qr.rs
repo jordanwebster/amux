@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use serde::{Deserialize, Serialize};
 
 use crate::HostId;
@@ -5,14 +7,15 @@ use crate::client::PairingStart;
 
 const QR_SECRET_LEN: usize = 32;
 
-/// What the QR code carries: `{host_id, cloud_url, secret}`. The secret is
+/// What the QR code carries: `{host_id, secret, addrs, cloud_url?}`. The secret is
 /// a one-shot 256-bit SPAKE2 input — it never crosses the wire, so the QR
 /// needs no pubkey; SPAKE2 provides mutual authentication from possession.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct QrPairingPayload {
     pub host_id: HostId,
-    pub cloud_url: String,
     pub secret: Vec<u8>,
+    pub addrs: Vec<SocketAddr>,
+    pub cloud_url: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -27,20 +30,20 @@ pub enum QrPairingError {
         expected: usize,
         actual: usize,
     },
-    #[error(
-        "QR payload cloud_url {payload_cloud_url:?} does not match configured cloud_url {configured_cloud_url:?}"
-    )]
-    CloudUrlMismatch {
-        payload_cloud_url: String,
-        configured_cloud_url: String,
+    #[error("QR pairing address {value:?} is invalid: {source}")]
+    InvalidAddress {
+        value: String,
+        source: std::net::AddrParseError,
     },
 }
 
 #[derive(Deserialize, Serialize)]
 struct WireQrPairingPayload {
     host_id: String,
-    cloud_url: String,
     secret: Vec<u8>,
+    addrs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cloud_url: Option<String>,
 }
 
 pub fn encode_qr_pairing_payload(
@@ -49,8 +52,9 @@ pub fn encode_qr_pairing_payload(
 ) -> Result<String, QrPairingError> {
     let payload = WireQrPairingPayload {
         host_id: pairing.identity.host_id.to_string(),
-        cloud_url: pairing.cloud_url.clone(),
         secret: secret.to_vec(),
+        addrs: pairing.addrs.iter().map(ToString::to_string).collect(),
+        cloud_url: pairing.cloud_url.clone(),
     };
     Ok(serde_json::to_string(&payload)?)
 }
@@ -63,34 +67,21 @@ pub fn parse_qr_pairing_payload(payload: &str) -> Result<QrPairingPayload, QrPai
             source,
         })?;
     validate_qr_payload_bytes("secret", &payload.secret)?;
+    let addrs = payload
+        .addrs
+        .into_iter()
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|source| QrPairingError::InvalidAddress { value, source })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(QrPairingPayload {
         host_id,
-        cloud_url: payload.cloud_url,
         secret: payload.secret,
+        addrs,
+        cloud_url: payload.cloud_url,
     })
-}
-
-pub fn parse_qr_pairing_payload_for_cloud(
-    payload: &str,
-    configured_cloud_url: &str,
-) -> Result<QrPairingPayload, QrPairingError> {
-    let payload = parse_qr_pairing_payload(payload)?;
-    validate_qr_payload_cloud_url(&payload.cloud_url, configured_cloud_url)?;
-    Ok(payload)
-}
-
-pub fn validate_qr_payload_cloud_url(
-    payload_cloud_url: &str,
-    configured_cloud_url: &str,
-) -> Result<(), QrPairingError> {
-    if payload_cloud_url == configured_cloud_url {
-        Ok(())
-    } else {
-        Err(QrPairingError::CloudUrlMismatch {
-            payload_cloud_url: payload_cloud_url.to_string(),
-            configured_cloud_url: configured_cloud_url.to_string(),
-        })
-    }
 }
 
 fn validate_qr_payload_bytes(field: &'static str, bytes: &[u8]) -> Result<(), QrPairingError> {
@@ -120,16 +111,17 @@ mod tests {
                 name: "desktop".to_string(),
             },
             ttl_seconds: 300,
-            tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            addrs: vec!["192.0.2.4:9001".parse().unwrap()],
+            cloud_url: Some("https://relay.example".to_string()),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
 
         let payload = encode_qr_pairing_payload(&pairing, &[9; 32]).unwrap();
-        let parsed = parse_qr_pairing_payload_for_cloud(&payload, "https://relay.example").unwrap();
+        let parsed = parse_qr_pairing_payload(&payload).unwrap();
 
         assert_eq!(parsed.host_id, HostId::from_u128(1));
-        assert_eq!(parsed.cloud_url, "https://relay.example");
+        assert_eq!(parsed.cloud_url.as_deref(), Some("https://relay.example"));
+        assert_eq!(parsed.addrs, vec!["192.0.2.4:9001".parse().unwrap()]);
         assert_eq!(parsed.secret, vec![9; 32]);
     }
 
@@ -142,8 +134,8 @@ mod tests {
                 name: "desktop".to_string(),
             },
             ttl_seconds: 300,
-            tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            addrs: Vec::new(),
+            cloud_url: None,
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
 
@@ -155,11 +147,12 @@ mod tests {
     }
 
     #[test]
-    fn qr_pairing_payload_validates_shape_and_cloud_url() {
+    fn qr_pairing_payload_validates_shape() {
         let payload = serde_json::json!({
             "host_id": "00000000-0000-0000-0000-000000000001",
             "cloud_url": "https://relay.example",
             "secret": [9],
+            "addrs": [],
         })
         .to_string();
 
@@ -169,10 +162,6 @@ mod tests {
                 field: "secret",
                 ..
             })
-        ));
-        assert!(matches!(
-            validate_qr_payload_cloud_url("https://a", "https://b"),
-            Err(QrPairingError::CloudUrlMismatch { .. })
         ));
     }
 }
