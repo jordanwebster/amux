@@ -168,8 +168,9 @@ checked separately; transitive exclusions below also apply through third parties
 | `ui-state` | Pure Model/Msg/Effect/update, provider-specific folds, commands and send gates, review/draft values | `model` |
 | `ui-runtime` | Client connections, effect execution, ordered delivery, profile directory client, artifact fetching, recording/report persistence | `model`, `ui-state`, `client`, `artifacts` |
 | `tui` | Rendering, interaction state, terminal/clipboard handling, themes, and existing fleet event loop using the runtime | `model`, `ui-state`, `ui-runtime` |
-| `mobile` | Rust mobile lifecycle, frame-coalesced projection and cache, account switching; ordinary Rust API without exported C symbols | `model`, `settings`, `node`, `client`, `ui-state`, `ui-runtime` |
-| `mobile-ffi` | Thin staticlib boundary: opaque handles, ABI ownership, panic policy, exported functions/header | `mobile` |
+| `app-runtime` | Shared rich-client sessions, account-scoped cache, typed presentation updates and operation routing; ordinary Rust API | `model`, `settings`, `client`, `ui-state`, `ui-runtime` |
+| `embedded-client` | Embedded node/installation startup, credentials and shutdown ownership; supplies sessions to app-runtime | `model`, `settings`, `node`, `client`, `app-runtime` |
+| `client-ffi` | Thin C boundary: opaque handles, ABI ownership, exported functions/header; initial embedding-capable bridge | `app-runtime`, `embedded-client` |
 | `amux` | CLI composition, provider registration, configuration discovery, desktop process/update policy, OAuth device-login command, TUI launch | `model`, `settings`, `node`, `host-api`, `agent-runtime`, `client`, `ui-state`, `ui-runtime`, `tui`; `claude`/`replay-support` only for actual provider management commands |
 
 The node's shared authentication implementation stays a private subsystem at
@@ -192,9 +193,11 @@ flowchart TD
   cli[amux CLI] --> hosting[agent-runtime]
   cli --> node
   cli --> tui
-  ffi[mobile-ffi] --> mobile
-  mobile --> node
-  mobile --> runtime[ui-runtime]
+  ffi[client-ffi] --> app[app-runtime]
+  ffi --> embedded[embedded-client]
+  embedded --> node
+  embedded --> app
+  app --> runtime[ui-runtime]
   tui --> runtime
   runtime --> client
   runtime --> ui[ui-state]
@@ -217,6 +220,57 @@ The final CLI and embedded app still relink when their dependencies change.
 really uses Runtime. If transport-free screenshots remain costly after this
 split, extract rendering from the event loop as a measured follow-up, not by
 claiming the current TUI is transitively client-free.
+
+### Reuse across rich clients
+
+The iPhone is the first rich client, not the owner of the shared client library.
+Use `app-runtime` and `client-ffi` as the target package names instead of `mobile`
+and `mobile-ffi`. Existing `amux-mobile` is the extraction source, not a name to
+preserve. Keep product names such as Amux in Swift modules and C symbol prefixes
+where they identify the product; name Rust packages by responsibility.
+
+Keep three different layers clear: `client` speaks the RPC APIs; `ui-runtime`
+executes a session's reducer effects and delivers observations; `app-runtime`
+coordinates rich-client sessions and projects their state into typed fleet/feed
+updates. It does not become another reducer or transport implementation. Start
+projection and fleet-cache code as modules in app-runtime; extract additional
+crates only when a consumer or compile boundary justifies them.
+
+App-runtime accepts supplied session connections and scoped administration
+capabilities. It must not depend on node, spawn a desktop daemon, choose a
+platform credential store, or assume every client owns an installation.
+`embedded-client` owns those node resources when embedding is selected. An
+attached desktop client uses the existing daemon through client APIs. Dropping
+an attached client closes its subscriptions; it must not shut down the daemon.
+An embedded owner drains and shuts down only the resources it created.
+
+The initial C bridge can depend on embedded-client because the existing native
+application needs embedding. That makes this particular bridge embedding-capable;
+it does not make app-runtime depend on node or oblige future clients to use the
+C ABI. A Rust desktop UI can use app-runtime directly. If a later attached-only
+foreign-language client needs a smaller binary, split the final bridge composition
+then; do not force every backend or output format into one feature matrix now.
+Keep the bridge's callback/handle implementation independent of node internals.
+
+Selection and lifetime are not phone-wide globals. Keep account identity on
+commands/results and expose independent view/subscription handles so desktop
+windows can select different accounts and sessions. Shared account sessions may
+serve multiple views; losing one view must not cancel another view's work.
+Platform shells own navigation, window state, visibility/background policy,
+credential-store adapters, file pickers, notifications and display cadence.
+Projection accepts requested cadence and explicit time; it does not assume
+one screen, a fixed refresh rate, or that any background event suspends all
+sessions. Preserve stale-result rejection and cache-versus-live authority rules.
+Keep presentation values independent of SwiftUI/AppKit/UIKit and C pointers;
+serialization and callback delivery belong at the bridge edge.
+
+Do this now by keeping node/client/UI APIs instance-scoped, capability-based and
+free of mobile assumptions. At native integration, extract the existing bridge
+logic into the packages above and test both an embedded composition and an
+attached composition, plus two simultaneous view handles. Do not create these
+future packages as empty scaffolding in the current pre-app checkout. Swift
+model/adapter reuse can stay in an appropriately scoped AmuxCore package;
+iPhone navigation remains in its app shell.
 
 ### Public API rules
 
@@ -293,8 +347,8 @@ eligible for bounded cleanup. Do not add one directory per commit.
 | Host development and tests | Dev profile, unwind, workspace line-table debug info, dependency debug info off, incremental on, no LTO | Local build/check/test tasks; selected targets |
 | Host CI tests | Same source/features and dev semantics; incremental off for immutable cacheable jobs | CI; intentionally distinct from local incremental state |
 | Host distribution | Release, abort; retain current optimization until measured | Release verification/packaging only, selected product binaries |
-| iOS simulator iteration | `mobile-dev`, derived from dev, line tables, incremental, no LTO, ordinary parallel codegen, abort at product boundary | Ordinary simulator app build; one ARM64 slice |
-| iOS measurement/distribution | `mobile-release`, initially preserve current optimized mobile settings for comparison; benchmark thin versus fat LTO | Measured simulator and shipping device; shipping simulator only for its explicit bridge check |
+| iOS simulator iteration | `ios-dev`, derived from dev, line tables, incremental, no LTO, ordinary parallel codegen, abort at product boundary | Ordinary simulator app build; one ARM64 slice |
+| iOS measurement/distribution | `ios-release`, initially preserve current optimized mobile settings for comparison; benchmark thin versus fat LTO | Measured simulator and shipping device; shipping simulator only for its explicit bridge check |
 
 Start by testing `debug = "line-tables-only"` for local workspace crates.
 It preserves file/line backtraces but omits variable/type inspection; keep an
@@ -496,8 +550,10 @@ assembly, project generation, app build, test build, test execution, and
 verification. Use Cargo's reported artifact paths, as the existing script
 already correctly does; never discover a header/archive by globbing old outputs.
 
-`mobile` is an rlib so lifecycle/projection unit tests and cached compilation
-do not require rebuilding a static archive. `mobile-ffi` is the thin staticlib.
+`app-runtime` and `embedded-client` are rlibs so session/projection and embedding
+tests do not require rebuilding a static archive. `client-ffi` is the thin C
+boundary, initially packaged as a staticlib for Apple clients. Choose other
+artifact formats only for actual consumers; do not emit every crate type by default.
 Keep development-only exports/transport adapters in a leaf development
 composition (separate small package if practical; otherwise one documented
 leaf feature with no shared-library feature propagation). Shipping composition
@@ -650,7 +706,7 @@ authorization, ordering, lifecycle and release exclusions, must remain covered.
 | 3 | Extract both client-service and owner-admin clients; split `ui-state`/`ui-runtime`; rename TUI and screenshot packages and update desktop/native consumers. | Reducer specs run without node/providers/tonic/tokio in their normal closure; node implementation edit does not recompile UI libraries. |
 | 4 | Define host lifecycle/operation contract, then extract agent runtime and rename remaining node library. Adapt installation factory and mobile composition; remove `local-agents` and desktop-only policy from shared node. | Provider-free mobile graph; node and runtime have no dependency on one another; deletion/write drain, suspend/resume, attachments, A2A and admission suites pass. |
 | 5 | Move testnet/provider specs/TUI fixtures, consolidate harness targets; remove profile gates and unnecessary production test dependencies. Simplify large service/pairing modules while preserving private tests. | Product dependency closures exclude test support. Debug and optimized test configurations work; release artifacts exclude test backend/tools. |
-| 6 | Split mobile Rust logic from staticlib; make slice/header/project/packaging dependencies explicit; replace competing bridge links; introduce simulator development profile and tree-owned devices. | Swift-only edit runs zero Rust compilation, header generation, framework assembly or bridge smoke; Rust edit rebuilds only needed slice; two trees run independently; release and hosted-test bridge checks pass. |
+| 6 | Extract reusable app-runtime, embedded-client and client-ffi from the native bridge; make slice/header/project/packaging dependencies explicit; replace competing bridge links; introduce simulator development profile and tree-owned devices. | Swift-only edit runs zero Rust compilation, header generation, framework assembly or bridge smoke; Rust edit rebuilds only needed slice; two trees run independently; release and hosted-test bridge checks pass. |
 | 7 | Compare profile/cache/runner choices; enable focused build/test recipes; unify CI recipes; enforce graph and storage budgets. Remove old profiles/output layouts only through declared cleanup. | No unexplained new configurations in a build→test→lint→build cycle; selected tests match intent; timed-out processes/resources are reclaimed; storage stays bounded. |
 | 8 | Finish Bazel trial begun after step 3, using completed mobile artifact contracts; choose one supported build architecture before the native merge. | Publish measured adopt/defer decision against the gates above and retire the losing experimental path. |
 

@@ -1,3 +1,11 @@
+2026-09-11 — **Name shared client foundations for desktop and mobile reuse.**
+Revise the build proposal and implementation brief to separate reusable rich-client
+sessions/projection from embedded-node ownership and C bindings. The intended
+packages are app-runtime, embedded-client and client-ffi. Shared APIs must support
+attached clients and independent views without phone-specific selection or
+background policy. Extract these packages from the native bridge at integration;
+the current Rust pass establishes instance, identity and ownership boundaries.
+
 2026-09-11 — **Audit codebase and build foundations.** Record a proposed Rust
 crate graph, native bridge/build changes, reproducible test and toolchain policy,
 worktree resource/cache ownership, and a bounded Bazel evaluation. The native
