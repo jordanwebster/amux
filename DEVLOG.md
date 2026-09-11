@@ -14389,3 +14389,22 @@ The resumed pass also corrected the composition rather than only the photographe
 Floating glass icons no longer carry an invisible square layout frame. Their button wrappers now provide the 44-point hit region consistently on Home, Hosts, the drawer, and conversations, which removes the filter menu's post-dismiss square while preserving touch size. Fixed symbol and label slots in the custom tab bar remove the selected-weight baseline wobble. A focused simulator interaction probe checks both behaviors and saves the post-interaction frames for direct inspection.
 
 The final reference pass covered every app-owned light and dark capture plus the large-text, compact-phone, error, permission, pairing, and reduced-transparency states. Review file headings and its weighted edge wheel now follow the reference structure, including comment marks and a one-line active-file pill. Pairing code cells, sign-in copy, rename geometry, and shared destructive-card spacing were brought to the same measurements. No golden baseline was updated during this pass; the rendered actuals remain review evidence until the design is accepted.
+
+## The drawer no longer clips the conversation to its safe-area rectangle
+
+The drawer transformed a conversation whose background deliberately paints through the
+status and home areas, then clipped the result to the smaller rectangle SwiftUI lays out
+between those areas. Even closed, that mask exposed two differently sampled strips of the
+outer gradient. Open, its rounded top edge sat directly behind the real conversation pill,
+so the pill appeared to overlap a second bubble.
+
+The mask is removed. The drawer already covers the transformed page's leading corners and
+its trailing corners move beyond the display, so the mask contributed no visible designed
+edge; it only cut off the full-bleed background. The drawer and conversation keep their real
+safe-area layout, including the reconnect action above the home area. The reference's 4%
+centred scale remains, so the small designed vertical movement of the background page is
+unchanged.
+
+Focused light and dark captures of both the open drawer and unreachable conversation show a
+continuous physical-edge background, one conversation pill, correctly placed drawer chrome,
+and a fully clear Retry Now card. Golden baselines were not updated.

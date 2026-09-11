@@ -302,7 +302,11 @@ public struct DrawerOverlay<Content: View>: View {
                 .disabled(progress > 0)
                 .accessibilityHidden(progress > 0)
                 .overlay { scrim }
-                .clipShape(RoundedRectangle(cornerRadius: 22 * progress, style: .continuous))
+                // The drawer always covers the page's leading corners and the
+                // trailing corners move beyond the display. Clipping this
+                // safe-area-sized view only cuts off the full-bleed ground,
+                // exposing bands and a false rounded surface behind the real
+                // conversation pill.
                 .shadow(color: .black.opacity(0.24 * progress), radius: 24, x: -6)
 
             drawer
@@ -310,12 +314,6 @@ public struct DrawerOverlay<Content: View>: View {
                 .offset(x: -Self.width * (1 - progress))
                 .accessibilityHidden(progress == 0)
         }
-        // The bottom safe area is kept rather than ignored. Every ground in
-        // here already runs to the physical edge on its own, so ignoring it
-        // bought nothing and cost the screen underneath the clearance the
-        // system reserves for the tab bar — which is where a conversation
-        // puts its composer, and where a machine that has gone away offers
-        // Retry Now. Ignored, that offer is drawn behind the bar.
         .gesture(drag)
         .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: open)
     }
