@@ -42,6 +42,7 @@ public struct DiffPage: View {
     private let model: ReviewStore
     private let subject: String
     private let actions: @MainActor (ReviewAction) -> Void
+    private let wheel: String?
     /// The file list, which the heading opens.
     @State private var listing = false
     /// Where each row is, so a finger dragging over the page can be told which
@@ -56,10 +57,12 @@ public struct DiffPage: View {
     public init(
         model: ReviewStore,
         subject: String,
+        wheel: String? = nil,
         actions: @escaping @MainActor (ReviewAction) -> Void
     ) {
         self.model = model
         self.subject = subject
+        self.wheel = wheel
         self.actions = actions
     }
 
@@ -68,7 +71,7 @@ public struct DiffPage: View {
             Ground()
             scroll
             if let range = model.selection {
-                Color.black.opacity(0.26)
+                Color.black.opacity(0.3)
                     .ignoresSafeArea()
                     .accessibilityHidden(true)
                 CommentSheet(
@@ -90,7 +93,8 @@ public struct DiffPage: View {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
                     ForEach(Array(model.files.enumerated()), id: \.element.id) { index, file in
                         FileHeading(
-                            file: file, comments: model.comments(in: file.path),
+                            label: label(for: file), file: file,
+                            comments: model.comments(in: file.path),
                             collapsed: model.isCollapsed(file.path),
                             toggle: { actions(.toggleFile(file.path)) },
                             list: { listing = true })
@@ -107,7 +111,10 @@ public struct DiffPage: View {
             .scrollIndicators(.hidden)
             .safeAreaInset(edge: .top, spacing: 0) { chrome }
             .overlay(alignment: .trailing) {
-                EdgeWheel(files: model.files) { path in
+                EdgeWheel(
+                    files: model.files, comments: { model.comments(in: $0) },
+                    initiallyOn: wheel.flatMap { path in model.files.firstIndex { $0.path == path } }
+                ) { path in
                     actions(.scrubTo(path))
                     withAnimation(.easeOut(duration: 0.18)) { scroller.scrollTo(path, anchor: .top) }
                 }
@@ -129,6 +136,18 @@ public struct DiffPage: View {
                 }
             }
         }
+    }
+
+    /// Enough of a path to distinguish this file from the others in the
+    /// patch. A basename is easier to scan; its parent joins only when two
+    /// basenames would otherwise be identical.
+    private func label(for file: ReviewFile) -> String {
+        let name = file.path.split(separator: "/").last.map(String.init) ?? file.path
+        guard model.files.filter({
+            ($0.path.split(separator: "/").last.map(String.init) ?? $0.path) == name
+        }).count > 1 else { return name }
+        let parts = file.path.split(separator: "/")
+        return parts.count >= 2 ? parts.suffix(2).joined(separator: "/") : name
     }
 
     @ViewBuilder
@@ -284,6 +303,7 @@ public struct DiffPage: View {
 /// beside the path opens the list of every file, which is the tenth.
 private struct FileHeading: View {
     @Environment(\.design) private var design
+    let label: String
     let file: ReviewFile
     let comments: Int
     let collapsed: Bool
@@ -293,16 +313,14 @@ private struct FileHeading: View {
     var body: some View {
         HStack(spacing: 8) {
             Button(action: toggle) {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
                     Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(design.inkFaint.color)
-                        .frame(width: 14)
-                    Text(file.path)
-                        .designFont(.monoSmall, design)
+                    Text(label)
+                        .designFont(.identifier, design)
                         .foregroundStyle(design.ink.color)
                         .lineLimit(1)
-                        .truncationMode(.head)
                 }
                 .thumbTarget(y: 14)
             }
@@ -316,14 +334,13 @@ private struct FileHeading: View {
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(design.inkFaint.color)
-                    .frame(width: 18)
                     .thumbTarget(x: 13, y: 14)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("All Files")
             .identified("review.files", label: "All Files")
             .reclaimingThumbTarget(x: 13, y: 14)
-            Spacer(minLength: 4)
+            Spacer(minLength: 6)
             if comments > 0 { CommentCount(count: comments, size: 16) }
             Text("+\(file.added)")
                 .designFont(.monoSmall, design)
@@ -464,18 +481,19 @@ private struct CommentThread: View {
     let comment: ReviewComment
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: 9) {
             Rectangle()
                 .fill(design.accent.color)
-                .frame(width: 2.5)
+                .frame(width: 2)
             Text(comment.text)
-                .designFont(.body, design)
+                .designFont(.detail, design)
                 .foregroundStyle(design.ink.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, design.metrics.gutter)
         .padding(.vertical, 10)
+        .padding(.trailing, 12)
+        .padding(.leading, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(design.sunken.color)
         .accessibilityElement(children: .combine)
@@ -504,58 +522,65 @@ private struct CommentSheet: View {
 
     var body: some View {
         @Bindable var model = model
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
             Capsule()
-                .fill(design.hairline.color)
-                .frame(width: 40, height: 5)
-                .frame(maxWidth: .infinity)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Rectangle()
-                    .fill(design.accent.color)
-                    .frame(width: 2.5, height: 15)
-                Text(model.describe(range) ?? "")
-                    .designFont(.mono, design)
+                .fill(design.inkFaint.color.opacity(0.6))
+                .frame(width: 38, height: 5)
+                .padding(.vertical, 9)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    Rectangle()
+                        .fill(design.accent.color)
+                        .frame(width: 2, height: 12)
+                    Text("\(range.to - range.from + 1) line\(range.to == range.from ? "" : "s") in")
+                        .designFont(.caption, design)
+                        .foregroundStyle(design.inkMuted.color)
+                    Text(model.anchor(range)?.path ?? "")
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.ink.color)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer(minLength: 6)
+                    Text(lines)
+                        .designFont(.monoSmall, design)
+                        .foregroundStyle(design.inkFaint.color)
+                }
+
+                TextField("", text: $model.draft, axis: .vertical)
+                    .designFont(.body, design)
                     .foregroundStyle(design.ink.color)
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                Spacer(minLength: 6)
-                Text(lines)
-                    .designFont(.mono, design)
-                    .foregroundStyle(design.inkFaint.color)
-            }
-            TextField("", text: $model.draft, axis: .vertical)
-                .designFont(.body, design)
-                .foregroundStyle(design.ink.color)
-                .lineLimit(2...6)
-                .focused($writing)
-                // A remark about a patch is half identifiers: `Code::Internal`
-                // corrected to something English is worse than a typo, and the
-                // suggestions above the keyboard are guessing at prose that is
-                // mostly not prose.
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.sentences)
-                // The caret blinks on a timer of its own, which a baseline
-                // cannot photograph twice the same way. It is drawn for a
-                // person and left out of the picture.
-                .tint(photographed ? .clear : design.accentColor)
-                .identified("review.commentField", value: model.draft)
-            HStack(spacing: 10) {
-                Button { done { add(model.draft) } } label: {
-                    ActionLabel("Add to Review", kind: .primary, fill: true)
+                    .lineLimit(2...6)
+                    .focused($writing)
+                    // A remark about a patch is half identifiers: `Code::Internal`
+                    // corrected to something English is worse than a typo.
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.sentences)
+                    // The caret blinks on a timer of its own, so photographs
+                    // omit it while the live field keeps the design tint.
+                    .tint(photographed ? .clear : design.accentColor)
+                    .identified("review.commentField", value: model.draft)
+                    .padding(.top, 2)
+
+                HStack(spacing: 8) {
+                    Button { done { add(model.draft) } } label: {
+                        ActionLabel("Add to Review", kind: .primary, fill: true)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Add to Review")
+                    .identified("review.addComment", label: "Add to Review")
+                    Button { done(cancel) } label: {
+                        ActionLabel("Cancel", kind: .outline, fill: true)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Cancel")
+                    .identified("review.cancelComment", label: "Cancel")
                 }
-                .buttonStyle(.plain)
-                .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel("Add to Review")
-                .identified("review.addComment", label: "Add to Review")
-                Button { done(cancel) } label: {
-                    ActionLabel("Cancel", kind: .outline, fill: true)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Cancel")
-                .identified("review.cancelComment", label: "Cancel")
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .padding(16)
         .frame(maxWidth: .infinity)
         .background {
             Color.clear.frosted(
@@ -606,65 +631,102 @@ private struct CommentSheet: View {
 private struct EdgeWheel: View {
     @Environment(\.design) private var design
     let files: [ReviewFile]
+    let comments: (String) -> Int
     let scrub: @MainActor (String) -> Void
     @State private var on: Int?
 
+    init(
+        files: [ReviewFile], comments: @escaping (String) -> Int,
+        initiallyOn: Int? = nil, scrub: @escaping @MainActor (String) -> Void
+    ) {
+        self.files = files
+        self.comments = comments
+        self.scrub = scrub
+        _on = State(initialValue: initiallyOn)
+    }
+
+    private var weights: [CGFloat] {
+        files.map { max(1, CGFloat($0.added + $0.removed)) }
+    }
+
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            if let on, files.indices.contains(on) {
-                let file = files[on]
-                HStack(spacing: 6) {
-                    Text(name(file.path))
-                        .designFont(.mono, design)
-                        .foregroundStyle(design.ink.color)
-                    Text("+\(file.added)")
-                        .designFont(.monoSmall, design)
-                        .foregroundStyle(design.added.color)
-                    Text("\u{2212}\(file.removed)")
-                        .designFont(.monoSmall, design)
-                        .foregroundStyle(design.removed.color)
-                }
-                .padding(.horizontal, 14)
-                .frame(minHeight: 40)
-                .background { Color.clear.frosted(Capsule()) }
-                .transition(.opacity)
-            }
-            GeometryReader { frame in
+        GeometryReader { proxy in
+            let available = max(1, proxy.size.height - 130)
+            let total = max(1, weights.reduce(0, +))
+            let heights = weights.map { $0 / total * available }
+            let current = on ?? 0
+            let offset = heights.prefix(current).reduce(0, +)
+
+            ZStack(alignment: .topTrailing) {
                 VStack(spacing: 2) {
-                    ForEach(Array(files.enumerated()), id: \.element.id) { index, _ in
-                        Capsule()
-                            .fill(on == index
-                                  ? design.ink.color.opacity(0.7)
-                                  : design.inkFaint.color.opacity(0.3))
-                            .frame(width: on == index ? 4 : 3)
-                            .frame(maxHeight: .infinity)
+                    ForEach(Array(files.enumerated()), id: \.element.id) { index, file in
+                        ZStack(alignment: .trailing) {
+                            Capsule()
+                                .fill(on == index
+                                    ? design.ink.color.opacity(0.7)
+                                    : design.inkFaint.color.opacity(0.3))
+                                .frame(width: on == index ? 4 : 3)
+                            if comments(file.path) > 0 {
+                                Circle()
+                                    .fill(design.accent.color)
+                                    .frame(width: 5, height: 5)
+                                    .offset(x: -7)
+                            }
+                        }
+                        .frame(height: heights[index])
                     }
                 }
-                .padding(.vertical, 65)
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { drag in
-                            let step = frame.size.height / CGFloat(max(files.count, 1))
-                            let index = min(
-                                files.count - 1, max(0, Int(drag.location.y / max(step, 1))))
-                            guard index != on else { return }
-                            on = index
-                            scrub(files[index].path)
-                        }
-                        .onEnded { _ in on = nil })
+                .frame(width: 14)
+                .padding(.trailing, 6)
+                .padding(.top, 65)
+
+                if let on, files.indices.contains(on) {
+                    let file = files[on]
+                    HStack(spacing: 8) {
+                        Text(name(file.path))
+                            .designFont(.identifier, design)
+                            .foregroundStyle(design.ink.color)
+                        Text("+\(file.added)")
+                            .designFont(.monoSmall, design)
+                            .foregroundStyle(design.added.color)
+                        Text("\u{2212}\(file.removed)")
+                            .designFont(.monoSmall, design)
+                            .foregroundStyle(design.removed.color)
+                    }
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
+                    .background { Color.clear.frosted(Capsule()) }
+                    .padding(.trailing, 26)
+                    .offset(y: 65 + offset + heights[on] / 2 - 19)
+                    .transition(.opacity)
+                }
             }
-            .frame(width: 22)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .overlay(alignment: .trailing) {
+                Color.clear
+                    .frame(width: 22)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { drag in
+                                let location = min(max(drag.location.y - 65, 0), available)
+                                var boundary: CGFloat = 0
+                                let index = heights.enumerated().first { _, height in
+                                    boundary += height
+                                    return location <= boundary
+                                }?.offset ?? max(files.count - 1, 0)
+                                guard files.indices.contains(index), index != on else { return }
+                                on = index
+                                scrub(files[index].path)
+                            }
+                            .onEnded { _ in on = nil })
+            }
         }
-        .padding(.trailing, 2)
-        .frame(maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
         .accessibilityHidden(true)
         .identified("review.wheel", value: on.map(String.init) ?? "idle")
     }
 
-    /// The last part of the path. The wheel is a glance, and a full path in a
-    /// pill that appears under a thumb is not read.
     private func name(_ path: String) -> String {
         path.split(separator: "/").last.map(String.init) ?? path
     }

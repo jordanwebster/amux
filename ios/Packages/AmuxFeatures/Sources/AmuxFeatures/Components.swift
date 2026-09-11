@@ -158,7 +158,10 @@ public struct RowGroup<Item: Identifiable, Content: View>: View {
                         Rectangle()
                             .fill(design.hairline.color)
                             .frame(height: design.metrics.hairline)
-                            .padding(.leading, 46)
+                            .padding(
+                                .leading,
+                                prominence == .subject
+                                    ? 46 : design.surfaces.separation == .rule ? 0 : 46)
                     }
                 }
             }
@@ -268,9 +271,6 @@ public struct GlassIcon: View {
                     Color.clear.frosted(Circle())
                 }
             }
-            // The glyph is 34 pt but the thing you hit is not: a control this
-            // small has to keep the 44 pt target the guidelines ask for.
-            .frame(width: 44, height: 44)
             .contentShape(Circle())
     }
 }

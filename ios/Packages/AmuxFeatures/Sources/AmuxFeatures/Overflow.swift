@@ -41,7 +41,9 @@ struct OverflowMenu: View {
             row(.delete, glyph: "trash", label: "Delete Agent", destructive: true)
         }
         .frame(maxWidth: 258, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            wash: 0.88)
         .accessibilityElement(children: .contain)
         .identified("overflow", value: address)
     }
@@ -110,7 +112,7 @@ struct RenameCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Rename \(current)")
                 .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
@@ -126,7 +128,7 @@ struct RenameCard: View {
                 .focused($writing)
                 .onSubmit { if !chosen.isEmpty { confirm(chosen) } }
                 .padding(.horizontal, 14)
-                .frame(height: 52)
+                .frame(height: 44)
                 .background {
                     RoundedRectangle(
                         cornerRadius: design.metrics.controlRadius, style: .continuous)
@@ -135,16 +137,7 @@ struct RenameCard: View {
                 .identified("rename.field", label: "Name", value: name)
             HStack(spacing: 10) {
                 Button(action: cancel) {
-                    Text("Cancel")
-                        .designFont(.bodyEmphasis, design)
-                        .foregroundStyle(design.ink.color)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background {
-                            RoundedRectangle(
-                                cornerRadius: design.metrics.controlRadius, style: .continuous)
-                                .fill(design.sunken.color)
-                        }
+                    ActionLabel("Cancel", kind: .quiet, fill: true)
                 }
                 .buttonStyle(.plain)
                 .identified("rename.cancel", label: "Cancel")
@@ -157,9 +150,11 @@ struct RenameCard: View {
                 .identified("rename.confirm", label: "Rename")
             }
         }
-        .padding(20)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            wash: 0.9)
         .accessibilityElement(children: .contain)
         .identified("rename", value: current)
     }
@@ -179,12 +174,12 @@ struct DeleteAgentCard: View {
     let confirm: @MainActor () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Delete \(name)?")
                 .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 9) {
                 consequence("checkmark", kept: true, "Its edits stay. Nothing is reverted.")
                 consequence("xmark", kept: false, "Its session ends. Unfinished work stops.")
                 consequence(
@@ -192,16 +187,7 @@ struct DeleteAgentCard: View {
             }
             HStack(spacing: 10) {
                 Button(action: cancel) {
-                    Text("Cancel")
-                        .designFont(.bodyEmphasis, design)
-                        .foregroundStyle(design.ink.color)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background {
-                            RoundedRectangle(
-                                cornerRadius: design.metrics.controlRadius, style: .continuous)
-                                .fill(design.sunken.color)
-                        }
+                    ActionLabel("Cancel", kind: .quiet, fill: true)
                 }
                 .buttonStyle(.plain)
                 .identified("agent-delete.cancel", label: "Cancel")
@@ -210,7 +196,8 @@ struct DeleteAgentCard: View {
                         .designFont(.bodyEmphasis, design)
                         .foregroundStyle(Color.white)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 52)
+                        .padding(.vertical, 11)
+                        .frame(minHeight: 44)
                         .background {
                             RoundedRectangle(
                                 cornerRadius: design.metrics.controlRadius, style: .continuous)
@@ -220,20 +207,23 @@ struct DeleteAgentCard: View {
                 .buttonStyle(.plain)
                 .identified("agent-delete.confirm", label: "Delete")
             }
+            .padding(.top, 2)
         }
-        .padding(20)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            wash: 0.9)
         .accessibilityElement(children: .contain)
         .identified("agent-delete", value: name)
     }
 
     private func consequence(_ glyph: String, kept: Bool, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
             Image(systemName: glyph)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(kept ? design.inkMuted.color : design.removed.color)
-                .frame(width: 16)
+                .frame(width: 14)
             Text(text)
                 .designFont(.detail, design)
                 .foregroundStyle(design.inkMuted.color)

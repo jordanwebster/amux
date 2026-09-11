@@ -14371,3 +14371,21 @@ The Agents shimmer was removed rather than restyled. The debug state now reports
 Large accessibility text now keeps conversation identity and location in a bounded header, clears transcript text from behind the status bar, and gives the ask panel enough of the first view to expose Allow and Deny. The peer-exchange fixture also opens both message directions and uses a compact transcript so its golden demonstrates the interaction shown by the design.
 
 All 124 light, dark, regular-size, accessibility-size and small-phone golden baselines were recaptured after direct comparison with the preserved designs. Verification used the focused iOS unit suite and golden runner; the hour-long aggregate mobile verification task was deliberately not run.
+
+## 2026-09-11 — Resume visual parity audit
+
+The previous completion assessment relied on representative comparisons and refreshed app goldens rather than a complete visual comparison of every approved reference. The audit is reopened: each light and dark reference must be inspected beside the corresponding app capture, and every visible difference must be fixed or explained. The conversation overflow was the first concrete miss found in that review; its whole-screen offset placed the menu about 52 points below the approved attachment point, so it now begins eight points under the conversation chrome.
+
+The same visual pass found that New Agent still carried pre-design proportions even though its broad structure looked correct at a glance. Its directory row now follows the reference's plain configuration treatment, recent directories use the compact outlined chips, and host/provider rows use the reference spacing, icon scale, and selected border.
+
+Slash-command suggestions now follow the final reference rather than the earlier intermediate iteration: compact 9-point row insets and the command name alone. The provider/source label was removed because the approved design deliberately relies on namespaced command names where provenance matters.
+
+The screenshot-report prompt now uses the reference's muted bug mark and 88% glass wash. Its size and bottom clearance already matched; the system-owned screenshot thumbnail remains outside the app's control.
+
+Source comparison after the visual pass also removed residual intermediate measurements from floating controls. Agent/account menus, model settings, attachments, slash suggestions, and the expanded task strip now use the explicit washes, corner radii, row insets, radio sizes, and card spacing in their final reference implementations rather than a nearby shared default.
+
+The resumed pass also corrected the composition rather than only the photographed menu. Conversation content and its scrim now extend through the physical top safe area while the chrome and composer remain foreground insets; this removes both the undimmed status/home-indicator bands under overlays and the hard band where the transcript fade used to begin. The same edge-covering rule was checked against the review, account, directory, device, deletion, and drawer overlays.
+
+Floating glass icons no longer carry an invisible square layout frame. Their button wrappers now provide the 44-point hit region consistently on Home, Hosts, the drawer, and conversations, which removes the filter menu's post-dismiss square while preserving touch size. Fixed symbol and label slots in the custom tab bar remove the selected-weight baseline wobble. A focused simulator interaction probe checks both behaviors and saves the post-interaction frames for direct inspection.
+
+The final reference pass covered every app-owned light and dark capture plus the large-text, compact-phone, error, permission, pairing, and reduced-transparency states. Review file headings and its weighted edge wheel now follow the reference structure, including comment marks and a one-line active-file pill. Pairing code cells, sign-in copy, rename geometry, and shared destructive-card spacing were brought to the same measurements. No golden baseline was updated during this pass; the rendered actuals remain review evidence until the design is accepted.

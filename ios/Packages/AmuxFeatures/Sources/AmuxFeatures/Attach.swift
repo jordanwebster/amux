@@ -32,15 +32,17 @@ struct PlusCard: View {
     let choose: @MainActor (AttachChoice) -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(spacing: 9) {
+            HStack(spacing: 9) {
                 tile(.photo, glyph: "photo", label: "Photo")
                 tile(.file, glyph: "doc", label: "File")
             }
             permissions
         }
-        .padding(8)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .padding(11)
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            wash: 0.88)
         .accessibilityElement(children: .contain)
         .identified("plus")
     }
@@ -58,11 +60,11 @@ struct PlusCard: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
             .background {
-                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(design.sunken.color)
             }
             .contentShape(RoundedRectangle(
-                cornerRadius: design.metrics.controlRadius, style: .continuous))
+                cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -93,11 +95,11 @@ struct PlusCard: View {
             .padding(.horizontal, 14)
             .frame(minHeight: 52)
             .background {
-                RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(design.sunken.color)
             }
             .contentShape(RoundedRectangle(
-                cornerRadius: design.metrics.controlRadius, style: .continuous))
+                cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(

@@ -360,6 +360,78 @@
           }
         }
       }
+    },
+    "Asked relay-cleanup and started reading the tests while we wait. Nothing in amux-ui matches on the name itself, so if it is holding nothing this is a one-file change.": {
+      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asked relay-cleanup and started reading the tests while we wait. Nothing in amux-ui matches on the name itself, so if it is holding nothing this is a one-file change."
+          }
+        }
+      }
+    },
+    "Clear. Collapsing them now.": {
+      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear. Collapsing them now."
+          }
+        }
+      }
+    },
+    "cargo check -p amux-ui": {
+      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cargo check -p amux-ui"
+          }
+        }
+      }
+    },
+    "Finished in 3.8s": {
+      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finished in 3.8s"
+          }
+        }
+      }
+    },
+    "spec-suite updated three assertions": {
+      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "spec-suite updated three assertions"
+          }
+        }
+      }
+    },
+    "Moved it. The shared crate no longer exports the three constants.": {
+      "comment": "Controlled transcript text for the peer-conversation visual fixture.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moved it. The shared crate no longer exports the three constants."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

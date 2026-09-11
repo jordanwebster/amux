@@ -134,7 +134,7 @@ public struct PairByCode: View {
             .designFont(.mono, design)
             .foregroundStyle(design.ink.color)
             .frame(maxWidth: .infinity)
-            .frame(height: 62)
+            .frame(height: 58)
             .background {
                 let shape = RoundedRectangle(
                     cornerRadius: design.metrics.controlRadius, style: .continuous)
@@ -142,7 +142,7 @@ public struct PairByCode: View {
                     shape.fill(design.raised.color)
                     shape.strokeBorder(
                         next ? design.ink.color : design.hairline.color,
-                        lineWidth: next ? 2 : design.metrics.hairline)
+                        lineWidth: next ? 1.5 : 1)
                 }
             }
     }

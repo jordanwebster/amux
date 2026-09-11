@@ -26,14 +26,14 @@ public struct ReportPrompt: View {
             HStack(spacing: 9) {
                 Image(systemName: "ladybug")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(design.ink.color)
+                    .foregroundStyle(design.inkMuted.color)
                 Text("Report")
                     .designFont(.detail, design)
                     .foregroundStyle(design.ink.color)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
-            .frosted(Capsule())
+            .frosted(Capsule(), wash: 0.88)
         }
         .buttonStyle(.plain)
         .identified("report.prompt", label: "Report")

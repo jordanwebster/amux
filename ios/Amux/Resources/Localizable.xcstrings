@@ -5748,6 +5748,198 @@
           }
         }
       }
+    },
+    "Notifications": {
+      "comment": "Label for the notification settings row on the You screen.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Notifications"
+          }
+        }
+      }
+    },
+    "When an agent needs you": {
+      "comment": "Value explaining when notifications are sent on the You screen.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When an agent needs you"
+          }
+        }
+      }
+    },
+    "Show": {
+      "comment": "Accessibility title for the Agents home filter picker.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show"
+          }
+        }
+      }
+    },
+    "Filter Agents": {
+      "comment": "Accessibility label for the Agents home filter button.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filter Agents"
+          }
+        }
+      }
+    },
+    "%@ · nothing needs you": {
+      "comment": "Accessibility summary for an account with no agents waiting for attention.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · nothing needs you"
+          }
+        }
+      }
+    },
+    "%@ · %@ need you": {
+      "comment": "Accessibility summary for an account and its number of agents waiting for attention.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@ need you"
+          }
+        }
+      }
+    },
+    "All Agents": {
+      "comment": "Agents home filter option that includes every agent.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All Agents"
+          }
+        }
+      }
+    },
+    "Needs You": {
+      "comment": "Agents home filter option that includes agents waiting for attention.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs You"
+          }
+        }
+      }
+    },
+    "Type your email to confirm": {
+      "comment": "Instruction above the account deletion confirmation field.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type your email to confirm"
+          }
+        }
+      }
+    },
+    "%@ line%@ in": {
+      "comment": "Prefix describing the selected line range in the review comment sheet.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ line%@ in"
+          }
+        }
+      }
+    },
+    "Unmute": {
+      "comment": "Per-agent overflow action that enables notifications.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unmute"
+          }
+        }
+      }
+    },
+    "Mute": {
+      "comment": "Per-agent overflow action that disables notifications.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mute"
+          }
+        }
+      }
+    },
+    "Reach your agents\nanywhere": {
+      "comment": "Two-line heading on the subscription paywall.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reach your agents\nanywhere"
+          }
+        }
+      }
+    },
+    "A subscription connects this phone to your hosts. Without one, nothing is reachable.": {
+      "comment": "Explanation on the subscription paywall.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A subscription connects this phone to your hosts. Without one, nothing is reachable."
+          }
+        }
+      }
+    },
+    "Sign in": {
+      "comment": "Heading on the sign-in screen.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in"
+          }
+        }
+      }
+    },
+    "Signed in on %@": {
+      "comment": "Sign-in explainer naming the website host.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signed in on %@"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -21,33 +21,23 @@ struct SlashRows: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(RoundedRectangle(cornerRadius: 21, style: .continuous), wash: 0.88)
         .accessibilityElement(children: .contain)
         .identified("slash", value: commands.typed)
     }
 
     private func row(_ command: ProviderCommand) -> some View {
         Button { pick(command) } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Text("/\(command.name)")
                     .designFont(.mono, design)
                     .foregroundStyle(design.ink.color)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 12)
-                // Two sessions can both offer /compact and mean different
-                // things by it, and one of them can come from a plugin
-                // somebody installed. Which is which is not something the app
-                // can work out for you after you have picked the wrong one.
-                if !command.origin.isEmpty {
-                    Text(command.origin)
-                        .designFont(.detail, design)
-                        .foregroundStyle(design.inkFaint.color)
-                        .lineLimit(1)
-                }
+                Spacer(minLength: 6)
             }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 42)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

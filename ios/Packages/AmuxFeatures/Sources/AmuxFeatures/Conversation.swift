@@ -255,12 +255,14 @@ public struct Conversation: View {
         ZStack {
             Ground()
             transcript
-            // The two surfaces that are not about the message being written:
-            // what the agent can be done to, and doing the one of those that
-            // cannot be undone. They sit over the whole screen rather than in
-            // the foot, because neither replaces the composer — the overflow
-            // hangs from the control that opened it, and a deletion is a
-            // question about the conversation as a whole.
+            // A conversation overlay pushes the page back edge to edge. The
+            // chrome and bottom controls are safe-area insets on this stack,
+            // so they remain in front of the scrim as floating surfaces.
+            if dimsPage {
+                Scrim { showing = nil }
+            }
+            // The overflow hangs from the control that opened it. Bottom
+            // cards live with the composer in the safe-area inset below.
             if showing == .overflow {
                 OverflowMenu(address: address, muted: muted) { choice in
                     switch choice {
@@ -275,33 +277,14 @@ public struct Conversation: View {
                 }
                 .padding(.horizontal, design.metrics.gutter)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .padding(.top, 108)
-            }
-            if showing == .rename {
-                RenameCard(
-                    current: subject.name,
-                    cancel: { showing = nil },
-                    confirm: { name in
-                        showing = nil
-                        actions(.renamed(name))
-                    })
-                    .padding(.horizontal, 12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 10)
-            }
-            if showing == .deleteAgent {
-                DeleteAgentCard(
-                    name: subject.name,
-                    cancel: { showing = nil },
-                    confirm: {
-                        showing = nil
-                        actions(.deleteAgent)
-                    })
-                    .padding(.horizontal, 12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .padding(.bottom, 10)
+                // The outer safe-area inset has already reserved the floating
+                // chrome, so this is the reference's eight-point attachment
+                // below the controls rather than a duplicated chrome height.
+                .padding(.top, 8)
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) { chrome }
+        .safeAreaInset(edge: .bottom, spacing: 0) { foot }
         // A name put on a container is handed down to everything under it the
         // system does not already treat as its own, so without this the pill,
         // the chip and every row answer to "conversation" — for VoiceOver and
@@ -349,15 +332,12 @@ public struct Conversation: View {
         // The platform's effect, not a hand-drawn plate. Masking a glass layer
         // to make it fade stops it sampling what is behind it, so it renders
         // as a pane you can read straight through; this samples correctly.
+        // The system safe area belongs to the floating chrome, not to the
+        // feed behind it. Extending the scroll view to the physical top lets
+        // its soft edge effect fade continuously behind the status region
+        // instead of starting at the chrome's lower boundary.
+        .ignoresSafeArea(edges: .top)
         .scrollEdgeEffectStyle(.soft, for: .top)
-        // Anything open over the conversation takes the transcript back and
-        // gives a press anywhere on it somewhere to land. It goes on the feed
-        // rather than on the whole screen on purpose: the pill and the
-        // composer stay where they were and stay bright, because what has
-        // opened is *from* them and they are still what you are working in.
-        .overlay { if showing != nil { Scrim { showing = nil } } }
-        .safeAreaInset(edge: .top, spacing: 0) { chrome }
-        .safeAreaInset(edge: .bottom, spacing: 0) { foot }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
     }
 
@@ -418,8 +398,22 @@ public struct Conversation: View {
             // writing to something you are deleting.
             // Being asked for a name is the same: one field at a time, and a
             // composer under the card would be a second one.
-            if showing == .deleteAgent || showing == .rename {
-                EmptyView()
+            if showing == .deleteAgent {
+                DeleteAgentCard(
+                    name: subject.name,
+                    cancel: { showing = nil },
+                    confirm: {
+                        showing = nil
+                        actions(.deleteAgent)
+                    })
+            } else if showing == .rename {
+                RenameCard(
+                    current: subject.name,
+                    cancel: { showing = nil },
+                    confirm: { name in
+                        showing = nil
+                        actions(.renamed(name))
+                    })
             // An unanswered ask outranks everything else down here. Whatever
             // else is true — a machine that has gone quiet, a layer catching
             // up — the agent has stopped and is waiting on one answer, and
@@ -492,6 +486,17 @@ public struct Conversation: View {
         [subject.name, subject.host?.lowercased()].compactMap { $0 }.joined(separator: "/")
     }
 
+    /// Surfaces opened over the conversation push its page back. Growing the
+    /// facts strip does not: it is part of the conversation's bottom content.
+    private var dimsPage: Bool {
+        switch showing {
+        case .overflow, .plus, .settings, .permissions, .deleteAgent, .rename:
+            true
+        case .tasks, nil:
+            false
+        }
+    }
+
     /// The facts about the running turn, where there are any.
     ///
     /// Absent when nothing is true, which is most conversations: a band along
@@ -562,10 +567,13 @@ public struct Conversation: View {
                 showing = showing == .overflow ? nil : .overflow
                 actions(.overflow)
             } label: {
-                GlassIcon(glyph: "ellipsis")
+                GlassIcon(glyph: "ellipsis", size: 36)
+                    .thumbTarget(x: 4, y: 4)
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("More")
             .identified("conversation.overflow", label: "More")
+            .reclaimingThumbTarget(x: 4, y: 4)
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.top, 6)

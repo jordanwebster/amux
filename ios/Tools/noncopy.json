@@ -122,7 +122,9 @@
     ],
     "ios/Amux/Debug/DoorScreens.swift": [
       {"literal": "\"spec-suite\"", "context": "? Scenario.focus : Scenario.agentId(\"spec-suite\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
-      {"literal": "\"refactor-auth\"", "context": "DiffPage(model: review, subject: \"refactor-auth\") { _ in }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"refactor-auth\"", "context": "DiffPage(model: review, subject: \"refactor-auth\") { _ in }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"refactor-auth\"", "context": "model: review, subject: \"refactor-auth\", wheel: \"spec/pairing.rs\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"spec/pairing.rs\"", "context": "model: review, subject: \"refactor-auth\", wheel: \"spec/pairing.rs\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "ios/Amux/Debug/DoorServer.swift": [
       {"literal": "\"the driving door could not open: \\(error)\"", "context": "fatalError(\"the driving door could not open: \\(error)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -1187,7 +1189,7 @@
       {"literal": "\"subscription\"", "context": "id: \"subscription\"", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"signOut\"", "context": "action(\"Sign Out\", id: \"signOut\") { actions(.signOut(entry.id)) }", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"delete\"", "context": "action(\"Delete Account\", id: \"delete\", danger: true) {", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"identity\"", "context": "row(\"Identity\", value: identity, id: \"identity\") { actions(.identity) }", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"identity\"", "context": "row(\"Identity\", value: identity, id: \"identity\", mono: true) { actions(.identity) }", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"you.appearance\"", "context": ".identified(\"you.appearance\", value: appearance?.rawValue ?? \"system\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"you.appearance.\\(wanted?.rawValue ?? \"system\")\"", "context": "\"you.appearance.\\(wanted?.rawValue ?? \"system\")\", label: title,", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"envelope\"", "context": "glyphRow(\"Contact Support\", glyph: \"envelope\", id: \"support\") {", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1196,7 +1198,8 @@
       {"literal": "\"report\"", "context": "glyphRow(\"Report a Problem\", glyph: \"ladybug\", id: \"report\") {", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 2},
       {"literal": "\"you.\\(id)\"", "context": ".identified(\"you.\\(id)\", label: title, value: value)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"you.\\(id)\"", "context": ".identified(\"you.\\(id)\", label: title)", "reason": "Stable element/record identifier, not a displayed label.", "count": 2}
+      {"literal": "\"you.\\(id)\"", "context": ".identified(\"you.\\(id)\", label: title)", "reason": "Stable element/record identifier, not a displayed label.", "count": 2},
+      {"literal": "\"notifications\"", "context": "row(\"Notifications\", value: \"When an agent needs you\", id: \"notifications\") {", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift": [
       {"literal": "\"home\"", "context": ".identified(\"home\", value: accounts.gate.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1227,7 +1230,9 @@
       {"literal": "\"unsubscribed\"", "context": "case .unsubscribed: \"unsubscribed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\" \u00b7 \"", "context": "Text([stateWord, detail].compactMap { $0 }.joined(separator: \" \u00b7 \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"\u00b7\"", "context": "Text(\"\u00b7\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\" \u00b7 \"", "context": "return [host, row.workingDirectory].compactMap { $0 }.joined(separator: \" \u00b7 \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
+      {"literal": "\" \u00b7 \"", "context": "return [host, row.workingDirectory].compactMap { $0 }.joined(separator: \" \u00b7 \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"line.3.horizontal.decrease\"", "context": "GlassIcon(glyph: \"line.3.horizontal.decrease\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
+      {"literal": "\"home.filter\"", "context": ".identified(\"home.filter\", label: \"Filter Agents\", value: filter.rawValue)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift": [
       {"literal": "\"conversation.ask\"", "context": ".identified(\"conversation.ask\", value: panel.id)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1258,10 +1263,7 @@
       {"literal": "\"ask.decision.\\(choice.id)\"", "context": "\"ask.decision.\\(choice.id)\", label: choice.label,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"questionmark\"", "context": "AskHead(glyph: \"questionmark\", title: \"Waiting on an answer\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"ask.unreadable\"", "context": ".identified(\"ask.unreadable\", value: label)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"checkmark\"", "context": "AskHead(glyph: \"checkmark\", title: \"Finished\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
-      {"literal": "\"ask.review\"", "context": ".identified(\"ask.review\", label: \"Review Changes\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"ask.later\"", "context": ".identified(\"ask.later\", label: \"Later\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"conversation.finished\"", "context": ".identified(\"conversation.finished\", value: arithmetic)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+      {"literal": "\"text.bubble\"", "context": "Image(systemName: \"text.bubble\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Attach.swift": [
       {"literal": "\"photo\"", "context": "tile(.photo, glyph: \"photo\", label: \"Photo\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1296,29 +1298,19 @@
       {"literal": "\"composer.interrupt\"", "context": ".identified(\"composer.interrupt\", label: \"Stop\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"arrow.up\"", "context": "RoundButton(glyph: \"arrow.up\", filled: written)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"composer.send\"", "context": "\"composer.send\", label: state.busy ? \"Queue\" : \"Send\", enabled: written)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"composer.working\"", "context": "\"composer.working\", label: activity.name, value: activity.elapsed ?? \"\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"composer.working\"", "context": "\"composer.working\", label: activity.name, value: activity.elapsed ?? \"\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"stop.fill\"", "context": ".font(.system(size: glyph == \"stop.fill\" ? 12 : 14, weight: .bold))", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift": [
       {"literal": "\" \u00b7 \"", "context": "return [host, \"unreachable\"].compactMap { $0 }.joined(separator: \" \u00b7 \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\" \u00b7 \"", "context": "return [host, directory].compactMap { $0 }.joined(separator: \" \u00b7 \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"conversation\"", "context": ".identified(\"conversation\", value: model.agent.description)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"/\"", "context": "[subject.name, subject.host?.lowercased()].compactMap { $0 }.joined(separator: \"/\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"ellipsis\"", "context": "GlassIcon(glyph: \"ellipsis\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
+      {"literal": "\"ellipsis\"", "context": "GlassIcon(glyph: \"ellipsis\", size: 36)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"conversation.overflow\"", "context": ".identified(\"conversation.overflow\", label: \"More\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"conversation.children\"", "context": ".identified(\"conversation.children\", value: \"\\(roster.count)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"\\(roster.count)\"", "context": ".identified(\"conversation.children\", value: \"\\(roster.count)\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"conversation.child.unopenable\"", "context": ".identified(\"conversation.child.unopenable\", value: sentence)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"sidebar.left\"", "context": "Image(systemName: \"sidebar.left\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"conversation.drawer\"", "context": ".identified(\"conversation.drawer\", label: \"Agents\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"conversation.subject\"", "context": "\"conversation.subject\", label: \"\\(subject.name), \\(subject.place)\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"info.circle.fill\"", "context": "Image(systemName: explaining ? \"info.circle.fill\" : \"info.circle\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"info.circle\"", "context": "Image(systemName: explaining ? \"info.circle.fill\" : \"info.circle\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"conversation.child.\\(child.id)\"", "context": ".identified(\"conversation.child.\\(child.id)\", label: spoken, value: value)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"hand.raised.fill\"", "context": "case .permission: \"hand.raised.fill\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"questionmark\"", "context": "case .question: \"questionmark\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"checkmark\"", "context": "case .finished: \"checkmark\"", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"circle\"", "context": "case nil: \"circle\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\", \"", "context": ".compactMap { $0 }.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"+\\(changes.insertions)\"", "context": "private var insertions: String { \"+\\(changes.insertions)\" }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"\\u{2212}\\(changes.deletions)\"", "context": "private var deletions: String { \"\\u{2212}\\(changes.deletions)\" }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"conversation.changes\"", "context": "\"conversation.changes\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
@@ -1374,7 +1366,11 @@
       {"literal": "\"/\"", "context": "path.split(separator: \"/\").last.map(String.init) ?? path", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"\\(count)\"", "context": "Text(\"\\(count)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"review.count\"", "context": ".identified(\"review.count\", label: \"\\(count) comments\", value: \"\\(count)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"\\(count)\"", "context": ".identified(\"review.count\", label: \"\\(count) comments\", value: \"\\(count)\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1}
+      {"literal": "\"\\(count)\"", "context": ".identified(\"review.count\", label: \"\\(count) comments\", value: \"\\(count)\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
+      {"literal": "\"/\"", "context": "let name = file.path.split(separator: \"/\").last.map(String.init) ?? file.path", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"/\"", "context": "($0.path.split(separator: \"/\").last.map(String.init) ?? $0.path) == name", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"/\"", "context": "let parts = file.path.split(separator: \"/\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"/\"", "context": "return parts.count >= 2 ? parts.suffix(2).joined(separator: \"/\") : name", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift": [
       {"literal": "\"drawer\"", "context": ".identified(\"drawer\", value: current?.description ?? \"none\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1500,7 +1496,9 @@
       {"literal": "\"xmark\"", "context": "\"xmark\", kept: false, \"The conversation is deleted on every device.\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"agent-delete.cancel\"", "context": ".identified(\"agent-delete.cancel\", label: \"Cancel\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"agent-delete.confirm\"", "context": ".identified(\"agent-delete.confirm\", label: \"Delete\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"agent-delete\"", "context": ".identified(\"agent-delete\", value: name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+      {"literal": "\"agent-delete\"", "context": ".identified(\"agent-delete\", value: name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"bell\"", "context": "row(.mute, glyph: muted ? \"bell\" : \"bell.slash\", label: muted ? \"Unmute\" : \"Mute\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
+      {"literal": "\"bell.slash\"", "context": "row(.mute, glyph: muted ? \"bell\" : \"bell.slash\", label: muted ? \"Unmute\" : \"Mute\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift": [
       {"literal": "\"pin\"", "context": ".identified(\"pin\", value: model.digits)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1604,10 +1602,10 @@
       {"literal": "\"failed\"", "context": "case .failed: \"failed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"chevron.left\"", "context": "Image(systemName: \"chevron.left\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"sign-in.back\"", "context": ".identified(\"sign-in.back\", label: \"Back to \\(back)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"sign-in.title\"", "context": ".identified(\"sign-in.title\", value: \"Sign In\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"sign-in.title\"", "context": ".identified(\"sign-in.title\", value: \"Sign in\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"sign-in.explanation\"", "context": ".identified(\"sign-in.explanation\", value: explanation)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"arrow.up.forward.square\"", "context": "fact(\"arrow.up.forward.square\", \"Sign in on \\(model.host)\", id: \"where\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"where\"", "context": "fact(\"arrow.up.forward.square\", \"Sign in on \\(model.host)\", id: \"where\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"arrow.up.forward.square\"", "context": "fact(\"arrow.up.forward.square\", \"Signed in on \\(model.host)\", id: \"where\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
+      {"literal": "\"where\"", "context": "fact(\"arrow.up.forward.square\", \"Signed in on \\(model.host)\", id: \"where\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"creditcard\"", "context": "fact(\"creditcard\", \"Web subscriptions carry over\", id: \"billing\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"billing\"", "context": "fact(\"creditcard\", \"Web subscriptions carry over\", id: \"billing\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"sign-in.\\(id)\"", "context": ".identified(\"sign-in.\\(id)\", value: text)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1631,7 +1629,6 @@
       {"literal": "\"chevron.forward\"", "context": "case .command: \"chevron.forward\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift": [
-      {"literal": "\"turn-end\"", "context": "kind: \"turn-end\", glyph: nil,", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"compaction\"", "context": "kind: \"compaction\", glyph: \"arrow.down.right.and.arrow.up.left\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"arrow.down.right.and.arrow.up.left\"", "context": "kind: \"compaction\", glyph: \"arrow.down.right.and.arrow.up.left\",", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"compacted \u00b7 \\(tokens(before)) \\u{2192} \\(tokens(after))\"", "context": "return \"compacted \u00b7 \\(tokens(before)) \\u{2192} \\(tokens(after))\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1643,7 +1640,6 @@
       {"literal": "\"failed\"", "context": "kind: \"failed\", verb: \"Failed\", subject: label, mono: true, meta: nil,", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"interrupted\"", "context": "kind: \"interrupted\", verb: \"Interrupted\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"provider-error\"", "context": "kind: \"provider-error\", verb: \"Provider error\", subject: nil, mono: false,", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"thinking\"", "context": "kind: \"thinking\", verb: seconds.map { \"Thought for \\($0)s\" } ?? \"Thought\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"subagent\"", "context": "kind: \"subagent\", verb: state == nil ? \"Started\" : (state ?? \"\").capitalized,", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"exit\"", "context": "ActivityRow(kind: \"exit\", verb: text, subject: nil, mono: false, meta: nil)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"unreadable\"", "context": "kind: \"unreadable\", verb: \"Unreadable\", subject: label, mono: true, meta: nil,", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1686,7 +1682,11 @@
       {"literal": "\"transcript.\\(kind)\"", "context": "\"transcript.\\(kind)\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"questionmark.square.dashed\"", "context": "Image(systemName: \"questionmark.square.dashed\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"transcript.unsupported\"", "context": ".identified(\"transcript.unsupported\", label: \"This build cannot read \\(layer)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"transcript.page\"", "context": "nonisolated static let space = \"transcript.page\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
+      {"literal": "\"transcript.page\"", "context": "nonisolated static let space = \"transcript.page\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"denied\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"failed\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"interrupted\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"provider-error\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxShell/Sources/AmuxShell/ConversationRecording.swift": [
       {"literal": "\"drawer\"", "context": "public static let drawer = \"drawer\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
@@ -1708,9 +1708,6 @@
       {"literal": "\"page.\\(route.name)\"", "context": ".identified(\"page.\\(route.name)\", value: route.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxShell/Sources/AmuxShell/Route.swift": [
-      {"literal": "\"square.stack\"", "context": "case .agents: \"square.stack\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"desktopcomputer\"", "context": "case .hosts: \"desktopcomputer\"", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"person\"", "context": "case .you: \"person\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"conversation\"", "context": "case .conversation: \"conversation\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"changes\"", "context": "case .changes: \"changes\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"new-agent\"", "context": "case .newAgent: \"new-agent\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1719,14 +1716,20 @@
       {"literal": "\"host\"", "context": "case .host: \"host\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"sign-in\"", "context": "case .signIn: \"sign-in\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"paywall\"", "context": "case .paywall: \"paywall\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"profiles\"", "context": "case .accounts: \"profiles\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"profiles\"", "context": "case .accounts: \"profiles\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"square.stack.3d.up\"", "context": "case .agents: \"square.stack.3d.up\"", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
+      {"literal": "\"externaldrive.connected.to.line.below\"", "context": "case .hosts: \"externaldrive.connected.to.line.below\"", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
+      {"literal": "\"person.crop.circle\"", "context": "case .you: \"person.crop.circle\"", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxShell/Sources/AmuxShell/Shell.swift": [
       {"literal": "\"shell\"", "context": ".identified(\"shell\", value: router.tab.rawValue)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"img\"", "context": "name: \"photo.\\(type.preferredFilenameExtension ?? \"img\")\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"photo.\\(type.preferredFilenameExtension ?? \"img\")\"", "context": "name: \"photo.\\(type.preferredFilenameExtension ?? \"img\")\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"application/octet-stream\"", "context": "mime: type.preferredMIMEType ?? \"application/octet-stream\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"application/octet-stream\"", "context": "mime: type?.preferredMIMEType ?? \"application/octet-stream\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"application/octet-stream\"", "context": "mime: type?.preferredMIMEType ?? \"application/octet-stream\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"tab.\\(item.rawValue)\"", "context": "\"tab.\\(item.rawValue)\", label: item.title,", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"not selected\"", "context": "value: isSelected ? \"selected\" : \"not selected\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
+      {"literal": "\"notifications.muted.\\(agent.description)\"", "context": "_muted = AppStorage(wrappedValue: false, \"notifications.muted.\\(agent.description)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Door.swift": [
       {"literal": "\"open\"", "context": "case \"open\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -2690,31 +2693,31 @@
       {"literal": "\"seq\"", "context": "\"id\": .int(id), \"seq\": .int(seq), \"kind\": kind,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"kind\"", "context": "\"id\": .int(id), \"seq\": .int(seq), \"kind\": kind,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"\"\"\n            Make the pairing failures indistinguishable in the client too \u2014 the error copy \\\n            currently leaks which host rejected us.\n            \"\"\"", "context": "prompt(0, seq: 1, text: \"\"\"\n            Make the pairing failures indistinguishable in the client too \u2014 the error copy \\\n            currently leaks which host rejected us.\n            \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"crates/amux-ui/src/pairing.rs\"", "context": "read(2, seq: 3, path: \"crates/amux-ui/src/pairing.rs\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
-      {"literal": "\"\\\"INVALID_PIN\\\"\"", "context": "search(3, seq: 4, query: \"\\\"INVALID_PIN\\\"\", grouped: true),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"crates/amux-ui/src/pairing.rs\"", "context": "read(2, seq: 3, path: \"crates/amux-ui/src/pairing.rs\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 3},
+      {"literal": "\"\\\"INVALID_PIN\\\"\"", "context": "search(3, seq: 4, query: \"\\\"INVALID_PIN\\\"\", grouped: true),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 3},
       {"literal": "\"\"\"\n            Found it. The client maps three distinct gRPC statuses onto three different \\\n            strings, so the copy leaks exactly what the protocol deliberately hides. I've \\\n            collapsed them onto one message and deleted the branch.\n            \"\"\"", "context": "message(4, seq: 5, text: \"\"\"\n            Found it. The client maps three distinct gRPC statuses onto three different \\\n            strings, so the copy leaks exactly what the protocol deliberately hides. I've \\\n            collapsed them onto one message and deleted the branch.\n            \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"crates/amux-ui/src/pairing.rs\"", "context": "edit(5, seq: 6, path: \"crates/amux-ui/src/pairing.rs\", added: 9, removed: 14, lines: [", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"  let message = match status {\"", "context": "\"  let message = match status {\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
-      {"literal": "\"-   Code::NotFound => \\\"no such host\\\",\"", "context": "\"-   Code::NotFound => \\\"no such host\\\",\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"  let message = match status {\"", "context": "\"  let message = match status {\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 3},
+      {"literal": "\"-   Code::NotFound => \\\"no such host\\\",\"", "context": "\"-   Code::NotFound => \\\"no such host\\\",\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 3},
       {"literal": "\"-   Code::Unauthenticated => \\\"wrong PIN\\\",\"", "context": "\"-   Code::Unauthenticated => \\\"wrong PIN\\\",\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"-   Code::DeadlineExceeded => \\\"expired\\\",\"", "context": "\"-   Code::DeadlineExceeded => \\\"expired\\\",\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"+   // One string for every failure: the\"", "context": "\"+   // One string for every failure: the\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"+   // protocol refuses to tell them apart,\"", "context": "\"+   // protocol refuses to tell them apart,\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"+   // and so must we.\"", "context": "\"+   // and so must we.\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"+   _ => \\\"Pairing failed. Check the code\\\",\"", "context": "\"+   _ => \\\"Pairing failed. Check the code\\\",\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
-      {"literal": "\"  };\"", "context": "\"  };\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"+   _ => \\\"Pairing failed. Check the code\\\",\"", "context": "\"+   _ => \\\"Pairing failed. Check the code\\\",\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 3},
+      {"literal": "\"  };\"", "context": "\"  };\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 3},
       {"literal": "\"cargo check -p amux-ui\"", "context": "ran(6, seq: 7, command: \"cargo check -p amux-ui\", output: \"Finished in 4.2s\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"Finished in 4.2s\"", "context": "ran(6, seq: 7, command: \"cargo check -p amux-ui\", output: \"Finished in 4.2s\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"\"\"\n            `cargo check` is clean. Before I call it done I'd like to run the spec suite \u2014 \\\n            three tests assert on the old error strings and I want to see them fail loudly \\\n            rather than guess.\n            \"\"\"", "context": "message(7, seq: 8, text: \"\"\"\n            `cargo check` is clean. Before I call it done I'd like to run the spec suite \u2014 \\\n            three tests assert on the old error strings and I want to see them fail loudly \\\n            rather than guess.\n            \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"\"\"\n                `cargo check` is clean; the whole of its output is here.\n\n                \\(token.element)\n\n                Before I call it done I'd like to run the spec suite \u2014 three tests assert on \\\n                the old error strings and I want to see them fail loudly rather than guess.\n                \"\"\"", "context": "message(7, seq: 8, text: \"\"\"\n                `cargo check` is clean; the whole of its output is here.\n\n                \\(token.element)\n\n                Before I call it done I'd like to run the spec suite \u2014 three tests assert on \\\n                the old error strings and I want to see them fail loudly rather than guess.\n                \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"Good. Now run the whole suite and tell me what breaks.\"", "context": "prompt(8, seq: 9, text: \"Good. Now run the whole suite and tell me what breaks.\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"cargo test --workspace\"", "context": "running(9, seq: 10, command: \"cargo test --workspace\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"\"\"\n                Check with relay-cleanup before you collapse the errors \\u{2014} it's in \\\n                that file too.\n                \"\"\"", "context": "prompt(1, seq: 2, text: \"\"\"\n                Check with relay-cleanup before you collapse the errors \\u{2014} it's in \\\n                that file too.\n                \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"relay-cleanup/mini\"", "context": "toAgent(4, seq: 5, to: \"relay-cleanup/mini\", text: \"\"\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"\"\"\n                I am about to collapse the three pairing error arms onto one string in \\\n                amux-ui. Are you holding anything that matches on the error name?\n                \"\"\"", "context": "toAgent(4, seq: 5, to: \"relay-cleanup/mini\", text: \"\"\"\n                I am about to collapse the three pairing error arms onto one string in \\\n                amux-ui. Are you holding anything that matches on the error name?\n                \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"crates/amux-ui/tests/spec/pairing.rs\"", "context": "read(5, seq: 6, path: \"crates/amux-ui/tests/spec/pairing.rs\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"relay-cleanup/mini\"", "context": "fromAgent(7, seq: 8, from: \"relay-cleanup/mini\", text: \"\"\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"\"\"\n                Nothing here matches on it \\u{2014} I only construct them. Go ahead, and I \\\n                will rebase onto whatever you land.\n                \"\"\"", "context": "fromAgent(7, seq: 8, from: \"relay-cleanup/mini\", text: \"\"\"\n                Nothing here matches on it \\u{2014} I only construct them. Go ahead, and I \\\n                will rebase onto whatever you land.\n                \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"\"\"\n                Check with relay-cleanup before you collapse the errors \\u{2014} it's in \\\n                that file too.\n                \"\"\"", "context": "prompt(1, seq: 2, text: \"\"\"\n                Check with relay-cleanup before you collapse the errors \\u{2014} it's in \\\n                that file too.\n                \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"relay-cleanup/mini\"", "context": "toAgent(4, seq: 5, to: \"relay-cleanup/mini\", text: \"\"\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"\"\"\n                I am about to collapse the three pairing error arms onto one string in \\\n                amux-ui. Are you holding anything that matches on the error name?\n                \"\"\"", "context": "toAgent(4, seq: 5, to: \"relay-cleanup/mini\", text: \"\"\"\n                I am about to collapse the three pairing error arms onto one string in \\\n                amux-ui. Are you holding anything that matches on the error name?\n                \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"crates/amux-ui/tests/spec/pairing.rs\"", "context": "read(5, seq: 6, path: \"crates/amux-ui/tests/spec/pairing.rs\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"relay-cleanup/mini\"", "context": "fromAgent(7, seq: 8, from: \"relay-cleanup/mini\", text: \"\"\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
+      {"literal": "\"\"\"\n                Nothing here matches on it \\u{2014} I only construct them. Go ahead, and I \\\n                will rebase onto whatever you land.\n                \"\"\"", "context": "fromAgent(7, seq: 8, from: \"relay-cleanup/mini\", text: \"\"\"\n                Nothing here matches on it \\u{2014} I only construct them. Go ahead, and I \\\n                will rebase onto whatever you land.\n                \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"crates/amux-ui/src/pairing.rs\"", "context": "edit(8, seq: 9, path: \"crates/amux-ui/src/pairing.rs\", added: 9, removed: 14, lines: [", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"cargo check -p amux-ui\"", "context": "ran(9, seq: 10, command: \"cargo check -p amux-ui\", output: \"\"\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"\"\"\n                Checking amux-ui v0.1.0\n                Finished in 3.8s\n                warning: unused import\n                \"\"\"", "context": "ran(9, seq: 10, command: \"cargo check -p amux-ui\", output: \"\"\"\n                Checking amux-ui v0.1.0\n                Finished in 3.8s\n                warning: unused import\n                \"\"\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2847,7 +2850,10 @@
       {"literal": "\"crates/amux-ui/src/pairing.rs\"", "context": "[\"crates/amux-ui/src/pairing.rs\", \"b71c3f0a\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"b71c3f0a\"", "context": "[\"crates/amux-ui/src/pairing.rs\", \"b71c3f0a\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"crates/amux-ui/src/pairing/errors.rs\"", "context": "[\"crates/amux-ui/src/pairing/errors.rs\", \"2d8e46b1\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"2d8e46b1\"", "context": "[\"crates/amux-ui/src/pairing/errors.rs\", \"2d8e46b1\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+      {"literal": "\"2d8e46b1\"", "context": "[\"crates/amux-ui/src/pairing/errors.rs\", \"2d8e46b1\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"crates/amux-ui/src/pairing.rs\"", "context": "edit(9, seq: 10, path: \"crates/amux-ui/src/pairing.rs\", added: 9, removed: 14, lines: [", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"relay-cleanup/mini\"", "context": "fromAgent(12, seq: 13, from: \"relay-cleanup/mini\", text: \"\"\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"relay-cleanup/mini\"", "context": "exited(13, seq: 14, agent: \"relay-cleanup/mini\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ]
   }
 }

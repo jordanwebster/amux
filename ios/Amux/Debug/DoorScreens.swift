@@ -147,7 +147,13 @@ enum DoorScreens {
         // page: what is selected and what is in the draft are the review's own
         // state, so the sheet is a state of this screen rather than a screen
         // beside it.
-        case .diff, .comment:
+        case .diff:
+            if let review = host.stores.review(Scenario.focus) {
+                DiffPage(
+                    model: review, subject: "refactor-auth", wheel: "spec/pairing.rs"
+                ) { _ in }
+            }
+        case .comment:
             if let review = host.stores.review(Scenario.focus) {
                 DiffPage(model: review, subject: "refactor-auth") { _ in }
             }

@@ -29,12 +29,12 @@ struct DeleteAccountCard: View {
     let actions: @MainActor (DeleteAccountAction) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Delete this account?")
                 .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 9) {
                 consequence("checkmark", kept: true,
                             "Your agents and files stay on your hosts.")
                 consequence("xmark", kept: false, "This phone can no longer reach them.")
@@ -46,9 +46,11 @@ struct DeleteAccountCard: View {
             confirmation
             buttons
         }
-        .padding(20)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            wash: 0.9)
         .accessibilityElement(children: .contain)
         .identified("delete", value: state)
     }
@@ -152,9 +154,9 @@ struct DeleteAccountCard: View {
     /// the confirmation for you.
     private var confirmation: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Type \(entry.account.email) to confirm")
-                .designFont(.monoSmall, design)
-                .foregroundStyle(design.inkMuted.color)
+            Text("Type your email to confirm")
+                .designFont(.caption, design)
+                .foregroundStyle(design.inkFaint.color)
                 .fixedSize(horizontal: false, vertical: true)
             TextField(entry.account.email, text: Bindable(model).typed)
                 .textFieldStyle(.plain)
@@ -183,16 +185,7 @@ struct DeleteAccountCard: View {
     private var buttons: some View {
         HStack(spacing: 10) {
             Button { actions(.cancel) } label: {
-                Text("Cancel")
-                    .designFont(.bodyEmphasis, design)
-                    .foregroundStyle(design.ink.color)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background {
-                        RoundedRectangle(
-                            cornerRadius: design.metrics.controlRadius, style: .continuous)
-                            .fill(design.sunken.color)
-                    }
+                ActionLabel("Cancel", kind: .quiet, fill: true)
             }
             .buttonStyle(.plain)
             .identified("delete.cancel", label: "Cancel")
@@ -201,7 +194,8 @@ struct DeleteAccountCard: View {
                     .designFont(.bodyEmphasis, design)
                     .foregroundStyle(Color.white)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 52)
+                    .padding(.vertical, 11)
+                    .frame(minHeight: 44)
                     .background {
                         RoundedRectangle(
                             cornerRadius: design.metrics.controlRadius, style: .continuous)
@@ -216,14 +210,15 @@ struct DeleteAccountCard: View {
             .opacity(confirmed ? 1 : 0.4)
             .identified("delete.confirm", label: "Delete", enabled: confirmed)
         }
+        .padding(.top, 2)
     }
 
     private func consequence(_ glyph: String, kept: Bool, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
             Image(systemName: glyph)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(kept ? design.inkMuted.color : design.removed.color)
-                .frame(width: 16)
+                .frame(width: 14)
             Text(text)
                 .designFont(.detail, design)
                 .foregroundStyle(design.inkMuted.color)

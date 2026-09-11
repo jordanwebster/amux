@@ -76,13 +76,13 @@ public struct NewAgent: View {
     /// carries the bar, the foot and the chooser.
     private var middle: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 22) {
                 machines
                 directory
                 layers
             }
             .padding(.horizontal, design.metrics.gutter)
-            .padding(.top, 10)
+            .padding(.top, 8)
             // Clear of the tray at the foot, which floats over this.
             .padding(.bottom, 130)
         }
@@ -129,7 +129,7 @@ public struct NewAgent: View {
     /// not exist; showing it disabled says the true thing, which is that it is
     /// away and nothing can be started on it until it is back.
     private var machines: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             SectionHead(title: "Host")
             if hosts.hosts.isEmpty {
                 Explain("Pair a host before starting an agent.")
@@ -144,7 +144,7 @@ public struct NewAgent: View {
 
     private func machine(_ host: HostEntry) -> some View {
         Button { actions(.point(host.id)) } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 11) {
                 Radio(chosen: model.machine == host.id)
                     .opacity(host.online ? 1 : 0.4)
                 VStack(alignment: .leading, spacing: 2) {
@@ -159,7 +159,7 @@ public struct NewAgent: View {
                 Spacer(minLength: 6)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 11)
+            .padding(.vertical, 12)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -198,15 +198,14 @@ public struct NewAgent: View {
     /// always somewhere this machine has been used before, and the whole
     /// enumeration is one tap away for the times it is not.
     private var directory: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             SectionHead(title: "Directory")
-            Surface(prominence: .subject) {
+            Surface {
                 Button { model.browsing = true } label: {
-                    HStack(spacing: 11) {
+                    HStack(spacing: 10) {
                         Image(systemName: "folder")
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(design.inkMuted.color)
-                            .frame(width: 22)
                         Text(model.directory.isEmpty ? "Choose a directory" : model.directory)
                             .designFont(.mono, design)
                             .foregroundStyle(
@@ -219,7 +218,7 @@ public struct NewAgent: View {
                             .foregroundStyle(design.inkFaint.color)
                     }
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+                    .padding(.vertical, 14)
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
@@ -250,15 +249,19 @@ public struct NewAgent: View {
 
     private var recent: some View {
         ScrollView(.horizontal) {
-            HStack(spacing: 8) {
+            HStack(spacing: 7) {
                 ForEach(chips) { project in
                     Button { model.choose(directory: project.path) } label: {
                         Text(project.name)
                             .designFont(.monoSmall, design)
                             .foregroundStyle(design.ink.color)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 9)
-                            .background(Capsule().fill(design.sunken.color))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background {
+                                Capsule().fill(design.sunken.color)
+                                    .overlay(Capsule().strokeBorder(
+                                        design.hairline.color, lineWidth: 1))
+                            }
                             .thumbTarget(y: 6)
                     }
                     .buttonStyle(.plain)
@@ -277,9 +280,9 @@ public struct NewAgent: View {
     // MARK: - What runs there
 
     private var layers: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
             SectionHead(title: "Agent")
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 ForEach(NewAgentStore.Provider.allCases) { provider in
                     LayerCard(
                         provider: provider, chosen: model.provider == provider,
@@ -363,9 +366,9 @@ private struct LayerCard: View {
     @State private var picking = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             Image(systemName: glyph)
-                .font(.system(size: 19, weight: .medium))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(chosen ? design.accent.color : design.inkMuted.color)
             Text(provider.title)
                 .designFont(.bodyEmphasis, design)
@@ -381,7 +384,7 @@ private struct LayerCard: View {
                 shape.fill(design.raised.color)
                 shape.strokeBorder(
                     chosen ? design.accent.color : design.hairline.color,
-                    lineWidth: chosen ? 2 : design.metrics.hairline)
+                    lineWidth: chosen ? 1.5 : 1)
             }
         }
         .contentShape(RoundedRectangle(
@@ -413,7 +416,7 @@ private struct LayerCard: View {
                 HStack(spacing: 4) {
                     line
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(design.inkFaint.color)
                 }
                 .thumbTarget(y: 15)

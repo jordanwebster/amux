@@ -73,9 +73,12 @@ public struct AgentsDrawer: View {
             Spacer()
             Button { actions(.newAgent) } label: {
                 GlassIcon(glyph: "plus", prominent: true, size: 30)
+                    .thumbTarget(x: 7, y: 7)
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("New Agent")
             .identified("drawer.newAgent", label: "New Agent")
+            .reclaimingThumbTarget(x: 7, y: 7)
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.bottom, 12)

@@ -46,7 +46,9 @@ struct FactsStrip: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: open ? 24 : 21, style: .continuous),
+            wash: open ? 0.88 : Glass.wash)
         .accessibilityElement(children: .contain)
         .identified("facts", value: open ? "open" : "folded")
     }

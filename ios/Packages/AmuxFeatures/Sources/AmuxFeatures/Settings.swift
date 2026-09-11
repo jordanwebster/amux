@@ -83,8 +83,8 @@ struct SettingsCard: View {
                 EffortAxis(
                     levels: provider.efforts, current: provider.effort,
                     pick: { change(.effort($0)) })
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 18)
+                    .padding(.horizontal, 15)
+                    .padding(.bottom, 14)
             }
             if let refusal {
                 Text(refusal)
@@ -97,7 +97,9 @@ struct SettingsCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            wash: 0.88)
         .accessibilityElement(children: .contain)
         .identified("settings", value: ModelChip.label(provider) ?? "")
     }
@@ -106,9 +108,9 @@ struct SettingsCard: View {
         Text(text.uppercased())
             .designFont(.sectionTitle, design)
             .foregroundStyle(design.inkFaint.color)
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 15)
+            .padding(.top, 13)
+            .padding(.bottom, 8)
     }
 
     private func modelRow(_ model: ModelInfo) -> some View {
@@ -121,8 +123,8 @@ struct SettingsCard: View {
                     .foregroundStyle(design.ink.color)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 52)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -150,9 +152,9 @@ struct Radio: View {
             Circle()
                 .strokeBorder(
                     chosen ? mark : design.hairline.color, lineWidth: chosen ? 2 : 1)
-                .frame(width: 16, height: 16)
+                .frame(width: 15, height: 15)
             if chosen {
-                Circle().fill(mark).frame(width: 8, height: 8)
+                Circle().fill(mark).frame(width: 7, height: 7)
             }
         }
         .frame(width: 18, height: 18)
@@ -277,7 +279,9 @@ struct PermissionsCard: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            wash: 0.88)
         .accessibilityElement(children: .contain)
         .identified("permissions", value: permission.current ?? "")
     }

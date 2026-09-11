@@ -166,7 +166,9 @@ public struct AccountSwitcher: View {
             .buttonStyle(.plain)
             .identified("accounts.add", label: "Add Account")
         }
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
+        .frosted(
+            RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous),
+            wash: 0.88)
         .accessibilityElement(children: .contain)
         .identified("accounts.switcher", value: accounts.selected?.value ?? "none")
     }

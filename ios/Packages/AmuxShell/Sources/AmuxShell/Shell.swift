@@ -228,8 +228,10 @@ private struct ShellTabBar: View {
                     VStack(spacing: 3) {
                         Image(systemName: item.symbol)
                             .font(.system(size: 17, weight: isSelected ? .semibold : .regular))
+                            .frame(height: 20)
                         Text(item.title)
                             .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                            .frame(height: 13)
                     }
                     .foregroundStyle(isSelected ? design.ink.color : design.inkFaint.color)
                     .frame(maxWidth: .infinity)

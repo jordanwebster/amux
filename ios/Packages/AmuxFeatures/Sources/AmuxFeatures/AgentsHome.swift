@@ -109,22 +109,32 @@ public struct AgentsHome: View {
             // header leaves it out and the screen keeps the one action that
             // does lead somewhere.
             if accounts.gate == .ready {
-                Menu {
-                    Picker("Show", selection: $filter) {
-                        ForEach(HomeFilter.allCases) { filter in
-                            Text(filter.title).tag(filter)
+                HStack(spacing: 8) {
+                    if !switcherOpen {
+                        Menu {
+                            Picker("Show", selection: $filter) {
+                                ForEach(HomeFilter.allCases) { filter in
+                                    Text(filter.title).tag(filter)
+                                }
+                            }
+                        } label: {
+                            GlassIcon(glyph: "line.3.horizontal.decrease")
+                                .thumbTarget(x: 5, y: 5)
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Filter Agents")
+                        .identified("home.filter", label: "Filter Agents", value: filter.rawValue)
+                        .reclaimingThumbTarget(x: 5, y: 5)
                     }
-                } label: {
-                    GlassIcon(glyph: "line.3.horizontal.decrease")
+                    Button { actions(.newAgent) } label: {
+                        GlassIcon(glyph: "plus", prominent: true)
+                            .thumbTarget(x: 5, y: 5)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("New Agent")
+                    .identified("home.newAgent", label: "New Agent")
+                    .reclaimingThumbTarget(x: 5, y: 5)
                 }
-                .accessibilityLabel("Filter Agents")
-                .identified("home.filter", label: "Filter Agents", value: filter.rawValue)
-                Button { actions(.newAgent) } label: {
-                    GlassIcon(glyph: "plus", prominent: true)
-                }
-                .accessibilityLabel("New Agent")
-                .identified("home.newAgent", label: "New Agent")
             }
         }
         .padding(.horizontal, design.metrics.gutter)

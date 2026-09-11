@@ -82,9 +82,12 @@ public struct HostsTab: View {
             // things the screen lists, and what this screen lists is machines.
             Button { actions(.pair(model.discovered.count == 1 ? model.discovered[0].id : nil)) } label: {
                 GlassIcon(glyph: "plus", prominent: true)
+                    .thumbTarget(x: 5, y: 5)
             }
+            .buttonStyle(.plain)
             .accessibilityLabel("Pair a Host")
             .identified("hosts.pair", label: "Pair a Host")
+            .reclaimingThumbTarget(x: 5, y: 5)
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.vertical, 10)
