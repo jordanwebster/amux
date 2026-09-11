@@ -324,11 +324,11 @@ there are only two states to recover from and each has one command.
 
 **The numbers are written but nothing is committed.** Anything that fails in
 the archive, the export or the validation leaves this. `wt run release` says
-so and stops; `git status` shows three modified tracked files and no new
+so and stops; `git status` shows two modified tracked files and no new
 commit, and `git tag --list 'ios-v*'` is unchanged. Undo the numbers:
 
 ```
-git checkout ios/project.yml ios/Amux/Info.plist ios/Amux.xcodeproj/project.pbxproj
+git checkout ios/project.yml ios/Amux.xcodeproj/project.pbxproj
 ```
 
 Then fix what failed and run the release again. Nothing was spent: the build

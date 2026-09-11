@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **Release recovery names only the files that change.** The guide
+now describes two modified files and restores only the project specification
+and generated Xcode project. Info.plist reads both numbers from build settings
+and is unchanged by versioning. Checked the guide against write_numbers and
+the committed Info.plist substitutions.
+
 2026-09-11 — **Keep iOS failure captures within the CI job budget.** The iOS
 job now allows 270 minutes around its 210-minute verification timeout. The
 extra hour covers setup, the 15-minute reference pairing step and artifact
