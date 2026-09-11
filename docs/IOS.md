@@ -202,10 +202,14 @@ cloud answers again.
 
 For a captured debug report, begin with [the debugging guide](DEBUGGING.md).
 Run `timeout 1800 wt run ios-replay -- /path/to/report` to rebuild stores from
-`msgs.jsonl` and the native `trace.jsonl`, then capture and compare the restored
-screen. No recorded effect executes and no host is contacted. Client recordings
-do not reconstruct arbitrary provider history; host replay requires provider
-records or an explicitly tested conversion.
+`msgs.jsonl` and the native `trace.jsonl`, then capture the restored screen and
+compare it with the report's own `frame.png`. The trace carries the place in the
+app, the instant the screen read its ages from and the account it was drawn for,
+so the replay pins its clock and restores that account before folding a message,
+and draws the result in the real shell rather than on one screen alone. No
+recorded effect executes and no host is contacted. Client recordings do not
+reconstruct arbitrary provider history; host replay requires provider records or
+an explicitly tested conversion.
 
 Reporting freezes the app's own frame after screenshot notification, or from
 Report a Problem under Help. The system preview remains system-owned. The
