@@ -8856,3 +8856,13 @@ release configurations use the pinned compiler and corrected `amux` package.
 The product/library Clippy recipe passes with warnings denied. Full test
 compilation currently identifies remaining monolith-era test imports, recorded
 in the build-foundations progress log for the integration verification.
+
+2026-09-11 — **Disposable build outputs have an admission boundary.** A small
+repository helper inventories allocated bytes, defaults aggregate admission to
+60 GiB, refuses reservations that do not fit, and lists only inactive output
+sets carrying this repository's ownership marker as prune candidates. The
+coordination lock is nonblocking, and apply mode revalidates ownership before
+removing a coherent target directory. Existing unmarked and active worktree
+outputs are reported but never deleted. A controlled proof refused 2 bytes
+under a 1-byte budget, admitted 1 MiB under 1 GiB, and listed the resulting
+4 KiB owned output only in dry-run mode.
