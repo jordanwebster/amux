@@ -121,7 +121,18 @@ infrastructure role now opens UDP 9001 beside the TCP fallback, renders both
 listeners into the service configuration, and requires both sockets to be
 bound before a deploy is healthy. The matching change is committed locally on
 the infra repository's `relay-udp` branch and has not been pushed or applied;
-the operator applies it after this connection work lands.
+the operator applies it after this connection work lands and a relay release
+both accepts `udp_port` and binds UDP 9001. Applying it sooner would render
+`udp_port` into the relay configuration and trigger Ansible's restart handler,
+but every released relay rejects that unknown key. The unit would crash-loop
+with no automatic rollback: an Ansible apply does not invoke `deploy.sh`, and
+that script's new `ss -uln` health gate cannot pass until the QUIC listener
+ships.
+
+The deployed connect endpoint at amux.sh now mints a tunnel-capable token for
+every signed-in account and carries its real tier. The production relay
+predates this branch's tier gate, however, so free-account relay tunnels remain
+ungated until a relay built from this work is released.
 
 2026-09-11 — **Prove account-free pairing over real multicast.** The end-to-end
 runner now opts individual daemons into platform mDNS while keeping unrelated
