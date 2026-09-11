@@ -112,6 +112,21 @@ impl UdpProxy {
         socket
     }
 
+    /// Returns a loopback address that forwards to an ordinary UDP endpoint
+    /// while applying this test network's per-daemon controls.
+    pub(crate) fn route_to(&self, destination: SocketAddr) -> SocketAddr {
+        let public_socket = Arc::new(bind_tokio_udp());
+        let public_addr = public_socket.local_addr().unwrap();
+        spawn_external_forwarder(
+            public_socket,
+            destination,
+            self.inner.peers.clone(),
+            self.inner.controls.clone(),
+            self.inner.cancel.clone(),
+        );
+        public_addr
+    }
+
     pub(crate) fn latency(&self, millis: u64) {
         self.inner
             .controls
@@ -221,6 +236,117 @@ fn spawn_public_forwarder(
             }
         }
     });
+}
+
+fn spawn_external_forwarder(
+    public_socket: Arc<UdpSocket>,
+    destination: SocketAddr,
+    peers: Arc<RwLock<PeerTable>>,
+    controls: Arc<Controls>,
+    cancel: CancellationToken,
+) {
+    tokio::spawn(async move {
+        let flows = Arc::new(tokio::sync::Mutex::new(
+            HashMap::<SocketAddr, Arc<UdpSocket>>::new(),
+        ));
+        let mut buffer = vec![0_u8; 65_535];
+        loop {
+            let received = tokio::select! {
+                received = public_socket.recv_from(&mut buffer) => received,
+                _ = cancel.cancelled() => return,
+            };
+            let (len, source_addr) = match received {
+                Ok(received) => received,
+                Err(error) => {
+                    tracing::warn!(%error, "UDP proxy external receive failed");
+                    continue;
+                }
+            };
+            let source = peers
+                .read()
+                .unwrap()
+                .by_private_addr
+                .get(&source_addr)
+                .copied();
+            if controls.should_drop(source, None) {
+                continue;
+            }
+            let flow = get_or_create_external_flow(
+                source,
+                source_addr,
+                public_socket.clone(),
+                flows.clone(),
+                peers.clone(),
+                controls.clone(),
+                cancel.clone(),
+            )
+            .await;
+            let payload = buffer[..len].to_vec();
+            let latency = controls.latency();
+            if latency.is_zero() {
+                let _ = flow.send_to(&payload, destination).await;
+            } else {
+                tokio::spawn(async move {
+                    tokio::time::sleep(latency).await;
+                    let _ = flow.send_to(&payload, destination).await;
+                });
+            }
+        }
+    });
+}
+
+async fn get_or_create_external_flow(
+    source: Option<HostId>,
+    source_addr: SocketAddr,
+    public_socket: Arc<UdpSocket>,
+    flows: Arc<tokio::sync::Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>>,
+    peers: Arc<RwLock<PeerTable>>,
+    controls: Arc<Controls>,
+    cancel: CancellationToken,
+) -> Arc<UdpSocket> {
+    let mut flows_guard = flows.lock().await;
+    if let Some(flow) = flows_guard.get(&source_addr) {
+        return flow.clone();
+    }
+    let flow = Arc::new(bind_tokio_udp());
+    flows_guard.insert(source_addr, flow.clone());
+    drop(flows_guard);
+
+    let response_socket = flow.clone();
+    tokio::spawn(async move {
+        let mut buffer = vec![0_u8; 65_535];
+        loop {
+            let received = tokio::select! {
+                received = response_socket.recv_from(&mut buffer) => received,
+                _ = cancel.cancelled() => return,
+            };
+            let (len, _) = match received {
+                Ok(received) => received,
+                Err(error) => {
+                    tracing::warn!(%error, "UDP proxy external flow receive failed");
+                    continue;
+                }
+            };
+            if controls.should_drop(None, source) {
+                continue;
+            }
+            let destination = source
+                .and_then(|id| peers.read().unwrap().by_id.get(&id).map(|p| p.private_addr))
+                .unwrap_or(source_addr);
+            let payload = buffer[..len].to_vec();
+            let latency = controls.latency();
+            if latency.is_zero() {
+                let _ = public_socket.send_to(&payload, destination).await;
+            } else {
+                let public_socket = public_socket.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(latency).await;
+                    let _ = public_socket.send_to(&payload, destination).await;
+                });
+            }
+        }
+    });
+    flow
 }
 
 #[allow(clippy::too_many_arguments)]

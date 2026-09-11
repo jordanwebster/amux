@@ -9126,3 +9126,11 @@ black-holed addresses hold connection attempts for more than a few seconds.
 address gets a bounded QUIC dial before pairing tries the next candidate. A
 host remains promptly pairable through a working address when an earlier VPN
 or virtual-interface address silently drops every handshake packet.
+
+2026-09-11 — **Cloud links prefer QUIC and remember UDP-blocked networks.** A
+profile starts QUIC immediately and staggers its relay TCP fallback by 300 ms,
+keeping the first successful carrier with QUIC winning simultaneous results.
+A TCP-only win suppresses QUIC attempts to that relay host for one hour in the
+running profile, while expiry or a process restart probes QUIC again. Relay
+status now names both the entitlement tier and carrier, and the same profile
+QUIC endpoint preserves relayed sessions when its network address changes.

@@ -19,8 +19,8 @@ use crate::identity;
 use crate::protocol::wire;
 use crate::server::ShutdownReason;
 use crate::services::{
-    CloudLink, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices, establish_cloud_link,
-    start_user_services,
+    CloudLink, CloudTransport, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices,
+    UDP_BLOCKED_MEMORY, UdpBlockedMemory, establish_cloud_link, start_user_services,
 };
 use crate::transport::InProcessConnection;
 use crate::update::UpdateReporter;
@@ -114,6 +114,13 @@ pub(crate) enum CloudFixtureAuth {
         auth: crate::routing::LinkConnectorAuth,
         client_config: quinn::ClientConfig,
         server_name: String,
+        quic_addr: SocketAddr,
+    },
+    RefreshingAuto {
+        auth: crate::routing::LinkConnectorAuth,
+        client_config: quinn::ClientConfig,
+        server_name: String,
+        quic_addr: SocketAddr,
     },
 }
 
@@ -121,6 +128,7 @@ pub(crate) enum CloudFixtureAuth {
 #[derive(Default)]
 pub(crate) struct RuntimeFixtures {
     pub(crate) listener: Option<std::net::UdpSocket>,
+    pub(crate) quic_client_socket: Option<std::net::UdpSocket>,
     pub(crate) advertised_addr: Option<SocketAddr>,
     pub(crate) quic_transport: Option<Arc<quinn::TransportConfig>>,
     pub(crate) discovery: Option<Arc<dyn Discovery>>,
@@ -128,6 +136,7 @@ pub(crate) struct RuntimeFixtures {
     pub(crate) cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
     pub(crate) cloud_transport: Option<std::net::SocketAddr>,
     pub(crate) cloud_refresh_interval: Option<Duration>,
+    pub(crate) udp_blocked_memory: Option<Duration>,
 }
 
 pub(crate) struct ProfileRuntimeOptions {
@@ -255,6 +264,7 @@ pub(crate) struct ProfileRuntime {
     dial: DirectDialPolicy,
     background_tasks: Vec<JoinHandle<()>>,
     cloud_link: Mutex<Option<CloudLink>>,
+    udp_blocked: Arc<UdpBlockedMemory>,
     status: RuntimeStatus,
     #[cfg(unix)]
     unix_accept_task: Option<JoinHandle<()>>,
@@ -424,7 +434,22 @@ async fn build(
     let found_hosts = Arc::new(FoundHosts::default());
     let direct_endpoint = match &lan_endpoint {
         Some(endpoint) => endpoint.clone(),
-        None => quinn::Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?,
+        None => {
+            #[cfg(testnet)]
+            if let Some(socket) = options.fixtures.quic_client_socket.take() {
+                socket.set_nonblocking(true)?;
+                quinn::Endpoint::new(
+                    quinn::EndpointConfig::default(),
+                    None,
+                    socket,
+                    Arc::new(quinn::TokioRuntime),
+                )?
+            } else {
+                quinn::Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?
+            }
+            #[cfg(not(testnet))]
+            quinn::Endpoint::client(SocketAddr::from(([0, 0, 0, 0], 0)))?
+        }
     };
     services.configure_reachability(
         options.paths.data_dir.clone(),
@@ -496,6 +521,16 @@ async fn build(
     #[cfg(unix)]
     let (socket_ownership, link_socket_ownership) = bound.disarm_socket_cleanup();
 
+    let udp_blocked = Arc::new(UdpBlockedMemory::new(
+        #[cfg(testnet)]
+        options
+            .fixtures
+            .udp_blocked_memory
+            .unwrap_or(UDP_BLOCKED_MEMORY),
+        #[cfg(not(testnet))]
+        UDP_BLOCKED_MEMORY,
+    ));
+
     Ok(ProfileRuntime {
         host_id,
         paths: options.paths,
@@ -526,6 +561,7 @@ async fn build(
         dial: options.dial,
         background_tasks,
         cloud_link: Mutex::new(None),
+        udp_blocked,
         status,
         #[cfg(unix)]
         unix_accept_task,
@@ -644,18 +680,45 @@ impl ProfileRuntime {
                     *address,
                     auth.clone(),
                     self.status.clone(),
-                    None,
+                    self.services.quic_endpoint(),
+                    crate::services::TestCloudTransport::Tcp,
+                    self.udp_blocked.clone(),
                 ),
                 CloudFixtureAuth::RefreshingQuic {
                     auth,
                     client_config,
                     server_name,
+                    quic_addr,
                 } => CloudLink::testnet_with_auth(
                     ctx,
                     *address,
                     auth.clone(),
                     self.status.clone(),
-                    Some((client_config.clone(), server_name.clone())),
+                    self.services.quic_endpoint(),
+                    crate::services::TestCloudTransport::Quic {
+                        client_config: client_config.clone(),
+                        server_name: server_name.clone(),
+                        quic_addr: *quic_addr,
+                    },
+                    self.udp_blocked.clone(),
+                ),
+                CloudFixtureAuth::RefreshingAuto {
+                    auth,
+                    client_config,
+                    server_name,
+                    quic_addr,
+                } => CloudLink::testnet_with_auth(
+                    ctx,
+                    *address,
+                    auth.clone(),
+                    self.status.clone(),
+                    self.services.quic_endpoint(),
+                    crate::services::TestCloudTransport::Auto {
+                        client_config: client_config.clone(),
+                        server_name: server_name.clone(),
+                        quic_addr: *quic_addr,
+                    },
+                    self.udp_blocked.clone(),
                 ),
             });
             return Ok(());
@@ -685,10 +748,14 @@ impl ProfileRuntime {
             self.state.clone(),
             self.services.link_connector_ctx_with_signed_in(signed_in),
             self.status.clone(),
-            #[cfg(test_fixtures)]
-            self.test_cloud_transport,
-            #[cfg(test_fixtures)]
-            self.test_cloud_refresh_interval,
+            CloudTransport::new(
+                self.services.quic_endpoint(),
+                self.udp_blocked.clone(),
+                #[cfg(test_fixtures)]
+                self.test_cloud_transport,
+                #[cfg(test_fixtures)]
+                self.test_cloud_refresh_interval,
+            ),
         ));
         Ok(())
     }

@@ -3,9 +3,12 @@
 //! Manages the outbound TLS connection from a local server to a cloud relay.
 //! Handles exponential backoff on retriable errors and stops on auth failures.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use futures_util::FutureExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc, oneshot, watch};
@@ -37,6 +40,73 @@ const ABSOLUTE_JITTER_MAX: Duration = Duration::from_secs(5);
 const BACKOFF_RESET_AFTER_ESTABLISHED: Duration = Duration::from_secs(30);
 const CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const FREE_TIER_REFRESH_INTERVAL: Duration = Duration::from_secs(180);
+pub(crate) const UDP_BLOCKED_MEMORY: Duration = Duration::from_secs(3600);
+pub(crate) const TCP_FALLBACK_DELAY: Duration = Duration::from_millis(300);
+
+pub(crate) struct UdpBlockedMemory {
+    duration: Duration,
+    blocked_at: Mutex<HashMap<String, tokio::time::Instant>>,
+}
+
+pub(crate) struct CloudTransport {
+    quic_endpoint: quinn::Endpoint,
+    udp_blocked: Arc<UdpBlockedMemory>,
+    #[cfg(test_fixtures)]
+    tcp_override: Option<std::net::SocketAddr>,
+    #[cfg(test_fixtures)]
+    free_refresh_interval: Option<Duration>,
+}
+
+impl CloudTransport {
+    pub(crate) fn new(
+        quic_endpoint: quinn::Endpoint,
+        udp_blocked: Arc<UdpBlockedMemory>,
+        #[cfg(test_fixtures)] tcp_override: Option<std::net::SocketAddr>,
+        #[cfg(test_fixtures)] free_refresh_interval: Option<Duration>,
+    ) -> Self {
+        Self {
+            quic_endpoint,
+            udp_blocked,
+            #[cfg(test_fixtures)]
+            tcp_override,
+            #[cfg(test_fixtures)]
+            free_refresh_interval,
+        }
+    }
+}
+
+impl UdpBlockedMemory {
+    pub(crate) fn new(duration: Duration) -> Self {
+        Self {
+            duration,
+            blocked_at: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn holds(&self, host: &str) -> bool {
+        let mut blocked_at = self
+            .blocked_at
+            .lock()
+            .expect("UDP-blocked memory lock poisoned");
+        let now = tokio::time::Instant::now();
+        blocked_at.retain(|_, recorded| now.duration_since(*recorded) < self.duration);
+        blocked_at.contains_key(host)
+    }
+
+    fn record(&self, host: &str) {
+        self.blocked_at
+            .lock()
+            .expect("UDP-blocked memory lock poisoned")
+            .insert(host.to_string(), tokio::time::Instant::now());
+    }
+
+    fn clear(&self, host: &str) {
+        self.blocked_at
+            .lock()
+            .expect("UDP-blocked memory lock poisoned")
+            .remove(host);
+    }
+}
 
 #[allow(dead_code)]
 pub(crate) struct CloudLink {
@@ -52,10 +122,23 @@ struct CloudConnectionContext {
     connector: LinkConnectorCtx,
     status: RuntimeStatus,
     refresh_rx: LinkConnectorRefreshReceiver,
-    #[cfg(test_fixtures)]
-    transport: Option<std::net::SocketAddr>,
-    #[cfg(test_fixtures)]
-    free_refresh_interval: Option<Duration>,
+    transport: CloudTransport,
+}
+
+#[cfg(testnet)]
+#[derive(Clone)]
+pub(crate) enum TestCloudTransport {
+    Auto {
+        client_config: quinn::ClientConfig,
+        server_name: String,
+        quic_addr: std::net::SocketAddr,
+    },
+    Quic {
+        client_config: quinn::ClientConfig,
+        server_name: String,
+        quic_addr: std::net::SocketAddr,
+    },
+    Tcp,
 }
 
 impl CloudLink {
@@ -85,10 +168,15 @@ impl CloudLink {
             .await
             .map_err(|_| CloudError::Connection("cloud link closed during refresh".into()))?
             .map_err(cloud_error_from_refresh_status)?;
-        self.status.report(Observed::Connected {
-            tier,
-            carrier: RelayCarrier::Tcp,
-        });
+        let carrier = match &*self.status.subscribe().borrow() {
+            Observed::Connected { carrier, .. } => *carrier,
+            _ => {
+                return Err(CloudError::Connection(
+                    "cloud link refreshed before it was connected".into(),
+                ));
+            }
+        };
+        self.status.report(Observed::Connected { tier, carrier });
         Ok(tier)
     }
 
@@ -98,64 +186,34 @@ impl CloudLink {
         address: std::net::SocketAddr,
         auth: LinkConnectorAuth,
         status: RuntimeStatus,
-        quic: Option<(quinn::ClientConfig, String)>,
+        quic_endpoint: quinn::Endpoint,
+        transport: TestCloudTransport,
+        udp_blocked: Arc<UdpBlockedMemory>,
     ) -> Self {
         let (stop_tx, stop_rx) = watch::channel(false);
         let tier = auth.tier();
         let refresh_status = status.clone();
-        let auth = auth.with_refresh_observer(move |tier| {
-            refresh_status.report(Observed::Connected {
-                tier,
-                carrier: RelayCarrier::Tcp,
-            });
-        });
         let (refresh_tx, refresh_rx) = mpsc::channel(1);
         status.report(Observed::Connecting);
         let task_status = status.clone();
         let task_stop_tx = stop_tx.clone();
         let task = tokio::spawn(async move {
-            let carrier: Arc<dyn LinkCarrier> = match quic {
-                Some((client_config, server_name)) => {
-                    let endpoint = match quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()) {
-                        Ok(endpoint) => endpoint,
-                        Err(error) => {
-                            tracing::warn!(%error, "test cloud QUIC endpoint failed");
-                            task_status.report(Observed::Retrying);
-                            return;
-                        }
-                    };
-                    match QuicCarrier::connect_relay_with_config(
-                        &endpoint,
-                        address,
-                        &server_name,
-                        client_config,
-                    )
-                    .await
-                    {
-                        Ok(carrier) => Arc::new(carrier),
-                        Err(error) => {
-                            tracing::warn!(%error, "test cloud QUIC connection failed");
-                            task_status.report(Observed::Retrying);
-                            return;
-                        }
-                    }
-                }
-                None => {
-                    let stream = match TcpStream::connect(address).await {
-                        Ok(stream) => stream,
-                        Err(error) => {
-                            tracing::warn!(%error, "test cloud TCP connection failed");
-                            task_status.report(Observed::Retrying);
-                            return;
-                        }
-                    };
-                    Arc::new(MuxCarrier::new(
-                        stream,
-                        MuxRole::Connector,
-                        CarrierKind::RelayTcp,
-                    ))
+            let selected =
+                dial_test_cloud_carrier(quic_endpoint, address, transport, udp_blocked).await;
+            let (carrier, relay_carrier) = match selected {
+                Ok(selected) => selected,
+                Err(error) => {
+                    tracing::warn!(%error, "test cloud connection failed");
+                    task_status.report(Observed::Retrying);
+                    return;
                 }
             };
+            let auth = auth.with_refresh_observer(move |tier| {
+                refresh_status.report(Observed::Connected {
+                    tier,
+                    carrier: relay_carrier,
+                });
+            });
             let (connector_task, established_rx) =
                 spawn_connector_with_auth_establishment_and_shutdown(
                     connector_ctx,
@@ -171,6 +229,7 @@ impl CloudLink {
                 stop_rx,
                 task_status,
                 tier,
+                relay_carrier,
             )
             .await;
         });
@@ -191,6 +250,7 @@ async fn observe_fixture_connector(
     stop_rx: watch::Receiver<bool>,
     status: RuntimeStatus,
     tier: crate::Tier,
+    carrier: RelayCarrier,
 ) {
     let connected_at = std::time::Instant::now();
     let established = await_cloud_establishment(
@@ -199,6 +259,7 @@ async fn observe_fixture_connector(
         connected_at,
         CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT,
         tier,
+        carrier,
     )
     .await;
     let stopped = *stop_rx.borrow();
@@ -237,8 +298,7 @@ pub(crate) fn establish_cloud_link(
     state: Arc<RwLock<ServerState>>,
     connector_ctx: LinkConnectorCtx,
     status: RuntimeStatus,
-    #[cfg(test_fixtures)] transport: Option<std::net::SocketAddr>,
-    #[cfg(test_fixtures)] free_refresh_interval: Option<Duration>,
+    transport: CloudTransport,
 ) -> CloudLink {
     let (stop_tx, mut stop_rx) = watch::channel(false);
     let (refresh_tx, refresh_rx) = mpsc::channel(1);
@@ -251,10 +311,7 @@ pub(crate) fn establish_cloud_link(
         connector: connector_ctx,
         status: task_status,
         refresh_rx,
-        #[cfg(test_fixtures)]
         transport,
-        #[cfg(test_fixtures)]
-        free_refresh_interval,
     };
     let task = tokio::spawn(
         async move {
@@ -383,6 +440,145 @@ async fn prepare_cloud_connection(
     Ok((credentials, details))
 }
 
+type CloudDialResult = Result<Arc<dyn LinkCarrier>, String>;
+
+async fn select_cloud_carrier<Q, T>(
+    host: &str,
+    udp_blocked: Arc<UdpBlockedMemory>,
+    fallback_delay: Duration,
+    quic: Q,
+    tcp: T,
+) -> Result<(Arc<dyn LinkCarrier>, RelayCarrier), String>
+where
+    Q: Future<Output = CloudDialResult>,
+    T: Future<Output = CloudDialResult>,
+{
+    if udp_blocked.holds(host) {
+        tracing::debug!(host, "remembered UDP-blocked cloud host; dialing TCP only");
+        return tcp.await.map(|carrier| (carrier, RelayCarrier::Tcp));
+    }
+
+    let selected = race_cloud_carriers(fallback_delay, quic, tcp).await?;
+    match selected.1 {
+        RelayCarrier::Quic => udp_blocked.clear(host),
+        RelayCarrier::Tcp => udp_blocked.record(host),
+    }
+    Ok(selected)
+}
+
+async fn race_cloud_carriers<Q, T>(
+    fallback_delay: Duration,
+    quic: Q,
+    tcp: T,
+) -> Result<(Arc<dyn LinkCarrier>, RelayCarrier), String>
+where
+    Q: Future<Output = CloudDialResult>,
+    T: Future<Output = CloudDialResult>,
+{
+    tokio::pin!(quic);
+    let tcp = async move {
+        tokio::time::sleep(fallback_delay).await;
+        tcp.await
+    };
+    tokio::pin!(tcp);
+
+    enum First {
+        Quic(CloudDialResult),
+        Tcp(CloudDialResult),
+    }
+    let first = tokio::select! {
+        biased;
+        result = &mut quic => First::Quic(result),
+        result = &mut tcp => First::Tcp(result),
+    };
+
+    match first {
+        First::Quic(Ok(carrier)) => {
+            close_ready_loser(tcp.as_mut().now_or_never());
+            Ok((carrier, RelayCarrier::Quic))
+        }
+        First::Tcp(Ok(carrier)) => {
+            close_ready_loser(quic.as_mut().now_or_never());
+            Ok((carrier, RelayCarrier::Tcp))
+        }
+        First::Quic(Err(quic_error)) => {
+            tracing::debug!(error = %quic_error, "cloud QUIC dial failed; waiting for TCP");
+            match tcp.await {
+                Ok(carrier) => Ok((carrier, RelayCarrier::Tcp)),
+                Err(tcp_error) => Err(format!(
+                    "QUIC failed: {quic_error}; TCP failed: {tcp_error}"
+                )),
+            }
+        }
+        First::Tcp(Err(tcp_error)) => {
+            tracing::debug!(error = %tcp_error, "cloud TCP dial failed; waiting for QUIC");
+            match quic.await {
+                Ok(carrier) => Ok((carrier, RelayCarrier::Quic)),
+                Err(quic_error) => Err(format!(
+                    "QUIC failed: {quic_error}; TCP failed: {tcp_error}"
+                )),
+            }
+        }
+    }
+}
+
+fn close_ready_loser(result: Option<CloudDialResult>) {
+    if let Some(Ok(carrier)) = result {
+        carrier.close(crate::protocol::wire::pb::LinkCloseReason::UserShutdown);
+    }
+}
+
+#[cfg(testnet)]
+async fn dial_test_cloud_carrier(
+    quic_endpoint: quinn::Endpoint,
+    tcp_addr: std::net::SocketAddr,
+    transport: TestCloudTransport,
+    udp_blocked: Arc<UdpBlockedMemory>,
+) -> Result<(Arc<dyn LinkCarrier>, RelayCarrier), String> {
+    let tcp = async move {
+        TcpStream::connect(tcp_addr)
+            .await
+            .map(|stream| {
+                Arc::new(MuxCarrier::new(
+                    stream,
+                    MuxRole::Connector,
+                    CarrierKind::RelayTcp,
+                )) as Arc<dyn LinkCarrier>
+            })
+            .map_err(|error| error.to_string())
+    };
+
+    let (client_config, server_name, quic_addr, automatic) = match transport {
+        TestCloudTransport::Auto {
+            client_config,
+            server_name,
+            quic_addr,
+        } => (client_config, server_name, quic_addr, true),
+        TestCloudTransport::Quic {
+            client_config,
+            server_name,
+            quic_addr,
+        } => (client_config, server_name, quic_addr, false),
+        TestCloudTransport::Tcp => return tcp.await.map(|carrier| (carrier, RelayCarrier::Tcp)),
+    };
+    let quic = async move {
+        QuicCarrier::connect_relay_with_config(
+            &quic_endpoint,
+            quic_addr,
+            &server_name,
+            client_config,
+        )
+        .await
+        .map(|carrier| Arc::new(carrier) as Arc<dyn LinkCarrier>)
+        .map_err(|error| error.to_string())
+    };
+    if automatic {
+        select_cloud_carrier("testnet-relay", udp_blocked, TCP_FALLBACK_DELAY, quic, tcp).await
+    } else {
+        quic.await.map(|carrier| (carrier, RelayCarrier::Quic))
+    }
+}
+
 async fn run_cloud_connection_with_details(
     ctx: &CloudConnectionContext,
     credentials: Arc<dyn CredentialProvider>,
@@ -390,19 +586,53 @@ async fn run_cloud_connection_with_details(
     stop_rx: watch::Receiver<bool>,
 ) -> std::result::Result<(), CloudConnectionError> {
     tracing::info!(host = %details.host, port = details.port, "connecting to cloud routing");
+    let quic_endpoint = ctx.transport.quic_endpoint.clone();
+    let quic_host = details.host.clone();
+    let quic_port = details.port;
+    let quic = async move {
+        QuicCarrier::connect_relay(&quic_endpoint, &quic_host, quic_port)
+            .await
+            .map(|carrier| Arc::new(carrier) as Arc<dyn LinkCarrier>)
+            .map_err(|error| error.to_string())
+    };
+    let tcp_host = details.host.clone();
+    let tcp_port = details.port;
     #[cfg(test_fixtures)]
-    let stream = cloud_routing_stream(&details.host, details.port, ctx.transport).await;
-    #[cfg(not(test_fixtures))]
-    let stream = cloud_routing_stream(&details.host, details.port).await;
-    let stream = stream.map_err(|error| CloudConnectionError::Retriable {
+    let fixture_transport = ctx.transport.tcp_override;
+    let tcp = async move {
+        #[cfg(test_fixtures)]
+        let stream = cloud_routing_stream(&tcp_host, tcp_port, fixture_transport).await;
+        #[cfg(not(test_fixtures))]
+        let stream = cloud_routing_stream(&tcp_host, tcp_port).await;
+        stream
+            .map(|stream| {
+                Arc::new(MuxCarrier::new(
+                    stream,
+                    MuxRole::Connector,
+                    CarrierKind::RelayTcp,
+                )) as Arc<dyn LinkCarrier>
+            })
+            .map_err(|error| error.to_string())
+    };
+    let (carrier, relay_carrier) = tokio::time::timeout(
+        CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT,
+        select_cloud_carrier(
+            &details.host,
+            ctx.transport.udp_blocked.clone(),
+            TCP_FALLBACK_DELAY,
+            quic,
+            tcp,
+        ),
+    )
+    .await
+    .map_err(|_| CloudConnectionError::Retriable {
+        msg: "cloud routing transport dial timed out".to_string(),
+        reset_backoff: false,
+    })?
+    .map_err(|error| CloudConnectionError::Retriable {
         msg: format!("Connection failed: {error}"),
         reset_backoff: false,
     })?;
-    let carrier = Arc::new(MuxCarrier::new(
-        stream,
-        MuxRole::Connector,
-        CarrierKind::RelayTcp,
-    ));
     let connected_at = std::time::Instant::now();
     let tier = details.tier;
     let refresh_status = ctx.status.clone();
@@ -421,7 +651,8 @@ async fn run_cloud_connection_with_details(
         Some({
             #[cfg(test_fixtures)]
             {
-                ctx.free_refresh_interval
+                ctx.transport
+                    .free_refresh_interval
                     .unwrap_or(FREE_TIER_REFRESH_INTERVAL)
             }
             #[cfg(not(test_fixtures))]
@@ -433,7 +664,7 @@ async fn run_cloud_connection_with_details(
     .with_refresh_observer(move |tier| {
         refresh_status.report(Observed::Connected {
             tier,
-            carrier: RelayCarrier::Tcp,
+            carrier: relay_carrier,
         });
     });
     let (connector_task, established_rx) = spawn_connector_with_auth_establishment_and_shutdown(
@@ -450,6 +681,7 @@ async fn run_cloud_connection_with_details(
         connected_at,
         CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT,
         tier,
+        relay_carrier,
     )
     .await?;
 
@@ -507,13 +739,11 @@ async fn await_cloud_establishment(
     connected_at: std::time::Instant,
     timeout: Duration,
     tier: crate::Tier,
+    carrier: RelayCarrier,
 ) -> std::result::Result<(), CloudConnectionError> {
     match tokio::time::timeout(timeout, established_rx).await {
         Ok(Ok(Ok(_))) => {
-            observed.report(Observed::Connected {
-                tier,
-                carrier: RelayCarrier::Tcp,
-            });
+            observed.report(Observed::Connected { tier, carrier });
             Ok(())
         }
         Ok(Ok(Err(status))) => {
@@ -696,12 +926,14 @@ mod tests {
 
     use super::{
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, FREE_TIER_REFRESH_INTERVAL,
-        INITIAL_BACKOFF, MAX_BACKOFF, await_cloud_establishment, cloud_connection_error_from_fetch,
+        INITIAL_BACKOFF, MAX_BACKOFF, TCP_FALLBACK_DELAY, UDP_BLOCKED_MEMORY, UdpBlockedMemory,
+        await_cloud_establishment, cloud_connection_error_from_fetch,
         cloud_connection_error_from_status, establish_cloud_link, jittered_backoff_with_samples,
-        next_backoff, should_reset_backoff_after_connection, sleep_or_stop,
+        next_backoff, race_cloud_carriers, should_reset_backoff_after_connection, sleep_or_stop,
     };
     use crate::auth::{AccessToken, AuthError, CredentialProvider};
     use crate::config::Config;
+    use crate::link::{CarrierKind, LinkCarrier, MuxCarrier, MuxRole};
     use crate::profile::status::{Observed, RelayCarrier, RuntimeStatus};
     use crate::protocol::{ProtocolError, protocol_status};
     use crate::routing::{Capabilities, Host, LinkConnectorCtx, LinkRegistry, RoutingCore};
@@ -754,6 +986,45 @@ mod tests {
     #[test]
     fn free_tier_refresh_uses_the_product_cadence() {
         assert_eq!(FREE_TIER_REFRESH_INTERVAL, Duration::from_secs(180));
+        assert_eq!(TCP_FALLBACK_DELAY, Duration::from_millis(300));
+        assert_eq!(UDP_BLOCKED_MEMORY, Duration::from_secs(3600));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn udp_blocked_memory_expires_and_a_new_process_memory_starts_empty() {
+        let memory = UdpBlockedMemory::new(Duration::from_secs(10));
+        memory.record("relay.test");
+        assert!(memory.holds("relay.test"));
+
+        tokio::time::advance(Duration::from_secs(10)).await;
+        assert!(!memory.holds("relay.test"));
+        assert!(!UdpBlockedMemory::new(Duration::from_secs(10)).holds("relay.test"));
+    }
+
+    #[tokio::test]
+    async fn simultaneous_cloud_dials_prefer_quic() {
+        let (quic_io, _quic_peer) = tokio::io::duplex(64);
+        let quic: Arc<dyn LinkCarrier> = Arc::new(MuxCarrier::new(
+            quic_io,
+            MuxRole::Connector,
+            CarrierKind::RelayQuic,
+        ));
+        let (tcp_io, _tcp_peer) = tokio::io::duplex(64);
+        let tcp: Arc<dyn LinkCarrier> = Arc::new(MuxCarrier::new(
+            tcp_io,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ));
+        let (winner, carrier) = race_cloud_carriers(
+            Duration::ZERO,
+            std::future::ready(Ok(quic)),
+            std::future::ready(Ok(tcp)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(carrier, RelayCarrier::Quic);
+        assert_eq!(winner.kind(), CarrierKind::RelayQuic);
     }
 
     #[tokio::test]
@@ -844,6 +1115,7 @@ mod tests {
             std::time::Instant::now(),
             Duration::from_millis(10),
             crate::Tier::Pro,
+            RelayCarrier::Quic,
         )
         .await
         .unwrap_err();
@@ -932,10 +1204,14 @@ mod tests {
             state,
             connector_ctx,
             RuntimeStatus::new(None),
-            #[cfg(test_fixtures)]
-            None,
-            #[cfg(test_fixtures)]
-            None,
+            super::CloudTransport::new(
+                quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap(),
+                Arc::new(super::UdpBlockedMemory::new(super::UDP_BLOCKED_MEMORY)),
+                #[cfg(test_fixtures)]
+                None,
+                #[cfg(test_fixtures)]
+                None,
+            ),
         );
 
         tokio::time::timeout(Duration::from_secs(1), request_started_rx)

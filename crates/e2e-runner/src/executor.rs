@@ -1173,7 +1173,8 @@ impl Executor {
                     &serde_json::json!({
                         "host_name": host_name, "socket_path": socket_path,
                         "state_path": state_path, "data_dir": root.join("data"),
-                        "tcp_port": listener_port, "cloud_url": cloud_url, "prevent_idle_sleep": false,
+                        "tcp_port": listener_port, "udp_port": listener_port,
+                        "cloud_url": cloud_url, "prevent_idle_sleep": false,
                     }),
                 )?;
                 (path, socket_path)

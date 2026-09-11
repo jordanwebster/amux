@@ -35,6 +35,7 @@ use crate::trust::{Reachability, SharedTrustStore};
 /// Parameters a daemon needs to (re)connect to the testnet cloud relay.
 pub(crate) struct CloudAttachment {
     pub(crate) addr: SocketAddr,
+    pub(crate) quic_addr: SocketAddr,
     pub(crate) token: String,
     /// The cloud user this daemon attaches as (the relay's authenticator
     /// maps its bearer token to this user).
@@ -43,6 +44,7 @@ pub(crate) struct CloudAttachment {
     pub(crate) tokens: TokenRegistry,
     pub(crate) user_tiers: UserTierRegistry,
     pub(crate) refresh_interval: Option<std::time::Duration>,
+    pub(crate) udp_blocked_memory: Option<std::time::Duration>,
     pub(crate) relay_transport: super::RelayTransport,
     pub(crate) quic_client_config: quinn::ClientConfig,
 }
@@ -90,10 +92,17 @@ impl CloudAttachment {
 
     fn fixture_auth_with(&self, auth: LinkConnectorAuth) -> CloudFixtureAuth {
         match self.relay_transport {
+            super::RelayTransport::Auto => CloudFixtureAuth::RefreshingAuto {
+                auth,
+                client_config: self.quic_client_config.clone(),
+                server_name: "localhost".to_string(),
+                quic_addr: self.quic_addr,
+            },
             super::RelayTransport::Quic => CloudFixtureAuth::RefreshingQuic {
                 auth,
                 client_config: self.quic_client_config.clone(),
                 server_name: "localhost".to_string(),
+                quic_addr: self.quic_addr,
             },
             super::RelayTransport::Tcp => CloudFixtureAuth::Refreshing(auth),
         }
@@ -213,12 +222,18 @@ const CALL_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 pub(crate) async fn start_daemon_runtime(
     inner: &Arc<DaemonInner>,
     listener: Option<std::net::UdpSocket>,
+    quic_client_socket: Option<std::net::UdpSocket>,
     discovery: ScriptedDiscovery,
 ) -> DaemonRuntime {
     let listener = match (listener, inner.direct_addr) {
         (Some(listener), _) => Some(listener),
         (None, Some(_)) => Some(inner.udp_proxy.rebind(inner.proxy_id)),
         (None, None) => None,
+    };
+    let quic_client_socket = match (quic_client_socket, inner.direct_addr, &inner.cloud) {
+        (Some(socket), _, _) => Some(socket),
+        (None, None, Some(_)) => Some(inner.udp_proxy.rebind(inner.proxy_id)),
+        _ => None,
     };
     let config = crate::config::Config {
         host_name: inner.name.clone(),
@@ -245,12 +260,17 @@ pub(crate) async fn start_daemon_runtime(
     );
     options.fixtures = RuntimeFixtures {
         listener,
+        quic_client_socket,
         advertised_addr: inner.direct_addr,
         quic_transport: Some(super::udp_proxy::transport_config()),
         discovery: None,
         artifact_clock: Some(inner.artifact_clock.clone()),
         cloud_transport: None,
         cloud_refresh_interval: None,
+        udp_blocked_memory: inner
+            .cloud
+            .as_ref()
+            .and_then(|cloud| cloud.udp_blocked_memory),
         cloud: inner
             .cloud
             .as_ref()
@@ -408,14 +428,23 @@ impl Daemon {
     }
 
     async fn assert_relay_carrier(&self, expected: CarrierKind) {
-        let parts = self.try_parts().await.expect("profile is running");
-        let carrier = parts
-            .channels
-            .link_registry()
-            .cloud_relay_carrier()
-            .await
-            .expect("profile has a cloud relay carrier");
-        assert_eq!(carrier.kind(), expected);
+        let assertion = format!("'{}' uses {expected:?} for its cloud relay", self.name());
+        eventually(
+            &assertion,
+            async || {
+                let Some(parts) = self.try_parts().await else {
+                    return false;
+                };
+                parts
+                    .channels
+                    .link_registry()
+                    .cloud_relay_carrier()
+                    .await
+                    .is_some_and(|carrier| carrier.kind() == expected)
+            },
+            self.failure_dump(),
+        )
+        .await;
     }
 
     /// Opens a stream whose destination is the adjacent relay itself. A
@@ -1147,7 +1176,7 @@ impl Daemon {
         // port is released before the new runtime rebinds it.
         self.stop().await;
         let discovery = self.net.upgrade().unwrap().discovery.clone();
-        let mut runtime = start_daemon_runtime(&self.inner, None, discovery).await;
+        let mut runtime = start_daemon_runtime(&self.inner, None, None, discovery).await;
         if self.inner.cloud.is_some() {
             wait_for_stored_direct_peers(&runtime).await;
             runtime.spawn_cloud_connector(&self.inner).await;
@@ -1201,7 +1230,7 @@ impl Daemon {
             panic!("remove device key for daemon '{}': {error}", self.name())
         });
         let discovery = self.net.upgrade().unwrap().discovery.clone();
-        let mut runtime = start_daemon_runtime(&self.inner, None, discovery).await;
+        let mut runtime = start_daemon_runtime(&self.inner, None, None, discovery).await;
         if self.inner.cloud.is_some() {
             runtime.spawn_cloud_connector(&self.inner).await;
         }
@@ -1459,6 +1488,30 @@ impl Daemon {
         if let Some(runtime) = self.runtime().await.as_ref() {
             runtime.stop_cloud().await;
         }
+    }
+
+    /// Replaces this daemon's cloud link without restarting its profile.
+    /// Process-local transport memory therefore survives the operation.
+    pub async fn restart_cloud_link(&self) {
+        let relay = self
+            .net
+            .upgrade()
+            .and_then(|net| net.cloud.as_ref().map(|cloud| cloud.host_id))
+            .expect("restart_cloud_link requires a testnet cloud relay");
+        self.stop_cloud().await;
+        eventually(
+            &format!("'{}' drops its old cloud link", self.name()),
+            async || !self.has_direct_route_to(relay).await,
+            self.failure_dump(),
+        )
+        .await;
+        self.reconnect_cloud().await;
+        eventually(
+            &format!("'{}' establishes its replacement cloud link", self.name()),
+            async || self.has_direct_route_to(relay).await,
+            self.failure_dump(),
+        )
+        .await;
     }
 
     /// Refreshes this daemon's relay entitlement on its existing cloud link.

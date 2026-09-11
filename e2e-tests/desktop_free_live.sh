@@ -109,7 +109,7 @@ wait_profile_tier() {
   deadline=$(($(date +%s) + 60))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     if timeout 10 "$amux_bin" --config "$1" profiles > "$scratch/profiles.txt" 2>/dev/null &&
-      grep -Fq "bound / connected ($2)" "$scratch/profiles.txt"; then
+      grep -Fq "bound / connected ($2, quic)" "$scratch/profiles.txt"; then
       return 0
     fi
     sleep 1

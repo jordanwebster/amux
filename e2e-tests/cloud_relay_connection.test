@@ -66,13 +66,13 @@ Server started.
 > amux profiles
 @@retry 10000 100
 Profiles:
-  $server_a.id  server_a  alice@example.test  bound / connected (pro)
+  $server_a.id  server_a  alice@example.test  bound / connected (pro, quic)
 
 @TpairB
 > amux profiles
 @@retry 10000 100
 Profiles:
-  $server_b.id  server_b  alice@example.test  bound / connected (pro)
+  $server_b.id  server_b  alice@example.test  bound / connected (pro, quic)
 
 @TpairA
 > amux pair

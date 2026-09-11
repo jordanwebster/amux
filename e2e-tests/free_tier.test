@@ -67,12 +67,12 @@ echo: hello before free
 @PairA
 > amux profiles
 @@retry 10000 100
-@@contains bound / connected (pro)
+@@contains bound / connected (pro, quic)
 
 @PairB
 > amux profiles
 @@retry 10000 100
-@@contains bound / connected (pro)
+@@contains bound / connected (pro, quic)
 
 @PairB
 > amux pair
@@ -107,7 +107,7 @@ Pairing mode ended.
 @A
 > amux profiles
 @@retry 10000 100
-@@contains bound / connected (free)
+@@contains bound / connected (free, quic)
 
 > amux peer list
 @@retry 10000 100

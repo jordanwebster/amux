@@ -98,8 +98,9 @@ pub enum Via {
 /// Carrier a fixture daemon uses for its authenticated cloud-relay link.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RelayTransport {
-    Quic,
     #[default]
+    Auto,
+    Quic,
     Tcp,
 }
 
@@ -451,6 +452,8 @@ struct DaemonSpec {
     cloud_user: Option<String>,
     cloud_tier: crate::Tier,
     cloud_refresh_interval: Option<std::time::Duration>,
+    udp_blocked_memory: Option<std::time::Duration>,
+    udp_blocked: bool,
     relay_transport: RelayTransport,
 }
 
@@ -549,7 +552,9 @@ impl TestNetBuilder {
             cloud_user: None,
             cloud_tier: crate::Tier::Pro,
             cloud_refresh_interval: None,
-            relay_transport: RelayTransport::Tcp,
+            udp_blocked_memory: None,
+            udp_blocked: false,
+            relay_transport: RelayTransport::Auto,
         });
         self
     }
@@ -626,6 +631,27 @@ impl TestNetBuilder {
         );
         self.last_daemon("cloud_refresh_interval")
             .cloud_refresh_interval = Some(interval);
+        self
+    }
+
+    /// Shortens how long the selected daemon remembers a UDP-blocked relay
+    /// network. Intended for deterministic fallback expiry specifications.
+    pub fn udp_blocked_memory(mut self, duration: std::time::Duration) -> Self {
+        assert!(
+            !self.selecting_profile,
+            "udp_blocked_memory currently requires a standalone daemon"
+        );
+        self.last_daemon("udp_blocked_memory").udp_blocked_memory = Some(duration);
+        self
+    }
+
+    /// Starts the selected daemon with UDP blocked by the test network.
+    pub fn udp_blocked(mut self) -> Self {
+        assert!(
+            !self.selecting_profile,
+            "udp_blocked currently requires a standalone daemon"
+        );
+        self.last_daemon("udp_blocked").udp_blocked = true;
         self
     }
 
@@ -714,6 +740,7 @@ impl TestNetBuilder {
         } else {
             None
         };
+        let cloud_quic_addr = cloud.as_ref().map(|cloud| udp_proxy.route_to(cloud.addr));
 
         // Identities and direct-QUIC sockets first, so trust seeding can
         // reference peer pubkeys and listener addresses.
@@ -738,16 +765,20 @@ impl TestNetBuilder {
             std::fs::create_dir_all(&data_dir).expect("create daemon data dir");
             let identity = load_or_create_device_identity_in(&data_dir)
                 .unwrap_or_else(|error| panic!("create identity for '{}': {error}", spec.name));
-            let (listener, direct_addr) = if spec.cloud_only {
-                (None, None)
+            let binding = udp_proxy.register(identity.host_id);
+            let (listener, quic_client_socket, direct_addr) = if spec.cloud_only {
+                (None, Some(binding.socket), None)
             } else {
-                let binding = udp_proxy.register(identity.host_id);
-                (Some(binding.socket), Some(binding.public_addr))
+                (Some(binding.socket), None, Some(binding.public_addr))
             };
+            if spec.udp_blocked {
+                udp_proxy.blocked(identity.host_id, true);
+            }
             preps.push(DaemonPrep {
                 identity,
                 data_dir,
                 listener,
+                quic_client_socket,
                 direct_addr,
                 trust: TrustStore::default(),
                 attaches_to_cloud: self.cloud && !spec.no_cloud,
@@ -854,12 +885,14 @@ impl TestNetBuilder {
                         .insert(user_id, spec.cloud_tier);
                     CloudAttachment {
                         addr: cloud.addr,
+                        quic_addr: cloud_quic_addr.expect("cloud QUIC route missing"),
                         token,
                         user_id,
                         tier: spec.cloud_tier,
                         tokens: cloud.token_registry(),
                         user_tiers: cloud.user_tier_registry(),
                         refresh_interval: spec.cloud_refresh_interval,
+                        udp_blocked_memory: spec.udp_blocked_memory,
                         relay_transport: spec.relay_transport,
                         quic_client_config: cloud.quic_client_config(),
                     }
@@ -867,7 +900,13 @@ impl TestNetBuilder {
                 runtime: Mutex::new(None),
                 installation: None,
             });
-            let runtime = start_daemon_runtime(&inner, prep.listener, discovery.clone()).await;
+            let runtime = start_daemon_runtime(
+                &inner,
+                prep.listener,
+                prep.quic_client_socket,
+                discovery.clone(),
+            )
+            .await;
             *inner.runtime.lock().await = Some(runtime);
             daemon_inners.push(inner);
         }
@@ -1009,6 +1048,7 @@ struct DaemonPrep {
     identity: DeviceIdentity,
     data_dir: std::path::PathBuf,
     listener: Option<std::net::UdpSocket>,
+    quic_client_socket: Option<std::net::UdpSocket>,
     direct_addr: Option<SocketAddr>,
     trust: TrustStore,
     attaches_to_cloud: bool,

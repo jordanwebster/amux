@@ -527,6 +527,7 @@ fn fixture_factory(
             });
         RuntimeFixtures {
             listener,
+            quic_client_socket: None,
             advertised_addr: fixture.direct_addr,
             quic_transport: Some(super::udp_proxy::transport_config()),
             discovery: Some(Arc::new(discovery.clone()) as Arc<dyn Discovery>),
@@ -534,6 +535,7 @@ fn fixture_factory(
             cloud: None,
             cloud_transport: cloud_addr,
             cloud_refresh_interval: None,
+            udp_blocked_memory: None,
         }
     })
 }
@@ -613,12 +615,14 @@ pub(super) async fn start(
                         let (user_id, token) = cloud.credentials_for_user(user);
                         CloudAttachment {
                             addr: cloud.addr,
+                            quic_addr: cloud.addr,
                             user_id,
                             token,
                             tier: crate::Tier::Pro,
                             tokens: cloud.token_registry(),
                             user_tiers: cloud.user_tier_registry(),
                             refresh_interval: None,
+                            udp_blocked_memory: None,
                             relay_transport: super::RelayTransport::Tcp,
                             quic_client_config: cloud.quic_client_config(),
                         }

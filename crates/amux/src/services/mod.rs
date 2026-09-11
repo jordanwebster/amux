@@ -19,8 +19,11 @@ pub(crate) use client::ClientService;
 pub(crate) use pairing::{LocalPairingIdentity, PairingService};
 pub(crate) use reachability::ReachabilityLinkConnector;
 #[cfg(testnet)]
+pub(crate) use startup::TestCloudTransport;
+#[cfg(testnet)]
 pub(crate) use startup::start_user_services_with_artifact_clock;
 pub(crate) use startup::{
-    CloudLink, CloudLinkServer, DeviceRuntimeSecurity, FREE_TIER_REFRESH_INTERVAL,
-    StartedUserServices, establish_cloud_link, start_user_services,
+    CloudLink, CloudLinkServer, CloudTransport, DeviceRuntimeSecurity, FREE_TIER_REFRESH_INTERVAL,
+    StartedUserServices, UDP_BLOCKED_MEMORY, UdpBlockedMemory, establish_cloud_link,
+    start_user_services,
 };

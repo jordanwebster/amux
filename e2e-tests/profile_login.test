@@ -44,5 +44,5 @@ terminal:
 > amux profiles
 @@retry 8000 100
 Profiles:
-  $local.work.id  Bob Example  bob@example.test  bound / connected (free)
-  $local.personal.id  Alice Example  alice@example.test  bound / connected (free)
+  $local.work.id  Bob Example  bob@example.test  bound / connected (free, quic)
+  $local.personal.id  Alice Example  alice@example.test  bound / connected (free, quic)

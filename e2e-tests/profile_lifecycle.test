@@ -38,7 +38,7 @@ terminal:
 > amux profiles
 @@retry 8000 100
 Profiles:
-  $local.id  local  alice@example.test  bound / connected (pro)
+  $local.id  local  alice@example.test  bound / connected (pro, quic)
 
 > amux profile create scratch
 @@contains scratch    unbound / local
@@ -58,7 +58,7 @@ $local.id  Personal  alice@example.test  paused / local
 > amux profiles
 @@retry 8000 100
 Profiles:
-  $local.id  Personal  alice@example.test  bound / connected (pro)
+  $local.id  Personal  alice@example.test  bound / connected (pro, quic)
 
 > amux --profile Personal logout
 $local.id  Personal  alice@example.test  logged_out / local

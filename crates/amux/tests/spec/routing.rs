@@ -321,6 +321,9 @@ async fn cloud_peers_keep_communicating_across_a_jwt_expiry() {
         .await;
     let [laptop, phone] = net.daemons(["laptop", "phone"]);
 
+    laptop.uses_quic_relay().await;
+    phone.uses_quic_relay().await;
+
     let jwt = laptop
         .reattach_cloud_with_expiring_jwt(Duration::from_secs(2))
         .await;

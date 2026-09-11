@@ -8,7 +8,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-pub(crate) use cloud::{CloudLink, FREE_TIER_REFRESH_INTERVAL, establish_cloud_link};
+#[cfg(testnet)]
+pub(crate) use cloud::TestCloudTransport;
+pub(crate) use cloud::{
+    CloudLink, CloudTransport, FREE_TIER_REFRESH_INTERVAL, UDP_BLOCKED_MEMORY, UdpBlockedMemory,
+    establish_cloud_link,
+};
 use futures_util::{Stream, StreamExt, stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
@@ -677,6 +682,12 @@ impl Drop for StartedUserServices {
 }
 
 impl StartedUserServices {
+    pub(crate) fn quic_endpoint(&self) -> quinn::Endpoint {
+        self.reachability_links
+            .quic_endpoint()
+            .expect("profile QUIC endpoint is configured")
+    }
+
     pub(crate) fn configure_reachability(
         &self,
         data_dir: PathBuf,
