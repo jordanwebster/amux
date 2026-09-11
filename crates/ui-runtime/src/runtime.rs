@@ -2317,7 +2317,7 @@ mod tests {
         runtime.observe_now(old);
 
         let before = Utc::now();
-        let op = runtime.dispatch(Command::Claude(crate::claude::ClaudeCommand::SendPrompt {
+        let op = runtime.dispatch(Command::Claude(ui_state::claude::ClaudeCommand::SendPrompt {
             agent,
             text: "fresh dispatch".to_string(),
         }));
@@ -2510,15 +2510,15 @@ mod tests {
         );
         assert_eq!(
             runtime.model().agent(agent).unwrap().attention,
-            crate::Attention::Unknown
+            ui_state::Attention::Unknown
         );
         assert_eq!(
-            crate::codex::phase(runtime.model(), agent),
-            crate::codex::CodexPhase::Replaying
+            ui_state::codex::phase(runtime.model(), agent),
+            ui_state::codex::CodexPhase::Replaying
         );
         assert_eq!(
-            crate::codex::send_gate(runtime.model(), agent),
-            crate::codex::SendGate::Replaying
+            ui_state::codex::send_gate(runtime.model(), agent),
+            ui_state::codex::SendGate::Replaying
         );
 
         process_and_assert_coherent(
@@ -2530,15 +2530,15 @@ mod tests {
         );
         assert_eq!(
             runtime.model().agent(agent).unwrap().attention,
-            crate::Attention::Idle
+            ui_state::Attention::Idle
         );
         assert_eq!(
-            crate::codex::phase(runtime.model(), agent),
-            crate::codex::CodexPhase::Idle
+            ui_state::codex::phase(runtime.model(), agent),
+            ui_state::codex::CodexPhase::Idle
         );
         assert_eq!(
-            crate::codex::send_gate(runtime.model(), agent),
-            crate::codex::SendGate::Ready
+            ui_state::codex::send_gate(runtime.model(), agent),
+            ui_state::codex::SendGate::Ready
         );
     }
 
@@ -2597,17 +2597,17 @@ mod tests {
         );
         assert_eq!(
             layer.attention(),
-            crate::Attention::NeedsYou {
-                why: crate::Why::Finished
+            ui_state::Attention::NeedsYou {
+                why: ui_state::Why::Finished
             }
         );
         assert_eq!(
             runtime.model().agent(agent).unwrap().attention,
-            crate::Attention::Unknown
+            ui_state::Attention::Unknown
         );
         assert_eq!(
-            crate::codex::send_gate(runtime.model(), agent),
-            crate::codex::SendGate::Replaying
+            ui_state::codex::send_gate(runtime.model(), agent),
+            ui_state::codex::SendGate::Replaying
         );
 
         process_and_assert_coherent(
@@ -2619,13 +2619,13 @@ mod tests {
         );
         assert_eq!(
             runtime.model().agent(agent).unwrap().attention,
-            crate::Attention::NeedsYou {
-                why: crate::Why::Finished
+            ui_state::Attention::NeedsYou {
+                why: ui_state::Why::Finished
             }
         );
         assert_eq!(
-            crate::codex::send_gate(runtime.model(), agent),
-            crate::codex::SendGate::Ready
+            ui_state::codex::send_gate(runtime.model(), agent),
+            ui_state::codex::SendGate::Ready
         );
     }
 }

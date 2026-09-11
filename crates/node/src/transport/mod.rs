@@ -19,11 +19,11 @@ pub(crate) use memory::{
     InProcessConnection, ShutdownIo, in_process_channel, managed_in_process_transport_pair,
 };
 #[cfg(test)]
-pub(crate) use memory::{in_process_incoming, in_process_transport_pair};
+pub(crate) use memory::in_process_transport_pair;
 pub(crate) use single_io::channel_from_single_io;
 #[allow(unused_imports)]
 pub(crate) use ssh::{SshRelayIo, spawn_ssh_pair_recv, spawn_ssh_relay};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use tcp::tcp_incoming;
 pub(crate) use tcp::{TcpServerTransport, configure_tcp_keepalive};
 use thiserror::Error;

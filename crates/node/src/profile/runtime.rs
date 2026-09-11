@@ -192,7 +192,7 @@ pub(crate) struct ProfileRuntime {
     pub(crate) trust: crate::trust::SharedTrustStore,
     #[cfg(testnet)]
     test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) test_cloud_transport: Option<tonic::transport::Channel>,
     client: Client,
     #[cfg(testnet)]
@@ -389,7 +389,7 @@ async fn build(
         test_cloud: options.fixtures.cloud,
         #[cfg(testnet)]
         test_cloud_transport: options.fixtures.cloud_transport,
-        #[cfg(all(test, not(testnet)))]
+        #[cfg(all(any(test, feature = "test-support"), not(testnet)))]
         test_cloud_transport: None,
         client,
         #[cfg(testnet)]
@@ -410,7 +410,7 @@ impl ProfileRuntime {
         self.client.clone()
     }
 
-    #[cfg(testnet)]
+    #[cfg(any(testnet, feature = "test-support"))]
     pub(crate) fn report_status_for_test(&self, observed: Observed) {
         self.status.report(observed);
     }
@@ -510,7 +510,7 @@ impl ProfileRuntime {
             self.state.clone(),
             self.services.link_connector_ctx(),
             self.status.clone(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-support"))]
             self.test_cloud_transport.clone(),
         ));
         Ok(())

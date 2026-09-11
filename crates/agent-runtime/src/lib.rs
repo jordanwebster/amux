@@ -25,6 +25,7 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         let data_dir = std::env::temp_dir().join("amux-agent-runtime-test");
+        std::fs::create_dir_all(&data_dir).expect("create agent runtime test data directory");
         Self {
             path: None,
             socket_path: data_dir.join("amux.sock"),
@@ -34,11 +35,11 @@ impl Default for Config {
 }
 
 #[cfg(test)]
-mod config {
-    pub(crate) use super::Config;
+fn keymap_dir(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("keymaps")
 }
 
 #[cfg(test)]
-fn keymap_dir(data_dir: &std::path::Path) -> std::path::PathBuf {
-    data_dir.join("keymaps")
+mod config {
+    pub(crate) use super::Config;
 }

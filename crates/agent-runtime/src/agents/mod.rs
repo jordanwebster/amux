@@ -46,9 +46,5 @@ pub(crate) use session::{
 };
 #[cfg(any(debug_assertions, test))]
 pub(crate) use test_agent::TestAgentSession;
-#[cfg(test)]
-pub(crate) use test_agent::io::{
-    TEST_DELAYED_DELIVERY_COMMAND, TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
-};
 #[cfg(any(test, testnet))]
-pub(crate) use test_agent::io::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
+pub(crate) use test_agent::io::TEST_ECHO_COMMAND;

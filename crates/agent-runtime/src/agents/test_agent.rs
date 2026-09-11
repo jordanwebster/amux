@@ -35,7 +35,6 @@ pub(crate) mod io {
     pub(crate) const TEST_DELAYED_DELIVERY_COMMAND: &str = "__amux_test_delayed_delivery__";
     pub(crate) const TEST_FAILED_DELIVERY_COMMAND: &str = "__amux_test_failed_delivery__";
     pub(crate) const TEST_UNAVAILABLE_DELIVERY_COMMAND: &str = "__amux_test_unavailable_delivery__";
-    pub(crate) const TEST_ECHO_V1: &str = "test_echo_v1";
 }
 
 pub(crate) struct TestAgentSession {

@@ -20,7 +20,7 @@ mod services;
 pub mod setup;
 mod sleep_inhibitor;
 mod subscription;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_fixtures;
 #[cfg(testnet)]

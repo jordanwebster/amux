@@ -864,154 +864,6 @@ fn structured_output_event(
 }
 
 #[cfg(test)]
-pub(super) async fn open_in_process_protocol_plane(
-    kind: crate::agents::AgentKind,
-    protocol: Protocol,
-) -> Result<(), ProtocolError> {
-    use crate::agents::{AgentSession, AgentType, ClaudeDriver, CreateAgentRequest, new_agent};
-
-    let host_id = Uuid::new_v4();
-    let config = crate::config::Config::default();
-    let route =
-        crate::agents::McpLaunchRoute::for_current_process(&config, host_id).map_err(|error| {
-            ProtocolError::ServerError {
-                message: error.to_string(),
-            }
-        })?;
-    let host = AgentRuntime::new_with_mcp_launch_route(
-        route,
-        crate::keymap_dir(&config.data_dir),
-        config.data_dir.clone(),
-    )
-    .map_err(|error| ProtocolError::ServerError {
-        message: error.to_string(),
-    })?;
-    let agent_id = Uuid::new_v4();
-    let agent_type = match kind {
-        crate::agents::AgentKind::Claude { driver } => AgentType::Claude { driver },
-        crate::agents::AgentKind::Codex => AgentType::Codex {
-            model: None,
-            approval_policy: None,
-            sandbox_policy: None,
-            resume_thread_id: None,
-        },
-        crate::agents::AgentKind::TestAgent => AgentType::TestAgent {
-            command: "in-process-test-agent".to_string(),
-        },
-    };
-    let request = CreateAgentRequest {
-        agent_id,
-        host_id: None,
-        name: Some("typed-protocol-test".to_string()),
-        agent_type,
-        working_dir: std::env::temp_dir(),
-        terminal_size: None,
-        args: Vec::new(),
-        parent: None,
-        initial_prompt: None,
-    };
-    let deps = host.state().read().await.deps.clone();
-    let session: AgentSession = match kind {
-        crate::agents::AgentKind::Claude {
-            driver: ClaudeDriver::Pty,
-        } => {
-            let session = crate::agents::claude::ClaudeSession::for_protocol_tests(
-                &request,
-                deps.runtime_dir.clone(),
-                deps.claude_version_cache.clone(),
-                deps.mcp_launch_route.clone(),
-                deps.claude_user_keymap_dir.clone(),
-            );
-            Box::new(session)
-        }
-        crate::agents::AgentKind::Claude {
-            driver: ClaudeDriver::Sdk,
-        }
-        | crate::agents::AgentKind::Codex
-        | crate::agents::AgentKind::TestAgent => {
-            new_agent(&request, &deps).map_err(|error| ProtocolError::ServerError {
-                message: error.to_string(),
-            })?
-        }
-    };
-    host.state()
-        .write()
-        .await
-        .insert_registered_local_agent(host_id, agent_id, session)
-        .map_err(|message| ProtocolError::ServerError { message })?;
-
-    let prepared = prepare_direct_session_subscription(
-        &SessionRequest {
-            agent_id,
-            args: match protocol {
-                Protocol::TerminalV1 => HostSessionArgs::Terminal(model::TerminalV1Args::default()),
-                Protocol::ClaudePtyTranscriptV1 => HostSessionArgs::ClaudePty(model::ClaudePtyTranscriptV1Args { terminal_size: None, replay_query: None }),
-                Protocol::ClaudeSdkV1 => HostSessionArgs::ClaudeSdk(model::ClaudeSdkV1Args::default()),
-                Protocol::CodexSdkV1 => HostSessionArgs::Codex(model::CodexSdkV1Args::default()),
-                Protocol::TestEchoV1 => HostSessionArgs::TestEcho,
-            },
-        },
-        &host,
-    )
-    .await?;
-    drop(prepared);
-    if matches!(
-        kind,
-        crate::agents::AgentKind::Claude {
-            driver: ClaudeDriver::Sdk
-        }
-    ) {
-        debug_assert_eq!(protocol, Protocol::ClaudeSdkV1);
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-pub(super) async fn create_sdk_in_process() -> Result<(), ProtocolError> {
-    use crate::agents::{AgentType, ClaudeDriver, CreateAgentRequest, McpLaunchRoute, new_agent};
-
-    let host_id = Uuid::new_v4();
-    let config = crate::config::Config::default();
-    let route = McpLaunchRoute::for_current_process(&config, host_id).map_err(|error| {
-        ProtocolError::ServerError {
-            message: error.to_string(),
-        }
-    })?;
-    let host = AgentRuntime::new_with_mcp_launch_route(
-        route,
-        crate::keymap_dir(&config.data_dir),
-        config.data_dir.clone(),
-    )
-    .map_err(|error| ProtocolError::ServerError {
-        message: error.to_string(),
-    })?;
-    let request = CreateAgentRequest {
-        agent_id: Uuid::new_v4(),
-        host_id: None,
-        name: Some("sdk-placeholder".to_string()),
-        parent: None,
-        initial_prompt: None,
-        agent_type: AgentType::Claude {
-            driver: ClaudeDriver::Sdk,
-        },
-        working_dir: std::env::temp_dir(),
-        args: Vec::new(),
-        terminal_size: None,
-    };
-    let state = host.state().read().await;
-    let session = new_agent(&request, &state.deps).map_err(|error| ProtocolError::ServerError {
-        message: error.to_string(),
-    })?;
-    debug_assert_eq!(
-        session.kind(),
-        crate::agents::AgentKind::Claude {
-            driver: ClaudeDriver::Sdk,
-        }
-    );
-    Ok(())
-}
-
-#[cfg(test)]
 mod tests {
     use futures_util::StreamExt;
     use tokio::time::{Duration, timeout};
@@ -1055,27 +907,18 @@ mod tests {
 
         let mut stream = subscribe_session_stream(
             &host,
-            SubscribeSessionRequest {
+            SessionRequest {
                 agent_id,
-                protocol: Protocol::CodexSdkV1,
-                args: None,
+                args: HostSessionArgs::Codex(model::CodexSdkV1Args::default()),
             },
             None,
         )
         .await
         .unwrap();
         let opened = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            opened.event,
-            Some(wire::subscribe_session_response::Event::Opened(_))
-        ));
+        assert!(matches!(opened, HostSessionEvent::Opened));
         let replay_complete = stream.next().await.unwrap().unwrap();
-        let Some(wire::subscribe_session_response::Event::ReplayComplete(replay_complete)) =
-            replay_complete.event
-        else {
-            panic!("expected replay-complete marker");
-        };
-        assert!(replay_complete.cursor.is_none());
+        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete { sequence: None }));
     }
 
     #[tokio::test]
@@ -1095,10 +938,9 @@ mod tests {
 
         let stream = subscribe_session_stream(
             &host,
-            SubscribeSessionRequest {
+            SessionRequest {
                 agent_id,
-                protocol: Protocol::TerminalV1,
-                args: None,
+                args: HostSessionArgs::Terminal(model::TerminalV1Args::default()),
             },
             None,
         )
@@ -1258,7 +1100,6 @@ mod tests {
         let mut stream = direct_session_response_stream(
             agent_id,
             SessionOutputReader::Raw(RawSessionOutputReader {
-                protocol: Protocol::TerminalV1,
                 reader,
                 #[cfg(unix)]
                 _codex_lease: None,
@@ -1273,15 +1114,9 @@ mod tests {
         }
 
         let opened = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            opened.event,
-            Some(wire::subscribe_session_response::Event::Opened(_))
-        ));
+        assert!(matches!(opened, HostSessionEvent::Opened));
         let replay_complete = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            replay_complete.event,
-            Some(wire::subscribe_session_response::Event::ReplayComplete(_))
-        ));
+        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete { .. }));
 
         let mut saw_resource_exhausted = false;
         for _ in 0..300 {
@@ -1291,11 +1126,11 @@ mod tests {
                 .expect("session stream ended before lag error")
             {
                 Ok(_) => {}
-                Err(status) => {
-                    assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+                Err(HostStreamError::Protocol(ProtocolError::ResourceExhausted { .. })) => {
                     saw_resource_exhausted = true;
                     break;
                 }
+                Err(error) => panic!("unexpected stream error: {error}"),
             }
         }
         assert!(saw_resource_exhausted);
@@ -1319,7 +1154,6 @@ mod tests {
         let mut stream = direct_session_response_stream(
             agent_id,
             SessionOutputReader::Structured {
-                protocol: Protocol::ClaudeSdkV1,
                 reader,
                 replay_cursor: None,
             },
@@ -1329,28 +1163,19 @@ mod tests {
         );
 
         let opened = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            opened.event,
-            Some(wire::subscribe_session_response::Event::Opened(_))
-        ));
+        assert!(matches!(opened, HostSessionEvent::Opened));
         let replay = stream.next().await.unwrap().unwrap();
-        let Some(wire::subscribe_session_response::Event::Output(output)) = replay.event else {
+        let HostSessionEvent::Output { sequence, payload } = replay else {
             panic!("expected attachment replay output");
         };
-        let Some(wire::session_output::Output::ClaudeSdkV1(output)) = output.output else {
-            panic!("expected Claude SDK attachment replay output");
-        };
-        assert_eq!(output.seq_id, 0);
+        assert_eq!(sequence, Some(0));
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&output.payload).unwrap(),
+            serde_json::from_slice::<serde_json::Value>(&payload).unwrap(),
             attachments_row(None, &[artifact])
         );
 
         let replay_complete = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            replay_complete.event,
-            Some(wire::subscribe_session_response::Event::ReplayComplete(_))
-        ));
+        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete { .. }));
     }
 
     #[tokio::test]
@@ -1363,7 +1188,6 @@ mod tests {
         let mut stream = direct_session_response_stream(
             agent_id,
             SessionOutputReader::Raw(RawSessionOutputReader {
-                protocol: Protocol::TerminalV1,
                 reader,
                 #[cfg(unix)]
                 _codex_lease: None,
@@ -1374,25 +1198,14 @@ mod tests {
         );
 
         let opened = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            opened.event,
-            Some(wire::subscribe_session_response::Event::Opened(_))
-        ));
+        assert!(matches!(opened, HostSessionEvent::Opened));
 
         shutdown_tx
             .send(ShutdownReason::Suspending)
             .await
             .expect("shutdown receiver should be active");
         let error = stream.next().await.unwrap().unwrap_err();
-        assert_eq!(error.code(), tonic::Code::Unavailable);
-        assert_eq!(error.message(), "server suspending");
-        assert_eq!(
-            error
-                .metadata()
-                .get(SHUTDOWN_REASON_METADATA_KEY)
-                .and_then(|value| value.to_str().ok()),
-            Some("suspending")
-        );
+        assert!(matches!(error, HostStreamError::Shutdown(ShutdownReason::Suspending)));
         assert!(stream.next().await.is_none());
     }
 }

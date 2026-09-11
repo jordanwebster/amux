@@ -49,6 +49,7 @@ gethostname = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
+node = { workspace = true, features = ["test-support"] }
 tempfile = { workspace = true }
 ratatui = { workspace = true }
 vt100 = "0.15"

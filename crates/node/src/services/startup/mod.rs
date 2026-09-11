@@ -37,11 +37,7 @@ use crate::services::client::{ClientService, PairingTrustAccess};
 use crate::services::{
     AgentServiceCtx, LocalPairingIdentity, PairingService, ReachabilityLinkConnector,
 };
-#[cfg(test)]
-use crate::transport::PreTrustPairingReachability;
-#[cfg(test)]
-use crate::transport::in_process_transport_pair;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use crate::transport::tcp_incoming;
 #[cfg(unix)]
 use crate::transport::unix_incoming;
@@ -49,6 +45,8 @@ use crate::transport::{
     BoxedGrpcIo, InProcessConnection, TcpServerTransport, in_process_channel,
     managed_in_process_transport_pair,
 };
+#[cfg(test)]
+use crate::transport::in_process_transport_pair;
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::tunnel::{TunnelPool, TunnelTransport};
 use crate::user_state::ServerState;
@@ -154,7 +152,7 @@ impl CloudLinkService {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn serve_on_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
         spawn_cloud_link_service_server(self.clone(), tcp_incoming(listener))
     }

@@ -224,22 +224,6 @@ impl ClaudePtyBackend {
         backend
     }
 
-    #[cfg(test)]
-    pub(crate) fn for_protocol_tests(
-        req: &CreateAgentRequest,
-        runtime_dir: PathBuf,
-        version_cache: ClaudeVersionCache,
-        launch_route: McpLaunchRoute,
-        user_keymap_dir: PathBuf,
-    ) -> Self {
-        Self::scripted(
-            req,
-            runtime_dir,
-            version_cache,
-            launch_route,
-            user_keymap_dir,
-        )
-    }
 
     #[cfg(testnet)]
     pub(crate) fn scripted_for_testnet(

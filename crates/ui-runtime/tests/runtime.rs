@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use node::{AgentIdentifier, ArtifactKind, CreateAgentRequest, claude_io};
+use node::{AgentIdentifier, ArtifactKind, CreateAgentRequest};
 use artifacts::ARTIFACT_SIZE_CAP;
 use tempfile::tempdir;
 use ui_runtime::{
@@ -100,7 +100,7 @@ async fn installation_client() -> (node::Installation, node::Client, PathBuf, te
 fn claude_input(text: &str) -> InputPayload {
     InputPayload::Claude {
         expected_seq: 0,
-        intent: claude_io::Intent::Prompt {
+        intent: model::ClaudePtyIntent::Prompt {
             text: text.to_string(),
         },
         retry_stale: false,
@@ -727,7 +727,7 @@ async fn switcher_rejects_late_results() {
     // artifact cache are the work account's.
     assert!(runtime.model().cloud_subscription_required());
     let report = runtime
-        .report(ui_runtime::DumpReason::UserRequested)
+        .report(ui_state::DumpReason::UserRequested)
         .unwrap();
     assert!(
         report.starts_with(root.join("work").join("reports")),

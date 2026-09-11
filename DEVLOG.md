@@ -8877,3 +8877,13 @@ checks pass for the provider-free node/client/UI graph. The comparable after
 benchmark measured a 41.52 s clean product build, 0.226 s median warm build,
 33.73 s focused test, 4.06 s private edit rebuild and 3.22 GB logical clean
 output. Generator freshness and workspace doctests pass.
+
+2026-09-11 — **Extracted crates retain their integration test seams.** Node's
+cross-crate fixtures are now enabled through an explicit development-only
+feature, allowing CLI and UI-runtime tests to construct isolated installations
+without restoring the old product feature graph. Runtime session tests consume
+typed host events directly, provider replays resolve fixtures from their owning
+spec packages, and CLI tests supply the desktop host factory when they exercise
+test-agent sessions. Profile-adoption coverage now writes the retained-owner
+layout used by the extracted artifact runtime. The workspace test targets
+compile, and the repaired runtime, session and adoption tests pass.

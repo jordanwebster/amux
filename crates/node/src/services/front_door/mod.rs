@@ -9,8 +9,6 @@ use tonic::transport::Channel;
 use wire;
 
 use crate::installation::Installation;
-#[cfg(test)]
-use crate::transport::GrpcIo;
 use crate::transport::{self, BoxedGrpcIo, ShutdownIo};
 
 mod handlers;

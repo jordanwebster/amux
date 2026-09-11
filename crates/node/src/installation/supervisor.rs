@@ -286,6 +286,18 @@ fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), Inst
 }
 
 impl Installation {
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) async fn test_runtime(
+        &self,
+        id: ProfileId,
+    ) -> Option<tokio::sync::OwnedMutexGuard<Option<ProfileRuntime>>> {
+        let runtime = {
+            let state = self.inner.state.lock().unwrap();
+            state.active(id).ok()?.slot.runtime.clone()
+        };
+        Some(runtime.lock_owned().await)
+    }
+
     /// Serve a desktop installation until the host requests shutdown or a local
     /// administrator stops it through the front door. One sleep assertion covers
     /// every profile for the lifetime of the daemon.
@@ -483,7 +495,7 @@ impl Installation {
         &self.inner.root
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn use_test_cloud_transport(
         &self,
         id: ProfileId,

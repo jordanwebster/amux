@@ -5,8 +5,6 @@ use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-#[cfg(test)]
-use futures_util::{Stream, stream};
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Channel, Endpoint};
@@ -117,12 +115,6 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for ShutdownIo<T> {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn in_process_incoming(
-    transport: InProcessTransport,
-) -> impl Stream<Item = io::Result<InProcessTransport>> + Send + 'static {
-    stream::once(async move { Ok(transport) })
-}
 
 pub(crate) fn in_process_channel(transport: InProcessTransport) -> Channel {
     channel_from_single_io(

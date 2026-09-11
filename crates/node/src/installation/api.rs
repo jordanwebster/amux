@@ -6,8 +6,10 @@ use std::time::Duration;
 use crate::{
     AccessToken, AuthError, CredentialProvider, CredentialSource, Installation,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
-    ProfileAdmin, ProfileEvent, ShutdownReason,
+    ProfileAdmin, ShutdownReason,
 };
+#[cfg(testnet)]
+use crate::ProfileEvent;
 
 struct NoCredentials;
 

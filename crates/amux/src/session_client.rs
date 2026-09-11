@@ -1280,7 +1280,7 @@ mod attach {
             listeners: node::Listeners::InProcessOnly,
             credentials: node::CredentialSource::ProfileFiles,
             identity_http: Default::default(),
-            host_factory: None,
+            host_factory: Some(std::sync::Arc::new(agent_runtime::AgentRuntimeFactory)),
         })
         .await
         .unwrap();

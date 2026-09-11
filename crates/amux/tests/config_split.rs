@@ -428,12 +428,13 @@ async fn profile_selector_cli_non_pristine_login_requires_confirmation() {
     let mut config = node::load_profile_config(&fixture.profile).unwrap().profile;
     config.cloud_url = identity.url();
     write(&fixture.profile, &config);
+    let retained_owner = config
+        .data_dir
+        .join("agents")
+        .join(uuid::Uuid::new_v4().to_string())
+        .join("artifacts");
+    std::fs::create_dir_all(&retained_owner).unwrap();
     fixture.run(&["server", "start"]);
-    std::fs::write(
-        config.data_dir.join("cache/artifacts/retained"),
-        b"retained artifact",
-    )
-    .unwrap();
     let output = fixture
         .command(&["login", "--profile", &fixture.id.to_string()])
         .output()

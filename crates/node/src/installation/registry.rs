@@ -39,7 +39,7 @@ pub enum InstallationRoot {
     /// disk, in a fresh directory under [`std::env::temp_dir()`] (the app
     /// container's tmp on iOS, TMPDIR on macOS), deleted when the installation
     /// is dropped. Hosts must supply a durable [`Self::OnDisk`] root instead.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     Ephemeral,
 }
 
@@ -141,9 +141,9 @@ pub struct Registry {
 
 impl Registry {
     pub fn open(root: InstallationRoot) -> Result<Self, InstallationError> {
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-support")))]
         let InstallationRoot::OnDisk(path) = root;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         let path = match root {
             InstallationRoot::OnDisk(path) => path,
             InstallationRoot::Ephemeral => {

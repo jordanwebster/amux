@@ -2366,7 +2366,7 @@ mod tests {
         injected_text: &str,
     ) -> (Codex, Thread, tokio::task::JoinHandle<()>) {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/rows/codex")
+            .join("../codex-specs/fixtures/codex")
             .join(fixture);
         let mut script = load_script(fixture);
         for event in script
@@ -3891,7 +3891,7 @@ mod tests {
     #[tokio::test]
     async fn a2a_codex_completion_replays_last_agent_message() {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/rows/codex/a2a_last_message.io.jsonl");
+            .join("../codex-specs/fixtures/codex/a2a_last_message.io.jsonl");
         let mut script = load_script(fixture);
         let initialize = script
             .iter_mut()

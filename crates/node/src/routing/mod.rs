@@ -16,10 +16,6 @@ mod wire;
 
 pub(crate) use core::{RouteUpdateOutcome, RoutingCore, RoutingDebug};
 
-#[cfg(test)]
-pub(crate) use connect::spawn_connector_to_channel;
-#[cfg(test)]
-pub(crate) use connect::spawn_connector_to_channel_with_bearer_token;
 #[cfg(testnet)]
 pub(crate) use connect::spawn_connector_to_channel_with_bearer_token_and_shutdown;
 pub(crate) use connect::{
