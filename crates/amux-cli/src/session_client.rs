@@ -455,27 +455,64 @@ pub async fn list_agents(all: bool, config: &Config) -> Result<()> {
     let rpc = require_running_client(config, Some("amux list")).await?;
     let agents = rpc.list_agents().await?;
     let hosts = rpc.list_hosts().await?;
-    if list_has_payment_blocked_host(&hosts) {
-        return Err(anyhow!(amux::ProtocolError::PaymentRequired));
-    }
-    if agents.is_empty() {
-        println!("No agents running.");
-    } else {
-        println!("Running agents:");
-        for line in agent_list_lines(&agents, all, Utc::now()) {
-            println!("{line}");
-        }
-    }
+    write_agent_list(&agents, &hosts, all, Utc::now(), io::stdout(), io::stderr())?;
 
     print_update_banner(&config.state_path);
     Ok(())
 }
 
-fn list_has_payment_blocked_host(hosts: &[amux::HostEntry]) -> bool {
-    let payment_message = amux::ProtocolError::PaymentRequired.to_string();
-    hosts
+fn write_agent_list(
+    agents: &[amux::Agent],
+    hosts: &[amux::HostEntry],
+    all: bool,
+    now: DateTime<Utc>,
+    mut output: impl Write,
+    mut errors: impl Write,
+) -> io::Result<()> {
+    let blocked_hosts = payment_blocked_hosts(hosts);
+    let blocked_ids = blocked_hosts
         .iter()
-        .any(|host| host.last_dial_error.as_deref() == Some(payment_message.as_str()))
+        .map(|host| host.id)
+        .collect::<HashSet<_>>();
+    let reachable_agents = agents
+        .iter()
+        .filter(|agent| !blocked_ids.contains(&agent.host_id))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if reachable_agents.is_empty() {
+        writeln!(output, "No agents running.")?;
+    } else {
+        writeln!(output, "Running agents:")?;
+        for line in agent_list_lines(&reachable_agents, all, now) {
+            writeln!(output, "{line}")?;
+        }
+    }
+
+    for host in blocked_hosts {
+        writeln!(
+            errors,
+            "{}: {}",
+            host.name,
+            amux::ProtocolError::PaymentRequired
+        )?;
+    }
+
+    Ok(())
+}
+
+fn payment_blocked_hosts(hosts: &[amux::HostEntry]) -> Vec<&amux::HostEntry> {
+    let payment_message = amux::ProtocolError::PaymentRequired.to_string();
+    let mut blocked = hosts
+        .iter()
+        .filter(|host| host.last_dial_error.as_deref() == Some(payment_message.as_str()))
+        .collect::<Vec<_>>();
+    blocked.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    blocked
 }
 
 type AgentKey = (Uuid, Uuid);
@@ -1349,10 +1386,12 @@ mod attach {
     }
 
     #[test]
-    fn list_refuses_cached_agents_that_the_relay_will_not_carry() {
-        let agent = listed_agent(1, "away-agent");
+    fn list_prints_reachable_agents_and_names_payment_blocked_hosts() {
+        let local_agent = listed_agent(1, "local-agent");
+        let mut away_agent = listed_agent(2, "away-agent");
+        away_agent.host_id = Uuid::from_u128(200);
         let away_host = amux::HostEntry {
-            id: agent.host_id,
+            id: away_agent.host_id,
             name: "host-b".to_string(),
             online: true,
             version: Some("test".to_string()),
@@ -1363,13 +1402,24 @@ mod attach {
             signed_in: Some(true),
         };
 
-        assert!(super::list_has_payment_blocked_host(std::slice::from_ref(
-            &away_host
-        ),));
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+        super::write_agent_list(
+            &[local_agent, away_agent],
+            &[away_host],
+            false,
+            Utc::now(),
+            &mut output,
+            &mut errors,
+        )
+        .unwrap();
 
-        let mut reachable = away_host;
-        reachable.last_dial_error = None;
-        assert!(!super::list_has_payment_blocked_host(&[reachable]));
+        let output = String::from_utf8(output).unwrap();
+        let errors = String::from_utf8(errors).unwrap();
+        assert!(output.contains("local-agent"));
+        assert!(!output.contains("away-agent"));
+        assert!(errors.contains("host-b"));
+        assert!(errors.contains(&amux::ProtocolError::PaymentRequired.to_string()));
     }
 
     #[test]

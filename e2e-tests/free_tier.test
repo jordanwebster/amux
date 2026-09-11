@@ -117,7 +117,7 @@ Pairing mode ended.
 > amux list
 @@retry 10000 100
 @@contains Cloud subscription required
-@@exit 1
+@@contains host-b
 
 @@tier alice pro
 

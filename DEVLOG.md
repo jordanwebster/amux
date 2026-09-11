@@ -1,3 +1,9 @@
+2026-09-11 — **List reachable agents when one relay host is blocked.** The
+command-line fleet list now omits cached agents behind a free relay while still
+printing local, direct, SSH, and paid-relay agents. Each blocked host is named
+with its subscription refusal without turning the otherwise useful listing
+into a failed command.
+
 2026-09-11 — **Keep desktop update notices across installation profiles.**
 Installation-managed profile runtimes again report available and required
 updates through each profile's state directory, so every CLI selection sees
