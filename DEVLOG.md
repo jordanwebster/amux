@@ -8903,8 +8903,8 @@ denied, and the pinned formatter now covers the extracted workspace.
 
 2026-09-12 — **Declared builds participate in bounded output retention.** The
 ordinary build, check, test, codegen, and lint recipes now reserve capacity in a
-configurable 60 GiB pool,
-records a process lease while its command runs, refreshes its target's allocated
+configurable 60 GiB pool, record a process lease while their command runs, refresh
+their target's allocated
 size periodically and on exit, and forwards cancellation to the complete child
 process group.
 Admission accounts for concurrent reservations and may reclaim only another
@@ -8940,3 +8940,11 @@ three cycles. Cancellation cleared its lease, and a one-byte pool refused
 admission with exit 75. The daemon resource probe now requires the tree socket
 before invoking the client, so never-started disposable trees are not mistaken
 for live external daemons during teardown.
+
+2026-09-12 — **UI runtime integration owns its desktop test host explicitly.**
+The all-target workspace suite no longer depends on node's unit-test cfg to
+silently supply an agent runtime. The UI runtime integration harness declares
+the development-only agent-runtime edge and passes its factory into each
+embedded installation it creates. Production UI runtime dependencies remain
+client-side, while the integration still proves real agent, artifact, account,
+and independent-view lifetimes under focused and workspace feature graphs.
