@@ -689,3 +689,28 @@ extension FeedEntry {
             hidden: body["output_truncated"]?.boolValue == true ? -1 : max(0, lines.count - 2))
     }
 }
+
+/// Where somebody had got to in a transcript.
+///
+/// The entry they were resting on, and how far into that entry the top of the
+/// page had reached. Anchored on an entry rather than stated as a distance
+/// down the whole feed because a transcript is laid out from markdown, and
+/// markdown measures differently at another type size, in another appearance
+/// or under a build a month older: a distance points at a different row every
+/// time one of those changes, while an entry is the same entry. The remainder
+/// is what makes putting it back the same picture rather than the same
+/// neighbourhood.
+public struct TranscriptResting: Codable, Equatable, Sendable {
+    /// The identity of the entry, which is the identity the runtime gave the
+    /// message it was projected from.
+    public let entry: String
+    /// How many points of that entry had already passed above the top of the
+    /// page. Never negative: the entry a reader is resting on is the one the
+    /// top of the page is inside.
+    public let into: Double
+
+    public init(entry: String, into: Double) {
+        self.entry = entry
+        self.into = into
+    }
+}

@@ -16,6 +16,7 @@ import SwiftUI
 /// only draws what the projection already named.
 struct TranscriptFeed: View {
     @Environment(\.design) private var design
+    @Environment(\.transcriptTops) private var tops
     let rows: [TranscriptRow]
 
     var body: some View {
@@ -24,9 +25,63 @@ struct TranscriptFeed: View {
                 TranscriptRowView(
                     row: row,
                     railContinues: index + 1 < rows.count && rows[index + 1].onRail)
+                    // Where this entry begins, measured against the feed
+                    // rather than against the page. A row does not move
+                    // within the feed when the feed is scrolled, so this is
+                    // answered once per entry when it is laid out and never
+                    // again while somebody reads — which is what makes asking
+                    // every entry affordable.
+                    .onGeometryChange(for: CGFloat.self) {
+                        $0.frame(in: .named(TranscriptTops.space)).minY
+                    } action: { tops?.begins(row.id, at: $0) }
             }
         }
         .padding(.horizontal, design.metrics.gutter)
+    }
+}
+
+/// Where each entry of a transcript begins, kept beside the feed rather than
+/// in it.
+///
+/// A reference rather than view state on purpose. These are answers about the
+/// layout that arrive during layout, and writing one into view state would
+/// invalidate the feed that was in the middle of being laid out. Nothing draws
+/// from this; it is read at the two moments somebody asks where in a
+/// transcript the reader is, and told where to put them back.
+@MainActor
+final class TranscriptTops {
+    /// The name the feed answers geometry questions in. Scrolling does not
+    /// move a row within the feed, so a position measured in it is stable.
+    nonisolated static let space = "transcript.feed"
+
+    private var tops: [String: CGFloat] = [:]
+
+    func begins(_ entry: String, at top: CGFloat) {
+        tops[entry] = top
+    }
+
+    func top(of entry: String) -> CGFloat? { tops[entry] }
+
+    /// The entry the top of the page is inside: the last one to begin at or
+    /// above it. Nothing when the feed has not been laid out yet, or when the
+    /// page is above the first entry it has measured.
+    func resting(at top: CGFloat) -> TranscriptResting? {
+        guard let found = tops
+            .filter({ $0.value <= top + 0.5 })
+            .max(by: { $0.value < $1.value })
+        else { return nil }
+        return TranscriptResting(entry: found.key, into: Double(max(0, top - found.value)))
+    }
+}
+
+private struct TranscriptTopsKey: EnvironmentKey {
+    static let defaultValue: TranscriptTops? = nil
+}
+
+extension EnvironmentValues {
+    var transcriptTops: TranscriptTops? {
+        get { self[TranscriptTopsKey.self] }
+        set { self[TranscriptTopsKey.self] = newValue }
     }
 }
 
@@ -47,9 +102,18 @@ struct TranscriptFeed: View {
 /// to report that it finished measuring can wait forever on an offscreen row.
 struct TranscriptContainer<Content: View>: View {
     @Environment(\.design) private var design
+    /// Where a recording left the reader, to be put back instead of the tail.
+    /// Nothing is the ordinary case and the one the app itself always passes:
+    /// open at the latest entry and follow it.
+    var resting: TranscriptResting?
+    /// Told where the reader has come to rest, once they have taken the feed
+    /// off its tail. Nothing in the shipping app listens.
+    var moved: ((TranscriptResting) -> Void)?
     @ViewBuilder let content: Content
     @State private var position = ScrollPosition()
     @State private var readerMoved = false
+    @State private var tops = TranscriptTops()
+    @State private var page = TranscriptPage()
 
     var body: some View {
         ScrollView {
@@ -62,32 +126,109 @@ struct TranscriptContainer<Content: View>: View {
             // the newest row should be.
             .padding(.bottom, design.metrics.feedGap)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .coordinateSpace(.named(TranscriptTops.space))
         }
+        .environment(\.transcriptTops, tops)
         .scrollIndicators(.hidden)
-        .defaultScrollAnchor(.bottom, for: .initialOffset)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        // A transcript opens at its latest entry and stays there as it grows.
+        // One put back where a recording left the reader must not: what is
+        // above them is what they were reading, and an entry measuring itself
+        // below them is not a reason to be taken to the bottom of the feed.
+        .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .initialOffset)
+        .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .sizeChanges)
         .scrollPosition($position)
         .onScrollGeometryChange(for: TranscriptLayout.self) { geometry in
             TranscriptLayout(geometry)
         } action: { _, layout in
             // A geometry callback runs while lazy measurements are being
-            // applied. Request the edge after that layout has finished, so
-            // the scroll uses the new heights and insets.
+            // applied. Ask after that layout has finished, so the scroll uses
+            // the new heights and insets.
             Task { @MainActor in
-                if !readerMoved, layout.containerSize.height > 0 {
+                guard layout.containerSize.height > 0 else { return }
+                if resting != nil { restore() } else if !readerMoved {
                     position.scrollTo(edge: .bottom)
                 }
             }
         }
+        // Where the page has reached, which the layout above deliberately
+        // does not notice. Two questions need it and neither is a reason to
+        // move the feed: which entry the reader has stopped on, and how far a
+        // restored position still has to go.
+        .onScrollGeometryChange(for: TranscriptReach.self) { geometry in
+            TranscriptReach(geometry)
+        } action: { _, reach in
+            page.top = reach.top
+            page.offset = reach.offset
+            guard resting != nil else { return }
+            Task { @MainActor in restore() }
+        }
         .onScrollPhaseChange { _, phase in
             if phase == .tracking || phase == .interacting {
                 readerMoved = true
+            }
+            // Where the reader stopped, rather than everywhere they passed
+            // through. A transcript is scrolled in one gesture over hundreds
+            // of entries, and a recording of every one of them would say
+            // nothing a recording of the last one does not.
+            if phase == .idle, readerMoved, resting == nil,
+               let stopped = tops.resting(at: page.top) {
+                moved?(stopped)
             }
         }
         .onChange(of: position.isPositionedByUser) { _, byReader in
             if byReader { readerMoved = true }
         }
     }
+
+    /// Puts the reader back where a recording left them.
+    ///
+    /// Written as a correction repeated until it lands rather than as one
+    /// scroll, because the entry it aims at may not have been laid out yet:
+    /// a feed opens at its tail, so an entry the reader had scrolled back to
+    /// is often not built at all until something asks for it. Asking for it
+    /// by identity builds it; once it has reported where it begins, the
+    /// remainder is the difference between where the page is and where it
+    /// should be, applied to the last position asked for so that it converges
+    /// whatever the scroll view counts a position in.
+    ///
+    /// The ceiling is what stops a transcript that never settles — one whose
+    /// entries keep re-measuring — from correcting itself forever.
+    private func restore() {
+        guard let resting, page.corrections < TranscriptPage.corrections else { return }
+        guard let begins = tops.top(of: resting.entry) else {
+            page.corrections += 1
+            position.scrollTo(id: resting.entry, anchor: .top)
+            return
+        }
+        let error = begins + resting.into - page.top
+        guard abs(error) > 0.5 else { return }
+        page.corrections += 1
+        page.asked = (page.asked ?? page.offset) + error
+        position.scrollTo(y: page.asked ?? 0)
+    }
+}
+
+/// What the page is doing, kept beside the scroll view rather than in view
+/// state.
+///
+/// Every field here is written from a geometry callback, which runs while the
+/// feed is being laid out. Writing one into view state would invalidate the
+/// view in the middle of its own layout, and none of these is drawn from.
+@MainActor
+private final class TranscriptPage {
+    /// How many corrections a restored position may take before it is left
+    /// where it is.
+    static let corrections = 16
+
+    /// Where the top of the page has reached, measured in the feed.
+    var top: CGFloat = 0
+    /// What the scroll view says its own offset is, which is not the same
+    /// number and not in the same units as the feed's.
+    var offset: CGFloat = 0
+    /// The last position asked for, so a correction adds to what was asked
+    /// rather than to what was measured.
+    var asked: CGFloat?
+    var corrections = 0
 }
 
 /// Offset changes are deliberately excluded: moving to the tail must not
@@ -101,6 +242,22 @@ private struct TranscriptLayout: Equatable {
         contentSize = geometry.contentSize
         containerSize = geometry.containerSize
         insets = geometry.contentInsets
+    }
+}
+
+/// How far the page has travelled, in both of the counts that matter.
+///
+/// `top` is where the top of the visible page has reached measured in the feed,
+/// which is the count entries report themselves in, so the two can be compared.
+/// `offset` is the scroll view's own, which is neither the same number nor
+/// necessarily counted from the same place — it is only ever added to.
+private struct TranscriptReach: Equatable {
+    let top: CGFloat
+    let offset: CGFloat
+
+    init(_ geometry: ScrollGeometry) {
+        offset = geometry.contentOffset.y
+        top = geometry.contentOffset.y + geometry.contentInsets.top
     }
 }
 
