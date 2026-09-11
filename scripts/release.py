@@ -576,19 +576,22 @@ def main() -> int:
     if not arguments.rehearse:
         write_numbers(version, build)
     try:
+        step = "archive"
         archive(version, build, facts)
+        step = "export"
         exported = export(version, build, facts)
         written = exported.parent / "ReleaseNotes.txt"
         written.write_text(message + "\n")
         print(f"exported {exported}")
         print(f"release notes beside it in {written}")
+        step = "validate"
         validate(exported, facts)
-    except subprocess.CalledProcessError as failed:
-        step = failed.cmd[0] if failed.cmd else "the release"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as failed:
+        reason = "timed out" if isinstance(failed, subprocess.TimeoutExpired) else "failed"
         if arguments.rehearse:
-            print(f"{step} failed; the rehearsal wrote nothing", file=sys.stderr)
+            print(f"{step} {reason}; the rehearsal wrote nothing", file=sys.stderr)
         else:
-            print(f"{step} failed, so nothing was committed and no tag was "
+            print(f"{step} {reason}, so nothing was committed and no tag was "
                   f"cut. {version} ({build}) is written into the tree and "
                   "nowhere else; docs/RELEASE.md says how to undo that",
                   file=sys.stderr)

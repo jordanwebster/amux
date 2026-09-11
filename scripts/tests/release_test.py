@@ -182,6 +182,49 @@ class TheNumbersReachingTheProject(unittest.TestCase):
                              recipe.project_numbers(written.read_text()))
 
 
+class InterruptedRelease(unittest.TestCase):
+    def test_step_failures_and_timeouts_explain_recovery_without_committing(self):
+        names = ("archive", "export", "validate")
+        for step in names:
+            for rehearse in (False, True):
+                for failure, reason in (
+                    (subprocess.TimeoutExpired(["xcodebuild"], 1800), "timed out"),
+                    (subprocess.CalledProcessError(1, ["xcodebuild"]), "failed"),
+                ):
+                    with self.subTest(step=step, rehearse=rehearse, reason=reason):
+                        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+                            stack.enter_context(unittest.mock.patch.object(
+                                sys, "argv", ["release.py"] + (["--rehearse"] if rehearse else [])))
+                            for name, result in (
+                                ("inputs", ([], {"clean": True})),
+                                ("numbers", ("1.2.3", 44)),
+                                ("notes", "Release notes"),
+                            ):
+                                stack.enter_context(unittest.mock.patch.object(
+                                    recipe, name, return_value=result))
+                            write = stack.enter_context(unittest.mock.patch.object(recipe, "write_numbers"))
+                            commit = stack.enter_context(unittest.mock.patch.object(recipe, "commit_and_tag"))
+                            steps = {name: stack.enter_context(unittest.mock.patch.object(recipe, name))
+                                     for name in names}
+                            steps["export"].return_value = Path(directory) / "amux.ipa"
+                            steps[step].side_effect = failure
+                            error = stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                            self.assertEqual(1, recipe.main())
+                            self.assertIn(f"{step} {reason}", error.getvalue())
+                            commit.assert_not_called()
+                            if rehearse:
+                                write.assert_not_called()
+                                self.assertIn("the rehearsal wrote nothing", error.getvalue())
+                            else:
+                                write.assert_called_once_with("1.2.3", 44)
+                                self.assertIn("nothing was committed and no tag was cut", error.getvalue())
+                                self.assertIn("1.2.3 (44) is written into the tree", error.getvalue())
+                                self.assertIn("docs/RELEASE.md says how to undo that", error.getvalue())
+                            for later in names[names.index(step) + 1:]:
+                                steps[later].assert_not_called()
+
+
 class TheRehearsal(unittest.TestCase):
     """The claim that a rehearsal wrote nothing is measured, not asserted.
 

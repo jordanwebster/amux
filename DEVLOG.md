@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **A timed-out release explains how to recover.** Archive, export
+and validation now catch TimeoutExpired alongside failed subprocess exits.
+The diagnostic names the step and says whether version numbers were written,
+with the recovery guide for a real release. Tests cover all three steps, both
+failure types and both release modes, and prove no commit or tag follows a
+failure. `wt run test-recipes` passes (99 tests).
+
 2026-09-11 — **Release recovery names only the files that change.** The guide
 now describes two modified files and restores only the project specification
 and generated Xcode project. Info.plist reads both numbers from build settings
