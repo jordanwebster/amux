@@ -8924,3 +8924,8 @@ cycle, a forced coherent reclamation halfway through, post-rebuild size spread,
 cancellation lease cleanup, and one-byte-budget refusal before removing only
 the trees it created. Wt's automatically seeded parent targets remain unowned
 and excluded from the experiment.
+
+2026-09-12 — **The retention runner reports setup failures directly.** Its
+disposable tree labels stay within wt's derived-resource name limit, and a
+failed `wt new` now includes the captured diagnostic instead of surfacing only
+Python's subprocess exception.

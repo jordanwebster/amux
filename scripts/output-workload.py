@@ -12,7 +12,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTES = ROOT / "notes" / "build-foundations" / "measurements"
-TREE_PREFIX = "build-foundations-retention"
+TREE_PREFIX = "bf-ret"
 OUTPUT_BUDGET = 4 * 1024**3
 RESERVE = 512 * 1024**2
 ORIGINAL = """    let digest = Sha256::digest(bytes);
@@ -52,8 +52,14 @@ def create_tree(name: str, revision: str) -> Path:
             "--no-attach",
             "--no-build",
             "--json",
-        ]
+        ],
+        check=False,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"wt could not create {target}: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
     payload = json.loads(result.stdout)
     return Path(payload["data"]["tree"]["path"])
 
@@ -196,7 +202,7 @@ def main():
     run_id = f"retention-{stamp}-{os.getpid()}"
     evidence = NOTES / run_id
     evidence.mkdir(parents=True)
-    names = [f"{TREE_PREFIX}-{run_id}-{letter}" for letter in "abc"]
+    names = [f"{TREE_PREFIX}-{os.getpid()}-{letter}" for letter in "abc"]
     trees = []
     try:
         for name in names:
