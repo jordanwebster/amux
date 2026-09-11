@@ -1,3 +1,11 @@
+2026-09-11 — **Prove session and bulk isolation on the ordered relay fallback.**
+Session subscriptions and artifact fetches now have black-box coverage showing
+that their fresh native streams coexist on one relay link, that either endpoint
+can open a callback stream, and that graceful finish remains distinct from a
+named refusal. Artifacts may be 32 MiB; gRPC data channels allow 64 MiB for
+protobuf overhead while link control and stream-preface frames retain their
+separate 16 MiB safety limit.
+
 2026-09-11 — **Finish the native-stream link re-derivation on every ordered
 carrier.** Direct peers now run the shared link runtime over pinned mutual TLS,
 cloud peers run it over WebPKI TLS with authorization in `Hello`, and SSH

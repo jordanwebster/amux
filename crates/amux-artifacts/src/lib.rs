@@ -17,7 +17,7 @@ pub use cache::Cache;
 pub use owner::Owner;
 
 /// The maximum size accepted for one artifact.
-pub const ARTIFACT_SIZE_CAP: u64 = 10 * 1024 * 1024;
+pub const ARTIFACT_SIZE_CAP: u64 = 32 * 1024 * 1024;
 
 /// How long an unpinned artifact remains eligible for storage.
 pub const EPHEMERAL_TTL: Duration = Duration::from_secs(60 * 60);

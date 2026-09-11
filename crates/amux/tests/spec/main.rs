@@ -29,12 +29,13 @@ mod smoke; // the harness in one test: the canonical TestNet example // Chapter 
 
 mod agents; // Chapter 7 — Agent messaging & relationships
 mod attachments; // Chapter 9 — Artifact routing, persistence & lifetime
+mod channels; // Chapter 5 — Native stream classes & lifecycle
 mod debug; // Chapter 8 — Live daemon diagnostics
 mod identity; // Chapter 1 — Identity & trust
 mod pairing; // Chapter 2 — Pairing
 mod presence; // Chapter 3 — Presence
 mod routing; // Chapter 4 — Routing & failover
-mod sessions; // Chapter 5 — Remote sessions & authority
-mod wire; // Chapter 6 — Wire conformance (WirePeer)
+mod sessions; // Chapter 6 — Remote sessions & authority
+mod wire; // Chapter 7 — Wire conformance (WirePeer)
 
 mod profiles;

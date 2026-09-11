@@ -200,6 +200,46 @@ impl ChannelPool {
             .len()
     }
 
+    #[cfg(testnet)]
+    pub(crate) fn active_session_agents(&self, peer: HostId) -> Vec<AgentId> {
+        let lifetimes = self
+            .lifetimes
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut agents = lifetimes
+            .iter()
+            .filter_map(|(key, streams)| match key.class {
+                ChannelClass::Session { agent }
+                    if key.peer == peer
+                        && streams.iter().any(|stream| stream.strong_count() > 0) =>
+                {
+                    Some(agent)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        agents.sort_unstable();
+        agents
+    }
+
+    #[cfg(testnet)]
+    pub(crate) fn active_bulk_streams(&self, peer: HostId) -> usize {
+        let lifetimes = self
+            .lifetimes
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        lifetimes
+            .iter()
+            .filter(|(key, _)| key.peer == peer && key.class == ChannelClass::Bulk)
+            .map(|(_, streams)| {
+                streams
+                    .iter()
+                    .filter(|stream| stream.strong_count() > 0)
+                    .count()
+            })
+            .sum()
+    }
+
     async fn open_stream(&self, peer: HostId, route: Route) -> Result<ByteStream, ChannelError> {
         let carrier = match route {
             Route::Direct(link) => {

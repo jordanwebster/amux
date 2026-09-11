@@ -32,22 +32,25 @@ pub(crate) mod wire {
         pub(crate) use super::super::amux::v1::*;
     }
 
+    /// Bound for link-control messages and application-stream prefaces.
     pub(crate) const MESSAGE_SIZE_LIMIT: usize = 16 * 1024 * 1024;
+    /// RPC payloads include artifacts plus protobuf framing overhead.
+    const CHANNEL_MESSAGE_SIZE_LIMIT: usize = 64 * 1024 * 1024;
 
     pub(crate) fn agent_service_client(
         channel: tonic::transport::Channel,
     ) -> agent_service_client::AgentServiceClient<tonic::transport::Channel> {
         agent_service_client::AgentServiceClient::new(channel)
-            .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
-            .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+            .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+            .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
     }
 
     pub(crate) fn client_service_client(
         channel: tonic::transport::Channel,
     ) -> client_service_client::ClientServiceClient<tonic::transport::Channel> {
         client_service_client::ClientServiceClient::new(channel)
-            .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
-            .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+            .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+            .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
     }
 
     pub(crate) fn agent_service_server<T>(service: T) -> agent_service_server::AgentServiceServer<T>
@@ -55,8 +58,8 @@ pub(crate) mod wire {
         T: agent_service_server::AgentService,
     {
         agent_service_server::AgentServiceServer::new(service)
-            .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
-            .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+            .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+            .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
     }
 
     pub(crate) fn client_service_server<T>(
@@ -66,8 +69,8 @@ pub(crate) mod wire {
         T: client_service_server::ClientService,
     {
         client_service_server::ClientServiceServer::new(service)
-            .max_decoding_message_size(MESSAGE_SIZE_LIMIT)
-            .max_encoding_message_size(MESSAGE_SIZE_LIMIT)
+            .max_decoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
+            .max_encoding_message_size(CHANNEL_MESSAGE_SIZE_LIMIT)
     }
 }
 

@@ -8,6 +8,8 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use super::TestNet;
 use super::assertions::DEFAULT_TIMEOUT;
 use crate::HostId;
@@ -18,6 +20,97 @@ use crate::link::{
 use crate::protocol::PROTOCOL_VERSION;
 use crate::protocol::wire::pb;
 use crate::routing::{Capabilities, ConnectRole, Host, host_to_wire};
+
+/// Exercises the native stream boundary without gRPC obscuring its lifecycle:
+/// graceful finish is EOF, while refusal remains a named reset reason.
+pub async fn native_stream_lifecycle() -> (bool, &'static str) {
+    let (connector_io, acceptor_io) = tokio::io::duplex(1024 * 1024);
+    let connector = Arc::new(MuxCarrier::new(
+        connector_io,
+        MuxRole::Connector,
+        CarrierKind::RelayTcp,
+    ));
+    let acceptor = Arc::new(MuxCarrier::new(
+        acceptor_io,
+        MuxRole::Acceptor,
+        CarrierKind::RelayTcp,
+    ));
+    let (mut connector_sink, connector_source) = connector.control();
+    let (acceptor_sink, mut acceptor_source) = acceptor.control();
+    write_message(&mut connector_sink, &pb::Message { body: None })
+        .await
+        .expect("activate native carrier control stream");
+    read_message(&mut acceptor_source)
+        .await
+        .expect("read native carrier control stream")
+        .expect("native carrier control stream stays open");
+
+    let open = {
+        let connector = connector.clone();
+        tokio::spawn(async move {
+            connector
+                .open_stream(pb::StreamPreface { dst: vec![1; 16] })
+                .await
+        })
+    };
+    let (_, mut accepted) = acceptor
+        .accept_stream()
+        .await
+        .expect("accept stream to finish");
+    accepted
+        .write_all(b"accepted")
+        .await
+        .expect("accept native stream");
+    let mut opened = open
+        .await
+        .expect("stream-open task")
+        .expect("stream is accepted");
+    let mut marker = [0_u8; 8];
+    opened
+        .read_exact(&mut marker)
+        .await
+        .expect("read acceptance marker");
+    accepted.finish().await.expect("finish native stream");
+    let finished_reads_eof = opened
+        .read(&mut [0_u8; 1])
+        .await
+        .expect("read graceful stream finish")
+        == 0;
+
+    let refused_open = {
+        let connector = connector.clone();
+        tokio::spawn(async move {
+            connector
+                .open_stream(pb::StreamPreface { dst: vec![2; 16] })
+                .await
+        })
+    };
+    let (_, mut refused) = acceptor
+        .accept_stream()
+        .await
+        .expect("accept stream to refuse");
+    refused
+        .reset(pb::StreamRefusal::PaymentRequired)
+        .await
+        .expect("reset native stream");
+    let refusal_name = match refused_open.await.expect("refused stream-open task") {
+        Err(crate::link::OpenError::Refused(pb::StreamRefusal::PaymentRequired)) => {
+            "payment_required"
+        }
+        Err(error) => panic!("expected PAYMENT_REQUIRED refusal, got {error}"),
+        Ok(_) => panic!("expected PAYMENT_REQUIRED refusal, but the stream was accepted"),
+    };
+
+    // The control handles own the link while the application streams are
+    // exercised; keep both directions alive until the observations finish.
+    drop((
+        connector_sink,
+        connector_source,
+        acceptor_sink,
+        acceptor_source,
+    ));
+    (finished_reads_eof, refusal_name)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkCloseReason {

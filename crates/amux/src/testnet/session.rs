@@ -144,6 +144,22 @@ impl Daemon {
             .await
     }
 
+    /// Fetches through this daemon's local profile service, which resolves
+    /// the remote owner and assigns the transfer its dedicated bulk channel.
+    pub async fn fetch_artifact_via_profile(
+        &self,
+        owner: &Daemon,
+        agent: &Agent,
+        id: &ArtifactId,
+    ) -> tokio::task::JoinHandle<Result<(ArtifactRef, Vec<u8>), ClientError>> {
+        let name = agent.name.as_deref().expect("test agent has a name");
+        self.sees_agent_on(owner, name).await;
+        let client = self.admin_client().await;
+        let agent_id = agent.id;
+        let id = id.clone();
+        tokio::spawn(async move { client.get_artifact(agent_id.into(), &id).await })
+    }
+
     /// Captures the checkout diff on `owner` for `agent` through this daemon.
     pub async fn diff_on(
         &self,
@@ -1005,6 +1021,33 @@ impl Daemon {
                 .unwrap_or_else(|error| panic!("failed to route {description}: {error}"));
             Client::from_client_service_channel(channel)
         };
+        let stream = client
+            .subscribe_session(crate::SubscribeSessionRequest {
+                agent: agent_name.into(),
+                io_protocol: TEST_ECHO_V1.to_string(),
+                args: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("failed to open {description}: {error}"));
+        EchoSession {
+            description,
+            client,
+            stream,
+            agent_name: agent_name.to_string(),
+        }
+    }
+
+    /// Attaches through this daemon's local profile service. Unlike a direct
+    /// test call to the peer service, this exercises remote resolution and the
+    /// dedicated session channel chosen for the resolved agent.
+    pub async fn attach_via_profile(&self, other: &Daemon, agent_name: &str) -> EchoSession {
+        self.sees_agent_on(other, agent_name).await;
+        let description = format!(
+            "profile-routed echo session from '{}' to agent '{agent_name}' on '{}'",
+            self.name(),
+            other.name()
+        );
+        let client = self.admin_client().await;
         let stream = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: agent_name.into(),

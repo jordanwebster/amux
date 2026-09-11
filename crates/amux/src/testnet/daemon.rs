@@ -497,6 +497,36 @@ impl Daemon {
             .await
     }
 
+    /// Agent identities whose live session channels currently ride the link
+    /// from this daemon to `other`.
+    pub async fn active_session_streams_to(&self, other: &Daemon) -> Vec<crate::AgentId> {
+        self.try_parts()
+            .await
+            .expect("profile is running")
+            .channels
+            .active_session_agents(other.host_id())
+    }
+
+    /// Waits until a bulk channel is live on the link from this daemon to
+    /// `other`, without introducing timing sleeps into a protocol spec.
+    pub async fn expects_active_bulk_stream_to(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' has an active bulk stream to '{}'",
+            self.name(),
+            other.name()
+        );
+        eventually(
+            &assertion,
+            async || {
+                self.try_parts()
+                    .await
+                    .is_some_and(|parts| parts.channels.active_bulk_streams(other.host_id()) > 0)
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
     /// Presence: `other` shows up as online on this daemon's host-listing
     /// surface.
     pub async fn sees(&self, other: &Daemon) {
