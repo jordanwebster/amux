@@ -2,6 +2,8 @@ pub(crate) mod carrier;
 pub(crate) mod channels;
 pub(crate) mod mux;
 pub(crate) mod piper;
+#[allow(dead_code)]
+pub(crate) mod quic;
 pub(crate) mod run;
 
 pub(crate) use carrier::{

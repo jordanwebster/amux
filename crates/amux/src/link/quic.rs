@@ -1,0 +1,958 @@
+use std::net::{SocketAddr, UdpSocket};
+use std::pin::Pin;
+use std::sync::Mutex;
+use std::task::{Context, Poll};
+use std::{future, io};
+
+use futures_util::future::BoxFuture;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::{mpsc, oneshot, watch};
+
+use super::carrier::{
+    AsyncStream, BoxIoFuture, ByteStream, CarrierKind, ControlSink, ControlSource, ControlWrite,
+    LinkCarrier, OpenError,
+};
+use crate::HostId;
+use crate::identity::{DeviceIdentity, IdentityError};
+use crate::protocol::wire::{self, pb};
+use crate::trust::SharedTrustStore;
+
+const STREAM_ACCEPTED: u8 = 0;
+const CONTROL_QUEUE_CAPACITY: usize = 32;
+const DEVICE_SERVER_NAME: &str = "amux-device.local";
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ConnectError {
+    #[error("device identity configuration failed: {0}")]
+    Identity(#[from] IdentityError),
+    #[error("could not resolve {host}:{port}: {source}")]
+    Resolve {
+        host: String,
+        port: u16,
+        #[source]
+        source: io::Error,
+    },
+    #[error("{host}:{port} resolved to no addresses")]
+    NoAddress { host: String, port: u16 },
+    #[error("QUIC connection setup failed: {0}")]
+    Setup(#[from] quinn::ConnectError),
+    #[error("QUIC handshake failed: {0}")]
+    Handshake(#[from] quinn::ConnectionError),
+}
+
+pub(crate) struct QuicCarrier {
+    kind: CarrierKind,
+    connection: quinn::Connection,
+    inbound: tokio::sync::Mutex<mpsc::UnboundedReceiver<(pb::StreamPreface, ByteStream)>>,
+    control: Mutex<Option<(ControlSink, ControlSource)>>,
+    closed: watch::Sender<Option<pb::LinkCloseReason>>,
+}
+
+impl QuicCarrier {
+    pub(crate) async fn connect_direct(
+        endpoint: &quinn::Endpoint,
+        addr: SocketAddr,
+        identity: &DeviceIdentity,
+        trust_store: SharedTrustStore,
+        peer: HostId,
+    ) -> Result<Self, ConnectError> {
+        let config = identity.quic_client_config_for_peer(trust_store, peer)?;
+        let connection = endpoint
+            .connect_with(config, addr, DEVICE_SERVER_NAME)?
+            .await?;
+        let control = connection.open_bi().await?;
+        Ok(Self::new(connection, CarrierKind::Quic, Some(control)))
+    }
+
+    pub(crate) async fn connect_relay(
+        endpoint: &quinn::Endpoint,
+        host: &str,
+        port: u16,
+    ) -> Result<Self, ConnectError> {
+        let addr = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|source| ConnectError::Resolve {
+                host: host.to_string(),
+                port,
+                source,
+            })?
+            .next()
+            .ok_or_else(|| ConnectError::NoAddress {
+                host: host.to_string(),
+                port,
+            })?;
+        let connection = endpoint.connect(addr, host)?.await?;
+        let control = connection.open_bi().await?;
+        Ok(Self::new(connection, CarrierKind::RelayQuic, Some(control)))
+    }
+
+    pub(crate) fn from_accepted(connection: quinn::Connection) -> Self {
+        Self::from_accepted_with_kind(connection, CarrierKind::Quic)
+    }
+
+    pub(crate) fn from_accepted_with_kind(
+        connection: quinn::Connection,
+        kind: CarrierKind,
+    ) -> Self {
+        Self::new(connection, kind, None)
+    }
+
+    pub(crate) fn rebind(endpoint: &quinn::Endpoint, socket: UdpSocket) -> io::Result<()> {
+        endpoint.rebind(socket)
+    }
+
+    fn new(
+        connection: quinn::Connection,
+        kind: CarrierKind,
+        opened_control: Option<(quinn::SendStream, quinn::RecvStream)>,
+    ) -> Self {
+        let (inbound_tx, inbound) = mpsc::unbounded_channel();
+        let (control_stream_tx, control_stream_rx) = oneshot::channel();
+        let (closed, _) = watch::channel(None);
+        let driver_connection = connection.clone();
+        tokio::spawn(async move {
+            let control = match opened_control {
+                Some(control) => Ok(control),
+                None => driver_connection.accept_bi().await,
+            };
+            if control_stream_tx.send(control).is_err() {
+                return;
+            }
+
+            while let Ok((send, recv)) = driver_connection.accept_bi().await {
+                let inbound = inbound_tx.clone();
+                tokio::spawn(async move {
+                    prepare_inbound_stream(send, recv, inbound).await;
+                });
+            }
+        });
+
+        let (control_write_tx, control_write_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
+        let (control_read_tx, control_read_rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
+        tokio::spawn(run_control_stream(
+            control_stream_rx,
+            control_write_rx,
+            control_read_tx,
+        ));
+        let monitor_connection = connection.clone();
+        let monitor_closed = closed.clone();
+        tokio::spawn(async move {
+            let reason = close_reason_from_connection(monitor_connection.closed().await);
+            if monitor_closed.borrow().is_none() {
+                monitor_closed.send_replace(Some(reason));
+            }
+        });
+
+        Self {
+            kind,
+            connection,
+            inbound: tokio::sync::Mutex::new(inbound),
+            control: Mutex::new(Some((
+                ControlSink {
+                    tx: control_write_tx,
+                },
+                ControlSource {
+                    rx: control_read_rx,
+                },
+            ))),
+            closed,
+        }
+    }
+
+    async fn next_inbound(&self) -> Option<(pb::StreamPreface, ByteStream)> {
+        self.inbound.lock().await.recv().await
+    }
+}
+
+impl LinkCarrier for QuicCarrier {
+    fn kind(&self) -> CarrierKind {
+        self.kind
+    }
+
+    fn control(&self) -> (ControlSink, ControlSource) {
+        self.control
+            .lock()
+            .expect("control stream lock poisoned")
+            .take()
+            .expect("a link control stream can only be taken once")
+    }
+
+    fn open_stream(
+        &self,
+        preface: pb::StreamPreface,
+    ) -> BoxFuture<'_, Result<ByteStream, OpenError>> {
+        Box::pin(async move {
+            let (mut send, mut recv) = self
+                .connection
+                .open_bi()
+                .await
+                .map_err(map_connection_open_error)?;
+            let preface_len = prost::Message::encoded_len(&preface);
+            if preface_len > wire::MESSAGE_SIZE_LIMIT {
+                return Err(OpenError::Io(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "stream preface is {preface_len} bytes; limit is {}",
+                        wire::MESSAGE_SIZE_LIMIT
+                    ),
+                )));
+            }
+            write_proto(&mut send, &preface)
+                .await
+                .map_err(map_write_error)?;
+
+            let mut status = [0_u8; 1];
+            match recv.read_exact(&mut status).await {
+                Ok(()) if status[0] == STREAM_ACCEPTED => {
+                    Ok(Box::new(QuicByteStream::accepted(send, recv)) as ByteStream)
+                }
+                Ok(()) => Err(OpenError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid QUIC stream-open status {}", status[0]),
+                ))),
+                Err(quinn::ReadExactError::ReadError(quinn::ReadError::Reset(code))) => {
+                    Err(OpenError::Refused(refusal_from_varint(code)))
+                }
+                Err(quinn::ReadExactError::ReadError(quinn::ReadError::ConnectionLost(_))) => {
+                    Err(OpenError::LinkClosed)
+                }
+                Err(error) => Err(OpenError::Io(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    error,
+                ))),
+            }
+        })
+    }
+
+    fn accept_stream(&self) -> BoxFuture<'_, Option<(pb::StreamPreface, ByteStream)>> {
+        Box::pin(self.next_inbound())
+    }
+
+    fn close(&self, reason: pb::LinkCloseReason) {
+        self.closed.send_replace(Some(reason));
+        self.connection.close(
+            quinn::VarInt::from_u32(reason as u32),
+            reason.as_str_name().as_bytes(),
+        );
+    }
+
+    fn closed(&self) -> BoxFuture<'_, pb::LinkCloseReason> {
+        Box::pin(async move {
+            let mut closed = self.closed.subscribe();
+            loop {
+                if let Some(reason) = *closed.borrow_and_update() {
+                    return reason;
+                }
+                if closed.changed().await.is_err() {
+                    return pb::LinkCloseReason::Unspecified;
+                }
+            }
+        })
+    }
+}
+
+fn close_reason_from_connection(error: quinn::ConnectionError) -> pb::LinkCloseReason {
+    match error {
+        quinn::ConnectionError::ApplicationClosed(close) => {
+            pb::LinkCloseReason::try_from(close.error_code.into_inner() as i32)
+                .unwrap_or(pb::LinkCloseReason::Unspecified)
+        }
+        _ => pb::LinkCloseReason::Unspecified,
+    }
+}
+
+async fn prepare_inbound_stream(
+    mut send: quinn::SendStream,
+    mut recv: quinn::RecvStream,
+    inbound: mpsc::UnboundedSender<(pb::StreamPreface, ByteStream)>,
+) {
+    match read_proto::<pb::StreamPreface>(&mut recv, wire::MESSAGE_SIZE_LIMIT).await {
+        Ok(Some(preface)) => {
+            let stream = Box::new(QuicByteStream::pending(send, recv)) as ByteStream;
+            if let Err(error) = inbound.send((preface, stream)) {
+                let (_, mut stream) = error.0;
+                let _ = stream.reset(pb::StreamRefusal::ShuttingDown).await;
+            }
+        }
+        Ok(None) | Err(_) => {
+            reset_stream_pair(&mut send, &mut recv, pb::StreamRefusal::NotAdjacent);
+        }
+    }
+}
+
+async fn run_control_stream(
+    stream: oneshot::Receiver<
+        Result<(quinn::SendStream, quinn::RecvStream), quinn::ConnectionError>,
+    >,
+    writes: mpsc::Receiver<ControlWrite>,
+    reads: mpsc::Sender<io::Result<pb::Message>>,
+) {
+    let Ok(Ok((send, recv))) = stream.await else {
+        return;
+    };
+    let read = read_control_messages(recv, reads);
+    let write = write_control_messages(send, writes);
+    tokio::pin!(read);
+    tokio::pin!(write);
+    tokio::select! {
+        _ = &mut read => {}
+        _ = &mut write => {}
+    }
+}
+
+async fn read_control_messages(
+    mut recv: quinn::RecvStream,
+    sender: mpsc::Sender<io::Result<pb::Message>>,
+) {
+    loop {
+        match read_proto::<pb::Message>(&mut recv, wire::MESSAGE_SIZE_LIMIT).await {
+            Ok(Some(message)) => {
+                if sender.send(Ok(message)).await.is_err() {
+                    return;
+                }
+            }
+            Ok(None) => return,
+            Err(error) => {
+                let _ = sender.send(Err(error)).await;
+                future::pending::<()>().await;
+            }
+        }
+    }
+}
+
+async fn write_control_messages(
+    mut send: quinn::SendStream,
+    mut receiver: mpsc::Receiver<ControlWrite>,
+) {
+    while let Some(ControlWrite {
+        bytes,
+        declared_len,
+        result,
+    }) = receiver.recv().await
+    {
+        let write_result = write_frame(&mut send, &bytes, declared_len)
+            .await
+            .map_err(io::Error::from);
+        match write_result {
+            Ok(()) => {
+                let _ = result.send(Ok(()));
+            }
+            Err(error) => {
+                let kind = error.kind();
+                let message = error.to_string();
+                let _ = result.send(Err(io::Error::new(kind, message.clone())));
+                while let Ok(command) = receiver.try_recv() {
+                    let _ = command
+                        .result
+                        .send(Err(io::Error::new(kind, message.clone())));
+                }
+                return;
+            }
+        }
+    }
+    let _ = send.finish();
+}
+
+async fn write_frame(
+    send: &mut quinn::SendStream,
+    bytes: &[u8],
+    declared_len: Option<u32>,
+) -> Result<(), quinn::WriteError> {
+    let len = declared_len.unwrap_or_else(|| {
+        u32::try_from(bytes.len()).expect("control message length was checked before queueing")
+    });
+    send.write_all(&len.to_be_bytes()).await?;
+    send.write_all(bytes).await
+}
+
+async fn write_proto<M: prost::Message>(
+    send: &mut quinn::SendStream,
+    message: &M,
+) -> Result<(), quinn::WriteError> {
+    let encoded_len = message.encoded_len();
+    let mut bytes = Vec::with_capacity(encoded_len);
+    message
+        .encode(&mut bytes)
+        .expect("encoding into a Vec cannot fail");
+    write_frame(send, &bytes, None).await
+}
+
+async fn read_proto<M: prost::Message + Default>(
+    recv: &mut quinn::RecvStream,
+    limit: usize,
+) -> io::Result<Option<M>> {
+    let mut header = [0_u8; 4];
+    match recv.read_exact(&mut header).await {
+        Ok(()) => {}
+        Err(quinn::ReadExactError::FinishedEarly(0)) => return Ok(None),
+        Err(error) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, error)),
+    }
+    let len = u32::from_be_bytes(header) as usize;
+    if len > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("protobuf frame is {len} bytes; limit is {limit}"),
+        ));
+    }
+    let mut bytes = vec![0; len];
+    recv.read_exact(&mut bytes)
+        .await
+        .map_err(|error| io::Error::new(io::ErrorKind::UnexpectedEof, error))?;
+    M::decode(bytes.as_slice())
+        .map(Some)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn map_connection_open_error(error: quinn::ConnectionError) -> OpenError {
+    match error {
+        quinn::ConnectionError::LocallyClosed
+        | quinn::ConnectionError::ApplicationClosed(_)
+        | quinn::ConnectionError::ConnectionClosed(_) => OpenError::LinkClosed,
+        error => OpenError::Io(io::Error::from(error)),
+    }
+}
+
+fn map_write_error(error: quinn::WriteError) -> OpenError {
+    match error {
+        quinn::WriteError::Stopped(code) => OpenError::Refused(refusal_from_varint(code)),
+        quinn::WriteError::ConnectionLost(_) | quinn::WriteError::ClosedStream => {
+            OpenError::LinkClosed
+        }
+        error => OpenError::Io(io::Error::from(error)),
+    }
+}
+
+fn refusal_from_varint(code: quinn::VarInt) -> pb::StreamRefusal {
+    pb::StreamRefusal::try_from(code.into_inner() as i32).unwrap_or(pb::StreamRefusal::Unspecified)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Admission {
+    Pending,
+    Accepted,
+    Closed,
+}
+
+struct QuicByteStream {
+    send: quinn::SendStream,
+    recv: quinn::RecvStream,
+    admission: Admission,
+    accept_offset: usize,
+}
+
+impl QuicByteStream {
+    fn pending(send: quinn::SendStream, recv: quinn::RecvStream) -> Self {
+        Self {
+            send,
+            recv,
+            admission: Admission::Pending,
+            accept_offset: 0,
+        }
+    }
+
+    fn accepted(send: quinn::SendStream, recv: quinn::RecvStream) -> Self {
+        Self {
+            send,
+            recv,
+            admission: Admission::Accepted,
+            accept_offset: 0,
+        }
+    }
+
+    fn poll_accept(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.admission != Admission::Pending {
+            return Poll::Ready(Ok(()));
+        }
+        while self.accept_offset < 1 {
+            let written = match AsyncWrite::poll_write(
+                Pin::new(&mut self.send),
+                cx,
+                &[STREAM_ACCEPTED][self.accept_offset..],
+            ) {
+                Poll::Ready(result) => result?,
+                Poll::Pending => return Poll::Pending,
+            };
+            if written == 0 {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "could not accept QUIC stream",
+                )));
+            }
+            self.accept_offset += written;
+        }
+        self.admission = Admission::Accepted;
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncRead for QuicByteStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        match self.poll_accept(cx) {
+            Poll::Ready(Ok(())) => AsyncRead::poll_read(Pin::new(&mut self.recv), cx, buf),
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl AsyncWrite for QuicByteStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.poll_accept(cx) {
+            Poll::Ready(Ok(())) => AsyncWrite::poll_write(Pin::new(&mut self.send), cx, buf),
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.poll_accept(cx) {
+            Poll::Ready(Ok(())) => AsyncWrite::poll_flush(Pin::new(&mut self.send), cx),
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.poll_accept(cx) {
+            Poll::Ready(Ok(())) => {
+                self.admission = Admission::Closed;
+                AsyncWrite::poll_shutdown(Pin::new(&mut self.send), cx)
+            }
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl AsyncStream for QuicByteStream {
+    fn finish(&mut self) -> BoxFuture<'_, io::Result<()>> {
+        Box::pin(async move {
+            future::poll_fn(|cx| self.poll_accept(cx)).await?;
+            self.admission = Admission::Closed;
+            self.send
+                .finish()
+                .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error.to_string()))
+        })
+    }
+
+    fn reset(&mut self, code: pb::StreamRefusal) -> BoxIoFuture<'_, ()> {
+        reset_stream_pair(&mut self.send, &mut self.recv, code);
+        self.admission = Admission::Closed;
+        Box::pin(future::ready(Ok(())))
+    }
+}
+
+impl Drop for QuicByteStream {
+    fn drop(&mut self) {
+        if self.admission == Admission::Pending {
+            reset_stream_pair(
+                &mut self.send,
+                &mut self.recv,
+                pb::StreamRefusal::ShuttingDown,
+            );
+        }
+    }
+}
+
+fn reset_stream_pair(
+    send: &mut quinn::SendStream,
+    recv: &mut quinn::RecvStream,
+    code: pb::StreamRefusal,
+) {
+    let code = quinn::VarInt::from_u32(code as u32);
+    let _ = send.reset(code);
+    let _ = recv.stop(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use chrono::Utc;
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+    use rustls::client::{
+        ClientSessionMemoryCache, ClientSessionStore, Resumption, Tls12ClientSessionValue,
+        Tls13ClientSessionValue,
+    };
+    use rustls::crypto::{
+        WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature,
+    };
+    use rustls::pki_types::{
+        CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime,
+    };
+    use rustls::{CertificateError, DigitallySignedStruct, NamedGroup, SignatureScheme};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+    use crate::identity::{QUIC_ALPN, ed25519_public_key_from_certificate, quic_transport_config};
+    use crate::trust::{TrustStore, TrustStorePairingUpdate};
+
+    struct LoopbackPair {
+        _client_endpoint: quinn::Endpoint,
+        _server_endpoint: quinn::Endpoint,
+        client: Arc<QuicCarrier>,
+        server: Arc<QuicCarrier>,
+    }
+
+    async fn loopback_pair() -> LoopbackPair {
+        let client_identity = DeviceIdentity::for_test(HostId::new_v4());
+        let server_identity = DeviceIdentity::for_test(HostId::new_v4());
+        let client_trust = trust_for(&server_identity);
+        let server_trust = trust_for(&client_identity);
+        let server_config = server_identity.quic_server_config(server_trust).unwrap();
+        let server_endpoint =
+            quinn::Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let client_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let server_addr = server_endpoint.local_addr().unwrap();
+
+        let accept = async {
+            server_endpoint
+                .accept()
+                .await
+                .expect("server endpoint closed")
+                .await
+                .expect("server handshake failed")
+        };
+        let connect = QuicCarrier::connect_direct(
+            &client_endpoint,
+            server_addr,
+            &client_identity,
+            client_trust,
+            server_identity.host_id,
+        );
+        let (server_connection, client) = tokio::join!(accept, connect);
+        let client = Arc::new(client.unwrap());
+        let server = Arc::new(QuicCarrier::from_accepted(server_connection));
+
+        // Writing one frame makes the connector-opened control stream visible
+        // before any application stream is opened.
+        let (mut client_control, _client_source) = client.control();
+        super::super::carrier::write_message(&mut client_control, &pb::Message { body: None })
+            .await
+            .unwrap();
+
+        LoopbackPair {
+            _client_endpoint: client_endpoint,
+            _server_endpoint: server_endpoint,
+            client,
+            server,
+        }
+    }
+
+    fn trust_for(peer: &DeviceIdentity) -> SharedTrustStore {
+        let mut trust = TrustStore::default();
+        assert_eq!(
+            trust
+                .upsert_paired_peer(
+                    peer.host_id,
+                    peer.public_key().to_vec(),
+                    "peer".to_string(),
+                    None,
+                    Utc::now(),
+                )
+                .unwrap(),
+            TrustStorePairingUpdate::Inserted
+        );
+        Arc::new(std::sync::RwLock::new(trust))
+    }
+
+    fn preface(byte: u8) -> pb::StreamPreface {
+        pb::StreamPreface { dst: vec![byte] }
+    }
+
+    #[tokio::test]
+    async fn refusal_code_survives_a_reset() {
+        let pair = loopback_pair().await;
+        let client = pair.client.clone();
+        let opening = tokio::spawn(async move { client.open_stream(preface(1)).await });
+        let (_, mut inbound) = pair.server.accept_stream().await.unwrap();
+        inbound
+            .reset(pb::StreamRefusal::PaymentRequired)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            opening.await.unwrap(),
+            Err(OpenError::Refused(pb::StreamRefusal::PaymentRequired))
+        ));
+    }
+
+    #[tokio::test]
+    async fn two_streams_do_not_block_each_other_under_a_slow_reader() {
+        let pair = loopback_pair().await;
+        let client = pair.client.clone();
+        let first_open = tokio::spawn(async move { client.open_stream(preface(1)).await.unwrap() });
+        let (_, mut slow_reader) = pair.server.accept_stream().await.unwrap();
+        slow_reader.flush().await.unwrap();
+        let mut first = first_open.await.unwrap();
+
+        let blocked_writer = tokio::spawn(async move {
+            let payload = vec![7_u8; 8 * 1024 * 1024];
+            first.write_all(&payload).await
+        });
+
+        let client = pair.client.clone();
+        let second_open =
+            tokio::spawn(async move { client.open_stream(preface(2)).await.unwrap() });
+        let (got, mut fast_stream) =
+            tokio::time::timeout(Duration::from_secs(1), pair.server.accept_stream())
+                .await
+                .expect("second stream was blocked by the unread first stream")
+                .unwrap();
+        assert_eq!(got, preface(2));
+        fast_stream.write_all(b"ok").await.unwrap();
+        let mut second = second_open.await.unwrap();
+        let mut response = [0_u8; 2];
+        tokio::time::timeout(Duration::from_secs(1), second.read_exact(&mut response))
+            .await
+            .expect("second stream response was blocked by the unread first stream")
+            .unwrap();
+        assert_eq!(&response, b"ok");
+
+        slow_reader
+            .reset(pb::StreamRefusal::ShuttingDown)
+            .await
+            .unwrap();
+        assert!(blocked_writer.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_client_offered_session_ticket_is_not_honoured() {
+        let client_identity = DeviceIdentity::for_test(HostId::new_v4());
+        let server_identity = DeviceIdentity::for_test(HostId::new_v4());
+        let server_trust = trust_for(&client_identity);
+
+        let mut ticket_server_tls = server_identity
+            .server_tls_config(server_trust.clone())
+            .unwrap();
+        ticket_server_tls.alpn_protocols = vec![QUIC_ALPN.to_vec()];
+        ticket_server_tls.session_storage = rustls::server::ServerSessionMemoryCache::new(32);
+        ticket_server_tls.send_tls13_tickets = 2;
+        ticket_server_tls.max_early_data_size = 0;
+        let ticket_crypto =
+            quinn::crypto::rustls::QuicServerConfig::try_from(ticket_server_tls).unwrap();
+        let mut ticket_server_config = quinn::ServerConfig::with_crypto(Arc::new(ticket_crypto));
+        ticket_server_config.transport_config(quic_transport_config());
+        ticket_server_config.migration(true);
+
+        let server_endpoint =
+            quinn::Endpoint::server(ticket_server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let server_addr = server_endpoint.local_addr().unwrap();
+
+        let full_handshakes = Arc::new(AtomicUsize::new(0));
+        let verifier = Arc::new(CountingPinnedVerifier::new(
+            server_identity.public_key().to_vec(),
+            full_handshakes.clone(),
+        ));
+        let sessions = Arc::new(TrackingSessionStore::default());
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+            client_identity.private_key_pkcs8().to_vec(),
+        ));
+        let mut client_tls =
+            rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+                .dangerous()
+                .with_custom_certificate_verifier(verifier)
+                .with_client_auth_cert(
+                    vec![CertificateDer::from(
+                        client_identity.certificate_der().unwrap(),
+                    )],
+                    key,
+                )
+                .unwrap();
+        client_tls.alpn_protocols = vec![QUIC_ALPN.to_vec()];
+        client_tls.resumption = Resumption::store(sessions.clone());
+        client_tls.enable_early_data = false;
+        let client_crypto = quinn::crypto::rustls::QuicClientConfig::try_from(client_tls).unwrap();
+        let mut client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
+        client_config.transport_config(quic_transport_config());
+        let mut client_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client_endpoint.set_default_client_config(client_config);
+
+        let (first_server, first_client) =
+            connect_raw(&server_endpoint, &client_endpoint, server_addr).await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while sessions.inserted.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("ticket-issuing server did not provide a session ticket");
+        first_client.close(0_u32.into(), b"test complete");
+        first_server.close(0_u32.into(), b"test complete");
+
+        server_endpoint.set_server_config(Some(
+            server_identity.quic_server_config(server_trust).unwrap(),
+        ));
+        let (second_server, second_client) =
+            connect_raw(&server_endpoint, &client_endpoint, server_addr).await;
+
+        assert!(
+            sessions.taken.load(Ordering::SeqCst) > 0,
+            "the client must actually offer its cached ticket"
+        );
+        assert_eq!(
+            full_handshakes.load(Ordering::SeqCst),
+            2,
+            "the ticket-disabled server must force a full certificate handshake"
+        );
+        second_client.close(0_u32.into(), b"test complete");
+        second_server.close(0_u32.into(), b"test complete");
+    }
+
+    async fn connect_raw(
+        server: &quinn::Endpoint,
+        client: &quinn::Endpoint,
+        addr: SocketAddr,
+    ) -> (quinn::Connection, quinn::Connection) {
+        let accept = async {
+            server
+                .accept()
+                .await
+                .expect("server endpoint closed")
+                .await
+                .expect("server handshake failed")
+        };
+        let connect = async {
+            client
+                .connect(addr, DEVICE_SERVER_NAME)
+                .unwrap()
+                .await
+                .expect("client handshake failed")
+        };
+        tokio::join!(accept, connect)
+    }
+
+    #[derive(Debug)]
+    struct CountingPinnedVerifier {
+        expected_pubkey: Vec<u8>,
+        full_handshakes: Arc<AtomicUsize>,
+        supported_algs: WebPkiSupportedAlgorithms,
+    }
+
+    impl CountingPinnedVerifier {
+        fn new(expected_pubkey: Vec<u8>, full_handshakes: Arc<AtomicUsize>) -> Self {
+            Self {
+                expected_pubkey,
+                full_handshakes,
+                supported_algs: rustls::crypto::ring::default_provider()
+                    .signature_verification_algorithms,
+            }
+        }
+    }
+
+    impl ServerCertVerifier for CountingPinnedVerifier {
+        fn verify_server_cert(
+            &self,
+            end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: UnixTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            let pubkey = ed25519_public_key_from_certificate(end_entity)
+                .map_err(|_| rustls::Error::InvalidCertificate(CertificateError::BadEncoding))?;
+            if pubkey.as_slice() != self.expected_pubkey.as_slice() {
+                return Err(rustls::Error::InvalidCertificate(
+                    CertificateError::BadSignature,
+                ));
+            }
+            self.full_handshakes.fetch_add(1, Ordering::SeqCst);
+            Ok(ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            verify_tls12_signature(message, cert, dss, &self.supported_algs)
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            verify_tls13_signature(message, cert, dss, &self.supported_algs)
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            self.supported_algs.supported_schemes()
+        }
+    }
+
+    #[derive(Debug)]
+    struct TrackingSessionStore {
+        inner: ClientSessionMemoryCache,
+        inserted: AtomicUsize,
+        taken: AtomicUsize,
+    }
+
+    impl Default for TrackingSessionStore {
+        fn default() -> Self {
+            Self {
+                inner: ClientSessionMemoryCache::new(32),
+                inserted: AtomicUsize::new(0),
+                taken: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl ClientSessionStore for TrackingSessionStore {
+        fn set_kx_hint(&self, server_name: ServerName<'static>, group: NamedGroup) {
+            self.inner.set_kx_hint(server_name, group);
+        }
+
+        fn kx_hint(&self, server_name: &ServerName<'_>) -> Option<NamedGroup> {
+            self.inner.kx_hint(server_name)
+        }
+
+        fn set_tls12_session(
+            &self,
+            server_name: ServerName<'static>,
+            value: Tls12ClientSessionValue,
+        ) {
+            self.inner.set_tls12_session(server_name, value);
+        }
+
+        fn tls12_session(&self, server_name: &ServerName<'_>) -> Option<Tls12ClientSessionValue> {
+            self.inner.tls12_session(server_name)
+        }
+
+        fn remove_tls12_session(&self, server_name: &ServerName<'static>) {
+            self.inner.remove_tls12_session(server_name);
+        }
+
+        fn insert_tls13_ticket(
+            &self,
+            server_name: ServerName<'static>,
+            value: Tls13ClientSessionValue,
+        ) {
+            self.inserted.fetch_add(1, Ordering::SeqCst);
+            self.inner.insert_tls13_ticket(server_name, value);
+        }
+
+        fn take_tls13_ticket(
+            &self,
+            server_name: &ServerName<'static>,
+        ) -> Option<Tls13ClientSessionValue> {
+            let ticket = self.inner.take_tls13_ticket(server_name);
+            if ticket.is_some() {
+                self.taken.fetch_add(1, Ordering::SeqCst);
+            }
+            ticket
+        }
+    }
+}

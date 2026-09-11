@@ -52,6 +52,7 @@ dependencies = [
  "prost",
  "prost-types",
  "pty-host",
+ "quinn",
  "rcgen",
  "replay-support",
  "reqwest",

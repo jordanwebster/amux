@@ -35,6 +35,7 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 futures-util = { workspace = true }
 yamux = { workspace = true }
+quinn = { workspace = true }
 gethostname = { workspace = true }
 oauth2 = { workspace = true }
 async-trait = { workspace = true }

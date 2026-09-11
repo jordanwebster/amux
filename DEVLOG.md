@@ -9068,3 +9068,11 @@ conformance once again spends the real TCP listener's per-source TLS handshake
 budget and observes a later connection refused before TLS, then proves a paired
 link established before the flood can still make calls through the rewritten
 native-stream dispatcher path.
+
+2026-09-11 — **QUIC links use pinned device identities without resumption.**
+Device certificates now produce TLS 1.3 QUIC configurations with the amux
+protocol identifier, native stream isolation, migration, bounded stream counts
+and device-shaped liveness timers. Session tickets and early data are disabled.
+The carrier reserves the first bidirectional stream for control, carries stream
+refusals in QUIC reset codes, and keeps a responsive stream beside a blocked
+reader.

@@ -12,6 +12,7 @@ use rcgen::{
 };
 use ring::rand::{SecureRandom as _, SystemRandom};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
+use rustls::client::Resumption;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
@@ -36,6 +37,8 @@ const ED25519_PKCS8_V1_PREFIX: [u8; 16] = [
 const ED25519_SPKI_PREFIX: [u8; 12] = [
     0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
 ];
+#[allow(dead_code)]
+pub(crate) const QUIC_ALPN: &[u8] = b"amux/2";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum IdentityError {
@@ -154,6 +157,69 @@ impl DeviceIdentity {
         config.alpn_protocols = vec![b"h2".to_vec()];
         Ok(config)
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn quic_server_config(
+        &self,
+        trust_store: SharedTrustStore,
+    ) -> Result<quinn::ServerConfig, IdentityError> {
+        let mut tls = self.server_tls_config(trust_store)?;
+        tls.alpn_protocols = vec![QUIC_ALPN.to_vec()];
+        tls.session_storage = std::sync::Arc::new(rustls::server::NoServerSessionStorage {});
+        tls.send_tls13_tickets = 0;
+        tls.max_early_data_size = 0;
+
+        let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
+            .map_err(|error| IdentityError::TlsConfig(error.to_string()))?;
+        let mut config = quinn::ServerConfig::with_crypto(std::sync::Arc::new(crypto));
+        config.transport_config(quic_transport_config());
+        config.migration(true);
+        Ok(config)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn quic_client_config_for_peer(
+        &self,
+        trust_store: SharedTrustStore,
+        peer: HostId,
+    ) -> Result<quinn::ClientConfig, IdentityError> {
+        let mut tls = self.client_tls_config_for_peer(trust_store, peer)?;
+        tls.alpn_protocols = vec![QUIC_ALPN.to_vec()];
+        tls.resumption = Resumption::disabled();
+        tls.enable_early_data = false;
+
+        let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls)
+            .map_err(|error| IdentityError::TlsConfig(error.to_string()))?;
+        let mut config = quinn::ClientConfig::new(std::sync::Arc::new(crypto));
+        config.transport_config(quic_transport_config());
+        Ok(config)
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn quic_transport_config() -> std::sync::Arc<quinn::TransportConfig> {
+    #[cfg(target_os = "ios")]
+    let (keep_alive, idle_timeout) = (
+        std::time::Duration::from_secs(20),
+        std::time::Duration::from_secs(60),
+    );
+    #[cfg(not(target_os = "ios"))]
+    let (keep_alive, idle_timeout) = (
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(120),
+    );
+
+    let mut transport = quinn::TransportConfig::default();
+    transport
+        .keep_alive_interval(Some(keep_alive))
+        .max_idle_timeout(Some(
+            idle_timeout
+                .try_into()
+                .expect("QUIC idle timeout fits in a QUIC variable integer"),
+        ))
+        .max_concurrent_bidi_streams(64_u32.into())
+        .max_concurrent_uni_streams(0_u32.into());
+    std::sync::Arc::new(transport)
 }
 
 pub(crate) fn host_id_for_certificate(
