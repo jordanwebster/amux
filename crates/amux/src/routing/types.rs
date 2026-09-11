@@ -35,6 +35,8 @@ pub struct Host {
     pub version: String,
     /// Host-level protocol and agent creation capabilities.
     pub capabilities: Capabilities,
+    /// Whether this host's profile is bound to an account.
+    pub signed_in: Option<bool>,
 }
 
 /// Local identity of one link: the authenticated peer plus a connection
@@ -101,6 +103,7 @@ pub(crate) fn host_to_wire(host: &Host) -> pb::Host {
         name: host.name.clone(),
         version: host.version.clone(),
         capabilities: Some(capabilities_to_wire(&host.capabilities)),
+        signed_in: host.signed_in,
     }
 }
 
@@ -110,6 +113,7 @@ pub(crate) fn host_from_wire(host: pb::Host) -> Result<Host, protocol_wire::Deco
         name: host.name,
         version: host.version,
         capabilities: capabilities_from_wire(host.capabilities)?,
+        signed_in: host.signed_in,
     })
 }
 

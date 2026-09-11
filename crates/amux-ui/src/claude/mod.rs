@@ -1726,6 +1726,8 @@ mod tests {
             capabilities: None,
             trust_status: amux::HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: amux::HostVia::Direct,
+            signed_in: Some(true),
         };
         let mut model = Model::default();
         for msg in [

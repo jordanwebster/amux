@@ -980,6 +980,12 @@ mod tests {
             capabilities: None,
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: if online {
+                amux_ui::HostVia::Direct
+            } else {
+                amux_ui::HostVia::Offline
+            },
+            signed_in: Some(true),
         }
     }
 

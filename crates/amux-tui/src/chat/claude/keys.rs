@@ -933,6 +933,8 @@ mod tests {
             capabilities: None,
             trust_status: amux_ui::HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: amux_ui::HostVia::Direct,
+            signed_in: Some(true),
         };
         vec![
             Msg::Server(ServerMsg::Connected {

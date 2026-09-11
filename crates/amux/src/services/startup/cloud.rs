@@ -854,6 +854,7 @@ mod tests {
                 name: "local".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 capabilities: Capabilities::default(),
+                signed_in: Some(true),
             },
             routing,
             tunnels,

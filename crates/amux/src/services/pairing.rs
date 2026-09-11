@@ -2064,6 +2064,7 @@ mod tests {
                             agent_type: "test-agent".to_string(),
                         }],
                     },
+                    signed_in: Some(true),
                 },
             )
             .await;
@@ -2333,6 +2334,7 @@ mod tests {
                             agent_type: "test-agent".to_string(),
                         }],
                     },
+                    signed_in: Some(true),
                 },
             )
             .await;
@@ -2421,6 +2423,7 @@ mod tests {
                     name: "relay".to_string(),
                     version: "test".to_string(),
                     capabilities: Capabilities::default(),
+                    signed_in: Some(true),
                 },
                 link_tx,
                 LinkRole::Peer,

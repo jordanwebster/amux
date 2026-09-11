@@ -15,6 +15,7 @@ use super::NetInner;
 use super::assertions::eventually;
 use super::net::{RegisteredToken, TokenRegistry, UserTierRegistry, bind_addr_with_retries};
 use crate::HostId;
+use crate::auth::{AccessToken, AuthError, CredentialProvider};
 use crate::client::Client;
 use crate::connection::ConnectionManager;
 use crate::discovery::{Discovery, ScriptedDiscovery};
@@ -25,8 +26,8 @@ use crate::profile::runtime::{
 };
 use crate::protocol::wire;
 use crate::routing::{
-    HostEntry, HostTrustStatus, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
-    Route, RoutingCore,
+    HostEntry, HostTrustStatus, HostVia, LinkCarrier, LinkConnectorAuth, LinkConnectorToken,
+    LinkConnectorTokenRefresher, Route, RoutingCore,
 };
 use crate::server::ShutdownReason;
 use crate::services::{ClientService, PtyAgentHost};
@@ -44,6 +45,23 @@ pub(crate) struct CloudAttachment {
     pub(crate) tokens: TokenRegistry,
     pub(crate) user_tiers: UserTierRegistry,
     pub(crate) refresh_interval: Option<std::time::Duration>,
+}
+
+/// Marks a testnet daemon with a cloud attachment as account-bound. The
+/// fixture supplies its relay token directly, so this provider is only the
+/// profile binding that production obtains from the installation supervisor.
+struct TestnetCredentials;
+
+#[async_trait::async_trait]
+impl CredentialProvider for TestnetCredentials {
+    async fn access_token(&self) -> Result<AccessToken, AuthError> {
+        Ok(AccessToken {
+            bearer: "testnet-profile-binding".into(),
+            expires_at: None,
+        })
+    }
+
+    fn invalidate(&self, _token: &AccessToken) {}
 }
 
 impl CloudAttachment {
@@ -218,7 +236,10 @@ pub(crate) async fn start_daemon_runtime(
     };
     let mut options = ProfileRuntimeOptions::from_legacy_config(
         config,
-        None,
+        inner
+            .cloud
+            .as_ref()
+            .map(|_| Arc::new(TestnetCredentials) as Arc<dyn CredentialProvider>),
         None,
         Listeners::InProcessOnly,
         Arc::new(discovery) as Arc<dyn Discovery>,
@@ -1167,6 +1188,72 @@ impl Daemon {
         }
     }
 
+    /// Waits until the public ListHosts boundary reports the selected route
+    /// and last announced account-binding fact for `other`.
+    pub async fn sees_host_status(&self, other: &Daemon, via: HostVia, signed_in: Option<bool>) {
+        let assertion = format!(
+            "'{}' reports '{}' via {via:?} with signed_in={signed_in:?}",
+            self.name(),
+            other.name()
+        );
+        let other_id = other.host_id();
+        eventually(
+            &assertion,
+            async || {
+                let client = {
+                    let runtime = self.runtime().await;
+                    runtime.as_ref().map(ProfileRuntime::client)
+                };
+                let Some(client) = client else {
+                    return false;
+                };
+                client.list_hosts().await.ok().is_some_and(|hosts| {
+                    hosts.into_iter().any(|host| {
+                        host.id == other_id && host.via == via && host.signed_in == signed_in
+                    })
+                })
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    /// Opens the production link protocol over a tracked TCP stream while
+    /// tagging that stream as the test stand-in for SSH stdio.
+    pub async fn connect_via_ssh_fixture(&self, other: &Daemon) {
+        let identity = load_or_create_device_identity_in(&self.inner.data_dir)
+            .expect("load daemon identity for SSH fixture");
+        let (connector_ctx, trust_store) = {
+            let runtime = self.runtime().await;
+            let runtime = runtime
+                .as_ref()
+                .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+            (
+                runtime
+                    .services
+                    .link_connector_ctx()
+                    .with_expected_peer(other.host_id())
+                    .with_carrier(LinkCarrier::Ssh),
+                runtime.trust.clone(),
+            )
+        };
+        let channel = crate::transport::trusted_device_channel_tracked(
+            other.direct_addr(),
+            identity,
+            trust_store,
+            other.host_id(),
+            Some(other.inner.tracked_tcp.clone()),
+        )
+        .expect("prepare SSH fixture transport");
+        let (_task, established) =
+            crate::routing::spawn_connector_to_channel_with_establishment(connector_ctx, channel);
+        tokio::time::timeout(super::assertions::DEFAULT_TIMEOUT, established)
+            .await
+            .expect("SSH fixture link establishment timed out")
+            .expect("SSH fixture link task ended before establishment")
+            .expect("SSH fixture link was refused");
+    }
+
     /// The route this daemon would use for a fresh call to `peer`: the best
     /// known route (what `channel_to` activates), falling back to the
     /// currently active route.
@@ -1379,11 +1466,13 @@ impl Daemon {
                 for host in table {
                     let _ = writeln!(
                         out,
-                        "  - {} ({}) online={} trust={:?} last_dial_error={}",
+                        "  - {} ({}) online={} trust={:?} via={:?} signed_in={:?} last_dial_error={}",
                         host.name,
                         host.id,
                         host.online,
                         host.trust_status,
+                        host.via,
+                        host.signed_in,
                         host.last_dial_error.as_deref().unwrap_or("none")
                     );
                 }

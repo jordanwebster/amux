@@ -31,7 +31,7 @@ use crate::pairing::{PAIR_MODE_TTL, PairMode, PairModeError};
 use crate::protocol::{ProtocolError, protocol_status, wire};
 use crate::routing::{
     EventSource, FEATURE_CLOUD_RELAY, Host, HostEntry, HostEvent, HostReachabilityEvent,
-    HostTrustStatus, RoutingCore, capabilities_to_wire,
+    HostTrustStatus, HostVia, RoutingCore, capabilities_to_wire,
 };
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::services::ReachabilityLinkConnector;
@@ -210,6 +210,8 @@ impl ClientService {
                     capabilities: Some(crate::Capabilities::default()),
                     trust_status: HostTrustStatus::UntrustedButOnline,
                     last_dial_error: None,
+                    via: HostVia::Direct,
+                    signed_in: None,
                 },
                 via: PeerVia::Direct,
                 addrs: advert.addrs,
@@ -232,7 +234,10 @@ impl ClientService {
         entries.retain(|host| host.trust_status == HostTrustStatus::UntrustedButOnline);
         self.mark_client_visible_host_entries(&entries).await;
         candidates.extend(entries.into_iter().map(|host| PairingCandidate {
-            host,
+            host: HostEntry {
+                via: HostVia::Relay,
+                ..host
+            },
             via: PeerVia::Relay,
             addrs: Vec::new(),
         }));
@@ -447,8 +452,11 @@ impl ClientService {
         hosts: Vec<Host>,
         include_trust_only: bool,
     ) -> Vec<HostEntry> {
-        let trusted_hosts = self.trusted_host_names();
-        let trusted_names = trusted_hosts.iter().cloned().collect::<HashMap<_, _>>();
+        let trusted_hosts = self.trusted_host_facts();
+        let trusted_names = trusted_hosts
+            .iter()
+            .map(|(host_id, name, _)| (*host_id, name.clone()))
+            .collect::<HashMap<_, _>>();
         let mut seen = HashSet::new();
         let mut entries = Vec::with_capacity(
             hosts.len()
@@ -466,11 +474,11 @@ impl ClientService {
             );
         }
         if include_trust_only {
-            for (host_id, name) in trusted_hosts {
+            for (host_id, name, signed_in) in trusted_hosts {
                 if seen.contains(&host_id) || self.is_local_host(host_id) {
                     continue;
                 }
-                entries.push(self.trusted_host_entry(host_id, name).await);
+                entries.push(self.trusted_host_entry(host_id, name, signed_in).await);
             }
         }
         entries.sort_unstable_by_key(|host| host.id);
@@ -493,6 +501,11 @@ impl ClientService {
         let name = host.name.clone();
         let version = host.version.clone();
         let capabilities = host.capabilities.clone();
+        let signed_in = if self.is_local_host(host_id) {
+            host.signed_in
+        } else {
+            self.trusted_host_signed_in(host_id)
+        };
         HostEntry {
             id: host_id,
             name,
@@ -505,10 +518,21 @@ impl ClientService {
                 HostTrustStatus::UntrustedButOnline
             },
             last_dial_error: self.stored_last_dial_error(host_id).await,
+            via: if self.is_local_host(host_id) {
+                HostVia::Direct
+            } else {
+                self.remote_agent_connections.via_for(host_id).await
+            },
+            signed_in,
         }
     }
 
-    async fn trusted_host_entry(&self, host_id: Uuid, name: String) -> HostEntry {
+    async fn trusted_host_entry(
+        &self,
+        host_id: Uuid,
+        name: String,
+        signed_in: Option<bool>,
+    ) -> HostEntry {
         HostEntry {
             id: host_id,
             name,
@@ -517,6 +541,8 @@ impl ClientService {
             capabilities: None,
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: self.stored_last_dial_error(host_id).await,
+            via: HostVia::Offline,
+            signed_in,
         }
     }
 
@@ -530,14 +556,34 @@ impl ClientService {
     }
 
     fn trusted_host_names(&self) -> Vec<(Uuid, String)> {
+        self.trusted_host_facts()
+            .into_iter()
+            .map(|(host_id, name, _)| (host_id, name))
+            .collect()
+    }
+
+    fn trusted_host_facts(&self) -> Vec<(Uuid, String, Option<bool>)> {
         let Ok(store) = self.pairing_trust.trust_store.read() else {
             tracing::warn!("failed to read trust store for host listing status");
             return Vec::new();
         };
         store
             .entries()
-            .map(|(host_id, entry)| (host_id, entry.name.clone()))
+            .map(|(host_id, entry)| (host_id, entry.name.clone(), entry.signed_in))
             .collect()
+    }
+
+    fn trusted_host_signed_in(&self, host_id: Uuid) -> Option<bool> {
+        let Ok(store) = self.pairing_trust.trust_store.read() else {
+            tracing::warn!("failed to read trust store for host signed-in status");
+            return None;
+        };
+        store
+            .entries()
+            .find_map(|(entry_host_id, entry)| {
+                (entry_host_id == host_id).then_some(entry.signed_in)
+            })
+            .flatten()
     }
 
     fn trusted_host_name(&self, host_id: Uuid) -> Option<String> {
@@ -656,7 +702,8 @@ impl ClientService {
                 let Some(name) = self.trusted_host_name(host_id) else {
                     return;
                 };
-                self.trusted_host_entry(host_id, name).await
+                self.trusted_host_entry(host_id, name, self.trusted_host_signed_in(host_id))
+                    .await
             }
         };
         let mut state = self.state.write().await;
@@ -673,7 +720,10 @@ impl ClientService {
 
     async fn remove_host(&self, host_id: Uuid) -> HostEventOutcome {
         let trusted_replacement = match self.trusted_host_name(host_id) {
-            Some(name) => Some(self.trusted_host_entry(host_id, name).await),
+            Some(name) => Some(
+                self.trusted_host_entry(host_id, name, self.trusted_host_signed_in(host_id))
+                    .await,
+            ),
             None => None,
         };
         let mut state = self.state.write().await;
@@ -1385,6 +1435,13 @@ pub(crate) fn host_entry_to_wire(host: &HostEntry) -> wire::HostEntry {
             HostTrustStatus::UntrustedButOnline => wire::HostTrustStatus::UntrustedButOnline as i32,
         },
         last_dial_error: host.last_dial_error.clone(),
+        via: match host.via {
+            HostVia::Direct => wire::HostVia::Direct as i32,
+            HostVia::Relay => wire::HostVia::Relay as i32,
+            HostVia::Ssh => wire::HostVia::Ssh as i32,
+            HostVia::Offline => wire::HostVia::Offline as i32,
+        },
+        signed_in: host.signed_in,
     }
 }
 
@@ -2461,6 +2518,7 @@ mod tests {
                 features: Vec::new(),
                 supported_agent_types,
             },
+            signed_in: Some(true),
         }
     }
 
@@ -2479,6 +2537,8 @@ mod tests {
             capabilities: Some(host.capabilities.clone()),
             trust_status: HostTrustStatus::UntrustedButOnline,
             last_dial_error: None,
+            via: HostVia::Offline,
+            signed_in: None,
         }
     }
 
@@ -3810,6 +3870,8 @@ mod tests {
             wire::HostTrustStatus::Trusted as i32
         );
         assert!(hosts.hosts[0].last_dial_error.is_none());
+        assert_eq!(hosts.hosts[0].via, wire::HostVia::Offline as i32);
+        assert_eq!(hosts.hosts[0].signed_in, None);
 
         let agents = tonic_list_agents(&service).await;
         assert_eq!(agents.agents.len(), 1);
@@ -3826,10 +3888,14 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        assert!(matches!(
-            host_stream.next().await.unwrap().unwrap().event,
-            Some(wire::subscribe_hosts_response::Event::HostUpdated(_))
-        ));
+        let Some(wire::subscribe_hosts_response::Event::HostUpdated(updated)) =
+            host_stream.next().await.unwrap().unwrap().event
+        else {
+            panic!("expected host snapshot entry")
+        };
+        let streamed_host = updated.host.expect("host snapshot entry");
+        assert_eq!(streamed_host.via, wire::HostVia::Offline as i32);
+        assert_eq!(streamed_host.signed_in, None);
         assert!(matches!(
             host_stream.next().await.unwrap().unwrap().event,
             Some(wire::subscribe_hosts_response::Event::SnapshotComplete(_))
@@ -4174,6 +4240,7 @@ mod tests {
                 features: vec![crate::routing::FEATURE_CLOUD_RELAY.to_string()],
                 supported_agent_types: Vec::new(),
             },
+            signed_in: Some(true),
         };
         tunnels
             .link_registry()
@@ -4209,6 +4276,8 @@ mod tests {
             hosts[0].host.trust_status,
             HostTrustStatus::UntrustedButOnline
         );
+        assert_eq!(hosts[0].host.via, HostVia::Relay);
+        assert_eq!(hosts[0].host.signed_in, None);
     }
 
     #[tokio::test]

@@ -19,7 +19,7 @@ use crate::agents::{
 use crate::debug::DebugFormat;
 use crate::pairing::ssh::SshPairingPeer;
 use crate::protocol::{ProtocolError, protocol_error_from_status_details, wire};
-use crate::routing::{HostEntry, HostEvent, HostTrustStatus, capabilities_from_wire};
+use crate::routing::{HostEntry, HostEvent, HostTrustStatus, HostVia, capabilities_from_wire};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::transport::TransportError;
 use crate::{
@@ -1229,6 +1229,21 @@ pub(crate) fn host_entry_from_wire(
             method,
             message: error.to_string(),
         })?;
+    let via = match wire::HostVia::try_from(host.via).map_err(|_| ClientError::Decode {
+        method,
+        message: format!("invalid HostEntry.via {}", host.via),
+    })? {
+        wire::HostVia::Direct => HostVia::Direct,
+        wire::HostVia::Relay => HostVia::Relay,
+        wire::HostVia::Ssh => HostVia::Ssh,
+        wire::HostVia::Offline => HostVia::Offline,
+        wire::HostVia::Unspecified => {
+            return Err(ClientError::Decode {
+                method,
+                message: "HostEntry.via is unspecified".to_string(),
+            });
+        }
+    };
     Ok(HostEntry {
         id,
         name: host.name,
@@ -1237,6 +1252,8 @@ pub(crate) fn host_entry_from_wire(
         capabilities,
         trust_status,
         last_dial_error: host.last_dial_error,
+        via,
+        signed_in: host.signed_in,
     })
 }
 

@@ -33,7 +33,7 @@ pub use amux::installation::ProfileId;
 pub use amux::{
     Agent, AgentId, AgentKind, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef,
     BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, DiffResponse, HostEntry, HostId,
-    HostTrustStatus, Protocol, WorkingOn, claude_io,
+    HostTrustStatus, HostVia, Protocol, WorkingOn, claude_io,
 };
 pub use attachments::{
     ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention,

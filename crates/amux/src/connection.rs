@@ -14,7 +14,9 @@ use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 
 use crate::HostId;
-use crate::routing::{FEATURE_CLOUD_RELAY, Host, LinkId, Route, RoutingCore, RoutingEvent};
+use crate::routing::{
+    FEATURE_CLOUD_RELAY, Host, HostVia, LinkCarrier, LinkId, Route, RoutingCore, RoutingEvent,
+};
 use crate::transport::TrustedPeerConnections;
 use crate::tunnel::{TunnelPool, TunnelPoolError};
 
@@ -153,6 +155,18 @@ impl ConnectionManager {
 
     pub(crate) async fn clear_reachability_error(&self, peer: HostId) {
         self.state.write().await.reachability_errors.remove(&peer);
+    }
+
+    pub(crate) async fn via_for(&self, peer: HostId) -> HostVia {
+        match self.state.read().await.active.get(&peer).copied() {
+            Some(Route::Via(_)) => HostVia::Relay,
+            Some(Route::Direct(link)) => match self.tunnels.link_registry().carrier(&link).await {
+                Some(LinkCarrier::Ssh) => HostVia::Ssh,
+                Some(LinkCarrier::Direct) => HostVia::Direct,
+                None => HostVia::Offline,
+            },
+            None => HostVia::Offline,
+        }
     }
 
     pub(crate) async fn send_link_close_to_host(
@@ -383,6 +397,7 @@ mod tests {
                     agent_type: "test-agent".to_string(),
                 }],
             },
+            signed_in: Some(true),
         }
     }
 
@@ -395,6 +410,7 @@ mod tests {
                 features: vec![FEATURE_CLOUD_RELAY.to_string()],
                 supported_agent_types: Vec::new(),
             },
+            signed_in: Some(true),
         }
     }
 

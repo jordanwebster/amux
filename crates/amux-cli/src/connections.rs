@@ -337,6 +337,12 @@ mod tests {
             capabilities: Some(amux::Capabilities::default()),
             trust_status: amux::HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: if online {
+                amux::HostVia::Direct
+            } else {
+                amux::HostVia::Offline
+            },
+            signed_in: Some(true),
         }
     }
 

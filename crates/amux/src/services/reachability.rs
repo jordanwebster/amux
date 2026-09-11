@@ -17,7 +17,8 @@ use crate::discovery::{Discovery, DiscoveryEvent, FoundHosts};
 use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::DeviceIdentity;
 use crate::routing::{
-    Host, LinkConnectorCtx, Route, RoutingCore, spawn_connector_to_channel_with_establishment,
+    Host, LinkCarrier, LinkConnectorCtx, Route, RoutingCore,
+    spawn_connector_to_channel_with_establishment,
 };
 use crate::transport::{
     channel_from_single_io, configure_tonic_endpoint_keepalive, spawn_ssh_relay,
@@ -462,7 +463,14 @@ async fn establish_reachability_link(
             let mut last_error = None;
             for addr in addrs {
                 match prepare_direct_channel(&context, attempt.peer, addr) {
-                    Ok(channel) => match establish_channel(&context, attempt.peer, channel).await {
+                    Ok(channel) => match establish_channel(
+                        &context,
+                        attempt.peer,
+                        channel,
+                        LinkCarrier::Direct,
+                    )
+                    .await
+                    {
                         Ok((host, connector_task, abort_on_drop)) => {
                             persist_working_addr(&context, attempt.peer, addr);
                             context
@@ -509,7 +517,7 @@ async fn establish_reachability_link(
                     return false;
                 }
             };
-            match establish_channel(&context, attempt.peer, channel).await {
+            match establish_channel(&context, attempt.peer, channel, LinkCarrier::Ssh).await {
                 Ok((host, connector_task, abort_on_drop)) => {
                     context
                         .connections
@@ -555,13 +563,15 @@ async fn establish_channel(
     context: &ReachabilityLinkContext,
     peer: HostId,
     channel: tonic::transport::Channel,
+    carrier: LinkCarrier,
 ) -> Result<(Host, JoinHandle<Result<(), tonic::Status>>, AbortTaskOnDrop), String> {
     let connector_ctx = LinkConnectorCtx::new(
         context.local_host.clone(),
         context.routing.clone(),
         context.tunnels.clone(),
     )
-    .with_expected_peer(peer);
+    .with_expected_peer(peer)
+    .with_carrier(carrier);
     let (connector_task, established_rx) =
         spawn_connector_to_channel_with_establishment(connector_ctx, channel);
     let abort_on_failure = AbortTaskOnDrop(connector_task.abort_handle());

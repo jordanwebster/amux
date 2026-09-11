@@ -38,6 +38,15 @@ pub enum HostTrustStatus {
     UntrustedButOnline,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HostVia {
+    Direct,
+    Relay,
+    Ssh,
+    Offline,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct HostEntry {
     pub id: Uuid,
@@ -54,6 +63,10 @@ pub struct HostEntry {
     /// `!online && last_dial_error.is_none()`, derived client-side if
     /// anyone cares.
     pub last_dial_error: Option<String>,
+    /// The live route selected for new calls to this host.
+    pub via: HostVia,
+    /// The last account-binding fact this host announced.
+    pub signed_in: Option<bool>,
 }
 
 /// Client-facing host inventory events.

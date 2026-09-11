@@ -6,7 +6,66 @@
 //! candidates. (docs/PROTOCOL.md "Routing: two rules"; docs/ARCHITECTURE.md
 //! "Service surface map", "The cloud deployment")
 
+use amux::HostVia;
 use amux::testnet::{TestNet, Via};
+
+/// Host inventory follows the active route, including the carrier under a
+/// direct route, rather than merely repeating configured reachabilities.
+#[tokio::test]
+async fn a_host_reports_direct_relay_ssh_or_offline_as_its_links_change() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("laptop")
+        .daemon("desktop")
+        .paired("laptop", "desktop", Via::Cloud)
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    net.announce(&desktop);
+    laptop
+        .sees_host_status(&desktop, HostVia::Direct, Some(true))
+        .await;
+
+    net.withdraw(&desktop);
+    desktop.sever_direct_connections().await;
+    laptop.can_call(&desktop).await;
+    laptop
+        .sees_host_status(&desktop, HostVia::Relay, Some(true))
+        .await;
+
+    laptop.connect_via_ssh_fixture(&desktop).await;
+    laptop
+        .sees_host_status(&desktop, HostVia::Ssh, Some(true))
+        .await;
+
+    desktop.stop_cloud().await;
+    desktop.sever_direct_connections().await;
+    laptop
+        .sees_host_status(&desktop, HostVia::Offline, Some(true))
+        .await;
+}
+
+/// A peer's binding fact is retained with trust when its last live route
+/// disappears, so signed-out hosts are not mistaken for subscription leads.
+#[tokio::test]
+async fn an_offline_host_that_never_signed_in_is_reported_as_such() {
+    let net = TestNet::builder()
+        .daemon("laptop")
+        .daemon("desktop")
+        .paired("laptop", "desktop", Via::Direct)
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    laptop
+        .sees_host_status(&desktop, HostVia::Direct, Some(false))
+        .await;
+    desktop.stop().await;
+    laptop
+        .sees_host_status(&desktop, HostVia::Offline, Some(false))
+        .await;
+}
 
 /// Two daemons attached to the same cloud user see each other come online —
 /// no trust required — and see each other disappear when one goes away.

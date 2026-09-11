@@ -437,18 +437,22 @@ async fn start_routing_services_parts(
     state: Arc<RwLock<ServerState>>,
     device_security: Option<DeviceRuntimeSecurity>,
 ) -> StartedRoutingParts {
-    let (host_id, host_name, is_cloud_server) = {
+    let (host_id, host_name, is_cloud_server, signed_in) = {
         let state = state.read().await;
         (
             state.host_id(),
             state.host_name().to_string(),
             state.is_cloud_server(),
+            state.credentials.is_some(),
         )
     };
-    let host = local_host(host_id, &host_name, is_cloud_server);
+    let host = local_host(host_id, &host_name, is_cloud_server, signed_in);
 
     let routing = Arc::new(match device_security.as_ref() {
-        Some(security) => RoutingCore::with_trust_store(security.trust_store.clone()),
+        Some(security) => RoutingCore::with_persisted_trust_store(
+            security.trust_store.clone(),
+            security.data_dir.clone(),
+        ),
         None => RoutingCore::new(),
     });
     let (incoming_tunnels_tx, incoming_tunnels_rx) = mpsc::channel(64);
@@ -1112,6 +1116,7 @@ mod tests {
                     agent_type: "test-agent".to_string(),
                 }],
             },
+            signed_in: Some(true),
         }
     }
 

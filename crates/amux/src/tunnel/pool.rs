@@ -745,6 +745,7 @@ mod tests {
                     agent_type: "test-agent".to_string(),
                 }],
             },
+            signed_in: Some(true),
         }
     }
 

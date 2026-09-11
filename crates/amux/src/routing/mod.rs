@@ -30,7 +30,7 @@ pub(crate) use connect::{
     spawn_connector_to_channel_with_establishment,
 };
 pub(crate) use events::{EventSource, HostReachabilityEvent, RoutingEvent};
-pub use events::{HostEntry, HostEvent, HostTrustStatus};
+pub use events::{HostEntry, HostEvent, HostTrustStatus, HostVia};
 pub(crate) use host::{
     FEATURE_CLOUD_RELAY, MAX_HOST_NAME_BYTES, local_capabilities, local_host, validate_remote_host,
 };
@@ -38,8 +38,8 @@ pub(crate) use link::{
     ConnectHandshake, ConnectHandshakeEvent, protocol_error_hello_ack, protocol_error_link_close,
 };
 pub(crate) use link_registry::{
-    LinkAdmission, LinkCloseRequest, LinkOutputTx, LinkRegistry, LinkRole, LinkUnavailable,
-    TunnelOpenForward,
+    LinkAdmission, LinkCarrier, LinkCloseRequest, LinkOutputTx, LinkProperties, LinkRegistry,
+    LinkRole, LinkUnavailable, TunnelOpenForward,
 };
 pub use types::{Capabilities, Host, SupportedAgentType};
 pub(crate) use types::{

@@ -12,12 +12,18 @@ pub(crate) const FEATURE_CLOUD_RELAY: &str = "amux.cloud_relay";
 pub(crate) const MAX_SUPPORTED_AGENT_TYPES: usize = 64;
 pub(crate) const MAX_HOST_NAME_BYTES: usize = 256;
 
-pub(crate) fn local_host(host_id: Uuid, host_name: &str, is_cloud_server: bool) -> Host {
+pub(crate) fn local_host(
+    host_id: Uuid,
+    host_name: &str,
+    is_cloud_server: bool,
+    signed_in: bool,
+) -> Host {
     Host {
         id: host_id,
         name: host_name.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         capabilities: local_capabilities(is_cloud_server),
+        signed_in: Some(signed_in),
     }
 }
 
@@ -97,7 +103,7 @@ mod tests {
 
     #[test]
     fn validate_remote_host_rejects_too_many_supported_agent_types() {
-        let mut host = local_host(Uuid::from_u128(1), "peer", false);
+        let mut host = local_host(Uuid::from_u128(1), "peer", false, false);
         host.capabilities.supported_agent_types = (0..=MAX_SUPPORTED_AGENT_TYPES)
             .map(|idx| SupportedAgentType {
                 agent_type: format!("agent-{idx}"),
@@ -115,6 +121,7 @@ mod tests {
             Uuid::from_u128(1),
             &"a".repeat(MAX_HOST_NAME_BYTES + 1),
             false,
+            false,
         );
 
         let error = validate_remote_host(&host).expect_err("host name should exceed the cap");
@@ -124,7 +131,7 @@ mod tests {
 
     #[test]
     fn cloud_local_host_advertises_no_supported_agent_types() {
-        let host = local_host(Uuid::from_u128(1), "cloud", true);
+        let host = local_host(Uuid::from_u128(1), "cloud", true, false);
 
         assert!(host.capabilities.supported_agent_types.is_empty());
         assert!(
@@ -138,7 +145,7 @@ mod tests {
     #[cfg(feature = "local-agents")]
     #[test]
     fn non_cloud_local_host_advertises_claude_agent_type() {
-        let host = local_host(Uuid::from_u128(1), "host", false);
+        let host = local_host(Uuid::from_u128(1), "host", false, false);
 
         assert!(
             host.capabilities
@@ -158,7 +165,7 @@ mod tests {
     #[cfg(all(feature = "local-agents", not(unix)))]
     #[test]
     fn non_unix_local_host_does_not_advertise_codex_agent_type() {
-        let host = local_host(Uuid::from_u128(1), "host", false);
+        let host = local_host(Uuid::from_u128(1), "host", false, false);
 
         assert!(
             host.capabilities
@@ -171,7 +178,7 @@ mod tests {
     #[cfg(not(feature = "local-agents"))]
     #[test]
     fn non_cloud_local_host_advertises_no_agent_types_without_local_agents() {
-        let host = local_host(Uuid::from_u128(1), "host", false);
+        let host = local_host(Uuid::from_u128(1), "host", false, false);
 
         assert!(host.capabilities.supported_agent_types.is_empty());
     }

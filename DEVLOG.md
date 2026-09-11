@@ -1,3 +1,11 @@
+2026-09-11 — **Report each host's live route and account binding.** Device
+hellos now state whether their profile is account-bound, and paired peers
+retain that fact in the trust store when the device goes offline. Host
+inventory and pairing-candidate responses identify direct, relay, SSH, and
+offline routes from the connection actually selected, including the carrier
+under a direct route. Presence scenarios exercise every route transition and
+distinguish an offline host that has never signed in.
+
 2026-09-11 — **Gate cloud tunnels at the relay while preserving presence.**
 Every live link now records whether it was admitted by a pinned device key or
 by a cloud token with a free/pro tier. The relay refuses a tunnel open when

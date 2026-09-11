@@ -265,7 +265,8 @@ mod tests {
             message_fields.get("TunnelClose").cloned(),
             Some(std::collections::BTreeMap::from([
                 ("tunnel_id", 1),
-                ("dst", 2)
+                ("dst", 2),
+                ("error", 3)
             ]))
         );
 

@@ -13,6 +13,7 @@
 //! claims adjacency to it — so presence reaches exactly two hops.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -125,6 +126,7 @@ impl RoutingState {
 pub(crate) struct RoutingCore {
     state: RwLock<RoutingState>,
     trust_store: Option<SharedTrustStore>,
+    trust_data_dir: Option<PathBuf>,
 }
 
 impl RoutingCore {
@@ -132,10 +134,23 @@ impl RoutingCore {
         Self::default()
     }
 
+    #[cfg(test)]
     pub(crate) fn with_trust_store(trust_store: SharedTrustStore) -> Self {
         Self {
             state: RwLock::new(RoutingState::default()),
             trust_store: Some(trust_store),
+            trust_data_dir: None,
+        }
+    }
+
+    pub(crate) fn with_persisted_trust_store(
+        trust_store: SharedTrustStore,
+        data_dir: PathBuf,
+    ) -> Self {
+        Self {
+            state: RwLock::new(RoutingState::default()),
+            trust_store: Some(trust_store),
+            trust_data_dir: Some(data_dir),
         }
     }
 
@@ -261,6 +276,7 @@ impl RoutingCore {
     /// Records a channel-backed direct link to `host`. Emits `NeighborUp`
     /// (and `Added` presence on first sight).
     pub(crate) async fn apply_direct_up(&self, host: Host, link: LinkId) -> RouteUpdateOutcome {
+        self.remember_signed_in(&host);
         let trusted_hosts = self.trusted_host_ids();
         let mut state = self.state.write().await;
         let host_id = host.id;
@@ -319,6 +335,7 @@ impl RoutingCore {
     /// Records a neighbor's adjacency claim: `relay` says it has a direct
     /// link to `host`.
     pub(crate) async fn apply_claim_up(&self, relay: HostId, host: Host) -> RouteUpdateOutcome {
+        self.remember_signed_in(&host);
         let trusted_hosts = self.trusted_host_ids();
         let mut state = self.state.write().await;
         let host_id = host.id;
@@ -484,6 +501,24 @@ impl RoutingCore {
 }
 
 impl RoutingCore {
+    fn remember_signed_in(&self, host: &Host) {
+        let Some(trust_store) = &self.trust_store else {
+            return;
+        };
+        let Ok(mut trust_store) = trust_store.write() else {
+            tracing::warn!(peer = %host.id, "failed to update signed-in state: trust store poisoned");
+            return;
+        };
+        if !trust_store.remember_signed_in(host.id, host.signed_in) {
+            return;
+        }
+        if let Some(data_dir) = &self.trust_data_dir
+            && let Err(error) = trust_store.save_in(data_dir)
+        {
+            tracing::warn!(peer = %host.id, error = %error, "failed to persist signed-in state");
+        }
+    }
+
     fn trusted_host_ids(&self) -> HashSet<HostId> {
         let Some(trust_store) = &self.trust_store else {
             return HashSet::new();
@@ -622,6 +657,7 @@ mod tests {
                     agent_type: "test-agent".to_string(),
                 }],
             },
+            signed_in: Some(true),
         }
     }
 

@@ -23,10 +23,11 @@ use crate::protocol::{
     PROTOCOL_VERSION, ProtocolError, protocol_error_from_status_details, protocol_status, wire,
 };
 use crate::routing::{
-    ConnectHandshake, ConnectHandshakeEvent, Host, LinkAdmission, LinkCloseRequest, LinkId,
-    LinkRegistry, LinkRole, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,
-    inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
-    protocol_error_hello_ack, protocol_error_link_close, validate_remote_host,
+    ConnectHandshake, ConnectHandshakeEvent, Host, LinkAdmission, LinkCarrier, LinkCloseRequest,
+    LinkId, LinkProperties, LinkRegistry, LinkRole, RouteUpdateOutcome, RoutingCore,
+    host_from_wire, host_to_wire, inbound_host_from_wire, neighbor_down_from_wire,
+    neighbor_up_from_wire, protocol_error_hello_ack, protocol_error_link_close,
+    validate_remote_host,
 };
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::tunnel::TunnelPool;
@@ -294,6 +295,7 @@ pub(crate) struct LinkServiceCtx {
     auth_session: Option<LinkAuthSession>,
     tls_peer: Option<Uuid>,
     link_role: LinkRole,
+    carrier: LinkCarrier,
 }
 
 impl LinkServiceCtx {
@@ -310,6 +312,7 @@ impl LinkServiceCtx {
             auth_session: None,
             tls_peer: None,
             link_role: LinkRole::Peer,
+            carrier: LinkCarrier::Direct,
         }
     }
 
@@ -322,6 +325,7 @@ impl LinkServiceCtx {
             link,
             auth_session: self.auth_session.clone(),
             link_role: self.link_role,
+            carrier: self.carrier,
         }
     }
 
@@ -339,6 +343,11 @@ impl LinkServiceCtx {
         self.tls_peer = Some(tls_peer);
         self
     }
+
+    fn with_carrier(mut self, carrier: LinkCarrier) -> Self {
+        self.carrier = carrier;
+        self
+    }
 }
 
 /// Connector-side context: dials a peer's `LinkService.Connect`.
@@ -350,6 +359,7 @@ pub(crate) struct LinkConnectorCtx {
     links: Arc<LinkRegistry>,
     expected_peer: Option<HostId>,
     link_role: LinkRole,
+    carrier: LinkCarrier,
 }
 
 impl LinkConnectorCtx {
@@ -365,11 +375,17 @@ impl LinkConnectorCtx {
             tunnels,
             expected_peer: None,
             link_role: LinkRole::Peer,
+            carrier: LinkCarrier::Direct,
         }
     }
 
     pub(crate) fn with_expected_peer(mut self, expected_peer: HostId) -> Self {
         self.expected_peer = Some(expected_peer);
+        self
+    }
+
+    pub(crate) fn with_carrier(mut self, carrier: LinkCarrier) -> Self {
+        self.carrier = carrier;
         self
     }
 
@@ -388,6 +404,7 @@ impl LinkConnectorCtx {
             link,
             auth_session: None,
             link_role: self.link_role,
+            carrier: self.carrier,
         }
     }
 }
@@ -524,6 +541,7 @@ struct EstablishedConnectCtx {
     link: LinkId,
     auth_session: Option<LinkAuthSession>,
     link_role: LinkRole,
+    carrier: LinkCarrier,
 }
 
 #[tonic::async_trait]
@@ -541,10 +559,18 @@ impl wire::link_service_server::LinkService for LinkServiceCtx {
                 BoxedGrpcAuth::TlsTrusted { peer } => Some(*peer),
                 BoxedGrpcAuth::LocalTrusted | BoxedGrpcAuth::PreTrustPairing { .. } => None,
             });
-        let ctx = match tls_peer {
+        let mut ctx = match tls_peer {
             Some(peer) => self.clone().with_tls_peer(peer),
             None => self.clone(),
         };
+        if matches!(
+            request.extensions().get::<BoxedGrpcConnectInfo>(),
+            Some(BoxedGrpcConnectInfo {
+                auth: BoxedGrpcAuth::LocalTrusted,
+            })
+        ) {
+            ctx = ctx.with_carrier(LinkCarrier::Ssh);
+        }
         let rx = spawn_acceptor_connect(ctx, request.into_inner());
         Ok(tonic::Response::new(Box::pin(receiver_stream(rx))))
     }
@@ -825,31 +851,20 @@ async fn run_established_connect(
             tier: session.tier(),
         })
         .unwrap_or(LinkAdmission::PinnedKey);
-    let mut link_close_rx = match admission {
-        LinkAdmission::PinnedKey => {
-            ctx.links
-                .register(
-                    ctx.link,
-                    peer_host.clone(),
-                    out_tx.clone(),
-                    link_role,
-                    &sent_snapshot,
-                )
-                .await
-        }
-        LinkAdmission::CloudToken { .. } => {
-            ctx.links
-                .register_with_admission(
-                    ctx.link,
-                    peer_host.clone(),
-                    out_tx.clone(),
-                    link_role,
-                    admission,
-                    &sent_snapshot,
-                )
-                .await
-        }
-    };
+    let mut link_close_rx = ctx
+        .links
+        .register_with_details(
+            ctx.link,
+            peer_host.clone(),
+            out_tx.clone(),
+            LinkProperties {
+                role: link_role,
+                admission,
+                carrier: ctx.carrier,
+            },
+            &sent_snapshot,
+        )
+        .await;
 
     // Apply the peer's handshake snapshot as its adjacency claims.
     for neighbor in peer_neighbors {
@@ -1520,6 +1535,7 @@ mod tests {
                     agent_type: "test-agent".to_string(),
                 }],
             },
+            signed_in: Some(true),
         }
     }
 

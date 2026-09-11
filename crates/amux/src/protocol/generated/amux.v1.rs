@@ -816,6 +816,8 @@ pub struct Host {
     pub version: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "4")]
     pub capabilities: ::core::option::Option<Capabilities>,
+    #[prost(bool, optional, tag = "6")]
+    pub signed_in: ::core::option::Option<bool>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairMessage {
@@ -946,6 +948,10 @@ pub struct HostEntry {
     /// `!online && last_dial_error` unset, derived client-side if needed.
     #[prost(string, optional, tag = "7")]
     pub last_dial_error: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(enumeration = "HostVia", tag = "8")]
+    pub via: i32,
+    #[prost(bool, optional, tag = "9")]
+    pub signed_in: ::core::option::Option<bool>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Agent {
@@ -2276,6 +2282,41 @@ impl HostTrustStatus {
             "HOST_TRUST_STATUS_UNSPECIFIED" => Some(Self::Unspecified),
             "TRUSTED" => Some(Self::Trusted),
             "UNTRUSTED_BUT_ONLINE" => Some(Self::UntrustedButOnline),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum HostVia {
+    Unspecified = 0,
+    Direct = 1,
+    Relay = 2,
+    Ssh = 3,
+    Offline = 4,
+}
+impl HostVia {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "HOST_VIA_UNSPECIFIED",
+            Self::Direct => "HOST_VIA_DIRECT",
+            Self::Relay => "HOST_VIA_RELAY",
+            Self::Ssh => "HOST_VIA_SSH",
+            Self::Offline => "HOST_VIA_OFFLINE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "HOST_VIA_UNSPECIFIED" => Some(Self::Unspecified),
+            "HOST_VIA_DIRECT" => Some(Self::Direct),
+            "HOST_VIA_RELAY" => Some(Self::Relay),
+            "HOST_VIA_SSH" => Some(Self::Ssh),
+            "HOST_VIA_OFFLINE" => Some(Self::Offline),
             _ => None,
         }
     }

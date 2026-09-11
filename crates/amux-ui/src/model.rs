@@ -1418,6 +1418,8 @@ mod tests {
             capabilities: Some(Capabilities::default()),
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: None,
+            via: amux::HostVia::Direct,
+            signed_in: Some(true),
         }
     }
 

@@ -342,6 +342,7 @@ message Host {
   string name = 2;
   string version = 3;
   Capabilities capabilities = 4;
+  optional bool signed_in = 6;
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +416,16 @@ message HostEntry {
   // daemon honestly knows; "never tried / no news" is
   // `!online && last_dial_error` unset, derived client-side if needed.
   optional string last_dial_error = 7;
+  HostVia via = 8;
+  optional bool signed_in = 9;
+}
+
+enum HostVia {
+  HOST_VIA_UNSPECIFIED = 0;
+  HOST_VIA_DIRECT = 1;
+  HOST_VIA_RELAY = 2;
+  HOST_VIA_SSH = 3;
+  HOST_VIA_OFFLINE = 4;
 }
 
 message Agent {

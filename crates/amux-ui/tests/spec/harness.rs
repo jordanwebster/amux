@@ -56,6 +56,8 @@ pub fn a_host(name: &str) -> HostEntry {
         capabilities: Some(Capabilities::default()),
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: None,
+        via: amux::HostVia::Direct,
+        signed_in: Some(true),
     }
 }
 
@@ -69,6 +71,8 @@ pub fn an_offline_host(name: &str) -> HostEntry {
         capabilities: None,
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: Some("dial tcp: connection refused".to_string()),
+        via: amux::HostVia::Offline,
+        signed_in: Some(true),
     }
 }
 

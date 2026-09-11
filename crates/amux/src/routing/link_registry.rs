@@ -45,12 +45,28 @@ pub(crate) enum LinkRole {
     CloudRelay,
 }
 
+/// The physical carrier underneath a direct routing link. Relay routes are
+/// identified by `Route::Via`; direct routes use this tag to distinguish SSH
+/// from a network connection.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum LinkCarrier {
+    Direct,
+    Ssh,
+}
+
 /// How this daemon authenticated a live link. Only token-admitted links
 /// carry entitlement: pinned device links are independent of any account.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum LinkAdmission {
     PinnedKey,
     CloudToken { tier: Tier },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct LinkProperties {
+    pub(crate) role: LinkRole,
+    pub(crate) admission: LinkAdmission,
+    pub(crate) carrier: LinkCarrier,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -68,6 +84,7 @@ struct LinkWriter {
     closed: Arc<Notify>,
     role: LinkRole,
     admission: LinkAdmission,
+    carrier: LinkCarrier,
 }
 
 /// A local request for the link's connect task to close the link. Distinct
@@ -96,6 +113,7 @@ impl LinkRegistry {
     /// other links learn `NeighborUp(peer)` if this is the first link to the
     /// peer, and this link receives the diff between `advertised_snapshot`
     /// (the neighbor set its handshake carried) and the current one.
+    #[cfg(test)]
     pub(crate) async fn register(
         &self,
         link: LinkId,
@@ -104,17 +122,21 @@ impl LinkRegistry {
         role: LinkRole,
         advertised_snapshot: &[HostId],
     ) -> mpsc::Receiver<LinkCloseRequest> {
-        self.register_with_admission(
+        self.register_with_details(
             link,
             host,
             outgoing_tx,
-            role,
-            LinkAdmission::PinnedKey,
+            LinkProperties {
+                role,
+                admission: LinkAdmission::PinnedKey,
+                carrier: LinkCarrier::Direct,
+            },
             advertised_snapshot,
         )
         .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn register_with_admission(
         &self,
         link: LinkId,
@@ -124,6 +146,33 @@ impl LinkRegistry {
         admission: LinkAdmission,
         advertised_snapshot: &[HostId],
     ) -> mpsc::Receiver<LinkCloseRequest> {
+        self.register_with_details(
+            link,
+            host,
+            outgoing_tx,
+            LinkProperties {
+                role,
+                admission,
+                carrier: LinkCarrier::Direct,
+            },
+            advertised_snapshot,
+        )
+        .await
+    }
+
+    pub(crate) async fn register_with_details(
+        &self,
+        link: LinkId,
+        host: Host,
+        outgoing_tx: LinkOutputTx,
+        properties: LinkProperties,
+        advertised_snapshot: &[HostId],
+    ) -> mpsc::Receiver<LinkCloseRequest> {
+        let LinkProperties {
+            role,
+            admission,
+            carrier,
+        } = properties;
         let (close_tx, close_rx) = mpsc::channel(1);
         let closed = Arc::new(Notify::new());
         let mut state = self.state.write().await;
@@ -168,6 +217,7 @@ impl LinkRegistry {
                 closed,
                 role,
                 admission,
+                carrier,
             },
         );
         drop(state);
@@ -289,6 +339,15 @@ impl LinkRegistry {
             .writers
             .get(link)
             .map(|writer| writer.admission)
+    }
+
+    pub(crate) async fn carrier(&self, link: &LinkId) -> Option<LinkCarrier> {
+        self.state
+            .read()
+            .await
+            .writers
+            .get(link)
+            .map(|writer| writer.carrier)
     }
 
     pub(crate) async fn update_cloud_tier(&self, link: &LinkId, tier: Tier) {
@@ -515,6 +574,7 @@ mod tests {
                 features: Vec::new(),
                 supported_agent_types: Vec::new(),
             },
+            signed_in: Some(true),
         }
     }
 

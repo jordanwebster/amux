@@ -227,6 +227,17 @@ impl TrustStore {
         true
     }
 
+    pub(crate) fn remember_signed_in(&mut self, host_id: HostId, signed_in: Option<bool>) -> bool {
+        let Some(entry) = self.entries.get_mut(&host_id) else {
+            return false;
+        };
+        if entry.signed_in == signed_in {
+            return false;
+        }
+        entry.signed_in = signed_in;
+        true
+    }
+
     fn other_host_for_pubkey(&self, host_id: HostId, pubkey: &[u8]) -> Option<HostId> {
         self.entries.iter().find_map(|(candidate_host_id, entry)| {
             (*candidate_host_id != host_id && entry.pubkey == pubkey).then_some(*candidate_host_id)
@@ -585,6 +596,30 @@ mod tests {
                 .unwrap()
                 .contains("workstation")
         );
+    }
+
+    #[test]
+    fn trust_store_remembers_and_persists_a_peers_signed_in_fact() {
+        let dir = temp_data_dir();
+        let peer = HostId::from_u128(2);
+        let mut store = TrustStore::default();
+        store
+            .upsert_paired_peer(
+                peer,
+                vec![9; 32],
+                "peer".to_string(),
+                Reachability::Cloud,
+                DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
+            )
+            .unwrap();
+
+        assert!(store.remember_signed_in(peer, Some(false)));
+        assert!(!store.remember_signed_in(peer, Some(false)));
+        assert!(!store.remember_signed_in(HostId::from_u128(3), Some(true)));
+        store.save_in(dir.path()).unwrap();
+
+        let loaded = TrustStore::load_or_create_in(dir.path()).unwrap();
+        assert_eq!(loaded.entry(peer).unwrap().signed_in, Some(false));
     }
 
     #[test]

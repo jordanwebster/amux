@@ -82,6 +82,8 @@ fn base_msgs_readonly(readonly: bool) -> Vec<Msg> {
         capabilities: Some(amux_ui::Capabilities::default()),
         trust_status: amux_ui::HostTrustStatus::Trusted,
         last_dial_error: None,
+        via: amux_ui::HostVia::Direct,
+        signed_in: Some(true),
     };
     vec![
         Msg::Server(ServerMsg::Connected {

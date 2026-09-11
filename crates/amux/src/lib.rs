@@ -93,7 +93,9 @@ pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket}
 pub use pairing::{ONRAMP_PAIR_MODE_TTL, PairingAdmin};
 pub use paths::{default_data_dir, default_log_path, keymap_dir};
 pub use protocol::{PROTOCOL_VERSION, ProtocolError};
-pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
+pub use routing::{
+    Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, HostVia, SupportedAgentType,
+};
 pub use server::{DaemonBuilder, Server, ServerBuilder, ServerError, ShutdownReason};
 pub use transport::TransportError;
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
