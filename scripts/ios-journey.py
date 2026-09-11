@@ -897,13 +897,21 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
                 f"once it is up, because the screen that reads one is later work")
 
     port = free_port()
+    # The walk down the feed names its own pictures — including the two at the
+    # ends of it — and says in its index which rows each one holds, so they are
+    # collected from that rather than listed here.
     photographs = {
         name: journey.directory / f"{name}.png" for name in (
-            "conversation-rows", "conversation-row-kinds", "conversation-head",
+            "conversation-rows",
             "conversation-unfolded", "conversation-changes",
             "conversation-stale", "conversation-send-refused", "conversation-exited",
             "conversation-restored", "conversation-reconnected-live")}
     read = journey.directory / "conversation.json"
+    # Which photograph holds which rows, written by the test as it walks the
+    # feed. The walk takes one picture wherever a kind of row first becomes
+    # readable, so how many there are depends on the turn; they are collected
+    # by that index rather than named here.
+    captures = journey.directory / "conversation-captures.json"
     # The one thing a photograph cannot show: the feed moving under a thumb
     # while rows are still landing in it. The test says when that stretch
     # begins and ends; the Mac films exactly that.
@@ -919,6 +927,7 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
         journey, udid, "AmuxUITests/ConversationTests",
         {f"{name}.png": path for name, path in photographs.items()}
         | {"conversation.json": read, "conversation-tree.txt": tree,
+           "conversation-captures.json": captures,
            "conversation-offline-tree.txt": offline,
            "conversation-restored-tree.txt": restored},
         filming=film_of_streaming,
@@ -937,6 +946,21 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
         })
     shutil.copytree(recovery_report, journey.directory / "conversation-recovery", dirs_exist_ok=True)
     seen = json.loads(read.read_text())
+    held = json.loads(captures.read_text())
+    # A picture from an earlier run whose feed was different is not evidence
+    # about this one: the walk names its own captures, so anything left over
+    # under that name goes.
+    kept = {capture["photograph"] for capture in held}
+    for stale in journey.directory.glob("conversation-shows-*.png"):
+        if stale.name not in kept:
+            stale.unlink()
+    for capture in held:
+        taken = test_container(udid) / "tmp" / capture["photograph"]
+        journey.expect(taken.is_file(),
+                       f"the walk down the feed says it took {capture['photograph']} and left "
+                       f"nothing behind")
+        shutil.copyfile(taken, journey.directory / capture["photograph"])
+        taken.unlink()
 
     # What the phone was given once it was trusted.
     fleet = seen.get("fleet", [])
@@ -950,6 +974,14 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     rows = seen.get("rows", [])
     journey.expect("transcript.prose" in rows and "transcript.code" in rows,
                    f"the agent's prose did not arrive as markdown: {rows}")
+    everyKind = [
+        "transcript.prompt", "transcript.prose", "transcript.code",
+        "transcript.exploration", "transcript.edit", "transcript.wrote", "transcript.ran",
+        "transcript.output", "transcript.tool", "transcript.denied", "transcript.failed",
+        "transcript.interrupted", "transcript.provider-error", "transcript.subagent",
+        "transcript.agent-message", "transcript.exit", "transcript.unreadable",
+        "transcript.compaction", "transcript.turn-end",
+    ]
     told_apart = ["transcript.denied", "transcript.failed", "transcript.interrupted",
                   "transcript.provider-error", "transcript.subagent", "transcript.wrote",
                   "transcript.exit", "transcript.unreadable", "transcript.compaction",
@@ -958,22 +990,36 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect(not missing, f"the transcript never drew {', '.join(missing)}: {rows}")
     journey.say(f"the provider played every kind of step it has and the transcript drew "
                 f"{len(rows)} kinds of row, each under its own name: {', '.join(rows)}")
-    # And photographed where they are, which is the bottom of a long turn.
+    # And every one of them photographed somewhere a reader could read it,
+    # which is the stronger claim: a name in the system's tree covers rows
+    # scrolled under the floating pill and rows behind the composer, and a
+    # picture named for a row nobody can see says nothing. The walk counts a
+    # row only where the whole of it is inside the band between the pill and
+    # the foot.
+    journey.expect(not seen.get("unreadable"),
+                   f"the walk down the feed never had {seen.get('unreadable')} anywhere a "
+                   f"reader could read them")
+    photographed = {kind for capture in held for kind in capture["shows"]}
+    unphotographed = [kind for kind in everyKind if kind not in photographed]
+    journey.expect(not unphotographed,
+                   f"no retained picture holds {', '.join(unphotographed)} where it can be "
+                   f"read")
+    for capture in held:
+        written = journey.directory / capture["photograph"]
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("every kind of row was photographed where it can be read: "
+                + "; ".join(f"{capture['photograph']} at {capture['at']} holds "
+                            f"{', '.join(kind.removeprefix('transcript.') for kind in capture['shows'])}"
+                            for capture in held))
+    # The two ends of the same feed. A run where the picture named for the head
+    # and the picture named for the end of the turn hold the same rows means
+    # one of them is the other under a name that says the opposite.
     end = seen.get("endOfTurn") or []
-    shown = [kind for kind in told_apart if kind in end]
-    journey.expect(len(shown) >= 4,
-                   f"the end of the turn was photographed with none of those rows on screen: "
-                   f"{end}")
-    journey.say(f"conversation-row-kinds.png was taken at the end of the turn, with "
-                f"{', '.join(shown)} on screen")
-    # And the head photographed at the head. The two pictures are the same feed
-    # from its two ends, so a run where they hold the same rows means one of
-    # them is the other under a name that says the opposite.
     head = seen.get("head") or []
-    journey.expect(bool(head) and head != end,
-                   f"conversation-head.png was not taken at the top of the feed: {head}")
-    journey.say(f"conversation-head.png was taken at the top of the same feed, with "
-                f"{', '.join(head)} on screen")
+    journey.expect(bool(head) and bool(end) and head != end,
+                   f"the beginning and the end of the feed were photographed from the same "
+                   f"place: {head}")
     journey.expect(bool(seen.get("fold")),
                    "the folded run of reads did not list what it did when it was pressed")
     journey.expect(bool(seen.get("changes")),

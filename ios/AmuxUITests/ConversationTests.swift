@@ -134,31 +134,33 @@ final class ConversationTests: XCTestCase {
         // way a person would.
         _ = try waitForRows(app)
         photograph(app, "conversation-rows")
-        let transcript = readWholeFeed(app)
-        record["rows"] = transcript.sorted()
-        // The tree beside the photograph. A row that did not arrive, or that
+        let walked = walkTheFeed(app)
+        record["rows"] = walked.everything.sorted()
+        record["head"] = walked.head
+        record["endOfTurn"] = walked.end
+        record["captures"] = walked.captures
+        record["unreadable"] = walked.uncovered
+        // The tree beside the photographs. A row that did not arrive, or that
         // arrived as something else, is unreadable from a screenshot and from
         // a list of names; what the system built is the only thing that says
         // which.
         try? app.debugDescription.write(
             to: Self.inContainer("conversation-tree.txt"), atomically: true, encoding: .utf8)
+        try write("conversation-captures.json", walked.captures)
         for kind in Self.everyRowKind {
-            XCTAssertTrue(transcript.contains(kind),
-                          "the transcript never drew \(kind); it drew \(transcript.sorted())")
+            XCTAssertTrue(walked.everything.contains(kind),
+                          "the transcript never drew \(kind); it drew "
+                          + "\(walked.everything.sorted())")
         }
-        // The beginning of the feed, photographed at the beginning. Walking
-        // it left the screen wherever the walk stopped, so it is scrolled back
-        // first: a picture named for the head has to be taken at the head, and
-        // the end of the turn is a different picture taken below.
-        record["head"] = toTheHead(app)
-        photograph(app, "conversation-head")
-        // The end of the turn, photographed where it is. The refusals, the
-        // failure, the interruption and the provider's error all sit below the
-        // fold of a feed this long, so a photograph taken where the feed opens
-        // shows none of them: this one is taken with them on screen, and says
-        // which of them were.
-        record["endOfTurn"] = toTheEnd(app)
-        photograph(app, "conversation-row-kinds")
+        // And every one of them photographed somewhere a reader could read it,
+        // which is a different claim: the system's tree holds rows scrolled
+        // under the pill and behind the composer, and a picture named for a
+        // row nobody can see says nothing.
+        XCTAssertEqual(walked.uncovered, [],
+                       "the walk down the feed never had "
+                       + "\(walked.uncovered.joined(separator: ", ")) anywhere a reader "
+                       + "could read it; the closest each came was "
+                       + "\(walked.closest.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" })")
 
         // MARK: A folded run, opened.
         //
@@ -834,6 +836,170 @@ final class ConversationTests: XCTestCase {
         throw Lines.Failure("the transcript never settled; it holds \(last)")
     }
 
+    /// What one walk down the feed found: every kind of row the system built,
+    /// every kind a reader could actually read, and the photographs that show
+    /// them.
+    private struct Walk {
+        var everything: Set<String> = []
+        /// The kinds that were readable at the beginning and at the end, which
+        /// are the two ends of the same feed and must not be the same view.
+        var head: [String] = []
+        var end: [String] = []
+        var captures: [[String: Any]] = []
+        /// Kinds the walk never saw anywhere a reader could read them.
+        var uncovered: [String] = []
+        /// For those, how close they came: what stood between the row and the
+        /// reader is unreadable from a name alone.
+        var closest: [String: String] = [:]
+    }
+
+    /// Walks the feed and photographs it wherever a kind of row first becomes
+    /// readable, so that between them the pictures hold every kind the host
+    /// sent.
+    ///
+    /// Readable is meant literally: the whole row inside the band between the
+    /// pill floating over the top of the feed and whatever stands at the foot
+    /// — the composer, a panel, the tab bar — or, for a row taller than that
+    /// band, the band entirely inside the row. A name in the system's tree is
+    /// a weaker claim than a photograph: the tree holds rows that have
+    /// scrolled under the pill and rows behind the composer, and a picture
+    /// named for a row nobody can see is worse than no picture at all.
+    ///
+    /// The end of the turn is photographed first, where the feed already is,
+    /// and the walk then starts from the beginning. That way no two pictures
+    /// are taken from the same place: the walk stops when scrolling stops
+    /// moving it, which is the end, and everything there is already covered.
+    private func walkTheFeed(_ app: XCUIApplication) -> Walk {
+        var walk = Walk()
+        var uncovered = Set(Self.everyRowKind)
+
+        _ = toTheEnd(app)
+        var scan = readable(app)
+        walk.everything.formUnion(scan.all)
+        walk.end = scan.readable
+        photograph(app, "conversation-row-kinds")
+        walk.captures.append([
+            "photograph": "conversation-row-kinds.png", "at": "the end of the turn",
+            "shows": scan.readable,
+        ])
+        uncovered.subtract(scan.readable)
+
+        _ = toTheHead(app)
+        var last = ""
+        var nudged = false
+        for step in 0..<48 {
+            scan = readable(app)
+            walk.everything.formUnion(scan.all)
+            for (kind, note) in scan.nearest where uncovered.contains(kind) {
+                walk.closest[kind] = note
+            }
+            let fresh = Self.everyRowKind.filter {
+                uncovered.contains($0) && scan.readable.contains($0)
+            }
+            if step == 0 {
+                walk.head = scan.readable
+                photograph(app, "conversation-head")
+                walk.captures.append([
+                    "photograph": "conversation-head.png", "at": "the beginning of the feed",
+                    "shows": scan.readable,
+                ])
+            } else if let first = fresh.first {
+                let name = "conversation-shows-"
+                    + first.replacingOccurrences(of: "transcript.", with: "")
+                photograph(app, name)
+                walk.captures.append([
+                    "photograph": "\(name).png", "at": "part way down the feed",
+                    "shows": scan.readable,
+                ])
+            }
+            uncovered.subtract(scan.readable)
+            // Nothing moved. Either this is the bottom — where the picture
+            // taken at the start of the walk already holds what is on screen —
+            // or the drag was swallowed by something standing over the feed,
+            // so a plain swipe is tried once before the walk gives up.
+            if step > 0, scan.position == last {
+                if nudged { break }
+                nudged = true
+                app.swipeUp(velocity: .slow)
+                continue
+            }
+            nudged = false
+            last = scan.position
+            oneScreenful(app)
+        }
+        walk.uncovered = uncovered.sorted()
+        return walk
+    }
+
+    /// Every transcript row the system currently holds, and the ones a reader
+    /// could read.
+    private func readable(
+        _ app: XCUIApplication
+    ) -> (all: Set<String>, readable: [String], nearest: [String: String], position: String) {
+        let band = readableBand(app)
+        var all = Set<String>()
+        var seen: [String] = []
+        var nearest: [String: String] = [:]
+        // Where the feed is, as the rows themselves say: the same kinds can be
+        // on screen for several screenfuls running — a long stretch of prose
+        // is one row kind over and over — so whether a scroll moved anything
+        // is a question about position, not about names.
+        var standing: [String] = []
+        let rows = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "transcript."))
+            .allElementsBoundByIndex
+        for row in rows {
+            all.insert(row.identifier)
+            let frame = row.frame
+            guard frame.height > 0, band.height > 0 else { continue }
+            let inside = band.intersection(frame)
+            let held = inside.isNull ? 0 : inside.height
+            nearest[row.identifier] = "\(Int(held)) of \(Int(frame.height)) points inside a "
+                + "\(Int(band.height))-point band at \(Int(band.minY))"
+            standing.append("\(row.identifier)@\(Int(frame.minY))")
+            guard held >= min(frame.height, band.height) - 1 else { continue }
+            if !seen.contains(row.identifier) { seen.append(row.identifier) }
+        }
+        return (all, seen, nearest, standing.joined(separator: ","))
+    }
+
+    /// The part of the screen the feed can actually be read in: under the pill
+    /// that floats over the top of it, above whatever stands at the foot and
+    /// above the tab bar that floats over that.
+    private func readableBand(_ app: XCUIApplication) -> CGRect {
+        let page = app.frame
+        var top = page.minY
+        var bottom = page.maxY
+        // The pill and the chip float over the top of the feed, and the strip
+        // of children this agent started floats under them.
+        for name in ["conversation.drawer", "conversation.changes", "conversation.children"] {
+            let chrome = element(app, name)
+            guard chrome.exists, chrome.frame.height > 0 else { continue }
+            top = max(top, chrome.frame.maxY)
+        }
+        // And at the foot: whatever stands where a message is written, and the
+        // strip of facts about the turn that floats above it.
+        for name in ["facts", "composer", "conversation.foot", "conversation.exited",
+                     "conversation.ask", "conversation.finished"] {
+            let standing = element(app, name)
+            guard standing.exists, standing.frame.height > 0 else { continue }
+            bottom = min(bottom, standing.frame.minY)
+        }
+        let bar = app.tabBars.firstMatch
+        if bar.exists, bar.frame.height > 0 { bottom = min(bottom, bar.frame.minY) }
+        return CGRect(x: page.minX, y: top, width: page.width, height: max(0, bottom - top))
+    }
+
+    /// Moves the feed on by most of a screen, without the flick that a swipe
+    /// leaves behind: a walk that is photographing what it passes cannot skip
+    /// what the momentum carried by.
+    private func oneScreenful(_ app: XCUIApplication) {
+        let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        from.press(
+            forDuration: 0.05, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.2)
+    }
+
     /// Every kind of row in the whole feed, gathered by scrolling it from the
     /// end to the beginning.
     ///
@@ -980,5 +1146,13 @@ final class ConversationTests: XCTestCase {
         let data = try JSONSerialization.data(
             withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: Self.inContainer("conversation.json"))
+    }
+
+    /// One part of what was read, on its own, for a reader who should not have
+    /// to find it among everything else: which photograph holds which rows.
+    private func write(_ name: String, _ what: Any) throws {
+        let data = try JSONSerialization.data(
+            withJSONObject: what, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: Self.inContainer(name))
     }
 }

@@ -14144,3 +14144,31 @@ silently named only the two that did.
 Green: `wt run ios-journey -- review` — passed, over three files and +27 −6,
 with the same three remarks, the cancelled one absent, and the patch pinned to
 the one message the host received.
+
+## Every kind of row, photographed where a reader can read it
+
+The conversation journey claimed its two pictures held the rows it named, and
+counted them out of the accessibility tree. The tree is a weaker claim than a
+photograph: it holds rows that have scrolled under the floating pill, rows
+behind the strip of children the agent started, and rows behind the facts strip
+and the composer at the foot. A picture named for a row nobody can see says
+nothing, and the end-of-turn picture was naming one — the row saying a file was
+written sat half under the facts strip.
+
+The journey now walks the feed from its beginning to its end and photographs it
+wherever a kind of row first becomes readable, where readable means the whole
+row inside the band between the chrome floating over the top and whatever
+stands at the foot — or, for a row taller than that band, the band entirely
+inside the row. Each picture is named for the row it was taken for and carries,
+in an index beside it, the full list of what it holds; the run fails if any of
+the nineteen kinds is never readable anywhere. The end of the turn is
+photographed first, where the feed already is, so no two pictures are taken from
+the same place.
+
+Whether a scroll moved anything is now a question about position rather than
+about names: a long stretch of prose shows the same one row kind for several
+screenfuls running, and the walk used to conclude it had reached the end after
+one step.
+
+Green: `wt run ios-journey -- conversation` — passed; five pictures between them
+hold all nineteen row kinds, each one checked against the band it was read in.
