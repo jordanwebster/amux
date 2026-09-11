@@ -838,7 +838,8 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
         }
         #[cfg(unix)]
         Commands::Relay => {
-            amux::relay_stdio_to_unix_socket(&config.socket_path).await?;
+            amux::relay_stdio_to_unix_socket(amux::adjacent_link_socket_path(&config.socket_path))
+                .await?;
         }
         Commands::Update => unreachable!("update dispatches before profile configuration"),
         #[cfg(debug_assertions)]

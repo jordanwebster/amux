@@ -94,24 +94,6 @@ fn add_debug_cloud_root(_root_store: &mut rustls::RootCertStore) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn tls_channel(host: String, port: u16) -> Result<Channel> {
-    let endpoint = Endpoint::from_shared(format!("https://{host}:{port}"))
-        .map_err(|error| TransportError::Config(error.to_string()))?;
-    Ok(
-        configure_tonic_endpoint_keepalive(endpoint).connect_with_connector_lazy(service_fn(
-            move |_uri: Uri| {
-                let host = host.clone();
-                async move {
-                    tls_connect_stream(&host, port)
-                        .await
-                        .map(hyper_util::rt::TokioIo::new)
-                        .map_err(|error| std::io::Error::other(error.to_string()))
-                }
-            },
-        )),
-    )
-}
-
 pub(crate) fn pairing_channel(addr: SocketAddr) -> Result<Channel> {
     let endpoint = Endpoint::from_shared(format!("https://{addr}"))
         .map_err(|error| TransportError::Config(error.to_string()))?;

@@ -19,6 +19,7 @@ use crate::protocol::wire::{self, pb};
 const STREAM_ACCEPTED: u8 = 0;
 const STREAM_REFUSED: u8 = 1;
 const CONTROL_QUEUE_CAPACITY: usize = 32;
+const CLOSE_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MuxRole {
@@ -40,6 +41,7 @@ enum DriverCommand {
 pub(crate) struct MuxCarrier {
     kind: CarrierKind,
     commands: mpsc::UnboundedSender<DriverCommand>,
+    driver: tokio::task::AbortHandle,
     inbound: tokio::sync::Mutex<mpsc::UnboundedReceiver<yamux::Stream>>,
     control: Mutex<Option<(ControlSink, ControlSource)>>,
     control_ready: watch::Receiver<bool>,
@@ -71,7 +73,7 @@ impl MuxCarrier {
             MuxRole::Acceptor => yamux::Mode::Server,
         };
         let driver_closed = closed.clone();
-        tokio::spawn(async move {
+        let driver = tokio::spawn(async move {
             drive_connection(
                 yamux::Connection::new(io.compat(), yamux::Config::default(), mode),
                 command_rx,
@@ -94,6 +96,7 @@ impl MuxCarrier {
         Self {
             kind,
             commands,
+            driver: driver.abort_handle(),
             inbound: tokio::sync::Mutex::new(inbound),
             control: Mutex::new(Some((
                 ControlSink {
@@ -216,6 +219,11 @@ impl LinkCarrier for MuxCarrier {
     fn close(&self, reason: pb::LinkCloseReason) {
         self.closed.send_replace(Some(reason));
         let _ = self.commands.send(DriverCommand::Close);
+        let driver = self.driver.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(CLOSE_GRACE).await;
+            driver.abort();
+        });
     }
 
     fn closed(&self) -> BoxFuture<'_, pb::LinkCloseReason> {

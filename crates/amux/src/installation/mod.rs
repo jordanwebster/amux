@@ -44,6 +44,8 @@ use std::path::PathBuf;
 
 pub use paths::ProfilePaths;
 #[cfg(unix)]
+pub use paths::adjacent_link_socket_path;
+#[cfg(unix)]
 pub(crate) use paths::{MAX_CODEX_SOCKET_PATH_BYTES, adjacent_codex_socket_path};
 pub use registry::{Binding, InstallationRoot, ProfileId, ProfileLabel, ProfileRecord, Registry};
 

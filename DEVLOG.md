@@ -1,3 +1,20 @@
+2026-09-11 — **Finish the native-stream link re-derivation on every ordered
+carrier.** Direct peers now run the shared link runtime over pinned mutual TLS,
+cloud peers run it over WebPKI TLS with authorization in `Hello`, and SSH
+bridges stdio to a mode-0600 per-profile link socket. The dispatcher hands
+every accepted carrier to the same stream classifier, and shutdown owns both
+pending handshakes and established links so routes cannot survive a profile.
+We kept yamux for the temporary TCP and SSH carriers because both sides can
+open independently flow-controlled streams; keeping gRPC only for SSH would
+retain the obsolete link stack. We rejected HTTP/2 because only its client can
+open streams, the old frame multiplexer because it adds per-chunk parsing and
+head-of-line coupling, gRPC over HTTP/3 because tonic has no such transport,
+and frames inside QUIC because they discard QUIC's stream isolation. The inner
+pinned handshake remains so device authority does not depend on the carrier;
+the relay piper finishes both native streams when either direction ends. TCP's
+connection-wide head-of-line blocking remains an honest fallback limit until
+QUIC replaces the direct carrier and becomes the relay default.
+
 2026-09-11 — **Attach trusted TCP links to the native carrier runtime.** A
 trusted device connection now completes its pinned TLS handshake and then runs
 the version-2 control protocol plus independent application streams over one

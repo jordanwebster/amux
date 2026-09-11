@@ -37,11 +37,11 @@ pub(crate) use wire::{inbound_host_from_wire, neighbor_down_from_wire, neighbor_
 #[cfg(testnet)]
 pub(crate) use crate::link::run::link_reauth_tier_probe;
 #[cfg(test)]
-pub(crate) use crate::link::run::spawn_connector_to_channel_with_bearer_token;
+pub(crate) use crate::link::run::spawn_connector_with_bearer_token;
 pub(crate) use crate::link::run::{
-    AuthenticatedLinkUser, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorRefreshReceiver,
-    LinkConnectorRefreshRequest, LinkConnectorToken, LinkConnectorTokenRefresher, LinkCtx,
-    LinkTokenAuthenticator, spawn_connector_to_channel_with_auth_establishment_and_shutdown,
-    spawn_connector_to_channel_with_establishment,
+    AuthenticatedLinkContextProvider, AuthenticatedLinkUser, LinkConnectorAuth, LinkConnectorCtx,
+    LinkConnectorRefreshReceiver, LinkConnectorRefreshRequest, LinkConnectorToken,
+    LinkConnectorTokenRefresher, LinkCtx, LinkTokenAuthenticator,
     spawn_connector_with_auth_establishment_and_shutdown, spawn_connector_with_establishment,
+    spawn_connector_with_establishment_and_shutdown,
 };

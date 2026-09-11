@@ -484,7 +484,7 @@ impl Installation {
     pub(crate) async fn use_test_cloud_transport(
         &self,
         id: ProfileId,
-        channel: tonic::transport::Channel,
+        address: std::net::SocketAddr,
     ) -> Result<(), InstallationError> {
         let slot = self.inner.state.lock().unwrap().active(id)?.slot.clone();
         let mut runtime = slot.runtime.lock().await;
@@ -506,7 +506,7 @@ impl Installation {
         runtime
             .as_mut()
             .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))?
-            .test_cloud_transport = Some(channel);
+            .test_cloud_transport = Some(address);
         Ok(())
     }
 

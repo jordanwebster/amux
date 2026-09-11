@@ -52,6 +52,11 @@ pub(crate) trait LinkTokenAuthenticator: Send + Sync + 'static {
 }
 
 #[tonic::async_trait]
+pub(crate) trait AuthenticatedLinkContextProvider: Send + Sync + 'static {
+    async fn context_for(&self, user: &AuthenticatedLinkUser) -> (LinkCtx, Option<String>);
+}
+
+#[tonic::async_trait]
 impl<T> LinkTokenAuthenticator for Arc<T>
 where
     T: LinkTokenAuthenticator + ?Sized,
@@ -231,6 +236,7 @@ pub(crate) struct LinkCtx {
     routing_carrier: RoutingCarrier,
     acceptor_session: Option<LinkAuthSession>,
     authenticator: Option<Arc<dyn LinkTokenAuthenticator>>,
+    authenticated_context_provider: Option<Arc<dyn AuthenticatedLinkContextProvider>>,
     minimum_client_version: Option<String>,
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<Arc<StdRwLock<Option<EstablishmentSender>>>>,
@@ -270,6 +276,7 @@ impl LinkCtx {
             routing_carrier: RoutingCarrier::Direct,
             acceptor_session: None,
             authenticator: None,
+            authenticated_context_provider: None,
             minimum_client_version: None,
             connector_auth: None,
             established_tx: None,
@@ -306,6 +313,11 @@ impl LinkCtx {
         self
     }
 
+    pub(crate) fn with_shutdown(mut self, shutdown_rx: watch::Receiver<bool>) -> Self {
+        self.shutdown_rx = Some(shutdown_rx);
+        self
+    }
+
     pub(crate) fn with_token_authenticator(
         mut self,
         authenticator: Arc<dyn LinkTokenAuthenticator>,
@@ -313,6 +325,14 @@ impl LinkCtx {
     ) -> Self {
         self.authenticator = Some(authenticator);
         self.minimum_client_version = minimum_client_version;
+        self
+    }
+
+    pub(crate) fn with_authenticated_context_provider(
+        mut self,
+        provider: Arc<dyn AuthenticatedLinkContextProvider>,
+    ) -> Self {
+        self.authenticated_context_provider = Some(provider);
         self
     }
 
@@ -331,16 +351,22 @@ pub(crate) async fn run_link(
 ) -> Result<(), LinkError> {
     let (mut sink, mut source) = carrier.control();
     let mut handshake = ConnectHandshake::new(role);
-    let snapshot = ctx.links.neighbor_snapshot().await;
-
-    let (peer_host, peer_neighbors) = match role {
+    let (peer_host, peer_neighbors, snapshot) = match role {
         crate::routing::ConnectRole::Connector => {
+            let snapshot = ctx.links.neighbor_snapshot().await;
             write_message(&mut sink, &connector_hello(&ctx, &snapshot)).await?;
             let first = read_first(&mut source, "HelloAck").await?;
+            if let Some(wire::pb::message::Body::LinkClose(close)) = first.body.as_ref() {
+                let status = link_close_status(close).unwrap_or_else(|| {
+                    tonic::Status::unavailable("link closed during authentication")
+                });
+                return Err(status.into());
+            }
             match handshake.receive(first) {
                 Ok(ConnectHandshakeEvent::Accepted(accepted)) => {
-                    accept_peer_hello_ack(&ctx, accepted)
-                        .map_err(|error| protocol_status(wire::decode_protocol_error(error)))?
+                    let (peer, neighbors) = accept_peer_hello_ack(&ctx, accepted)
+                        .map_err(|error| protocol_status(wire::decode_protocol_error(error)))?;
+                    (peer, neighbors, snapshot)
                 }
                 Ok(ConnectHandshakeEvent::Rejected(error)) => {
                     return Err(protocol_status(wire::decode_protocol_error(error)).into());
@@ -384,15 +410,30 @@ pub(crate) async fn run_link(
                     return Ok(());
                 }
             };
-            let session = match authenticate_hello(&ctx, &hello).await {
+            let mut session = match authenticate_hello(&ctx, &hello).await {
                 Ok(session) => session,
                 Err(status) => {
                     audit::auth_jwt_failure(&status);
-                    write_message(&mut sink, &auth_expired_link_close()).await?;
-                    carrier.close(wire::pb::LinkCloseReason::AuthExpired);
+                    let (message, reason) = authentication_rejection_link_close(&status);
+                    write_message(&mut sink, &message).await?;
+                    carrier.close(reason);
                     return Ok(());
                 }
             };
+            if let (Some(provider), Some(authenticated)) =
+                (ctx.authenticated_context_provider.clone(), session.as_ref())
+            {
+                let user = authenticated.user();
+                let authenticator = authenticated.authenticator.clone();
+                let (selected, minimum_client_version) = provider.context_for(&user).await;
+                ctx = selected;
+                session = Some(LinkAuthSession::new(
+                    user,
+                    authenticator,
+                    minimum_client_version,
+                ));
+            }
+            let snapshot = ctx.links.neighbor_snapshot().await;
             let peer = match accept_peer_hello(&ctx, hello, session.as_ref()) {
                 Ok(peer) => peer,
                 Err(error) => {
@@ -406,7 +447,7 @@ pub(crate) async fn run_link(
                 .acceptor_ack_sent()
                 .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
             ctx.acceptor_session = session;
-            peer
+            (peer.0, peer.1, snapshot)
         }
     };
 
@@ -463,6 +504,16 @@ async fn run_established(
 ) -> Result<(), LinkError> {
     debug_assert!(handshake.is_established());
     let (peer_host, peer_neighbors) = peer;
+    if ctx
+        .shutdown_rx
+        .as_ref()
+        .is_some_and(|shutdown| *shutdown.borrow())
+    {
+        let status = tonic::Status::unavailable("link connector is shutting down");
+        signal_establishment(ctx.take_established_tx(), Err(clone_status(&status)));
+        carrier.close(wire::pb::LinkCloseReason::UserShutdown);
+        return Err(status.into());
+    }
     let link = LinkId::new(peer_host.id);
     let link_role = if ctx.connector_auth.is_some() {
         LinkRole::CloudRelay
@@ -935,6 +986,29 @@ fn auth_expired_link_close() -> wire::pb::Message {
     }
 }
 
+fn authentication_rejection_link_close(
+    status: &tonic::Status,
+) -> (wire::pb::Message, wire::pb::LinkCloseReason) {
+    if let Some(error @ ProtocolError::UpdateRequired { .. }) =
+        protocol_error_from_status_details(status)
+    {
+        let reason = wire::pb::LinkCloseReason::UpdateRequired;
+        return (
+            wire::pb::Message {
+                body: Some(wire::pb::message::Body::LinkClose(wire::pb::LinkClose {
+                    reason: reason as i32,
+                    error: Some(wire::encode_protocol_error(&error)),
+                })),
+            },
+            reason,
+        );
+    }
+    (
+        auth_expired_link_close(),
+        wire::pb::LinkCloseReason::AuthExpired,
+    )
+}
+
 fn link_close(reason: wire::pb::LinkCloseReason) -> wire::pb::Message {
     wire::pb::Message {
         body: Some(wire::pb::message::Body::LinkClose(wire::pb::LinkClose {
@@ -947,14 +1021,11 @@ fn link_close(reason: wire::pb::LinkCloseReason) -> wire::pb::Message {
 fn link_close_status(close: &wire::pb::LinkClose) -> Option<tonic::Status> {
     let reason = wire::pb::LinkCloseReason::try_from(close.reason)
         .unwrap_or(wire::pb::LinkCloseReason::Unspecified);
-    (reason == wire::pb::LinkCloseReason::UpdateRequired).then(|| {
-        close
-            .error
-            .clone()
-            .map(wire::decode_protocol_error)
-            .map(protocol_status)
-            .unwrap_or_else(|| tonic::Status::failed_precondition("amux update required"))
-    })
+    if let Some(error) = close.error.clone() {
+        return Some(protocol_status(wire::decode_protocol_error(error)));
+    }
+    (reason == wire::pb::LinkCloseReason::UpdateRequired)
+        .then(|| tonic::Status::failed_precondition("amux update required"))
 }
 
 fn should_audit_auth_refresh_failure(status: &tonic::Status) -> bool {
@@ -1035,6 +1106,14 @@ pub(crate) fn spawn_connector_with_establishment(
     spawn_connector(ctx, carrier, None, None, None)
 }
 
+pub(crate) fn spawn_connector_with_establishment_and_shutdown(
+    ctx: LinkConnectorCtx,
+    carrier: Arc<dyn Carrier>,
+    shutdown_rx: watch::Receiver<bool>,
+) -> (ConnectorTask, EstablishmentReceiver) {
+    spawn_connector(ctx, carrier, None, Some(shutdown_rx), None)
+}
+
 pub(crate) fn spawn_connector_with_auth_establishment_and_shutdown(
     ctx: LinkConnectorCtx,
     carrier: Arc<dyn Carrier>,
@@ -1085,39 +1164,38 @@ fn link_error_status(error: LinkError) -> tonic::Status {
     }
 }
 
-pub(crate) fn spawn_connector_to_channel_with_establishment(
-    _ctx: LinkConnectorCtx,
-    _channel: tonic::transport::Channel,
-) -> (ConnectorTask, EstablishmentReceiver) {
-    unavailable_connector()
-}
-
-pub(crate) fn spawn_connector_to_channel_with_auth_establishment_and_shutdown(
-    _ctx: LinkConnectorCtx,
-    _channel: tonic::transport::Channel,
-    _auth: LinkConnectorAuth,
-    _shutdown_rx: watch::Receiver<bool>,
-    _refresh_rx: Option<LinkConnectorRefreshReceiver>,
-) -> (ConnectorTask, EstablishmentReceiver) {
-    unavailable_connector()
-}
-
 #[cfg(test)]
-pub(crate) fn spawn_connector_to_channel_with_bearer_token(
-    _ctx: LinkConnectorCtx,
-    _channel: tonic::transport::Channel,
-    _token: String,
+pub(crate) fn spawn_connector_with_bearer_token(
+    ctx: LinkConnectorCtx,
+    carrier: Arc<dyn Carrier>,
+    token: String,
 ) -> ConnectorTask {
-    unavailable_connector().0
-}
+    #[derive(Clone)]
+    struct StaticTokenRefresher(LinkConnectorToken);
 
-fn unavailable_connector() -> (ConnectorTask, EstablishmentReceiver) {
-    let (established_tx, established_rx) = oneshot::channel();
-    let status = tonic::Status::unavailable("native link carrier is not attached");
-    let task_status = clone_status(&status);
-    let _ = established_tx.send(Err(status));
-    let task = tokio::spawn(async move { Err(task_status) });
-    (task, established_rx)
+    #[tonic::async_trait]
+    impl LinkConnectorTokenRefresher for StaticTokenRefresher {
+        async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
+            Ok(self.0.clone())
+        }
+    }
+
+    let token = LinkConnectorToken {
+        token,
+        expires_at: SystemTime::now() + Duration::from_secs(3600),
+        tier: crate::Tier::Pro,
+    };
+    spawn_connector(
+        ctx,
+        carrier,
+        Some(LinkConnectorAuth::new(
+            token.clone(),
+            Arc::new(StaticTokenRefresher(token)),
+        )),
+        None,
+        None,
+    )
+    .0
 }
 
 #[cfg(testnet)]

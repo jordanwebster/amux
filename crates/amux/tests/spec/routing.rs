@@ -204,7 +204,7 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
 ///
 /// In-flight streams break too, as revocation always intended: every stream
 /// rides a tunnel, the revoker's teardown closes its links (`LinkClose`) and
-/// its tunnels (`TunnelClose`), and a tunnel's death is a transport EOF under
+/// its channels, and a channel's death is a transport EOF under
 /// the stream. The historical stall — one-sided teardown left both sides' in-flight
 /// streams silently hanging — is gone structurally.
 #[tokio::test]

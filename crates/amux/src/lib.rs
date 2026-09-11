@@ -74,6 +74,8 @@ pub use config::{
     load_profile_config, resolve_claude_driver,
 };
 pub use debug::DebugFormat;
+#[cfg(unix)]
+pub use installation::adjacent_link_socket_path;
 pub use installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,

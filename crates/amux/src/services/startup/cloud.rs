@@ -6,6 +6,8 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
@@ -17,14 +19,15 @@ use crate::auth::cloud::{
     CloudError, CloudRoutingConnectionDetails, fetch_routing_connection_details,
 };
 use crate::config::Config;
+use crate::link::{CarrierKind, MuxCarrier, MuxRole};
 use crate::profile::status::{Observed, RelayCarrier, RuntimeStatus};
 use crate::protocol::{ProtocolError, protocol_error_from_status_details};
 use crate::routing::{
     Host, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorRefreshReceiver,
     LinkConnectorRefreshRequest, LinkConnectorToken, LinkConnectorTokenRefresher,
-    spawn_connector_to_channel_with_auth_establishment_and_shutdown,
+    spawn_connector_with_auth_establishment_and_shutdown,
 };
-use crate::transport::tls_channel;
+use crate::transport::tls_connect_stream;
 use crate::user_state::ServerState;
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -50,7 +53,7 @@ struct CloudConnectionContext {
     status: RuntimeStatus,
     refresh_rx: LinkConnectorRefreshReceiver,
     #[cfg(test_fixtures)]
-    transport: Option<tonic::transport::Channel>,
+    transport: Option<std::net::SocketAddr>,
     #[cfg(test_fixtures)]
     free_refresh_interval: Option<Duration>,
 }
@@ -92,7 +95,7 @@ impl CloudLink {
     #[cfg(testnet)]
     pub(crate) fn testnet_with_auth(
         connector_ctx: LinkConnectorCtx,
-        channel: tonic::transport::Channel,
+        address: std::net::SocketAddr,
         auth: LinkConnectorAuth,
         status: RuntimeStatus,
     ) -> Self {
@@ -107,22 +110,40 @@ impl CloudLink {
         });
         let (refresh_tx, refresh_rx) = mpsc::channel(1);
         status.report(Observed::Connecting);
-        let (connector_task, established_rx) =
-            spawn_connector_to_channel_with_auth_establishment_and_shutdown(
-                connector_ctx,
-                channel,
-                auth,
-                stop_rx.clone(),
-                Some(Arc::new(tokio::sync::Mutex::new(refresh_rx))),
-            );
-        let task = tokio::spawn(observe_fixture_connector(
-            connector_task,
-            established_rx,
-            stop_tx.clone(),
-            stop_rx,
-            status.clone(),
-            tier,
-        ));
+        let task_status = status.clone();
+        let task_stop_tx = stop_tx.clone();
+        let task = tokio::spawn(async move {
+            let stream = match TcpStream::connect(address).await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    tracing::warn!(%error, "test cloud TCP connection failed");
+                    task_status.report(Observed::Retrying);
+                    return;
+                }
+            };
+            let carrier = Arc::new(MuxCarrier::new(
+                stream,
+                MuxRole::Connector,
+                CarrierKind::RelayTcp,
+            ));
+            let (connector_task, established_rx) =
+                spawn_connector_with_auth_establishment_and_shutdown(
+                    connector_ctx,
+                    carrier,
+                    auth,
+                    stop_rx.clone(),
+                    Some(Arc::new(tokio::sync::Mutex::new(refresh_rx))),
+                );
+            observe_fixture_connector(
+                connector_task,
+                established_rx,
+                task_stop_tx,
+                stop_rx,
+                task_status,
+                tier,
+            )
+            .await;
+        });
         Self {
             stop_tx,
             refresh_tx: Some(refresh_tx),
@@ -186,7 +207,7 @@ pub(crate) fn establish_cloud_link(
     state: Arc<RwLock<ServerState>>,
     connector_ctx: LinkConnectorCtx,
     status: RuntimeStatus,
-    #[cfg(test_fixtures)] transport: Option<tonic::transport::Channel>,
+    #[cfg(test_fixtures)] transport: Option<std::net::SocketAddr>,
     #[cfg(test_fixtures)] free_refresh_interval: Option<Duration>,
 ) -> CloudLink {
     let (stop_tx, mut stop_rx) = watch::channel(false);
@@ -340,17 +361,18 @@ async fn run_cloud_connection_with_details(
 ) -> std::result::Result<(), CloudConnectionError> {
     tracing::info!(host = %details.host, port = details.port, "connecting to cloud routing");
     #[cfg(test_fixtures)]
-    let channel = ctx
-        .transport
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| cloud_routing_channel(details.host.clone(), details.port));
+    let stream = cloud_routing_stream(&details.host, details.port, ctx.transport).await;
     #[cfg(not(test_fixtures))]
-    let channel = cloud_routing_channel(details.host.clone(), details.port);
-    let channel = channel.map_err(|error| CloudConnectionError::Retriable {
+    let stream = cloud_routing_stream(&details.host, details.port).await;
+    let stream = stream.map_err(|error| CloudConnectionError::Retriable {
         msg: format!("Connection failed: {error}"),
         reset_backoff: false,
     })?;
+    let carrier = Arc::new(MuxCarrier::new(
+        stream,
+        MuxRole::Connector,
+        CarrierKind::RelayTcp,
+    ));
     let connected_at = std::time::Instant::now();
     let tier = details.tier;
     let refresh_status = ctx.status.clone();
@@ -384,14 +406,13 @@ async fn run_cloud_connection_with_details(
             carrier: RelayCarrier::Tcp,
         });
     });
-    let (connector_task, established_rx) =
-        spawn_connector_to_channel_with_auth_establishment_and_shutdown(
-            ctx.connector.clone(),
-            channel,
-            connector_auth,
-            stop_rx,
-            Some(ctx.refresh_rx.clone()),
-        );
+    let (connector_task, established_rx) = spawn_connector_with_auth_establishment_and_shutdown(
+        ctx.connector.clone(),
+        carrier,
+        connector_auth,
+        stop_rx,
+        Some(ctx.refresh_rx.clone()),
+    );
     let _abort_connector_on_drop = AbortTaskOnDrop(connector_task.abort_handle());
     await_cloud_establishment(
         &ctx.status,
@@ -520,11 +541,30 @@ fn update_required_from_status(status: &tonic::Status) -> Option<String> {
     }
 }
 
-fn cloud_routing_channel(
-    host: String,
+trait CloudIo: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
+
+impl<T> CloudIo for T where T: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
+
+type BoxedCloudIo = Box<dyn CloudIo>;
+
+#[cfg(test_fixtures)]
+async fn cloud_routing_stream(
+    host: &str,
     port: u16,
-) -> crate::transport::Result<tonic::transport::Channel> {
-    tls_channel(host, port)
+    transport: Option<std::net::SocketAddr>,
+) -> crate::transport::Result<BoxedCloudIo> {
+    if let Some(address) = transport {
+        let stream = TcpStream::connect(address).await?;
+        stream.set_nodelay(true)?;
+        crate::transport::configure_tcp_keepalive(&stream);
+        return Ok(Box::new(stream));
+    }
+    Ok(Box::new(tls_connect_stream(host, port).await?))
+}
+
+#[cfg(not(test_fixtures))]
+async fn cloud_routing_stream(host: &str, port: u16) -> crate::transport::Result<BoxedCloudIo> {
+    Ok(Box::new(tls_connect_stream(host, port).await?))
 }
 
 struct AbortTaskOnDrop(tokio::task::AbortHandle);

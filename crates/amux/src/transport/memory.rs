@@ -3,6 +3,7 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
@@ -40,27 +41,29 @@ pub(crate) fn managed_in_process_transport_pair() -> (
 ) {
     let (client, server) = in_process_transport_pair();
     let cancellation = CancellationToken::new();
-    let cancelled = Box::pin(cancellation.clone().cancelled_owned());
     (
         client,
-        ShutdownIo {
-            inner: server,
-            cancelled,
-        },
+        ShutdownIo::new(server, cancellation.clone()),
         InProcessConnection { cancellation },
     )
 }
 
 pub(crate) struct ShutdownIo<T> {
     inner: T,
+    _cancellation: Arc<CancellationToken>,
     cancelled: Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
 impl<T> ShutdownIo<T> {
     pub(crate) fn new(inner: T, cancellation: CancellationToken) -> Self {
+        Self::new_shared(inner, Arc::new(cancellation))
+    }
+
+    pub(crate) fn new_shared(inner: T, cancellation: Arc<CancellationToken>) -> Self {
         Self {
             inner,
-            cancelled: Box::pin(cancellation.cancelled_owned()),
+            cancelled: Box::pin(cancellation.as_ref().clone().cancelled_owned()),
+            _cancellation: cancellation,
         }
     }
 }

@@ -80,6 +80,10 @@ impl Piper {
                 _ = tokio::io::copy(&mut incoming_read, &mut outgoing_write) => {}
                 _ = tokio::io::copy(&mut outgoing_read, &mut incoming_write) => {}
             }
+            let mut incoming = incoming_read.unsplit(incoming_write);
+            let mut outgoing = outgoing_read.unsplit(outgoing_write);
+            let _ = incoming.finish().await;
+            let _ = outgoing.finish().await;
         }))
     }
 }
@@ -334,8 +338,14 @@ mod tests {
         )
         .await;
 
-        let piping =
-            tokio::spawn(async move { piper.pipe(origin_link, preface, incoming).await.unwrap() });
+        let copy_task = tokio::spawn(async move {
+            piper
+                .pipe(origin_link, preface, incoming)
+                .await
+                .unwrap()
+                .await
+                .unwrap();
+        });
         let (received, mut destination_stream) = tokio::time::timeout(
             Duration::from_secs(1),
             destination_pair.acceptor.accept_stream(),
@@ -347,10 +357,6 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), destination_stream.flush())
             .await
             .expect("timed out accepting the destination stream")
-            .unwrap();
-        let copy_task = tokio::time::timeout(Duration::from_secs(1), piping)
-            .await
-            .expect("timed out starting the piper")
             .unwrap();
         let mut origin_stream = tokio::time::timeout(Duration::from_secs(1), opening)
             .await

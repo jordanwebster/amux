@@ -96,7 +96,7 @@ start_relay() {
   live_tmux new-session -d -s relay -x 120 -y 40 \
     env AMUX_LOG="$scratch/relay.log" AMUX_TLS_CERT="$AMUX_TLS_CERT" AMUX_TLS_KEY="$AMUX_TLS_KEY" \
     timeout 1500 "$amux_bin" --config "$scratch/relay.yaml" server start --cloud --foreground
-  live_wait_file 30 "$scratch/relay.log" 'listening on cloud TLS LinkService'
+  live_wait_file 30 "$scratch/relay.log" 'listening for cloud TLS carriers'
 }
 
 set_fixture_tier() {

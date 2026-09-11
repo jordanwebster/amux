@@ -120,8 +120,8 @@ pub(crate) struct RuntimeFixtures {
     pub(crate) discovery: Option<Arc<dyn Discovery>>,
     pub(crate) tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
     pub(crate) artifact_clock: Option<Arc<dyn amux_artifacts::Clock>>,
-    pub(crate) cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
-    pub(crate) cloud_transport: Option<tonic::transport::Channel>,
+    pub(crate) cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
+    pub(crate) cloud_transport: Option<std::net::SocketAddr>,
     pub(crate) cloud_refresh_interval: Option<Duration>,
 }
 
@@ -237,11 +237,11 @@ pub(crate) struct ProfileRuntime {
     pub(crate) test_agent_host: Arc<crate::services::PtyAgentHost>,
     pub(crate) trust: crate::trust::SharedTrustStore,
     #[cfg(testnet)]
-    test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
+    test_cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
     #[cfg(testnet)]
     tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
     #[cfg(test_fixtures)]
-    pub(crate) test_cloud_transport: Option<tonic::transport::Channel>,
+    pub(crate) test_cloud_transport: Option<std::net::SocketAddr>,
     #[cfg(test_fixtures)]
     pub(crate) test_cloud_refresh_interval: Option<Duration>,
     client: Client,
@@ -256,7 +256,11 @@ pub(crate) struct ProfileRuntime {
     #[cfg(unix)]
     unix_accept_task: Option<JoinHandle<()>>,
     #[cfg(unix)]
+    link_accept_task: Option<JoinHandle<()>>,
+    #[cfg(unix)]
     socket_ownership: Option<SocketOwnership>,
+    #[cfg(unix)]
+    link_socket_ownership: Option<SocketOwnership>,
 }
 
 /// Start local services and listeners for one profile. Cloud attachment is
@@ -410,6 +414,15 @@ async fn build(
         tracing::info!(path = %options.paths.socket_path.display(), "listening on profile ClientService");
         task
     });
+    #[cfg(unix)]
+    let link_accept_task = bound.link_listener.take().map(|listener| {
+        let task = services.serve_link_on_unix_listener(listener);
+        tracing::info!(
+            path = %crate::installation::adjacent_link_socket_path(&options.paths.socket_path).display(),
+            "listening on profile native links"
+        );
+        task
+    });
     if let Some(listener) = lan_listener {
         let addr = lan_addr.expect("LAN listener address captured before serving");
         let addrs = if addr.ip().is_unspecified() {
@@ -467,6 +480,9 @@ async fn build(
     let client = Client::from_client_service_channel(client_channel.clone());
     status.report(Observed::Local);
 
+    #[cfg(unix)]
+    let (socket_ownership, link_socket_ownership) = bound.disarm_socket_cleanup();
+
     Ok(ProfileRuntime {
         host_id,
         paths: options.paths,
@@ -503,7 +519,11 @@ async fn build(
         #[cfg(unix)]
         unix_accept_task,
         #[cfg(unix)]
-        socket_ownership: bound.disarm_socket_cleanup(),
+        link_accept_task,
+        #[cfg(unix)]
+        socket_ownership,
+        #[cfg(unix)]
+        link_socket_ownership,
     })
 }
 
@@ -589,7 +609,7 @@ impl ProfileRuntime {
     pub(crate) async fn start_cloud(&self) -> Result<(), CloudStartError> {
         let signed_in = self.state.read().await.credentials.is_some();
         #[cfg(testnet)]
-        if let Some((channel, auth)) = &self.test_cloud {
+        if let Some((address, auth)) = &self.test_cloud {
             let mut connector = self.cloud_link.lock().await;
             if connector
                 .as_ref()
@@ -602,12 +622,9 @@ impl ProfileRuntime {
             }
             let ctx = self.services.link_connector_ctx_with_signed_in(signed_in);
             *connector = Some(match auth {
-                CloudFixtureAuth::Refreshing(auth) => CloudLink::testnet_with_auth(
-                    ctx,
-                    channel.clone(),
-                    auth.clone(),
-                    self.status.clone(),
-                ),
+                CloudFixtureAuth::Refreshing(auth) => {
+                    CloudLink::testnet_with_auth(ctx, *address, auth.clone(), self.status.clone())
+                }
             });
             return Ok(());
         }
@@ -637,7 +654,7 @@ impl ProfileRuntime {
             self.services.link_connector_ctx_with_signed_in(signed_in),
             self.status.clone(),
             #[cfg(test_fixtures)]
-            self.test_cloud_transport.clone(),
+            self.test_cloud_transport,
             #[cfg(test_fixtures)]
             self.test_cloud_refresh_interval,
         ));
@@ -676,6 +693,7 @@ impl ProfileRuntime {
 
     pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
         self.discovery.withdraw();
+        self.services.stop_accepting_external_links().await;
         #[cfg(testnet)]
         if let Some(connections) = &self.tracked_tcp {
             let connections = std::mem::take(&mut *connections.lock().unwrap());
@@ -684,17 +702,17 @@ impl ProfileRuntime {
             }
         }
         self.stop_accepting_local_clients().await;
+        self.services
+            .channels
+            .link_registry()
+            .send_link_close_to_all(link_close_reason(reason))
+            .await;
         self.services.close_direct_links().await;
         self.stop_cloud().await;
 
         if let Some(host) = &self.agent_host {
             host.notify_shutdown(reason).await;
         }
-        self.services
-            .channels
-            .link_registry()
-            .send_link_close_to_all(link_close_reason(reason))
-            .await;
         if let Some(host) = &self.agent_host {
             host.stop_all().await;
         }
@@ -710,7 +728,14 @@ impl ProfileRuntime {
                 task.abort();
                 let _ = task.await;
             }
+            if let Some(task) = self.link_accept_task.take() {
+                task.abort();
+                let _ = task.await;
+            }
             if let Some(ownership) = self.socket_ownership.take() {
+                ownership.remove_if_owned();
+            }
+            if let Some(ownership) = self.link_socket_ownership.take() {
                 ownership.remove_if_owned();
             }
         }
@@ -737,6 +762,10 @@ impl Drop for ProfileRuntime {
         self.discovery.withdraw();
         #[cfg(unix)]
         if let Some(task) = &self.unix_accept_task {
+            task.abort();
+        }
+        #[cfg(unix)]
+        if let Some(task) = &self.link_accept_task {
             task.abort();
         }
     }
@@ -768,7 +797,11 @@ struct BoundListeners {
     #[cfg(unix)]
     unix_listener: Option<tokio::net::UnixListener>,
     #[cfg(unix)]
+    link_listener: Option<tokio::net::UnixListener>,
+    #[cfg(unix)]
     socket_ownership: Option<SocketOwnership>,
+    #[cfg(unix)]
+    link_socket_ownership: Option<SocketOwnership>,
 }
 
 impl BoundListeners {
@@ -779,7 +812,11 @@ impl BoundListeners {
                 #[cfg(unix)]
                 unix_listener: None,
                 #[cfg(unix)]
+                link_listener: None,
+                #[cfg(unix)]
                 socket_ownership: None,
+                #[cfg(unix)]
+                link_socket_ownership: None,
             });
         }
 
@@ -787,13 +824,40 @@ impl BoundListeners {
         let unix_listener = crate::transport::bind_unix_listener(&options.paths.socket_path)?;
         #[cfg(unix)]
         let socket_ownership = Some(SocketOwnership::capture(options.paths.socket_path.clone())?);
+        #[cfg(unix)]
+        let link_path = crate::installation::adjacent_link_socket_path(&options.paths.socket_path);
+        #[cfg(unix)]
+        let link_listener = match crate::transport::bind_unix_listener(&link_path) {
+            Ok(listener) => listener,
+            Err(error) => {
+                if let Some(ownership) = socket_ownership {
+                    ownership.remove_if_owned();
+                }
+                return Err(error);
+            }
+        };
+        #[cfg(unix)]
+        let link_socket_ownership = match SocketOwnership::capture(link_path.clone()) {
+            Ok(ownership) => Some(ownership),
+            Err(error) => {
+                if let Some(ownership) = socket_ownership {
+                    ownership.remove_if_owned();
+                }
+                let _ = std::fs::remove_file(link_path);
+                return Err(error);
+            }
+        };
 
         let mut bound = Self {
             tcp_listener: None,
             #[cfg(unix)]
             unix_listener: Some(unix_listener),
             #[cfg(unix)]
+            link_listener: Some(link_listener),
+            #[cfg(unix)]
             socket_ownership,
+            #[cfg(unix)]
+            link_socket_ownership,
         };
         if options.config.lan.listen {
             let port = options.config.lan.port;
@@ -804,8 +868,11 @@ impl BoundListeners {
     }
 
     #[cfg(unix)]
-    fn disarm_socket_cleanup(&mut self) -> Option<SocketOwnership> {
-        self.socket_ownership.take()
+    fn disarm_socket_cleanup(&mut self) -> (Option<SocketOwnership>, Option<SocketOwnership>) {
+        (
+            self.socket_ownership.take(),
+            self.link_socket_ownership.take(),
+        )
     }
 }
 
@@ -813,6 +880,9 @@ impl BoundListeners {
 impl Drop for BoundListeners {
     fn drop(&mut self) {
         if let Some(ownership) = self.socket_ownership.take() {
+            ownership.remove_if_owned();
+        }
+        if let Some(ownership) = self.link_socket_ownership.take() {
             ownership.remove_if_owned();
         }
     }
@@ -1107,17 +1177,12 @@ mod tests {
         state.write().await.is_cloud_server = true;
         let relay = CloudLinkServer::with_authenticator(state, auth.clone());
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-        let channel = tonic::transport::Endpoint::from_shared(format!(
-            "http://{}",
-            listener.local_addr().unwrap()
-        ))
-        .unwrap()
-        .connect_lazy();
+        let relay_addr = listener.local_addr().unwrap();
         let server = relay.serve_on_tcp_listener(listener);
         let root = tempdir().unwrap();
         let mut options = options(root.path(), Listeners::InProcessOnly);
         options.fixtures.cloud = Some((
-            channel,
+            relay_addr,
             CloudFixtureAuth::Refreshing(LinkConnectorAuth::new(
                 LinkConnectorToken {
                     token: "runtime-token".into(),
@@ -1238,16 +1303,20 @@ mod tests {
             let root = tempdir().unwrap();
             let opts = options(root.path(), Listeners::Sockets);
             let config = opts.service_config();
+            let link_socket = crate::installation::adjacent_link_socket_path(&config.socket_path);
             let runtime = start(opts).await.unwrap();
             let channel = crate::client::connect_existing_client_service(&config)
                 .await
                 .unwrap();
             let client = Client::from_client_service_channel(channel);
             client.list_agents().await.unwrap();
+            UnixStream::connect(&link_socket).unwrap();
             runtime.stop(ShutdownReason::UserRequested).await;
             assert!(client.list_agents().await.is_err());
             assert!(UnixStream::connect(&config.socket_path).is_err());
             assert!(!config.socket_path.exists());
+            assert!(UnixStream::connect(&link_socket).is_err());
+            assert!(!link_socket.exists());
             let replacement = crate::transport::bind_unix_listener(&config.socket_path).unwrap();
             UnixStream::connect(&config.socket_path).unwrap();
             println!("Owned stop completed: client closed and a fresh socket bind succeeds");

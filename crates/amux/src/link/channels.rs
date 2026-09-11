@@ -1,7 +1,7 @@
 //! Tonic channels carried by independent native link streams.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 
 use rustls::pki_types::ServerName;
@@ -9,6 +9,7 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsConnector;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::{Channel, Endpoint};
 
 use super::{ByteStream, OpenError};
@@ -68,6 +69,7 @@ struct ChannelSecurity {
 
 pub(crate) struct ChannelPool {
     by_key: RwLock<HashMap<ChannelKey, Channel>>,
+    lifetimes: RwLock<HashMap<ChannelKey, Vec<Weak<CancellationToken>>>>,
     links: Arc<LinkRegistry>,
     security: Option<ChannelSecurity>,
     handshake_timeout: Duration,
@@ -77,6 +79,7 @@ impl ChannelPool {
     pub(crate) fn new(links: Arc<LinkRegistry>) -> Self {
         Self {
             by_key: RwLock::new(HashMap::new()),
+            lifetimes: RwLock::new(HashMap::new()),
             links,
             security: None,
             handshake_timeout: CHANNEL_TLS_HANDSHAKE_TIMEOUT,
@@ -90,6 +93,7 @@ impl ChannelPool {
     ) -> Self {
         Self {
             by_key: RwLock::new(HashMap::new()),
+            lifetimes: RwLock::new(HashMap::new()),
             links,
             security: Some(ChannelSecurity {
                 identity,
@@ -97,12 +101,6 @@ impl ChannelPool {
             }),
             handshake_timeout: CHANNEL_TLS_HANDSHAKE_TIMEOUT,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_handshake_timeout(mut self, timeout: Duration) -> Self {
-        self.handshake_timeout = timeout;
-        self
     }
 
     pub(crate) fn link_registry(&self) -> Arc<LinkRegistry> {
@@ -129,7 +127,7 @@ impl ChannelPool {
         }
 
         let stream = self.open_stream(key.peer, key.route).await?;
-        let channel = self.secure_channel(key.peer, stream).await?;
+        let channel = self.secure_channel(key, stream).await?;
         if key.class == ChannelClass::Calls {
             self.by_key
                 .write()
@@ -152,6 +150,7 @@ impl ChannelPool {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|key, _| route_link(key.route) != Some(link));
+        self.cancel_where(|key| route_link(key.route) == Some(link));
     }
 
     pub(crate) fn drop_host(&self, host: HostId) {
@@ -159,6 +158,7 @@ impl ChannelPool {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|key, _| key.peer != host && route_link_peer(key.route) != host);
+        self.cancel_where(|key| key.peer == host || route_link_peer(key.route) == host);
     }
 
     pub(crate) fn drop_route(&self, peer: HostId, route: Route) {
@@ -166,6 +166,7 @@ impl ChannelPool {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .retain(|key, _| key.peer != peer || key.route != route);
+        self.cancel_where(|key| key.peer == peer && key.route == route);
     }
 
     pub(crate) fn debug_view(&self) -> Vec<ChannelDebug> {
@@ -226,7 +227,7 @@ impl ChannelPool {
 
     async fn secure_channel(
         &self,
-        peer: HostId,
+        key: ChannelKey,
         stream: ByteStream,
     ) -> Result<Channel, ChannelError> {
         let security = self
@@ -235,10 +236,21 @@ impl ChannelPool {
             .ok_or_else(|| ChannelError::Handshake("device identity is unavailable".to_string()))?;
         let config = security
             .identity
-            .client_tls_config_for_peer(security.trust_store.clone(), peer)?;
+            .client_tls_config_for_peer(security.trust_store.clone(), key.peer)?;
         let connector = TlsConnector::from(Arc::new(config));
         let server_name = ServerName::try_from("amux-device".to_string())
             .map_err(|error| ChannelError::Tls(error.to_string()))?;
+        let lifetime = Arc::new(CancellationToken::new());
+        {
+            let mut lifetimes = self
+                .lifetimes
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let tracked = lifetimes.entry(key).or_default();
+            tracked.retain(|lifetime| lifetime.strong_count() > 0);
+            tracked.push(Arc::downgrade(&lifetime));
+        }
+        let stream = crate::transport::ShutdownIo::new_shared(stream, lifetime);
         let tls = tokio::time::timeout(
             self.handshake_timeout,
             connector.connect(server_name, stream),
@@ -251,6 +263,27 @@ impl ChannelPool {
             "native link channel",
             tls,
         ))
+    }
+
+    fn cancel_where(&self, predicate: impl Fn(&ChannelKey) -> bool) {
+        let mut lifetimes = self
+            .lifetimes
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let keys = lifetimes
+            .keys()
+            .copied()
+            .filter(|key| predicate(key))
+            .collect::<Vec<_>>();
+        for key in keys {
+            if let Some(tokens) = lifetimes.remove(&key) {
+                for token in tokens {
+                    if let Some(token) = token.upgrade() {
+                        token.cancel();
+                    }
+                }
+            }
+        }
     }
 
     async fn route_is_live(&self, route: Route) -> bool {

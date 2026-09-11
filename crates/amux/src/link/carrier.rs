@@ -23,6 +23,9 @@ pub(crate) type ByteStream = Box<dyn AsyncStream>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CarrierKind {
     Quic,
+    // Relay status must distinguish QUIC from direct QUIC even before the
+    // relay listener starts constructing this carrier kind.
+    #[allow(dead_code)]
     RelayQuic,
     RelayTcp,
     Ssh,

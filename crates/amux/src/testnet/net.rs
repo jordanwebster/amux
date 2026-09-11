@@ -26,7 +26,6 @@ use crate::connection::ConnectionManager;
 use crate::protocol::wire;
 use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
 use crate::services::CloudLinkServer;
-use crate::transport::TcpServerTransport;
 use crate::user_state::ServerState;
 
 /// OS-level handles to every TCP connection the relay has accepted, so an
@@ -299,7 +298,7 @@ impl CloudRelay {
 fn tracked_tcp_incoming(
     listener: TcpListener,
     connections: TrackedConnections,
-) -> impl Stream<Item = std::io::Result<TcpServerTransport<TcpStream>>> + Send + 'static {
+) -> impl Stream<Item = std::io::Result<TcpStream>> + Send + 'static {
     stream::unfold((listener, connections), |(listener, connections)| async {
         let item = accept_tracked(&listener, &connections).await;
         Some((item, (listener, connections)))
@@ -309,7 +308,7 @@ fn tracked_tcp_incoming(
 async fn accept_tracked(
     listener: &TcpListener,
     connections: &TrackedConnections,
-) -> std::io::Result<TcpServerTransport<TcpStream>> {
+) -> std::io::Result<TcpStream> {
     let (stream, _addr) = listener.accept().await?;
     if let Err(error) = stream.set_nodelay(true) {
         tracing::warn!(error = %error, "failed to set TCP_NODELAY");
@@ -321,7 +320,7 @@ async fn accept_tracked(
             .expect("testnet cloud connection registry poisoned")
             .push(duplicate);
     }
-    Ok(TcpServerTransport::new(TcpStream::from_std(std_stream)?))
+    TcpStream::from_std(std_stream)
 }
 
 /// Binds `addr`, retrying briefly: right after a relay or daemon shutdown the

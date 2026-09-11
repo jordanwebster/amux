@@ -98,6 +98,17 @@ impl LinkRegistry {
         ids
     }
 
+    #[cfg(testnet)]
+    pub(crate) async fn cloud_relay_carrier(&self) -> Option<Arc<dyn NativeLinkCarrier>> {
+        self.state
+            .read()
+            .await
+            .writers
+            .values()
+            .find(|writer| writer.role == LinkRole::CloudRelay)
+            .and_then(|writer| writer.native_carrier.clone())
+    }
+
     /// Registers a live link and runs the adjacency discipline atomically:
     /// other links learn `NeighborUp(peer)` if this is the first link to the
     /// peer, and this link receives the diff between `advertised_snapshot`

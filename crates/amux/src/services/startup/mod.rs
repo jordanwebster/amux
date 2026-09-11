@@ -12,11 +12,10 @@ pub(crate) use cloud::{CloudLink, FREE_TIER_REFRESH_INTERVAL, establish_cloud_li
 use futures_util::{Stream, StreamExt, stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{RwLock, Semaphore, mpsc};
+use tokio::sync::{RwLock, Semaphore, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tonic::transport::Channel;
-use tonic::transport::server::Connected;
 use uuid::Uuid;
 
 use crate::HostId;
@@ -24,12 +23,12 @@ use crate::agents::ArtifactOwners;
 use crate::connection::ConnectionManager;
 use crate::dispatcher::TunnelDispatcher;
 use crate::identity::{DeviceIdentity, IdentityError};
-use crate::link::{ChannelPool, serve_inbound_streams};
+use crate::link::{CarrierKind, ChannelPool, MuxCarrier, MuxRole, run_link, serve_inbound_streams};
 use crate::pairing::PairMode;
 use crate::protocol::wire;
 use crate::routing::{
-    AuthenticatedLinkUser, HostReachabilityEvent, LinkConnectorCtx, LinkCtx,
-    LinkTokenAuthenticator, LiveLocalHost, RoutingCore, local_host,
+    AuthenticatedLinkContextProvider, AuthenticatedLinkUser, HostReachabilityEvent,
+    LinkConnectorCtx, LinkCtx, LinkTokenAuthenticator, LiveLocalHost, RoutingCore, local_host,
 };
 use crate::services::client::{ClientService, PairingTrustAccess};
 use crate::services::{
@@ -45,15 +44,14 @@ use crate::transport::tcp_incoming;
 #[cfg(unix)]
 use crate::transport::unix_incoming;
 use crate::transport::{
-    BoxedGrpcIo, InProcessConnection, TcpServerTransport, in_process_channel,
-    managed_in_process_transport_pair,
+    BoxedGrpcIo, InProcessConnection, in_process_channel, managed_in_process_transport_pair,
 };
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::user_state::ServerState;
 
 const DEVICE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOUD_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
-type CloudTlsTransport = TcpServerTransport<tokio_rustls::server::TlsStream<TcpStream>>;
+type CloudTlsTransport = tokio_rustls::server::TlsStream<TcpStream>;
 
 #[derive(Clone)]
 pub(crate) struct JwtCloudLinkAuthenticator {
@@ -149,8 +147,7 @@ impl CloudLinkServer {
     pub(crate) fn serve_on_incoming<I, IO>(&self, incoming: I) -> JoinHandle<()>
     where
         I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
-        IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
-        IO::ConnectInfo: Clone + Send + Sync + 'static,
+        IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         spawn_cloud_carrier_server(self.clone(), incoming)
     }
@@ -181,6 +178,25 @@ impl CloudLinkServer {
 
         let mut users = self.inner.users.write().await;
         users.entry(user_id).or_insert(started).link_ctx()
+    }
+
+    async fn accepting_link_ctx(&self) -> LinkCtx {
+        let host = {
+            let state = self.inner.state.read().await;
+            local_host(
+                state.host_id(),
+                state.host_name(),
+                state.is_cloud_server(),
+                state.credentials.is_some(),
+            )
+        };
+        LinkCtx::new(
+            host,
+            Arc::new(RoutingCore::new()),
+            Arc::new(crate::routing::LinkRegistry::default()),
+        )
+        .with_token_authenticator(self.inner.authenticator.clone(), None)
+        .with_authenticated_context_provider(Arc::new(self.clone()))
     }
 
     /// Testnet observation seam: the relay-side `ConnectionManager` serving
@@ -232,6 +248,23 @@ impl CloudLinkServer {
     }
 }
 
+#[tonic::async_trait]
+impl AuthenticatedLinkContextProvider for CloudLinkServer {
+    async fn context_for(&self, user: &AuthenticatedLinkUser) -> (LinkCtx, Option<String>) {
+        let minimum_client_version = self
+            .inner
+            .state
+            .read()
+            .await
+            .minimum_client_version(&user.client_id);
+        let ctx = self
+            .link_ctx_for_user(user.user_id)
+            .await
+            .with_link_role(crate::routing::LinkRole::CloudRelay);
+        (ctx, minimum_client_version)
+    }
+}
+
 fn cloud_tls_incoming(
     listener: TcpListener,
     acceptor: TlsAcceptor,
@@ -278,7 +311,7 @@ fn cloud_tls_incoming(
                 let _permit = permit;
                 match tokio::time::timeout(handshake_timeout, acceptor.accept(stream)).await {
                     Ok(Ok(tls_stream)) => {
-                        let _ = tx.send(Ok(TcpServerTransport::new(tls_stream))).await;
+                        let _ = tx.send(Ok(tls_stream)).await;
                     }
                     Ok(Err(error)) => {
                         tracing::warn!(peer = %addr, error = %error, "TLS handshake failed");
@@ -383,6 +416,8 @@ pub(crate) struct StartedUserServices {
     pub(crate) pair_mode: Arc<PairMode>,
     reachability_links: ReachabilityLinkConnector,
     dispatcher: TunnelDispatcher,
+    external_accept_task: Option<JoinHandle<()>>,
+    external_links_shutdown: watch::Sender<bool>,
     connections_closed: tokio_util::sync::CancellationToken,
 }
 
@@ -508,6 +543,7 @@ async fn start_user_services_with_clock(
     let (pairing_incoming_tx, pairing_incoming_rx) = mpsc::channel(64);
 
     let connections_closed = tokio_util::sync::CancellationToken::new();
+    let (external_links_shutdown, _) = watch::channel(false);
     parts.runtime.tasks.push(spawn_trusted_service_server(
         client.clone(),
         agent.clone(),
@@ -582,6 +618,8 @@ async fn start_user_services_with_clock(
         pair_mode,
         reachability_links,
         dispatcher,
+        external_accept_task: None,
+        external_links_shutdown,
     })
 }
 
@@ -596,6 +634,12 @@ impl Deref for StartedUserServices {
 impl DerefMut for StartedUserServices {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.runtime
+    }
+}
+
+impl Drop for StartedUserServices {
+    fn drop(&mut self) {
+        self.external_links_shutdown.send_replace(true);
     }
 }
 
@@ -668,9 +712,44 @@ impl StartedUserServices {
         spawn_forward_to_trusted(incoming, trusted_tx, "Unix socket")
     }
 
+    #[cfg(unix)]
+    pub(crate) fn serve_link_on_unix_listener(
+        &self,
+        listener: tokio::net::UnixListener,
+    ) -> JoinHandle<()> {
+        let ctx = self
+            .link_ctx()
+            .with_carrier(crate::routing::LinkCarrier::Ssh)
+            .with_shutdown(self.external_links_shutdown.subscribe());
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _)) => {
+                        let carrier =
+                            Arc::new(MuxCarrier::new(stream, MuxRole::Acceptor, CarrierKind::Ssh));
+                        let ctx = ctx.clone();
+                        tokio::spawn(async move {
+                            if let Err(error) =
+                                run_link(ctx, carrier, crate::routing::ConnectRole::Acceptor).await
+                            {
+                                tracing::warn!(error = %error, "local SSH link exited with error");
+                            }
+                        });
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error, "local SSH link accept failed");
+                        break;
+                    }
+                }
+            }
+        })
+    }
+
     pub(crate) fn serve_external_tcp_listener(&mut self, listener: TcpListener) {
-        let task = self.dispatcher.serve_tcp_listener(listener);
-        self.tasks.push(task);
+        let task = self
+            .dispatcher
+            .serve_tcp_listener(listener, self.external_links_shutdown.subscribe());
+        self.external_accept_task = Some(task);
     }
 
     /// Test seam: serves the external TCP listener while registering every
@@ -683,10 +762,12 @@ impl StartedUserServices {
         listener: TcpListener,
         connections: crate::dispatcher::TrackedTcpConnections,
     ) {
-        let task = self
-            .dispatcher
-            .serve_tcp_listener_tracked(listener, connections);
-        self.tasks.push(task);
+        let task = self.dispatcher.serve_tcp_listener_tracked(
+            listener,
+            connections,
+            self.external_links_shutdown.subscribe(),
+        );
+        self.external_accept_task = Some(task);
     }
 
     pub(crate) fn spawn_reachability_links(&self) -> Vec<JoinHandle<()>> {
@@ -697,7 +778,15 @@ impl StartedUserServices {
         self.tasks.push(task);
     }
 
+    pub(crate) async fn stop_accepting_external_links(&mut self) {
+        self.external_links_shutdown.send_replace(true);
+        if let Some(task) = self.external_accept_task.take() {
+            let _ = task.await;
+        }
+    }
+
     pub(crate) async fn stop_tasks(&mut self) {
+        self.stop_accepting_external_links().await;
         self.connections_closed.cancel();
         let tasks = std::mem::take(&mut self.tasks);
         for task in &tasks {
@@ -840,15 +929,34 @@ where
     })
 }
 
-fn spawn_cloud_carrier_server<I, IO>(_service: CloudLinkServer, incoming: I) -> JoinHandle<()>
+fn spawn_cloud_carrier_server<I, IO>(service: CloudLinkServer, incoming: I) -> JoinHandle<()>
 where
     I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
-    IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
-    IO::ConnectInfo: Clone + Send + Sync + 'static,
+    IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
         let mut incoming = Box::pin(incoming);
-        while incoming.next().await.is_some() {}
+        while let Some(item) = incoming.next().await {
+            match item {
+                Ok(io) => {
+                    let service = service.clone();
+                    tokio::spawn(async move {
+                        let ctx = service.accepting_link_ctx().await;
+                        let carrier = Arc::new(MuxCarrier::new(
+                            io,
+                            MuxRole::Acceptor,
+                            CarrierKind::RelayTcp,
+                        ));
+                        if let Err(error) =
+                            run_link(ctx, carrier, crate::routing::ConnectRole::Acceptor).await
+                        {
+                            tracing::warn!(error = %error, "cloud link exited with error");
+                        }
+                    });
+                }
+                Err(error) => tracing::warn!(error = %error, "cloud stream accept failed"),
+            }
+        }
     })
 }
 
@@ -1058,6 +1166,15 @@ mod tests {
             })
             .await
             .unwrap();
+    }
+
+    async fn cloud_test_carrier(addr: std::net::SocketAddr) -> Arc<MuxCarrier> {
+        let stream = TcpStream::connect(addr).await.unwrap();
+        Arc::new(MuxCarrier::new(
+            stream,
+            MuxRole::Connector,
+            CarrierKind::RelayTcp,
+        ))
     }
 
     #[tokio::test]
@@ -1582,25 +1699,30 @@ mod tests {
             test_started_services_with_identity_and_trust(identity_b.clone(), trust_b).await;
 
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        host_b
-            .trusted_incoming_tx
-            .send(BoxedGrpcIo::local_trusted(server_io))
-            .await
-            .unwrap();
-        let channel = crate::transport::channel_from_single_io(
-            crate::transport::configure_tonic_endpoint_keepalive(Endpoint::from_static(
-                "http://ssh-relay-test",
-            )),
-            "test SSH relay transport",
+        let acceptor_carrier = Arc::new(MuxCarrier::new(
+            server_io,
+            MuxRole::Acceptor,
+            CarrierKind::Ssh,
+        ));
+        let acceptor_task = tokio::spawn(run_link(
+            host_b
+                .link_ctx()
+                .with_carrier(crate::routing::LinkCarrier::Ssh),
+            acceptor_carrier,
+            crate::routing::ConnectRole::Acceptor,
+        ));
+        let connector_carrier = Arc::new(MuxCarrier::new(
             client_io,
+            MuxRole::Connector,
+            CarrierKind::Ssh,
+        ));
+        let (connector_task, established_rx) = crate::routing::spawn_connector_with_establishment(
+            host_a
+                .link_connector_ctx()
+                .with_expected_peer(identity_b.host_id)
+                .with_carrier(crate::routing::LinkCarrier::Ssh),
+            connector_carrier,
         );
-        let (connector_task, established_rx) =
-            crate::routing::spawn_connector_to_channel_with_establishment(
-                host_a
-                    .link_connector_ctx()
-                    .with_expected_peer(identity_b.host_id),
-                channel,
-            );
 
         let established = tokio::time::timeout(Duration::from_secs(1), established_rx)
             .await
@@ -1629,6 +1751,7 @@ mod tests {
         );
 
         connector_task.abort();
+        acceptor_task.abort();
         drop(host_b);
     }
 
@@ -1641,14 +1764,9 @@ mod tests {
         let server_task = service.serve_on_tcp_listener(listener);
 
         let connector = test_started_services_with_host_id(Uuid::from_u128(2)).await;
-        let channel = Endpoint::from_shared(format!("http://{addr}"))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
-        let connector_task = crate::routing::spawn_connector_to_channel_with_bearer_token(
+        let connector_task = crate::routing::spawn_connector_with_bearer_token(
             connector.link_connector_ctx(),
-            channel,
+            cloud_test_carrier(addr).await,
             "token-a".to_string(),
         );
 
@@ -1707,24 +1825,14 @@ mod tests {
         let agent_id = Uuid::from_u128(44);
         create_test_agent(&host_a, agent_id).await;
 
-        let channel_a = Endpoint::from_shared(format!("http://{addr}"))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
-        let task_a = crate::routing::spawn_connector_to_channel_with_bearer_token(
+        let task_a = crate::routing::spawn_connector_with_bearer_token(
             host_a.link_connector_ctx(),
-            channel_a,
+            cloud_test_carrier(addr).await,
             "token-a".to_string(),
         );
-        let channel_b = Endpoint::from_shared(format!("http://{addr}"))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
-        let task_b = crate::routing::spawn_connector_to_channel_with_bearer_token(
+        let task_b = crate::routing::spawn_connector_with_bearer_token(
             host_b.link_connector_ctx(),
-            channel_b,
+            cloud_test_carrier(addr).await,
             "token-a".to_string(),
         );
 
@@ -1784,24 +1892,14 @@ mod tests {
         .await
         .unwrap();
 
-        let channel_a = Endpoint::from_shared(format!("http://{addr}"))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
-        let task_a = crate::routing::spawn_connector_to_channel_with_bearer_token(
+        let task_a = crate::routing::spawn_connector_with_bearer_token(
             host_a.link_connector_ctx(),
-            channel_a,
+            cloud_test_carrier(addr).await,
             "token-a".to_string(),
         );
-        let channel_b = Endpoint::from_shared(format!("http://{addr}"))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
-        let task_b = crate::routing::spawn_connector_to_channel_with_bearer_token(
+        let task_b = crate::routing::spawn_connector_with_bearer_token(
             host_b.link_connector_ctx(),
-            channel_b,
+            cloud_test_carrier(addr).await,
             "token-a".to_string(),
         );
 
@@ -1894,24 +1992,14 @@ mod tests {
         .await
         .unwrap();
 
-        let channel_a = Endpoint::from_shared(format!("http://{addr}"))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
-        let task_a = crate::routing::spawn_connector_to_channel_with_bearer_token(
+        let task_a = crate::routing::spawn_connector_with_bearer_token(
             host_a.link_connector_ctx(),
-            channel_a,
+            cloud_test_carrier(addr).await,
             "token-a".to_string(),
         );
-        let channel_b = Endpoint::from_shared(format!("http://{addr}"))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
-        let task_b = crate::routing::spawn_connector_to_channel_with_bearer_token(
+        let task_b = crate::routing::spawn_connector_with_bearer_token(
             host_b.link_connector_ctx(),
-            channel_b,
+            cloud_test_carrier(addr).await,
             "token-a".to_string(),
         );
 

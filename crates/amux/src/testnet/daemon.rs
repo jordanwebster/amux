@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 use chrono::{DateTime, TimeDelta, Utc};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tonic::transport::{Channel, Endpoint};
 
 use super::NetInner;
 use super::assertions::eventually;
@@ -173,14 +172,6 @@ impl DaemonRuntime {
     }
 }
 
-/// A lazy tonic channel to the testnet cloud relay. Connector lifecycle owns
-/// this link; the harness has no duplicate socket it can sever as a shortcut.
-fn cloud_channel(addr: SocketAddr) -> Channel {
-    Endpoint::from_shared(format!("http://{addr}"))
-        .expect("testnet cloud endpoint URI")
-        .connect_lazy()
-}
-
 impl Drop for DaemonRuntime {
     fn drop(&mut self) {
         if let Some(profile) = self.profile.take() {
@@ -253,7 +244,7 @@ pub(crate) async fn start_daemon_runtime(
         cloud_refresh_interval: None,
         cloud: inner.cloud.as_ref().map(|cloud| {
             (
-                cloud_channel(cloud.addr),
+                cloud.addr,
                 CloudFixtureAuth::Refreshing(cloud.refreshing_auth()),
             )
         }),
@@ -362,12 +353,41 @@ impl Daemon {
         ).await;
     }
 
-    /// Send actual tunnel-open frames on this profile's authenticated relay
-    /// link, bypassing the local route lookup. A same-tenant control must
-    /// receive its frame; the foreign tenant must allocate no endpoint.
+    /// Open native streams on this profile's authenticated relay link,
+    /// bypassing the local route lookup. A same-tenant control must accept
+    /// its stream; the foreign tenant must remain unreachable.
     pub async fn cloud_cannot_forward_to(&self, other: &Daemon, control: &Daemon) {
-        let _ = (other, control);
-        panic!("frame-based relay probes are unavailable during the native-stream transition");
+        let parts = self.try_parts().await.expect("profile is running");
+        let carrier = parts
+            .channels
+            .link_registry()
+            .cloud_relay_carrier()
+            .await
+            .expect("profile has a cloud relay carrier");
+        let control_stream = carrier
+            .open_stream(wire::pb::StreamPreface {
+                dst: control.host_id().as_bytes().to_vec(),
+            })
+            .await
+            .expect("same-tenant relay stream is accepted");
+        drop(control_stream);
+
+        let refused = match carrier
+            .open_stream(wire::pb::StreamPreface {
+                dst: other.host_id().as_bytes().to_vec(),
+            })
+            .await
+        {
+            Ok(_) => panic!("cross-tenant relay stream must be refused"),
+            Err(refused) => refused,
+        };
+        assert!(
+            matches!(
+                refused,
+                crate::link::OpenError::Refused(wire::pb::StreamRefusal::NoRoute)
+            ),
+            "cross-tenant relay stream was not refused as NO_ROUTE: {refused}"
+        );
     }
 
     /// Dial a known address and pin the responder locally so failure must
@@ -681,6 +701,21 @@ impl Daemon {
             && let Some(error) = crate::protocol::protocol_error_from_status_details(status)
         {
             return error;
+        }
+        if let Some(crate::link::ChannelError::Refused(refusal)) =
+            error.downcast_ref::<crate::link::ChannelError>()
+        {
+            return match refusal {
+                wire::pb::StreamRefusal::PaymentRequired => crate::ProtocolError::PaymentRequired,
+                wire::pb::StreamRefusal::RateLimited => crate::ProtocolError::ResourceExhausted {
+                    message: "relay stream rate limit reached".into(),
+                },
+                refusal => panic!(
+                    "routed call from '{}' to '{}' got unexpected stream refusal {refusal:?}",
+                    self.name(),
+                    other.name()
+                ),
+            };
         }
         panic!(
             "routed call from '{}' to '{}' failed without a structured protocol refusal: {error:#}",

@@ -5,7 +5,7 @@ use std::time::Duration;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Semaphore, mpsc};
+use tokio::sync::{Mutex, Semaphore, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
@@ -30,6 +30,8 @@ pub(crate) enum DispatchError {
     Tls(#[from] std::io::Error),
     #[error("dispatcher output channel is closed")]
     ChannelClosed,
+    #[error("native link failed: {0}")]
+    Link(String),
     #[error(transparent)]
     Identity(#[from] IdentityError),
 }
@@ -126,8 +128,12 @@ impl TunnelDispatcher {
         self
     }
 
-    pub(crate) fn serve_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
-        self.serve_tcp_listener_inner(listener, None)
+    pub(crate) fn serve_tcp_listener(
+        &self,
+        listener: TcpListener,
+        shutdown_rx: watch::Receiver<bool>,
+    ) -> JoinHandle<()> {
+        self.serve_tcp_listener_inner(listener, None, shutdown_rx)
     }
 
     /// Test seam: like [`Self::serve_tcp_listener`], but registers an
@@ -140,19 +146,38 @@ impl TunnelDispatcher {
         &self,
         listener: TcpListener,
         connections: TrackedTcpConnections,
+        shutdown_rx: watch::Receiver<bool>,
     ) -> JoinHandle<()> {
-        self.serve_tcp_listener_inner(listener, Some(connections))
+        self.serve_tcp_listener_inner(listener, Some(connections), shutdown_rx)
     }
 
     fn serve_tcp_listener_inner(
         &self,
         listener: TcpListener,
         track: Option<TrackedTcpConnections>,
+        mut shutdown_rx: watch::Receiver<bool>,
     ) -> JoinHandle<()> {
         let dispatcher = self.clone();
         tokio::spawn(async move {
+            let mut connection_tasks = tokio::task::JoinSet::new();
             loop {
-                let (stream, addr) = match listener.accept().await {
+                let accepted = tokio::select! {
+                    accepted = listener.accept() => Some(accepted),
+                    completed = connection_tasks.join_next(), if !connection_tasks.is_empty() => {
+                        if let Some(Err(error)) = completed
+                            && !error.is_cancelled()
+                        {
+                            tracing::warn!(error = %error, "external TCP connection task failed");
+                        }
+                        None
+                    }
+                    _ = wait_for_shutdown(&mut shutdown_rx) => {
+                        connection_tasks.detach_all();
+                        break;
+                    }
+                };
+                let Some(accepted) = accepted else { continue };
+                let (stream, addr) = match accepted {
                     Ok(accepted) => accepted,
                     Err(error) => {
                         tracing::warn!(error = %error, "external TCP accept failed");
@@ -184,12 +209,14 @@ impl TunnelDispatcher {
                 }
                 configure_tcp_keepalive(&stream);
                 let dispatcher = dispatcher.clone();
-                tokio::spawn(async move {
+                let connection_shutdown = shutdown_rx.clone();
+                connection_tasks.spawn(async move {
                     let _permit = permit;
                     if let Err(error) = dispatcher
                         .dispatch_external(
                             stream,
                             PreTrustPairingReachability::NoReusableReachability,
+                            connection_shutdown,
                         )
                         .await
                     {
@@ -261,6 +288,7 @@ impl TunnelDispatcher {
         &self,
         stream: IO,
         pairing_reachability: PreTrustPairingReachability,
+        shutdown_rx: watch::Receiver<bool>,
     ) -> Result<(), DispatchError>
     where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
@@ -283,18 +311,13 @@ impl TunnelDispatcher {
                     MuxRole::Acceptor,
                     CarrierKind::Quic,
                 ));
-                tokio::spawn(async move {
-                    if let Err(error) = run_link(
-                        ctx.with_authenticated_peer(peer),
-                        carrier,
-                        crate::routing::ConnectRole::Acceptor,
-                    )
-                    .await
-                    {
-                        tracing::warn!(%peer, %error, "inbound direct link ended with an error");
-                    }
-                });
-                Ok(())
+                run_link(
+                    ctx.with_authenticated_peer(peer).with_shutdown(shutdown_rx),
+                    carrier,
+                    crate::routing::ConnectRole::Acceptor,
+                )
+                .await
+                .map_err(|error| DispatchError::Link(error.to_string()))
             }
             DispatchTarget::Pairing => self
                 .pairing_tx
@@ -365,6 +388,14 @@ impl TunnelDispatcher {
                 "missing client certificate and pairing mode inactive",
             );
             Ok(DispatchTarget::Close)
+        }
+    }
+}
+
+async fn wait_for_shutdown(shutdown_rx: &mut watch::Receiver<bool>) {
+    while !*shutdown_rx.borrow_and_update() {
+        if shutdown_rx.changed().await.is_err() {
+            return;
         }
     }
 }

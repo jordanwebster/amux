@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
@@ -18,10 +18,7 @@ use crate::identity::DeviceIdentity;
 use crate::link::{
     CarrierKind, ChannelPool, LinkCarrier as NativeLinkCarrier, MuxCarrier, MuxRole,
 };
-use crate::routing::{
-    Host, LinkCarrier, LinkConnectorCtx, LiveLocalHost, Route, RoutingCore,
-    spawn_connector_with_establishment,
-};
+use crate::routing::{Host, LinkCarrier, LinkConnectorCtx, LiveLocalHost, Route, RoutingCore};
 use crate::transport::{spawn_ssh_relay, trusted_device_stream_tracked};
 use crate::trust::{Reachability, SharedTrustStore};
 
@@ -45,6 +42,7 @@ struct ReachabilityLinkConnectorInner {
     dialing: Arc<Mutex<HashSet<HostId>>>,
     queued_found: Arc<Mutex<HashSet<HostId>>>,
     direct_enabled: Arc<AtomicBool>,
+    direct_shutdown: Mutex<watch::Sender<bool>>,
 }
 
 #[derive(Clone)]
@@ -102,6 +100,7 @@ impl ReachabilityLinkConnector {
                     dialing: Arc::new(Mutex::new(HashSet::new())),
                     queued_found: Arc::new(Mutex::new(HashSet::new())),
                     direct_enabled: Arc::new(AtomicBool::new(true)),
+                    direct_shutdown: Mutex::new(watch::channel(false).0),
                 },
             )),
         }
@@ -297,18 +296,33 @@ impl ReachabilityLinkConnector {
             return;
         };
         inner.direct_enabled.store(false, Ordering::SeqCst);
+        inner.direct_shutdown.lock().unwrap().send_replace(true);
         inner
             .context
             .channels
             .link_registry()
             .close_peer_links()
             .await;
+        let tasks = inner
+            .retained_tasks
+            .lock()
+            .map(|mut tasks| tasks.drain(..).collect::<Vec<_>>())
+            .unwrap_or_default();
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
+        inner.dialing.lock().unwrap().clear();
+        inner.queued_found.lock().unwrap().clear();
     }
 
     pub(crate) fn resume_direct_links(&self) -> Vec<JoinHandle<()>> {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return Vec::new();
         };
+        *inner.direct_shutdown.lock().unwrap() = watch::channel(false).0;
         inner.direct_enabled.store(true, Ordering::SeqCst);
         let tasks = self.spawn_startup_links();
         self.requery();
@@ -331,6 +345,7 @@ impl ReachabilityLinkConnector {
         }
         let context = inner.context.clone();
         let dialing = inner.dialing.clone();
+        let shutdown_rx = inner.direct_shutdown.lock().unwrap().subscribe();
         let span = tracing::info_span!(
             "reachability_link",
             peer = %attempt.peer,
@@ -341,7 +356,7 @@ impl ReachabilityLinkConnector {
             async move {
                 let peer = attempt.peer;
                 let established_direct =
-                    establish_reachability_link(context.clone(), attempt).await;
+                    establish_reachability_link(context.clone(), attempt, shutdown_rx).await;
                 if direct {
                     dialing.lock().unwrap().remove(&peer);
                     if established_direct
@@ -457,6 +472,7 @@ async fn has_direct_route(context: &ReachabilityLinkContext, peer: HostId) -> bo
 async fn establish_reachability_link(
     context: ReachabilityLinkContext,
     attempt: ReachabilityLinkAttempt,
+    shutdown_rx: watch::Receiver<bool>,
 ) -> bool {
     match attempt.reachability.clone() {
         Reachability::Cloud => false,
@@ -473,6 +489,7 @@ async fn establish_reachability_link(
                             CarrierKind::Quic,
                         )),
                         LinkCarrier::Direct,
+                        shutdown_rx.clone(),
                     )
                     .await
                     {
@@ -513,7 +530,15 @@ async fn establish_reachability_link(
                     return false;
                 }
             };
-            match establish_carrier(&context, attempt.peer, carrier, LinkCarrier::Ssh).await {
+            match establish_carrier(
+                &context,
+                attempt.peer,
+                carrier,
+                LinkCarrier::Ssh,
+                shutdown_rx,
+            )
+            .await
+            {
                 Ok((host, connector_task, abort_on_drop)) => {
                     context
                         .connections
@@ -561,6 +586,7 @@ async fn establish_carrier(
     peer: HostId,
     native_carrier: Arc<dyn NativeLinkCarrier>,
     carrier: LinkCarrier,
+    shutdown_rx: watch::Receiver<bool>,
 ) -> Result<(Host, JoinHandle<Result<(), tonic::Status>>, AbortTaskOnDrop), String> {
     let connector_ctx = LinkConnectorCtx::new_live(
         context.local_host.clone(),
@@ -571,7 +597,11 @@ async fn establish_carrier(
     .with_carrier(carrier)
     .with_incoming_streams(context.incoming_streams_tx.clone());
     let (connector_task, established_rx) =
-        spawn_connector_with_establishment(connector_ctx, native_carrier);
+        crate::routing::spawn_connector_with_establishment_and_shutdown(
+            connector_ctx,
+            native_carrier,
+            shutdown_rx,
+        );
     let abort_on_failure = AbortTaskOnDrop(connector_task.abort_handle());
     let host = match tokio::time::timeout(DIRECT_LINK_ESTABLISHMENT_TIMEOUT, established_rx).await {
         Ok(Ok(Ok(host))) => host,

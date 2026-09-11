@@ -49,10 +49,12 @@ pub(crate) struct ConnectHandshake {
 }
 
 impl ConnectHandshake {
+    #[cfg(test)]
     pub(crate) fn connector() -> Self {
         Self::new(ConnectRole::Connector)
     }
 
+    #[cfg(test)]
     pub(crate) fn acceptor() -> Self {
         Self::new(ConnectRole::Acceptor)
     }

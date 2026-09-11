@@ -535,11 +535,7 @@ fn fixture_factory(
             tracked_tcp: Some(fixture.tracked_tcp.clone()),
             artifact_clock: Some(fixture.clock.clone()),
             cloud: None,
-            cloud_transport: cloud_addr.map(|addr| {
-                tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
-                    .unwrap()
-                    .connect_lazy()
-            }),
+            cloud_transport: cloud_addr,
             cloud_refresh_interval: None,
         }
     })

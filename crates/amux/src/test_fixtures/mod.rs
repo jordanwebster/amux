@@ -545,10 +545,7 @@ impl TestRelay {
         installation: &crate::Installation,
         id: crate::ProfileId,
     ) -> Result<(), crate::installation::InstallationError> {
-        let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", self.addr))
-            .expect("valid relay fixture URI")
-            .connect_lazy();
-        installation.use_test_cloud_transport(id, channel).await
+        installation.use_test_cloud_transport(id, self.addr).await
     }
 }
 

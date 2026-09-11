@@ -9,14 +9,10 @@ use futures_util::{Stream, stream};
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
-use super::GrpcIo;
-
-pub(crate) type TcpServerTransport<T = TcpStream> = GrpcIo<T>;
-
 #[cfg(any(test, test_fixtures))]
 pub(crate) fn tcp_incoming(
     listener: TcpListener,
-) -> impl Stream<Item = io::Result<TcpServerTransport<TcpStream>>> + Send + 'static {
+) -> impl Stream<Item = io::Result<TcpStream>> + Send + 'static {
     stream::unfold(listener, |listener| async move {
         let item = match listener.accept().await {
             Ok((stream, _addr)) => {
@@ -24,7 +20,7 @@ pub(crate) fn tcp_incoming(
                     tracing::warn!(error = %error, "failed to set TCP_NODELAY");
                 }
                 configure_tcp_keepalive(&stream);
-                Ok(TcpServerTransport::new(stream))
+                Ok(stream)
             }
             Err(error) => Err(error),
         };
