@@ -390,9 +390,13 @@ async fn profile_selector_cli_login_and_logout_preserve_the_device() {
     let key = std::fs::read(&key_path).unwrap();
     let login = fixture.run(&["login"]);
     let text = String::from_utf8_lossy(&login.stdout);
-    assert!(text.contains("Alice Example") && text.contains("alice@example.test"));
+    assert!(text.contains("Signed in as alice@example.test."));
+    assert!(text.contains("a subscription carries agents through it"));
+    let profiles = fixture.run(&["profiles"]);
+    let profiles = String::from_utf8_lossy(&profiles.stdout);
+    assert!(profiles.contains("Alice Example") && profiles.contains("alice@example.test"));
     assert!(
-        text.contains(&fixture.id.to_string()),
+        profiles.contains(&fixture.id.to_string()),
         "sole pristine profile is adopted"
     );
     let credential = fixture.profile.with_file_name("credentials.yaml");
@@ -408,7 +412,9 @@ async fn profile_selector_cli_login_and_logout_preserve_the_device() {
         "--name",
         "Personal",
     ]);
-    assert!(String::from_utf8_lossy(&login.stdout).contains("Personal"));
+    assert!(String::from_utf8_lossy(&login.stdout).contains("Signed in as alice@example.test."));
+    let profiles = fixture.run(&["profiles"]);
+    assert!(String::from_utf8_lossy(&profiles.stdout).contains("Personal"));
     assert_eq!(std::fs::read(&key_path).unwrap(), key);
     fixture.run(&["list"]);
 }

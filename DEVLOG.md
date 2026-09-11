@@ -5,6 +5,9 @@ target dispatcher. Independent sessions and the remote agent lifecycle no
 longer rely on the deleted frame bridge. Relay handshake rejections report
 authentication failure unless they carry the structured update error, and
 Unix socket boundary coverage now accounts for the longer adjacent link socket.
+Committed diagnostic reports now replay the unified cloud state and host-route
+shape, and CLI profile tests verify the current sign-in copy separately from
+the adopted profile's stored account name and label.
 
 2026-09-11 — **Prove session and bulk isolation on the ordered relay fallback.**
 Session subscriptions and artifact fetches now have black-box coverage showing
