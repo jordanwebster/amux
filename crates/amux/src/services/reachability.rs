@@ -56,6 +56,8 @@ struct ReachabilityLinkContext {
     incoming_streams_tx: tokio::sync::mpsc::Sender<(HostId, crate::link::ByteStream)>,
     runtime: Arc<Mutex<Option<ReachabilityRuntime>>>,
     quic_endpoint: Arc<Mutex<Option<quinn::Endpoint>>>,
+    #[cfg(testnet)]
+    quic_transport: Arc<Mutex<Option<Arc<quinn::TransportConfig>>>>,
 }
 
 #[derive(Clone)]
@@ -95,6 +97,8 @@ impl ReachabilityLinkConnector {
                         incoming_streams_tx,
                         runtime: Arc::new(Mutex::new(None)),
                         quic_endpoint: Arc::new(Mutex::new(None)),
+                        #[cfg(testnet)]
+                        quic_transport: Arc::new(Mutex::new(None)),
                     },
                     retained_tasks: Mutex::new(Vec::new()),
                     dialing: Arc::new(Mutex::new(HashSet::new())),
@@ -122,6 +126,14 @@ impl ReachabilityLinkConnector {
             found_hosts,
         });
         *inner.context.quic_endpoint.lock().unwrap() = Some(quic_endpoint);
+    }
+
+    #[cfg(testnet)]
+    pub(crate) fn set_test_quic_transport(&self, transport: Option<Arc<quinn::TransportConfig>>) {
+        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
+            return;
+        };
+        *inner.context.quic_transport.lock().unwrap() = transport;
     }
 
     pub(crate) fn quic_endpoint(&self) -> Option<quinn::Endpoint> {
@@ -591,12 +603,17 @@ async fn prepare_direct_carrier(
         .unwrap()
         .clone()
         .ok_or_else(|| "direct QUIC endpoint is not configured".to_string())?;
-    QuicCarrier::connect_direct(
+    #[cfg(testnet)]
+    let transport = context.quic_transport.lock().unwrap().clone();
+    #[cfg(not(testnet))]
+    let transport = None;
+    QuicCarrier::connect_direct_with_transport(
         &endpoint,
         addr,
         &context.identity,
         context.trust_store.clone(),
         peer,
+        transport,
     )
     .await
     .map(|carrier| Arc::new(carrier) as Arc<dyn NativeLinkCarrier>)

@@ -9092,3 +9092,11 @@ proxy. Tests can apply symmetric latency and deterministic loss, isolate a
 named daemon, or rebind a client's private socket while its advertised address
 stays fixed. Scripted discovery, pairing, trusted links, and session streams all
 use the proxied path, including profiles owned by the installation supervisor.
+
+2026-09-11 — **Direct QUIC behavior is covered at the session boundary.** The
+protocol specification now keeps a live session and its channels across a
+client address change, overlaps a large artifact fetch with interactive output,
+and closes every open stream on revocation. It also proves full handshakes when
+a client offers a cached ticket, admission limits under handshake floods,
+session delivery with five-percent loss and 200 ms latency, and direct presence
+loss when a peer's UDP path is blocked.

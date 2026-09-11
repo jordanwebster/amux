@@ -58,7 +58,21 @@ impl QuicCarrier {
         trust_store: SharedTrustStore,
         peer: HostId,
     ) -> Result<Self, ConnectError> {
-        let config = identity.quic_client_config_for_peer(trust_store, peer)?;
+        Self::connect_direct_with_transport(endpoint, addr, identity, trust_store, peer, None).await
+    }
+
+    pub(crate) async fn connect_direct_with_transport(
+        endpoint: &quinn::Endpoint,
+        addr: SocketAddr,
+        identity: &DeviceIdentity,
+        trust_store: SharedTrustStore,
+        peer: HostId,
+        transport: Option<std::sync::Arc<quinn::TransportConfig>>,
+    ) -> Result<Self, ConnectError> {
+        let mut config = identity.quic_client_config_for_peer(trust_store, peer)?;
+        if let Some(transport) = transport {
+            config.transport_config(transport);
+        }
         let connection = endpoint
             .connect_with(config, addr, DEVICE_SERVER_NAME)?
             .await?;

@@ -83,7 +83,7 @@ impl DeviceIdentity {
         &self.pubkey
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, testnet))]
     pub(crate) fn private_key_pkcs8(&self) -> &[u8] {
         &self.private_key_pkcs8
     }

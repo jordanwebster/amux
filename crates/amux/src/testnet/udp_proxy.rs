@@ -11,6 +11,20 @@ use tokio_util::sync::CancellationToken;
 
 use crate::HostId;
 
+pub(crate) fn transport_config() -> Arc<quinn::TransportConfig> {
+    let mut transport = quinn::TransportConfig::default();
+    transport
+        .keep_alive_interval(Some(Duration::from_millis(250)))
+        .max_idle_timeout(Some(
+            Duration::from_secs(2)
+                .try_into()
+                .expect("testnet QUIC idle timeout fits"),
+        ))
+        .max_concurrent_bidi_streams(64_u32.into())
+        .max_concurrent_uni_streams(0_u32.into());
+    Arc::new(transport)
+}
+
 #[derive(Clone)]
 pub(crate) struct UdpProxy {
     inner: Arc<UdpProxyInner>,
@@ -193,14 +207,18 @@ fn spawn_public_forwarder(
                 .get(&target)
                 .map(|p| p.private_addr);
             let latency = controls.latency();
-            tokio::spawn(async move {
-                if !latency.is_zero() {
-                    tokio::time::sleep(latency).await;
-                }
+            if latency.is_zero() {
                 if let Some(destination) = destination {
                     let _ = flow.send_to(&payload, destination).await;
                 }
-            });
+            } else {
+                tokio::spawn(async move {
+                    tokio::time::sleep(latency).await;
+                    if let Some(destination) = destination {
+                        let _ = flow.send_to(&payload, destination).await;
+                    }
+                });
+            }
         }
     });
 }
@@ -246,14 +264,16 @@ async fn get_or_create_flow(
                 .and_then(|id| peers.read().unwrap().by_id.get(&id).map(|p| p.private_addr))
                 .unwrap_or(source_addr);
             let payload = buffer[..len].to_vec();
-            let public_socket = public_socket.clone();
             let latency = controls.latency();
-            tokio::spawn(async move {
-                if !latency.is_zero() {
-                    tokio::time::sleep(latency).await;
-                }
+            if latency.is_zero() {
                 let _ = public_socket.send_to(&payload, destination).await;
-            });
+            } else {
+                let public_socket = public_socket.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(latency).await;
+                    let _ = public_socket.send_to(&payload, destination).await;
+                });
+            }
         }
     });
     flow

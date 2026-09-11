@@ -528,6 +528,7 @@ fn fixture_factory(
         RuntimeFixtures {
             listener,
             advertised_addr: fixture.direct_addr,
+            quic_transport: Some(super::udp_proxy::transport_config()),
             discovery: Some(Arc::new(discovery.clone()) as Arc<dyn Discovery>),
             artifact_clock: Some(fixture.clock.clone()),
             cloud: None,

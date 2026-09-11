@@ -51,6 +51,7 @@ pub use installation::{
 };
 mod pairing;
 mod session;
+mod ticket;
 mod udp_proxy;
 mod wire;
 

@@ -117,6 +117,7 @@ pub(crate) enum CloudFixtureAuth {
 pub(crate) struct RuntimeFixtures {
     pub(crate) listener: Option<std::net::UdpSocket>,
     pub(crate) advertised_addr: Option<SocketAddr>,
+    pub(crate) quic_transport: Option<Arc<quinn::TransportConfig>>,
     pub(crate) discovery: Option<Arc<dyn Discovery>>,
     pub(crate) artifact_clock: Option<Arc<dyn amux_artifacts::Clock>>,
     pub(crate) cloud: Option<(std::net::SocketAddr, CloudFixtureAuth)>,
@@ -346,9 +347,13 @@ async fn build(
     let mut service_config = options.service_config();
     service_config.validate()?;
 
-    let quic_server_config = security
+    let mut quic_server_config = security
         .quic_server_config()
         .map_err(|error| ProfileStartError::State(error.to_string()))?;
+    #[cfg(testnet)]
+    if let Some(transport) = options.fixtures.quic_transport.clone() {
+        quic_server_config.transport_config(transport);
+    }
     let mut bound = BoundListeners::bind(&options, quic_server_config.clone()).await?;
     let mut lan_endpoint = bound.quic_endpoint.take();
     #[cfg(testnet)]
@@ -422,6 +427,8 @@ async fn build(
         found_hosts,
         direct_endpoint,
     );
+    #[cfg(testnet)]
+    services.set_test_quic_transport(options.fixtures.quic_transport.clone());
 
     #[cfg(unix)]
     let unix_accept_task = bound.unix_listener.take().map(|listener| {

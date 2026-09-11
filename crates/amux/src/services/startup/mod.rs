@@ -658,6 +658,11 @@ impl StartedUserServices {
             .configure(data_dir, discovery, found_hosts, quic_endpoint);
     }
 
+    #[cfg(testnet)]
+    pub(crate) fn set_test_quic_transport(&self, transport: Option<Arc<quinn::TransportConfig>>) {
+        self.reachability_links.set_test_quic_transport(transport);
+    }
+
     pub(crate) fn spawn_dial_on_found(
         &self,
         events: tokio::sync::broadcast::Receiver<crate::discovery::DiscoveryEvent>,

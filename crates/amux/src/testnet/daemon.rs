@@ -224,6 +224,7 @@ pub(crate) async fn start_daemon_runtime(
     options.fixtures = RuntimeFixtures {
         listener,
         advertised_addr: inner.direct_addr,
+        quic_transport: Some(super::udp_proxy::transport_config()),
         discovery: None,
         artifact_clock: Some(inner.artifact_clock.clone()),
         cloud_transport: None,
