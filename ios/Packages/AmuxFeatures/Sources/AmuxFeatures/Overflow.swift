@@ -5,6 +5,7 @@ import SwiftUI
 /// Everything a conversation can be done *to* rather than said to.
 public enum OverflowChoice: Equatable, Sendable {
     case rename
+    case mute
     /// The agent's address on the fleet, on the clipboard, so it can be
     /// written to from somewhere else — another agent, a script, a terminal.
     ///
@@ -26,18 +27,21 @@ struct OverflowMenu: View {
     @Environment(\.design) private var design
     /// What the agent answers to elsewhere: "refactor-auth/studio".
     let address: String
+    let muted: Bool
     let choose: @MainActor (OverflowChoice) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             row(.rename, glyph: "pencil", label: "Rename")
-            Divider().overlay(design.hairline.color).padding(.leading, 56)
+            Divider().overlay(design.hairline.color).padding(.leading, 49)
+            row(.mute, glyph: muted ? "bell" : "bell.slash", label: muted ? "Unmute" : "Mute")
+            Divider().overlay(design.hairline.color).padding(.leading, 49)
             row(.copyAddress(address), glyph: "at", label: "Copy Address", detail: address)
             Divider().overlay(design.hairline.color).padding(.leading, 56)
             row(.delete, glyph: "trash", label: "Delete Agent", destructive: true)
         }
-        .frame(maxWidth: 300, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.cardRadius, style: .continuous))
+        .frame(maxWidth: 258, alignment: .leading)
+        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .identified("overflow", value: address)
     }
@@ -47,11 +51,11 @@ struct OverflowMenu: View {
         detail: String? = nil, destructive: Bool = false
     ) -> some View {
         Button { choose(choice) } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 Image(systemName: glyph)
-                    .font(.system(size: 17, weight: .regular))
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(destructive ? design.removed.color : design.inkMuted.color)
-                    .frame(width: 24)
+                    .frame(width: 19)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(label)
                         .designFont(.body, design)
@@ -65,9 +69,8 @@ struct OverflowMenu: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 15)
             .padding(.vertical, 12)
-            .frame(minHeight: 52)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -114,8 +117,9 @@ struct RenameCard: View {
                 .fixedSize(horizontal: false, vertical: true)
             TextField("Name", text: $name)
                 .textFieldStyle(.plain)
-                .designFont(.body, design)
+                .designFont(.mono, design)
                 .foregroundStyle(design.ink.color)
+                .tint(design.accentColor)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.done)
@@ -145,16 +149,7 @@ struct RenameCard: View {
                 .buttonStyle(.plain)
                 .identified("rename.cancel", label: "Cancel")
                 Button { confirm(chosen) } label: {
-                    Text("Rename")
-                        .designFont(.bodyEmphasis, design)
-                        .foregroundStyle(design.onAccent.color)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background {
-                            RoundedRectangle(
-                                cornerRadius: design.metrics.controlRadius, style: .continuous)
-                                .fill(design.accent.color)
-                        }
+                    ActionLabel("Rename", kind: .primary, fill: true)
                 }
                 .buttonStyle(.plain)
                 .disabled(chosen.isEmpty)
@@ -213,7 +208,7 @@ struct DeleteAgentCard: View {
                 Button(action: confirm) {
                     Text("Delete")
                         .designFont(.bodyEmphasis, design)
-                        .foregroundStyle(design.onAccent.color)
+                        .foregroundStyle(Color.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 52)
                         .background {

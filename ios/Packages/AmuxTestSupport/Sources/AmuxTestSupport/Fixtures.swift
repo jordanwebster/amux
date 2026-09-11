@@ -156,7 +156,7 @@ public enum Fixtures {
         },
         Fixture(id: "voices", screen: .voices) { bundle in
             States.open(
-                bundle, entries: Transcript.everyKind,
+                bundle, entries: Transcript.peerExchange,
                 session: Sessions.claude(family: Sessions.family))
         },
         Fixture(id: "review-cta", screen: .reviewCta) { bundle in

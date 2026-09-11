@@ -68,6 +68,9 @@ public struct DiffPage: View {
             Ground()
             scroll
             if let range = model.selection {
+                Color.black.opacity(0.26)
+                    .ignoresSafeArea()
+                    .accessibilityHidden(true)
                 CommentSheet(
                     model: model, range: range,
                     add: { actions(.comment(range, $0)) },
@@ -292,11 +295,11 @@ private struct FileHeading: View {
             Button(action: toggle) {
                 HStack(spacing: 10) {
                     Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(design.inkMuted.color)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(design.inkFaint.color)
                         .frame(width: 14)
                     Text(file.path)
-                        .designFont(.mono, design)
+                        .designFont(.monoSmall, design)
                         .foregroundStyle(design.ink.color)
                         .lineLimit(1)
                         .truncationMode(.head)
@@ -311,17 +314,17 @@ private struct FileHeading: View {
             .reclaimingThumbTarget(y: 14)
             Button(action: list) {
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(design.inkFaint.color)
-                    .frame(width: 30, height: 44)
-                    .thumbTarget(x: 8, y: 2)
+                    .frame(width: 18)
+                    .thumbTarget(x: 13, y: 14)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("All Files")
             .identified("review.files", label: "All Files")
-            .reclaimingThumbTarget(x: 8, y: 2)
+            .reclaimingThumbTarget(x: 13, y: 14)
             Spacer(minLength: 4)
-            if comments > 0 { CommentCount(count: comments, size: 20) }
+            if comments > 0 { CommentCount(count: comments, size: 16) }
             Text("+\(file.added)")
                 .designFont(.monoSmall, design)
                 .foregroundStyle(design.added.color)
@@ -330,7 +333,7 @@ private struct FileHeading: View {
                 .foregroundStyle(design.removed.color)
         }
         .padding(.horizontal, design.metrics.gutter)
-        .padding(.vertical, 9)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(design.sunken.color)
         .overlay(alignment: .bottom) {
@@ -371,27 +374,36 @@ private struct DiffRowView: View {
     }
 
     private var line: some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: 0) {
             Text(number)
                 .designFont(.monoSmall, design)
-                .foregroundStyle(design.inkFaint.color)
-                .frame(width: 34, alignment: .trailing)
+                .foregroundStyle(design.inkFaint.color.opacity(0.7))
+                .frame(width: 26, alignment: .trailing)
+                .padding(.trailing, 6)
             Text(marker)
-                .designFont(.mono, design)
+                .designFont(.monoSmall, design)
                 .foregroundStyle(mark)
-                .frame(width: 9, alignment: .leading)
+                .frame(width: 11, alignment: .center)
             Text(content)
-                .designFont(.mono, design)
+                .designFont(.monoSmall, design)
                 .foregroundStyle(design.ink.color)
                 // Wrapped, never scrolled sideways. The end of a long line is
                 // where the interesting half of a change usually is.
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, design.metrics.gutter)
+        .padding(.horizontal, design.metrics.gutter - 6)
         .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint)
+        .overlay {
+            if selected {
+                Rectangle().fill(design.accent.color.opacity(0.16))
+                    .overlay(alignment: .leading) {
+                        Rectangle().fill(design.accent.color).frame(width: 2.5)
+                    }
+            }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(spoken) \(number), \(content)")
     }
@@ -438,7 +450,6 @@ private struct DiffRowView: View {
     /// third kind of change: it is temporary and it is the reader's, not the
     /// patch's.
     private var tint: Color {
-        if selected { return design.ink.color.opacity(0.14) }
         switch row.kind {
         case .added: return design.added.color.opacity(0.13)
         case .removed: return design.removed.color.opacity(0.13)
@@ -455,7 +466,7 @@ private struct CommentThread: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Rectangle()
-                .fill(design.ink.color.opacity(0.55))
+                .fill(design.accent.color)
                 .frame(width: 2.5)
             Text(comment.text)
                 .designFont(.body, design)
@@ -500,7 +511,7 @@ private struct CommentSheet: View {
                 .frame(maxWidth: .infinity)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Rectangle()
-                    .fill(design.ink.color.opacity(0.55))
+                    .fill(design.accent.color)
                     .frame(width: 2.5, height: 15)
                 Text(model.describe(range) ?? "")
                     .designFont(.mono, design)
@@ -547,10 +558,11 @@ private struct CommentSheet: View {
         .padding(16)
         .frame(maxWidth: .infinity)
         .background {
-            UnevenRoundedRectangle(
-                topLeadingRadius: design.metrics.cardRadius,
-                topTrailingRadius: design.metrics.cardRadius, style: .continuous)
-                .fill(design.raised.color)
+            Color.clear.frosted(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: design.metrics.floatRadius,
+                    topTrailingRadius: design.metrics.floatRadius,
+                    style: .continuous))
                 .ignoresSafeArea(edges: .bottom)
         }
         .onAppear { writing = true }
@@ -618,14 +630,17 @@ private struct EdgeWheel: View {
                 .transition(.opacity)
             }
             GeometryReader { frame in
-                VStack(spacing: 0) {
+                VStack(spacing: 2) {
                     ForEach(Array(files.enumerated()), id: \.element.id) { index, _ in
-                        Circle()
-                            .fill(on == index ? design.ink.color : design.inkFaint.color)
-                            .frame(width: 5, height: 5)
+                        Capsule()
+                            .fill(on == index
+                                  ? design.ink.color.opacity(0.7)
+                                  : design.inkFaint.color.opacity(0.3))
+                            .frame(width: on == index ? 4 : 3)
                             .frame(maxHeight: .infinity)
                     }
                 }
+                .padding(.vertical, 65)
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
@@ -709,14 +724,14 @@ private struct FileList: View {
 private struct CommentCount: View {
     @Environment(\.design) private var design
     let count: Int
-    var size: CGFloat = 28
+    var size: CGFloat = 16
 
     var body: some View {
         ZStack {
-            Circle().fill(design.ink.color)
+            Circle().fill(design.accent.color)
             Text("\(count)")
                 .designFont(.caption, design)
-                .foregroundStyle(design.ground.color)
+                .foregroundStyle(design.onAccent.color)
         }
         .frame(width: size, height: size)
         .accessibilityLabel("\(count) comment\(count == 1 ? "" : "s")")

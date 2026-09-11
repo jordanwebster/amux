@@ -132,7 +132,7 @@ public struct HostsTab: View {
     private var offers: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: "Not paired")
-            RowGroup(items: model.discovered, prominence: .subject) { host in
+            RowGroup(items: model.discovered) { host in
                 offer(host)
             }
             Explain("Run `amux pair` on one of these and enter the code it prints.")
@@ -196,7 +196,7 @@ public struct HostsTab: View {
     private func thisPhone(_ roster: DeviceRoster) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: "This Phone")
-            RowGroup(items: facts(roster), prominence: .subject) { fact in
+            RowGroup(items: facts(roster)) { fact in
                 if fact.opensDevices {
                     Button { model.readDevices() } label: { FactRow(fact: fact) }
                         .buttonStyle(.plain)
@@ -234,7 +234,7 @@ public struct HostsTab: View {
     private func group(title: String, hosts: [HostEntry], caption: String?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: title)
-            RowGroup(items: hosts, prominence: .subject) { host in
+            RowGroup(items: hosts) { host in
                 row(host)
             }
             if let caption {
@@ -493,7 +493,7 @@ private struct DevicesSheet: View {
                 Explain("No host is paired with this phone.")
                     .identified("hosts.devices.none")
             } else {
-                RowGroup(items: model.devices, prominence: .subject) { device in
+                RowGroup(items: model.devices) { device in
                     row(device)
                 }
             }

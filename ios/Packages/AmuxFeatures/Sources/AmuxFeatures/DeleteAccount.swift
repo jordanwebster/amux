@@ -199,7 +199,7 @@ struct DeleteAccountCard: View {
             Button { actions(.confirm) } label: {
                 Text(model.working ? "Deleting…" : "Delete")
                     .designFont(.bodyEmphasis, design)
-                    .foregroundStyle(design.onAccent.color)
+                    .foregroundStyle(Color.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
                     .background {

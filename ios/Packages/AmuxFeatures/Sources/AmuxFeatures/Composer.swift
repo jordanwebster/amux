@@ -29,7 +29,7 @@ struct ComposerBox: View {
     let actions: @MainActor (ConversationAction) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 4) {
             if let activity = state.activity {
                 WorkingLine(activity: activity)
             }
@@ -55,7 +55,7 @@ struct ComposerBox: View {
             footer
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .identified("composer", label: placeholder, value: spoken)
@@ -130,19 +130,20 @@ struct ComposerBox: View {
     private static let lines = 8
 
     private var footer: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 9) {
             Button { actions(.attach) } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 19, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(design.inkMuted.color)
-                    .frame(width: 34, height: 34)
-                    .background { Circle().fill(design.sunken.color) }
-                    .frame(width: 44, height: 44)
+                    .frame(width: 30, height: 30)
+                    .background { Circle().fill(design.sunken.color.opacity(0.8)) }
+                    .thumbTarget(x: 7, y: 7)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Attach")
             .identified("composer.attach", label: "Attach")
+            .reclaimingThumbTarget(x: 7, y: 7)
             // Between the plus and the microphone, which is where the design
             // puts it: it is a standing fact about the message you are about
             // to send rather than an action on it.
@@ -150,14 +151,16 @@ struct ComposerBox: View {
             Spacer(minLength: 0)
             Button { actions(.dictate) } label: {
                 Image(systemName: dictation.active ? "stop.circle" : "mic")
-                    .font(.system(size: 18, weight: .regular))
+                    .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(design.inkMuted.color)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 30, height: 30)
+                    .thumbTarget(x: 7, y: 7)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(dictation.active ? "Stop Dictation" : "Dictate")
             .identified("composer.dictate", label: dictation.active ? "Stop Dictation" : "Dictate")
+            .reclaimingThumbTarget(x: 7, y: 7)
             primary
         }
     }
@@ -205,18 +208,19 @@ private struct RoundButton: View {
 
     var body: some View {
         Image(systemName: glyph)
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: glyph == "stop.fill" ? 12 : 14, weight: .bold))
             .foregroundStyle(filled ? design.ground.color : design.inkFaint.color)
-            .frame(width: 34, height: 34)
+            .frame(width: 30, height: 30)
             .background {
                 if filled {
                     Circle().fill(design.ink.color)
                 } else {
-                    Circle().strokeBorder(design.hairline.color, lineWidth: 1)
+                    Circle().fill(design.sunken.color.opacity(0.8))
                 }
             }
-            .frame(width: 44, height: 44)
+            .thumbTarget(x: 7, y: 7)
             .contentShape(Circle())
+            .reclaimingThumbTarget(x: 7, y: 7)
     }
 }
 
@@ -280,13 +284,13 @@ private struct MovingSegment: View {
             let travel = frame.size.width * (1 - Self.width)
             Capsule()
                 .fill(design.inkFaint.color)
-                .frame(width: frame.size.width * Self.width, height: 2)
+                .frame(width: frame.size.width * Self.width, height: 1)
                 .offset(x: still ? travel * Self.resting : (travelled ? travel : 0))
                 .animation(
                     still ? nil : .easeInOut(duration: 1.1).repeatForever(autoreverses: true),
                     value: travelled)
         }
-        .frame(height: 2)
+        .frame(height: 1)
         .allowsHitTesting(false)
         .onAppear { travelled = true }
     }

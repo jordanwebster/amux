@@ -72,10 +72,10 @@ final class FleetStoreTests: XCTestCase {
         XCTAssertEqual(store.sections[0].rows.map(\.name), ["gamma"])
     }
 
-    /// Hosts answer one at a time, so the shimmer stops one row at a time.
+    /// Hosts answer one at a time, so rows are confirmed one at a time.
     /// Nothing waits for the slowest machine on the account, and nothing moves
     /// while the answers come in.
-    func testEachRowStopsShimmeringAsItsOwnHostAnswers() {
+    func testEachRowIsConfirmedAsItsOwnHostAnswers() {
         let store = FleetStore(now: now)
         func cards(studioAwaiting: Bool, laptopAwaiting: Bool) -> [AgentCard] {
             [

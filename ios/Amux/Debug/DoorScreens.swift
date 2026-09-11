@@ -105,12 +105,18 @@ enum DoorScreens {
         // The overlay is handed in here as well, because the strip above the
         // composer grows into the task list and a capture of the grown strip
         // has to be able to ask for it open.
-        case .run, .runLive, .voices, .reviewCta, .working, .queued, .exited, .typing, .offline:
+        case .voices:
             Conversation(
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(
                     agent: Scenario.focus, in: host.stores.fleet),
-                naming: { host.stores.fleet.name(of: $0) },
+                showing: host.overlay) { _ in }
+                .expandedPeerMessages()
+        case .run, .runLive, .reviewCta, .working, .queued, .exited, .typing, .offline:
+            Conversation(
+                model: host.stores.conversation(Scenario.focus),
+                subject: ConversationSubject(
+                    agent: Scenario.focus, in: host.stores.fleet),
                 showing: host.overlay) { _ in }
         // The plus, opened. Which overlay a conversation is showing is a state
         // of the conversation and is handed in, the way the drawer's own
@@ -183,7 +189,7 @@ enum DoorScreens {
                 model: host.stores.conversation(Scenario.focus),
                 subject: ConversationSubject(
                     agent: Scenario.focus, in: host.stores.fleet),
-                naming: { host.stores.fleet.name(of: $0) }) { _ in }
+                ) { _ in }
                 .reportOffer(true, take: {}, dismiss: {})
         // The report, on the frame a screenshot froze. Captured on its own
         // rather than over the screen it is about: the frame is inside the

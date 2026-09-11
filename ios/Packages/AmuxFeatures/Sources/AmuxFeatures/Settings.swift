@@ -36,22 +36,22 @@ struct ModelChip: View {
             Button(action: press) {
                 HStack(spacing: 5) {
                     Text(label)
-                        .designFont(.mono, design)
-                        .foregroundStyle(design.inkMuted.color)
+                        .designFont(.monoSmall, design)
                         .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(design.inkFaint.color)
+                        .font(.system(size: 7, weight: .bold))
+                        .opacity(0.7)
                 }
-                .padding(.horizontal, 12)
-                .frame(minHeight: 34)
-                .background { Capsule().fill(design.sunken.color) }
-                .thumbTarget(y: 6)
+                .foregroundStyle(design.inkFaint.color)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background { Capsule().fill(design.sunken.color.opacity(0.7)) }
+                .thumbTarget(y: 9)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Model and Effort, \(label)")
             .identified("composer.model", label: "Model and Effort", value: label)
-            .reclaimingThumbTarget(y: 6)
+            .reclaimingThumbTarget(y: 9)
         }
     }
 }
@@ -114,7 +114,7 @@ struct SettingsCard: View {
     private func modelRow(_ model: ModelInfo) -> some View {
         let chosen = model.id == provider.model
         return Button { change(.model(model.id)) } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 11) {
                 Radio(chosen: chosen)
                 Text(model.name)
                     .designFont(.body, design)
@@ -150,12 +150,12 @@ struct Radio: View {
             Circle()
                 .strokeBorder(
                     chosen ? mark : design.hairline.color, lineWidth: chosen ? 2 : 1)
-                .frame(width: 20, height: 20)
+                .frame(width: 16, height: 16)
             if chosen {
-                Circle().fill(mark).frame(width: 10, height: 10)
+                Circle().fill(mark).frame(width: 8, height: 8)
             }
         }
-        .frame(width: 22, height: 22)
+        .frame(width: 18, height: 18)
     }
 }
 
@@ -172,50 +172,71 @@ private struct EffortAxis: View {
     let current: String?
     let pick: @MainActor (String) -> Void
 
+    private var index: Int { levels.firstIndex(of: current ?? "") ?? 0 }
+    private var last: Int { max(levels.count - 1, 1) }
+
+    private let knob: CGFloat = 15
+    private let bar: CGFloat = 5
+
     var body: some View {
-        VStack(spacing: 10) {
-            GeometryReader { frame in
-                let step = levels.count > 1
-                    ? frame.size.width / CGFloat(levels.count - 1) : frame.size.width
+        VStack(alignment: .leading, spacing: 7) {
+            GeometryReader { proxy in
+                let travel = proxy.size.width - knob
+                let x = travel * CGFloat(index) / CGFloat(last)
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(design.inkMuted.color)
-                        .frame(height: 3)
-                    ForEach(Array(levels.enumerated()), id: \.element) { index, level in
-                        let at = levels.count > 1 ? step * CGFloat(index) : 0
-                        Group {
-                            if level == current {
-                                Circle().fill(design.ink.color).frame(width: 18, height: 18)
-                            } else {
-                                Circle().fill(design.inkFaint.color).frame(width: 5, height: 5)
-                            }
+                        .fill(design.sunken.color)
+                        .frame(height: bar)
+                    Capsule()
+                        .fill(design.ink.color.opacity(0.55))
+                        .frame(width: x + knob / 2, height: bar)
+                    HStack(spacing: 0) {
+                        ForEach(Array(levels.enumerated()), id: \.element) { stop, _ in
+                            Circle()
+                                .fill(stop <= index
+                                    ? design.ground.color.opacity(0.7)
+                                    : design.inkFaint.color.opacity(0.5))
+                                .frame(width: 3, height: 3)
+                                .frame(maxWidth: .infinity, alignment: alignment(stop))
                         }
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
-                        .offset(x: at - 22)
-                        .onTapGesture { pick(level) }
-                        .accessibilityLabel(level.capitalizedFirst)
-                        .accessibilityAddTraits(level == current ? [.isSelected] : [])
-                        .identified(
-                            "settings.effort.\(level)", label: level.capitalizedFirst,
-                            value: level == current ? "current" : "")
+                    }
+                    .padding(.horizontal, knob / 2)
+                    ForEach(Array(levels.enumerated()), id: \.element) { stop, level in
+                        let at = travel * CGFloat(stop) / CGFloat(last)
+                        Circle()
+                            .fill(level == current ? design.ink.color : Color.clear)
+                            .frame(width: knob, height: knob)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                            .offset(x: at - 22)
+                            .onTapGesture { pick(level) }
+                            .accessibilityLabel(level.capitalizedFirst)
+                            .accessibilityAddTraits(level == current ? [.isSelected] : [])
+                            .identified(
+                                "settings.effort.\(level)", label: level.capitalizedFirst,
+                                value: level == current ? "current" : "")
                     }
                 }
-                .frame(height: 44)
-                .frame(maxHeight: .infinity)
+                .frame(height: knob, alignment: .center)
             }
-            .frame(height: 24)
-            HStack {
-                ForEach(Array(levels.enumerated()), id: \.element) { index, level in
-                    if index > 0 { Spacer(minLength: 0) }
+            .frame(height: knob)
+            HStack(spacing: 0) {
+                ForEach(Array(levels.enumerated()), id: \.element) { stop, level in
                     Text(level.capitalizedFirst)
-                        .designFont(.mono, design)
+                        .designFont(.caption, design)
                         .foregroundStyle(
                             level == current ? design.ink.color : design.inkFaint.color)
+                        .frame(maxWidth: .infinity, alignment: alignment(stop))
                 }
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private func alignment(_ index: Int) -> Alignment {
+        if index == 0 { return .leading }
+        if index == levels.count - 1 { return .trailing }
+        return .center
     }
 }
 
@@ -263,7 +284,7 @@ struct PermissionsCard: View {
 
     private func row(_ choice: PermissionChoice) -> some View {
         Button { change(.permission(choice.id)) } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 11) {
                 Radio(chosen: choice.selected, mark: design.ink)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(choice.name)

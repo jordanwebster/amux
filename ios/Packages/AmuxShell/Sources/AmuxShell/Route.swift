@@ -17,9 +17,9 @@ public enum Tab: String, Hashable, Sendable, CaseIterable, Codable {
 
     public var symbol: String {
         switch self {
-        case .agents: "square.stack"
-        case .hosts: "desktopcomputer"
-        case .you: "person"
+        case .agents: "square.stack.3d.up"
+        case .hosts: "externaldrive.connected.to.line.below"
+        case .you: "person.crop.circle"
         }
     }
 }

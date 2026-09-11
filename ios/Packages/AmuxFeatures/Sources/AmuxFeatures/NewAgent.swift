@@ -135,7 +135,7 @@ public struct NewAgent: View {
                 Explain("Pair a host before starting an agent.")
                     .identified("new-agent.no-hosts")
             } else {
-                RowGroup(items: hosts.hosts, prominence: .subject) { host in
+                RowGroup(items: hosts.hosts) { host in
                     machine(host)
                 }
             }
@@ -570,7 +570,7 @@ private struct DirectorySheet: View {
         VStack(alignment: .leading, spacing: 12) {
             if !model.recent.isEmpty && model.query.isEmpty {
                 SectionHead(title: "Recent")
-                RowGroup(items: model.recent, prominence: .subject) { project in
+                RowGroup(items: model.recent) { project in
                     row(project, recent: true)
                 }
             }
@@ -584,7 +584,7 @@ private struct DirectorySheet: View {
             case .none, .ready:
                 if !model.found.isEmpty {
                     SectionHead(title: model.query.isEmpty ? "Repositories" : "Found")
-                    RowGroup(items: model.found, prominence: .subject) { project in
+                    RowGroup(items: model.found) { project in
                         row(project, recent: false)
                     }
                 } else if model.listing == .ready {

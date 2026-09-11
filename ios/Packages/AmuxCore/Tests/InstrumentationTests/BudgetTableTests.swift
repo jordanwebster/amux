@@ -57,7 +57,7 @@ final class BudgetTableTests: XCTestCase {
         let text = try document()
         for line in [
             "| Cold first frame | Kernel process start to the first presented frame",
-            "| Reconciliation | `streamConnected` to the last row's shimmer ending",
+            "| Reconciliation | `streamConnected` to the last remembered row being confirmed",
             "| Streaming scroll | Hitch time ratio ≤ 5 ms per second",
             "| Samples and tolerance | 5 samples per metric",
             "## The physical-phone checklist",

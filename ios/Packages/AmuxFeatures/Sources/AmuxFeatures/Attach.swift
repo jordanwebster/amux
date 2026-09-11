@@ -47,16 +47,16 @@ struct PlusCard: View {
 
     private func tile(_ choice: AttachChoice, glyph: String, label: String) -> some View {
         Button { choose(choice) } label: {
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 Image(systemName: glyph)
-                    .font(.system(size: 26, weight: .regular))
+                    .font(.system(size: 21, weight: .regular))
                     .foregroundStyle(design.ink.color)
                 Text(label)
-                    .designFont(.body, design)
+                    .designFont(.detail, design)
                     .foregroundStyle(design.inkMuted.color)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 22)
+            .padding(.vertical, 16)
             .background {
                 RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
                     .fill(design.sunken.color)

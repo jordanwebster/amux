@@ -16,8 +16,8 @@
 #   * A spinner. Nothing these screens wait for is worth covering readable
 #     content with a symbol that says only "wait": a wait under 300 ms is over
 #     before a spinner would have been noticed, and a longer one has something
-#     true to show meanwhile — the remembered fleet, shimmering until it is
-#     confirmed. If a screen ever earns one, it earns a delayed wrapper with a
+#     true to show meanwhile — the remembered fleet, visibly marked as
+#     unconfirmed until its host answers. If a screen ever earns one, it earns a delayed wrapper with a
 #     measured threshold, and this rule changes with it.
 #
 # It checks itself first: the rules are run against files written to be wrong,

@@ -73,6 +73,7 @@ private func leave(for url: URL) {
 /// functions of their stores and never reach for a route, which is why one can
 /// be captured or replayed on its own.
 public struct Shell: View {
+    @Environment(\.design) private var design
     private let router: Router
     private let accounts: AccountRegistry
     private let stores: StoreBundle
@@ -124,20 +125,22 @@ public struct Shell: View {
 
     public var body: some View {
         @Bindable var router = router
-        TabView(selection: tab) {
-            SwiftUI.Tab(Tab.agents.title, systemImage: Tab.agents.symbol, value: Tab.agents) {
+        ZStack(alignment: .bottom) {
+            ZStack {
                 NavigationStack(path: $router.agentsPath) {
-                    AgentsTab(router: self.router, accounts: accounts, stores: stores, actions: actions)
+                    AgentsTab(
+                        router: self.router, accounts: accounts, stores: stores,
+                        actions: actions)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
-            }
-            SwiftUI.Tab(Tab.hosts.title, systemImage: Tab.hosts.symbol, value: Tab.hosts) {
+                .tabSurface(selected: router.tab == .agents)
+
                 NavigationStack(path: $router.hostsPath) {
                     HostsTabRoot(router: self.router, stores: stores)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
-            }
-            SwiftUI.Tab(Tab.you.title, systemImage: Tab.you.symbol, value: Tab.you) {
+                .tabSurface(selected: router.tab == .hosts)
+
                 NavigationStack(path: $router.youPath) {
                     YouTabRoot(
                         router: self.router, accounts: accounts, stores: stores,
@@ -146,26 +149,32 @@ public struct Shell: View {
                         report: { report?() }, actions: actions)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
+                .tabSurface(selected: router.tab == .you)
+            }
+
+            if router.path.isEmpty {
+                ShellTabBar(selected: router.tab) { router.select($0) }
+                    .padding(.horizontal, 44)
+                    .safeAreaPadding(.bottom, 6)
             }
         }
-        // The tab bar carries no name of this app's. An identifier put on a
-        // `Tab` lands on the page behind it rather than on the button in the
-        // bar, so naming them here would read as a contract that nothing can
-        // keep; the bar is the system's control and is reached by its title,
-        // the way a person reads it. What the shell does state is which tab is
-        // showing.
+        .tint(design.accentColor)
         .identified("shell", value: router.tab.rawValue)
+        .simultaneousGesture(backGesture)
     }
 
-    /// The tab bar, written through the router rather than straight into it.
-    ///
-    /// Reaching for the tab you are already on is the platform's way of saying
-    /// "take me back to the top of this", and it is the only way out of a
-    /// conversation now that a conversation has no bar to go back from. A
-    /// plain binding to the stored property would never see that tap, because
-    /// the value it sets is the value already there.
-    private var tab: Binding<Tab> {
-        Binding(get: { router.tab }, set: { router.select($0) })
+    /// Restores the platform's edge-to-pop interaction while the custom page
+    /// chrome keeps the system navigation bar out of the approved layout.
+    private var backGesture: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .global)
+            .onEnded { value in
+                guard !router.path.isEmpty,
+                      value.startLocation.x <= 24,
+                      value.translation.width >= 80,
+                      abs(value.translation.width) > abs(value.translation.height)
+                else { return }
+                router.pop()
+            }
     }
 
     /// One page per route. A route with no screen behind it yet says so rather
@@ -191,6 +200,54 @@ public struct Shell: View {
         default:
             UnbuiltPage(route: route)
         }
+    }
+}
+
+private extension View {
+    /// Retains every root screen and its navigation state while exposing only
+    /// the selected one to drawing, input, and accessibility.
+    func tabSurface(selected: Bool) -> some View {
+        opacity(selected ? 1 : 0)
+            .allowsHitTesting(selected)
+            .accessibilityHidden(!selected)
+    }
+}
+
+/// The app's three top-level places. It floats above root screens and leaves
+/// pushed work alone so a conversation ends with its composer.
+private struct ShellTabBar: View {
+    @Environment(\.design) private var design
+    let selected: Tab
+    let select: (Tab) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Tab.allCases, id: \.self) { item in
+                let isSelected = item == selected
+                Button { select(item) } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: item.symbol)
+                            .font(.system(size: 17, weight: isSelected ? .semibold : .regular))
+                        Text(item.title)
+                            .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                    }
+                    .foregroundStyle(isSelected ? design.ink.color : design.inkFaint.color)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(item.title)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .identified(
+                    "tab.\(item.rawValue)", label: item.title,
+                    value: isSelected ? "selected" : "not selected")
+            }
+        }
+        .padding(.horizontal, 6)
+        .frosted(Capsule())
     }
 }
 
@@ -223,6 +280,8 @@ private struct ConversationPage: View {
     @State private var pickingPhoto = false
     @State private var pickingFile = false
     @State private var picked: PhotosPickerItem?
+    /// A per-agent preference survives page reconstruction and app launches.
+    @AppStorage private var muted: Bool
 
     init(agent: AgentId, router: Router, stores: StoreBundle, recording: ConversationRecording?) {
         self.agent = agent
@@ -230,6 +289,7 @@ private struct ConversationPage: View {
         self.stores = stores
         self.recording = recording
         _open = State(initialValue: recording?.showing[agent] == ConversationRecording.drawer)
+        _muted = AppStorage(wrappedValue: false, "notifications.muted.\(agent.description)")
     }
 
     var body: some View {
@@ -237,9 +297,8 @@ private struct ConversationPage: View {
             Conversation(
                 model: stores.conversation(agent),
                 subject: ConversationSubject(agent: agent, in: stores.fleet),
-                naming: { stores.fleet.name(of: $0) },
                 showing: recording?.showing[agent].flatMap(ConversationOverlay.init(rawValue:)),
-                aside: recording?.aside.contains(agent) == true,
+                muted: muted,
                 resting: recording?.reading[agent],
                 opening: recording.map { recording in
                     { @MainActor @Sendable in recording.opened?(agent, $0?.rawValue) }
@@ -247,9 +306,6 @@ private struct ConversationPage: View {
                 reading: recording.map { recording in
                     { @MainActor @Sendable in recording.read?(agent, $0) }
                 },
-                asiding: recording.map { recording in
-                    { @MainActor @Sendable in recording.asided?(agent, $0) }
-                }
             ) { action in
                 switch action {
                 case .openDrawer: open = true
@@ -324,7 +380,11 @@ private struct ConversationPage: View {
                 // choice, so what lands on the clipboard is the string the row
                 // showed and not a second spelling made here.
                 case .overflowing(let choice):
-                    if case .copyAddress(let address) = choice { copy(address) }
+                    switch choice {
+                    case .copyAddress(let address): copy(address)
+                    case .mute: muted.toggle()
+                    case .rename, .delete: break
+                    }
                 case .renamed(let name): stores.rename(name, of: agent)
                 // Asking is not the same as it having happened. The write goes
                 // out and the screen stays; leaving is what the confirmation
@@ -800,6 +860,10 @@ private struct YouTabRoot: View {
             case .signIn: actions(.signIn)
             case .signOut(let id): actions(.signOutAccount(id))
             case .subscription: actions(.subscribe)
+            case .notifications:
+                if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                    leave(for: url)
+                }
             case .appearance(let wanted): actions(.wear(wanted))
             case .delete(let id): actions(.deleteAccount(id))
             // This phone's key and the machines that trust it are one page,

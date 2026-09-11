@@ -55,7 +55,11 @@ private struct AskHead: View {
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+            Spacer(minLength: 6)
+            Image(systemName: "text.bubble")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(design.inkFaint.color)
+                .accessibilityHidden(true)
         }
         .accessibilityElement(children: .combine)
         .identified("ask.head", label: title)
@@ -206,7 +210,7 @@ private struct PlanAsk: View {
 
     /// How much of the display a folded plan may take. A third leaves the
     /// transcript readable behind it; opened, it takes two thirds and scrolls.
-    private var cap: CGFloat { open ? 460 : 220 }
+    private var cap: CGFloat { open ? 460 : 150 }
 
     var body: some View {
         AskHead(glyph: "list.bullet", title: "Plan")
@@ -244,7 +248,7 @@ private struct PlanAsk: View {
             .accessibilityLabel("Approve")
             .identified("ask.approve", label: "Approve")
             Button { feedback = "" } label: {
-                ActionLabel("Send Back", kind: .outline)
+                ActionLabel("Send Back", kind: .outline, fill: true)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Send Back")
@@ -490,51 +494,5 @@ private struct UnreadableAsk: View {
         AskHead(glyph: "questionmark", title: "Waiting on an answer")
         Explain("This build cannot read a \(label) ask. Attach to the session to answer it.")
             .identified("ask.unreadable", value: label)
-    }
-}
-
-// MARK: - Finished
-
-/// The turn is over and something changed.
-///
-/// It sits where an ask would, because a finished turn is the last thing that
-/// needs you: the changes are the reason to have opened the conversation, and
-/// Later is the honest other answer — nothing is sent, and the panel goes away
-/// for this visit.
-struct FinishedPanel: View {
-    @Environment(\.design) private var design
-    let changes: ReviewDocument
-    let review: @MainActor () -> Void
-    let later: @MainActor () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AskHead(glyph: "checkmark", title: "Finished")
-            Explain(arithmetic)
-            HStack(spacing: 10) {
-                Button(action: review) {
-                    ActionLabel("Review Changes", kind: .primary, fill: true)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Review Changes")
-                .identified("ask.review", label: "Review Changes")
-                Button(action: later) { ActionLabel("Later", kind: .outline) }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Later")
-                    .identified("ask.later", label: "Later")
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .identified("conversation.finished", value: arithmetic)
-    }
-
-    /// "+118 −40", counted off the patch this opens rather than repeated
-    /// from the fleet's totals for the last turn. A number that disagreed with
-    /// the page it opens would be worse than no number.
-    private var arithmetic: String {
-        "+\(changes.insertions) \u{2212}\(changes.deletions)"
     }
 }

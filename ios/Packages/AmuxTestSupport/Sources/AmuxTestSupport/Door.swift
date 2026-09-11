@@ -420,18 +420,18 @@ public struct VisibleState: Codable, Sendable, Equatable {
     /// Whether the fleet on screen has been confirmed by a host.
     public let reconciled: Bool
     /// How many rows are still drawn as unconfirmed.
-    public let shimmering: Int
+    public let unconfirmed: Int
 
     public init(
         screen: String, typeSize: String, voiceOver: Bool = false,
-        elements: [VisibleElement], reconciled: Bool, shimmering: Int
+        elements: [VisibleElement], reconciled: Bool, unconfirmed: Int
     ) {
         self.screen = screen
         self.typeSize = typeSize
         self.voiceOver = voiceOver
         self.elements = elements
         self.reconciled = reconciled
-        self.shimmering = shimmering
+        self.unconfirmed = unconfirmed
     }
 }
 

@@ -79,16 +79,12 @@ final class DrawerTests: XCTestCase {
         XCTAssertEqual(value(app, "conversation"), opened,
                        "closing the drawer came back to a different conversation")
 
-        // And back to the fleet the way a person goes back from a conversation,
-        // which has no navigation bar to go back from: reaching for the tab
-        // already on show, which the platform reads as "take me to the top of
-        // it".
-        //
-        // The tab bar is the system's control and carries no name of the app's:
-        // an identifier put on a `Tab` names the page behind it, not the button
-        // in the bar. So it is reached the way the system publishes it and the
-        // way a person sees it — by the word written under the glyph.
-        pressTab(app, "Agents")
+        // And back to the fleet with the platform's edge gesture. The approved
+        // conversation leaves the tab bar off screen so the composer is the
+        // only surface at its foot.
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let inside = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        edge.press(forDuration: 0.05, thenDragTo: inside)
         XCTAssertTrue(home.waitForExistence(timeout: waiting),
                       "going back did not return to the home")
         XCTAssertEqual(identifiers(app, startingWith: "home.row."), remembered,
@@ -121,15 +117,6 @@ final class DrawerTests: XCTestCase {
             seen.append(element.identifier)
         }
         return seen
-    }
-
-    /// Presses a tab in the system's own tab bar, by the word on it.
-    private func pressTab(_ app: XCUIApplication, _ title: String) {
-        let button = app.tabBars.buttons[title]
-        guard button.waitForExistence(timeout: waiting) else {
-            return XCTFail("the tab bar has no \(title) tab")
-        }
-        button.tap()
     }
 
     /// Presses the thing with this name where a finger would land on it.

@@ -214,14 +214,14 @@ private struct Keypad: View {
                 HStack(spacing: 10) { ForEach(row, id: \.self) { key($0) } }
             }
             HStack(spacing: 10) {
-                Color.clear.frame(maxWidth: .infinity).frame(height: 56)
+                Color.clear.frame(maxWidth: .infinity).frame(height: 52)
                 key(0)
                 Button(action: backspace) {
                     Image(systemName: "delete.backward")
                         .font(.system(size: 22, weight: .regular))
                         .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 56)
+                        .frame(height: 52)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -230,20 +230,19 @@ private struct Keypad: View {
                 .identified("pin.delete", label: "Delete", enabled: enabled)
             }
         }
-        .padding(.bottom, 26)
+        .padding(.bottom, 12)
     }
 
     private func key(_ digit: Int) -> some View {
         Button { type(digit) } label: {
             Text("\(digit)")
-                .designFont(.display, design)
+                .font(.system(size: 27, weight: .regular))
                 .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
                 .frame(maxWidth: .infinity)
-                .frame(height: 56)
+                .frame(height: 52)
                 .background {
-                    RoundedRectangle(
-                        cornerRadius: design.metrics.controlRadius, style: .continuous)
-                        .fill(design.sunken.color)
+                    Color.clear.frosted(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
         }
         .buttonStyle(.plain)

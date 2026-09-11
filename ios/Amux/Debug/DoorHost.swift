@@ -1240,7 +1240,7 @@ final class DoorHost {
             voiceOver: UIAccessibility.isVoiceOverRunning,
             elements: declared + leaves,
             reconciled: stores.fleet.reconciled,
-            shimmering: stores.fleet.rows.filter { !$0.confirmed }.count))
+            unconfirmed: stores.fleet.rows.filter { !$0.confirmed }.count))
     }
 
     /// Photographs the window, once it draws the same thing twice.

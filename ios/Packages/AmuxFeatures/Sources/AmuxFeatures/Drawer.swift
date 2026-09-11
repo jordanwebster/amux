@@ -240,7 +240,6 @@ struct DrawerRow: View {
                     .fill(design.sunken.color)
             }
         }
-        .shimmering(!row.confirmed)
     }
 }
 

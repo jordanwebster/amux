@@ -80,14 +80,11 @@ final class FixtureTests: XCTestCase {
         Fixtures.named("home")!.apply(bundle)
 
         XCTAssertEqual(bundle.fleet.rows.count, 10)
-        XCTAssertEqual(bundle.fleet.subtitle, "6 need you · 10 agents")
-        // Two agents are genuinely blocked; the rest of the waiting are turns
-        // that ended and nobody has read. Longest-waiting leads, so the
-        // two-day-old unread turn is at the top rather than buried.
+        XCTAssertEqual(bundle.fleet.subtitle, "2 need you · 10 agents")
+        // Only the two agents unable to continue are pinned. Unread finished
+        // work remains in the recency list below them.
         let waiting = bundle.fleet.sections.first { $0.kind == .needsYou }
-        XCTAssertEqual(waiting?.rows.map(\.name),
-                       ["flake-hunt", "changelog", "pairing-copy", "relay-cleanup", "docs-pass",
-                        "refactor-auth"])
+        XCTAssertEqual(waiting?.rows.map(\.name), ["refactor-auth", "docs-pass"])
         XCTAssertEqual(bundle.fleet.exceptions, "air offline")
     }
 

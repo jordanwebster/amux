@@ -1,1511 +1,277 @@
 # Baselines
 
-One entry per captured screen: what the image is of, and — where the design
-work left a reference capture of the same screen — every way the app's own
-capture departs from it and why.
+These images lock the app's rendered states after comparison with the approved
+iPhone designs. Reference-backed screens follow the approved layout,
+typography, spacing, surfaces, colours, and control hierarchy. Added states use
+the same design language and are named below so the app's own edge cases remain
+reviewable.
 
-A departure is not a defect only if it is written down here. The captures under
-`ios/Goldens/` are the app; the design references under
-`ios/Goldens/References/` are the drawing that was
-approved. Where the two disagree, this file says which is right.
-
-Establishing a state's baseline includes declaring the state built, in
-`Fixtures.built`. One screen draws several states and each is written and
-locked on its own. A state not named there answers "unimplemented" and fails
-the full golden run. All 62 manifest screens have light and dark baselines;
-the 33 reference screens also have their 66 preserved design captures. Run
-`wt run ios-goldens` to compare every state, and `wt run ios-goldens-reference`
-to pair reference screens with the approved drawings.
+Run `wt run ios-goldens` to compare every state. Run
+`wt run ios-goldens-reference` to place the 33 reference-backed screens beside
+the preserved designs.
 
 ## Departures every screen shares
 
-Every capture here is a photograph of the pinned simulator's own display, taken
-from the Mac once the screen has stopped moving, rather than a picture the app
-draws of itself.
-
-It used to be the app drawing its own window into an image. That is where glass
-resolved, and it did not resolve the same way twice — the lensing along a
-card's top edge appeared on some passes and not others, and a screen with glass
-on it failed about one run in three whichever pass its baseline came from. The
-render server does not have that problem, because it is what draws the material
-in the first place. Waiting also had to move: the app can only watch its own
-view tree, and a glass surface that has just been built keeps animating in the
-render server after the tree has stopped changing, so the display is now
-photographed repeatedly until a run of photographs are the same file. A run
-rather than a pair, because the home indicator holds still for about half a
-second at launch and then takes itself away: two photographs could both catch
-it, so whichever screen happened to be captured first in a run kept a bar the
-rest of them did not.
-
-The frame is therefore the whole screen, including the parts of it the system
-draws rather than the app:
-
-- **The status bar is in the picture,** pinned to 9:41 with three bars of Wi-Fi,
-  four of cellular and a full battery, so two captures a minute apart do not
-  differ over the clock. The references draw a fixed bar for the same reason,
-  which brings these captures closer to them rather than further.
-- **No home indicator.** It is on screen for the first moment of a launch and
-  then goes away on its own, so it says nothing about the screen underneath it
-  and every capture is taken after it has gone. The references draw one; these
-  do not.
-- **Still no tab bar.** A capture opens one screen directly rather than the
-  whole shell. What the tab bar looks like is proven by the shell's own journey,
-  not by a still.
-- **The clock reads `9:41`, not `09:41`.** The pinned time is the same either
-  way; how it is written is the device's region. The simulators are pinned to
-  `en_US`, which writes a twelve-hour clock with no leading zero, and the pin
-  is now applied and the device rebooted before any screen is photographed —
-  the system draws the status bar once when it starts, so a device set up and
-  captured in the same pass would keep whatever format the Mac uses. Captures
-  taken before 2026-09-07 read `09:41` because they were photographed on a
-  device that had been set up but not restarted, and so inherited a Mac set to
-  a twenty-four-hour clock. Those thirty-six were re-photographed; nothing else
-  about them moved.
-
-A screen the door is showing knows it is being photographed rather than used,
-and anything that runs on a timer of its own draws its resting state while it
-is. Two things do: the text caret, without which a capture of a focused field
-is a coin toss over a bar of accent, and the composer's moving segment, which
-holds at the middle of its travel. Whatever is added next that blinks
-or sweeps belongs under the same rule, and any capture it changes is named in
-that screen's entry.
-
-## home
-
-The Agents home on a busy morning: ten agents across three machines, one of
-which is unreachable.
-
-- **Six agents need you, not two.** The reference splits a finished turn away
-  from a blocked one and pins only the blocked. The core has one vocabulary for
-  both — an agent that finished and has not been read still needs you — and the
-  confirmed requirement pins everything that needs you, longest-waiting first.
-  So the four finished turns sit above the two blocked ones, oldest first, and
-  the subtitle counts all six. The mark still distinguishes them: only a blocked
-  agent carries the accent, and a finished one is stated in words.
-- **The exceptions line appears here too.** The reference shows it only on the
-  quiet home. It appears whenever a machine is actually unreachable, which on
-  this morning includes this one; suppressing it because the list is busy would
-  hide the reason one agent's state is unknown.
-- **No filter control.** The reference draws a filter button beside the plus.
-  Nothing in the app filters the fleet, and a control that does nothing is worse
-  than its absence.
-- **`legacy-port` has a headline.** The reference gives the unreachable agent
-  the headline "Host offline · state unknown". The app shows the last thing the
-  agent said it was doing and says the state is unknown through the hollow mark
-  and the ordering, because the headline is the agent's own words and the app
-  must not put words in its mouth while it cannot reach it.
-
-## home-quiet
-
-The same morning later: everything blocked has been answered, every finished
-turn has been read, and one machine is still unreachable. Two agents running,
-one gone quiet, two nobody has touched in over a day, folded into a line that
-names them.
-
-- **`changelog` reads "Idle", not "Finished".** The reference shows it as a
-  finished turn. Here the turn has been read and answered, which is what makes
-  the home quiet at all, so the core reports it idle. It still carries the
-  arithmetic of what it changed: the numbers are the readable part whether or
-  not anything is waiting on them.
-
-## first-run
-
-The real home screen, empty, before anyone has signed in. Not a splash: an
-empty list teaches that this is a client for hosts you own, where a splash
-would teach that it is a service you subscribe to.
-
-No departures.
-
-The header has no New Agent button. Starting an agent needs a host, a host
-needs pairing and pairing needs an account that may reach one, so the control
-is not drawn until that is true; the baselines were retaken on 2026-09-11 when
-it stopped being drawn here, and the screen is left with the one action that
-leads somewhere.
-
-The title's own control changed under these two on 2026-09-08 and the baselines
-were retaken. The account list used to be a system menu hanging off the word
-"Agents"; it is now the app's own panel, because the rows carry what this phone
-knows about each account and one of them offers to sign back in. The word and
-the chevron are the same size in the same place; what moved is a fraction of a
-point of layout the system menu was adding around its label, visible only as
-antialiasing on the last letters.
-
-## first-run-paid
-
-Signed in and stopped at the second gate. The same empty screen with one word
-changed on the button and one line changed in the caption, because the state is
-the same: nothing is reachable yet.
-
-No departures. The header has no New Agent button for the same reason as
-`first-run`: nothing is reachable until the subscription is, and this baseline
-was retaken with it. The title's control changed with `first-run`'s, and this
-baseline was retaken for that reason too.
-
-## sign-in
-
-Copy review (2026-09-09): The navigation title reads “Sign In” in Title Case, as required by the copy standard. The host row says “Sign in on amux.sh”, describing where the next action happens rather than implying sign-in has already completed. The web-entitlement fact is unchanged.
-
-The hand-off. It owns almost nothing, because the signing-in happens on
-amux.sh: what an account buys, and a button that says where it is sending you.
-The host is named three times — in the first row, on the button and in the
-caption under it — because this is the moment a password gets typed, and a
-hand-off that does not say where it points is indistinguishable from one that
-is lying.
-
-- **The rule between the two rows starts past the glyph.** The reference runs
-  it the full width of the block, from the icon's own left edge. Every other
-  list in the app indents its rules to where the text starts, and two
-  separator rules in one app would read as two kinds of list.
-
-## sign-in-failed
-
-Copy review (2026-09-09): The navigation title uses “Sign In”, matching the ordinary sign-in page.
-
-The same screen having been turned away once. What went wrong and the button
-that tries again are one block at the foot, where the hand is already: the
-refusal is the cloud's own sentence, because this app does not know what
-happened on amux.sh and a friendlier sentence invented here would be guessing
-on somebody else's behalf. The button reads *Try Again*; the caption still says
-where it opens, because that has not changed.
-
-There is no reference for this state.
-
-## profiles
-
-The account switcher out over the home it hangs from: three accounts, the one
-on screen marked, one signed out and offering to sign back in, and Add Account
-under them. An account is a lens over the agent list, so the control that
-changes it belongs on the thing it is a lens over.
-
-- **No count beside the inactive account in this fixture.** The reference
-  puts a "1" on the account that is not on screen. This fixture supplies no
-  attention for that account. The live app subscribes to inactive accounts'
-  fleets and draws their attention badge from those facts; the accounts
-  journey exercises attention in the inactive account.
-- **No disc beside the title.** The home draws one only when there is an
-  account problem to point at; on a working phone the title is a title. That is
-  the home screen's own rule and this is the home screen.
-- **The account nobody is connected to says its address, not a host count.**
-  The reference gives every account a count. Only the account on screen has a
-  connection behind it, and writing "0 hosts" for the others would say they
-  have none when the truth is that nobody has asked.
-- **The panel is the app's own, not a system menu.** Each row carries what this
-  phone knows about that account and one of them offers to sign back in rather
-  than to switch; a menu would flatten all of that into a list of words.
-
-## you
-
-One page: the accounts this phone knows, what the account on screen has, and
-the things that belong to the phone rather than to any account. Appearance is a
-control on its own row rather than a value behind a screen, support sits with
-reporting because "something is wrong" is one intent with two exits, and the
-account's own actions sit under the list of accounts because they are that
-list's selected row continued.
-
-- **No Notifications row.** This app has no push and no notification
-  authorisation at all, and the release audit asserts that the string is
-  absent. A row leading to a setting that does nothing would be worse than not
-  having it.
-- **Subscription reads "Active · amux.sh", not "Active · yearly".** What this
-  device needs to say is where the subscription came from, because that is
-  where it is cancelled and it is the one thing that differs between a phone
-  that bought it and a phone honouring one bought on the web. The interval
-  lives in the store that bills it.
-- **Report a Problem only where a report can be written.** The reference draws
-  it unconditionally; a build a person installs carries no capture and would be
-  offering an exit that goes nowhere.
-- **The accounts are this app's own scenario.** Ada, her work account and a
-  side project she signed out of, rather than the drawing's names.
-
-## you-granted
-
-The same page for an account whose Pro access was granted rather than bought.
-The row is headed Pro, its summary reads “Active · Included”, and there is no
-store or billing source to manage. Everything else on the page remains the
-same: the known accounts, this phone's identity, its paired devices,
-Appearance and Help.
-
-There is no preserved reference for this entitlement state. The design
-catalogue pictures a bought subscription, so this capture locks the different
-words without pretending a granted entitlement has a subscription behind it.
-
-## delete
-
-Copy review (2026-09-09): The first consequence says agents and files stay on the hosts. The renewal consequence is one sentence stating that deleting the account leaves the subscription renewing on its date through its billing source.
-
-Giving up an account, asked over the page it was asked from: what deleting does
-in three lines, the account's own address typed to confirm it, and Cancel
-beside Delete. The You page behind is the real one, dimmed as one thing —
-what the card covers and how far the dimming reaches are facts about both
-screens at once, and a card photographed on bare ground would be a picture of
-neither.
-
-- **The third consequence does not say the subscription ends.** The reference
-  reads "Your subscription ends on 12 August and is not refunded". Deleting an
-  amux account does not cancel an App Store or a web subscription and cannot:
-  the money is billed by a system this app does not own, and the account
-  service refuses the deletion outright while a renewal is still set — which is
-  the `delete-blocked` state below. So the line says what is true instead:
-  when the subscription renews, where it renews, and that deleting does not
-  cancel it. A subscription already cancelled says it is not refunded, and an
-  account with nothing bought draws no third line at all.
-- **The renewal date is the scenario's, not the reference's.** December 12, a
-  fortnight after the fixed morning every fixture is a state of, so a capture
-  taken next year still reads the same.
-- **The field is empty until somebody types in it.** The reference shows the
-  address already in the box; drawn that way the app would be typing its own
-  confirmation. The account's address is the label above the field and the
-  placeholder inside it, and Delete stays greyed until what is typed is that
-  address. The capture is of the moment after it has been typed, because what
-  the button does once it is typed is the point of the screen.
-- **The account is this app's own scenario**, Ada's, rather than the drawing's.
-
-## delete-blocked
-
-Copy review (2026-09-09): The renewal guidance is one sentence: cancel through the named billing source, then return to delete the account. The management action and typed confirmation remain.
-
-The same question, refused, which the design has no capture of. The account
-service will not delete an account whose subscription is still set to renew,
-and it names the system that is billing. So the card grows a block above the
-field: what happened, that only the place it was bought can stop it, and a link
-that goes there. The address stays typed and Delete stays where it is, so
-coming back from the App Store is one press from finished — the deletion is
-retried rather than restarted.
-
-## paywall
-
-Copy review (2026-09-09): The description is one sentence: “Subscribe to reach your hosts through the relay.” Other subscription states name where to manage a purchase, distinguish included access and explain retries without promising successful confirmation.
-
-The subscription, and nothing dressed up around it: one sentence saying what it
-is, the two plans with their prices, and what is true of both. There is no list
-of perks, because a list implies a version without them and there is not one —
-without a subscription nothing is reachable at all.
-
-- **The rule between the two plans starts past the mark.** The same departure
-  as the sign-in rows, for the same reason: every list in the app indents its
-  rules to where the text starts.
-- **The title sits on one line.** The reference breaks it after "agents". The
-  app draws it at the design's own screen-title size, which fits the whole
-  phrase across the gutter; forcing the break would be typesetting the title
-  by hand.
-
-Three more states are drawn from the same screen and have no reference of their
-own: the account that already pays, which says where the subscription came from
-instead of selling a second one; the purchase the store has taken and cannot
-finish, which stops offering to buy so nobody is charged twice; and the one the
-store refused, which says what the store said.
-
-## paywall-unconfirmed
-
-The paywall after the App Store accepted a purchase but amux.sh could not
-confirm the entitlement. The account remains unsubscribed, the purchase stays
-saved, and Retry replaces the plan choices so the screen does not offer to
-charge for the same access again.
-
-There is no preserved reference for this failure state. Its caption says the
-app retries confirmation with amux.sh when it next opens; it does not promise
-that a later attempt will succeed.
-
-## drawer
-
-The fleet as a panel over the screen it was opened from: two groups, a name and
-one line each, the conversation you are in marked, and Hosts, You and how many
-machines are reachable along the foot.
-
-This is an added state with no preserved design reference. Three things about
-the picture are worth knowing:
-
-- **What is behind the panel is the conversation it was opened from.** It is
-  the real one, filled from the same state as `run`, rather than a stand-in:
-  what the panel dims, what its edge uncovers and how far its shadow reaches
-  are facts about the screen underneath, and a capture taken over bare ground
-  showed none of them. The panel itself is unchanged from the capture that was
-  taken that way.
-- **Two groups, where the home has three.** The home folds work that has been
-  quiet for a day into a line naming what is in it; that fold exists to keep a
-  home short enough to scan. This is a panel you are already scrolling, so the
-  folded work is the tail of everything else rather than a second thing to open.
-- **The foot repeats the tab bar.** Hosts and You are reachable from both,
-  because the drawer is the way out of a conversation without going back to a
-  list first, and reaching for the tab bar underneath means leaving the
-  conversation to get there. The design drew this panel for an app with no tab
-  bar; this one has both, and the shorter path wins.
-- **The foot stops short of the bottom edge, and so does the screen behind
-  it.** Both keep the clearance the system reserves at the bottom rather than
-  running under it. In the app that strip is where the tab bar floats, and
-  anything drawn into it — this foot, or a conversation's Retry Now — is
-  unreadable and cannot be pressed. Photographed here with no tab bar over it,
-  the clearance is the home indicator's, which is why the panel's last row and
-  the conversation's lower corner sit above the edge.
-
-## run
-
-A conversation's chrome: no navigation bar, a floating pill naming the agent
-with the machine and directory it runs in under it, the drawer control on the
-pill's leading edge and the overflow beside it.
-
-- **The conversation is a different one.** The reference's agent is collapsing
-  pairing errors and so is this one, but the rows are not the same rows: this
-  transcript is the fixture every conversation screen shares, so what one
-  screen proves about a row kind holds for all of them. The shapes match the
-  reference — a prompt on a surface, a folded run of looks, an edit as a path
-  and its arithmetic, a command with its output under it, prose at full width.
-- **A thinking line the reference does not draw.** The layer reports how long
-  the agent spent before it spoke, so the transcript says so. The reference
-  omits it; leaving out a row the core sends would mean the screen is not
-  showing what arrived.
-- **The model chip reads "opus 4.6", where the reference reads
-  "opus 4.6 · high".** The chip is in the footer between the plus and the
-  microphone, as the reference draws it, and it opens the sheet that changes
-  what it names. It says the effort too wherever the layer reports one — the
-  Codex captures read "gpt-5.2 · medium" — but a Claude session driven over a
-  PTY reports no effort levels, and naming a level nobody stated would be the
-  app inventing a fact about how hard the agent is thinking. The rest of the
-  box is the reference's: the field grows with what is written, the plus is at
-  the bottom left, and dictation and send are at the bottom right.
-- **The send button is drawn hollow until there is something to send.** The
-  reference draws it that way here and filled on `typing`, which is the same
-  rule; it is worth stating because it is the only thing on the box that
-  changes appearance as you type.
-- **The drawer control sits inside the pill.** The reference draws it there
-  too; it is worth saying because it is the only way out of a conversation.
-  There is no back chevron, by design, and the tab bar underneath is the other
-  way back: reaching for Agents while already inside a conversation returns to
-  the list, which is what the platform means by tapping the tab you are on.
-
-## review-cta
-
-The same screen once the turn has changed something: a chip in the chrome, in
-the diff's green and red, that opens the changes.
-
-- **The chip reads "+3 −6", not "+118 −40".** The reference's numbers belong to
-  a different agent's finished turn. The chip counts the patch it opens, hunk
-  by hunk, rather than repeating the fleet's totals for the last turn — a
-  number that disagreed with the page behind it would be worse than no number.
-- **The chip is a little rounder and a little wider than the drawing.** It is
-  a control, so it keeps the 44 pt target the guidelines ask for, which at this
-  type size is taller than the text needs.
-- The composer is the same box as on `run`, and carries no model chip for the
-  same reason.
-
-## run-live
-
-The same conversation with the turn still open: the person has asked for the
-whole suite and the command has not come back.
-
-- **The live row is a command, not a sentence.** The reference ends on a `Ran`
-  row whose trailing edge reads `running`, and so does this: a tool with no
-  result yet is what "still working" looks like in the transcript, and the app
-  says it in the layer's own words rather than animating something.
-- **The gate says working, so the box does.** The transcript's last command
-  is still open, and the shared send gate holds a new message until the turn
-  ends. The composer names the activity and keeps interrupt available.
-- **The moving segment sits below the activity.** Both baselines were retaken
-  when the segment moved onto its own row across the composer, leaving the
-  activity text above it instead of alongside it.
-- The thinking line and the differing conversation carry over from `run`.
-
-## voices
-
-Copy review (2026-09-09): The unknown-row caption reads “This build cannot read this row.” It removes the semicolon and the explanation of how unknown rows are retained. The shorter caption also shifts the bottom-anchored transcript behind the transparent status bar. Provider output stays verbatim.
-
-Everything an agent can write, on one screen: history compacted away, a folded
-run of looks, a message sent to another agent and two that came back, prose in
-every markdown construct, a change, a command with its output, and the refusals
-and failures that a good morning never shows.
-
-- **The markdown is the point of the prose.** The reference's agent writes one
-  plain paragraph. This one writes a heading, a table, a numbered list with a
-  link in it, fenced code and a quote, because the transcript promises to render
-  all of those and a still is the only place that promise can be checked. The
-  code block runs off the trailing edge on purpose: code that wraps stops being
-  code, so it scrolls sideways instead.
-- **A link is underlined, not coloured.** Every colour in this design is either
-  a step on the neutral ramp or the one accent, and the accent means "something
-  is waiting for you". A link is not that, and the system's blue is not a colour
-  this app owns.
-- **Agent-to-agent rows start collapsed.** The reference draws two of them open
-  and two closed. Which ones are open is a reader's choice rather than a state
-  the app should decide, so all of them arrive closed to one line and open where
-  they are tapped; the chevron says which way they will go.
-- **The screen is taller than the frame.** Below what this capture holds are the
-  written file, the refusal, the failure, the interruption, the provider error,
-  the subagent's start and finish, the row this build cannot read, the last
-  message back and the line where the other agent's session ends. This still
-  does not show them, so they are proved twice elsewhere: the projection suite
-  asserts what each of those rows becomes, and the conversation journey streams
-  every one of them from a real host, reads the whole feed by scrolling and
-  fails if any single kind stopped being drawn. Each kind is named on screen
-  under its own name — `transcript.denied`, `transcript.failed`,
-  `transcript.interrupted`, `transcript.provider-error` and the rest — so one
-  row of one kind can no longer stand in for all of them. The journey's
-  `conversation-row-kinds` photograph is taken at the end of that turn, with
-  those rows on screen.
-- **The accent stops at the glyph.** A denied, failed, interrupted or
-  provider-error row is marked on its mark and nowhere else. Colouring the words
-  as well would make a page with three failures on it mostly coloured, which
-  reads the same as a page with no colour at all.
-- **A written path is shortened from its front, not its middle.** The row reads
-  `Wrote …i/src/pairing_copy.rs`, where it used to read
-  `Wrote crates/amu…ing_copy.rs`. Both the reference and the earlier capture
-  spend half the width on the leading directories, and a path is identified by
-  the file at the end of it: two writes into different `src` directories look
-  alike from the front and never from the back. The trailing `38 lines` and
-  every other row on the screen are where they were.
-
-## ask-permission
-
-An agent stopped in the middle of a turn, asking to run a command. The panel
-takes the composer's place: the command verbatim, why it wants to run it, and
-the answers.
-
-- **Allow and Deny are not the same size.** Allow is filled and takes the
-  width; Deny is an outline beside it. Two equal buttons would make a
-  fifty-fifty decision out of one that is not — the agent asked to do a thing,
-  and allowing it is what carries on. The reference draws them this way too.
-- **The scope row says "Always allow access", not "Always allow cargo test".**
-  The reference names the command. What Claude actually offers here is a
-  directory grant for the session, and Claude builds its own permission menu
-  out of exactly that suggestion — so a row promising to always allow the
-  command while sending a directory grant would be a lie about what pressing it
-  does. The row says what the host offered and nothing else. Where the host
-  offers no suggestion at all there is no row, and where it offers a shape
-  nobody has checked against a real Claude the panel offers no answers and says
-  where to answer instead, because the core refuses every answer to those.
-- **No speech-bubble control.** The reference draws one at the panel's trailing
-  edge, for answering in words rather than with a button. Denying with feedback
-  and answering a question with free text both need a field, and the field is
-  the composer, which is built in the next milestone. A control that does
-  nothing is worse than its absence.
-- **The feed runs under the panel rather than stopping above it.** The panel is
-  glass over the transcript, as the drawer is over the conversation, so the
-  last thing the agent said is still legible through it and scrolls out from
-  under it. The reference's conversation was short enough that the question
-  never arose.
-- The differing conversation and the pinned status bar carry over from `run`.
-
-## ask-question
-
-The same agent asking which crate should own something, with its own answers.
-
-- **The header is not drawn.** Claude sends both a header ("Ownership") and the
-  question; with one question on screen the header restates what the question
-  already says, so only the question is drawn. A panel carrying several
-  questions draws each header, because there it is what tells them apart.
-- **Tapping an answer is the answer.** There is no confirm step: one question
-  that takes one answer is finished the moment it is tapped. A question that
-  takes several, or a panel carrying more than one, collects and then sends —
-  the layer refuses a response with a question missing, so the button waits
-  until every question has one. Only the single-answer shape is captured here;
-  the multi-select shape is asserted in the projection suite against a real
-  recorded multi-select ask.
-- The absent speech-bubble control and the feed running under the panel carry
-  over from `ask-permission`.
-
-## plan
-
-A plan to judge: the agent's own markdown, folded, with the two things to do
-with it.
-
-- **Approve means "approve, and keep asking about edits".** Claude's plan menu
-  has three arms — approve and auto-accept edits, approve and approve edits one
-  at a time, keep planning. The reference draws two buttons, and the one this
-  build sends is the manual arm: an app whose whole permission story is that
-  you are asked before things happen must not turn that off from a button
-  labelled Approve. Send Back is the third arm and asks what should change,
-  because the layer will not take a plan back without a reason.
-- **The plan is capped and faded, with a grabber under it.** A panel that ran
-  to the plan's full length would take the transcript off the screen, and the
-  transcript is what makes a plan judgeable. The grabber opens the rest in
-  place. The reference draws the same fold.
-- **The markdown is set as the transcript sets it.** A plan is reopenable from
-  the feed after the verdict, and the same document has to read the same way in
-  both places.
-- The absent speech-bubble control carries over from `ask-permission`.
-
-## diff
-
-The changes one turn made, read as one scroll. Two of the four files are folded
-away and two remarks have already been written.
-
-- **Files are alphabetical, so they are not in the patch's order.** The
-  reference lists them the way git walked the tree; this page sorts them the
-  way a person alphabetises, which is why `PROTOCOL.md` sits between `lib.rs`
-  and `spec/pairing.rs` rather than at the end. Git's order is not stable
-  between two runs over the same tree, and every address into a review — a row,
-  a range, a comment's place — is an index into this order.
-- **No hunk headers, and no line of context text where one was.** `@@ -118,7
-  +118,6 @@` states coordinates that the number beside every line already
-  states, and the function name the reference prints in grey beside it is not
-  in what the core sends: the shared parser records a hunk break as a break,
-  with no text. So a break is a hairline and a gap, and the numbers on either
-  side of it say how big it is.
-- **Lines wrap; nothing scrolls sideways.** A horizontal scroll view inside a
-  vertical one on a phone makes both gestures unreliable, and the end of a long
-  line is usually the half of a change worth reading. The reference wraps too;
-  what it does not show is how much taller a wrapped patch is, which is why
-  fewer lines fit here than in the drawing.
-- **The chrome is opaque, where the conversation's floats.** A patch is read by
-  running down a column of numbers, and a bar you can read the lines through
-  puts two columns of numbers in the same place.
-- **The edge wheel is a dot per file, not a scrollbar.** It names the file it
-  lands on while a thumb is on it; at rest it is four dots and nothing else,
-  which is why it is nearly invisible in a still. The reference draws it as a
-  full-height track.
-- **The comment count is ink.** Everywhere else the accent means something is
-  waiting on you. A remark you wrote is not that.
-
-## comment
-
-The same review with two lines held and a remark half written.
-
-- **The sheet is drawn in the page, not presented as a system sheet.** What is
-  being written about has to stay on screen: the held range is scrolled up
-  under the chrome and highlighted, and a presentation that took the screen
-  would hide the one thing the writing is about.
-- **The held range is grey, not green or red.** A selection is the reader's and
-  it is temporary; the two diff washes belong to the patch. Making it a third
-  wash would read as a third kind of change.
-- **The range is named twice, in two vocabularies.** "2 lines in
-  src/pairing.rs" counts rows of the patch, which is what a finger selected;
-  "120–121" is the file's own numbering, which is what the comment is finally
-  addressed by. A removed row would be numbered in the old file instead, and
-  the sheet would say so.
-- **Autocorrect is off in the field.** Half of a remark about a patch is
-  identifiers, and `Code::Internal` corrected into English is worse than a
-  typo. It also empties the suggestion strip above the keyboard, which was the
-  one part of this capture that was not the same twice.
-- **The keyboard is in the capture.** It is the app's own window, so it is
-  photographed with everything else. The reference shows it too.
-- **No text caret.** A caret blinks about once a second on a schedule of its
-  own, so no two photographs of a focused field agree: this capture came back
-  with a bar of accent in it about half the time and without it the other half.
-  A screen the door is showing is being photographed rather than used, and
-  anything that runs on a timer of its own draws its resting state while it is.
-  Somebody writing a comment in the app still sees the caret.
-
-## codex-approval
-
-The same moment on a Codex agent. There is no design reference for it; what it
-locks is that the two providers are not flattened into one.
-
-- **Codex's own decisions, in Codex's order.** Accept, Accept for Session and
-  Decline are three of the four the frozen backend takes. The panel lists them
-  as Codex offered them rather than mapping them onto Claude's Allow and Deny,
-  which would put words in a provider's mouth.
-- **A choice that cannot be pressed is still shown.** "Accept and Allow
-  Similar" is an object-valued decision this build cannot carry. Hiding it
-  would misrepresent what the far side offered; offering it would send
-  something the backend refuses. So it is listed, dimmed, and inert.
-- **The conversation is a Codex conversation.** Its rows arrive under Codex's
-  own keys rather than being a Claude transcript with the names changed, which
-  is why this feed is shorter and differently shaped than every other capture
-  here.
-
-## finished
-
-The turn ended, something changed, and nobody has read it yet.
-
-- **The panel and the chip say the same number.** Both count the patch that
-  they open — "+3 −6" — rather than the fleet's totals for the last turn.
-- **The tick is the accent.** Everywhere else a finished turn draws no mark and
-  is said in words, because on a list of ten agents a coloured tick per
-  finished turn would flood the screen. Here there is one agent and it is
-  waiting on you to read what it did, which is what the accent means.
-- **Later sends nothing.** It sets the panel aside for this visit; the chip in
-  the chrome is still the way to the changes, and coming back to the
-  conversation offers again. There is nothing to tell the host, so nothing is
-  told.
-- The design has no capture of this state.
-
-## typing
-
-The composer with a paragraph in it: the box has grown to hold four lines, the
-send button has filled, and a control for throwing the message away has
-appeared beside the text.
-
-- **The model chip is drawn where the reference draws it**, between the plus
-  and the microphone, and it opens the sheet that changes what it names. It is
-  absent on a conversation whose layer reports no model at all: a chip naming a
-  default nobody stated would be the app inventing a fact.
-- **There is a clear control, which the reference does not draw.** Interrupting
-  an agent and throwing away what you wrote are opposite intentions — one is
-  about the turn, one is about the message — and the confirmed requirement is
-  that they share no gesture. A phone has no modifier key to tell two meanings
-  of one button apart, so clearing is its own small control inside the field
-  and appears only when there is something to clear.
-- **The keyboard is not in the picture.** The field holds a draft that was put
-  there rather than typed into a focused field, which is the state a person
-  comes back to after leaving the app mid-message. The reference draws it the
-  same way. What a focused field looks like is proved by the writing journey,
-  which types into it.
-- **The box is as tall as the prose in it, and the field measures itself.** The
-  field is the app's one UIKit view, and a `UIViewRepresentable` answers the
-  layout's question directly in one pass. The SwiftUI field it replaced could
-  not: it measured its own height twice, the same four lines settled two device
-  pixels apart between launches, and the whole plate moved with them. Not
-  visible in the picture; it is why there is a picture at all. `docs/IOS.md`
-  says why the field is UIKit at all, and it is not this.
-- **Return inserts a newline.** Not visible in a still, and the whole reason
-  the box is shaped this way: a message to an agent is usually a paragraph, and
-  a keyboard whose return key sends cannot write a second one.
-- The differing conversation and the thinking line carry over from `run`.
-
-## working
-
-The same conversation with a turn running: what the agent is doing and how long
-it has been doing it, a segment travelling under it, and a button that stops it.
-
-- **The activity is one word.** The reference reads "Thinking 8s". Here it
-  reads "Running 8s", because the transcript's open row is a command rather
-  than a thought, and the command itself is spelled in full on the row directly
-  above. Repeating `cargo test --workspace` inside the box would put the same
-  string on the screen twice and truncate it the second time.
-- **The number is the fleet's arithmetic, not a clock this screen keeps.** It
-  counts from when the agent said the work started. A timer the phone started
-  would go on counting through a host that had stopped answering, and would
-  photograph differently every run.
-- **The segment has no track and is held at the middle of its travel.** No
-  trough behind it, because a trough is the shape of a thing with a known end
-  and nothing here knows when the turn will finish. It travels back and forth
-  in use; in front of a camera and under Reduce Motion it holds still, halfway
-  along, since a segment pinned to either end reads as a bar that has not
-  started. It sits on a row of its own under the activity, the full width of
-  the box, as the reference draws it: beside the words it started wherever the
-  text happened to end and read as a rule left in a header rather than as
-  movement.
-- **The button stops the turn rather than sending.** With nothing written there
-  is nothing to send and stopping is the reason a person reaches for the bottom
-  of the screen mid-turn. Writing something turns it back into a send — which
-  holds the message rather than delivering it, exactly as the field says it
-  will.
-- **The strip above the box carries one row, as the reference draws it.** This
-  session reported a task list and nothing else, so the strip is the count and
-  the current task and no more. Nothing this agent started and nothing waiting
-  to go means no second row and no chip: a row appears only while its fact is
-  true. `queued` is the same strip with every fact true and `strip` is that one
-  opened.
-- The differing conversation and the thinking line carry over from `run`.
-
-## queued
-
-A message waiting for the turn to end, on the strip above the composer, with
-everything else that is true about the turn beside it.
-
-Both captures were retaken when the composer's travelling segment moved onto
-its own row beneath the activity. The queued message remains in the strip
-above that box.
-
-- **One strip, four facts, in the order they are read.** The count and the task
-  being worked on, the number of agents this one started, and the message
-  waiting to go. A row appears only while its fact is true, so `working` — the
-  same conversation with no children and nothing queued — draws one row, and an
-  ordinary quiet conversation draws no strip at all.
-- **What the agent is doing this second is not on the strip.** It is the line at
-  the top of the composer, one plate below: "Running 8s". The reference puts the
-  current *task* on the strip and the current *activity* in the box, which are
-  two different facts from two different places — the provider's list and the
-  transcript's open row. Saying either of them twice would truncate the second
-  copy, and the truncated one is the version a person would try to read.
-- **The number of started agents is coloured because one of them is stuck.**
-  `spec-fixer` is waiting on a permission, and the accent is this app's one word
-  for "something is waiting for you". Nothing else on the strip is coloured —
-  not the task being worked on, because an agent working through its own list is
-  not waiting for anybody.
-- **The agents themselves are named in the chrome, not in the strip.** Three
-  chips above the feed, the stuck one carrying the mark, which is where this
-  build has drawn children since `voices`. The strip adds their number in the
-  one place a person is already looking mid-turn; it does not repeat their
-  names. The reference draws children as rows in the feed instead and so has no
-  chips here.
-- **Tapping the queued row unqueues it.** The text lands in the field, the row
-  goes, and what is in front of you is an ordinary unsent message. There is no
-  edit mode, no banner naming what is being changed and no discard — abandoning
-  it is clearing the field, the way every other unsent message is abandoned.
-  The pencil says so; it is absent while a message is already on its way, which
-  is the one state the core refuses to touch.
-- **The stop button is still there.** Nothing is written, so the composer's one
-  round control stops the turn. Stopping the agent and revising what you will
-  say next are different intentions, and the control that stops a running
-  command is never the one that gets crowded out.
-- The differing conversation carries over from `run`.
-
-## strip
-
-The same strip opened: the provider's whole list, with the line that summarises
-it exactly where it was.
-
-The light and dark baselines were retaken with the travelling segment on a
-separate row under the composer's activity text. The expanded list still
-opens above the composer.
-
-- **Not in the design's captures.** The design pictures the folded strip and
-  says the open one grows in place rather than flying a panel out of it. What
-  the list looks like is this build's answer.
-- **It grows upward and the summary line does not move.** What was tapped stays
-  under the thumb, and the chevron turns over. The list overlays the feed rather
-  than pushing it up, and the feed dims behind it like everything else a
-  conversation opens over itself — the strip, the composer and the pill stay
-  bright, because they are what you are working in.
-- **The panel is exactly as tall as the list, up to a cap.** A list left to grow
-  would push the composer off the display; a panel that took the cap whether or
-  not the list filled it would leave a band of empty glass under the last task,
-  which reads as tasks that failed to load. Past the cap it scrolls.
-- **The list is marked, not coloured.** A tick for what is done, a filled ring
-  for what is being worked on, an empty one for what has not started, with done
-  work receding and the current line in full ink and weight. The accent stays
-  reserved for the one child that cannot continue.
-- **The count is the provider's own two numbers.** "3/7" is what the host
-  reported, never recomputed from the seven items. A list whose items disagree
-  with its own count is the host's disagreement to resolve, and papering over it
-  here would hide it.
-- The queued row, the coloured count and the differing conversation carry over
-  from `queued`.
-
-## exited
-
-Copy review (2026-09-09): The caption says the process ended on the named host, without adding a second reassurance sentence.
-
-The same conversation after the run stopped for good: the feed as it was, and
-a card at the end of it stating the exit code and that nothing is still
-running.
-
-- **Nothing is offered.** The reference offers nothing either, and it is the
-  point of the screen rather than an omission: restarting is starting a new
-  agent, and deleting a finished run is not something to put in front of
-  somebody at the moment they are reading what it did.
-- **The machine is Studio and the age is 2m.** The reference reads
-  "mini · ~/src/amux" and "14m". Both come from the one scenario every capture
-  is a state of, where this agent runs on Studio and last did something two
-  minutes ago, rather than from numbers written on the card.
-- **No exit code is invented.** The code on the card is the one the host
-  reported. Where a host never says which, the card reads "Exited" and stops;
-  an absent code is not a zero.
-- **No composer at all, which the reference agrees with.** A run that has ended
-  will never take another message, so there is no box and nothing in its place.
-- The differing conversation and the thinking line carry over from `run`.
-
-## stale
-
-The same conversation after the machine that owns the agent stopped answering
-mid-turn. The feed is not cleared and not greyed out — it is the last thing
-that was true and stays readable — and the two places a reader is already
-looking say so.
-
-The design has no preserved capture of this, so there is nothing to compare it
-against.
-
-- **The place line says "unreachable" instead of the directory.** The
-  directory has not changed, but it is the least useful true thing on the
-  screen while the machine holding it cannot be reached, and that line is
-  where a reader looks to find out where a conversation lives.
-- **The overflow stays.** The design's own drawing of this screen replaced the
-  overflow with a hollow mark. Here the mark is on the panel along the bottom,
-  where the sentence explaining it is, and the overflow keeps its place: it is
-  the only way to act on a conversation, and a machine going away is not a
-  reason to take that away too.
-- **The panel is where the composer will be.** The composer is the one control
-  on this screen that would lie by staying usable, so its place is where the
-  failure is reported. Retry Now is offered here and nowhere else, because
-  waiting is what is actually happening and asking again is the only thing a
-  person can add to it.
-
-## send-refused
-
-A send the layer refused, with its reason where the composer will be. The
-session is replaying its history, so nothing this person typed reached the
-host.
-
-The design has no preserved capture of this either.
-
-- **The sentence is the core's, not the phone's.** "the session is replaying
-  history" is what the host answered, printed as it arrived. The phone has its
-  own sentence for each gate and uses it only when nothing has been attempted
-  yet; a refusal rewritten here would be a second opinion about something only
-  the host knows.
-- **Two words on the headline, not a paragraph.** "Not sent" is the whole of
-  what the person needs to act on. Whether it will go later is the sentence
-  under it.
-- **The accent stops at the glyph,** as it does on a denied row in the
-  transcript. Colouring the words as well would make a refusal louder than the
-  three failures a busy transcript above it already carries.
-
-- **No Retry Now here.** A layer that is catching up is already doing the thing
-  a retry would ask for. The button appears only where something has actually
-  stopped, which is `stale`.
-
-## reduced-glass
-
-The same conversation as `run`, drawn for a reader who has asked the system for
-less transparency and less motion. There is no design reference for it; what it
-locks is that both settings reach the screen rather than stopping at the app's
-front door.
-
-- **Every glass surface fills solid, with a hairline rim.** The chrome pill,
-  the round overflow button, the ask card and the composer all draw a plate in
-  the raised colour instead of sampling what is behind them, and each one takes
-  a hairline edge. The rim is the part that matters: lensing is what said a
-  surface was floating, and a solid panel over a solid ground with no edge
-  between them is two flat areas.
-- **The pill hides the transcript instead of showing it through.** Behind the
-  name in `run` the message above is visible and dimmed; here it is simply
-  covered. That is the point of the setting.
-- **Nothing sweeps.** An unconfirmed row's shimmer and the composer's
-  animations are still, so a capture of this state is stable for the same
-  reason a reader asked for it.
-
-## ax-home
-
-The same Agents home at the largest accessibility text size the system offers.
-The largest and not a middling one: a screen that survives this survives every
-size below it. There is no design reference at this size, so there is nothing
-to depart from; what the capture is for is that the screen still says what it
-says when someone turns the text up.
-
-- **The state line stacks instead of sharing a line.** At ordinary sizes
-  "Finished · 1 file · +21 −6" and the machine's name sit on one line with the
-  machine pushed right. Three things competing for one line at this size leave
-  each of them a few characters and an ellipsis, so the same words wrap and the
-  machine's name drops to its own line.
-- **A headline is still two lines.** Long headlines end in an ellipsis here as
-  they do at every size: a row promises the first two lines of what an agent is
-  doing, not all of it, and one tap opens the rest.
-- **The exceptions line wraps instead of taking one row.** One row is what an
-  exceptions line is for, and at every ordinary size it keeps it. At this size
-  the sentence does not fit on one, and the sentence about the one thing that
-  is actually wrong is worth more than the row it was promised.
-
-## ax-conversation
-
-A conversation at the largest accessibility text size, with an unanswered
-permission ask standing at the bottom of it. There is no design reference at
-this size.
-
-- **The chrome pill drops the machine and the directory.** At every ordinary
-  size it says the agent's name with where it is running under it. Here the
-  name alone wraps to two lines, and the two of them together would be most of
-  the display; of the two the name is the one that says which conversation this
-  is, and where it runs is still one press away on the overflow and in the
-  drawer.
-- **The name wraps rather than shortening.** "refacto…" is a recognisable label
-  beside a conversation at an ordinary size and names nothing at this one, so
-  the pill grows to hold both lines.
-- **The ask scrolls inside the bottom two thirds of the screen.** A headline, a
-  command, a reason and three buttons set at this size are taller than the
-  display. Left to ask for the room it wants, it takes the room the chrome
-  needs with it — SwiftUI squeezes every safe-area inset on a view when their
-  demands exceed it, which cut the pill to a third of its height and collapsed
-  every line on the card to one truncated line. Given two thirds and told to
-  scroll, nothing on it is cut off; the answer buttons are below the fold and
-  reached by scrolling the card.
-
-## ax-composer
-
-The composer with a message half-written in it, at the largest accessibility
-text size, so what the box does under the reader's thumb is photographed apart
-from the conversation behind it. There is no design reference at this size.
-
-- **The box grows to hold what is written, and keeps every word of it.** Four
-  lines of a half-written sentence wrap inside the box rather than being cut to
-  a line and an ellipsis.
-- **The conversation behind the box is where it stopped.** A feed long enough
-  to scroll shows through the glass above the composer, and it shows the same
-  rows every time the capture is taken.
-
-The feed was emptied out of this fixture on 2026-09-08 because the capture
-alternated between two scroll offsets about a hundred points apart, and the
-baselines were retaken on 2026-09-10 with it back. The cause was in the
-transcript's own scrolling, not in the composer: the container fixed where the
-feed opened before the tall composer had reported its final height and bottom
-inset, and never looked again, so "the bottom" had two answers. It now places
-the tail from the content, container and inset heights it has actually
-observed, until the reader scrolls for themselves. Measured on this exact draft
-and transcript: 17 of 20 captures opened at the wrong offset with the old
-container, and 20 of 20 matched with the repaired one.
-
-## unreadable-agent
-
-The Agents home with one agent this build cannot read on it. A machine on the
-account can run a newer amux than the phone, and then a real agent comes back
-under a provider name this build has never heard of. There is no design
-reference for that; what the capture locks is the answer this app gives.
-
-- **It is listed, under the name the host used.** The alternative — refusing
-  the card that would not decode — throws the whole fleet away the moment one
-  machine is ahead of the phone, which turns one unreadable agent into a screen
-  showing nothing at all.
-- **"Cannot be read" is written where the state word goes.** There is no glyph
-  for "this build has no case for what runs here", and an agent nobody can read
-  is not idle. It sits in the same place as "Finished" and "Idle" so the column
-  still reads down the list.
-- **It is the one row that is not a button.** Opening it would lead to a
-  conversation of which not a single row could be read, which is a worse answer
-  than the row saying so where it stands. Nothing marks that visually — the
-  sentence is the mark — and what the rest of the list does is unchanged.
-
-## small-home
-
-The same Agents home on the narrowest display the app supports. The same
-content as `home`, so every difference between the two captures is the layout
-answering a narrower width. There is no design reference at this width either.
-
-## small-conversation
-
-The same conversation on the narrowest display, from the same fixture as `run`,
-so every difference between the two captures is the layout answering a narrower
-width. There is no design reference at this width.
-
-- **The chrome pill keeps both its lines.** The name and the machine and
-  directory under it fit at this width; the directory is the part that would
-  give first, and here it does not have to.
-- **The transcript keeps its shape.** Prose wraps sooner and a diff line
-  shortens its path from the left, which is what the leading ellipsis on that
-  row is for; nothing is dropped and no row scrolls sideways.
+The app images are photographs of the pinned iOS simulator after rendering has
+settled. They include the simulator's status bar and Dynamic Island. The design
+captures use drawn system chrome and include a home indicator, while settled
+simulator captures omit that indicator.
+
+Names, agent output, model lists, host inventories, timestamps, counts, prices,
+and patch contents come from executable fixtures and may differ from the
+reference scenario. Those values do not change the approved visual hierarchy.
+Protocol-owned copy remains truthful where a drawing used illustrative data:
+pairing names the selected host and its real five-minute expiry, and account
+screens name the actual billing source.
+
+The golden door opens one screen directly, so root-screen goldens do not include
+the tab bar. The shell itself draws the approved floating three-item bar and
+removes it from pushed screens.
 
 ## probe
 
-Not a screen of the app. The capture harness's own target: the ground, a glass
-surface, the bundled display and mono faces, three ink strengths and the accent.
-A capture that renders this correctly is evidence that a capture of a real
-screen would render, and moving one token visibly changes this image.
+Added state using the `probe` fixture. The harness's own target: a screen made of the design's tokens, so a capture, a diff and a token change can be proven before any real screen exists. It follows the same visual system as its parent screen.
 
-There is no design reference for it, so there is nothing to depart from.
+## drawer
 
-## slash-typing
+Added state using the `drawer` fixture. The drawer is a state of the home screen the design has no capture of. It follows the same visual system as its parent screen.
 
-A command being typed: `/co` in the field, and the commands still matching
-raised on a card directly over the box.
+## home
 
-- **It is photographed on a Codex agent, not the reference's Claude one.** A
-  command is only a command on a layer that takes one. The core refuses a
-  command token on a Claude session driven over a PTY outright — "provider
-  commands are unavailable for this agent" — so that session is offered
-  nothing at all and there is no picture of it to take. Offering a menu of
-  things that will be refused is worse than offering none.
-- **Each row names where its command came from**, which the reference does
-  not. Two sessions can both offer `/compact` and mean different things by it,
-  and one of them can be a plugin somebody installed; picking the wrong one is
-  not a mistake the app can undo for you. So the source sits at the right of
-  the row, faint: `Codex` for the session's own, and the plugin's name for a
-  plugin's.
-- **The four rows are the reference's four, in its order**, including the
-  plugin's `/stripe:connect-recommend` for `/co`. A plugin's command is named
-  for its plugin first, and nobody typing `/co` is thinking of the plugin, so
-  the name after the namespace counts as a start of its own. Anywhere else
-  inside a name does not: a list that matched the middle of every word would
-  rank a command by nothing the typist can see.
-- **At most five are raised.** The rows sit over the conversation being written
-  about, and a list long enough to scroll would take the screen to save a few
-  keystrokes.
-- **A terminal-only command is dropped rather than shown and refused.** The
-  session reports which of its commands only mean something in a terminal, and
-  this is not one.
-- **The feed behind is not dimmed.** These rows are raised by what is being
-  written rather than opened by a press, and they go away by themselves when
-  the writing stops matching, so there is nothing here to dismiss — unlike the
-  cards in `plus` and `settings`, which are.
+Reference-backed capture of `home` using the `home` fixture. No visual departure is accepted.
 
-## plus
+## home-quiet
 
-Copy review (2026-09-09): The permissions row uses “Ask Me”, matching the provider mode control’s Title Case.
+Reference-backed capture of `home-quiet` using the `home-quiet` fixture. No visual departure is accepted.
 
-The plus, opened over the conversation it belongs to: one card holding two
-tiles and a row, with the composer still under it.
+## review-cta
 
-- **The card is the reference's**, down to the two recessed tiles side by side
-  and the permissions row beneath them rather than a third tile. A row is the
-  right shape for it because it is the one thing in the card that does not put
-  something *in* the message.
-- **There is no Paste row and no Slash command row.** Both were cut in the
-  design round that settled this card: the keyboard already pastes — and a
-  paste long enough to bury the sentence becomes a token by itself — and a
-  slash command is typed. A menu row for something the keyboard already does is
-  dead weight.
-- **The permissions row names the mode as the layer reports it**, and says
-  nothing where the layer reports none. The reference reads "Accept Edits"; the
-  conversation photographed here is under Claude's default mode, so it reads
-  "Ask Me", which is what that mode is called.
-- **The feed goes back behind it and the pill and the composer do not.** The
-  reference dims the transcript under every one of these cards and leaves the
-  chrome and the box at full strength, and so does this: what has opened came
-  *from* the composer and the composer is still what you are working in. The
-  dimming is also the way out — a press anywhere on the feed closes whatever is
-  open, which a card with no visible dismissal otherwise would not have. The
-  same layer is under `settings`, `permissions-claude`, `permissions-codex`,
-  `overflow`, `rename` and `agent-delete`.
-- The differing conversation and the thinking line carry over from `run`.
+Reference-backed capture of `review-cta` using the `review-cta` fixture. No visual departure is accepted.
 
-## tokens
+## finished
 
-A message being written that carries one of each thing a message can carry: a
-photo, a file, a long paste and a written review, with ordinary words between
-them. There is no design reference for this state — the design settled that
-attachments are tokens inside the message text and drew none of them — so
-everything here is the app's own answer, and this entry is what it is answering.
+Added state using the `finished` fixture. A finished turn nobody has read, with its review chip and the ordinary composer still available. It follows the same visual system as its parent screen.
 
-- **A token is a chip inside the sentence, not a row above the box.** That is
-  the settled requirement and it is the whole reason the field is a
-  `UITextView`: a chip has to be one object to the caret so that one backspace
-  takes the whole of it, the caret steps across it in one press, and it can be
-  picked up and dropped elsewhere. `docs/IOS.md` records what was tried in
-  SwiftUI first.
-- **The long paste is named and counted, not shown.** "Pasted text · 12 lines".
-  Where that line sits is the shared library's answer, so a paragraph that
-  becomes a token in the terminal becomes one here.
-- **A chip says the kind with a mark and the thing with words.** No thumbnail
-  for the photo, no first line for the paste, no file count for the review.
-  Drawing eighteen kilobytes of log as a wide card was the app disagreeing with
-  its own model, which says a long paste is named rather than shown.
-- **The same chip is drawn in the feed.** An agent can attach things too,
-  through its `attach` tool, and they are elements in the message text exactly
-  as yours are. It is one view used twice rather than two that resemble each
-  other — inside the field it is rendered to a picture, because a run of text
-  can only carry a picture. The capture puts both in one frame on purpose: the
-  agent's `cargo-check.txt` above the box and the person's `relay-trace.json`
-  inside it are the same chip, and neither side of the conversation keeps a
-  record of an attachment beside the text that names it.
+## run
 
-## settings
+Reference-backed capture of `run` using the `run` fixture. No visual departure is accepted.
 
-Model and effort, on one card over the composer whose chip opened it.
+## run-live
 
-- **It is photographed on a Codex agent, not the reference's Claude one.** The
-  reference draws Opus, Sonnet and Haiku with an effort axis under them. A
-  Claude session driven over a PTY reports no effort levels at all and refuses a
-  model change outright, so drawing the reference's screen would mean showing
-  controls this build knows will not take. Codex is the layer that reports both
-  and accepts both, so it is the layer the sheet is locked on. When the SDK
-  session lands, this becomes Claude's own list without the card changing.
-- **The furniture is gone, as the design settled.** No sublabels under the
-  model names, and effort is not a row of chips: three settings in one sheet,
-  two of them lists and the third a segmented control, made effort look like a
-  different kind of thing than it is.
-- **The effort axis is drawn rather than a `Slider`.** The platform's control is
-  continuous, and what is being picked is one of the handful of levels the
-  provider reported. A continuous control over three stops promises a precision
-  the setting does not have.
-- **Permissions are not in this card.** The design settled that they open
-  alone, from the plus. The model and the effort are one choice about how hard
-  this thinks; the permission mode is the safety setting, and the two may not
-  share an entry point.
-- The dimmed feed behind the card, and the pill and composer left bright in
-  front of it, carry over from `plus`.
+Reference-backed capture of `run-live` using the `run-live` fixture. No visual departure is accepted.
 
-## permissions-claude
+## stale
 
-Copy review (2026-09-09): Mode controls use Title Case: Ask Me, Accept Edits, Plan Mode, Auto and Bypass Permissions. Their provider identifiers, order and effects are unchanged.
+Added state using the `host-lost` fixture. A conversation whose host has gone away, which the design does not picture. It follows the same visual system as its parent screen.
 
-What the agent may do without asking, in Claude's vocabulary: its five modes,
-named as Claude names them, with the one the session reports marked.
+## voices
 
-There is no design reference for the sheet itself — the design settled its
-contents and its entry point and drew the row that opens it — so this entry is
-the app's answer.
+Reference-backed capture of `voices` using the `voices` fixture. No visual departure is accepted.
 
-- **Five modes, achromatic except one.** Colour in this app means something
-  needs you, and a permanent coloured label in every conversation would spend
-  it on nothing. Bypass permissions is the exception, because being in the mode
-  that will not ask again is not a state anybody should be in without seeing it.
-  The mark beside the mode the session is in is ink rather than the accent for
-  the same reason: a coloured mark on every mode in turn would compete with the
-  one warning this sheet exists to carry.
-- **The list is the provider's and the current one is the session's.** The core
-  reports which mode an agent is under, not the set of them, because the set is
-  closed and belongs to Claude. A mode reported that is not one of the five
-  would be shown as it was reported and marked current, rather than dropped.
-- **The refusal is stated rather than hidden.** This is a PTY session, which
-  will not take a mode change, so the card says so and still shows what the
-  agent is running under, which is worth reading even where it cannot be
-  changed from here. The sentence is lowercase because it is the shared
-  library's own, spelled once and read by the terminal and the phone alike; a
-  second, prettier copy of it here would be a second thing to keep true.
-- The dimmed feed carries over from `plus`.
+## ask-permission
 
-## permissions-codex
+Reference-backed capture of `ask-permission` using the `ask-permission` fixture. No visual departure is accepted.
 
-The same sheet in Codex's vocabulary: three presets, with the approval policy
-and the sandbox named under each.
+## ask-question
 
-- **The axes are named under the preset, not hidden behind it.** What a sandbox
-  permits is the thing being chosen, and "Auto" does not say it. This is the
-  settled requirement and it is the one structural difference from Claude's
-  sheet.
-- **Full Access carries the colour**, for the same reason Bypass permissions
-  does on the Claude sheet.
-- **A pair of policies the three presets do not cover is drawn as Custom**, with
-  both axes named, rather than rounded to the nearest preset. Not visible in
-  this capture, which is on the workspace-write preset the fixture reports.
-- **The two axes wrap onto a second line rather than truncating.** A sandbox
-  shortened to "danger full…" is a preset hidden behind its name after all,
-  which is the one thing this sheet exists to stop.
-- The dimmed feed carries over from `plus`.
+Reference-backed capture of `ask-question` using the `ask-question` fixture. No visual departure is accepted.
 
-## overflow
+## codex-approval
 
-The ellipsis, opened: everything the agent can be done to rather than said to.
+Added state using the `ask-permission-codex` fixture. The same ask in Codex's vocabulary rather than Claude's. It follows the same visual system as its parent screen.
 
-- **Three rows, where the reference draws four.** Mute is gone. It is a
-  notification setting, and notifications are out of this app's scope — the
-  design's own notification screen is excluded from this manifest for the same
-  reason. A row that turned off something the app does not do would be a
-  control that does nothing.
-- **The address is spelled under Copy Address**, as the reference draws it, so
-  what lands on the clipboard is visible before it is copied.
-- **Delete Agent is the only coloured row**, and it is last, because it is the
-  only one that cannot be undone.
-- The differing conversation carries over from `run`, and the dimmed feed from
-  `plus`.
+## comment
+
+Reference-backed capture of `comment` using the `comment` fixture. No visual departure is accepted.
+
+## diff
+
+Reference-backed capture of `diff` using the `diff` fixture. No visual departure is accepted.
+
+## plan
+
+Reference-backed capture of `plan` using the `plan` fixture. No visual departure is accepted.
 
 ## rename
 
-The Rename row, opened: the name the agent has, in a field, and nothing else.
-
-- **The design names the row but not the card**, so this capture is owed rather
-  than compared: nothing was drawn for what pressing Rename opens.
-- **The field opens holding the current name** rather than empty. Renaming is
-  almost always correcting what is there, and an empty field would make
-  somebody retype a name they only wanted to fix.
-- **Rename is filled in the accent and Delete is not.** Renaming is reversible,
-  so it takes the ordinary confirming colour; the deletion card's red is spent
-  on the thing that cannot be undone.
-- **The card covers the composer**, for the same reason the deletion card does:
-  a rename field and a message field on screen together are two fields, and
-  only one of them is being typed into.
-- The differing conversation carries over from `run`, and the dimmed feed from
-  `plus`.
+Added state using the `rename` fixture. The design names the row that renames an agent but not the card it opens; a name is typed into it, so it is owed a capture of its own. It follows the same visual system as its parent screen.
 
 ## agent-delete
 
-Deleting an agent, with what that does spelled out and the conversation still
-readable behind it.
+Reference-backed capture of `agent-delete` using the `agent-delete` fixture. No visual departure is accepted.
 
-- **The three consequences are the reference's**, in its order: the edits stay,
-  the session ends, the conversation goes everywhere it was. The reassuring one
-  is first because it is the fear people actually arrive with.
-- **The buttons are the reference's too** — Cancel and Delete side by side,
-  Delete filled in the diff's own red rather than in the accent, which is this
-  app's one word for "something is waiting for you" and is not this.
-- **The card covers the composer rather than sitting above it**, as the
-  reference draws it. Nothing is being written while this question is open.
-- The differing conversation carries over from `run`, and the dimmed feed from
-  `plus`.
+## overflow
 
-## hosts
+Reference-backed capture of `overflow` using the `overflow` fixture. No visual departure is accepted.
 
-Copy review (2026-09-09): Copy uses “host” throughout. The offline-group caption says these agents’ state is unknown until the host returns; it describes the state directly without saying the agents report it.
+## permissions-claude
 
-The machines, grouped by whether this phone can reach them: two answering and
-one that stopped answering eight minutes ago, with the agents on it said once
-under the group rather than implied on every row.
+Added state using the `permissions-claude` fixture. The permissions sheet in Claude's vocabulary. It follows the same visual system as its parent screen.
 
-- **Three machines, not four.** The reference lists Studio, mini, homelab and
-  air. The scenario every capture is a state of has three paired machines;
-  homelab is the one that has been found on the network and not paired, which
-  is what the pairing screens are about, and listing it here as a machine you
-  have would contradict them.
-- **The reachable machines are in alphabetical order**, so mini is above
-  Studio; the reference draws Studio first. Order is the store's, and it puts a
-  machine you can use above one you cannot and then follows the alphabet, which
-  is the only order that does not change under a sync.
-- **The kind is the operating system, not the model.** The reference reads
-  "Mac Studio", "Mac mini", "Linux". A machine announces what it is in the
-  link handshake, and what a daemon can honestly say about itself is the
-  system it runs — reading a marketing name like "Mac Studio" needs a table of
-  hardware identifiers, and a table like that is this program guessing what
-  computer it is on. So all three read "macOS", and a machine that has never
-  been adjacent — nothing has heard it say anything — has no kind on its row
-  at all rather than a guess.
-- **"offline for 8m", not "offline since 08:12".** Nothing in the inventory
-  says when a machine went away; presence is a boolean derived from routing.
-  The only honest answer is the moment this phone watched it change, and the
-  app says every other elapsed time as an age in one unit, so this one is an
-  age too. It also stays true: "08:12" on a machine that went three days ago
-  would read as this morning. A machine that was already gone the first time
-  the phone heard of it says only "offline".
-- **The plus pairs a machine.** The reference draws a plus with nothing said
-  about what it does. The plus on a screen adds one of the things the screen
-  lists, and this screen lists machines; New Agent is the plus on the Agents
-  home, which is what that screen lists.
-- **"This Phone" says the fingerprint in short.** The reference reads "iPhone ·
-  4f2a…9c1". A key is sixty-four hex characters and this row has one line for a
-  name and a key together, so it is elided in code — the same four and four at
-  every width and type size — rather than left to the layout, which would cut a
-  different number of characters on a larger type size. Ends alone are not
-  something anybody should compare a key by, which is why the whole of it, in
-  fours, is behind the row below.
-- **"Paired Devices" counts the trust store, not the fleet.** `air` is away and
-  still in it: the key it holds is still good and it will be let straight back
-  in when it answers. That is exactly the thing somebody comes to this section
-  to end, so a count that dropped machines while they were offline would hide
-  the ones most worth revoking.
+## permissions-codex
+
+Added state using the `permissions-codex` fixture. The permissions sheet in Codex's vocabulary. It follows the same visual system as its parent screen.
+
+## plus
+
+Reference-backed capture of `plus` using the `plus` fixture. No visual departure is accepted.
+
+## queued
+
+Reference-backed capture of `queued` using the `queued` fixture. No visual departure is accepted.
+
+## send-refused
+
+Added state using the `send-refused` fixture. A send the gate refuses, which the design does not picture. It follows the same visual system as its parent screen.
+
+## settings
+
+Reference-backed capture of `settings` using the `settings` fixture. No visual departure is accepted.
+
+## slash-typing
+
+Reference-backed capture of `slash-typing` using the `slash-typing` fixture. No visual departure is accepted.
+
+## strip
+
+Added state using the `strip` fixture. The facts strip under a conversation. It follows the same visual system as its parent screen.
+
+## tokens
+
+Added state using the `tokens` fixture. A draft carrying attachment tokens. It follows the same visual system as its parent screen.
+
+## typing
+
+Reference-backed capture of `typing` using the `typing` fixture. No visual departure is accepted.
+
+## working
+
+Reference-backed capture of `working` using the `working` fixture. No visual departure is accepted.
 
 ## devices
 
-The keys read rather than counted: this phone's own, whole, and one row per
-machine that holds one, over the machines themselves. The design left no
-reference for it — the reference stops at a count with a chevron.
+Added state using the `devices` fixture. This phone's identity and the devices paired with it. It follows the same visual system as its parent screen.
 
-- **Over the Hosts screen, not away from it.** The keys on this list are keys
-  to the machines on the list behind, and somebody who came to revoke one came
-  from reading that list. A page that replaced it would ask them to remember
-  which machine they meant.
-- **This phone's own key is first, and whole.** It is the fingerprint a machine
-  shows while it waits to be told whether to trust this device, so the place
-  somebody comes to compare keys is the one place it has to be readable in
-  full.
-- **Every fingerprint is in fours**, the way the pairing confirmation sets one,
-  and for the same reason: sixty-four unbroken characters is where an eye loses
-  its place. The characters and their order are untouched.
-- **`air` is on the list although it is offline.** The list is the trust store.
-  A machine that is away still holds a good key, and revoking it is exactly the
-  thing that cannot wait for it to come back.
-- **Revoke is an outline, and asks nothing first.** The sentence under the list
-  says what it does — access ends immediately — and it is said before the tap
-  rather than in a dialog after it. There is no undo offered anywhere: getting
-  the machine back means pairing again, which is a code typed on the machine
-  itself, and that is the honest description.
+## exited
 
-## pin
+Reference-backed capture of `exited` using the `exited` fixture. No visual departure is accepted.
 
-Copy review (2026-09-09): The expiry caption names the host, and the common refusal asks for a new code from the host. Wrong and expired codes still share one refusal and clear the digits.
+## hosts
 
-Half of a six-digit code typed against the machine that printed it: three
-digits in, the fourth box outlined, and what happens if the code goes stale
-said under the boxes.
-
-- **The instruction names the machine.** The reference reads "Run `amux pair`
-  on the host to get one." A code proves possession of one machine's offer and
-  is authenticated against that machine alone, so this app always knows which
-  one, and saying "homelab" is the difference between a person retyping a code
-  and a person typing it into the wrong machine's screen forever.
-- **Five minutes, not two.** The reference reads "The code expires after two
-  minutes." The pairing window in this protocol is five, so the reference's
-  sentence would be false on the third minute — when a code that was still
-  good would look like a code that had been mistyped, which is exactly the
-  confusion the sentence exists to prevent.
-- **The keypad is the app's own, not the system's.** The reference draws what
-  looks like the system number pad. A screen whose whole content is six digits
-  has nothing to edit, nothing to select and nowhere else to go, and the
-  system pad brings a keyboard's worth of behaviour for none of it. Drawing it
-  also means the digits and the keys they came from are one picture, so this
-  capture is of the whole screen rather than of a screen with a keyboard
-  animating over the bottom half of it.
-- **Digits are typed, not sent.** There is no button under the boxes and the
-  reference has none either. A six-digit code has one length, so the sixth
-  digit is the decision; a second tap to confirm it would only ever spend one
-  of the attempts the machine allows.
-- **A refused code is not this picture.** Every way a code can fail — mistyped,
-  expired, already used, never issued — replaces the expiry line with one
-  sentence and clears the boxes. That state is not captured separately because
-  it is this screen with a different caption; what makes it right is that all
-  four failures reach it, which the bridge's pairing test proves rather than a
-  photograph.
-
-## pair-confirm
-
-Copy review (2026-09-09): The headline names the host (“Pair with homelab?”), the field says “Host”, and the filled action says “Pair”. One sentence asks you to match the fingerprint with the host’s printed fingerprint; a separate caption states expiry. Pairing still requires the explicit action.
-
-Where a pairing link lands. The design left no reference for it, because the
-whole screen exists to hold the protocol's second phase open: reaching it means
-a secret authenticated and means nothing else, and the trust is written only
-when the person presses.
-
-- **The machine and the fingerprint are what the machine said**, not what the
-  link said. A link is a thing anybody can send this phone; the name and the
-  fingerprint here come back from the machine over an authenticated exchange,
-  which is why arriving is not pairing.
-- **The fingerprint is drawn in fours.** It is sixty-four hex characters and
-  the only thing to do with it is compare it against the one the machine shows.
-  An unbroken run of sixty-four is where an eye loses its place. The
-  characters and their order are untouched.
-- **The offer's remaining life is a length, not a clock face.** The machine
-  started the offer, so what matters is how long is left; "in 4m" reads the
-  same way every other elapsed time in this app does.
-- **"Not Now" is an outline beside a filled "Pair".** They are the
-  same size on purpose: turning a machine away is an ordinary answer to the
-  question the screen asks, not a way out of it. It is also a message rather
-  than a dismissal — the machine is told, so it can release the attempt now
-  instead of holding it until it expires.
-- **No back chevron.** The two buttons are the two answers; a third way off the
-  screen that answered neither would leave the machine holding an attempt for
-  no reason.
-
-## offline
-
-A conversation whose machine went away mid-turn. Both things that are true are
-said at once: the connection is gone, and everything already on screen is
-still the last thing that was true, so the feed stays readable and the
-composer — the one control that would lie by staying usable — becomes where
-the failure is reported.
-
-This is the same state as `stale`, photographed under the name the design
-catalogue gives it. It is one picture because it is one thing that happened;
-the two ids are the two lists it belongs to.
-
-- **The header keeps its glyph and its overflow.** The reference's own drawing
-  of this screen is a partly-drawn frame with the title overlapping the feed.
-  What is drawn here is the conversation this build draws everywhere else,
-  with the place line reading "unreachable".
-- **The panel is the reference's**, sentence for sentence: which machine is
-  unreachable, that reconnecting is happening, how long ago the last update
-  was, and Retry Now beneath.
-- The differing conversation and the stale place line carry over from `stale`.
+Reference-backed capture of `hosts` using the `hosts` fixture. No visual departure is accepted.
 
 ## new-agent
 
-Copy review (2026-09-09): Helper and failure copy consistently names the host. The model choice reads “Host Default”, and the typed-path control’s accessibility label uses Title Case.
+Reference-backed capture of `new-agent` using the `new-agent` fixture. No visual departure is accepted.
 
-Starting an agent: one machine, one directory, one layer, on one screen. The
-reference's own picture is followed closely; four things differ, and each is a
-fact about what this app can actually ask a machine for.
+## offline
 
-- **Three machines, not four.** The reference lists `homelab` among the hosts.
-  It is a machine on the network this phone has not paired with, and nothing
-  can be started on a machine that holds no key for this phone. It is on the
-  Hosts tab under "Not Paired", where it can be paired with, and it is not
-  here.
-- **The second line is what the machine said it is.** "macOS · via relay",
-  because `macOS` is what a host reports as its platform; the reference's "Mac
-  Studio" and "MacBook Air" are model names nothing on the wire carries.
-  Offline reads "offline, cannot start here" as drawn, on the row itself,
-  because it is the reason that one row is grey.
-- **The order is the Hosts tab's order** — reachable first, then by name — so
-  the same machines appear in the same order on both screens.
-- **The model is stated, and only Codex's is a choice.** The reference draws a
-  model with a chevron under each card. A create request names Claude's driver
-  and nothing else, so a model chosen for Claude would be a choice this screen
-  silently dropped; Codex's request does carry one. And the models a layer
-  offers only ever arrive with a running session — nothing can ask a machine
-  what a layer would offer before that layer exists — so the list behind
-  Codex's chevron is the one this account's own Codex sessions reported. A card
-  with no list to open has no chevron, which is why Claude's has none here.
+Reference-backed capture of `offline` using the `offline` fixture. No visual departure is accepted.
 
-Everything else is the reference: the radio list, the directory row with the
-recent projects as chips beneath it, the two cards with the chosen one
-outlined in the accent, and "Start on Studio" naming the machine at the foot.
-The whole enumeration of that machine's repositories, searchable, and a field
-for a path it did not list, are one tap away on the directory row; they are a
-state of this screen rather than a screen of their own, so the machine, the
-layer and the button that starts it never leave the display.
+## pair-confirm
 
-## shake
+Added state using the `pair-confirm` fixture. The confirmation an amux://pair link arrives at, which never pairs on arrival. It follows the same visual system as its parent screen.
 
-Something looked wrong, the phone was photographed, and the app offers to
-report the same frame. The picture is the conversation the person was on with
-the app's own Report pill floating over it, just above the composer.
+## pin
 
-The offer is drawn only after the frame, the runtime's recording and the
-view-state trace have all been frozen. That order is the whole flow: a capture
-taken once the report UI was up would be a picture of the report rather than of
-what was wrong.
+Reference-backed capture of `pin` using the `pin` fixture. No visual departure is accepted.
 
-- **The system's screenshot preview is not in the picture, and cannot be.** The
-  reference draws Apple's thumbnail in the bottom-left corner with the pill
-  beside it. That thumbnail belongs to the system, appears only after a real
-  screenshot, and is drawn outside this app's window; a capture opens the state
-  directly, so there is nothing there. What the app owns is the pill, and the
-  pill is what this baseline locks.
-- **The pill is inset 108 pt from the leading edge, not 77 pt.** The reference
-  put it five points to the right of the thumbnail it drew, which is about
-  59 pt wide. The system's real preview is wider than that and its size follows
-  a setting the app is never told about, so the gap is set to clear the widest
-  of them rather than to match a drawing of the narrow one. Sitting under the
-  preview would be worse than sitting further from it.
-- **The conversation behind it is this build's** — the same rows, the same
-  header and the same composer every other conversation capture shows. The
-  reference's transcript is its own drawing and differs in its wording and in
-  the effort chip beside the model, both of which carry over from `run`.
+## delete
 
-Everything else is the reference: one glass pill, a ladybug and the word
-Report, floating over the transcript just clear of the composer.
+Reference-backed capture of `delete` using the `delete` fixture. No visual departure is accepted.
+
+## delete-blocked
+
+Added state using the `delete-blocked` fixture. Account deletion blocked by live billing. It follows the same visual system as its parent screen.
+
+## first-run
+
+Reference-backed capture of `first-run` using the `first-run` fixture. No visual departure is accepted.
+
+## first-run-paid
+
+Reference-backed capture of `first-run-paid` using the `first-run-paid` fixture. No visual departure is accepted.
+
+## paywall
+
+Reference-backed capture of `paywall` using the `paywall` fixture. No visual departure is accepted.
+
+## paywall-unconfirmed
+
+Added state using the `paywall-unconfirmed` fixture. A purchase the App Store took and amux.sh has not confirmed: the design has no capture of it, and it is the one paywall state that keeps a purchase without granting a subscription. It follows the same visual system as its parent screen.
+
+## profiles
+
+Reference-backed capture of `profiles` using the `profiles` fixture. No visual departure is accepted.
+
+## sign-in
+
+Reference-backed capture of `sign-in` using the `sign-in` fixture. No visual departure is accepted.
+
+## sign-in-failed
+
+Added state using the `sign-in-failed` fixture. A sign-in the cloud refuses. It follows the same visual system as its parent screen.
+
+## you
+
+Reference-backed capture of `you` using the `you` fixture. No visual departure is accepted.
+
+## you-granted
+
+Added state using the `you-granted` fixture. An account whose access was given rather than bought reads differently on this page, and the design catalogue only pictured a bought subscription. It follows the same visual system as its parent screen.
 
 ## dump
 
-Copy review (2026-09-09): The drawing instruction is shortened to “Draw a box around each problem and add a note.” The contents caption continues to name only available session and host records.
+Reference-backed capture of `dump` using the `dump` fixture. No visual departure is accepted.
 
-The report, on the frame a screenshot froze: the picture, one box drawn round
-the row that is wrong with its own note under it, one note about the whole
-thing, and Send. Cancel goes back to what was being looked at and throws the
-report away; Send is the only thing on this screen that leaves the phone.
+## shake
 
-The picture is a photograph and not a live screen. Nothing on it can be
-pressed, scrolled or opened, because none of it is there any more.
-
-- **The report opens on the frozen frame with no Share step and no Photos
-  access.** The system's screenshot is the system's; this is the app's own
-  picture of its own window, taken when the report started.
-- **The status bar inside the picture is the app's, not the system's.** An app
-  can photograph its own window and nothing outside it, so what the picture
-  carries is whatever the app drew — the clock and the battery in the inner
-  frame are the simulator's status bar as it appeared in the capture this
-  fixture was taken from, not a live one.
-- **The rectangle's number sits on the box, and the same number is on its
-  note.** The reference draws the note's first words in a filled pill hanging
-  off the box instead. A note can be a sentence long and a pill carrying one
-  would cover the thing it points at, so the box carries a number and the
-  words live under the picture where there is room for them.
-- **The box's own note and the note about the whole report are both fields,
-  drawn as filled cards.** The reference draws only the second one as a card
-  and puts the box's words on the picture; both are typed into, so both are
-  drawn as the same kind of thing.
-- **The drawing instruction is shortened; the contents caption
-  names only available records.** The app cannot read back its system log,
-  so the bundle declares the log absent with a reason. Session and host
-  records can also be unavailable; the caption says ‘Includes this screen
-  and the available session and host records.’ rather than promising parts
-  the bundle may not contain. The same caption appears in `upload-failed`.
-
-The fixture states both notes on two lines rather than letting them wrap. A
-vertical text field settles a few points wider or narrower depending on how
-much of the page is scrollable, and this state is almost exactly one screen
-tall, so a note left to find its own wrap point broke on a different word on
-about one run in two. Where a person's note wraps is the field's business;
-where these wrap is the fixture's.
+Reference-backed capture of `shake` using the `shake` fixture. No visual departure is accepted.
 
 ## upload-failed
 
-Copy review (2026-09-09): The retry explanation reads “Retry sends your saved report.” The failed upload retains the frozen image and both notes.
+Added state using the `upload-failed` fixture. A report the cloud would not take. It follows the same visual system as its parent screen.
 
-The same report, after the account service would not take it. Send reads
-Retry, what the cloud said is under the report, and everything written is still
-there — the picture, the box, its note and the note about the whole thing.
-There is no preserved reference for this state; it is the designed failure the
-flow needs, because a report written on a train and lost to a tunnel is a
-report nobody writes twice.
+## ax-conversation
+
+Added state using the `run-accessibility` fixture. A conversation at an accessibility text size. It follows the same visual system as its parent screen.
+
+## ax-composer
+
+Added state using the `composer-accessibility` fixture. The composer with a message half-written in it, at an accessibility text size. It follows the same visual system as its parent screen.
+
+## reduced-glass
+
+Added state using the `run-reduced` fixture. The conversation for a reader who has asked for less transparency and less motion. It follows the same visual system as its parent screen.
+
+## ax-home
+
+Added state using the `home-accessibility` fixture. The home screen at an accessibility text size. It follows the same visual system as its parent screen.
+
+## unreadable-agent
+
+Added state using the `home-unreadable` fixture. An agent run by a provider this build has no case for: listed under the host's name for it, said to be unreadable and the one row on the home that cannot be opened. It follows the same visual system as its parent screen.
+
+## small-home
+
+Added state using the `home` fixture. The home screen on the narrowest supported display. It follows the same visual system as its parent screen.
+
+## small-conversation
+
+Added state using the `run` fixture. A conversation on the narrowest supported display. It follows the same visual system as its parent screen.
 
 ## dictation-listening
 
-The composer while app-owned speech recognition is listening. It keeps the
-example draft visible, changes the microphone glyph to a stop control and says
-“Listening. Tap Stop Dictation when you’re done.” in the composer's muted
-sentence styling. There is no preserved reference because the microphone in
-the typing reference is idle.
-
-This composited fixture proves layout and copy only. Live microphone
-recognition remains a physical-phone check.
+Added state using the `dictation-listening` fixture. Composer speech recognition listening state. It follows the same visual system as its parent screen.
 
 ## dictation-permission
 
-The same composer before speech and microphone access have been requested. A
-status line explains which permissions to allow while leaving the draft and
-the rest of the footer in place. The idle typing and working layouts do not
-gain this line. There is no preserved reference for the permission-preparation
-state.
+Added state using the `dictation-permission` fixture. Composer speech recognition permission state. It follows the same visual system as its parent screen.
 
 ## dictation-denied
 
-The composer after speech recognition access was denied. Its status names the
-speech and microphone permissions and offers an Open Settings action with a
-44-point target, while typing and the existing draft remain available. There
-is no preserved reference for the refusal state.
-
-The writing journey presses the real control with microphone permission
-revoked to prove this state beyond the composited layout capture.
+Added state using the `dictation-denied` fixture. Composer speech recognition denied state. It follows the same visual system as its parent screen.
 
 ## dictation-unavailable
 
-The composer when both permissions are allowed but the speech recognizer is
-unavailable. The muted status says typing remains available, and the example
-draft, microphone control and footer keep their places. There is no preserved
-reference for this availability failure. Both appearances use the existing
-design tokens.
+Added state using the `dictation-unavailable` fixture. Composer speech recognition unavailable state. It follows the same visual system as its parent screen.

@@ -145,9 +145,9 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
     /// owns this agent.
     ///
     /// Hosts answer one at a time, so a card is confirmed when its own machine
-    /// has been heard from rather than when the whole fleet has. That is what
-    /// lets a row stop shimmering on its own instead of the list waiting for
-    /// the slowest machine on the account.
+    /// has been heard from rather than when the whole fleet has. That lets each
+    /// row become confirmed on its own instead of the list waiting for the
+    /// slowest machine on the account.
     public var awaiting: Bool
 
     public var id: AgentId { agent.id }

@@ -41,6 +41,7 @@ public struct AgentsHome: View {
     /// and handed in only so a capture can ask for the panel: which accounts
     /// this phone has is a fact, having the list open is not.
     @State private var switcherOpen: Bool
+    @State private var filter: HomeFilter = .all
 
     public init(
         model: FleetStore,
@@ -93,7 +94,7 @@ public struct AgentsHome: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            if accounts.gate != .ready { accountDisc }
+            if accounts.accounts.count > 1 || accounts.gate != .ready { accountDisc }
             VStack(alignment: .leading, spacing: 1) {
                 title
                 Text(subtitle)
@@ -108,6 +109,17 @@ public struct AgentsHome: View {
             // header leaves it out and the screen keeps the one action that
             // does lead somewhere.
             if accounts.gate == .ready {
+                Menu {
+                    Picker("Show", selection: $filter) {
+                        ForEach(HomeFilter.allCases) { filter in
+                            Text(filter.title).tag(filter)
+                        }
+                    }
+                } label: {
+                    GlassIcon(glyph: "line.3.horizontal.decrease")
+                }
+                .accessibilityLabel("Filter Agents")
+                .identified("home.filter", label: "Filter Agents", value: filter.rawValue)
                 Button { actions(.newAgent) } label: {
                     GlassIcon(glyph: "plus", prominent: true)
                 }
@@ -172,7 +184,7 @@ public struct AgentsHome: View {
         // Nothing else the panel can say reaches this screen: the rest of an
         // account's actions live under You, where there is room to state what
         // they do.
-        case .signOut, .delete, .subscription, .appearance, .identity, .support, .report:
+        case .signOut, .delete, .subscription, .notifications, .appearance, .identity, .support, .report:
             break
         }
     }
@@ -214,6 +226,12 @@ public struct AgentsHome: View {
     /// screen, because otherwise the same fact would be said twice: once here
     /// and once on the exceptions line above the rows.
     private var subtitle: String {
+        if accounts.accounts.count > 1, let entry = accounts.selectedAccount {
+            let waiting = model.sections.first { $0.kind == .needsYou }?.rows.count ?? 0
+            return waiting == 0
+                ? "\(entry.name) · nothing needs you"
+                : "\(entry.name) · \(waiting) need you"
+        }
         if accounts.gate == .ready || !model.rows.isEmpty { return model.subtitle }
         switch accounts.gate {
         case .ready: return model.subtitle
@@ -224,13 +242,26 @@ public struct AgentsHome: View {
 
     // MARK: - The list
 
+    private var sections: [FleetSection] {
+        switch filter {
+        case .all:
+            model.sections
+        case .needsYou:
+            model.sections.filter { $0.kind == .needsYou }
+        case .running:
+            [FleetSection(
+                kind: .everythingElse, title: "Running",
+                rows: model.rows.filter { $0.phase == .running }, folded: false)]
+        }
+    }
+
     private var fleet: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let exceptions {
                     exceptionsLine(exceptions)
                 }
-                ForEach(model.sections) { section in
+                ForEach(sections) { section in
                     VStack(alignment: .leading, spacing: 8) {
                         if section.kind != .older {
                             SectionHead(
@@ -258,8 +289,8 @@ public struct AgentsHome: View {
 
     @ViewBuilder
     private func agentRow(_ row: AgentRow) -> some View {
-        let content = AgentRowView(row: row, host: model.host(row.hostId)?.name, now: model.orderedAt)
-            .shimmering(!row.confirmed)
+        let content = AgentRowView(
+            row: row, host: model.host(row.hostId)?.name, now: model.orderedAt)
         // An agent run by a provider this build has no case for is listed and
         // not offered to open. A button that led to a conversation of which
         // not one row could be read would be a worse answer than the row
@@ -423,6 +454,22 @@ public struct AgentsHome: View {
 
     private var gateActionTitle: String {
         accounts.gate == .signedOut ? "Sign In" : "Subscribe"
+    }
+}
+
+private enum HomeFilter: String, CaseIterable, Identifiable {
+    case all
+    case needsYou
+    case running
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All Agents"
+        case .needsYou: "Needs You"
+        case .running: "Running"
+        }
     }
 }
 

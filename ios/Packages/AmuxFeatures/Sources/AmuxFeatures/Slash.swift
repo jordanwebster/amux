@@ -47,7 +47,7 @@ struct SlashRows: View {
                 }
             }
             .padding(.horizontal, 16)
-            .frame(minHeight: 52)
+            .frame(minHeight: 42)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

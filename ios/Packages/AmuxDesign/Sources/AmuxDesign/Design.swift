@@ -131,8 +131,8 @@ public struct Design: Sendable, Equatable {
         // Read off the approved drawings rather than picked afresh, so the
         // arithmetic on a chip and the body of a diff are the same green and
         // the same red the design was signed off in.
-        added: Ramp(0x458353, 0x84C490),
-        removed: Ramp(0x9B3C40, 0xD78583),
+        added: Ramp(0x29854F, 0x70C78C),
+        removed: Ramp(0xA8333D, 0xE68080),
         faces: .instrument,
         metrics: Metrics(
             cardRadius: 16, controlRadius: 12, floatRadius: 26,

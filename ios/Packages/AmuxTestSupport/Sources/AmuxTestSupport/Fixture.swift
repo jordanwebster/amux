@@ -155,7 +155,7 @@ public struct Fixture: Identifiable, Sendable {
         AccountEntry(
             account: SignedInAccount(
                 id: AccountId("acme"), email: "ada@acme.example", displayName: "Acme"),
-            entitlement: .active(grant: .purchased(.appStore), renews: nil)),
+            entitlement: .active(grant: .purchased(.appStore), renews: nil), attention: 1),
         AccountEntry(
             account: SignedInAccount(
                 id: AccountId("side"), email: "side@example.com", displayName: "Side project"),

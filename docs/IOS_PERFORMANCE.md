@@ -93,8 +93,8 @@ recipe measures and which the physical-phone checklist holds.
 | Conversation workload | 1,000 rows: 55% prose with markdown, 20% tool rows, 10% folded reads, 5% command output over 200 lines, 5% edits, 5% rules and unknown rows; seed 1 |
 | Stream | 50 rows per second for 20 s appended to the conversation workload while the list auto-scrolls to the tail; the arriving rows carry identities that continue the transcript's, as a real feed's do |
 | Network | Runner latency 0 ms and 100 ms; reconciliation measured at both, budget applies at both |
-| Cold first frame | Kernel process start to the first presented frame containing the cached fleet rows themselves, shimmer running — not a launch image and not an empty list; 5 cold launches of a `Measured` build with the app terminated between; on the pinned simulator median ≤ 460 ms, worst ≤ 600 ms; the 400 ms this stands for on a phone is on the physical-phone checklist |
-| Reconciliation | `streamConnected` to the last row's shimmer ending; median ≤ 1,000 ms at either latency |
+| Cold first frame | Kernel process start to the first presented frame containing the cached fleet rows themselves, marked as remembered — not a launch image and not an empty list; 5 cold launches of a `Measured` build with the app terminated between; on the pinned simulator median ≤ 460 ms, worst ≤ 600 ms; the 400 ms this stands for on a phone is on the physical-phone checklist |
+| Reconciliation | `streamConnected` to the last remembered row being confirmed; median ≤ 1,000 ms at either latency |
 | Optimistic echo | `sendTapped` to the first presented frame containing the row, taken over the conversation workload on the shipped page with the composer there; ≤ 1 frame interval, measured on the simulator as ≤ 17 ms and labelled a proxy for 8.3 ms on ProMotion |
 | Streaming scroll | Hitch time ratio ≤ 5 ms per second (display-link missed-frame accounting, labelled a proxy for `XCTHitchMetric` on a device); main-thread CPU ≤ 60% of one core averaged over the stream; footprint ≤ 250 MB |
 | Idle | After a 2 s settle with no stream, zero transcript commits and zero display-link ticks requested over 5 s |

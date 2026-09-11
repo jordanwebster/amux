@@ -322,6 +322,47 @@ public enum Transcript {
         ]
     }
 
+    /// A compact exchange with another agent, with enough work around both
+    /// directions to show that their voices remain part of the same rail.
+    public static var peerExchange: [FeedEntry] {
+        [
+            compaction(0, seq: 1, before: 148_000, after: 22_000),
+            prompt(1, seq: 2, text: """
+                Check with relay-cleanup before you collapse the errors \u{2014} it's in \
+                that file too.
+                """),
+            read(2, seq: 3, path: "crates/amux-ui/src/pairing.rs"),
+            search(3, seq: 4, query: "\"INVALID_PIN\"", grouped: true),
+            toAgent(4, seq: 5, to: "relay-cleanup/mini", text: """
+                I am about to collapse the three pairing error arms onto one string in \
+                amux-ui. Are you holding anything that matches on the error name?
+                """),
+            read(5, seq: 6, path: "crates/amux-ui/tests/spec/pairing.rs"),
+            message(6, seq: 7, text: """
+                Asked relay-cleanup and started reading the tests while we wait. Nothing in \
+                amux-ui matches on the name itself, so if it is holding nothing this is a \
+                one-file change.
+                """),
+            fromAgent(7, seq: 8, from: "relay-cleanup/mini", text: """
+                Nothing here matches on it \u{2014} I only construct them. Go ahead, and I \
+                will rebase onto whatever you land.
+                """),
+            message(8, seq: 9, text: "Clear. Collapsing them now."),
+            edit(9, seq: 10, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14, lines: [
+                "  let message = match status {",
+                "-   Code::NotFound => \"no such host\",",
+                "+   _ => \"Pairing failed. Check the code\",",
+                "  };",
+            ]),
+            ran(10, seq: 11, command: "cargo check -p amux-ui", output: "Finished in 3.8s"),
+            subagentFinished(11, seq: 12, text: "spec-suite updated three assertions"),
+            fromAgent(12, seq: 13, from: "relay-cleanup/mini", text: """
+                Moved it. The shared crate no longer exports the three constants.
+                """),
+            exited(13, seq: 14, agent: "relay-cleanup/mini"),
+        ]
+    }
+
     /// Everything an agent can write, including the shapes this build cannot
     /// read and the voices that are not the agent's own.
     ///

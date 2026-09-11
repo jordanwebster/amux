@@ -71,7 +71,7 @@
       "screen": "review-cta",
       "fixture": "finished",
       "origin": "added_state",
-      "reason": "a finished turn nobody has read: the panel that takes the composer's place, which the design has no capture of",
+      "reason": "a finished turn nobody has read, with its review chip and the ordinary composer still available",
       "simulator": "amux-golden",
       "appearances": [
         "light",

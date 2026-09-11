@@ -102,8 +102,7 @@ public struct BenchConversationScreen: View {
                 model: fleet, hosts: hosts, current: model.agent) { _ in }
         ) {
             Conversation(
-                model: model, subject: subject,
-                naming: { fleet.name(of: $0) }) { _ in }
+                model: model, subject: subject) { _ in }
         }
     }
 

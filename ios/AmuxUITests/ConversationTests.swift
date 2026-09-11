@@ -303,11 +303,8 @@ final class ConversationTests: XCTestCase {
         // — so a bundle frozen here is the only evidence that a report carries
         // what somebody was actually looking at.
         // Nothing can be written while the layer is still holding the last
-        // message, and a turn that has just finished offers its changes over
-        // the composer until somebody says Later. Both are the screen being
-        // honest, and both have to be got past before there is a field.
+        // message, so wait until the ordinary composer is available again.
         _ = try door(runner, .init(kind: "awaitSendable", agent: runner.agent, seconds: 90))
-        setAsideAnyFinishedTurn(app)
         let field = element(app, "composer.field")
         XCTAssertTrue(field.waitForExistence(timeout: waiting),
                       "the conversation offered nowhere to write a message; where the composer "
@@ -337,7 +334,6 @@ final class ConversationTests: XCTestCase {
         press(app, "home.row.\(runner.agent)")
         XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
                       "coming back did not lead to the conversation")
-        setAsideAnyFinishedTurn(app)
         XCTAssertTrue(waitUntil { self.value(app, "composer.field") == Self.halfWritten },
                       "the half-written message did not survive leaving the conversation; the "
                       + "field says \(value(app, "composer.field") ?? "nothing")")
@@ -402,16 +398,8 @@ final class ConversationTests: XCTestCase {
         press(app, "home.row.\(runner.agent)")
         XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
                       "reopening the running agent did not lead to its conversation")
-        // The turn has ended and its changes are still on offer, in the place
-        // the composer sits. That offer is put away first, the way somebody
-        // who has already looked at the patch puts it away, so what is claimed
-        // below is about the panel that says the machine has gone rather than
-        // about the one that was covering it.
-        if element(app, "conversation.finished").waitForExistence(timeout: waiting) {
-            press(app, "ask.later")
-            XCTAssertTrue(waitUntil { !self.element(app, "conversation.finished").exists },
-                          "the changes on offer would not be put away")
-        }
+        // The turn's changes remain available from the compact header chip;
+        // the composer itself stays available until the machine goes away.
         // What is on screen before the machine goes, to compare against what
         // is on screen after it has.
         let readable = try waitForRows(app)
@@ -1045,14 +1033,13 @@ final class ConversationTests: XCTestCase {
 
     /// The part of the screen the feed can actually be read in: under the pill
     /// that floats over the top of it, above whatever stands at the foot and
-    /// above the tab bar that floats over that.
+    /// above the bottom edge of the page.
     private func readableBand(_ app: XCUIApplication) -> CGRect {
         let page = app.frame
         var top = page.minY
         var bottom = page.maxY
-        // The pill and the chip float over the top of the feed, and the strip
-        // of children this agent started floats under them.
-        for name in ["conversation.drawer", "conversation.changes", "conversation.children"] {
+        // The pill and changes chip float over the top of the feed.
+        for name in ["conversation.drawer", "conversation.changes"] {
             let chrome = element(app, name)
             guard chrome.exists, chrome.frame.height > 0 else { continue }
             top = max(top, chrome.frame.maxY)
@@ -1060,13 +1047,11 @@ final class ConversationTests: XCTestCase {
         // And at the foot: whatever stands where a message is written, and the
         // strip of facts about the turn that floats above it.
         for name in ["facts", "composer", "conversation.foot", "conversation.exited",
-                     "conversation.ask", "conversation.finished"] {
+                     "conversation.ask"] {
             let standing = element(app, name)
             guard standing.exists, standing.frame.height > 0 else { continue }
             bottom = min(bottom, standing.frame.minY)
         }
-        let bar = app.tabBars.firstMatch
-        if bar.exists, bar.frame.height > 0 { bottom = min(bottom, bar.frame.minY) }
         return CGRect(x: page.minX, y: top, width: page.width, height: max(0, bottom - top))
     }
 
@@ -1157,15 +1142,6 @@ final class ConversationTests: XCTestCase {
         XCTFail("scrolling the feed never brought \(identifier) somewhere it could be pressed")
     }
 
-    /// Says Later to a finished turn's offer of its changes, where there is
-    /// one. It stands in the composer's place until somebody answers it, and
-    /// what is wanted here is the composer.
-    private func setAsideAnyFinishedTurn(_ app: XCUIApplication) {
-        guard element(app, "conversation.finished").exists else { return }
-        press(app, "ask.later")
-        record["setAsideTheFinishedTurn"] = true
-    }
-
     /// The message left half written in the composer for the report below. A
     /// plain sentence: what is being proved is that a draft is carried and put
     /// back, not how a token is spelled.
@@ -1188,7 +1164,8 @@ final class ConversationTests: XCTestCase {
     }
 
     private func pressTab(_ app: XCUIApplication, _ title: String) {
-        let button = app.tabBars.buttons[title]
+        let button = app.descendants(matching: .any)
+            .matching(identifier: "tab.\(title.lowercased())").firstMatch
         guard button.waitForExistence(timeout: waiting) else {
             return XCTFail("the tab bar has no \(title) tab")
         }

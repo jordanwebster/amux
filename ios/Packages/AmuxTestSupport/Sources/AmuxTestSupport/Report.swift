@@ -25,14 +25,14 @@ public struct ReportPrompt: View {
         Button(action: take) {
             HStack(spacing: 9) {
                 Image(systemName: "ladybug")
-                    .font(.system(size: 19, weight: .regular))
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(design.ink.color)
                 Text("Report")
-                    .designFont(.bodyEmphasis, design)
+                    .designFont(.detail, design)
                     .foregroundStyle(design.ink.color)
             }
-            .padding(.horizontal, 18)
-            .frame(height: 46)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
             .frosted(Capsule())
         }
         .buttonStyle(.plain)
@@ -79,10 +79,10 @@ public struct ReportOffer: ViewModifier {
                         // Leave room near the corner for a system thumbnail.
                         // This is only a layout inset: iOS does not expose its
                         // preview's geometry and can cover the whole app.
-                        .padding(.leading, 108)
+                        .padding(.leading, 76)
                         // Above the composer and the tab bar, both of which
                         // live against the bottom of whatever screen has them.
-                        .padding(.bottom, 122)
+                        .padding(.bottom, 108)
                 }
                 .transition(.opacity)
             }
@@ -232,7 +232,7 @@ public struct ReportScreen: View {
             // inside another one, and drawn any wider it fills this screen
             // too — leaving the note and the boxes' own notes below the fold,
             // which is where the person is being asked to write.
-            .padding(.horizontal, 85)
+            .padding(.horizontal, 64)
         }
     }
 

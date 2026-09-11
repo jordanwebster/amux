@@ -12,6 +12,7 @@ public enum AccountsAction: Equatable, Sendable {
     case delete(AccountId)
     /// Open what this account has bought.
     case subscription
+    case notifications
     case appearance(Appearance?)
     case identity
     case support
@@ -39,7 +40,7 @@ struct AccountRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(entry.name)
                         .designFont(.body, design)
-                        .foregroundStyle(design.ink.color)
+                        .foregroundStyle(entry.signedIn ? design.ink.color : design.inkMuted.color)
                         .lineLimit(1)
                     Text(entry.line)
                         .designFont(.monoSmall, design)
@@ -165,7 +166,7 @@ public struct AccountSwitcher: View {
             .buttonStyle(.plain)
             .identified("accounts.add", label: "Add Account")
         }
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.cardRadius, style: .continuous))
+        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .identified("accounts.switcher", value: accounts.selected?.value ?? "none")
     }
@@ -191,11 +192,14 @@ struct SwitcherOverlay<Content: View>: View {
                 // puts it away: a panel you have to aim at a close button to
                 // dismiss is a panel that traps a thumb.
                 Color.black.opacity(0.22)
-                    .ignoresSafeArea()
+                    .padding(.top, 76)
+                    .ignoresSafeArea(edges: [.horizontal, .bottom])
                     .onTapGesture { actions(.dismiss) }
                     .accessibilityHidden(true)
                 AccountSwitcher(accounts: accounts, actions: actions)
-                    .padding(.horizontal, design.metrics.gutter)
+                    .frame(width: 300)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, design.metrics.gutter)
                     // Under the title it hangs from, which is where the eye
                     // already is after pressing it.
                     .padding(.top, 76)
@@ -266,7 +270,8 @@ public struct YouScreen: View {
                 ForEach(accounts.accounts) { entry in
                     AccountRow(
                         entry: entry, selected: entry.id == accounts.selected, actions: actions)
-                    rule(inset: 47)
+                        .padding(.horizontal, 14)
+                    rule(inset: 61)
                 }
                 Button { actions(.add) } label: {
                     HStack(spacing: 13) {
@@ -278,6 +283,7 @@ public struct YouScreen: View {
                         Spacer(minLength: 0)
                     }
                     .foregroundStyle(design.accent.color)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 13)
                     .contentShape(Rectangle())
                 }
@@ -314,10 +320,14 @@ public struct YouScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: "This phone")
             VStack(spacing: 0) {
+                row("Notifications", value: "When an agent needs you", id: "notifications") {
+                    actions(.notifications)
+                }
+                rule(inset: 14)
                 appearanceRow
                 if let identity {
-                    rule()
-                    row("Identity", value: identity, id: "identity") { actions(.identity) }
+                    rule(inset: 14)
+                    row("Identity", value: identity, id: "identity", mono: true) { actions(.identity) }
                 }
             }
         }
@@ -339,6 +349,7 @@ public struct YouScreen: View {
             .padding(3)
             .background(Capsule().fill(design.sunken.color))
         }
+        .padding(.horizontal, 14)
         .padding(.vertical, 11)
         .accessibilityElement(children: .contain)
         .identified("you.appearance", value: appearance?.rawValue ?? "system")
@@ -387,7 +398,8 @@ public struct YouScreen: View {
     // MARK: - Rows
 
     private func row(
-        _ title: String, value: String, id: String, press: @escaping @MainActor () -> Void
+        _ title: String, value: String, id: String, mono: Bool = false,
+        press: @escaping @MainActor () -> Void
     ) -> some View {
         Button(action: press) {
             HStack(spacing: 8) {
@@ -396,13 +408,14 @@ public struct YouScreen: View {
                     .foregroundStyle(design.ink.color)
                 Spacer(minLength: 8)
                 Text(value)
-                    .designFont(.body, design)
+                    .designFont(mono ? .mono : .body, design)
                     .foregroundStyle(design.inkMuted.color)
                     .lineLimit(1)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(design.inkFaint.color)
             }
+            .padding(.horizontal, 14)
             .padding(.vertical, 13)
             .contentShape(Rectangle())
         }
@@ -422,6 +435,7 @@ public struct YouScreen: View {
                     .foregroundStyle(danger ? design.removed.color : design.accent.color)
                 Spacer(minLength: 0)
             }
+            .padding(.horizontal, 14)
             .padding(.vertical, 13)
             .contentShape(Rectangle())
         }
@@ -446,6 +460,7 @@ public struct YouScreen: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(design.inkFaint.color)
             }
+            .padding(.horizontal, 14)
             .padding(.vertical, 13)
             .contentShape(Rectangle())
         }

@@ -462,7 +462,8 @@ class JourneyCase: XCTestCase {
     }
 
     func pressTab(_ app: XCUIApplication, _ title: String) {
-        let button = app.tabBars.buttons[title]
+        let button = app.descendants(matching: .any)
+            .matching(identifier: "tab.\(title.lowercased())").firstMatch
         guard button.waitForExistence(timeout: waiting) else {
             return XCTFail("the tab bar has no \(title) tab")
         }

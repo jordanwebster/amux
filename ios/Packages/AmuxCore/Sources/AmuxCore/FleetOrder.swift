@@ -70,8 +70,8 @@ public struct AgentRow: Sendable, Equatable, Identifiable {
     }
 
     public var needsYou: Bool {
-        if case .needsYou = card.attention { return true }
-        return false
+        guard case .needsYou(let why) = card.attention else { return false }
+        return why != .finished
     }
 
     /// How long this agent has been waiting on you.
@@ -138,8 +138,9 @@ public struct FleetSection: Sendable, Equatable, Identifiable {
 
 /// The home's ordering, as one pure function.
 ///
-/// Two rules do the work. An agent that needs you is pinned, longest-waiting
-/// first, because it cannot continue on its own and time will never raise it.
+/// Two rules do the work. An agent that cannot continue without you is pinned,
+/// most recent first, so the newest request is easiest to reach. A finished
+/// agent belongs with completed work even when its final turn is unread.
 /// Everything else is one recency list, because running is not a rank — an
 /// agent that stopped an hour ago can matter more than one mid-command — with
 /// anything quiet for a day folded away rather than dropped. An unread agent
@@ -147,10 +148,10 @@ public struct FleetSection: Sendable, Equatable, Identifiable {
 public func fleetOrder(_ cards: [AgentCard], now: Date, unread: UnreadWeights) -> [FleetSection] {
     let rows = cards.map { AgentRow(card: $0, unread: unread.isUnread($0)) }
 
-    // A tie between two identical waits still has to be an order, or the list
+    // A tie between two identical dates still has to be an order, or the list
     // shuffles for no reason the user can see. Identity breaks it.
     let waiting = rows.filter(\.needsYou).sorted {
-        ($0.lastActivity, $0.id.description) < ($1.lastActivity, $1.id.description)
+        ($0.lastActivity, $0.id.description) > ($1.lastActivity, $1.id.description)
     }
     let rest = rows.filter { !$0.needsYou }.sorted {
         ($1.lastActivity, $1.id.description) < ($0.lastActivity, $0.id.description)

@@ -321,33 +321,28 @@ final class AskTests: JourneyCase {
             ["Markdown": ["text": "Done: the tokenizer keeps the trailing newline now."]],
             "EndTurn",
         ]]])
-        waitFor(app, "conversation.finished", "a finished turn with changes offered no review")
-        record["finished"] = said(try declared(runner), "conversation.finished")?.value ?? ""
+        waitFor(app, "conversation.changes", "a finished turn with changes offered no review")
+        waitFor(app, "composer", "finishing a turn replaced the ordinary composer")
+        record["finished"] = said(try declared(runner), "conversation.changes")?.value ?? ""
         photograph(app, "ask-finished")
 
-        // Later says nothing to the host and takes the panel away for this
-        // visit; the chip in the chrome is still the way to the changes.
-        press(app, "ask.later")
-        waitForNo(app, "conversation.finished", "Later left the panel where it was")
-        let afterLater = try placeKept(
+        let afterFinishing = try placeKept(
             app, runner, reading: stillReading, at: beforeFinishing, newest: newest,
-            after: "deferring the finished turn")
+            after: "finishing the turn")
         kept = record["place"] as? [String: Any] ?? [:]
         kept["afterChild"] = ["reading": stillReading,
                               "before": Int(beforeFinishing.minY.rounded()),
-                              "after": Int(afterLater.minY.rounded())]
+                              "after": Int(afterFinishing.minY.rounded())]
         record["place"] = kept
         photograph(app, "ask-place-after-child")
-        XCTAssertTrue(element(app, "conversation.changes").exists,
-                      "deferring the review took the way to the changes away too")
 
-        // Coming back offers again, because nothing was decided.
+        // Coming back keeps the compact review entry in the header.
         pressTab(app, "Agents")
         waitFor(app, "home", "leaving the conversation did not return to the home")
         press(app, "home.row.\(runner.agent)")
-        waitFor(app, "conversation.finished",
-                "coming back to a finished turn did not offer the review again")
-        press(app, "ask.review")
+        waitFor(app, "conversation.changes",
+                "coming back to a finished turn lost the way to review its changes")
+        press(app, "conversation.changes")
         waitFor(app, "review", "Review Changes did not lead to the changes")
         record["review"] = said(try declared(runner), "review")?.value ?? ""
         photograph(app, "ask-review")

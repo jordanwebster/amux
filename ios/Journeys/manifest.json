@@ -4,13 +4,13 @@
       "id": "home-coldstart",
       "stage": 5,
       "topology": "e2e-tests/topologies/two-hosts.json",
-      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every row shimmering and nothing spinning, and a real connection to two hosts reconciles it. This launch is paired with neither machine, so neither host confirms the remembered agents and reconciliation leaves the list empty. The home journey separately proves a paired phone’s cached rows going solid in place as their hosts answer."
+      "claim": "A launch draws the fleet this phone remembers before it has reached anything, every remembered row visible and nothing spinning, and a real connection to two hosts reconciles it. This launch is paired with neither machine, so neither host confirms the remembered agents and reconciliation leaves the list empty. The home journey separately proves a paired phone’s cached rows going solid in place as their hosts answer."
     },
     {
       "id": "home",
       "stage": 5,
       "topology": "e2e-tests/topologies/home-fleet.json",
-      "claim": "Six agents on two machines the runner is running, on a phone that pairs with both of them through the protocol itself: before it has reached anything the phone draws the ones it remembers, the two that need an answer at the top and the one waiting longest first; a real connection reaches both machines and every remembered row goes solid where it stands as its own machine answers for it, a turn emitted by one of them changes nothing about the order, and taking the relay away leaves every row on screen under the one line that says the phone is offline; a phone that remembers nothing shows the home empty; and opening the row at the top reaches the whole fleet from a drawer over the conversation and comes back."
+      "claim": "Six agents on two machines the runner is running, on a phone that pairs with both of them through the protocol itself: before it has reached anything the phone draws the ones it remembers, the request that needs an answer at the top, ahead of finished and recent work; a real connection reaches both machines and every remembered row is confirmed in place as its own machine answers for it, a turn emitted by one of them changes nothing about the order, and taking the relay away leaves every row on screen under the one line that says the phone is offline; a phone that remembers nothing shows the home empty; and opening the row at the top reaches the whole fleet from a drawer over the conversation and comes back."
     },
     {
       "id": "conversation",

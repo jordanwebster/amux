@@ -14361,3 +14361,13 @@ for the button that is no longer drawn.
 Green: `wt run ios-journey -- accounts` — passed, with the home offering
 Sign In and no New Agent at launch, Subscribe and no New Agent once signed in,
 and New Agent again under an account that has access.
+
+## The iPhone implementation now follows the approved visual system
+
+The app had accumulated a second visual language around the approved screens: a stock, heavier tab bar; child-agent chips over conversations; a finished-state takeover; larger composer and keypad controls; boxed management lists; heavier transcript and review rows; and several missing actions and account cues. Those differences are removed. The shipping screens now use the design's custom floating tab bar, compact chrome and composer, continuous transcript rail, document typography, review geometry and colours, plain host/setup lists, account context, notification entry point, filter control, Mute action, and reference proportions across sheets and controls. Pushed screens hide the tab bar and keep the edge-to-go-back gesture, and finished conversations retain the normal composer with changes available from the header.
+
+The Agents shimmer was removed rather than restyled. The debug state now reports unconfirmed rows by what they are instead of naming a visual effect that no longer exists. The custom tab buttons occupy equal outer widths, and each root navigation stack stays mounted behind the selected tab; this preserves tab state without rendering a second system bar or shifting the bar when Agents is selected. Per-agent Mute is stored as a durable device preference instead of resetting with the overflow view.
+
+Large accessibility text now keeps conversation identity and location in a bounded header, clears transcript text from behind the status bar, and gives the ask panel enough of the first view to expose Allow and Deny. The peer-exchange fixture also opens both message directions and uses a compact transcript so its golden demonstrates the interaction shown by the design.
+
+All 124 light, dark, regular-size, accessibility-size and small-phone golden baselines were recaptured after direct comparison with the preserved designs. Verification used the focused iOS unit suite and golden runner; the hour-long aggregate mobile verification task was deliberately not run.

@@ -316,9 +316,6 @@ final class AccessibilityTests: JourneyCase {
         // Something in the feed first, so that what survives the machine going
         // away is a transcript somebody was reading rather than an empty one.
         try sayOneThing()
-        if element(app, "conversation.finished").waitForExistence(timeout: 5) {
-            press(app, "ask.later")
-        }
         try control.ask("CloudOffline")
         let gone = app.staticTexts["\(runner.host) is unreachable"]
         XCTAssertTrue(gone.waitForExistence(timeout: waiting),

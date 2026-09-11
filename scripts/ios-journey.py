@@ -495,7 +495,7 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
     unconnected, connected = [answer["bridge"] for answer in answers
                               if answer["kind"] == "bridge"]
 
-    # Before anything is reached: the remembered fleet, drawn and shimmering.
+    # Before anything is reached: the remembered fleet, drawn and unconfirmed.
     journey.expect(named(before, "home") is not None,
                    f"the launch did not draw the home: {[e['identifier'] for e in before['elements']]}")
     journey.expect(not unconnected["started"],
@@ -504,8 +504,8 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect(len(remembered_rows) == len(remembered),
                    f"the launch drew {len(remembered_rows)} rows, and this phone remembers "
                    f"{len(remembered)}")
-    journey.expect(before["shimmering"] == len(remembered),
-                   f"{before['shimmering']} of {len(remembered_rows)} rows were drawn as "
+    journey.expect(before["unconfirmed"] == len(remembered),
+                   f"{before['unconfirmed']} of {len(remembered_rows)} rows were drawn as "
                    f"remembered, and none of them has been confirmed yet")
     journey.expect(not before["reconciled"], "the fleet claimed to be confirmed before it was")
     unsaid = [row["identifier"] for row in remembered_rows
@@ -518,7 +518,7 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
                 if "progress" in element["identifier"].lower()
                 or "spinner" in element["identifier"].lower()]
     journey.expect(not spinners, f"the screen was spinning at something: {spinners}")
-    journey.say(f"before connecting: {len(remembered_rows)} remembered rows, all shimmering, "
+    journey.say(f"before connecting: {len(remembered_rows)} remembered rows, all unconfirmed, "
                 f"nothing spinning, subtitle "
                 f"{(named(before, 'home.subtitle') or {}).get('value')!r}")
 
@@ -536,8 +536,8 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
                    f"the phone saw {connected['discovered']} and the runner is running "
                    f"{sorted(running)}")
     journey.expect(after["reconciled"], f"the fleet was never confirmed: {after}")
-    journey.expect(after["shimmering"] == 0,
-                   f"{after['shimmering']} rows were still shimmering after the fleet was "
+    journey.expect(after["unconfirmed"] == 0,
+                   f"{after['unconfirmed']} rows were still unconfirmed after the fleet was "
                    f"confirmed")
     surviving = [row["identifier"] for row in rows(after)]
     placed = [row["identifier"] for row in remembered_rows]
@@ -569,9 +569,9 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     """The Agents home, against the machines the runner is really running.
 
     Six agents live on two machines the runner started, and this phone
-    remembers all six in the states it last saw them in: two that need an
-    answer, one mid-turn, one gone quiet, one nobody can account for and one
-    that has not moved in a day. What it remembers carries the runner's own
+    remembers all six in the states it last saw them in: one that needs an
+    answer, one finished, one mid-turn, one gone quiet, one nobody can account for,
+    and one that has not moved in a day. What it remembers carries the runner's own
     identities for those agents and machines, so the file on disk is what a
     previous run would have left rather than something invented beside it.
 
@@ -614,13 +614,13 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
         agent["host"] = identity["daemon"]
         agent["directory"] = here
     by_id = {agent["id"]: agent for agent in remembered}
-    # Needing an answer comes first, longest wait at the top of it, because
-    # nothing else will raise it. Everything else is one recency list.
+    # An agent unable to continue comes first. Finished and other work share
+    # one recency list below it.
     expected = [f"home.row.{agent['id']}" for agent in (
-        by_id[running["release-notes"]["agent_id"]],
         by_id[running["fix-login"]["agent_id"]],
         by_id[running["port-the-parser"]["agent_id"]],
         by_id[running["chase-the-flake"]["agent_id"]],
+        by_id[running["release-notes"]["agent_id"]],
         by_id[running["trim-the-fixtures"]["agent_id"]],
         by_id[running["warm-the-cache"]["agent_id"]])]
 
@@ -693,27 +693,25 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
 
     journey.expect(named(before, "home") is not None, "the launch did not draw the home")
     placed(before, "the remembered fleet was not drawn in the order the ordering asks for")
-    journey.expect(before["shimmering"] == len(remembered) and not before["reconciled"],
-                   f"{before['shimmering']} of {len(remembered)} rows were drawn as remembered, "
+    journey.expect(before["unconfirmed"] == len(remembered) and not before["reconciled"],
+                   f"{before['unconfirmed']} of {len(remembered)} rows were drawn as remembered, "
                    f"and no machine has answered for any of them")
     unsaid = [row["identifier"] for row in rows(before)
               if "remembered" not in (row["value"] or "")
               or "unread" not in (row["label"] or "")]
     journey.expect(not unsaid, f"rows that do not say they are remembered and unread: {unsaid}")
     subtitle = (named(before, "home.subtitle") or {}).get("value")
-    journey.expect(subtitle == f"2 need you · {len(remembered)} agents",
+    journey.expect(subtitle == f"1 need you · {len(remembered)} agents",
                    f"the subtitle counted the list as {subtitle!r}")
     def age(row: dict) -> str:
         """What the row says out loud about how long ago it last did anything."""
         return next((part for part in (row["label"] or "").split(", ")
                      if part.endswith(" ago")), "never said")
-    # The two at the top are the two that cannot continue on their own, the
-    # one that has been waiting longer first: time will never raise either of
-    # them, so the list has to.
-    waiting = [(row["value"], age(row)) for row in rows(before)[:2]]
-    journey.expect(waiting == [("Finished, remembered", "52m ago"),
-                               ("Needs permission, remembered", "6m ago")],
-                   f"the two rows at the top are not the two waiting longest: {waiting}")
+    # The request that cannot continue on its own is pinned above the recency
+    # list; a finished result stays with the rest of the completed work.
+    waiting = [(row["value"], age(row)) for row in rows(before)[:1]]
+    journey.expect(waiting == [("Needs permission, remembered", "6m ago")],
+                   f"the blocked request is not pinned at the top: {waiting}")
     day_old = next(row for row in rows(before) if row["identifier"] == expected[5])
     journey.expect(age(day_old) == "1d ago",
                    f"the agent that has not moved in a day reads {age(day_old)!r}")
@@ -725,7 +723,7 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect(first_frame is not None,
                    f"no first frame was marked: {[mark['signpost'] for mark in marks]}")
     journey.say(f"before reaching anything: {len(rows(before))} remembered rows, "
-                f"{waiting[0][1]} then {waiting[1][1]} at the top, {subtitle!r}, "
+                f"{waiting[0][1]} at the top, {subtitle!r}, "
                 f"nothing spinning, first frame "
                 f"{first_frame['sinceProcessStart'] * 1000:.0f} ms after the process started")
 
@@ -782,10 +780,10 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
                    f"{sorted(daemons)}")
     # Every row this phone remembered is confirmed by the machine that owns
     # it, and confirming it does not move it: the list is the same list, in
-    # the same order, with nothing left shimmering.
+    # the same order, with nothing left unconfirmed.
     surviving = placed(confirmed, "confirming the fleet moved the list")
-    journey.expect(confirmed["shimmering"] == 0,
-                   f"{confirmed['shimmering']} rows were still drawn as remembered after the "
+    journey.expect(confirmed["unconfirmed"] == 0,
+                   f"{confirmed['unconfirmed']} rows were still unconfirmed after the "
                    f"fleet was confirmed")
     journey.expect(confirmed["reconciled"],
                    "the fleet was drawn as confirmed by no machine")

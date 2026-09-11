@@ -104,7 +104,7 @@ public struct Paywall: View {
 
     private var heading: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Reach your agents anywhere")
+            Text("Reach your agents\nanywhere")
                 .designFont(.screenTitle, design)
                 .foregroundStyle(design.ink.color)
                 .fixedSize(horizontal: false, vertical: true)
@@ -120,7 +120,7 @@ public struct Paywall: View {
     }
 
     private var explanation: String {
-        "Subscribe to reach your hosts through the relay."
+        "A subscription connects this phone to your hosts. Without one, nothing is reachable."
     }
 
     private var plans: some View {

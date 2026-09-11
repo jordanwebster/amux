@@ -5,7 +5,7 @@ import XCTest
 final class FleetOrderTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
-    func testAgentsThatNeedYouArePinnedLongestWaitingFirst() {
+    func testActionableAsksArePinnedNewestFirst() {
         let cards = [
             Made.card(1, name: "recent-ask", attention: .needsYou(why: .permission), minutesAgo: 5, now: now),
             Made.card(2, name: "busy", attention: .working, minutesAgo: 1, now: now),
@@ -14,10 +14,10 @@ final class FleetOrderTests: XCTestCase {
         ]
         let sections = fleetOrder(cards, now: now, unread: UnreadWeights())
         XCTAssertEqual(sections.first?.kind, .needsYou)
-        XCTAssertEqual(sections.first?.rows.map(\.name), ["old-ask", "middle-ask", "recent-ask"])
+        XCTAssertEqual(sections.first?.rows.map(\.name), ["recent-ask", "old-ask"])
         XCTAssertEqual(sections.first?.title, "Needs you")
         XCTAssertEqual(sections[1].title, "Everything else")
-        XCTAssertEqual(sections[1].rows.map(\.name), ["busy"])
+        XCTAssertEqual(sections[1].rows.map(\.name), ["busy", "middle-ask"])
     }
 
     func testEverythingElseIsOneRecencyList() {

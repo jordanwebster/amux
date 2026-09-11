@@ -2,6 +2,25 @@ import AmuxCore
 import AmuxDesign
 import SwiftUI
 
+private struct ExpandedPeerMessagesKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    fileprivate var expandedPeerMessages: Bool {
+        get { self[ExpandedPeerMessagesKey.self] }
+        set { self[ExpandedPeerMessagesKey.self] = newValue }
+    }
+}
+
+public extension View {
+    /// Opens peer exchanges on entry when the surrounding screen asks to show
+    /// their full contents.
+    func expandedPeerMessages(_ expanded: Bool = true) -> some View {
+        environment(\.expandedPeerMessages, expanded)
+    }
+}
+
 /// What happened, in order.
 ///
 /// Everything an agent does hangs off one rail: a single hairline in the glyph
@@ -101,10 +120,9 @@ extension EnvironmentValues {
 /// A conversation opens at its latest row and follows the tail while a turn
 /// streams, which is what a chat does: what just happened is what you are
 /// looking at, and a row arriving while you read the tail brings you with it.
-/// Only where the list starts and how it reacts to growing are anchored — its
-/// alignment is not — so a transcript shorter than the screen stays at the top
-/// where it began instead of being pushed down against the composer. A
-/// two-row conversation must never open with empty ground above its first row.
+/// The latest row stays beside the composer, including when the whole transcript
+/// is shorter than the viewport. Longer transcripts still open at their tail and
+/// follow it while a turn streams.
 ///
 /// Markdown and lazy rows acquire their heights after the scroll view first
 /// lays out. The composer can also change the viewport as its measured height
@@ -156,6 +174,7 @@ struct TranscriptContainer<Content: View>: View {
         // below them is not a reason to be taken to the bottom of the feed.
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .initialOffset)
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .sizeChanges)
+        .defaultScrollAnchor(.bottom, for: .alignment)
         .scrollPosition($position)
         .onScrollGeometryChange(for: TranscriptLayout.self) { geometry in
             TranscriptLayout(geometry)
@@ -311,11 +330,8 @@ private struct TranscriptRowView: View {
                 Prose(markdown: said, open: open)
             }
                 .padding(.vertical, design.metrics.feedGap / 2)
-        case .turnEnd(let meta):
-            FeedRule(
-                kind: "turn-end", glyph: nil,
-                label: meta.map { "\($0) · turn ended" } ?? "turn ended")
-                .padding(.vertical, design.metrics.feedGap / 2)
+        case .turnEnd, .thinking:
+            EmptyView()
         case .compaction(let before, let after):
             FeedRule(
                 kind: "compaction", glyph: "arrow.down.right.and.arrow.up.left",
@@ -370,10 +386,8 @@ private struct TranscriptRowView: View {
             ActivityRow(
                 kind: "provider-error", verb: "Provider error", subject: nil, mono: false,
                 meta: nil, note: message)
-        case .thinking(let seconds, let redacted):
-            ActivityRow(
-                kind: "thinking", verb: seconds.map { "Thought for \($0)s" } ?? "Thought",
-                subject: redacted ? "withheld" : nil, mono: false, meta: nil)
+        case .thinking:
+            EmptyView()
         case .subagent(let name, let kind, let state):
             ActivityRow(
                 kind: "subagent", verb: state == nil ? "Started" : (state ?? "").capitalized,
@@ -443,28 +457,28 @@ private struct Rail<Content: View>: View {
     /// Wide enough for the widest glyph in the vocabulary and no wider: the
     /// column is a margin, and every point of it is width the prose beside it
     /// does not get.
-    private let column: CGFloat = 26
+    private let column: CGFloat = 14
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            VStack(spacing: 3) {
+        HStack(alignment: .top, spacing: 9) {
+            VStack(spacing: 0) {
                 Image(systemName: glyph)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(accented ? design.accent.color : design.inkFaint.color)
-                    .frame(width: column, height: 20)
+                    .frame(width: column, height: 18)
                 // The line is drawn per row rather than once behind the whole
                 // feed, so a lazy list that has not built the rows below still
                 // draws a rail that stops where the work does.
                 Rectangle()
                     .fill(design.hairline.color)
-                    .frame(width: 1)
+                    .frame(width: design.metrics.hairline)
                     .frame(maxHeight: .infinity)
                     .opacity(continues ? 1 : 0)
             }
             .frame(width: column)
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.bottom, 7)
+                .padding(.bottom, 4)
         }
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -481,17 +495,17 @@ private struct PromptSurface: View {
 
     var body: some View {
         HStack {
-            Spacer(minLength: 36)
+            Spacer(minLength: 44)
             AttachedText(text: text) { said in
                 Text(said)
                     .designFont(.body, design)
                     .foregroundStyle(design.ink.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .background {
-                    RoundedRectangle(cornerRadius: design.metrics.cardRadius, style: .continuous)
+                    RoundedRectangle(cornerRadius: design.metrics.controlRadius + 3, style: .continuous)
                         .fill(design.sunken.color)
                 }
         }
@@ -500,6 +514,33 @@ private struct PromptSurface: View {
     }
 }
 
+private enum DocumentMetrics {
+    static let blockGap: CGFloat = 14
+    static let listGap: CGFloat = 6
+    static let lineSpacing: CGFloat = 4
+}
+
+private func styledInline(_ source: AttributedString, design: Design) -> AttributedString {
+    var text = source
+    for run in text.runs {
+        if run.inlinePresentationIntent == .code {
+            text[run.range].font = design.font(.mono)
+            text[run.range].foregroundColor = design.inkMuted.color
+        }
+        if run.link != nil {
+            text[run.range].foregroundColor = design.accent.color
+            text[run.range].underlineStyle = .single
+        }
+    }
+    return text
+}
+
+private func documentHeadingFont(level: Int, design: Design) -> Font {
+    let size: CGFloat = level == 1 ? 21 : (level == 2 ? 18 : 15.5)
+    let style: Font.TextStyle = level == 1 ? .title3 : .headline
+    BundledFonts.register()
+    return .custom(design.faces.display, size: size, relativeTo: style).weight(.semibold)
+}
 /// What the agent said.
 ///
 /// The markdown is parsed away from the main thread and the blocks arrive as a
@@ -517,7 +558,7 @@ struct Prose: View {
     @State private var document: MarkdownDocument?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: DocumentMetrics.blockGap) {
             ForEach(Array((document?.blocks ?? []).enumerated()), id: \.offset) { _, block in
                 MarkdownBlockView(block: block)
             }
@@ -526,7 +567,7 @@ struct Prose: View {
         // Links are underlined by the parser, so the tint only has to stop
         // them arriving in the system's blue, which is not a colour this
         // design owns.
-        .tint(design.ink.color)
+        .tint(design.accent.color)
         .task(id: markdown) {
             let source = markdown
             document = await Task.detached(priority: .userInitiated) {
@@ -546,25 +587,27 @@ private struct MarkdownBlockView: View {
     var body: some View {
         switch block {
         case .heading(let level, let text):
-            Text(text)
-                .designFont(level <= 2 ? .screenTitle : .bodyEmphasis, design)
+            Text(styledInline(text, design: design))
+                .font(documentHeadingFont(level: level, design: design))
                 .foregroundStyle(design.ink.color)
                 .fixedSize(horizontal: false, vertical: true)
         case .paragraph(let text):
-            Text(text)
+            Text(styledInline(text, design: design))
                 .designFont(.body, design)
                 .foregroundStyle(design.ink.color)
+                .lineSpacing(DocumentMetrics.lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
         case .list(_, let items):
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: DocumentMetrics.listGap) {
                 ForEach(items) { item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(item.marker)
                             .designFont(.body, design)
                             .foregroundStyle(design.inkFaint.color)
-                        Text(item.text)
+                        Text(styledInline(item.text, design: design))
                             .designFont(.body, design)
                             .foregroundStyle(design.ink.color)
+                            .lineSpacing(DocumentMetrics.lineSpacing)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.leading, CGFloat(item.depth) * 16)
@@ -574,12 +617,12 @@ private struct MarkdownBlockView: View {
             CodeBlock(language: language, text: text)
         case .quote(let lines):
             HStack(alignment: .top, spacing: 10) {
-                Rectangle()
-                    .fill(design.hairline.color)
-                    .frame(width: 2)
+                Capsule()
+                    .fill(design.inkFaint.color.opacity(0.45))
+                    .frame(width: 2.5)
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                        Text(line)
+                        Text(styledInline(line, design: design))
                             .designFont(.body, design)
                             .foregroundStyle(design.inkMuted.color)
                             .fixedSize(horizontal: false, vertical: true)
@@ -630,8 +673,10 @@ private struct CodeBlock: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: design.metrics.controlRadius, style: .continuous)
-                .fill(design.sunken.color)
+            let shape = RoundedRectangle(
+                cornerRadius: design.metrics.controlRadius, style: .continuous)
+            shape.fill(design.sunken.color)
+                .overlay(shape.strokeBorder(design.hairline.color, lineWidth: 1))
         }
         .identified("transcript.code", value: language ?? "plain")
     }
@@ -647,26 +692,33 @@ private struct TableBlock: View {
 
     var body: some View {
         ScrollView(.horizontal) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
                 line(header, emphasis: true)
-                Rectangle()
-                    .fill(design.hairline.color)
-                    .frame(height: design.metrics.hairline)
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    Rectangle().fill(design.hairline.color)
+                        .frame(height: design.metrics.hairline)
                     line(row, emphasis: false)
                 }
+            }
+            .background {
+                let shape = RoundedRectangle(
+                    cornerRadius: design.metrics.controlRadius, style: .continuous)
+                shape.fill(design.sunken.color.opacity(0.6))
+                    .overlay(shape.strokeBorder(design.hairline.color, lineWidth: 1))
             }
         }
         .scrollIndicators(.hidden)
     }
 
     private func line(_ cells: [AttributedString], emphasis: Bool) -> some View {
-        HStack(alignment: .top, spacing: 18) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { _, cell in
-                Text(cell)
-                    .designFont(emphasis ? .bodyEmphasis : .body, design)
-                    .foregroundStyle(emphasis ? design.ink.color : design.inkMuted.color)
-                    .frame(minWidth: 60, alignment: .leading)
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
+                Text(styledInline(cell, design: design))
+                    .designFont(emphasis ? .caption : .monoSmall, design)
+                    .foregroundStyle(emphasis ? design.inkMuted.color : design.ink.color)
+                    .frame(width: index == 0 ? 146 : 128, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, emphasis ? 9 : 8)
             }
         }
     }
@@ -724,7 +776,7 @@ private struct ExplorationRow: View {
                         .foregroundStyle(design.ink.color)
                         .fixedSize()
                     Text(last)
-                        .designFont(.mono, design)
+                        .designFont(.monoSmall, design)
                         .foregroundStyle(design.inkFaint.color)
                         .lineLimit(1)
                         .truncationMode(.head)
@@ -886,7 +938,7 @@ private struct RanRow: View {
     let output: TranscriptRow.Output?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 2) {
             ActivityRow(kind: "ran", verb: "Ran", subject: command, mono: true, meta: meta)
             if let output { OutputPreview(output: output) }
         }
@@ -906,7 +958,7 @@ private struct OutputPreview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(output.head)
-                .designFont(.mono, design)
+                .designFont(.monoSmall, design)
                 .foregroundStyle(design.inkMuted.color)
                 .lineLimit(2)
             if output.hidden != 0 {
@@ -915,7 +967,7 @@ private struct OutputPreview: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(design.inkFaint.color)
                     Text(hiddenLabel)
-                        .designFont(.mono, design)
+                        .designFont(.monoSmall, design)
                         .foregroundStyle(design.inkFaint.color)
                 }
             }
@@ -940,6 +992,7 @@ private struct OutputPreview: View {
 /// quoted voice is visibly not this agent's prose.
 private struct AgentMessageRow: View {
     @Environment(\.design) private var design
+    @Environment(\.expandedPeerMessages) private var initiallyExpanded
     let from: String
     let text: String
     let outbound: Bool
@@ -947,21 +1000,21 @@ private struct AgentMessageRow: View {
     @State private var open = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: open ? 6 : 2) {
             Button { open.toggle() } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 9) {
                     Text(from)
                         .designFont(.identifier, design)
                         .foregroundStyle(design.ink.color)
                         .lineLimit(1)
                     if let note {
                         Text(note)
-                            .designFont(.mono, design)
+                            .designFont(.monoSmall, design)
                             .foregroundStyle(design.inkFaint.color)
                     }
                     Spacer(minLength: 4)
                     Image(systemName: open ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(design.inkFaint.color)
                 }
                 .thumbTarget(y: 13)
@@ -973,12 +1026,15 @@ private struct AgentMessageRow: View {
                 value: open ? "open" : "collapsed")
             .reclaimingThumbTarget(y: 13)
             Text(text)
-                .designFont(.mono, design)
-                .foregroundStyle(design.inkMuted.color)
+                .designFont(open ? .mono : .monoSmall, design)
+                .foregroundStyle(open ? design.inkMuted.color : design.inkFaint.color)
                 .lineLimit(open ? nil : 1)
                 .fixedSize(horizontal: false, vertical: open)
         }
         .accessibilityElement(children: .contain)
+        .onAppear {
+            if initiallyExpanded { open = true }
+        }
     }
 }
 
@@ -1013,7 +1069,7 @@ struct RowLine: Layout {
     /// The most of a contested line the trailing meta may hold.
     static let metaShare: CGFloat = 1.0 / 3.0
     /// Between the verb and the subject, matching the stack this replaced.
-    private let spacing: CGFloat = 8
+    private let spacing: CGFloat = 9
     /// The clear space between the subject and the meta, so that two texts
     /// that both run long still read as two texts.
     private let gap: CGFloat = 20
@@ -1148,23 +1204,25 @@ private struct ActivityRow: View {
     var truncation: Text.TruncationMode = .middle
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        let warning = ["denied", "failed", "interrupted", "provider-error"].contains(kind)
+        VStack(alignment: .leading, spacing: 2) {
             RowLine {
                 Text(verb)
-                    .designFont(.body, design)
-                    .foregroundStyle(design.ink.color)
+                    .designFont(.detail, design)
+                    .foregroundStyle(warning ? design.ink.color : design.inkMuted.color)
+                    .fixedSize()
                     .rowLine(.verb)
                 if let subject {
                     Text(subject)
-                        .designFont(mono ? .mono : .body, design)
-                        .foregroundStyle(mono ? design.inkMuted.color : design.ink.color)
+                        .designFont(mono ? .monoSmall : .detail, design)
+                        .foregroundStyle(warning ? design.inkMuted.color : design.inkFaint.color)
                         .lineLimit(1)
                         .truncationMode(truncation)
                         .rowLine(.subject)
                 }
                 if let meta {
                     Text(meta)
-                        .designFont(.mono, design)
+                        .designFont(.monoSmall, design)
                         .foregroundStyle(design.inkFaint.color)
                         .lineLimit(1)
                         .rowLine(.meta)
@@ -1172,7 +1230,7 @@ private struct ActivityRow: View {
             }
             if let note {
                 Text(note)
-                    .designFont(.mono, design)
+                    .designFont(.monoSmall, design)
                     .foregroundStyle(design.inkFaint.color)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)

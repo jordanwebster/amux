@@ -182,7 +182,7 @@ final class DoorTests: XCTestCase {
             elements: [VisibleElement(
                 identifier: "home.title", label: "Agents", value: nil,
                 frame: VisibleFrame(x: 16, y: 64, width: 200, height: 32), enabled: true)],
-            reconciled: true, shimmering: 3)
+            reconciled: true, unconfirmed: 3)
         let bridge = BridgeState(
             build: "0.1.0+debug-tools", started: true, connection: "connected",
             reconciled: true, hosts: [], agents: ["helper"], relayAttempts: 3, relayRetries: 1,

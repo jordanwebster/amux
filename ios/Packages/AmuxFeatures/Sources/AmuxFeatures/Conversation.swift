@@ -202,11 +202,6 @@ public struct Conversation: View {
     @Environment(\.design) private var design
     private let model: ConversationStore
     private let subject: ConversationSubject
-    /// What the fleet calls an agent this one started. The fleet owns names
-    /// and this screen does not, so whoever has the fleet hands the naming in
-    /// and a conversation drawn without one falls back to the identity, which
-    /// is at least true.
-    private let naming: (AgentId) -> String
     /// Where a recording left the reader in this transcript, or nothing for
     /// the ordinary case of opening at the latest entry.
     private let resting: TranscriptResting?
@@ -218,26 +213,11 @@ public struct Conversation: View {
     /// Told where the reader has come to rest in the transcript, for the same
     /// reason and by the same builds.
     private let reading: (@MainActor (TranscriptResting) -> Void)?
-    /// Told when a finished turn's offer of its changes is set aside, and by
-    /// the same builds again.
-    private let asiding: (@MainActor (Bool) -> Void)?
     private let actions: @MainActor (ConversationAction) -> Void
-    /// Whether the finished turn's panel has been set aside for this visit.
-    ///
-    /// View state, because Later is not something the host is told: nothing is
-    /// sent, the changes stay where they are, and the chip in the chrome is
-    /// still the way to them. Coming back to the conversation offers again.
-    @State private var deferred: Bool
-
-    /// Which child said it cannot be opened, while its sentence is on show.
-    ///
-    /// View state, because pressing one of those chips is not going anywhere:
-    /// nothing is sent, nothing is opened, and coming back to the conversation
-    /// starts again with the strip as it was.
-    @State private var unopenable: ChildRow.ID?
-
     /// What this conversation has opened over itself, if anything.
     @State private var showing: ConversationOverlay?
+    /// The durable notification preference owned by the presenting app.
+    private let muted: Bool
     /// How tall the page is, and how tall what is standing at the bottom of it
     /// wants to be. Both are measured rather than assumed because the answer
     /// is the reader's: at the largest accessibility size an unanswered ask is
@@ -254,25 +234,21 @@ public struct Conversation: View {
     public init(
         model: ConversationStore,
         subject: ConversationSubject,
-        naming: @escaping (AgentId) -> String = { $0.description },
         showing: ConversationOverlay? = nil,
-        aside: Bool = false,
+        muted: Bool = false,
         resting: TranscriptResting? = nil,
         opening: (@MainActor (ConversationOverlay?) -> Void)? = nil,
         reading: (@MainActor (TranscriptResting) -> Void)? = nil,
-        asiding: (@MainActor (Bool) -> Void)? = nil,
         actions: @escaping @MainActor (ConversationAction) -> Void
     ) {
         self.model = model
         self.subject = subject
-        self.naming = naming
+        self.muted = muted
         self.resting = resting
         self.opening = opening
         self.reading = reading
-        self.asiding = asiding
         self.actions = actions
         _showing = State(initialValue: showing)
-        _deferred = State(initialValue: aside)
     }
 
     public var body: some View {
@@ -286,9 +262,10 @@ public struct Conversation: View {
             // hangs from the control that opened it, and a deletion is a
             // question about the conversation as a whole.
             if showing == .overflow {
-                OverflowMenu(address: address) { choice in
+                OverflowMenu(address: address, muted: muted) { choice in
                     switch choice {
                     case .rename: showing = .rename
+                    case .mute: showing = nil
                     case .delete: showing = .deleteAgent
                     // Copying happens outside this screen and leaves nothing
                     // open behind it: the menu did what it said it would.
@@ -337,7 +314,6 @@ public struct Conversation: View {
         // pass through an action at all. What is open is one piece of state,
         // so what is open is what is reported.
         .onChange(of: showing) { _, now in opening?(now) }
-        .onChange(of: deferred) { _, now in asiding?(now) }
     }
 
     /// The feed, under the chrome rather than beside it.
@@ -351,6 +327,11 @@ public struct Conversation: View {
             if !subject.readable {
                 UnsupportedLayer(layer: "this agent’s transcript")
                     .padding(.top, design.metrics.feedGap)
+            } else if typeSize.isAccessibilitySize, model.asks.panel != nil {
+                // The ask repeats the command and reason it needs. At large
+                // type, a clipped fragment of the feed behind the fixed pill
+                // provides no context and makes both surfaces harder to read.
+                EmptyView()
             } else {
                 TranscriptFeed(rows: model.rows())
             }
@@ -384,7 +365,7 @@ public struct Conversation: View {
     /// and to whatever the agent last said, and a conversation whose whole
     /// screen is the answer buttons is not a conversation.
     private var footCap: CGFloat {
-        pageHeight > 0 ? pageHeight * 0.66 : .infinity
+        pageHeight > 0 ? pageHeight * 0.84 : .infinity
     }
 
     /// What occupies the composer's place when a message would not go.
@@ -445,11 +426,6 @@ public struct Conversation: View {
             // that answer is the only thing worth offering.
             } else if let panel = model.asks.panel {
                 AskPanelView(panel: panel) { actions(.answer(panel, $0)) }
-            } else if let changes = model.changes, !changes.isEmpty,
-                      subject.finished, !deferred {
-                FinishedPanel(
-                    changes: changes, review: { leaving(.openChanges) },
-                    later: { deferred = true })
             } else if let state = ConversationFootState(
                 gate: model.gate, refusal: model.refusal, subject: subject) {
                 ConversationFoot(state: state) { actions(.retry) }
@@ -576,80 +552,34 @@ public struct Conversation: View {
     // MARK: - The chrome
 
     private var chrome: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 8) {
-                pill
-                Spacer(minLength: 6)
-                if let changes = model.changes, !changes.isEmpty {
-                    ChangesChip(changes: changes) { leaving(.openChanges) }
-                }
-                Button {
-                    showing = showing == .overflow ? nil : .overflow
-                    actions(.overflow)
-                } label: {
-                    GlassIcon(glyph: "ellipsis")
-                }
-                .accessibilityLabel("More")
-                .identified("conversation.overflow", label: "More")
+        HStack(alignment: .center, spacing: 8) {
+            pill
+            Spacer(minLength: 6)
+            if let changes = model.changes, !changes.isEmpty {
+                ChangesChip(changes: changes) { leaving(.openChanges) }
             }
-            children
+            Button {
+                showing = showing == .overflow ? nil : .overflow
+                actions(.overflow)
+            } label: {
+                GlassIcon(glyph: "ellipsis")
+            }
+            .accessibilityLabel("More")
+            .identified("conversation.overflow", label: "More")
         }
         .padding(.horizontal, design.metrics.gutter)
-        .padding(.vertical, 6)
+        .padding(.top, 6)
+        .padding(.bottom, typeSize.isAccessibilitySize ? 18 : 6)
         // Glass over a sliver of transcript says "this floats". Glass over a
         // third of the display says nothing and leaves half-read words behind
         // every letter of the name, so at an accessibility size the chrome
         // stands on the ground instead and the feed begins under it.
-        .background { if typeSize.isAccessibilitySize { design.ground.color } }
-    }
-
-    /// What this agent started, and where each one can be answered.
-    ///
-    /// It rides with the chrome rather than sitting in the feed because a
-    /// child is a fact about the agent and not something it said: scrolling
-    /// back through a long turn must not take the one waiting child off the
-    /// screen. Nothing is drawn when an agent has started nothing, which is
-    /// most conversations.
-    @ViewBuilder
-    private var children: some View {
-        let roster = model.children(named: naming)
-        if !roster.isEmpty {
-            ScrollView(.horizontal) {
-                HStack(spacing: 8) {
-                    ForEach(roster) { child in
-                        ChildChip(child: child, explaining: unopenable == child.id) {
-                            if let agent = child.openable {
-                                unopenable = nil
-                                leaving(.openChild(agent))
-                            } else {
-                                unopenable = unopenable == child.id ? nil : child.id
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 2)
-            }
-            .scrollIndicators(.hidden)
-            .accessibilityElement(children: .contain)
-            .identified("conversation.children", value: "\(roster.count)")
-            // The sentence sits under the strip rather than inside a chip: it
-            // is a whole clause and a chip is a name, and a chip that grew to
-            // hold it would move every chip beside it.
-            if let named = unopenable,
-               let sentence = roster.first(where: { $0.id == named })?.unopenable {
-                Text(sentence)
-                    .designFont(.caption, design)
-                    .foregroundStyle(design.inkMuted.color)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background { Color.clear.frosted(
-                        RoundedRectangle(
-                            cornerRadius: design.metrics.controlRadius, style: .continuous)) }
-                    .identified("conversation.child.unopenable", value: sentence)
+        .background {
+            if typeSize.isAccessibilitySize {
+                design.ground.color.ignoresSafeArea(edges: .top)
             }
         }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 
     /// The agent, its machine and its directory, on one floating surface with
@@ -687,99 +617,23 @@ public struct Conversation: View {
                     .designFont(.identifier, design)
                     .foregroundStyle(design.ink.color)
                     .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
-                if !typeSize.isAccessibilitySize {
-                    Text(subject.place)
-                        .designFont(.monoSmall, design)
-                        .foregroundStyle(design.inkFaint.color)
-                        .lineLimit(1)
-                }
+                Text(subject.place)
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .lineLimit(1)
             }
             .fixedSize(horizontal: false, vertical: true)
             .padding(.trailing, 14)
         }
         .padding(.leading, 2)
         .frame(minHeight: 52)
-        .frosted(Capsule())
+        // Large transcript type must not remain legible through the subject:
+        // the shape still has the approved glass edge, over an opaque wash.
+        .frosted(Capsule(), wash: typeSize.isAccessibilitySize ? 1 : Glass.wash)
         .accessibilityElement(children: .contain)
         .identified(
             "conversation.subject", label: "\(subject.name), \(subject.place)",
             value: subject.name)
-    }
-}
-
-/// One agent this one started, as a chip you can press.
-///
-/// An agent with a conversation of its own is a door and is drawn as one; work
-/// the provider runs inside this session is not, and pressing it says so
-/// rather than doing nothing. Both are pressable because both look pressable,
-/// and a control that looks alive and ignores a finger reads as a broken app.
-private struct ChildChip: View {
-    @Environment(\.design) private var design
-    let child: ChildRow
-    /// Whether this chip's own reason for going nowhere is on show under the
-    /// strip.
-    let explaining: Bool
-    let press: @MainActor () -> Void
-
-    var body: some View {
-        Button(action: press) {
-            HStack(spacing: 6) {
-                if child.needs != nil {
-                    NeedsYouMark(glyph: glyph, size: 16)
-                } else if child.openable == nil {
-                    Image(systemName: explaining ? "info.circle.fill" : "info.circle")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(design.inkFaint.color)
-                }
-                Text(child.name)
-                    .designFont(.caption, design)
-                    .foregroundStyle(design.ink.color)
-                    .lineLimit(1)
-                if let state = child.state {
-                    Text(state)
-                        .designFont(.caption, design)
-                        .foregroundStyle(design.inkFaint.color)
-                        .lineLimit(1)
-                }
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 34)
-            .background { Color.clear.frosted(Capsule()) }
-            .thumbTarget(y: 6)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(spoken)
-        .identified("conversation.child.\(child.id)", label: spoken, value: value)
-        .reclaimingThumbTarget(y: 6)
-    }
-
-    /// The accent glyph is the fleet's, so a child waiting on a permission
-    /// reads here exactly as its row reads on the home.
-    private var glyph: String {
-        switch child.needs {
-        case .permission: "hand.raised.fill"
-        case .question: "questionmark"
-        case .finished: "checkmark"
-        case nil: "circle"
-        }
-    }
-
-    private var spoken: String {
-        [child.name, said, child.openable == nil ? "no conversation" : nil]
-            .compactMap { $0 }.joined(separator: ", ")
-    }
-
-    /// What a driver and VoiceOver read off the chip: what it is waiting for,
-    /// or the layer's own last word about it.
-    private var value: String { said ?? "" }
-
-    private var said: String? {
-        switch child.needs {
-        case .permission: "needs permission"
-        case .question: "has a question"
-        case .finished: "finished"
-        case nil: child.state
-        }
     }
 }
 
