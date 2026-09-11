@@ -77,16 +77,19 @@ Profiles:
 @TpairA
 > amux pair
 @@capture pairing_pin Pairing PIN:
+@@capture direct_addresses LAN direct addresses:
 Pairing mode active for 5 minutes.
 
 @TpairB
-> amux pair --connect host-a
+> amux pair host-a
 > $pairing_pin
 
 @@sleep 1500
 
 @TpairB
-@@capture paired_peer PIN: Paired with
+@@capture authenticated_host Pairing code: Host:
+@@capture fingerprint Fingerprint:
+@@capture paired_peer Paired with
 
 @@sleep 1200
 

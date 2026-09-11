@@ -1,3 +1,14 @@
+2026-09-11 — **Make nearby pairing the desktop on-ramp.** A fresh `amux init`
+now leaves a fifteen-minute pairing code open beside an install-link QR and
+explains that local use needs no account. `amux pair` accepts one host name,
+address, or `user@host` target, displays the authenticated name and fingerprint
+before committing trust, and reports whether the resulting pair is local,
+relayed, or over SSH. `amux peer list` refreshes discovery and combines trusted
+and unpaired hosts in one route-aware table. The route-specific `--connect` and
+`--via-ssh` flags are gone. CLI unit tests and end-to-end transcripts cover the
+copy, candidate resolution, direct and relay pairing, SSH pairing, and the
+found-to-trusted peer-list transition.
+
 2026-09-11 — **Unify local and relay device pairing.** The installation front
 door now exposes one two-phase Begin/Confirm/Abandon flow for PIN and QR
 pairing. It tries freshly discovered addresses, caller-provided addresses, and

@@ -340,8 +340,8 @@ mod tests {
     #[test]
     fn server_not_running_message_can_include_retry_command() {
         assert_eq!(
-            server_not_running_message(Some("amux pair --connect")),
-            "amux server is not running.\n\nStart it with:\n  amux server start\n\nThen run:\n  amux pair --connect"
+            server_not_running_message(Some("amux pair <target>")),
+            "amux server is not running.\n\nStart it with:\n  amux server start\n\nThen run:\n  amux pair <target>"
         );
         assert_eq!(
             server_not_running_message(None),

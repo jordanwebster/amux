@@ -9,7 +9,8 @@
 use std::io::{self, Write};
 
 use amux::setup::SetupError;
-use amux::{Config, setup};
+use amux::{Config, PairingSecret, setup};
+use amux_cli::connections::{INSTALL_LINK, onramp_lines};
 
 #[derive(Debug)]
 pub enum InitError {
@@ -150,7 +151,8 @@ pub async fn initialize(profile_path: Option<&std::path::Path>, reset: bool) -> 
     }
     installation.prevent_idle_sleep = preferences.prevent_idle_sleep;
     let mut front = crate::front_door::connect(&installation, true).await?;
-    if crate::profiles::directory(&mut front).await?.is_empty() {
+    let mut directory = crate::profiles::directory(&mut front).await?;
+    if directory.is_empty() {
         let profile = front
             .profiles
             .create_profile(rpc::CreateProfileRequest {
@@ -160,12 +162,57 @@ pub async fn initialize(profile_path: Option<&std::path::Path>, reset: bool) -> 
             .await?
             .into_inner();
         println!("Created unbound profile {}.", profile.id);
+        directory.push(profile);
     }
     println!("Installation ready. Run `amux login` to connect a cloud account.");
+    if let Some(profile_id) = onramp_profile_id(profile_path, &installation, &directory)? {
+        let admin = front.admin(amux::installation::ProfileId(profile_id));
+        if admin.list_peers().await?.is_empty() {
+            if admin.pairing_is_active().await? {
+                admin.cancel_pairing().await?;
+            }
+            let pairing = admin
+                .start_pin_pairing_with_ttl(amux::ONRAMP_PAIR_MODE_TTL)
+                .await?;
+            let PairingSecret::Pin(code) = pairing.secret else {
+                unreachable!("the init on-ramp requests PIN pairing")
+            };
+            println!();
+            for line in onramp_lines(
+                &installation.host_name,
+                &code,
+                std::time::Duration::from_secs(pairing.ttl_seconds),
+                INSTALL_LINK,
+            ) {
+                println!("{line}");
+            }
+        }
+    }
     if was_running {
         println!("Restart the server to apply changed keep-awake preferences.");
     }
     Ok(())
+}
+
+fn onramp_profile_id(
+    profile_path: Option<&std::path::Path>,
+    installation: &amux::InstallationConfig,
+    directory: &[amux::installation::rpc::ProfileInfo],
+) -> anyhow::Result<Option<uuid::Uuid>> {
+    if let Some(path) = profile_path {
+        return Ok(Some(
+            amux::load_profile_config(&std::fs::canonicalize(path)?)?
+                .profile_id
+                .0,
+        ));
+    }
+    let remembered = std::fs::read_to_string(crate::profiles::last_used(installation)).ok();
+    Ok(
+        crate::profiles::select(directory, None, remembered.as_deref())
+            .ok()
+            .map(|profile| profile.id.parse())
+            .transpose()?,
+    )
 }
 
 fn prompt_idle_sleep(config: &mut Config) -> Result<(), InitError> {

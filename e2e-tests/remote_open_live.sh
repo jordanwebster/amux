@@ -38,7 +38,7 @@ pair_pid=$!
 live_wait_file 30 "$scratch/pair-server.log" 'Pairing PIN:'
 pin=$(sed -n 's/^Pairing PIN: //p' "$scratch/pair-server.log" | head -n 1)
 [ -n "$pin" ] || live_fail 'pair responder did not publish a PIN'
-printf '%s\n' "$pin" | timeout 60 "$amux_bin" --config "$b_config" pair --connect "127.0.0.1:$a_port" > "$scratch/pair-client.log" 2>&1
+printf '%s\n' "$pin" | timeout 60 "$amux_bin" --config "$b_config" pair "127.0.0.1:$a_port" > "$scratch/pair-client.log" 2>&1
 wait "$pair_pid"
 pair_pid=
 timeout 30 "$amux_bin" --config "$b_config" peer list > "$evidence_dir/peers.txt"

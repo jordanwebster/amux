@@ -222,6 +222,18 @@ impl ProfileAdminClient {
             .await
     }
 
+    pub async fn start_pin_pairing_with_ttl(
+        &self,
+        ttl: Duration,
+    ) -> Result<PairingStart, ClientError> {
+        self.start_pairing(
+            wire::start_pairing_request::Mode::Pin,
+            Some(ttl.as_secs()),
+            None,
+        )
+        .await
+    }
+
     pub async fn start_lan_pin_pairing(&self) -> Result<PairingStart, ClientError> {
         self.start_pairing(wire::start_pairing_request::Mode::Pin, None, None)
             .await

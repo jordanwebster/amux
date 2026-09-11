@@ -554,13 +554,7 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     assert!(personal.pairing_is_active().await.unwrap());
 
     let mut pair = local
-        .command(&[
-            "pair",
-            "--profile",
-            "work",
-            "--connect",
-            &address.to_string(),
-        ])
+        .command(&["pair", "--profile", "work", &address.to_string()])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -569,12 +563,12 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     pair.stdin.take().unwrap().write_all(b"654321\n").unwrap();
     let output = pair.wait_with_output().unwrap();
     println!(
-        "$ amux pair --profile work --connect {address}\n{}{}",
+        "$ amux pair --profile work {address}\n{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.status.success(), "{output:?}");
-    assert!(String::from_utf8_lossy(&output.stdout).contains("via direct TCP"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("on this network"));
     assert!(personal.list_peers().await.unwrap().is_empty());
     assert!(
         personal.pairing_is_active().await.unwrap(),
@@ -586,7 +580,10 @@ async fn front_door_cli_pairing_and_trust_stay_with_the_selected_profile() {
     assert!(String::from_utf8_lossy(&info.stdout).contains(&format!("direct-tcp:{address}")));
     local.run(&["unpair", "cli-installation", "--profile", "work", "--force"]);
     let peers = local.run(&["peer", "list", "--profile", "work"]);
-    assert!(String::from_utf8_lossy(&peers.stdout).contains("No trusted peers"));
+    assert_eq!(
+        String::from_utf8_lossy(&peers.stdout),
+        "HOST  ID  VIA  PAIRED\n"
+    );
     local.run(&["pair", "--profile", "personal", "--cancel"]);
     assert!(!personal.pairing_is_active().await.unwrap());
 }
@@ -754,7 +751,7 @@ async fn ssh_renamed_profile() {
 import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
-assert args[:6] == ["-T", "-o", "BatchMode=yes", "--", "remote.example", "amux"], args
+assert args[:6] == ["-T", "-o", "BatchMode=yes", "--", "user@remote.example", "amux"], args
 assert args[6:] == ["pair-recv"] or (len(args) == 9 and args[6:8] == ["relay", "--profile"]), args
 fd = os.open({calls}, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
 os.write(fd, (json.dumps(args) + "\n").encode())
@@ -788,7 +785,7 @@ os.execve({binary}, [{binary}] + args[6:], env)
         output
     };
     run_local_ssh(&["server", "start"]);
-    run_local_ssh(&["pair", "--via-ssh", "remote.example"]);
+    run_local_ssh(&["pair", "user@remote.example"]);
 
     let local_front = FrontDoorClient::connect(&local.installation.front_door_socket)
         .await
@@ -802,7 +799,7 @@ os.execve({binary}, [{binary}] + args[6:], env)
     assert_eq!(
         peers[0].reachabilities,
         vec![PeerReachability::Ssh {
-            target: "remote.example".into(),
+            target: "user@remote.example".into(),
             profile: work_id,
         }]
     );
@@ -929,7 +926,7 @@ os.execve({binary}, [{binary}] + args[6:], env)
                 "-o",
                 "BatchMode=yes",
                 "--",
-                "remote.example",
+                "user@remote.example",
                 "amux",
                 "relay",
                 "--profile",

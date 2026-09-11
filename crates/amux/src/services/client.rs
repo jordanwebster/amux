@@ -205,9 +205,9 @@ impl ClientService {
                 host: HostEntry {
                     id: advert.host_id,
                     name: advert.name,
-                    online: false,
+                    online: true,
                     version: Some(advert.version.to_string()),
-                    capabilities: None,
+                    capabilities: Some(crate::Capabilities::default()),
                     trust_status: HostTrustStatus::UntrustedButOnline,
                     last_dial_error: None,
                 },

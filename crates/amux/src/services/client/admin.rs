@@ -148,6 +148,7 @@ impl ProfileAdmin {
             .trust_commit_lock
             .check()
             .map_err(|error| status_to_client_error(protocol_status(error)))?;
+        self.service.reachability_links.requery();
         Ok(self.service.list_pairing_candidates().await)
     }
 

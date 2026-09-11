@@ -50,17 +50,19 @@ Server started.
 @TpairA
 > amux pair --listen
 @@capture pairing_pin Pairing PIN:
-LAN direct listener: port $server_a.lan_port
+@@capture direct_addresses LAN direct addresses:
 Pairing mode active for 5 minutes.
 
 @TpairB
-> amux pair --connect 127.0.0.1:$server_a.lan_port
+> amux pair 127.0.0.1:$server_a.lan_port
 > $pairing_pin
 
 @@sleep 1500
 
 @TpairB
-@@capture paired_peer PIN: Paired with
+@@capture authenticated_host Pairing code: Host:
+@@capture fingerprint Fingerprint:
+@@capture paired_peer Paired with
 
 @@sleep 1200
 

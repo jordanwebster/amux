@@ -41,7 +41,12 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     };
 
     match subcommand {
-        "client" | "list" | "ls" | "profiles" | "init" | "login" | "logout" | "update" => true,
+        "client" | "list" | "ls" | "profiles" | "init" | "login" | "logout" | "update" | "peer" => {
+            true
+        }
+        "pair" => command.args[index + 1..]
+            .iter()
+            .any(|arg| arg == "--cancel" || arg == "--demo"),
         "profile" => {
             command
                 .args
@@ -1221,7 +1226,13 @@ impl Executor {
             let env = config_envs
                 .get(&cfg.name)
                 .ok_or_else(|| format!("Missing env for config: {}", cfg.name))?;
-            let mut commands = vec![vec!["init".to_string()]];
+            // Explicit init now leaves the fresh-install pairing window open.
+            // General e2e fixtures start from a neutral pairing state; tests of
+            // the on-ramp invoke init themselves after this setup cancellation.
+            let mut commands = vec![
+                vec!["init".to_string()],
+                vec!["pair".to_string(), "--cancel".to_string()],
+            ];
             if let Some(account) = &cfg.cloud_account {
                 fixture
                     .ok_or("login requires cloud fixture")?
