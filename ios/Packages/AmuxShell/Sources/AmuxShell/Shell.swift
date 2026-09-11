@@ -92,6 +92,10 @@ public struct Shell: View {
     /// A debug build may supply a Help action. The shell carries no capture
     /// types or report views, so linking it cannot ship the reporting tools.
     private let report: (@MainActor () -> Void)?
+    /// Where a build with the reporting tools in it keeps what a conversation
+    /// has open and where it is being read, and where a replay puts them back.
+    /// Nothing in the shipping app supplies one.
+    private let recording: ConversationRecording?
     private let actions: @MainActor (ShellAction) -> Void
 
     public init(
@@ -103,6 +107,7 @@ public struct Shell: View {
         deletion: DeletionStore,
         appearance: Appearance? = nil,
         report: (@MainActor () -> Void)? = nil,
+        recording: ConversationRecording? = nil,
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
         self.appearance = appearance
@@ -113,6 +118,7 @@ public struct Shell: View {
         self.signIn = signIn
         self.paywall = paywall
         self.report = report
+        self.recording = recording
         self.actions = actions
     }
 
@@ -168,7 +174,8 @@ public struct Shell: View {
     private func page(_ route: Route) -> some View {
         switch route {
         case .conversation(let agent):
-            ConversationPage(agent: agent, router: router, stores: stores)
+            ConversationPage(
+                agent: agent, router: router, stores: stores, recording: recording)
         case .changes(let agent):
             ChangesPage(agent: agent, router: router, stores: stores)
         case .newAgent:
@@ -197,9 +204,16 @@ private struct ConversationPage: View {
     let agent: AgentId
     let router: Router
     let stores: StoreBundle
+    /// Where a report of this conversation is recorded, and where a replay of
+    /// one left what it is to be put back showing. Nothing in the shipping app.
+    let recording: ConversationRecording?
     /// Whose screen this is while it is out: view state, because a drawer is
     /// something this page is doing and not somewhere the app has gone.
-    @State private var open = false
+    ///
+    /// Seeded rather than always closed, because a replay of a report taken
+    /// with the fleet out has to come back with the fleet out — and a piece of
+    /// view state can only be decided from outside it as it is built.
+    @State private var open: Bool
     @Environment(\.scenePhase) private var scenePhase
     @State private var dictation = SpeechDictation()
     /// The system's own pickers, asked for from the plus. They are presented
@@ -210,12 +224,28 @@ private struct ConversationPage: View {
     @State private var pickingFile = false
     @State private var picked: PhotosPickerItem?
 
+    init(agent: AgentId, router: Router, stores: StoreBundle, recording: ConversationRecording?) {
+        self.agent = agent
+        self.router = router
+        self.stores = stores
+        self.recording = recording
+        _open = State(initialValue: recording?.showing[agent] == ConversationRecording.drawer)
+    }
+
     var body: some View {
         DrawerOverlay(open: $open, drawer: drawer) {
             Conversation(
                 model: stores.conversation(agent),
                 subject: ConversationSubject(agent: agent, in: stores.fleet),
-                naming: { stores.fleet.name(of: $0) }
+                naming: { stores.fleet.name(of: $0) },
+                showing: recording?.showing[agent].flatMap(ConversationOverlay.init(rawValue:)),
+                resting: recording?.reading[agent],
+                opening: recording.map { recording in
+                    { @MainActor @Sendable in recording.opened?(agent, $0?.rawValue) }
+                },
+                reading: recording.map { recording in
+                    { @MainActor @Sendable in recording.read?(agent, $0) }
+                }
             ) { action in
                 switch action {
                 case .openDrawer: open = true
@@ -302,6 +332,11 @@ private struct ConversationPage: View {
         // A conversation has no bar. The feed runs to the top of the display
         // and the way out is the drawer control on its own chrome.
         .toolbar(.hidden, for: .navigationBar)
+        // The fleet over the conversation is this page's state rather than the
+        // conversation's, so it says for itself that it is out.
+        .onChange(of: open) { _, out in
+            recording?.opened?(agent, out ? ConversationRecording.drawer : nil)
+        }
         .onDisappear { dictation.stop() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { dictation.stop() }

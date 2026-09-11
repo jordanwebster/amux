@@ -13,6 +13,12 @@ final class TraceTests: XCTestCase {
         account: SignedInAccount(id: AccountId("ada"), email: "ada@example.com"),
         entitlement: .active(grant: .granted, renews: nil))
 
+    /// One of every kind of event there is, written and read back.
+    ///
+    /// Exhaustive in both directions. The compiler insists a kind added to the
+    /// event is named in ``kind(of:)``; the count below insists it is also
+    /// written into this list, so a new kind cannot reach a recorded bundle
+    /// without anybody having checked that it survives being written down.
     func testEveryTraceEventSurvivesTheWire() throws {
         let events: [TraceEvent] = [
             .route(.home),
@@ -21,9 +27,11 @@ final class TraceTests: XCTestCase {
             .route(.conversation(agent)),
             .route(.review(agent)),
             .route(.screen("probe")),
-            .sheet("new-agent"),
+            .sheet("overflow"),
             .sheet(nil),
-            .scroll(agent, 1_248.5),
+            .reading(agent, TranscriptResting(entry: "msg-41", into: 128.5)),
+            .draft(agent, Self.halfWritten),
+            .draft(agent, MessageDraft()),
             .appearance(.dark),
             .dynamicType("accessibility3"),
             .frozen(at: frozen, ordered: frozen.addingTimeInterval(-44)),
@@ -31,6 +39,67 @@ final class TraceTests: XCTestCase {
             .account(nil),
         ]
         XCTAssertEqual(try Trace.events(Trace.lines(events)), events)
+        XCTAssertEqual(
+            Set(events.map(Self.kind(of:))).count, 8,
+            "a kind of event is missing from the list that is written and read back")
+    }
+
+    /// A draft with a token standing in it: the sentence alone is not the
+    /// draft, because each token holds one private character of it and the
+    /// character says nothing about what it stands for.
+    private static let halfWritten: MessageDraft = {
+        var draft = MessageDraft(prose: "have another look at ")
+        draft.place(caret: 21)
+        draft.insert(DraftToken(
+            kind: .review, label: "Review · 2 comments", element: "<review id=\"abc\"/>",
+            attachment: DraftAttachment(
+                id: ArtifactId("sha256:abc"), kind: .diff, name: "review.diff",
+                mime: "text/x-diff", size: 4_096)))
+        draft.insert(text: " before you start")
+        return draft
+    }()
+
+    /// The kinds there are, named once. A kind added to the event and not
+    /// named here stops this file compiling, which is the point.
+    private static func kind(of event: TraceEvent) -> String {
+        switch event {
+        case .route: "route"
+        case .sheet: "sheet"
+        case .reading: "reading"
+        case .draft: "draft"
+        case .appearance: "appearance"
+        case .dynamicType: "dynamicType"
+        case .frozen: "frozen"
+        case .account: "account"
+        }
+    }
+
+    /// A half-written message comes back whole: the sentence, the caret in it
+    /// and every token standing in it. What a token becomes in the sent
+    /// message and the artifact travelling with it cannot be worked out again
+    /// from the draft, so both have to survive the file.
+    func testADraftComesBackWithItsTokensStandingInIt() throws {
+        let read = try Trace.events(Trace.lines([.draft(agent, Self.halfWritten)]))
+        guard case .draft(_, let draft)? = read.first else {
+            return XCTFail("a draft did not come back as a draft: \(read)")
+        }
+        XCTAssertEqual(draft.body, Self.halfWritten.body)
+        XCTAssertEqual(draft.caret, Self.halfWritten.caret)
+        XCTAssertEqual(draft.ordered.map(\.label), ["Review · 2 comments"])
+        XCTAssertEqual(draft.ordered.first?.attachment?.name, "review.diff")
+    }
+
+    /// Where a reader had got to is written as the entry they were resting on
+    /// and how far into it, never as a distance down the whole feed: markdown
+    /// measures differently at another type size or under an older build, and
+    /// a distance would then point at another row entirely.
+    func testAReadingPositionIsAnEntryAndHowFarIntoIt() throws {
+        let written = try object(Trace.lines([
+            .reading(agent, TranscriptResting(entry: "msg-41", into: 128.5)),
+        ]))
+        let resting = try XCTUnwrap(written["reading"] as? [String: Any])
+        XCTAssertEqual(resting["entry"] as? String, "msg-41")
+        XCTAssertEqual(resting["into"] as? Double, 128.5)
     }
 
     /// An instant is written the way every other timestamp that leaves this

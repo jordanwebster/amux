@@ -39,6 +39,10 @@ final class ConversationTests: XCTestCase {
         let ended: String
         let host: String
         let report: String
+        /// Where the second report goes: the conversation as somebody left
+        /// it, with a message half written, a card open and the feed scrolled
+        /// back off its tail.
+        let left: String
 
         init() throws {
             let environment = ProcessInfo.processInfo.environment
@@ -57,6 +61,7 @@ final class ConversationTests: XCTestCase {
             ended = try required("AMUX_ENDED_AGENT")
             host = try required("AMUX_HOST")
             report = try required("AMUX_REPORT")
+            left = try required("AMUX_LEFT_REPORT")
         }
     }
 
@@ -288,6 +293,57 @@ final class ConversationTests: XCTestCase {
                        "the feed did not get further into the turn as it was scrolled: \(furthest)")
         XCTAssertGreaterThan(furthest.last ?? -1, furthest.first ?? -1,
                              "no row arrived while the transcript was being scrolled: \(furthest)")
+
+        // MARK: A report of the conversation as somebody left it.
+        //
+        // The three things a replay cannot get from the runtime's own
+        // recording, arranged on one screen: a message half written and never
+        // sent, a card open over the conversation, and the feed scrolled back
+        // off its tail. None of them is in any message — they are this phone's
+        // — so a bundle frozen here is the only evidence that a report carries
+        // what somebody was actually looking at.
+        let field = element(app, "composer.field")
+        XCTAssertTrue(field.waitForExistence(timeout: waiting),
+                      "the conversation offered nowhere to write a message")
+        field.tap()
+        field.typeText(Self.halfWritten)
+        // Out to the fleet and back in. It is the shortest way to put the
+        // keyboard down through the app's own path rather than by reaching for
+        // the system's, and it is also the claim that a half-written message
+        // belongs to the conversation rather than to the field: what comes
+        // back has to be what was typed.
+        pressTab(app, "Agents")
+        XCTAssertTrue(element(app, "home").waitForExistence(timeout: waiting),
+                      "leaving the conversation did not return to the home")
+        press(app, "home.row.\(runner.agent)")
+        XCTAssertTrue(conversation.waitForExistence(timeout: waiting),
+                      "coming back did not lead to the conversation")
+        XCTAssertTrue(waitUntil { self.value(app, "composer.field") == Self.halfWritten },
+                      "the half-written message did not survive leaving the conversation; the "
+                      + "field says \(value(app, "composer.field") ?? "nothing")")
+        record["halfWritten"] = value(app, "composer.field")
+
+        // Back off the tail, which is where a conversation opens and stays.
+        let atTheTail = streamedLines(app)
+        for _ in 0..<8 { app.swipeDown(velocity: .fast) }
+        settle()
+        let scrolledBack = streamedLines(app)
+        XCTAssertLessThan(scrolledBack.max() ?? Int.max, atTheTail.max() ?? 0,
+                          "scrolling back left the feed on the same rows it opened at")
+        record["readingAtTheTail"] = atTheTail.max()
+        record["readingScrolledBack"] = scrolledBack.max()
+
+        press(app, "conversation.overflow")
+        XCTAssertTrue(app.staticTexts["Rename"].waitForExistence(timeout: waiting),
+                      "the overflow did not open over the conversation")
+        settle()
+        photograph(app, "conversation-left")
+        _ = try door(runner, .init(kind: "report", agent: runner.agent, path: runner.left))
+        // Closed again, so nothing after this is asked of a screen with a menu
+        // over it.
+        press(app, "conversation.overflow")
+        XCTAssertTrue(waitUntil { !app.staticTexts["Rename"].exists },
+                      "the overflow would not close")
 
         // MARK: A run that ended.
         pressTab(app, "Agents")
@@ -1075,6 +1131,18 @@ final class ConversationTests: XCTestCase {
             if attempt < 20 { app.swipeDown(velocity: .slow) } else { app.swipeUp(velocity: .slow) }
         }
         XCTFail("scrolling the feed never brought \(identifier) somewhere it could be pressed")
+    }
+
+    /// The message left half written in the composer for the report below. A
+    /// plain sentence: what is being proved is that a draft is carried and put
+    /// back, not how a token is spelled.
+    private static let halfWritten = "and then check the migration before you merge"
+
+    /// Lets the screen stop moving. A swipe hands back before the feed has
+    /// finished travelling, and what is being photographed is where it came to
+    /// rest rather than where it was passing through.
+    private func settle() {
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
     }
 
     private func waitUntil(_ condition: () -> Bool) -> Bool {

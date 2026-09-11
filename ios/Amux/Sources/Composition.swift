@@ -36,6 +36,10 @@ final class Composition {
     let reports: ReportStore?
     let freezer: (any ReportFreezing)?
     #endif
+    /// Where the conversations say what they have open and where they are
+    /// being read, so a report can carry two things no message ever does.
+    /// Nothing in a build a person installs: there is no report to write.
+    let conversations: ConversationRecording?
     /// The account service. Every screen sees it as `CloudService` and none of
     /// them knows there is HTTP behind it. A debug build's driving door is
     /// handed the same one, so a launch driven against the real service is
@@ -96,6 +100,15 @@ final class Composition {
             place: { Self.place(for: router) },
             account: { [accounts] in accounts.selectedAccount },
             ordered: { [accounts, signedOut] in (accounts.stores ?? signedOut).fleet.orderedAt },
+            // Every half-written message on this phone, not only the one in
+            // front of whoever froze the report: a person who wrote to one
+            // agent, went to another and reported from there is reporting
+            // about both, and the drafts are on the same phone either way.
+            drafts: { [accounts, signedOut] in
+                (accounts.stores ?? signedOut).conversations.compactMapValues {
+                    $0.draft.isEmpty ? nil : $0.draft
+                }
+            },
             runtimeFailure: { [runtime] in runtime.failure })
         // Where somebody goes is recorded as they go there, rather than only
         // where they ended up: a report is replayed by walking the same trail,
@@ -107,6 +120,15 @@ final class Composition {
             guard let router else { return }
             DoorHost.shared.arrived(at: Self.place(for: router))
         }
+        // A card left open and a transcript scrolled back are in no message
+        // and belong to no store, so the screens that own them say so here and
+        // a freeze writes down whatever they last said.
+        let conversations = ConversationRecording()
+        conversations.opened = { DoorHost.shared.opened($1, over: $0) }
+        conversations.read = { DoorHost.shared.reading($1, of: $0) }
+        self.conversations = conversations
+        #else
+        conversations = nil
         #endif
         router.loads(with: self)
         rememberedFleet()

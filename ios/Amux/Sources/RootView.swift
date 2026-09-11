@@ -68,6 +68,7 @@ struct RootView: View {
             deletion: composition.deletion,
             appearance: composition.appearance,
             report: report,
+            recording: composition.conversations,
             actions: { composition.handle($0) }
         )
         // What the app is wearing. Set here rather than inside a screen: it

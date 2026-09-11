@@ -902,7 +902,7 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     # collected from that rather than listed here.
     photographs = {
         name: journey.directory / f"{name}.png" for name in (
-            "conversation-rows",
+            "conversation-rows", "conversation-left",
             "conversation-unfolded", "conversation-changes",
             "conversation-stale", "conversation-send-refused", "conversation-exited",
             "conversation-restored", "conversation-reconnected-live")}
@@ -923,6 +923,11 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     offline = journey.directory / "conversation-offline-tree.txt"
     restored = journey.directory / "conversation-restored-tree.txt"
     recovery_report = container(udid) / "tmp/conversation-recovery"
+    # The conversation as somebody left it: a message half written, a card open
+    # over it and the feed scrolled back off its tail. None of the three is in
+    # any message the runtime carries, so this is the bundle a replay is
+    # checked against — and the one kept in the repository as a fixture.
+    left_report = container(udid) / "tmp/conversation-left"
     perform(
         journey, udid, "AmuxUITests/ConversationTests",
         {f"{name}.png": path for name, path in photographs.items()}
@@ -943,8 +948,10 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
             "AMUX_ENDED_AGENT": running["ran-its-course"]["agent_id"],
             "AMUX_HOST": daemon["name"],
             "AMUX_REPORT": str(recovery_report),
+            "AMUX_LEFT_REPORT": str(left_report),
         })
     shutil.copytree(recovery_report, journey.directory / "conversation-recovery", dirs_exist_ok=True)
+    shutil.copytree(left_report, journey.directory / "conversation-left", dirs_exist_ok=True)
     seen = json.loads(read.read_text())
     held = json.loads(captures.read_text())
     # A picture from an earlier run whose feed was different is not evidence
@@ -1103,6 +1110,36 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
                 f"in view went {' then '.join(str(row) for row in furthest)} as it was scrolled; "
                 f"filmed in {film_of_streaming.name} "
                 f"({film_of_streaming.stat().st_size // 1024} KB)")
+
+    # The report of the conversation as it was left. Three of the things on
+    # that screen are in no message the runtime carries — the half-written
+    # message, the open card and the entry the feed was resting on — so the
+    # trace beside the picture is the only place they can have come from.
+    left = journey.directory / "conversation-left"
+    trace = [json.loads(line) for line in
+             (left / "trace.jsonl").read_text().splitlines() if line.strip()]
+    kinds = {event["kind"] for event in trace}
+    journey.expect({"draft", "sheet", "reading"} <= kinds,
+                   f"the report of the conversation as it was left recorded {sorted(kinds)}")
+    drafted = [event for event in trace if event["kind"] == "draft"]
+    journey.expect(any(event["draft"]["body"] == seen.get("halfWritten") for event in drafted),
+                   f"the recording carries {[event['draft']['body'] for event in drafted]} where "
+                   f"the composer said {seen.get('halfWritten')!r}")
+    opened = [event.get("sheet") for event in trace if event["kind"] == "sheet"]
+    journey.expect(opened[-1:] == ["overflow"],
+                   f"the recording says the conversation had {opened} open")
+    resting = [event["reading"] for event in trace if event["kind"] == "reading"]
+    journey.expect(all(event.get("entry") for event in resting),
+                   f"a reading position was recorded without an entry to anchor it: {resting}")
+    journey.expect((left / "frame.png").stat().st_size > 0,
+                   f"{left} has no picture of the screen the recording is of")
+    journey.say(f"the conversation was left with {seen.get('halfWritten')!r} half written, the "
+                f"overflow open over it and the feed scrolled back from row "
+                f"{seen.get('readingAtTheTail')} to row {seen.get('readingScrolledBack')}; the "
+                f"report frozen there records all three — the draft, the open card, and the "
+                f"entry the reader was resting on ({resting[-1]['entry']}, "
+                f"{resting[-1]['into']:.0f} points into it) — none of which is in any message "
+                f"the runtime carries")
 
     for photograph in photographs.values():
         journey.expect(photograph.is_file() and photograph.stat().st_size > 0,

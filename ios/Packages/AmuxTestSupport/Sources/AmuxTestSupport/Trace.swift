@@ -48,24 +48,35 @@ public enum Place: Sendable, Equatable {
 ///
 /// A report holds two recordings that answer different questions. The
 /// runtime's `msgs.jsonl` says what the fleet and its conversations were; this
-/// says what was being looked at — which place, which sheet, how far down a
-/// transcript, in which appearance and at which reader's type size, whose
-/// account was signed in and what the clock on it read. Neither alone
-/// reproduces the screen somebody was complaining about, so replay folds the
-/// first and then applies the second.
+/// says what was being looked at — which place, what was open over it, where
+/// in a transcript the reader had got to, what was half written and not sent,
+/// in which appearance and at which reader's type size, whose account was
+/// signed in and what the clock on it read. Neither alone reproduces the
+/// screen somebody was complaining about, so replay folds the first and then
+/// applies the second.
 ///
-/// The composer's draft is deliberately absent. The plan names a `draft` case,
-/// but the draft type it carries belongs to the composer, which is not built
-/// yet; a case carrying a stand-in would freeze the wrong shape into recorded
-/// bundles. It is added when the composer lands.
+/// The three the runtime never hears about are the ones that most often carry
+/// the complaint. A half-written message, a card somebody had open and the
+/// entry they had scrolled back to never leave the phone, so a recording that
+/// did not carry them would replay an empty composer over a transcript resting
+/// at its tail with nothing open — a screen nobody was ever looking at.
 public enum TraceEvent: Sendable, Equatable {
     /// Where the person went. Written as they navigate, so a recording is the
     /// trail through the app rather than a single destination.
     case route(Place)
-    /// The sheet over that place, or nothing when it was dismissed.
+    /// What was open over that place — a card, a menu, the drawer — named the
+    /// way the screen that owns it names it, or nothing when the place was
+    /// showing nothing over itself.
+    ///
+    /// Not every surface belongs here. An unanswered ask takes the composer's
+    /// place rather than opening over the screen, and whether there is one is
+    /// the session's own answer: it comes back out of the runtime's recording
+    /// with the rest of the conversation and nothing here has to say so.
     case sheet(String?)
-    /// How far down one agent's transcript the reader had scrolled, in points.
-    case scroll(AgentId, Double)
+    /// Where in one agent's transcript the reader had got to.
+    case reading(AgentId, TranscriptResting)
+    /// The message somebody had half written to one agent and not sent.
+    case draft(AgentId, MessageDraft)
     case appearance(Appearance)
     /// The reader's type size, spelled the way a door request spells it.
     case dynamicType(String)
@@ -91,7 +102,8 @@ public enum TraceEvent: Sendable, Equatable {
 
 extension TraceEvent: Codable {
     private enum Key: String, CodingKey {
-        case kind, place, screen, agent, sheet, offset, appearance, size, at, ordered, account
+        case kind, place, screen, agent, sheet, reading, draft, appearance, size, at, ordered,
+             account
     }
 
     public init(from decoder: any Decoder) throws {
@@ -100,10 +112,14 @@ extension TraceEvent: Codable {
         switch kind {
         case "route": self = .route(try Self.place(from: fields))
         case "sheet": self = .sheet(try fields.decodeIfPresent(String.self, forKey: .sheet))
-        case "scroll":
-            self = .scroll(
+        case "reading":
+            self = .reading(
                 try fields.decode(AgentId.self, forKey: .agent),
-                try fields.decode(Double.self, forKey: .offset))
+                try fields.decode(TranscriptResting.self, forKey: .reading))
+        case "draft":
+            self = .draft(
+                try fields.decode(AgentId.self, forKey: .agent),
+                try fields.decode(MessageDraft.self, forKey: .draft))
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType": self = .dynamicType(try fields.decode(String.self, forKey: .size))
@@ -128,10 +144,14 @@ extension TraceEvent: Codable {
         case .sheet(let sheet):
             try fields.encode("sheet", forKey: .kind)
             try fields.encodeIfPresent(sheet, forKey: .sheet)
-        case .scroll(let agent, let offset):
-            try fields.encode("scroll", forKey: .kind)
+        case .reading(let agent, let resting):
+            try fields.encode("reading", forKey: .kind)
             try fields.encode(agent, forKey: .agent)
-            try fields.encode(offset, forKey: .offset)
+            try fields.encode(resting, forKey: .reading)
+        case .draft(let agent, let draft):
+            try fields.encode("draft", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
+            try fields.encode(draft, forKey: .draft)
         case .appearance(let appearance):
             try fields.encode("appearance", forKey: .kind)
             try fields.encode(appearance, forKey: .appearance)

@@ -194,7 +194,7 @@ public struct DraftToken: Sendable, Equatable {
     /// Which of amux's four closed attachment kinds this is, or the command
     /// a message can be. It decides the glyph and nothing else; what the token
     /// says is `label`.
-    public enum Kind: String, Sendable, Equatable {
+    public enum Kind: String, Codable, Sendable, Equatable {
         case photo
         case file
         case text
@@ -652,5 +652,51 @@ extension String {
     public var capitalizedFirst: String {
         guard let first else { return self }
         return String(first).uppercased() + dropFirst()
+    }
+}
+
+/// A token is written down whole. What it says on screen, what it becomes in
+/// the sent message and the artifact travelling with it are all decided
+/// elsewhere and none of them can be worked out again from the draft, so all
+/// three are kept.
+extension DraftToken: Codable {}
+
+/// A half-written message is written down as the sentence, where the caret was
+/// in it, and every token standing in it.
+///
+/// All three, because the sentence alone is not the draft: each token holds one
+/// private character of it, and a sentence restored without the tokens it
+/// stands on would put an invisible character in the middle of somebody's
+/// paragraph where an attachment used to be.
+extension MessageDraft: Codable {
+    private enum Key: String, CodingKey { case body, caret, tokens }
+
+    /// One token and the character of the sentence it is standing in. A
+    /// dictionary keyed by a character has no spelling in JSON, and this is
+    /// also the order a person reading the file wants them in.
+    private struct Standing: Codable {
+        let slot: String
+        let token: DraftToken
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: Key.self)
+        self.init(prose: try fields.decode(String.self, forKey: .body))
+        for standing in try fields.decode([Standing].self, forKey: .tokens) {
+            guard let slot = standing.slot.first else { continue }
+            tokens[slot] = standing.token
+        }
+        place(caret: try fields.decode(Int.self, forKey: .caret))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var fields = encoder.container(keyedBy: Key.self)
+        try fields.encode(body, forKey: .body)
+        try fields.encode(caret, forKey: .caret)
+        try fields.encode(
+            tokens.keys.sorted().compactMap { slot in
+                tokens[slot].map { Standing(slot: String(slot), token: $0) }
+            },
+            forKey: .tokens)
     }
 }

@@ -225,6 +225,7 @@ struct DrivenRoot<Content: View>: View {
                     stores: replayed.stores, signIn: host.signIn,
                     paywall: host.paywall, deletion: host.deletion,
                     appearance: host.appearance, report: nil,
+                    recording: replayed.recording,
                     actions: { _ in })
                     .preferredColorScheme(host.appearance == .dark ? .dark : .light)
             } else if let screen = host.screen {

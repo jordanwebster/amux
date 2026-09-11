@@ -35,6 +35,10 @@ final class ReportFreeze: ReportFreezing {
     /// When the fleet on screen was last put in order, which is what every
     /// "11s ago" on it was measured from.
     private let ordered: () -> Date
+    /// Every message half written on this phone and not sent. A draft is
+    /// client-side and travels in nothing, so a report that did not carry one
+    /// replays somebody's complaint with an empty composer under it.
+    private let drafts: () -> [AgentId: MessageDraft]
     private let runtimeFailure: () -> String?
 
     init(
@@ -45,6 +49,11 @@ final class ReportFreeze: ReportFreezing {
         },
         account: @escaping () -> AccountEntry? = { DoorHost.shared.accountOnScreen },
         ordered: @escaping () -> Date = { DoorHost.shared.stores.fleet.orderedAt },
+        drafts: @escaping () -> [AgentId: MessageDraft] = {
+            DoorHost.shared.stores.conversations.compactMapValues {
+                $0.draft.isEmpty ? nil : $0.draft
+            }
+        },
         runtimeFailure: @escaping () -> String? = { nil }
     ) {
         self.window = window
@@ -52,6 +61,7 @@ final class ReportFreeze: ReportFreezing {
         self.place = place
         self.account = account
         self.ordered = ordered
+        self.drafts = drafts
         self.runtimeFailure = runtimeFailure
     }
 
@@ -79,6 +89,13 @@ final class ReportFreeze: ReportFreezing {
     /// was recorded" and "nothing happened" in the same breath — while a
     /// replay of it puts back no screen at all.
     ///
+    /// What was open, what was half written and where each transcript was being
+    /// read go after the place, because each of them is a state of a screen
+    /// rather than a step on the way to one — and because putting the open card
+    /// back needs the place it was open over to have been decided first. They
+    /// are written in agent order so two freezes of the same screen produce the
+    /// same file.
+    ///
     /// The clock and the account go last because they are what the frozen
     /// screen was reading, not something that happened: a replay builds its
     /// stores from them before it folds a single message, and without them it
@@ -86,8 +103,20 @@ final class ReportFreeze: ReportFreezing {
     /// them.
     private func traceLines() -> Result<String, PartAbsent> {
         var events = DoorHost.shared.traceEvents
-        if let place = place(), events.last != .route(place) {
+        let place = place()
+        if let place, events.last != .route(place) {
             events.append(.route(place))
+        }
+        if case .conversation(let agent)? = place {
+            events.append(.sheet(DoorHost.shared.panels[agent]))
+        }
+        let readings = DoorHost.shared.readings
+        for agent in readings.keys.sorted(by: { $0.description < $1.description }) {
+            events.append(.reading(agent, readings[agent]!))
+        }
+        let written = drafts()
+        for agent in written.keys.sorted(by: { $0.description < $1.description }) {
+            events.append(.draft(agent, written[agent]!))
         }
         events.append(.frozen(at: Date(), ordered: ordered()))
         events.append(.account(account()))

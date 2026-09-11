@@ -63,9 +63,14 @@ public enum ConversationAction: Equatable, Sendable {
 /// plus offers and what the overflow offers are both about the conversation
 /// you are in, and neither takes you anywhere. It is a parameter as well as
 /// state so a screen can be opened already showing one — which is how each is
-/// photographed, and how a conversation reached from a notification about a
-/// permission could open on it.
-public enum ConversationOverlay: Equatable, Sendable {
+/// photographed, how a conversation reached from a notification about a
+/// permission could open on it, and how a report of a conversation with one
+/// open comes back with it open.
+///
+/// Each is spelled, because a recording of a screen has to name what was open
+/// over it in words that survive being written to a file and read back by a
+/// later build.
+public enum ConversationOverlay: String, Equatable, Sendable {
     case plus
     /// Model and effort, from the footer chip.
     case settings
@@ -202,6 +207,17 @@ public struct Conversation: View {
     /// and a conversation drawn without one falls back to the identity, which
     /// is at least true.
     private let naming: (AgentId) -> String
+    /// Where a recording left the reader in this transcript, or nothing for
+    /// the ordinary case of opening at the latest entry.
+    private let resting: TranscriptResting?
+    /// Told what this conversation has opened over itself, whenever that
+    /// changes. Nothing in the shipping app listens: it exists so a build with
+    /// the reporting tools in it can record a card somebody had open, which is
+    /// in no message and would otherwise be lost with the screen.
+    private let opening: (@MainActor (ConversationOverlay?) -> Void)?
+    /// Told where the reader has come to rest in the transcript, for the same
+    /// reason and by the same builds.
+    private let reading: (@MainActor (TranscriptResting) -> Void)?
     private let actions: @MainActor (ConversationAction) -> Void
     /// Whether the finished turn's panel has been set aside for this visit.
     ///
@@ -237,11 +253,17 @@ public struct Conversation: View {
         subject: ConversationSubject,
         naming: @escaping (AgentId) -> String = { $0.description },
         showing: ConversationOverlay? = nil,
+        resting: TranscriptResting? = nil,
+        opening: (@MainActor (ConversationOverlay?) -> Void)? = nil,
+        reading: (@MainActor (TranscriptResting) -> Void)? = nil,
         actions: @escaping @MainActor (ConversationAction) -> Void
     ) {
         self.model = model
         self.subject = subject
         self.naming = naming
+        self.resting = resting
+        self.opening = opening
+        self.reading = reading
         self.actions = actions
         _showing = State(initialValue: showing)
     }
@@ -302,6 +324,12 @@ public struct Conversation: View {
         // for anything driving the app alike.
         .accessibilityElement(children: .contain)
         .identified("conversation", value: model.agent.description)
+        // Said here rather than at each control that opens something, because
+        // several of them close one card by opening another and two of them —
+        // rename and delete — are reached from inside the overflow and never
+        // pass through an action at all. What is open is one piece of state,
+        // so what is open is what is reported.
+        .onChange(of: showing) { _, now in opening?(now) }
     }
 
     /// The feed, under the chrome rather than beside it.
@@ -311,7 +339,7 @@ public struct Conversation: View {
     /// underneath it when it scrolls, which is the only arrangement in which
     /// frosting the top edge means anything.
     private var transcript: some View {
-        TranscriptContainer {
+        TranscriptContainer(resting: resting, moved: reading) {
             if !subject.readable {
                 UnsupportedLayer(layer: "this agent’s transcript")
                     .padding(.top, design.metrics.feedGap)

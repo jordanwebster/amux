@@ -139,6 +139,18 @@ final class DoorHost {
     /// Where the app is now, in the words a recording names places by.
     private(set) var placeOnShow: Place?
 
+    /// What each conversation has open over itself and where each transcript
+    /// is being read, as the screens that own those say so.
+    ///
+    /// Kept as the latest answer per agent rather than appended to the trail
+    /// above, because neither is something that happened: a card is open or it
+    /// is not, and a transcript scrolled through hundreds of entries in one
+    /// gesture rests on exactly one of them. Both are written into a recording
+    /// when it is frozen, beside the clock and the account and for the same
+    /// reason — they are what the frozen screen was, not what led to it.
+    @ObservationIgnored private(set) var panels: [AgentId: String] = [:]
+    @ObservationIgnored private(set) var readings: [AgentId: TranscriptResting] = [:]
+
     /// Records that the app has arrived somewhere.
     ///
     /// Repeats are dropped. The tab bar is the system's control and writes the
@@ -157,6 +169,17 @@ final class DoorHost {
 
     /// The app put back from a recording, when one is being replayed.
     private(set) var replayed: ReplayedApp?
+
+    /// Records what one conversation has opened over itself, or that it has
+    /// closed everything.
+    func opened(_ panel: String?, over agent: AgentId) {
+        panels[agent] = panel
+    }
+
+    /// Records where the reader of one transcript has come to rest.
+    func reading(_ resting: TranscriptResting, of agent: AgentId) {
+        readings[agent] = resting
+    }
 
     /// What has been recorded so far, for a report being frozen right now.
     ///
@@ -1090,14 +1113,40 @@ final class DoorHost {
             typeSize = size
             trace.append(event)
             return .ack
-        // A sheet that was dismissed is nothing to put back, and the app has
-        // no sheet to open and no transcript to scroll until the screens that
-        // hold them are built.
-        case .sheet(nil):
+        // What was open over the place on show. A recording that says nothing
+        // was open is still put back: the page is built from this, and leaving
+        // it alone would leave whatever the last recording opened standing.
+        case .sheet(let name):
+            guard let replayed else {
+                return .error("nothing can be opened outside the app")
+            }
+            guard case .conversation(let agent)? = placeOnShow else {
+                guard name == nil else {
+                    return .error("\(placeOnShow?.described ?? "nothing") opens no \(name ?? "")")
+                }
+                trace.append(event)
+                return .ack
+            }
+            if let name, ConversationOverlay(rawValue: name) == nil,
+               name != ConversationRecording.drawer {
+                return .error("a conversation opens no \(name)")
+            }
+            replayed.recording.showing[agent] = name
             trace.append(event)
             return .ack
-        case .sheet(.some(let name)): return .error("unimplemented sheet: \(name)")
-        case .scroll: return .error("unimplemented: scrolling a transcript")
+        case .reading(let agent, let resting):
+            guard let replayed else {
+                return .error("a transcript can only be read inside the app")
+            }
+            replayed.recording.reading[agent] = resting
+            trace.append(event)
+            return .ack
+        // The draft belongs to the conversation's own store rather than to the
+        // screen, so it goes straight back into it and no view has to be told.
+        case .draft(let agent, let draft):
+            stores.conversation(agent).draft = draft
+            trace.append(event)
+            return .ack
         }
     }
 
@@ -1399,6 +1448,11 @@ final class ReplayedApp {
     let stores: StoreBundle
     let accounts: AccountRegistry
     let router = Router()
+    /// What each conversation in this replay is to be built already showing
+    /// and already resting at. Written by the trace before the page is built,
+    /// which is the only moment a screen's own view state can be decided from
+    /// outside it.
+    let recording = ConversationRecording()
 
     init(stores: StoreBundle, accounts: AccountRegistry) {
         self.stores = stores
