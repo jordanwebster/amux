@@ -32,6 +32,7 @@ final class TraceTests: XCTestCase {
             .reading(agent, TranscriptResting(entry: "msg-41", into: 128.5)),
             .draft(agent, Self.halfWritten),
             .draft(agent, MessageDraft()),
+            .setAside(agent),
             .appearance(.dark),
             .dynamicType("accessibility3"),
             .frozen(at: frozen, ordered: frozen.addingTimeInterval(-44)),
@@ -40,7 +41,7 @@ final class TraceTests: XCTestCase {
         ]
         XCTAssertEqual(try Trace.events(Trace.lines(events)), events)
         XCTAssertEqual(
-            Set(events.map(Self.kind(of:))).count, 8,
+            Set(events.map(Self.kind(of:))).count, 9,
             "a kind of event is missing from the list that is written and read back")
     }
 
@@ -67,6 +68,7 @@ final class TraceTests: XCTestCase {
         case .sheet: "sheet"
         case .reading: "reading"
         case .draft: "draft"
+        case .setAside: "setAside"
         case .appearance: "appearance"
         case .dynamicType: "dynamicType"
         case .frozen: "frozen"

@@ -239,12 +239,16 @@ private struct ConversationPage: View {
                 subject: ConversationSubject(agent: agent, in: stores.fleet),
                 naming: { stores.fleet.name(of: $0) },
                 showing: recording?.showing[agent].flatMap(ConversationOverlay.init(rawValue:)),
+                aside: recording?.aside.contains(agent) == true,
                 resting: recording?.reading[agent],
                 opening: recording.map { recording in
                     { @MainActor @Sendable in recording.opened?(agent, $0?.rawValue) }
                 },
                 reading: recording.map { recording in
                     { @MainActor @Sendable in recording.read?(agent, $0) }
+                },
+                asiding: recording.map { recording in
+                    { @MainActor @Sendable in recording.asided?(agent, $0) }
                 }
             ) { action in
                 switch action {

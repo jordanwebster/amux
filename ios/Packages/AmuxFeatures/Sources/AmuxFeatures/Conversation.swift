@@ -218,13 +218,16 @@ public struct Conversation: View {
     /// Told where the reader has come to rest in the transcript, for the same
     /// reason and by the same builds.
     private let reading: (@MainActor (TranscriptResting) -> Void)?
+    /// Told when a finished turn's offer of its changes is set aside, and by
+    /// the same builds again.
+    private let asiding: (@MainActor (Bool) -> Void)?
     private let actions: @MainActor (ConversationAction) -> Void
     /// Whether the finished turn's panel has been set aside for this visit.
     ///
     /// View state, because Later is not something the host is told: nothing is
     /// sent, the changes stay where they are, and the chip in the chrome is
     /// still the way to them. Coming back to the conversation offers again.
-    @State private var deferred = false
+    @State private var deferred: Bool
 
     /// Which child said it cannot be opened, while its sentence is on show.
     ///
@@ -253,9 +256,11 @@ public struct Conversation: View {
         subject: ConversationSubject,
         naming: @escaping (AgentId) -> String = { $0.description },
         showing: ConversationOverlay? = nil,
+        aside: Bool = false,
         resting: TranscriptResting? = nil,
         opening: (@MainActor (ConversationOverlay?) -> Void)? = nil,
         reading: (@MainActor (TranscriptResting) -> Void)? = nil,
+        asiding: (@MainActor (Bool) -> Void)? = nil,
         actions: @escaping @MainActor (ConversationAction) -> Void
     ) {
         self.model = model
@@ -264,8 +269,10 @@ public struct Conversation: View {
         self.resting = resting
         self.opening = opening
         self.reading = reading
+        self.asiding = asiding
         self.actions = actions
         _showing = State(initialValue: showing)
+        _deferred = State(initialValue: aside)
     }
 
     public var body: some View {
@@ -330,6 +337,7 @@ public struct Conversation: View {
         // pass through an action at all. What is open is one piece of state,
         // so what is open is what is reported.
         .onChange(of: showing) { _, now in opening?(now) }
+        .onChange(of: deferred) { _, now in asiding?(now) }
     }
 
     /// The feed, under the chrome rather than beside it.

@@ -77,6 +77,14 @@ public enum TraceEvent: Sendable, Equatable {
     case reading(AgentId, TranscriptResting)
     /// The message somebody had half written to one agent and not sent.
     case draft(AgentId, MessageDraft)
+    /// One agent's finished turn, whose offer of its changes had been set
+    /// aside for this visit.
+    ///
+    /// Recorded because it is the reader's answer and not the agent's: the
+    /// turn is still finished and the changes are still there, so a replay
+    /// that did not know somebody had said Later would put the offer back over
+    /// the composer and hide everything they were writing underneath it.
+    case setAside(AgentId)
     case appearance(Appearance)
     /// The reader's type size, spelled the way a door request spells it.
     case dynamicType(String)
@@ -120,6 +128,8 @@ extension TraceEvent: Codable {
             self = .draft(
                 try fields.decode(AgentId.self, forKey: .agent),
                 try fields.decode(MessageDraft.self, forKey: .draft))
+        case "setAside":
+            self = .setAside(try fields.decode(AgentId.self, forKey: .agent))
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
         case "dynamicType": self = .dynamicType(try fields.decode(String.self, forKey: .size))
@@ -152,6 +162,9 @@ extension TraceEvent: Codable {
             try fields.encode("draft", forKey: .kind)
             try fields.encode(agent, forKey: .agent)
             try fields.encode(draft, forKey: .draft)
+        case .setAside(let agent):
+            try fields.encode("setAside", forKey: .kind)
+            try fields.encode(agent, forKey: .agent)
         case .appearance(let appearance):
             try fields.encode("appearance", forKey: .kind)
             try fields.encode(appearance, forKey: .appearance)

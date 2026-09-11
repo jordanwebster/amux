@@ -1,0 +1,8 @@
+{"agent":"74b1d09a-1324-46a6-9a2b-e81839fb4e77","kind":"route","place":"conversation"}
+{"agent":"74b1d09a-1324-46a6-9a2b-e81839fb4e77","kind":"route","place":"review"}
+{"agent":"74b1d09a-1324-46a6-9a2b-e81839fb4e77","kind":"route","place":"conversation"}
+{"kind":"sheet","sheet":"overflow"}
+{"agent":"74b1d09a-1324-46a6-9a2b-e81839fb4e77","kind":"reading","reading":{"entry":"claude_pty:10","into":32.333333333333314}}
+{"agent":"74b1d09a-1324-46a6-9a2b-e81839fb4e77","draft":{"body":"and then check the migration before you merge","caret":45,"tokens":[]},"kind":"draft"}
+{"at":"2026-09-11T05:34:54.646977901Z","kind":"frozen","ordered":"2026-09-11T05:30:30.196432114Z"}
+{"account":{"account":{"displayName":"journey-phone","email":"journey-phone@example.com","id":"journey-phone"},"entitlement":{"active":{"grant":{"purchased":{"_0":"appStore"}}}},"hosts":1,"signedIn":true},"kind":"account"}

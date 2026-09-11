@@ -112,7 +112,8 @@
       {"literal": "\"nothing\"", "context": "return .error(\"\\(placeOnShow?.described ?? \"nothing\") opens no \\(name ?? \"\")\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"\\(placeOnShow?.described ?? \"nothing\") opens no \\(name ?? \"\")\"", "context": "return .error(\"\\(placeOnShow?.described ?? \"nothing\") opens no \\(name ?? \"\")\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"a conversation opens no \\(name)\"", "context": "return .error(\"a conversation opens no \\(name)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"a transcript can only be read inside the app\"", "context": "return .error(\"a transcript can only be read inside the app\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
+      {"literal": "\"a transcript can only be read inside the app\"", "context": "return .error(\"a transcript can only be read inside the app\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"nothing can be set aside outside the app\"", "context": "return .error(\"nothing can be set aside outside the app\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "ios/Amux/Debug/DoorRecording.swift": [
       {"literal": "\"the screen could not be photographed, so there is no report\"", "context": "case .notPhotographed: \"the screen could not be photographed, so there is no report\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -2519,7 +2520,9 @@
       {"literal": "\"reading\"", "context": "case \"reading\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"draft\"", "context": "case \"draft\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"reading\"", "context": "try fields.encode(\"reading\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"draft\"", "context": "try fields.encode(\"draft\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
+      {"literal": "\"draft\"", "context": "try fields.encode(\"draft\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"setAside\"", "context": "case \"setAside\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"setAside\"", "context": "try fields.encode(\"setAside\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Transcript.swift": [
       {"literal": "\"entry\"", "context": "\"entry\": .string(\"prompt\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},

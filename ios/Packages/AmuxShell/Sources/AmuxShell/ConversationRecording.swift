@@ -25,12 +25,18 @@ public final class ConversationRecording {
     /// Told where the reader of one transcript has come to rest, once they
     /// have taken it off its tail.
     public var read: (@MainActor (AgentId, TranscriptResting) -> Void)?
+    /// Told when a finished turn's offer of its changes is set aside, or
+    /// offered again.
+    public var asided: (@MainActor (AgentId, Bool) -> Void)?
     /// What each conversation is to be built already showing. Empty in the
     /// app; written by a replay before the page it names is built, which is
     /// the only moment a screen's own state can be decided from outside it.
     public var showing: [AgentId: String] = [:]
     /// Where each transcript is to be built already resting.
     public var reading: [AgentId: TranscriptResting] = [:]
+    /// Which conversations are to be built with a finished turn's offer
+    /// already set aside.
+    public var aside: Set<AgentId> = []
 
     /// What the drawer is called where a recording names what is open. It is
     /// not one of the conversation's own overlays — it is the fleet borrowing

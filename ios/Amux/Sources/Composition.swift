@@ -126,6 +126,7 @@ final class Composition {
         let conversations = ConversationRecording()
         conversations.opened = { DoorHost.shared.opened($1, over: $0) }
         conversations.read = { DoorHost.shared.reading($1, of: $0) }
+        conversations.asided = { DoorHost.shared.setAside($1, for: $0) }
         self.conversations = conversations
         #else
         conversations = nil

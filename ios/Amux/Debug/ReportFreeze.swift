@@ -125,6 +125,9 @@ final class ReportFreeze: ReportFreezing {
         for agent in written.keys.sorted(by: { $0.description < $1.description }) {
             events.append(.draft(agent, written[agent]!))
         }
+        for agent in DoorHost.shared.asides.sorted(by: { $0.description < $1.description }) {
+            events.append(.setAside(agent))
+        }
         events.append(.frozen(at: Date(), ordered: ordered()))
         events.append(.account(account()))
         do { return .success(try Trace.lines(events)) } catch {

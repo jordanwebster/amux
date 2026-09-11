@@ -307,7 +307,12 @@ final class ConversationTests: XCTestCase {
         // the composer until somebody says Later. Both are the screen being
         // honest, and both have to be got past before there is a field.
         _ = try door(runner, .init(kind: "awaitSendable", agent: runner.agent, seconds: 90))
-        if element(app, "conversation.finished").exists { press(app, "ask.later") }
+        var setAside = false
+        if element(app, "conversation.finished").exists {
+            press(app, "ask.later")
+            setAside = true
+        }
+        record["setAsideTheFinishedTurn"] = setAside
         let field = element(app, "composer.field")
         XCTAssertTrue(field.waitForExistence(timeout: waiting),
                       "the conversation offered nowhere to write a message; where the composer "

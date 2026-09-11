@@ -150,6 +150,9 @@ final class DoorHost {
     /// reason — they are what the frozen screen was, not what led to it.
     @ObservationIgnored private(set) var panels: [AgentId: String] = [:]
     @ObservationIgnored private(set) var readings: [AgentId: TranscriptResting] = [:]
+    /// The conversations whose finished turn has had its offer of its changes
+    /// set aside for this visit.
+    @ObservationIgnored private(set) var asides: Set<AgentId> = []
 
     /// Records that the app has arrived somewhere.
     ///
@@ -179,6 +182,12 @@ final class DoorHost {
     /// Records where the reader of one transcript has come to rest.
     func reading(_ resting: TranscriptResting, of agent: AgentId) {
         readings[agent] = resting
+    }
+
+    /// Records that a finished turn's offer of its changes was set aside, or
+    /// is being offered again.
+    func setAside(_ on: Bool, for agent: AgentId) {
+        if on { asides.insert(agent) } else { asides.remove(agent) }
     }
 
     /// What has been recorded so far, for a report being frozen right now.
@@ -1145,6 +1154,13 @@ final class DoorHost {
         // screen, so it goes straight back into it and no view has to be told.
         case .draft(let agent, let draft):
             stores.conversation(agent).draft = draft
+            trace.append(event)
+            return .ack
+        case .setAside(let agent):
+            guard let replayed else {
+                return .error("nothing can be set aside outside the app")
+            }
+            replayed.recording.aside.insert(agent)
             trace.append(event)
             return .ack
         }

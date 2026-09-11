@@ -1,0 +1,21 @@
+{
+  "agents": [
+    "carry-on",
+    "ran-its-course"
+  ],
+  "ages": {
+    "carry-on": "0s",
+    "ran-its-course": "0s"
+  },
+  "entries": {
+    "691efed0-441e-45a6-8c7f-d71f2635b8c3": 0,
+    "74b1d09a-1324-46a6-9a2b-e81839fb4e77": 185
+  },
+  "events": 7,
+  "hosts": [
+    "studio"
+  ],
+  "reconciled": true,
+  "screen": "conversation 74b1d09a-1324-46a6-9a2b-e81839fb4e77",
+  "trace": 8
+}

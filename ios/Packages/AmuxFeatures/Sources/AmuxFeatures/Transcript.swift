@@ -34,6 +34,14 @@ struct TranscriptFeed: View {
                     .onGeometryChange(for: CGFloat.self) {
                         $0.frame(in: .named(TranscriptTops.space)).minY
                     } action: { tops?.begins(row.id, at: $0) }
+                    // Forgotten the moment it is recycled. A feed lays its
+                    // rows out with whatever heights it has so far, so an
+                    // entry that has scrolled away was last measured against a
+                    // layout that has since changed under it — and an answer
+                    // from then would put a reader back somewhere nobody was.
+                    // What is on screen re-measures as the heights above it
+                    // settle, which is what makes it worth asking.
+                    .onDisappear { tops?.forget(row.id) }
             }
         }
         .padding(.horizontal, design.metrics.gutter)
@@ -60,11 +68,16 @@ final class TranscriptTops {
         tops[entry] = top
     }
 
+    func forget(_ entry: String) {
+        tops[entry] = nil
+    }
+
     func top(of entry: String) -> CGFloat? { tops[entry] }
 
     /// The entry the top of the page is inside: the last one to begin at or
-    /// above it. Nothing when the feed has not been laid out yet, or when the
-    /// page is above the first entry it has measured.
+    /// above it. Only entries on screen are here, which is the only place the
+    /// top of the page can be. Nothing when the feed has not been laid out
+    /// yet, or when the page is above the first entry it has measured.
     func resting(at top: CGFloat) -> TranscriptResting? {
         guard let found = tops
             .filter({ $0.value <= top + 0.5 })
@@ -116,6 +129,12 @@ struct TranscriptContainer<Content: View>: View {
     @State private var page = TranscriptPage()
 
     var body: some View {
+        // The reader is only here so that an entry can be asked for by
+        // identity. Marking the feed as a layout of scroll targets would do
+        // that too, and would also move where a feed comes to rest — a
+        // transcript is read by dragging it wherever you like, not by settling
+        // it onto whichever row is nearest.
+        ScrollViewReader { entries in
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 content
@@ -178,6 +197,8 @@ struct TranscriptContainer<Content: View>: View {
         .onChange(of: position.isPositionedByUser) { _, byReader in
             if byReader { readerMoved = true }
         }
+        .onAppear { page.entries = entries }
+        }
     }
 
     /// Puts the reader back where a recording left them.
@@ -197,7 +218,7 @@ struct TranscriptContainer<Content: View>: View {
         guard let resting, page.corrections < TranscriptPage.corrections else { return }
         guard let begins = tops.top(of: resting.entry) else {
             page.corrections += 1
-            position.scrollTo(id: resting.entry, anchor: .top)
+            page.entries?.scrollTo(resting.entry, anchor: .top)
             return
         }
         let error = begins + resting.into - page.top
@@ -230,6 +251,9 @@ private final class TranscriptPage {
     /// rather than to what was measured.
     var asked: CGFloat?
     var corrections = 0
+    /// How an entry is reached by name, for the one case where its position
+    /// cannot be measured because it has not been built.
+    var entries: ScrollViewProxy?
 }
 
 /// Offset changes are deliberately excluded: moving to the tail must not

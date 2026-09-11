@@ -1125,6 +1125,14 @@ def conversation(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect(any(event["draft"]["body"] == seen.get("halfWritten") for event in drafted),
                    f"the recording carries {[event['draft']['body'] for event in drafted]} where "
                    f"the composer said {seen.get('halfWritten')!r}")
+    # Saying Later to a finished turn's offer of its changes is the reader's
+    # answer and nobody else's, so it has to be recorded for the same reason
+    # the rest of this does — otherwise the offer comes back over the composer
+    # and hides the message that was being written under it.
+    journey.expect(("setAside" in kinds) == bool(seen.get("setAsideTheFinishedTurn")),
+                   f"the conversation set the finished turn aside "
+                   f"{seen.get('setAsideTheFinishedTurn')} and the recording says "
+                   f"{'setAside' in kinds}")
     opened = [event.get("sheet") for event in trace if event["kind"] == "sheet"]
     journey.expect(opened[-1:] == ["overflow"],
                    f"the recording says the conversation had {opened} open")

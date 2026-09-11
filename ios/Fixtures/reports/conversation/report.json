@@ -1,0 +1,33 @@
+{
+  "build" : "amux-ios\/1.0.31",
+  "created_at" : "2026-09-11T05:34:54.650Z",
+  "detail" : null,
+  "git_sha" : "457242449d93086d6b722e6264e528c4e2ea9dd2",
+  "image_frame" : {
+    "height_pt" : 874,
+    "scale" : 3,
+    "width_pt" : 402
+  },
+  "kind" : "bug",
+  "marks" : [
+
+  ],
+  "note" : "",
+  "parts" : {
+    "daemon" : "present",
+    "frame" : "present",
+    "log" : {
+      "absent" : {
+        "reason" : "this app logs through the system, which keeps no file it can read back"
+      }
+    },
+    "msgs" : "present",
+    "trace" : "present",
+    "trace_kind" : "native_view"
+  },
+  "replay" : "unchecked",
+  "schema_version" : 2,
+  "stamp" : "1789104894650-48822",
+  "status" : "open",
+  "viewport" : null
+}
