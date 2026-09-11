@@ -155,7 +155,8 @@ jobs:
   ios:
     name: ios
     runs-on: macos-26
-    timeout-minutes: 210
+    # Leave time for setup, reference pairing and uploads after verification times out.
+    timeout-minutes: 270
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode 26.6

@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-11 — **Keep iOS failure captures within the CI job budget.** The iOS
+job now allows 270 minutes around its 210-minute verification timeout. The
+extra hour covers setup, the 15-minute reference pairing step and artifact
+uploads, so verification can time out without job cancellation losing its
+captures. Checked both timeout values and the subsequent always-run steps.
+
 2026-09-11 — **Release steps can report their own timeouts.** The release
 recipe now allows 8100 seconds: the archive, export and validation budgets
 total 7200 seconds, with 900 seconds left for setup and recovery reporting.
