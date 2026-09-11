@@ -395,21 +395,4 @@ final class AskTests: JourneyCase {
                      "\(answering) threw the reader forward to the newest row")
         return now
     }
-
-    /// Where the row saying this sits on the screen, or nothing where the
-    /// screen is not showing it.
-    ///
-    /// Found by what it says: prose carries no name of its own, and the one
-    /// name every prose row shares cannot tell one from another. A row that
-    /// has scrolled off is either absent from the tree the system builds or
-    /// lies outside the window, and both mean nobody is reading it.
-    private func onScreen(_ app: XCUIApplication, _ saying: String) -> CGRect? {
-        let matching = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@", saying))
-            .allElementsBoundByIndex
-        guard let row = matching.first(where: { $0.exists && $0.frame.height > 0 }) else {
-            return nil
-        }
-        return row.frame.intersects(app.frame) ? row.frame : nil
-    }
 }

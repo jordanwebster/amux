@@ -14118,3 +14118,29 @@ them for a reason that has nothing to do with any answer.
 Green: `wt run ios-journey -- asks` — passed; the row being read was drawn at
 the same point before and after each answer, and the host's account of the six
 answers is unchanged.
+
+## The three ways around a patch, driven on a patch that needs them
+
+The review page offers three ways to move around a set of changes: folding a
+file away by its heading, the list of every file that the stack of chevrons
+beside the path opens, and the wheel down the right edge. None of them was ever
+driven. The repository the journey left for the host had two small files in it,
+so the whole patch fitted on one screen — there was nowhere for any of the three
+to take a reader, and nothing to see if they failed.
+
+The repository now carries a third, longer file, so the patch the host freezes
+is taller than the phone. The journey picks that file out of the list and lands
+on it, folds it away and watches its lines go, opens it again and watches them
+come back, then drags a thumb down the wheel to the last file and back to the
+first. Each step is judged by a line that belongs to one file and to no other:
+the one the page should have reached is on screen, and the one it came from is
+not. The list, the folded file and the page the wheel reached are photographed.
+
+Which files the patch covers is now gathered as the reader passes their
+headings rather than read once when the page opens: a patch taller than the
+phone never has all of its headings on screen at once, and the old reading
+silently named only the two that did.
+
+Green: `wt run ios-journey -- review` — passed, over three files and +27 −6,
+with the same three remarks, the cancelled one absent, and the patch pinned to
+the one message the host received.

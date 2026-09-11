@@ -1113,6 +1113,109 @@ WIRE_EDITED = """pub fn encode(tokens: &[Token]) -> String {
 }
 """
 
+# A third file, long enough that the patch is taller than the phone. The three
+# ways around a patch — folding a file away, the list of files and the wheel
+# down the edge — say nothing about a diff that fits on one screen: there is
+# nowhere for any of them to take a reader.
+TOKENS_COMMITTED = """//! The token table, and what a token is.
+
+pub struct Token {
+    text: String,
+    kind: Kind,
+}
+
+impl Token {
+    pub fn new(text: &str) -> Self {
+        Self { text: text.to_string(), kind: classify(text) }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    pub fn is_word(&self) -> bool {
+        matches!(self.kind, Kind::Word)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Kind {
+    Word,
+    Space,
+    Newline,
+}
+
+pub fn classify(text: &str) -> Kind {
+    if text.trim().is_empty() {
+        Kind::Space
+    } else {
+        Kind::Word
+    }
+}
+"""
+
+TOKENS_EDITED = """//! The token table, and what a token is.
+
+pub struct Token {
+    text: String,
+    kind: Kind,
+    span: Span,
+}
+
+impl Token {
+    pub fn new(text: &str, span: Span) -> Self {
+        Self { text: text.to_string(), kind: classify(text), span }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    pub fn is_word(&self) -> bool {
+        matches!(self.kind, Kind::Word)
+    }
+
+    pub fn is_newline(&self) -> bool {
+        matches!(self.kind, Kind::Newline)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Clone, Copy)]
+pub enum Kind {
+    Word,
+    Space,
+    Newline,
+}
+
+pub fn classify(text: &str) -> Kind {
+    if text == "\\n" {
+        Kind::Newline
+    } else if text.trim().is_empty() {
+        Kind::Space
+    } else {
+        Kind::Word
+    }
+}
+"""
+
 
 def asks(journey: Journey, udid: str, ready: dict) -> None:
     """Every kind of ask, answered on the phone and confirmed on the host.
@@ -1322,8 +1425,9 @@ def review(journey: Journey, udid: str, ready: dict) -> None:
                 f"{', '.join(sorted(running))} in a repository this journey left with one "
                 f"uncommitted change in it")
 
-    photographs = {"review-diff.png": "diff.png", "review-comment.png": "comment.png",
-                   "review-sent.png": "sent.png"}
+    photographs = {"review-diff.png": "diff.png", "review-files.png": "files.png",
+                   "review-collapsed.png": "collapsed.png", "review-wheel.png": "wheel.png",
+                   "review-comment.png": "comment.png", "review-sent.png": "sent.png"}
     read = journey.directory / "review.json"
     perform(
         journey, udid, "AmuxUITests/ReviewTests",
@@ -1342,12 +1446,26 @@ def review(journey: Journey, udid: str, ready: dict) -> None:
         })
     seen = json.loads(read.read_text())
 
-    journey.expect(sorted(seen.get("files", [])) == ["parser.rs", "wire.rs"],
+    journey.expect(sorted(seen.get("files", [])) == ["parser.rs", "tokens.rs", "wire.rs"],
                    f"the patch the host computed covers {seen.get('files')}, and the repository "
-                   f"this journey left has two changed files in it")
+                   f"this journey left has three changed files in it")
     journey.expect(bool(seen.get("diff")), "the page carries no identity for the patch it drew")
     journey.say(f"the host froze {seen['magnitudes']} across {', '.join(seen['files'])} and the "
                 f"phone drew patch {seen['diff']}")
+
+    # The three ways around a patch that is taller than the phone, each judged
+    # by which file the page was left on: a line that belongs to one file and
+    # to no other was on screen, and the one before it was not.
+    around = seen.get("navigation", {})
+    journey.expect(around.get("picked") == "tokens.rs"
+                   and around.get("folded", {}).get("lines") == "hidden"
+                   and around.get("scrubbedTo", {}).get("last") == "wire.rs"
+                   and around.get("scrubbedTo", {}).get("first") == "parser.rs",
+                   f"the list, the fold and the wheel did not each reach what they name: "
+                   f"{around}")
+    journey.say("the list every heading opens reached tokens.rs, folding it away took its lines "
+                "off the page and opening it brought them back, and the wheel down the edge was "
+                "dragged to wire.rs at the foot and back to parser.rs at the head")
 
     written = seen.get("comments", [])
     journey.expect(len(written) == 3,
@@ -3060,8 +3178,9 @@ def prepare_asks() -> None:
 def prepare_review() -> None:
     scratch_repository(
         "review-repository",
-        {"parser.rs": PARSER_COMMITTED, "wire.rs": WIRE_COMMITTED},
-        {"parser.rs": PARSER_EDITED, "wire.rs": WIRE_EDITED})
+        {"parser.rs": PARSER_COMMITTED, "tokens.rs": TOKENS_COMMITTED,
+         "wire.rs": WIRE_COMMITTED},
+        {"parser.rs": PARSER_EDITED, "tokens.rs": TOKENS_EDITED, "wire.rs": WIRE_EDITED})
 
 
 def prepare_writing() -> None:

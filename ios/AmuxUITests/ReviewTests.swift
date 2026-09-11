@@ -39,8 +39,24 @@ final class ReviewTests: JourneyCase {
         let page = try declared(runner)
         record["diff"] = said(page, "review")?.value ?? ""
         record["magnitudes"] = said(page, "review.chrome")?.value ?? ""
-        record["files"] = page.filter { $0.identifier == "review.file" }.map { $0.label }
+        // What the page says it covers is the chrome's own count; which files
+        // those are is gathered as the reader passes them, because a patch
+        // taller than the phone never has all of its headings on screen at
+        // once.
+        record["onOpening"] = page.filter { $0.identifier == "review.file" }.map { $0.label }
         photograph(app, "review-diff")
+
+        // MARK: The three ways around a patch longer than the screen.
+        //
+        // The list every heading opens, folding a file away, and the wheel
+        // down the right edge. Each is judged by where the page is left: a
+        // line that belongs to one file and to no other is on screen, and the
+        // line the page was showing before is not.
+        XCTAssertNotNil(onScreen(app, Self.firstOfParser),
+                        "the patch did not open on the first file")
+        let around = try navigate(app, runner)
+        record["navigation"] = around
+        record["files"] = around["files"]
 
         // MARK: Three remarks, each about a range taken hold of.
         //
@@ -150,6 +166,130 @@ final class ReviewTests: JourneyCase {
             "lines": sheet?.value ?? "",
         ]
     }
+
+
+    /// The file list, folding, and the wheel, in that order, on the patch the
+    /// host froze.
+    ///
+    /// The order matters: the list is what takes the reader off the first
+    /// file, folding is checked on the file the list reached, and the wheel
+    /// takes the reader to the last file and back to the first — which is
+    /// where the remarks below expect to start.
+    private func navigate(_ app: XCUIApplication, _ runner: Runner) throws -> [String: Any] {
+        var found: [String: Any] = [:]
+        var passed = Set(headings(app))
+
+        // The list of every file, opened from the heading of the one on
+        // screen, and a different file picked out of it.
+        press(app, "review.files")
+        XCTAssertTrue(app.staticTexts["Files"].waitForExistence(timeout: waiting),
+                      "the stack of chevrons beside the path opened no list of files")
+        // The list is a sheet over the patch, so the row wanted is the lowest
+        // thing on screen that begins with that path: the heading of the same
+        // file is behind it, near the top.
+        let listed = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", Self.middleFile))
+            .allElementsBoundByIndex.filter { $0.isHittable }
+            .max { $0.frame.minY < $1.frame.minY }
+        XCTAssertNotNil(listed, "the file list offered no \(Self.middleFile) to jump to")
+        photograph(app, "review-files")
+        listed?.tap()
+        XCTAssertTrue(waitUntil { self.onScreen(app, Self.firstOfTokens) != nil },
+                      "picking \(Self.middleFile) out of the list did not reach it")
+        XCTAssertNil(onScreen(app, Self.firstOfParser),
+                     "picking a file out of the list left the page where it was")
+        found["picked"] = Self.middleFile
+        passed.formUnion(headings(app))
+
+        // That file folded away, and opened again. Folding is the heading
+        // itself: the chevron beside the path is what it says it is.
+        pressFile(app, Self.middleFile)
+        XCTAssertEqual(try fileSays(runner, Self.middleFile), "collapsed",
+                       "the heading did not say the file was folded away")
+        XCTAssertTrue(waitUntil(within: 10) { self.onScreen(app, Self.firstOfTokens) == nil },
+                      "folding \(Self.middleFile) away left its lines on the page")
+        photograph(app, "review-collapsed")
+        found["folded"] = ["file": Self.middleFile, "lines": "hidden"]
+        passed.formUnion(headings(app))
+        pressFile(app, Self.middleFile)
+        XCTAssertEqual(try fileSays(runner, Self.middleFile), "open",
+                       "pressing the heading again did not open the file")
+        XCTAssertTrue(waitUntil(within: 10) { self.onScreen(app, Self.firstOfTokens) != nil },
+                      "opening \(Self.middleFile) again did not bring its lines back")
+
+        // The wheel down the edge: a thumb held against it and dragged, which
+        // is the only way to work it. It is drawn as a column of one dot per
+        // file over the whole height of the page, so where the thumb ends is
+        // which file the page goes to.
+        scrub(app, to: 0.93)
+        XCTAssertTrue(waitUntil { self.onScreen(app, Self.firstOfWire) != nil },
+                      "scrubbing to the foot of the wheel did not reach the last file")
+        XCTAssertNil(onScreen(app, Self.firstOfTokens),
+                     "scrubbing to the last file left the page on the one before it")
+        photograph(app, "review-wheel")
+        found["scrubbedTo"] = ["last": "wire.rs"]
+        passed.formUnion(headings(app))
+        scrub(app, to: 0.08)
+        XCTAssertTrue(waitUntil { self.onScreen(app, Self.firstOfParser) != nil },
+                      "scrubbing back to the head of the wheel did not reach the first file")
+        XCTAssertNil(onScreen(app, Self.firstOfWire),
+                     "scrubbing back to the first file left the page on the last")
+        var reached = found["scrubbedTo"] as? [String: String] ?? [:]
+        reached["first"] = "parser.rs"
+        found["scrubbedTo"] = reached
+        passed.formUnion(headings(app))
+        found["files"] = passed.sorted()
+        return found
+    }
+
+    /// Every file heading the page is currently showing.
+    private func headings(_ app: XCUIApplication) -> [String] {
+        app.descendants(matching: .any).matching(identifier: "review.file")
+            .allElementsBoundByIndex.map { $0.label }.filter { !$0.isEmpty }
+    }
+
+    /// Presses one file's heading, which is the control that folds it.
+    ///
+    /// Every heading shares one name, so the one wanted is the one whose label
+    /// is that path.
+    private func pressFile(_ app: XCUIApplication, _ path: String) {
+        let heading = app.descendants(matching: .any).matching(identifier: "review.file")
+            .allElementsBoundByIndex.first { $0.label == path }
+        guard let heading else {
+            return XCTFail("no heading on the page is \(path)")
+        }
+        if heading.isHittable {
+            heading.tap()
+        } else {
+            heading.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+    }
+
+    /// What the page says about one file: open, or folded away.
+    private func fileSays(_ runner: Runner, _ path: String) throws -> String {
+        try declared(runner)
+            .first { $0.identifier == "review.file" && $0.label == path }?.value ?? ""
+    }
+
+    /// Drags a thumb down the wheel at the right edge to the given fraction of
+    /// the screen.
+    ///
+    /// By coordinate because the wheel is hidden from assistive technology on
+    /// purpose — it is a shortcut through a document that is already readable
+    /// end to end, and a column of undescribable dots is not something to read
+    /// out. A finger is all it answers to, so a finger is what this is.
+    private func scrub(_ app: XCUIApplication, to fraction: Double) {
+        let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5))
+        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: fraction))
+        from.press(forDuration: 0.2, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.3)
+    }
+
+    /// One line out of each file, which is in that file and in no other. Where
+    /// the page is, is which of them is on screen.
+    private static let firstOfParser = "fn parse(input: &str) -> Vec<Token> {"
+    private static let firstOfTokens = "pub struct Token {"
+    private static let firstOfWire = "pub fn encode(tokens: &[Token])"
+    private static let middleFile = "tokens.rs"
 
     /// The field in the comment sheet, which takes the keyboard on arrival.
     private func writable(_ app: XCUIApplication) -> XCUIElement? {

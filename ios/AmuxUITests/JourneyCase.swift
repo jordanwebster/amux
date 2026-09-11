@@ -389,6 +389,24 @@ class JourneyCase: XCTestCase {
         return seen
     }
 
+    /// Where the thing saying this sits on the screen, or nothing where the
+    /// screen is not showing it.
+    ///
+    /// Found by what it says, for everything that carries no name of its own —
+    /// a line of a patch, a paragraph of a message — or whose one name is
+    /// shared by every one of its kind. What has scrolled away is either
+    /// absent from the tree the system builds or lies outside the window, and
+    /// both mean nobody is looking at it.
+    func onScreen(_ app: XCUIApplication, _ saying: String) -> CGRect? {
+        let matching = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", saying))
+            .allElementsBoundByIndex
+        guard let found = matching.first(where: { $0.exists && $0.frame.height > 0 }) else {
+            return nil
+        }
+        return found.frame.intersects(app.frame) ? found.frame : nil
+    }
+
     func transcriptRows(_ app: XCUIApplication) -> [String] {
         identifiers(app, startingWith: "transcript.")
     }

@@ -28,7 +28,7 @@
       "id": "review",
       "stage": 7,
       "topology": "e2e-tests/topologies/review.json",
-      "claim": "A patch a real host froze, read as one scroll and written about with a finger: ranges taken by holding a line and dragging, three remarks added and a fourth cancelled before it was said, and the whole review attached and sent with a remark about the change as a whole. The host received one message carrying that patch's identity, those ranges, what was said about each of them and the patch pinned to it — and nothing about the remark that was cancelled."
+      "claim": "A patch a real host froze across three files, taller than the phone, read and written about with a finger: the list every file heading opens reaching a file further down, that file folded away and opened again, the wheel down the right edge dragged to the last file and back to the first, ranges taken by holding a line and dragging, three remarks added and a fourth cancelled before it was said, and the whole review attached and sent with a remark about the change as a whole. The host received one message carrying that patch's identity, those ranges, what was said about each of them and the patch pinned to it — and nothing about the remark that was cancelled."
     },
     {
       "id": "writing",
