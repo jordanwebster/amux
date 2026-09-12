@@ -497,10 +497,9 @@
     ],
     "ios/Packages/AmuxCore/Sources/AmuxCore/Coding.swift": [
       {"literal": "\"not an RFC 3339 timestamp: \\(text)\"", "context": "debugDescription: \"not an RFC 3339 timestamp: \\(text)\"))", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1},
-      {"literal": "\"+00:00\"", "context": "var body = text.hasSuffix(\"+00:00\") ? String(text.dropLast(6)) + \"Z\" : text", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"Z\"", "context": "var body = text.hasSuffix(\"+00:00\") ? String(text.dropLast(6)) + \"Z\" : text", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\".\"", "context": "if let dot = body.firstIndex(of: \".\") {", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"0.\\(digits)\"", "context": "fraction = Double(\"0.\\(digits)\") ?? 0", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"+00:00\"", "context": "guard text.hasSuffix(\"Z\") || text.hasSuffix(\"+00:00\") else { return nil }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"Z\"", "context": "guard text.hasSuffix(\"Z\") || text.hasSuffix(\"+00:00\") else { return nil }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\".\"", "context": "let style = text.contains(\".\") ? fractionalTimestamp : wholeTimestamp", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"%.9f\"", "context": "var digits = String(format: \"%.9f\", fraction).dropFirst(2)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"0\"", "context": "while digits.hasSuffix(\"0\") { digits = digits.dropLast() }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"\\(stamp).\\(digits)Z\"", "context": "return \"\\(stamp).\\(digits)Z\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},

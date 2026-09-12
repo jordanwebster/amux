@@ -132,7 +132,6 @@ extension EnvironmentValues {
 /// layout changes until the reader takes control. Waiting for every lazy row
 /// to report that it finished measuring can wait forever on an offscreen row.
 struct TranscriptContainer<Content: View>: View {
-    @Environment(\.design) private var design
     /// Where a recording left the reader, to be put back instead of the tail.
     /// Nothing is the ordinary case and the one the app itself always passes:
     /// open at the latest entry and follow it.
@@ -159,11 +158,10 @@ struct TranscriptContainer<Content: View>: View {
             // conversation is reopened, defeating lazy construction and
             // blocking the main thread while every markdown row is measured.
             content
-            // One gap under the last row and no more. The composer inset
-            // already holds the feed clear of the box, so anything further
-            // would open every conversation on a band of empty ground where
-            // the newest row should be.
-            .padding(.bottom, design.metrics.feedGap)
+            // Every terminal row owns its trailing feed gap, just as the
+            // source transcript does. Adding another gap at the container
+            // would shift a short, bottom-anchored conversation upward and
+            // leave an empty band above the composer.
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         // Named on the page rather than on the feed inside it, so a row

@@ -116,13 +116,13 @@ final class PerformanceSuite: XCTestCase {
 
         // The cache is on screen first: what is being measured is the wait
         // between a connection and the rows it confirms, not the first draw.
-        harness.deliver(cached)
+        await harness.deliver(cached)
         await harness.settle()
 
-        harness.deliver(connected)
-        try await Task.sleep(for: .milliseconds(delay))
-        harness.deliver(confirmed)
+        let delivery = harness.deliver(
+            connected, then: confirmed, after: .milliseconds(delay))
         try await harness.wait(for: .reconciled)
+        await delivery.value
 
         let opened = try XCTUnwrap(Signposts.first(.streamConnected))
         let reconciled = try XCTUnwrap(Signposts.first(.reconciled))
@@ -165,7 +165,7 @@ final class PerformanceSuite: XCTestCase {
             self.page(harness, agent: agent, model: model) { drawn.record($0) }
         }
         defer { window.isHidden = true }
-        harness.deliver(Harness.encoded([
+        await harness.deliver(Harness.encoded([
             .session(Sessions.claude(agent: agent)),
             Workloads.append(entries, to: agent, at: 0),
         ]))
@@ -245,7 +245,7 @@ final class PerformanceSuite: XCTestCase {
         let model = harness.stores.conversation(agent)
         let window = harness.show { self.page(harness, agent: agent, model: model) }
         defer { window.isHidden = true }
-        harness.deliver(Harness.encoded([
+        await harness.deliver(Harness.encoded([
             .session(Sessions.claude(agent: agent)),
             Workloads.append(entries, to: agent, at: 0),
         ]))
@@ -266,14 +266,9 @@ final class PerformanceSuite: XCTestCase {
         let frames = FrameWatch()
         let cpu = CPUWatch()
         frames.start()
-        let started = ContinuousClock.now
         let interval = Duration.seconds(1) / 50
-        for (index, batch) in batches.enumerated() {
-            harness.deliver(batch)
-            let due = started + interval * (index + 1)
-            let remaining = ContinuousClock.now.duration(to: due)
-            if remaining > .zero { try await Task.sleep(for: remaining) }
-        }
+        let delivery = harness.deliver(batches, every: interval)
+        await delivery.value
         let hitch = frames.stop()
         let percent = cpu.percent()
         let footprint = Footprint.megabytes()
@@ -343,7 +338,7 @@ final class PerformanceSuite: XCTestCase {
             self.page(harness, agent: agent, model: model) { drawn.record($0) }
         }
         defer { window.isHidden = true }
-        harness.deliver(Harness.encoded([
+        await harness.deliver(Harness.encoded([
             .session(Sessions.claude(agent: agent)),
             Workloads.append(entries, to: agent, at: 0),
         ]))

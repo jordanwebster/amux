@@ -17,22 +17,25 @@ migration vocabulary. Debug-only alternatives and scenarios are absent from
 Release.
 
 An equivalent native batch builds alternatives together and uses one installed
-app session. Two ideas took 20.88s and four took 21.25s, versus 19.57–20.14s and
-20.27–21.16s in the isolated source app: 0.74–1.31s and 0.09–0.98s slower,
-respectively. The four-idea batch includes a structural alternative. A fresh
+app session. Recompiling the changed shared UI and Debug alternatives, two ideas
+took 18.46s and four took 20.57s, versus 19.57–20.14s and 20.27–21.16s in the
+isolated source app. Native was 1.11–1.68s faster for two; four was 0.30s slower
+than the fastest source repeat and 0.59s faster than the slowest. The four-idea
+batch includes a structural alternative. A fresh
 gallery pairs matched home/run/plan source and production images in both
 appearances, retaining originals and displaying sRGB-normalized derivatives;
 no golden was changed. The production shell necessarily uses the real Dynamic
-Island and safe areas. Its real editable composer also shortens the transcript
-viewport compared with the source mockup's overlaid static composer, so the
-same conversation begins higher on screen. The unchanged comparator detected
+Island and safe areas. Independent review found that the conversation had
+mistakenly added a second trailing feed gap. Removing it puts the prompt,
+activity and prose within roughly three points of the source while retaining
+the real editor and bottom safe-area inset. The unchanged comparator detected
 deliberate spacing, type and glass mistakes.
 
-Optimized performance passes all unchanged budgets and drift gates: 444ms
-median cold first frame, 42.9% median streaming main-thread CPU, 71.1MB median
-for a thousand-row conversation, zero idle commits and 241ms median foreground
-recovery. One cold launch reached 472ms while the other four were 435–448ms;
-the unchanged 460ms gate judges the five-launch median. Accessibility passes
+Optimized performance passes all unchanged budgets and drift gates: 439ms
+median cold first frame, 42.5% median streaming main-thread CPU, 70.7MB median
+for a thousand-row conversation, zero idle commits and 240ms median foreground
+recovery. The worst cold launch was 451ms against the unchanged 460ms
+five-launch-median gate. Accessibility passes
 668 controls across 63 states with every app-drawn target at least 44 points.
 Home, writing, ask and conversation live journeys pass. The conversation check
 exercises every one of the 18 visible row families, drawer and tab navigation,
@@ -43,6 +46,34 @@ lazy feed directly under the scroll view, draws rail connectors without an
 infinite layout proposal and keys scroll state to the selected agent. Release
 inspection passes after removing the explicitly excluded Mute and Notifications
 rows and their dormant production state rather than waiving the gate.
+
+Final qualification exposed strict reconciliation and hitch drift that the
+earlier run had not. Runtime bytes are decoded without a redundant
+string-to-data copy, and the UTC timestamp parser now uses Foundation's value
+format rather than serializing roughly 120 parses through `DateFormatter` for a
+40-agent confirmation. An authoritative fleet identical to the cached fleet
+advances reconciliation state and instrumentation without rebuilding or
+republishing every visible row. The zero-latency median fell from an unstable
+9ms to 1.9ms; the 100ms workload measured 106.6ms. The transcript retains its
+already-folded projection across ordinary appends and reopens only a grouped
+exploration run that crosses the append boundary, instead of folding 1,000–2,000
+historical entries for every streamed row. Streaming returned to a zero-hitch
+median without changing the zero baseline, 15% drift rule or 5ms/s budget.
+Focused tests cover row-observation suppression and projection equivalence
+through grouped appends, rewrites, eviction and replay. The harness now drives
+successive and paced callbacks from one persistent worker, matching the runtime
+instead of inserting main-actor test-driver round trips between callbacks.
+The production conversation journey then caught a missing invalidation for
+replace-only feed updates: four live row families are finalized through
+replacement rather than append. The cache now rebuilds for replacement- or
+eviction-only updates, with a row-kind regression test. The unchanged journey
+passes again with all 18 row families visible and its navigation, input,
+refusal, reconnect, streaming and 120-row restoration assertions intact.
+
+SwiftUI still emits same-frame `IdentifiedElements` and scroll-geometry
+diagnostics while synthetic transcript samples are first settling. They did
+not produce a failed hitch, lazy-row or idle gate in the final run, but remain
+an explicit implementation limitation rather than being waived.
 
 2026-09-11 — **The direct design port has started at the production shell.**
 Home, conversation and plan fixtures now enter the real shell instead of

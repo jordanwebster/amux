@@ -82,6 +82,12 @@ public final class ConversationStore {
     /// Absolute position of `entries.first`.
     public private(set) var firstPosition: UInt64 = 0
 
+    /// The already-folded rows the view reads. A stream appends far more
+    /// often than it rewrites history; retaining this projection keeps every
+    /// arriving row from folding the entire transcript again on the main
+    /// actor.
+    private var projectedRows: [TranscriptRow] = []
+
     /// Operations dispatched from this conversation that have not been
     /// answered yet. An answer claims its entry and removes it, so a second
     /// result carrying the same identifier is not claimed twice.
@@ -149,7 +155,7 @@ public final class ConversationStore {
     }
 
     public func rows() -> [TranscriptRow] {
-        entries.transcriptRows() + unacknowledged.map {
+        projectedRows + unacknowledged.map {
             TranscriptRow(
                 id: "pending-\($0.id.uuidString)", layer: layer,
                 kind: .prompt(text: $0.text))
@@ -235,6 +241,12 @@ public final class ConversationStore {
     }
 
     private func apply(_ update: FeedUpdate) {
+        let oldCount = entries.count
+        let oldEnd = firstPosition + UInt64(oldCount)
+        let removedPrefix = update.evicted > firstPosition
+        let isPlainAppend = !removedPrefix
+            && update.replace.isEmpty
+            && update.base == oldEnd
         if update.evicted > firstPosition {
             let gone = Int(min(update.evicted - firstPosition, UInt64(entries.count)))
             entries.removeFirst(gone)
@@ -250,7 +262,12 @@ public final class ConversationStore {
             entries[index] = replacement.entry
         }
         if !update.replace.isEmpty { Signposts.emit(.transcriptCommit) }
-        guard !update.append.isEmpty else { return }
+        guard !update.append.isEmpty else {
+            if removedPrefix || !update.replace.isEmpty {
+                projectedRows = entries.transcriptRows()
+            }
+            return
+        }
         if entries.isEmpty { firstPosition = update.base }
         let end = firstPosition + UInt64(entries.count)
         if update.base < firstPosition {
@@ -269,8 +286,37 @@ public final class ConversationStore {
             invariants.append("feed gap between \(end) and \(update.base)")
         }
         entries.append(contentsOf: update.append)
+        if isPlainAppend {
+            appendProjected(update.append, after: oldCount)
+        } else {
+            projectedRows = entries.transcriptRows()
+        }
         reconcile(update.append)
         for _ in update.append { Signposts.emit(.streamRow) }
         Signposts.emit(.transcriptCommit)
+    }
+
+    /// Extends the folded projection, reopening only the exploration run
+    /// that crosses the append boundary. Every other prior row is immutable
+    /// in a plain append and can remain exactly where it is.
+    private func appendProjected(_ appended: [FeedEntry], after oldCount: Int) {
+        guard !appended.isEmpty else { return }
+        guard oldCount > 0,
+              appended[0].exploration?.groups == true,
+              entries[oldCount - 1].exploration != nil,
+              !projectedRows.isEmpty
+        else {
+            projectedRows.append(contentsOf: appended.transcriptRows())
+            return
+        }
+
+        var runStart = oldCount - 1
+        while runStart > 0,
+              entries[runStart].exploration?.groups == true,
+              entries[runStart - 1].exploration != nil {
+            runStart -= 1
+        }
+        projectedRows.removeLast()
+        projectedRows.append(contentsOf: Array(entries[runStart...]).transcriptRows())
     }
 }

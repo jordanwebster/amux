@@ -75,14 +75,30 @@ public final class FleetStore {
     public func apply(_ event: Event) {
         switch event {
         case .fleet(let fleet):
+            // Check the existing indexed content before allocating its
+            // replacements. Confirmation of an unchanged cached fleet is the
+            // common reconnect path, and dictionary construction was most of
+            // its fixed cost.
+            let visibleContentChanged = fleet.hosts.count != hosts.count
+                || fleet.agents.count != cards.count
+                || fleet.hosts.contains { hosts[$0.id] != $0.entry }
+                || fleet.agents.contains { cards[$0.id] != $0 }
             epoch = fleet.epoch
-            hosts = Dictionary(uniqueKeysWithValues: fleet.hosts.map { ($0.entry.id, $0.entry) })
-            cards = Dictionary(fleet.agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
             let wasReconciled = reconciled
             reconciled = fleet.reconciled
             if fleet.reconciled { reconciliations += 1 }
-            reconcileOrder()
-            rebuild()
+            // A host commonly confirms exactly the fleet that was restored
+            // from cache. The confirmation changes provenance, not anything
+            // drawn in the list, so do not rebuild every row and notify every
+            // observer as though the list changed.
+            if visibleContentChanged {
+                hosts = Dictionary(
+                    uniqueKeysWithValues: fleet.hosts.map { ($0.entry.id, $0.entry) })
+                cards = Dictionary(
+                    fleet.agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+                reconcileOrder()
+                rebuild()
+            }
             if !wasReconciled && reconciled { Signposts.emit(.reconciled) }
             if !markedFirstFrame && !rows.isEmpty {
                 markedFirstFrame = true

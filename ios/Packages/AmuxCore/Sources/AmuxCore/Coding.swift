@@ -32,17 +32,13 @@ public enum AmuxJSON {
 
     static func timestamp(_ text: String) -> Date? {
         // Chrono writes UTC as a trailing `Z`; a relayed timestamp that spells
-        // the same offset out longhand means the same instant.
-        var body = text.hasSuffix("+00:00") ? String(text.dropLast(6)) + "Z" : text
-        var fraction: TimeInterval = 0
-        if let dot = body.firstIndex(of: ".") {
-            let after = body.index(after: dot)
-            let digits = body[after...].prefix { $0.isNumber }
-            fraction = Double("0.\(digits)") ?? 0
-            body.removeSubrange(dot..<body.index(after, offsetBy: digits.count))
-        }
-        guard let whole = wholeSeconds.date(from: body) else { return nil }
-        return whole.addingTimeInterval(fraction)
+        // the same offset out longhand means the same instant. Keep the
+        // accepted grammar narrow while using Foundation's value parser:
+        // DateFormatter serialises every parse and made a fleet confirmation
+        // spend most of its time reading timestamps it had already seen.
+        guard text.hasSuffix("Z") || text.hasSuffix("+00:00") else { return nil }
+        let style = text.contains(".") ? fractionalTimestamp : wholeTimestamp
+        return try? style.parse(text)
     }
 
     static func text(_ date: Date) -> String {
@@ -63,4 +59,7 @@ public enum AmuxJSON {
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
         return formatter
     }()
+
+    private static let wholeTimestamp = Date.ISO8601FormatStyle(includingFractionalSeconds: false)
+    private static let fractionalTimestamp = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 }

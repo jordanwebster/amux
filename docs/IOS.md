@@ -149,8 +149,11 @@ type alternatives. These alternatives and the driving protocol are Debug-only;
 Release has one UI. Each run writes original PNGs, hashes, separate build,
 install, launch, capture and gallery timings, a manifest and a simple local
 `index.html` under `target/ios/native-design-benchmarks/`. It never updates a
-golden. Use `review` to pair matched home, conversation and plan content from
-the selected source with the production shell in light/dark; original images
+golden. Measure an edit loop after changing or otherwise invalidating the
+relevant shared UI and alternative sources; an unchanged incremental build is
+a warm capture loop and is not comparable to the source's edit-and-rebuild
+measurements. Use `review` to pair matched home, conversation and plan content
+from the selected source with the production shell in light/dark; original images
 are retained and the displayed derivatives are normalized to sRGB. Use
 `detection` to prove the unchanged comparator notices deliberate spacing, type
 and glass mistakes.

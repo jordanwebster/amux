@@ -14,8 +14,33 @@ final class ConversationStoreTests: XCTestCase {
         ]))
     }
 
+    private func prompt(_ id: Int, seq: Int, text: String) -> FeedEntry {
+        FeedEntry(layer: .claudePty, row: .object([
+            "id": .int(id),
+            "seq": .int(seq),
+            "kind": .object(["entry": .string("prompt"), "text": .string(text)]),
+        ]))
+    }
+
     private func text(_ store: ConversationStore) -> [String] {
         store.entries.compactMap { $0.row["kind"]?["text"]?.stringValue }
+    }
+
+    private func look(_ id: Int, path: String, grouped: Bool) -> FeedEntry {
+        FeedEntry(layer: .claudePty, row: .object([
+            "id": .int(id),
+            "seq": .int(id + 1),
+            "kind": .object([
+                "entry": .string("tool"),
+                "name": .string("Read"),
+                "invocation": .object([
+                    "tool": .string("read"),
+                    "file_path": .string(path),
+                ]),
+                "outcome": .object(["outcome": .string("success")]),
+                "group_with_previous": .bool(grouped),
+            ]),
+        ]))
     }
 
     func testRowsAppendInOrder() {
@@ -27,6 +52,29 @@ final class ConversationStoreTests: XCTestCase {
             append: [row(1, seq: 2, text: "two"), row(2, seq: 3, text: "three")],
             replace: [], evicted: 0)))
         XCTAssertEqual(text(store), ["one", "two", "three"])
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+    }
+
+    func testIncrementalProjectionRefoldsAGroupAcrossTheAppendBoundary() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: [look(0, path: "one.swift", grouped: false)],
+            replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1,
+            append: [
+                look(1, path: "two.swift", grouped: true),
+                look(2, path: "three.swift", grouped: true),
+            ],
+            replace: [], evicted: 0)))
+
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+        guard case .exploration(let reads, _, let anchor, _) = store.rows().first?.kind else {
+            return XCTFail("the appended reads did not remain one folded run")
+        }
+        XCTAssertEqual(reads, 3)
+        XCTAssertEqual(anchor, "one.swift")
     }
 
     func testARewrittenRowIsRewrittenRatherThanRepeated() {
@@ -40,6 +88,22 @@ final class ConversationStoreTests: XCTestCase {
             replace: [FeedReplacement(position: 0, entry: row(0, seq: 1, text: "Hello\n\nUpdated"))],
             evicted: 0)))
         XCTAssertEqual(text(store), ["Hello\n\nUpdated", "two"])
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+    }
+
+    func testAReplaceOnlyUpdateRefreshesTheProjectedRow() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: [row(0, seq: 1, text: "draft")], replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1, append: [],
+            replace: [FeedReplacement(
+                position: 0, entry: prompt(0, seq: 1, text: "finished"))],
+            evicted: 0)))
+
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+        XCTAssertEqual(store.rows().first?.kind, .prompt(text: "finished"))
     }
 
     func testAnEvictedPrefixLeavesWithoutRenumberingWhatSurvives() {
@@ -61,6 +125,7 @@ final class ConversationStoreTests: XCTestCase {
             replace: [FeedReplacement(position: 3, entry: row(3, seq: 4, text: "corrected"))],
             evicted: 2)))
         XCTAssertEqual(text(store), ["row-2", "corrected", "row-4"])
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
     }
 
     func testAReplayFromBeforeWhatIsHeldBecomesTheWholeFeed() {
@@ -83,6 +148,7 @@ final class ConversationStoreTests: XCTestCase {
             append: (0..<5).map { row($0, seq: $0 + 1, text: "row-\($0)") },
             replace: [], evicted: 0)))
         XCTAssertEqual(text(store), ["row-0", "row-1", "row-2", "row-3", "row-4"])
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
         XCTAssertEqual(store.firstPosition, 0)
         XCTAssertTrue(store.invariants.isEmpty, "\(store.invariants)")
     }

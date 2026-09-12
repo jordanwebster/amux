@@ -1,4 +1,5 @@
 import AmuxMobile
+import Darwin
 import Foundation
 
 /// How to start the shared runtime. The field names are the bridge's own, so
@@ -131,7 +132,13 @@ public final class BridgeClient: Sendable {
         var malformed: [String] { lock.withLock { unreadable } }
 
         func receive(_ json: UnsafePointer<CChar>) {
-            let data = Data(String(cString: json).utf8)
+            // The callback already hands us UTF-8 bytes. Turning them into a
+            // Swift string and immediately back into bytes performs two
+            // allocations on every runtime update, including the fleet
+            // confirmation that gates reconnect latency.
+            let data = Data(
+                bytesNoCopy: UnsafeMutableRawPointer(mutating: json),
+                count: strlen(json), deallocator: .none)
             guard let batch = try? decoder.decode([Event].self, from: data) else {
                 lock.withLock { unreadable.append(String(decoding: data, as: UTF8.self)) }
                 return

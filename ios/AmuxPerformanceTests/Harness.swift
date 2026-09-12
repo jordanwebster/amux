@@ -58,8 +58,8 @@ final class Harness {
     /// Hands the runtime's own callback a batch, encoded as the runtime
     /// encodes it. The decoding, the ordering and the hop to the main actor
     /// are the app's, not the test's.
-    func deliver(_ events: [Event]) {
-        deliver(Harness.encoded(events))
+    func deliver(_ events: [Event]) async {
+        await deliver(Harness.encoded(events))
     }
 
     /// Delivers bytes that were encoded earlier.
@@ -68,8 +68,39 @@ final class Harness {
     /// runtime produces this JSON on its own worker, so encoding it on the
     /// main thread mid-measurement would put Rust's work into the app's
     /// number.
-    func deliver(_ json: String) {
-        bridge.deliverAsRuntime(json)
+    func deliver(_ json: String) async {
+        let bridge = bridge
+        await Task.detached(priority: .userInitiated) {
+            bridge.deliverAsRuntime(json)
+        }.value
+    }
+
+    /// Starts two successive callbacks on one worker, as the runtime does.
+    /// Keeping the worker alive between them avoids measuring a round trip
+    /// through this main-actor test driver that production never makes.
+    func deliver(_ first: String, then second: String, after delay: Duration) -> Task<Void, Never> {
+        let bridge = bridge
+        return Task.detached(priority: .userInitiated) {
+            bridge.deliverAsRuntime(first)
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            bridge.deliverAsRuntime(second)
+        }
+    }
+
+    /// Feeds a paced stream from one persistent worker. The runtime does not
+    /// create a task or revisit the main actor between callbacks, so neither
+    /// should a performance workload that is meant to stand in for it.
+    func deliver(_ batches: [String], every interval: Duration) -> Task<Void, Never> {
+        let bridge = bridge
+        return Task.detached(priority: .userInitiated) {
+            let started = ContinuousClock.now
+            for (index, batch) in batches.enumerated() {
+                bridge.deliverAsRuntime(batch)
+                let due = started + interval * (index + 1)
+                let remaining = ContinuousClock.now.duration(to: due)
+                if remaining > .zero { try? await Task.sleep(for: remaining) }
+            }
+        }
     }
 
     static func encoded(_ events: [Event]) -> String {

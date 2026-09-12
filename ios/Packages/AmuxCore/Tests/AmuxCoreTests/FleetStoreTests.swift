@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import XCTest
 @testable import AmuxCore
 
@@ -39,6 +40,26 @@ final class FleetStoreTests: XCTestCase {
         store.apply(Made.fleet(cards, reconciled: true))
         XCTAssertEqual(store.reconciliations, 2, "the second confirmation is a second arrival")
         XCTAssertTrue(store.reconciled, "and the flag it could have been read from has not moved")
+    }
+
+    func testConfirmingIdenticalCachedContentDoesNotRebuildTheVisibleRows() {
+        let store = FleetStore(now: now)
+        let cards = [Made.card(1, name: "alpha", attention: .idle, minutesAgo: 2, now: now)]
+        store.apply(Made.fleet(cards, reconciled: false))
+        let rowsChanged = ObservationFlag()
+        withObservationTracking {
+            _ = store.rows
+        } onChange: {
+            rowsChanged.set()
+        }
+
+        store.apply(Made.fleet(cards, reconciled: true))
+
+        XCTAssertTrue(store.reconciled)
+        XCTAssertEqual(store.reconciliations, 1)
+        XCTAssertFalse(
+            rowsChanged.value,
+            "confirmation redrew a list whose visible content was identical")
     }
 
     func testSyncConfirmsTheRowsWithoutRegroupingThem() {
@@ -209,5 +230,16 @@ final class FleetStoreTests: XCTestCase {
         XCTAssertTrue(store.rows[0].unread)
         store.opened(Made.agentId(1), at: now)
         XCTAssertFalse(store.rows[0].unread)
+    }
+}
+
+private final class ObservationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var changed = false
+
+    var value: Bool { lock.withLock { changed } }
+
+    func set() {
+        lock.withLock { changed = true }
     }
 }
