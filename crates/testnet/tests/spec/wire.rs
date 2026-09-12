@@ -16,7 +16,7 @@
 //! allocates, so a late frame is for an unknown id and is a deterministic
 //! drop. The once-`#[ignore]`d marker below is now a real passing test.
 
-use node::testnet::{LinkCloseReason, TestNet, Via, WirePeer};
+use testnet::{LinkCloseReason, TestNet, Via, WirePeer};
 
 /// An oversize `TunnelData` (one byte past the 64 KiB payload cap, N-TN-7) is
 /// a link-closing protocol violation: the daemon answers `LinkClose(PROTOCOL_

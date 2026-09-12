@@ -68,24 +68,22 @@ impl Listeners {
     }
 }
 
-#[cfg(test)]
 #[derive(Clone)]
-pub(crate) enum CloudFixtureAuth {
+pub enum CloudFixtureAuth {
     Bearer(String),
     Refreshing(crate::routing::LinkConnectorAuth),
 }
 
-#[cfg(test)]
 #[derive(Default)]
-pub(crate) struct RuntimeFixtures {
-    pub(crate) listener: Option<TcpListener>,
-    pub(crate) tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
-    pub(crate) artifact_clock: Option<Arc<dyn artifacts::Clock>>,
-    pub(crate) cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
-    pub(crate) cloud_transport: Option<tonic::transport::Channel>,
+pub struct RuntimeFixtures {
+    pub listener: Option<TcpListener>,
+    pub tracked_tcp: Option<crate::dispatcher::TrackedTcpConnections>,
+    pub host_factory: Option<Arc<dyn LocalAgentHostFactory>>,
+    pub cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
+    pub cloud_transport: Option<tonic::transport::Channel>,
 }
 
-pub(crate) struct ProfileRuntimeOptions {
+pub struct ProfileRuntimeOptions {
     pub(crate) paths: ProfilePaths,
     pub(crate) config: RuntimeConfig,
     pub(crate) shared: Arc<InstallationSettings>,
@@ -93,12 +91,11 @@ pub(crate) struct ProfileRuntimeOptions {
     pub(crate) host_factory: Option<Arc<dyn LocalAgentHostFactory>>,
 
     pub(crate) listeners: Listeners,
-    #[cfg(test)]
-    pub(crate) fixtures: RuntimeFixtures,
+    pub fixtures: RuntimeFixtures,
 }
 
 impl ProfileRuntimeOptions {
-    pub(crate) fn from_legacy_config(
+    pub fn from_legacy_config(
         config: Config,
         credentials: Option<Arc<dyn CredentialProvider>>,
         update_reporter: Option<Arc<dyn UpdateReporter>>,
@@ -139,7 +136,6 @@ impl ProfileRuntimeOptions {
             host_factory,
 
             listeners,
-            #[cfg(test)]
             fixtures: RuntimeFixtures::default(),
         }
     }
@@ -165,7 +161,7 @@ impl ProfileRuntimeOptions {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum ProfileStartError {
+pub enum ProfileStartError {
     #[error(transparent)]
     Config(#[from] ConfigError),
     #[error("IO error: {0}")]
@@ -175,27 +171,23 @@ pub(crate) enum ProfileStartError {
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum CloudStartError {
+pub enum CloudStartError {
     #[error("profile has no cloud credentials")]
     MissingCredentials,
 }
 
 /// All state and tasks owned by one complete device profile.
-pub(crate) struct ProfileRuntime {
-    pub(crate) host_id: crate::HostId,
+pub struct ProfileRuntime {
+    pub host_id: crate::HostId,
     paths: ProfilePaths,
     state: Arc<RwLock<ServerState>>,
-    pub(crate) agent_host: Option<Arc<dyn LocalAgentHost>>,
-    pub(crate) services: StartedUserServices,
-    #[cfg(test)]
-    pub(crate) test_agent_host: Arc<dyn LocalAgentHost>,
-    pub(crate) trust: crate::trust::SharedTrustStore,
-    #[cfg(test)]
+    pub agent_host: Option<Arc<dyn LocalAgentHost>>,
+    pub services: StartedUserServices,
+    pub trust: crate::trust::SharedTrustStore,
     test_cloud: Option<(tonic::transport::Channel, CloudFixtureAuth)>,
-    pub(crate) test_cloud_transport: Option<tonic::transport::Channel>,
+    pub test_cloud_transport: Option<tonic::transport::Channel>,
     client: Client,
-    #[cfg(test)]
-    pub(crate) client_channel: tonic::transport::Channel,
+    pub client_channel: tonic::transport::Channel,
     in_process_connection: InProcessConnection,
     background_tasks: Vec<JoinHandle<()>>,
     cloud_connector: Mutex<Option<CloudConnector>>,
@@ -208,10 +200,7 @@ pub(crate) struct ProfileRuntime {
 
 /// Start local services and listeners for one profile. Cloud attachment is
 /// intentionally a separate operation.
-#[cfg(test)]
-pub(crate) async fn start(
-    options: ProfileRuntimeOptions,
-) -> Result<ProfileRuntime, ProfileStartError> {
+pub async fn start(options: ProfileRuntimeOptions) -> Result<ProfileRuntime, ProfileStartError> {
     let reporters = options
         .shared
         .status_reporters
@@ -220,7 +209,6 @@ pub(crate) async fn start(
     start_observed(options, status).await
 }
 
-#[cfg(test)]
 pub(crate) async fn start_observed(
     options: ProfileRuntimeOptions,
     status: RuntimeStatus,
@@ -276,7 +264,6 @@ async fn build(
     security: DeviceRuntimeSecurity,
     status: RuntimeStatus,
 ) -> Result<ProfileRuntime, ProfileStartError> {
-    #[cfg(test)]
     let mut options = options;
     let reporters = options
         .shared
@@ -296,16 +283,11 @@ async fn build(
     )));
     state.write().await.subscription_reporter = reporters.subscription.clone();
 
-    #[cfg(test)]
     let host_factory: Option<Arc<dyn LocalAgentHostFactory>> = options
         .fixtures
-        .artifact_clock
-        .as_ref()
-        .map(|clock| Arc::new(agent_runtime::test_support::Factory::new(clock.clone())) as _)
-        .or_else(|| options.host_factory.clone())
-        .or_else(|| Some(Arc::new(agent_runtime::AgentRuntimeFactory)));
-    #[cfg(not(test))]
-    let host_factory = options.host_factory.clone();
+        .host_factory
+        .clone()
+        .or_else(|| options.host_factory.clone());
     let agent_host = host_factory
         .as_ref()
         .map(|factory| {
@@ -326,17 +308,7 @@ async fn build(
             })
         })
         .transpose()?;
-    #[cfg(test)]
-    let test_agent_host = agent_host
-        .clone()
-        .expect("node tests require an agent runtime");
     let trust = security.shared_trust_store();
-    #[cfg(not(test))]
-    let mut services = start_user_services(state.clone(), agent_host.clone(), security)
-        .await
-        .map_err(|error| ProfileStartError::State(error.to_string()))?;
-
-    #[cfg(test)]
     let mut services = start_user_services(state.clone(), agent_host.clone(), security)
         .await
         .map_err(|error| ProfileStartError::State(error.to_string()))?;
@@ -353,7 +325,6 @@ async fn build(
         tracing::info!(addr = %addr, "listening on profile direct dispatcher TCP");
     }
 
-    #[cfg(test)]
     if let Some(tracked) = &options.fixtures.tracked_tcp {
         if let Some(listener) = options.fixtures.listener.take() {
             services.serve_external_tcp_listener_tracked(listener, tracked.clone());
@@ -376,7 +347,6 @@ async fn build(
         }
     }
 
-    #[cfg(test)]
     if options.listeners == Listeners::InProcessOnly && options.fixtures.tracked_tcp.is_some() {
         background_tasks.extend(services.spawn_reachability_links());
     }
@@ -393,17 +363,10 @@ async fn build(
         state,
         agent_host,
         services,
-        #[cfg(test)]
-        test_agent_host,
         trust,
-        #[cfg(test)]
         test_cloud: options.fixtures.cloud,
-        #[cfg(test)]
         test_cloud_transport: options.fixtures.cloud_transport,
-        #[cfg(not(test))]
-        test_cloud_transport: None,
         client,
-        #[cfg(test)]
         client_channel,
         in_process_connection,
         background_tasks,
@@ -417,11 +380,11 @@ async fn build(
 }
 
 impl ProfileRuntime {
-    pub(crate) fn client(&self) -> Client {
+    pub fn client(&self) -> Client {
         self.client.clone()
     }
 
-    pub(crate) fn report_status_for_test(&self, observed: Observed) {
+    pub fn report_status_for_test(&self, observed: Observed) {
         self.status.report(observed);
     }
 
@@ -467,8 +430,7 @@ impl ProfileRuntime {
         Ok(None)
     }
 
-    pub(crate) async fn start_cloud(&self) -> Result<(), CloudStartError> {
-        #[cfg(test)]
+    pub async fn start_cloud(&self) -> Result<(), CloudStartError> {
         if let Some((channel, auth)) = &self.test_cloud {
             let mut connector = self.cloud_connector.lock().await;
             if connector
@@ -525,13 +487,12 @@ impl ProfileRuntime {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) async fn set_test_cloud_auth(&mut self, auth: CloudFixtureAuth) {
+    pub async fn set_test_cloud_auth(&mut self, auth: CloudFixtureAuth) {
         self.stop_cloud().await;
         self.test_cloud.as_mut().expect("test cloud configured").1 = auth;
     }
 
-    pub(crate) async fn stop_cloud(&self) {
+    pub async fn stop_cloud(&self) {
         let mut connector = self.cloud_connector.lock().await;
         if let Some(connector) = connector.take() {
             connector.stop().await;
@@ -539,7 +500,7 @@ impl ProfileRuntime {
         self.status.report(Observed::Local);
     }
 
-    pub(crate) async fn stop(mut self, reason: ShutdownReason) {
+    pub async fn stop(mut self, reason: ShutdownReason) {
         self.quiesce(reason).await;
         self.finish_stop().await;
     }

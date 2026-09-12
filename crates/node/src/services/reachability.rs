@@ -24,7 +24,7 @@ use crate::tunnel::TunnelPool;
 const DIRECT_LINK_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
-pub(crate) struct ReachabilityLinkConnector {
+pub struct ReachabilityLinkConnector {
     mode: ReachabilityLinkConnectorMode,
 }
 
@@ -90,8 +90,7 @@ impl ReachabilityLinkConnector {
 
     /// Test-harness seam: register every TCP socket this connector dials in
     /// `tracker`, so the harness can sever them like a process exit.
-    #[cfg(test)]
-    pub(crate) fn track_dialed_tcp(&self, tracker: TrackedTcpConnections) {
+    pub fn track_dialed_tcp(&self, tracker: TrackedTcpConnections) {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return;
         };
@@ -124,7 +123,7 @@ impl ReachabilityLinkConnector {
             .collect()
     }
 
-    pub(crate) fn spawn_pair_time_link(&self, peer: HostId, reachability: Reachability) {
+    pub fn spawn_pair_time_link(&self, peer: HostId, reachability: Reachability) {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return;
         };

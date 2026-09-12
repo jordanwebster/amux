@@ -5,7 +5,7 @@
 //! pairing. (docs/PROTOCOL.md "Identity and trust"; docs/ARCHITECTURE.md
 //! "Identity and the trust store")
 
-use node::testnet::{TestNet, Via};
+use testnet::{TestNet, Via};
 
 /// A fresh daemon creates its identity once; both the keypair and the
 /// `host_id` survive a restart, and a paired peer's pinned-key mTLS still

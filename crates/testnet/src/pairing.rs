@@ -9,10 +9,10 @@
 use std::time::Duration;
 
 use client::PairingSecret;
+use node::{HostId, pair_via_pin_direct_tcp, pair_via_ssh_initiator, pair_via_ssh_responder};
 
 use super::Daemon;
 use super::assertions::eventually;
-use crate::{HostId, pair_via_pin_direct_tcp, pair_via_ssh_initiator, pair_via_ssh_responder};
 
 /// A 6-digit pairing PIN handed out by [`Daemon::start_pairing`].
 /// Dereferences to the PIN string for `pair(..).with_pin(&pin)`.
@@ -285,7 +285,7 @@ impl PairAttempt<'_> {
         self.from
             .spawn_direct_link(
                 self.to.host_id(),
-                crate::trust::Reachability::DirectTcp { addr },
+                node::trust::Reachability::DirectTcp { addr },
             )
             .await;
         Ok(())

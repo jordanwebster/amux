@@ -70,7 +70,7 @@ pub(crate) enum HostEventOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AgentEventOutcome {
+pub enum AgentEventOutcome {
     Upserted,
     Removed,
     Ignored,
@@ -86,7 +86,7 @@ struct ClientServiceState {
 }
 
 #[derive(Clone)]
-pub(crate) struct ClientService {
+pub struct ClientService {
     state: Arc<RwLock<ClientServiceState>>,
     local_agents: AgentServiceCtx,
     server_state: Arc<RwLock<ServerState>>,
@@ -153,7 +153,7 @@ impl ClientService {
     }
 
     /// Pairing discovery is served only by the installation front door.
-    pub(crate) async fn list_pairing_candidates(&self) -> Vec<HostEntry> {
+    pub async fn list_pairing_candidates(&self) -> Vec<HostEntry> {
         let mut hosts = Vec::new();
         for host in self.hosts_snapshot().await {
             if !self.is_local_host(host.id)
@@ -168,7 +168,7 @@ impl ClientService {
         entries
     }
 
-    pub(crate) async fn list_agents(&self) -> Vec<Agent> {
+    pub async fn list_agents(&self) -> Vec<Agent> {
         let state = self.state.read().await;
         sorted_values_by_id(&state.agents_model, |agent| agent.id)
     }
@@ -178,7 +178,7 @@ impl ClientService {
         self.state.write().await.host_events.subscribe()
     }
 
-    pub(crate) async fn subscribe_hosts_with_snapshot(
+    pub async fn subscribe_hosts_with_snapshot(
         &self,
     ) -> (Vec<HostEntry>, mpsc::Receiver<HostEvent>) {
         let (snapshot, rx) = {
@@ -222,7 +222,7 @@ impl ClientService {
             .await;
     }
 
-    pub(crate) async fn apply_agent_event(&self, event: AgentEvent) -> AgentEventOutcome {
+    pub async fn apply_agent_event(&self, event: AgentEvent) -> AgentEventOutcome {
         match event {
             AgentEvent::AgentUp { agent } => self.upsert_agent(agent, AgentChangeKind::Up).await,
             AgentEvent::AgentUpdated { agent } => {

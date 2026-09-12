@@ -28,7 +28,7 @@ use crate::routing::{LinkRegistry, LinkRole};
 use crate::trust::SharedTrustStore;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RouteUpdateOutcome {
+pub enum RouteUpdateOutcome {
     Inserted,
     AlreadyKnown,
     RejectedByCap,
@@ -62,7 +62,7 @@ struct RoutingState {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct RoutingDebug {
+pub struct RoutingDebug {
     pub(crate) hosts: Vec<HostDebug>,
     pub(crate) routes: Vec<RouteDebug>,
     pub(crate) links: Vec<LinkDebug>,
@@ -123,7 +123,7 @@ impl RoutingState {
 }
 
 #[derive(Default)]
-pub(crate) struct RoutingCore {
+pub struct RoutingCore {
     state: RwLock<RoutingState>,
     trust_store: Option<SharedTrustStore>,
 }
@@ -142,7 +142,7 @@ impl RoutingCore {
 
     /// The route a fresh call to `host_id` would take: a direct link when we
     /// hold one, otherwise through the first relay that claims adjacency.
-    pub(crate) async fn route_to(&self, host_id: HostId) -> Option<Route> {
+    pub async fn route_to(&self, host_id: HostId) -> Option<Route> {
         let state = self.state.read().await;
         if let Some(entry) = state.directs.get(&host_id)
             && let Some(link) = entry.links.first()
@@ -157,7 +157,7 @@ impl RoutingCore {
     }
 
     /// Every route we hold to `host_id` (the direct link first).
-    pub(crate) async fn routes_to(&self, host_id: HostId) -> Vec<Route> {
+    pub async fn routes_to(&self, host_id: HostId) -> Vec<Route> {
         let state = self.state.read().await;
         let mut routes = Vec::new();
         if let Some(entry) = state.directs.get(&host_id) {
@@ -249,8 +249,7 @@ impl RoutingCore {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
-    pub(crate) async fn host_entry(&self, host_id: HostId) -> Option<Host> {
+    pub async fn host_entry(&self, host_id: HostId) -> Option<Host> {
         let state = self.state.read().await;
         state
             .directs
@@ -436,7 +435,7 @@ impl RoutingCore {
     }
 
     /// The current table replayed as events, for seeding a late subscriber.
-    pub(crate) async fn routing_events_snapshot(&self) -> Vec<RoutingEvent> {
+    pub async fn routing_events_snapshot(&self) -> Vec<RoutingEvent> {
         let state = self.state.read().await;
         let mut events = Vec::new();
         let mut directs = state.directs.values().collect::<Vec<_>>();

@@ -1,6 +1,6 @@
 //! The amux protocol spec suite.
 //!
-//! Whole-daemon black-box tests over the `node::testnet` harness. Chapters
+//! Whole-daemon black-box tests over the `testnet` harness. Chapters
 //! mirror the protocol story (`docs/PROTOCOL.md`), so reading the suite
 //! top-to-bottom works as documentation; the modules below are declared in
 //! that reading order.

@@ -65,7 +65,7 @@ async fn create_test_agent(client: &node::Client, working_dir: &Path) -> node::A
 }
 
 async fn installation_client() -> (node::Installation, node::Client, PathBuf, tempfile::TempDir) {
-    let disk_root = node::test_fixtures::short_installation_root();
+    let disk_root = testnet::identity::short_installation_root();
     let installation = node::Installation::open(node::InstallationOptions {
         root: node::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: node::InstallationSettings {
@@ -814,7 +814,7 @@ fn socket_connector(socket: &Path) -> ui_runtime::Connector {
 
 #[cfg(unix)]
 async fn socketed_installation() -> (node::Installation, tempfile::TempDir) {
-    let disk_root = node::test_fixtures::short_installation_root();
+    let disk_root = testnet::identity::short_installation_root();
     let installation = node::Installation::open(node::InstallationOptions {
         root: node::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: node::InstallationSettings {

@@ -1262,7 +1262,7 @@ mod attach {
     }
 
     async fn embedded_client() -> (node::Installation, Client, tempfile::TempDir) {
-        let root = node::test_fixtures::short_installation_root();
+        let root = testnet::identity::short_installation_root();
         let installation = node::Installation::open(node::InstallationOptions {
             root: node::InstallationRoot::OnDisk(root.path().into()),
             settings: node::InstallationSettings {

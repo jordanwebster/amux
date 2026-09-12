@@ -5,8 +5,8 @@ use node::installation::{AgentResumeStatus, OperationId, SuspendReason};
 #[cfg(unix)]
 use node::installation::{FrontDoor, rpc};
 #[cfg(unix)]
-use node::testnet::InstallationHandle;
-use node::testnet::TestNet;
+use testnet::InstallationHandle;
+use testnet::TestNet;
 
 async fn devices() -> TestNet {
     TestNet::builder()

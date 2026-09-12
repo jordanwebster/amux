@@ -5,38 +5,49 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-node = { workspace = true }
+agent-runtime = { workspace = true }
+anyhow = { workspace = true }
+artifacts = { workspace = true }
 async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+client = { workspace = true }
+futures-util = { workspace = true }
+host-api = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+node = { workspace = true }
+model = { workspace = true }
 reqwest = { workspace = true }
+rustls = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+tracing = { workspace = true }
 uuid = { workspace = true }
+wire = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
 [dev-dependencies]
-agent-runtime = { workspace = true }
-anyhow = { workspace = true }
-bytes = { workspace = true }
-chrono = { workspace = true }
 claude = { workspace = true }
 claude-specs = { path = "../claude-specs" }
-client = { workspace = true }
 codex = { path = "../codex" }
 codex-specs = { path = "../codex-specs" }
 gethostname = { workspace = true }
-host-api = { workspace = true }
 model = { workspace = true }
 nix = { workspace = true }
 redaction = { workspace = true }
 replay-support = { path = "../replay-support" }
 serde = { workspace = true }
-serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
-wire = { workspace = true }
 
 [[test]]
 name = "codex_live"

@@ -14,6 +14,13 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use futures_util::{Stream, stream};
+use node::HostId;
+use node::config::Config;
+use node::connection::ConnectionManager;
+use node::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
+use node::services::CloudLinkService;
+use node::transport::TcpServerTransport;
+use node::user_state::ServerState;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -21,13 +28,6 @@ use uuid::Uuid;
 use wire;
 
 use super::assertions::POLL_INTERVAL;
-use crate::HostId;
-use crate::config::Config;
-use crate::connection::ConnectionManager;
-use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
-use crate::services::CloudLinkService;
-use crate::transport::TcpServerTransport;
-use crate::user_state::ServerState;
 
 /// OS-level handles to every TCP connection the relay has accepted, so an
 /// outage can sever them for real (tonic's spawned connection tasks outlive
@@ -50,8 +50,8 @@ pub(crate) type TokenRegistry = Arc<std::sync::RwLock<HashMap<String, Registered
 /// TTL for ordinary (non-expiring-test) testnet tokens.
 const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(3600);
 
-pub(crate) struct CloudRelay {
-    pub(crate) addr: SocketAddr,
+pub struct CloudRelay {
+    pub addr: SocketAddr,
     pub(crate) host_id: HostId,
     /// The default cloud user's bearer token.
     pub(crate) token: String,
@@ -93,7 +93,7 @@ impl Drop for RunningCloud {
 }
 
 impl CloudRelay {
-    pub(crate) async fn start() -> Self {
+    pub async fn start() -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("bind testnet cloud relay listener");
@@ -171,7 +171,7 @@ impl CloudRelay {
             .entry(label.to_string())
             .or_insert_with(|| {
                 let user_id = Uuid::new_v4();
-                let token = format!("spec-token-{label}-{}", Uuid::new_v4().simple());
+                let token = crate::identity::relay_token(label);
                 self.register_token(&token, user_id, DEFAULT_TOKEN_TTL);
                 (user_id, token)
             })
@@ -189,6 +189,24 @@ impl CloudRelay {
 
     pub(crate) fn token_registry(&self) -> TokenRegistry {
         self.tokens.clone()
+    }
+
+    /// Registers or returns the relay account identified by `label`.
+    pub fn register_user(&self, label: &str) -> RelayUser {
+        let (user_id, token) = self.credentials_for_user(label);
+        RelayUser { user_id, token }
+    }
+
+    /// Uses this relay's plaintext transport for an unbound profile.
+    pub async fn use_for_profile(
+        &self,
+        installation: &node::Installation,
+        id: node::ProfileId,
+    ) -> Result<(), node::installation::InstallationError> {
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", self.addr))
+            .expect("valid relay fixture URI")
+            .connect_lazy();
+        installation.use_test_cloud_transport(id, channel).await
     }
 
     /// Attempts a routed `ClientService.ListAgents` call from the relay's
@@ -242,6 +260,12 @@ impl CloudRelay {
     pub(crate) async fn is_online(&self) -> bool {
         self.server.lock().await.is_some()
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct RelayUser {
+    pub user_id: Uuid,
+    pub token: String,
 }
 
 /// Accepts TCP connections like the production relay, but keeps an OS-level

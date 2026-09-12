@@ -12,7 +12,8 @@ mod transport;
 mod types;
 
 use bytes::Bytes;
-pub(crate) use pool::{TunnelDebug, TunnelPool, TunnelPoolError};
+pub(crate) use pool::TunnelDebug;
+pub use pool::{TunnelPool, TunnelPoolError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 pub(crate) use transport::TunnelTransport;
@@ -20,7 +21,7 @@ use wire as pb;
 
 use crate::HostId;
 use crate::routing::LinkOutputTx;
-pub(crate) use crate::tunnel::types::TunnelId;
+pub use crate::tunnel::types::TunnelId;
 
 pub(crate) const TUNNEL_DATA_PAYLOAD_MAX: usize = 64 * 1024;
 const BUF_SIZE: usize = TUNNEL_DATA_PAYLOAD_MAX;

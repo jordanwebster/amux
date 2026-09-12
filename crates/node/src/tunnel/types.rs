@@ -4,14 +4,14 @@
 //! `TunnelOpen.src` — so the wire shape is just `bytes tunnel_id`.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TunnelId(uuid::Uuid);
+pub struct TunnelId(uuid::Uuid);
 
 impl TunnelId {
     pub(crate) fn new() -> Self {
         Self(uuid::Uuid::new_v4())
     }
 
-    pub(crate) fn to_wire(self) -> Vec<u8> {
+    pub fn to_wire(self) -> Vec<u8> {
         self.0.as_bytes().to_vec()
     }
 
@@ -38,7 +38,7 @@ impl std::fmt::Display for TunnelId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum TunnelTypeError {
+pub enum TunnelTypeError {
     #[error("{field} must be 16 bytes, got {actual}")]
     InvalidUuidLength { field: &'static str, actual: usize },
 }

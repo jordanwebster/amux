@@ -5,13 +5,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use node::installation::{BindTarget, Observed, ProfileStatus};
-use node::test_fixtures::{Fault, IdentityServer, TestAccount, TestRelay};
 use node::{
     AccessToken, AuthError, BindRequest, Client, CredentialProvider, CredentialSource, HostId,
     HostTrustStatus, Installation, InstallationOptions, InstallationRoot, InstallationSettings,
     Listeners, OAuthError, OperationId, PairingSecret, ProfileId, ShutdownReason,
     refresh_access_token,
 };
+use testnet::identity::{Fault, IdentityServer, TestAccount};
+use testnet::relay::CloudRelay;
 
 struct HostCredentials {
     url: String,
@@ -68,7 +69,7 @@ async fn bind(
     installation: &Installation,
     providers: &Providers,
     identity: &IdentityServer,
-    relay: &TestRelay,
+    relay: &CloudRelay,
     subject: &str,
 ) -> (ProfileStatus, Arc<HostCredentials>) {
     let profile = installation.create(OperationId::new(), None).await.unwrap();
@@ -172,7 +173,7 @@ async fn wait_pairing_host(installation: &Installation, id: ProfileId, peer: Hos
 
 #[tokio::test]
 async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
-    let relay = TestRelay::start().await;
+    let relay = CloudRelay::start().await;
     let personal_user = relay.register_user("personal");
     let work_user = relay.register_user("work");
     assert_ne!(personal_user.user_id, work_user.user_id);

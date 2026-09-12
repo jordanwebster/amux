@@ -10,7 +10,7 @@ const DEFAULT_EVENT_BUFFER: usize = 256;
 /// `ConnectionManager`). Strictly local bookkeeping; the wire-side
 /// `NeighborUp`/`NeighborDown` fan-out lives in the `LinkRegistry`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum RoutingEvent {
+pub enum RoutingEvent {
     /// A channel-backed direct link to `host` came up.
     NeighborUp { host: Host, link: LinkId },
     /// A direct link went down; `last_link` marks the peer's last one.

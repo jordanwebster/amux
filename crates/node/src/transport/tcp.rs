@@ -7,8 +7,9 @@ use tokio::net::{TcpListener, TcpStream};
 
 use super::GrpcIo;
 
-pub(crate) type TcpServerTransport<T = TcpStream> = GrpcIo<T>;
+pub type TcpServerTransport<T = TcpStream> = GrpcIo<T>;
 
+#[allow(dead_code)]
 pub(crate) fn tcp_incoming(
     listener: TcpListener,
 ) -> impl Stream<Item = io::Result<TcpServerTransport<TcpStream>>> + Send + 'static {

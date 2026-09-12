@@ -67,10 +67,10 @@ mod tests {
             Installation, InstallationRoot, Observed, ProfileId, ProfileLabel, ProfilePaths,
             Registry,
         };
-        use node::test_fixtures::report_profile_status;
+        use testnet::identity::report_profile_status;
 
         tokio::time::timeout(std::time::Duration::from_secs(15), async {
-            let temp = node::test_fixtures::short_installation_root();
+            let temp = testnet::identity::short_installation_root();
             let root = std::fs::canonicalize(temp.path()).unwrap();
             let (cloud_url, cloud_server) = manifest_fixture("/manifest.json", "100.0.0").await;
             let (update_url, manifest_server) = manifest_fixture("/releases/desktop.json", "99.0.0").await;
@@ -272,7 +272,7 @@ mod tests {
             reporter.dismiss_update_required("99.0.0");
             reporter.report_subscription_required(true);
 
-            let root = node::test_fixtures::short_installation_root();
+            let root = testnet::identity::short_installation_root();
             let installation = node::Installation::open(node::InstallationOptions {
                 root: node::InstallationRoot::OnDisk(root.path().into()),
                 settings: node::InstallationSettings {

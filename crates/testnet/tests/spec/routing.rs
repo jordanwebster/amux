@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use node::testnet::{TestNet, Via};
+use testnet::{TestNet, Via};
 
 /// Direct beats cloud: with both paths available, traffic uses the direct
 /// link — from both ends. The acceptor of a direct link routes back over

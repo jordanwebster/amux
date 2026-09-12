@@ -9,19 +9,19 @@ use crate::config::Config;
 use crate::subscription::SubscriptionReporter;
 use crate::update::UpdateReporter;
 
-pub(crate) struct ServerState {
+pub struct ServerState {
     pub(crate) config: Config,
     pub(crate) host_id: Uuid,
     pub(crate) credentials: Option<Arc<dyn CredentialProvider>>,
     pub(crate) subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
     pub(crate) update_reporter: Option<Arc<dyn UpdateReporter>>,
-    pub(crate) is_cloud_server: bool,
+    pub is_cloud_server: bool,
     pub(crate) jwt_validator: Option<Arc<JwtValidator>>,
     pub(crate) local_agent_host: Option<Arc<dyn LocalAgentHost>>,
 }
 
 impl ServerState {
-    pub(crate) fn new(
+    pub fn new(
         config: Config,
         host_id: Uuid,
         credentials: Option<Arc<dyn CredentialProvider>>,

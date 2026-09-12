@@ -1,3 +1,13 @@
+2026-09-12 — **Promote the whole-daemon harness into testnet.** Testnet now
+owns the topology builder, daemon and installation handles, identity service,
+wire actor, cloud relay and all 92 whole-daemon specs. The two former relay
+fixtures are one registry-authenticated implementation, while node exposes only
+the hidden internals the harness needs; test-only provider composition remains
+in testnet rather than entering node's production dependency graph. The spec
+inventory remains 412 tests (92 testnet and 320 UI-state), node's unit-only
+harness runs 399 tests in about 7.3 seconds, and the embedded fixture tests,
+full specs, workspace tests, dependency policy and all-target Clippy pass.
+
 2026-09-12 — **Fold deterministic fixtures into the TUI package.** The fixture
 registry, builders and five focused suites now live under `tui` behind its
 non-default `fixtures` feature. Shot enables that feature directly, so the

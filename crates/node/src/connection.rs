@@ -60,7 +60,7 @@ impl ConnectionPool {
     }
 }
 
-pub(crate) struct ConnectionManager {
+pub struct ConnectionManager {
     routing: Arc<RoutingCore>,
     pool: Arc<ConnectionPool>,
     tunnels: Arc<TunnelPool>,
@@ -106,7 +106,7 @@ impl ConnectionManager {
         })
     }
 
-    pub(crate) async fn channel_to(&self, peer: HostId) -> Result<Channel, TunnelPoolError> {
+    pub async fn channel_to(&self, peer: HostId) -> Result<Channel, TunnelPoolError> {
         let route = self
             .routing
             .route_to(peer)
@@ -338,13 +338,11 @@ impl ConnectionManager {
         &self.tunnels
     }
 
-    #[cfg(test)]
-    pub(crate) async fn active_route(&self, peer: HostId) -> Option<Route> {
+    pub async fn active_route(&self, peer: HostId) -> Option<Route> {
         self.state.read().await.active.get(&peer).copied()
     }
 
-    #[cfg(test)]
-    pub(crate) async fn known_routes(&self, peer: HostId) -> Vec<Route> {
+    pub async fn known_routes(&self, peer: HostId) -> Vec<Route> {
         self.routing.routes_to(peer).await
     }
 }

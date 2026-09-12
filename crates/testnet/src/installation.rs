@@ -5,15 +5,16 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
-use super::daemon::{CloudAttachment, DaemonInner, TestArtifactClock};
-use super::{Daemon, NetInner};
-use crate::installation::{
+use node::installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
     ProfileEvent, ProfileId, ProfilePaths, ProfileStatus, ProfileWatch,
 };
-use crate::profile::runtime::{ProfileRuntime, RuntimeFixtures};
-use crate::test_fixtures::IdentityServer;
+use node::profile::runtime::{ProfileRuntime, RuntimeFixtures};
+
+use super::daemon::{CloudAttachment, DaemonInner, TestArtifactClock};
+use super::{Daemon, NetInner};
+use crate::identity::IdentityServer;
 
 pub(super) struct InstallationSpec {
     pub name: String,
@@ -29,7 +30,7 @@ pub(super) struct ProfileSpec {
 
 struct ProfileFixture {
     tcp_addr: Option<SocketAddr>,
-    tracked_tcp: crate::dispatcher::TrackedTcpConnections,
+    tracked_tcp: node::dispatcher::TrackedTcpConnections,
     clock: Arc<TestArtifactClock>,
 }
 
@@ -47,7 +48,7 @@ pub(crate) struct ProfileOwner {
 }
 
 impl ProfileOwner {
-    pub(crate) async fn installation_admin(&self) -> crate::installation::ProfileAdmin {
+    pub(crate) async fn installation_admin(&self) -> node::installation::ProfileAdmin {
         self.installation
             .upgrade()
             .expect("installation dropped")
@@ -59,8 +60,7 @@ impl ProfileOwner {
 
     pub(crate) fn admin_client(&self) -> client::ProfileAdminClient {
         use client::FrontDoorClient;
-
-        use crate::installation::{FrontDoor, rpc};
+        use node::installation::{FrontDoor, rpc};
         let owner = self.installation.upgrade().expect("installation dropped");
         let channel = FrontDoor::new(owner.current(), None).channel();
         FrontDoorClient {
@@ -286,7 +286,7 @@ impl std::ops::Deref for Profile {
 /// a lifecycle request after update admission closes and before preparation.
 pub struct UpdatePreparationHold {
     pub(crate) _runtime: tokio::sync::OwnedMutexGuard<Option<ProfileRuntime>>,
-    pub(crate) operations: Arc<crate::installation::OperationGate>,
+    pub(crate) operations: Arc<host_api::OperationGate>,
 }
 
 impl UpdatePreparationHold {
@@ -304,13 +304,17 @@ impl UpdatePreparationHold {
 impl Profile {
     pub async fn hold_update_preparation(&self) -> UpdatePreparationHold {
         let owner = self.daemon.inner.installation.as_ref().unwrap();
-        owner
+        let (_runtime, operations) = owner
             .installation
             .upgrade()
             .unwrap()
             .current()
             .hold_update_preparation_for_test(self.id)
-            .await
+            .await;
+        UpdatePreparationHold {
+            _runtime,
+            operations,
+        }
     }
 
     /// Prepare and park the currently active sessions through the local host.
@@ -324,7 +328,12 @@ impl Profile {
             .runtime()
             .await
             .unwrap();
-        let host = &runtime.as_ref().unwrap().test_agent_host;
+        let host = runtime
+            .as_ref()
+            .unwrap()
+            .agent_host
+            .as_ref()
+            .expect("testnet agent host");
         host.prepare_suspend(self.paths().state_path).await.unwrap();
         host.commit_suspend().await;
     }
@@ -337,18 +346,19 @@ impl Profile {
     /// reconnect through a client or look up the profile after deletion.
     pub async fn retain_work(&self) -> RetainedProfileWork {
         let owner = self.daemon.inner.installation.as_ref().unwrap();
-        owner
+        let (agent, pairing) = owner
             .installation
             .upgrade()
             .unwrap()
             .current()
             .retained_work_for_test(self.id)
-            .await
+            .await;
+        RetainedProfileWork { agent, pairing }
     }
 
     /// Force refresh through the runtime's installed credential provider and
     /// await its commit or refusal. No credential material leaves the fixture.
-    pub async fn refresh_credentials(&self) -> Result<(), crate::auth::AuthError> {
+    pub async fn refresh_credentials(&self) -> Result<(), node::auth::AuthError> {
         let owner = self.daemon.inner.installation.as_ref().unwrap();
         owner
             .installation
@@ -359,7 +369,7 @@ impl Profile {
             .await
     }
 
-    pub async fn reaches_status(&self, observed: crate::installation::Observed) {
+    pub async fn reaches_status(&self, observed: node::installation::Observed) {
         super::assertions::eventually(
             &format!("{} reaches {observed:?}", self.name()),
             async || self.status().observed == observed,
@@ -369,13 +379,13 @@ impl Profile {
     }
 
     #[cfg(unix)]
-    pub async fn socket_client(&self) -> crate::Client {
-        let config = crate::config::Config {
+    pub async fn socket_client(&self) -> node::Client {
+        let config = node::config::Config {
             socket_path: self.paths().socket_path,
             ..Default::default()
         };
         let channel = client::connect_socket(&config.socket_path).await.unwrap();
-        crate::Client::from_channel(channel)
+        node::Client::from_channel(channel)
     }
 
     pub fn status(&self) -> ProfileStatus {
@@ -391,7 +401,7 @@ impl Profile {
             .expect("profile no longer exists")
     }
 
-    pub fn client(&self) -> crate::Client {
+    pub fn client(&self) -> node::Client {
         let owner = self.daemon.inner.installation.as_ref().unwrap();
         owner
             .installation
@@ -512,7 +522,9 @@ fn fixture_factory(
         RuntimeFixtures {
             listener: listener.map(|listener| tokio::net::TcpListener::from_std(listener).unwrap()),
             tracked_tcp: Some(fixture.tracked_tcp.clone()),
-            artifact_clock: Some(fixture.clock.clone()),
+            host_factory: Some(Arc::new(agent_runtime::test_support::Factory::new(
+                fixture.clock.clone(),
+            ))),
             cloud: None,
             cloud_transport: cloud_addr.map(|addr| {
                 tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
@@ -526,9 +538,9 @@ fn fixture_factory(
 pub(super) async fn start(
     spec: InstallationSpec,
     identity: Arc<IdentityServer>,
-    cloud: Option<&super::net::CloudRelay>,
+    cloud: Option<&super::relay::CloudRelay>,
 ) -> InstallationHandle {
-    let disk_root = crate::test_fixtures::short_installation_root();
+    let disk_root = crate::identity::short_installation_root();
     let root = InstallationRoot::OnDisk(disk_root.path().into());
     let fixtures = Arc::new(Mutex::new(FixturePlan {
         profiles: BTreeMap::new(),
@@ -623,22 +635,22 @@ pub(super) async fn start(
 /// Service contexts retained independently of their runtime and transports.
 /// Exercises late work at the commit boundary, beyond closed-client checks.
 pub struct RetainedProfileWork {
-    pub(crate) agent: crate::services::AgentServiceCtx,
-    pub(crate) pairing: crate::services::PeerTrustCommitContext,
+    pub(crate) agent: node::services::AgentServiceCtx,
+    pub(crate) pairing: node::services::PeerTrustCommitContext,
 }
 
 impl RetainedProfileWork {
     /// Deliver through the retained production service even after its socket closes.
     pub async fn send_echo_input(
         &self,
-        agent: &crate::Agent,
+        agent: &node::Agent,
         payload: &[u8],
-    ) -> Result<(), crate::ProtocolError> {
+    ) -> Result<(), node::ProtocolError> {
         self.agent
-            .send_input(crate::agents::SendInputRequest {
+            .send_input(node::agents::SendInputRequest {
                 agent_id: agent.id,
-                protocol: crate::agents::Protocol::TestEchoV1,
-                event: crate::agents::SessionInputEvent::Input {
+                protocol: node::agents::Protocol::TestEchoV1,
+                event: node::agents::SessionInputEvent::Input {
                     input_id: vec![1],
                     payload: payload.to_vec(),
                 },
@@ -647,7 +659,7 @@ impl RetainedProfileWork {
             .await
     }
 
-    pub async fn diff(&self, agent: &crate::Agent) -> Result<(), tonic::Status> {
+    pub async fn diff(&self, agent: &node::Agent) -> Result<(), tonic::Status> {
         use wire;
         use wire::agent_service_server::AgentService;
         self.agent
@@ -663,16 +675,16 @@ impl RetainedProfileWork {
 
     pub async fn assert_late_writes_rejected(
         &self,
-        agent: &crate::Agent,
+        agent: &node::Agent,
         peer: &Daemon,
-        artifact: &crate::ArtifactRef,
+        artifact: &node::ArtifactRef,
     ) {
         use wire;
         use wire::agent_service_server::AgentService;
         let (id, key) = peer.identity_on_disk();
-        let error = crate::services::commit_peer_trust(
+        let error = node::services::commit_peer_trust(
             self.pairing.clone(),
-            crate::services::PeerTrustUpdate::new(id, key, peer.name().into(), None),
+            node::services::PeerTrustUpdate::new(id, key, peer.name().into(), None),
         )
         .await
         .unwrap_err();
@@ -681,7 +693,7 @@ impl RetainedProfileWork {
             .agent
             .put_artifact_by_agent(
                 agent.id,
-                crate::ArtifactKind::File,
+                node::ArtifactKind::File,
                 "late.txt",
                 "text/plain",
                 b"late".to_vec(),
@@ -690,7 +702,7 @@ impl RetainedProfileWork {
             .unwrap_err();
         assert!(matches!(
             error,
-            crate::ProtocolError::FailedPrecondition { .. }
+            node::ProtocolError::FailedPrecondition { .. }
         ));
         let error = self
             .agent
@@ -717,7 +729,7 @@ impl RetainedProfileWork {
             self.diff(agent).await.unwrap_err().code(),
             tonic::Code::FailedPrecondition
         );
-        let error = <crate::services::AgentServiceCtx as AgentService>::send_input(
+        let error = <node::services::AgentServiceCtx as AgentService>::send_input(
             &self.agent,
             tonic::Request::new(wire::SendInputRequest {
                 agent_id: agent.id.as_bytes().to_vec(),

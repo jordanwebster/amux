@@ -13,12 +13,12 @@ use tonic::transport::server::Connected;
 
 use crate::HostId;
 
-pub(crate) struct GrpcIo<T> {
+pub struct GrpcIo<T> {
     inner: T,
 }
 
 impl<T> GrpcIo<T> {
-    pub(crate) fn new(inner: T) -> Self {
+    pub fn new(inner: T) -> Self {
         Self { inner }
     }
 }

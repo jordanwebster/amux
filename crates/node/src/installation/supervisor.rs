@@ -154,7 +154,6 @@ pub(super) struct Inner {
     identity_http: reqwest::Client,
     host_factory: Option<Arc<dyn host_api::LocalAgentHostFactory>>,
     binding: AsyncMutex<VecDeque<binding::PendingLogin>>,
-    #[cfg(test)]
     fixtures: Option<RuntimeFixtureFactory>,
 }
 
@@ -286,7 +285,8 @@ fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), Inst
 }
 
 impl Installation {
-    pub(crate) async fn test_runtime(
+    #[doc(hidden)]
+    pub async fn test_runtime(
         &self,
         id: ProfileId,
     ) -> Option<tokio::sync::OwnedMutexGuard<Option<ProfileRuntime>>> {
@@ -345,13 +345,7 @@ impl Installation {
     /// Own an installation and start its profiles independently. Keep this owner
     /// alive across screens; dropping clients never stops a profile.
     pub async fn open(options: InstallationOptions) -> Result<Self, InstallationError> {
-        Self::open_inner(
-            options,
-            None,
-            #[cfg(test)]
-            None,
-        )
-        .await
+        Self::open_inner(options, None, None).await
     }
 
     /// Open a desktop installation using shared preferences from its config.
@@ -368,19 +362,13 @@ impl Installation {
             identity_http: reqwest::Client::new(),
             host_factory,
         };
-        Self::open_inner(
-            options,
-            Some(config),
-            #[cfg(test)]
-            None,
-        )
-        .await
+        Self::open_inner(options, Some(config), None).await
     }
 
     async fn open_inner(
         options: InstallationOptions,
         config: Option<InstallationConfig>,
-        #[cfg(test)] fixtures: Option<RuntimeFixtureFactory>,
+        fixtures: Option<RuntimeFixtureFactory>,
     ) -> Result<Self, InstallationError> {
         let registry = Registry::open(options.root)?;
         let temporary_root = if registry.path().is_none() {
@@ -457,7 +445,6 @@ impl Installation {
             identity_http: options.identity_http,
             host_factory: options.host_factory,
             binding: AsyncMutex::new(VecDeque::new()),
-            #[cfg(test)]
             fixtures,
         });
         for record in records {
@@ -494,7 +481,8 @@ impl Installation {
         &self.inner.root
     }
 
-    pub(crate) async fn use_test_cloud_transport(
+    #[doc(hidden)]
+    pub async fn use_test_cloud_transport(
         &self,
         id: ProfileId,
         channel: tonic::transport::Channel,
@@ -846,7 +834,6 @@ impl Inner {
                 host_factory: self.host_factory.clone(),
 
                 listeners: self.listeners,
-                #[cfg(test)]
                 fixtures: self
                     .fixtures
                     .as_ref()
@@ -1206,7 +1193,5 @@ pub use update::{
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
 mod testnet;
-#[cfg(test)]
 use testnet::RuntimeFixtureFactory;

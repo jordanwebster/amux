@@ -119,7 +119,7 @@ fn bearer_token_from_metadata(
 }
 
 #[derive(Clone)]
-pub(crate) struct CloudLinkService {
+pub struct CloudLinkService {
     inner: Arc<CloudLinkServiceInner>,
 }
 
@@ -137,7 +137,7 @@ impl CloudLinkService {
         )
     }
 
-    pub(crate) fn with_authenticator(
+    pub fn with_authenticator(
         state: Arc<RwLock<ServerState>>,
         authenticator: Arc<dyn LinkTokenAuthenticator>,
     ) -> Self {
@@ -150,14 +150,14 @@ impl CloudLinkService {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn serve_on_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
         spawn_cloud_link_service_server(self.clone(), tcp_incoming(listener))
     }
 
     /// Serves the relay on an arbitrary accepted-transport stream. Used by
     /// the testnet harness to keep kill-switch handles on accepted sockets.
-    #[cfg(test)]
-    pub(crate) fn serve_on_incoming<I, IO>(&self, incoming: I) -> JoinHandle<()>
+    pub fn serve_on_incoming<I, IO>(&self, incoming: I) -> JoinHandle<()>
     where
         I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
         IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
@@ -197,8 +197,7 @@ impl CloudLinkService {
     /// Testnet observation seam: the relay-side `ConnectionManager` serving
     /// `user_id`, if that user has attached. Lets spec tests assert what the
     /// relay can (not) do with the traffic it forwards.
-    #[cfg(test)]
-    pub(crate) async fn user_routing_connections(
+    pub async fn user_routing_connections(
         &self,
         user_id: Uuid,
     ) -> Option<Arc<crate::connection::ConnectionManager>> {
@@ -210,8 +209,7 @@ impl CloudLinkService {
             .map(|services| services.connections.clone())
     }
 
-    #[cfg(test)]
-    pub(crate) async fn user_has_link_to(&self, user_id: Uuid, host_id: HostId) -> bool {
+    pub async fn user_has_link_to(&self, user_id: Uuid, host_id: HostId) -> bool {
         let tunnels = self
             .inner
             .users
@@ -410,10 +408,10 @@ fn cloud_link_server(
     )
 }
 
-pub(crate) struct StartedRoutingServices {
-    pub(crate) routing: Arc<RoutingCore>,
-    pub(crate) tunnels: Arc<TunnelPool>,
-    pub(crate) connections: Arc<ConnectionManager>,
+pub struct StartedRoutingServices {
+    pub routing: Arc<RoutingCore>,
+    pub tunnels: Arc<TunnelPool>,
+    pub connections: Arc<ConnectionManager>,
     local_host: Host,
     _incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
     tasks: Vec<JoinHandle<()>>,
@@ -492,23 +490,21 @@ pub(crate) async fn start_routing_services(
     parts.runtime
 }
 
-pub(crate) struct StartedUserServices {
+pub struct StartedUserServices {
     runtime: StartedRoutingServices,
-    #[cfg(test)]
-    pub(crate) agent: AgentServiceCtx,
-    pub(crate) client: ClientService,
+    pub agent: AgentServiceCtx,
+    pub client: ClientService,
     trusted_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
-    #[cfg(test)]
+    #[allow(dead_code)]
     pairing_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
-    #[cfg(test)]
-    pub(crate) pair_mode: Arc<PairMode>,
+    pub pair_mode: Arc<PairMode>,
     reachability_links: ReachabilityLinkConnector,
     dispatcher: TunnelDispatcher,
     connections_closed: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Clone)]
-pub(crate) struct DeviceRuntimeSecurity {
+pub struct DeviceRuntimeSecurity {
     identity: DeviceIdentity,
     trust_store: SharedTrustStore,
     data_dir: PathBuf,
@@ -660,13 +656,10 @@ pub(crate) async fn start_user_services(
     Ok(StartedUserServices {
         connections_closed,
         runtime: parts.runtime,
-        #[cfg(test)]
         agent,
         client,
         trusted_incoming_tx,
-        #[cfg(test)]
         pairing_incoming_tx,
-        #[cfg(test)]
         pair_mode,
         reachability_links,
         dispatcher,
@@ -740,7 +733,6 @@ impl StartedUserServices {
     /// accepted socket in `connections`, so an in-process restart can sever
     /// them like a real process exit (see
     /// [`crate::dispatcher::TunnelDispatcher::serve_tcp_listener_tracked`]).
-    #[cfg(test)]
     pub(crate) fn serve_external_tcp_listener_tracked(
         &mut self,
         listener: TcpListener,
@@ -771,8 +763,7 @@ impl StartedUserServices {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn reachability_link_connector(&self) -> &ReachabilityLinkConnector {
+    pub fn reachability_link_connector(&self) -> &ReachabilityLinkConnector {
         &self.reachability_links
     }
 }

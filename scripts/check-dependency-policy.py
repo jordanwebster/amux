@@ -34,7 +34,7 @@ TEST_SUPPORT = {
     "shot",
 }
 SUPPORT_ALLOWED_LOCAL = {
-    "testnet": {"node"},
+    "testnet": {"agent-runtime", "artifacts", "client", "host-api", "model", "node", "wire"},
     "claude-specs": {"claude", "pty-host", "redaction", "replay-support"},
     "codex-specs": {"codex", "redaction", "replay-support"},
 }

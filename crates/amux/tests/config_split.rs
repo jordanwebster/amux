@@ -368,7 +368,7 @@ fn profile_selector_cli_lifecycle_keeps_each_commands_selection() {
 #[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn profile_selector_cli_login_and_logout_preserve_the_device() {
-    use node::test_fixtures::{IdentityServer, TestAccount};
+    use testnet::identity::{IdentityServer, TestAccount};
     let identity = IdentityServer::start(
         vec![TestAccount {
             sub: "alice".into(),
@@ -414,7 +414,7 @@ async fn profile_selector_cli_login_and_logout_preserve_the_device() {
 #[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn profile_selector_cli_non_pristine_login_requires_confirmation() {
-    use node::test_fixtures::{IdentityServer, TestAccount};
+    use testnet::identity::{IdentityServer, TestAccount};
     let identity = IdentityServer::start(
         vec![TestAccount {
             sub: "alice".into(),

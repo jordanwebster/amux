@@ -42,14 +42,14 @@ const LINK_AUTH_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(300);
 const LINK_CONNECT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
-pub(crate) struct AuthenticatedLinkUser {
-    pub(crate) user_id: Uuid,
-    pub(crate) client_id: String,
-    pub(crate) expires_at: SystemTime,
+pub struct AuthenticatedLinkUser {
+    pub user_id: Uuid,
+    pub client_id: String,
+    pub expires_at: SystemTime,
 }
 
 #[tonic::async_trait]
-pub(crate) trait LinkTokenAuthenticator: Send + Sync + 'static {
+pub trait LinkTokenAuthenticator: Send + Sync + 'static {
     async fn authenticate_token(&self, token: &str)
     -> Result<AuthenticatedLinkUser, tonic::Status>;
 }
@@ -92,29 +92,26 @@ impl LinkAuthSession {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct LinkConnectorToken {
-    pub(crate) token: String,
-    pub(crate) expires_at: SystemTime,
+pub struct LinkConnectorToken {
+    pub token: String,
+    pub expires_at: SystemTime,
 }
 
 #[tonic::async_trait]
-pub(crate) trait LinkConnectorTokenRefresher: Send + Sync + 'static {
+pub trait LinkConnectorTokenRefresher: Send + Sync + 'static {
     async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status>;
 }
 
 /// Connector-side credential state for an authenticated (cloud) link: the
 /// token currently in force and the refresher that mints its successor.
 #[derive(Clone)]
-pub(crate) struct LinkConnectorAuth {
+pub struct LinkConnectorAuth {
     token: LinkConnectorToken,
     refresher: Arc<dyn LinkConnectorTokenRefresher>,
 }
 
 impl LinkConnectorAuth {
-    pub(crate) fn new(
-        token: LinkConnectorToken,
-        refresher: Arc<dyn LinkConnectorTokenRefresher>,
-    ) -> Self {
+    pub fn new(token: LinkConnectorToken, refresher: Arc<dyn LinkConnectorTokenRefresher>) -> Self {
         Self { token, refresher }
     }
 
@@ -150,7 +147,7 @@ impl LinkConnectorAuth {
 
 /// Acceptor-side context: serves `LinkService.Connect`.
 #[derive(Clone)]
-pub(crate) struct LinkServiceCtx {
+pub struct LinkServiceCtx {
     local_host: Host,
     routing: Arc<RoutingCore>,
     tunnels: Arc<TunnelPool>,
@@ -230,7 +227,6 @@ impl LinkConnectorCtx {
         self
     }
 
-    #[cfg(test)]
     pub(crate) fn with_link_role(mut self, link_role: LinkRole) -> Self {
         self.link_role = link_role;
         self
@@ -302,7 +298,6 @@ pub(crate) fn spawn_connector_to_channel_with_auth_establishment_and_shutdown(
     (task, established_rx)
 }
 
-#[cfg(test)]
 pub(crate) fn spawn_connector_to_channel_with_bearer_token_and_shutdown(
     ctx: LinkConnectorCtx,
     channel: Channel,

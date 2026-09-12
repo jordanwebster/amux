@@ -38,7 +38,7 @@ const CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 /// purchase on the phone from looking broken while the desktop catches up.
 const SUBSCRIPTION_RECHECK_INTERVAL: Duration = Duration::from_secs(5);
 
-pub(crate) struct CloudConnector {
+pub struct CloudConnector {
     stop_tx: watch::Sender<bool>,
     task: JoinHandle<()>,
 }
@@ -57,7 +57,6 @@ impl CloudConnector {
         let _ = self.task.await;
     }
 
-    #[cfg(test)]
     pub(crate) fn testnet_bearer(
         connector_ctx: LinkConnectorCtx,
         channel: tonic::transport::Channel,
@@ -83,7 +82,6 @@ impl CloudConnector {
         Self { stop_tx, task }
     }
 
-    #[cfg(test)]
     pub(crate) fn testnet_with_auth(
         connector_ctx: LinkConnectorCtx,
         channel: tonic::transport::Channel,
@@ -110,7 +108,6 @@ impl CloudConnector {
     }
 }
 
-#[cfg(test)]
 async fn observe_fixture_connector(
     connector_task: JoinHandle<Result<(), tonic::Status>>,
     established_rx: oneshot::Receiver<Result<Host, tonic::Status>>,

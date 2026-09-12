@@ -16,7 +16,7 @@ const TRUST_FILE: &str = "trust.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum Reachability {
+pub enum Reachability {
     Cloud,
     Ssh {
         target: String,
@@ -29,20 +29,20 @@ pub(crate) enum Reachability {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TrustEntry {
-    pub(crate) pubkey: Vec<u8>,
-    pub(crate) name: String,
-    pub(crate) paired_at: DateTime<Utc>,
-    pub(crate) reachabilities: Vec<Reachability>,
+pub struct TrustEntry {
+    pub pubkey: Vec<u8>,
+    pub name: String,
+    pub paired_at: DateTime<Utc>,
+    pub reachabilities: Vec<Reachability>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct TrustStore {
+pub struct TrustStore {
     entries: BTreeMap<HostId, TrustEntry>,
     replacement_pending: BTreeSet<HostId>,
 }
 
-pub(crate) type SharedTrustStore = std::sync::Arc<std::sync::RwLock<TrustStore>>;
+pub type SharedTrustStore = std::sync::Arc<std::sync::RwLock<TrustStore>>;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,23 +79,21 @@ impl TrustStore {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn save_in(&self, data_dir: &Path) -> Result<(), IdentityError> {
+    pub fn save_in(&self, data_dir: &Path) -> Result<(), IdentityError> {
         self.save_to_path(&trust_path(data_dir))
     }
 
-    #[cfg(test)]
-    pub(crate) fn entry(&self, host_id: HostId) -> Option<&TrustEntry> {
+    pub fn entry(&self, host_id: HostId) -> Option<&TrustEntry> {
         self.entries.get(&host_id)
     }
 
-    pub(crate) fn entries(&self) -> impl Iterator<Item = (HostId, &TrustEntry)> + '_ {
+    pub fn entries(&self) -> impl Iterator<Item = (HostId, &TrustEntry)> + '_ {
         self.entries
             .iter()
             .map(|(host_id, entry)| (*host_id, entry))
     }
 
-    #[cfg(test)]
-    pub(crate) fn insert_for_test(&mut self, host_id: HostId, entry: TrustEntry) {
+    pub fn insert_for_test(&mut self, host_id: HostId, entry: TrustEntry) {
         self.entries.insert(host_id, entry);
     }
 

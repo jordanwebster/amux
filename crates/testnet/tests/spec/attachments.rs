@@ -10,9 +10,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use artifacts::ARTIFACT_SIZE_CAP;
-use node::testnet::{TestNet, Via};
 use node::{ArtifactId, ArtifactKind, ClientError, DiffBase, ProtocolError};
 use tempfile::TempDir;
+use testnet::{TestNet, Via};
 use uuid::Uuid;
 
 mod cross_host {

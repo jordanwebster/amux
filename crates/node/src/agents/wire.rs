@@ -18,7 +18,7 @@ use crate::agents::{RenameAgentRequest, TerminalSize};
 use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SessionInputEvent {
+pub enum SessionInputEvent {
     Input { input_id: Vec<u8>, payload: Vec<u8> },
     Control { payload: Vec<u8> },
 }
@@ -31,11 +31,11 @@ pub(crate) struct SubscribeSessionRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SendInputRequest {
-    pub(crate) agent_id: Uuid,
-    pub(crate) protocol: Protocol,
-    pub(crate) event: SessionInputEvent,
-    pub(crate) pin: Vec<String>,
+pub struct SendInputRequest {
+    pub agent_id: Uuid,
+    pub protocol: Protocol,
+    pub event: SessionInputEvent,
+    pub pin: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -723,9 +723,7 @@ pub(crate) fn agent_to_wire(
     })
 }
 
-pub(crate) fn agent_from_wire(
-    agent: protocol_wire::Agent,
-) -> Result<Agent, protocol_wire::DecodeError> {
+pub fn agent_from_wire(agent: protocol_wire::Agent) -> Result<Agent, protocol_wire::DecodeError> {
     let created_at = Utc
         .timestamp_millis_opt(agent.created_at_unix_ms)
         .single()

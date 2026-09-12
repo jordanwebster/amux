@@ -6,27 +6,35 @@ pub(super) type RuntimeFixtureFactory =
     Arc<dyn Fn(ProfileId) -> runtime::RuntimeFixtures + Send + Sync>;
 
 impl Installation {
-    pub(crate) async fn hold_update_preparation_for_test(
+    #[doc(hidden)]
+    pub async fn hold_update_preparation_for_test(
         &self,
         id: ProfileId,
-    ) -> crate::testnet::UpdatePreparationHold {
+    ) -> (
+        tokio::sync::OwnedMutexGuard<Option<ProfileRuntime>>,
+        Arc<host_api::OperationGate>,
+    ) {
         let slot = self.inner.state.lock().unwrap().profiles[&id].slot.clone();
-        crate::testnet::UpdatePreparationHold {
-            _runtime: slot.runtime.clone().lock_owned().await,
-            operations: slot.operations.clone(),
-        }
+        (
+            slot.runtime.clone().lock_owned().await,
+            slot.operations.clone(),
+        )
     }
 
-    pub(crate) async fn retained_work_for_test(
+    #[doc(hidden)]
+    pub async fn retained_work_for_test(
         &self,
         id: ProfileId,
-    ) -> crate::testnet::RetainedProfileWork {
+    ) -> (
+        crate::services::AgentServiceCtx,
+        crate::services::PeerTrustCommitContext,
+    ) {
         let slot = self.inner.state.lock().unwrap().profiles[&id].slot.clone();
         let runtime = slot.runtime.lock().await;
         let runtime = runtime.as_ref().unwrap();
-        crate::testnet::RetainedProfileWork {
-            agent: runtime.services.agent.clone(),
-            pairing: crate::services::PeerTrustCommitContext::new(
+        (
+            runtime.services.agent.clone(),
+            crate::services::PeerTrustCommitContext::new(
                 runtime.trust.clone(),
                 slot.operations.clone(),
                 runtime.services.connections.clone(),
@@ -36,13 +44,11 @@ impl Installation {
                     .join(id.to_string())
                     .join("data"),
             ),
-        }
+        )
     }
 
-    pub(crate) async fn refresh_for_test(
-        &self,
-        id: ProfileId,
-    ) -> Result<(), crate::auth::AuthError> {
+    #[doc(hidden)]
+    pub async fn refresh_for_test(&self, id: ProfileId) -> Result<(), crate::auth::AuthError> {
         use crate::auth::CredentialProvider;
         let store = self.inner.state.lock().unwrap().profiles[&id]
             .slot
@@ -56,18 +62,21 @@ impl Installation {
         store.access_token().await.map(|_| ())
     }
 
-    pub(crate) async fn open_for_test(
+    #[doc(hidden)]
+    pub async fn open_for_test(
         options: InstallationOptions,
         fixtures: RuntimeFixtureFactory,
     ) -> Result<Self, InstallationError> {
         Self::open_inner(options, None, Some(fixtures)).await
     }
 
-    pub(crate) fn test_root(&self) -> PathBuf {
+    #[doc(hidden)]
+    pub fn test_root(&self) -> PathBuf {
         self.inner.root.clone()
     }
 
-    pub(crate) async fn stop_for_test(&self) {
+    #[doc(hidden)]
+    pub async fn stop_for_test(&self) {
         self.inner.shutdown(ShutdownReason::UserRequested).await;
     }
 }

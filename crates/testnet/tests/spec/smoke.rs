@@ -4,7 +4,7 @@
 //! chapters that own their behaviors — presence (Ch. 3) and routing &
 //! failover (Ch. 4).
 
-use node::testnet::{TestNet, Via};
+use testnet::{TestNet, Via};
 
 #[tokio::test]
 async fn paired_daemons_see_trust_and_call_each_other() {

@@ -2,7 +2,7 @@
 #![cfg(unix)]
 
 use node::installation::{FrontDoor, rpc};
-use node::testnet::{TestNet, Via};
+use testnet::{TestNet, Via};
 
 /// A paired peer can use agent calls, but lifecycle and trust administration is absent
 /// from its gRPC service. The installation owner still administers trust.

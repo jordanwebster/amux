@@ -75,7 +75,7 @@ pub(crate) const PAIR_MODE_TTL: Duration = Duration::from_secs(5 * 60);
 pub(crate) const PAIR_ATTEMPT_LIMIT: u8 = 5;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub(crate) enum PairModeError {
+pub enum PairModeError {
     #[error("pairing mode is already active")]
     AlreadyActive,
     #[error("pairing mode is not active")]
@@ -113,7 +113,7 @@ struct PairModeSession {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct PairMode {
+pub struct PairMode {
     state: Arc<Mutex<PairModeState>>,
 }
 
@@ -162,11 +162,7 @@ impl PairMode {
         Ok(secret)
     }
 
-    pub(crate) fn start_pin_for_duration(
-        &self,
-        pin: String,
-        ttl: Duration,
-    ) -> Result<(), PairModeError> {
+    pub fn start_pin_for_duration(&self, pin: String, ttl: Duration) -> Result<(), PairModeError> {
         validate_pin(&pin)?;
         self.start_session(
             PairSecret {

@@ -19,6 +19,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{Stream, stream};
+use node::HostId;
+use node::identity::load_or_create_device_identity_in;
+use node::routing::{Capabilities, Host, host_to_wire};
+use node::transport::trusted_device_channel_tracked;
+use node::trust::{TrustEntry, TrustStore};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -31,11 +36,6 @@ use wire::{self, PROTOCOL_VERSION, pb};
 
 use super::TestNet;
 use super::assertions::DEFAULT_TIMEOUT;
-use crate::HostId;
-use crate::identity::load_or_create_device_identity_in;
-use crate::routing::{Capabilities, Host, host_to_wire};
-use crate::transport::trusted_device_channel_tracked;
-use crate::trust::{TrustEntry, TrustStore};
 
 /// The LinkClose reasons the wire-conformance tests assert on. Mirrors the
 /// wire enum so the spec suite need not name the crate-private protobuf type.

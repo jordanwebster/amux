@@ -54,6 +54,7 @@ libc = { workspace = true }
 
 [dev-dependencies]
 node = { workspace = true }
+testnet = { workspace = true }
 tempfile = { workspace = true }
 ratatui = { workspace = true }
 vt100 = "0.15"

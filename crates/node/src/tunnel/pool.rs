@@ -45,7 +45,7 @@ const TUNNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const PAIRING_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum TunnelPoolError {
+pub enum TunnelPoolError {
     #[error("host {host_id} is not reachable")]
     NotFound { host_id: HostId },
     #[error("no live link to host {host_id}")]
@@ -105,7 +105,7 @@ impl Default for PoolState {
     }
 }
 
-pub(crate) struct TunnelPool {
+pub struct TunnelPool {
     my_host_id: HostId,
     #[allow(dead_code)]
     routing: Arc<RoutingCore>,
@@ -185,7 +185,7 @@ impl TunnelPool {
         self
     }
 
-    pub(crate) fn link_registry(&self) -> Arc<LinkRegistry> {
+    pub fn link_registry(&self) -> Arc<LinkRegistry> {
         self.links.clone()
     }
 
@@ -575,8 +575,7 @@ impl TunnelPool {
 
     /// Testnet observation seam: every active tunnel as
     /// `(id, remote peer, pinned link)`.
-    #[cfg(test)]
-    pub(crate) async fn active_tunnels(&self) -> Vec<(TunnelId, HostId, LinkId)> {
+    pub async fn active_tunnels(&self) -> Vec<(TunnelId, HostId, LinkId)> {
         self.state
             .read()
             .await

@@ -2,7 +2,7 @@
 
 use node::ProtocolError;
 use node::installation::{Intent, Observed, OperationId, ProfileEvent, ProfileStatus};
-use node::testnet::{TestNet, Via, WatchProbe};
+use testnet::{TestNet, Via, WatchProbe};
 
 async fn devices() -> TestNet {
     TestNet::builder()

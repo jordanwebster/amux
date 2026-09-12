@@ -54,7 +54,7 @@ pub enum Route {
 }
 
 impl Route {
-    pub(crate) fn is_direct(&self) -> bool {
+    pub fn is_direct(&self) -> bool {
         matches!(self, Route::Direct(_))
     }
 }
@@ -68,7 +68,7 @@ impl std::fmt::Display for Route {
     }
 }
 
-pub(crate) fn host_to_wire(host: &Host) -> pb::Host {
+pub fn host_to_wire(host: &Host) -> pb::Host {
     pb::Host {
         host_id: host.id.as_bytes().to_vec(),
         name: host.name.clone(),

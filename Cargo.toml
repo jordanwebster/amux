@@ -34,6 +34,7 @@ edition = "2024"
 # Internal
 agent-runtime = { path = "crates/agent-runtime" }
 node = { path = "crates/node" }
+testnet = { path = "crates/testnet" }
 client = { path = "crates/client" }
 host-api = { path = "crates/host-api" }
 model = { path = "crates/model" }

@@ -23,12 +23,11 @@ pub(crate) use memory::{in_process_incoming, in_process_transport_pair};
 pub(crate) use single_io::channel_from_single_io;
 #[allow(unused_imports)]
 pub(crate) use ssh::{SshRelayIo, spawn_ssh_pair_recv, spawn_ssh_relay};
-pub(crate) use tcp::{TcpServerTransport, configure_tcp_keepalive, tcp_incoming};
+pub use tcp::TcpServerTransport;
+pub(crate) use tcp::{configure_tcp_keepalive, tcp_incoming};
 use thiserror::Error;
-pub(crate) use tls::{
-    create_tls_acceptor, pairing_channel, pairing_channel_from_io, tls_channel,
-    trusted_device_channel_tracked,
-};
+pub use tls::trusted_device_channel_tracked;
+pub(crate) use tls::{create_tls_acceptor, pairing_channel, pairing_channel_from_io, tls_channel};
 use tonic::transport::{Endpoint, Server};
 #[cfg(unix)]
 pub(crate) use unix::{bind_unix_listener, unix_incoming};

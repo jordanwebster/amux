@@ -22,4 +22,5 @@ uuid = { workspace = true }
 [dev-dependencies]
 agent-runtime = { workspace = true }
 node = { workspace = true }
+testnet = { workspace = true }
 tempfile = { workspace = true }

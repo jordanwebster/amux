@@ -4,7 +4,7 @@
 //! so its counts cannot quietly fall back to placeholders while the ordinary
 //! protocol remains healthy.
 
-use node::testnet::{TestNet, Via};
+use testnet::{TestNet, Via};
 
 /// A live dump explains both halves of a remote session: the calling daemon's
 /// route, link, and tunnel, and the hosting daemon's output subscription,

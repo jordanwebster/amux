@@ -48,7 +48,7 @@ fn take_mtls_audit_emitted() -> bool {
 /// OS-level duplicates of accepted external-TCP sockets, kept so test
 /// harnesses can sever every live connection at once (see
 /// [`TunnelDispatcher::serve_tcp_listener_tracked`]).
-pub(crate) type TrackedTcpConnections = std::sync::Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
+pub type TrackedTcpConnections = std::sync::Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
 
 pub(crate) fn track_tcp_stream(
     stream: tokio::net::TcpStream,
@@ -127,7 +127,6 @@ impl TunnelDispatcher {
     /// in-process daemon "restart" can sever them the way a real process
     /// exit would (per-connection tasks are detached and would otherwise
     /// keep serving the old runtime).
-    #[cfg(test)]
     pub(crate) fn serve_tcp_listener_tracked(
         &self,
         listener: TcpListener,

@@ -47,7 +47,7 @@ subject; when two overlap, the owner named here wins.
   ledgers.
 - `KEYMAPS.md` — semantic Claude PTY input; keymap data, resolution,
   interpretation, provenance, management and screen-detection limits.
-- `../crates/node/tests/spec/` and `../crates/ui-state/tests/spec/` — the executable specs. The suites read as
+- `../crates/testnet/tests/spec/` and `../crates/ui-state/tests/spec/` — the executable specs. The suites read as
   documentation and locks the protocol's guarantees; run it with
   `timeout 600 wt run spec`.
 - `../DEVLOG.md` — recent work history and decisions.

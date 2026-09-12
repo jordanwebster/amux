@@ -13,14 +13,14 @@ use std::path::Path;
 use agent_runtime::test_support::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use bytes::Bytes;
 use client::{Client, ClientError};
+use node::{
+    Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
+    DiffBase, DiffResponse, SendInputRequest, SendMessageRequest, SubscribeSessionEvent,
+};
 use uuid::Uuid;
 
 use super::Daemon;
 use super::assertions::{DEFAULT_TIMEOUT, eventually};
-use crate::{
-    Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
-    DiffBase, DiffResponse, SendInputRequest, SendMessageRequest, SubscribeSessionEvent,
-};
 
 impl Daemon {
     /// Hold every queue slot of an echo PTY until the returned permits drop.
@@ -89,7 +89,7 @@ impl Daemon {
                 host_id: None,
                 name: Some(name.to_string()),
                 agent_type: AgentType::Claude {
-                    driver: crate::ClaudeDriver::Pty,
+                    driver: node::ClaudeDriver::Pty,
                 },
                 working_dir: working_dir.as_ref().to_path_buf(),
                 terminal_size: None,
@@ -181,7 +181,7 @@ impl Daemon {
     ) -> Vec<ArtifactRef> {
         let client = self.client_to(owner).await;
         let mut stream = client
-            .subscribe_session(crate::SubscribeSessionRequest {
+            .subscribe_session(node::SubscribeSessionRequest {
                 agent: agent.id.into(),
                 io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.to_string(),
                 args: None,
@@ -215,7 +215,7 @@ impl Daemon {
         let mut stream = self
             .client_to(owner)
             .await
-            .subscribe_session(crate::SubscribeSessionRequest {
+            .subscribe_session(node::SubscribeSessionRequest {
                 agent: agent.id.into(),
                 io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.to_string(),
                 args: None,
@@ -270,7 +270,7 @@ impl Daemon {
         let mut stream = self
             .admin_client()
             .await
-            .subscribe_session(crate::SubscribeSessionRequest {
+            .subscribe_session(node::SubscribeSessionRequest {
                 agent: child.id.into(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 args: None,
@@ -278,11 +278,11 @@ impl Daemon {
             .await
             .unwrap_or_else(|error| panic!("subscribe to echo child '{name}': {error}"));
         let encoded = echoed_envelope(&mut stream, name, "an initial child prompt").await;
-        let parsed = crate::envelope::parse(&encoded)
+        let parsed = node::envelope::parse(&encoded)
             .unwrap_or_else(|error| panic!("initial child prompt did not parse: {error}"));
         assert_eq!(parsed.from_id, Some(parent.id));
         assert_eq!(parsed.from_kind.as_deref(), Some(parent.kind.provider()));
-        assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.kind, node::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, prompt);
         child
     }
@@ -363,7 +363,7 @@ impl Daemon {
             .removed_children
             .into_iter()
             .map(|agent| {
-                crate::agents::agent_from_wire(agent)
+                node::agents::agent_from_wire(agent)
                     .expect("removed child decodes")
                     .id
             })
@@ -436,14 +436,14 @@ impl Daemon {
                 tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
                     .await
                     .expect("fleet snapshot completes"),
-                Ok(crate::agents::AgentEvent::SnapshotComplete)
+                Ok(node::agents::AgentEvent::SnapshotComplete)
             ) {
                 break;
             }
         }
 
         client
-            .set_agent_status(crate::SetAgentStatusRequest {
+            .set_agent_status(node::SetAgentStatusRequest {
                 agent: child.id.into(),
                 working_on: Some("reviewing the result".to_string()),
             })
@@ -454,7 +454,7 @@ impl Daemon {
                 .await
                 .expect("status update reaches the fleet stream")
                 .expect("fleet stream remains open");
-            if let crate::agents::AgentEvent::AgentUpdated { agent } = event
+            if let node::agents::AgentEvent::AgentUpdated { agent } = event
                 && agent.id == child.id
             {
                 break agent.working_on.expect("status update carries working_on");
@@ -479,7 +479,7 @@ impl Daemon {
                 .await
                 .expect("completion clear reaches the fleet stream")
                 .expect("fleet stream remains open");
-            if let crate::agents::AgentEvent::AgentUpdated { agent } = event
+            if let node::agents::AgentEvent::AgentUpdated { agent } = event
                 && agent.id == child.id
             {
                 assert!(agent.working_on.is_none());
@@ -528,7 +528,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' did not restart", self.name()));
         let (resumed, failed) = resumed_parts
             .agent_host
-            .resume(state_path, &crate::installation::OperationGate::default())
+            .resume(state_path, &host_api::OperationGate::default())
             .await
             .expect("resume suspended agents");
         assert_eq!((resumed, failed), (2, 0));
@@ -570,7 +570,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         parts
             .client
-            .apply_agent_event(crate::agents::AgentEvent::AgentUp {
+            .apply_agent_event(node::agents::AgentEvent::AgentUp {
                 agent: child.clone(),
             })
             .await;
@@ -599,7 +599,7 @@ impl Daemon {
         let unreachable = response
             .unreachable_children
             .into_iter()
-            .map(|agent| crate::agents::agent_from_wire(agent).expect("unreachable child decodes"))
+            .map(|agent| node::agents::agent_from_wire(agent).expect("unreachable child decodes"))
             .collect::<Vec<_>>();
         assert_eq!(unreachable.len(), 1);
         assert_eq!(unreachable[0].id, child.id);
@@ -635,7 +635,7 @@ impl Daemon {
                 host_id: None,
                 name: Some("claude-child".to_string()),
                 agent_type: AgentType::Claude {
-                    driver: crate::ClaudeDriver::Pty,
+                    driver: node::ClaudeDriver::Pty,
                 },
                 working_dir: std::env::temp_dir(),
                 terminal_size: None,
@@ -656,7 +656,7 @@ impl Daemon {
             .expect("the echo parent should have a name");
         let client = parent_owner.admin_client().await;
         let mut stream = client
-            .subscribe_session(crate::SubscribeSessionRequest {
+            .subscribe_session(node::SubscribeSessionRequest {
                 agent: parent.id.into(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 args: None,
@@ -685,19 +685,14 @@ impl Daemon {
         assert_parent_lifecycle_envelope(
             &completed,
             &child,
-            crate::envelope::EnvelopeKind::Completed,
+            node::envelope::EnvelopeKind::Completed,
             last_assistant_message,
         );
 
         agent_runtime::test_support::end_scripted_session(parts.agent_host.as_ref(), child_id)
             .await;
         let exited = echoed_envelope(&mut stream, parent_name, "an exited message").await;
-        assert_parent_lifecycle_envelope(
-            &exited,
-            &child,
-            crate::envelope::EnvelopeKind::Exited,
-            "",
-        );
+        assert_parent_lifecycle_envelope(&exited, &child, node::envelope::EnvelopeKind::Exited, "");
     }
 
     /// Asserts that the daemon rejects an agent-authored message when the
@@ -732,7 +727,7 @@ impl Daemon {
     pub async fn human_message_is_echoed(&self, recipient: &str, text: &str) {
         let client = self.admin_client().await;
         let mut stream = client
-            .subscribe_session(crate::SubscribeSessionRequest {
+            .subscribe_session(node::SubscribeSessionRequest {
                 agent: recipient.into(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 args: None,
@@ -769,13 +764,13 @@ impl Daemon {
             encoded.contains("from=\"human\""),
             "the echoed tag carries human provenance"
         );
-        let parsed = crate::envelope::parse(&encoded)
+        let parsed = node::envelope::parse(&encoded)
             .unwrap_or_else(|error| panic!("echoed envelope did not parse: {error}"));
         assert_eq!(parsed.id, envelope_id);
         assert_eq!(parsed.from, "human");
         assert_eq!(parsed.from_id, None);
         assert_eq!(parsed.from_kind, None);
-        assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.kind, node::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, text);
     }
 
@@ -820,7 +815,7 @@ impl Daemon {
             .expect("the echo recipient should have a name");
         let client = recipient_owner.admin_client().await;
         let mut stream = client
-            .subscribe_session(crate::SubscribeSessionRequest {
+            .subscribe_session(node::SubscribeSessionRequest {
                 agent: recipient.id.into(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 args: None,
@@ -867,13 +862,13 @@ impl Daemon {
             encoded.contains(&format!("from-kind=\"{}\"", sender.kind.provider())),
             "the echoed tag carries the daemon-resolved agent kind"
         );
-        let parsed = crate::envelope::parse(&encoded)
+        let parsed = node::envelope::parse(&encoded)
             .unwrap_or_else(|error| panic!("echoed envelope did not parse: {error}"));
         assert_eq!(parsed.id, envelope_id);
         assert_eq!(parsed.from, format!("{sender_name}/{}", sender.host_id));
         assert_eq!(parsed.from_id, Some(sender.id));
         assert_eq!(parsed.from_kind.as_deref(), Some(sender.kind.provider()));
-        assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.kind, node::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, text);
     }
 
@@ -897,7 +892,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         parts
             .client
-            .apply_agent_event(crate::agents::AgentEvent::AgentUp {
+            .apply_agent_event(node::agents::AgentEvent::AgentUp {
                 agent: recipient.clone(),
             })
             .await;
@@ -990,7 +985,7 @@ impl Daemon {
             Client::from_channel(channel)
         };
         let stream = client
-            .subscribe_session(crate::SubscribeSessionRequest {
+            .subscribe_session(node::SubscribeSessionRequest {
                 agent: agent_name.into(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 args: None,
@@ -1020,7 +1015,7 @@ impl Daemon {
     /// The same administration methods are absent from the plain profile socket.
     #[cfg(unix)]
     pub async fn rejects_admin_on_socket(&self, socket_path: std::path::PathBuf) {
-        let config = crate::Config {
+        let config = node::Config {
             socket_path,
             ..Default::default()
         };
@@ -1062,7 +1057,7 @@ impl Daemon {
     }
 }
 
-async fn replay_cursor(stream: &mut crate::SessionStream) -> u64 {
+async fn replay_cursor(stream: &mut node::SessionStream) -> u64 {
     let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
     loop {
         let event = tokio::time::timeout_at(deadline, stream.recv())
@@ -1092,7 +1087,7 @@ async fn replay_cursor(stream: &mut crate::SessionStream) -> u64 {
 }
 
 async fn attachment_refs(
-    stream: &mut crate::SessionStream,
+    stream: &mut node::SessionStream,
     expected_input_id: Option<&[u8]>,
 ) -> Vec<ArtifactRef> {
     let expected_input_id = expected_input_id.map(hex_bytes);
@@ -1140,7 +1135,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 }
 
 async fn echoed_envelope(
-    stream: &mut crate::SessionStream,
+    stream: &mut node::SessionStream,
     recipient: &str,
     description: &str,
 ) -> String {
@@ -1189,10 +1184,10 @@ async fn echoed_envelope(
 fn assert_parent_lifecycle_envelope(
     encoded: &str,
     child: &Agent,
-    kind: crate::envelope::EnvelopeKind,
+    kind: node::envelope::EnvelopeKind,
     text: &str,
 ) {
-    let parsed = crate::envelope::parse(encoded)
+    let parsed = node::envelope::parse(encoded)
         .unwrap_or_else(|error| panic!("parent lifecycle envelope did not parse: {error}"));
     assert_eq!(parsed.from_id, Some(child.id));
     assert_eq!(parsed.from_kind.as_deref(), Some("claude"));
@@ -1206,7 +1201,7 @@ fn assert_parent_lifecycle_envelope(
 pub struct EchoSession {
     description: String,
     client: Client,
-    stream: crate::SessionStream,
+    stream: node::SessionStream,
     agent_name: String,
 }
 

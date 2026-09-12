@@ -43,7 +43,7 @@ fn no_supported_agent_types() -> ProtocolError {
 /// host; the `None` arm is ordinary control flow, not conditional
 /// compilation.
 #[derive(Clone)]
-pub(crate) struct AgentServiceCtx {
+pub struct AgentServiceCtx {
     host: Option<Arc<dyn LocalAgentHost>>,
     host_id: Uuid,
     is_cloud_server: bool,
@@ -179,7 +179,7 @@ impl AgentServiceCtx {
             .await
     }
 
-    pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
+    pub async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
         let _operation = self.operations.admit().await?;
         self.require_host()?
             .send_input(host_input_request(request)?, _operation)
@@ -188,7 +188,7 @@ impl AgentServiceCtx {
 
     /// Stores an artifact produced by a managed agent, pins it immediately,
     /// and announces its immutable metadata before the tool call returns.
-    pub(crate) async fn put_artifact_by_agent(
+    pub async fn put_artifact_by_agent(
         &self,
         caller: Uuid,
         kind: model::ArtifactKind,

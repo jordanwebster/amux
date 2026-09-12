@@ -50,7 +50,7 @@ type PairStream = Pin<Box<dyn Stream<Item = Result<wire::pb::PairMessage, Status
 pub(crate) type SharedTrustCommitLock = Arc<crate::installation::OperationGate>;
 
 #[derive(Clone)]
-pub(crate) struct PeerTrustCommitContext {
+pub struct PeerTrustCommitContext {
     trust_store: SharedTrustStore,
     trust_commit_lock: SharedTrustCommitLock,
     connections: Arc<ConnectionManager>,
@@ -58,7 +58,7 @@ pub(crate) struct PeerTrustCommitContext {
 }
 
 impl PeerTrustCommitContext {
-    pub(crate) fn new(
+    pub fn new(
         trust_store: SharedTrustStore,
         trust_commit_lock: SharedTrustCommitLock,
         connections: Arc<ConnectionManager>,
@@ -73,7 +73,7 @@ impl PeerTrustCommitContext {
     }
 }
 
-pub(crate) struct PeerTrustUpdate {
+pub struct PeerTrustUpdate {
     host_id: HostId,
     pubkey: Vec<u8>,
     name: String,
@@ -81,7 +81,7 @@ pub(crate) struct PeerTrustUpdate {
 }
 
 impl PeerTrustUpdate {
-    pub(crate) fn new(
+    pub fn new(
         host_id: HostId,
         pubkey: Vec<u8>,
         name: String,
@@ -389,7 +389,7 @@ impl PairingService {
     }
 }
 
-pub(crate) async fn commit_peer_trust(
+pub async fn commit_peer_trust(
     context: PeerTrustCommitContext,
     update: PeerTrustUpdate,
 ) -> Result<(), Status> {

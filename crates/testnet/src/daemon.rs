@@ -9,29 +9,28 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 use chrono::{DateTime, TimeDelta, Utc};
 use client::Client;
 use host_api::LocalAgentHost;
-use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-use tonic::transport::{Channel, Endpoint};
-use wire;
-
-use super::NetInner;
-use super::assertions::eventually;
-use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries};
-use crate::HostId;
-use crate::connection::ConnectionManager;
-use crate::dispatcher::TrackedTcpConnections;
-use crate::identity::{device_key_path, load_or_create_device_identity_in};
-use crate::profile::runtime::{
+use node::HostId;
+use node::connection::ConnectionManager;
+use node::dispatcher::TrackedTcpConnections;
+use node::identity::{device_key_path, load_or_create_device_identity_in};
+use node::profile::runtime::{
     self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
 };
-use crate::routing::{
+use node::routing::{
     HostEntry, HostTrustStatus, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
     Route, RoutingCore,
 };
-use crate::server::ShutdownReason;
-use crate::services::ClientService;
-use crate::trust::{Reachability, SharedTrustStore};
-use crate::tunnel::TunnelPool;
+use node::server::ShutdownReason;
+use node::services::ClientService;
+use node::trust::{Reachability, SharedTrustStore};
+use node::tunnel::TunnelPool;
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use tonic::transport::{Channel, Endpoint};
+
+use super::NetInner;
+use super::assertions::eventually;
+use super::relay::{RegisteredToken, TokenRegistry, bind_addr_with_retries};
 
 /// Parameters a daemon needs to (re)connect to the testnet cloud relay.
 pub(crate) struct CloudAttachment {
@@ -177,7 +176,7 @@ pub(crate) async fn start_daemon_runtime(
         (None, Some(addr)) => Some(bind_addr_with_retries(addr).await),
         (None, None) => None,
     };
-    let config = crate::config::Config {
+    let config = node::config::Config {
         host_name: inner.name.clone(),
         socket_path: inner.data_dir.join("amux.sock"),
         state_path: inner.data_dir.join("state.yaml"),
@@ -185,7 +184,7 @@ pub(crate) async fn start_daemon_runtime(
         tcp_port: inner.tcp_addr.map(|addr| addr.port()),
 
         prevent_idle_sleep: Some(false),
-        ..crate::config::Config::default()
+        ..node::config::Config::default()
     };
     let mut options = ProfileRuntimeOptions::from_legacy_config(
         config,
@@ -198,7 +197,9 @@ pub(crate) async fn start_daemon_runtime(
     options.fixtures = RuntimeFixtures {
         listener,
         tracked_tcp: Some(inner.tracked_tcp.clone()),
-        artifact_clock: Some(inner.artifact_clock.clone()),
+        host_factory: Some(Arc::new(agent_runtime::test_support::Factory::new(
+            inner.artifact_clock.clone(),
+        ))),
         cloud_transport: None,
         cloud: inner.cloud.as_ref().map(|cloud| {
             (
@@ -298,7 +299,7 @@ impl Daemon {
                     && parts.routing.routes_to(other.host_id()).await.is_empty()
                     && parts.connections.known_routes(other.host_id()).await.is_empty()
                     && !parts.routing.routing_events_snapshot().await.iter().any(|event| {
-                        matches!(event, crate::routing::RoutingEvent::ClaimUp { host, .. } if host.id == other.host_id())
+                        matches!(event, node::routing::RoutingEvent::ClaimUp { host, .. } if host.id == other.host_id())
                     })
             },
             self.failure_dump(),
@@ -377,17 +378,17 @@ impl Daemon {
     pub async fn cannot_authenticate_to(&self, other: &Daemon) {
         let identity = load_or_create_device_identity_in(&self.inner.data_dir).unwrap();
         let (_, pubkey) = other.identity_on_disk();
-        let mut trust = crate::trust::TrustStore::default();
+        let mut trust = node::trust::TrustStore::default();
         trust.insert_for_test(
             other.host_id(),
-            crate::trust::TrustEntry {
+            node::trust::TrustEntry {
                 pubkey,
                 name: other.name().into(),
                 paired_at: Utc::now(),
                 reachabilities: vec![],
             },
         );
-        let channel = crate::transport::trusted_device_channel_tracked(
+        let channel = node::transport::trusted_device_channel_tracked(
             other
                 .inner
                 .tcp_addr
@@ -430,17 +431,23 @@ impl Daemon {
     }
 
     /// Runs the same loaded-owner sweep used by the daemon background task.
-    pub async fn sweep_artifacts(&self) -> Vec<crate::ArtifactId> {
+    pub async fn sweep_artifacts(&self) -> Vec<node::ArtifactId> {
         let guard = self.runtime().await;
         let runtime = guard
             .as_ref()
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
-        agent_runtime::test_support::sweep_artifacts(runtime.test_agent_host.as_ref())
-            .unwrap_or_else(|error| panic!("'{}' failed to sweep artifacts: {error}", self.name()))
+        agent_runtime::test_support::sweep_artifacts(
+            runtime
+                .agent_host
+                .as_ref()
+                .expect("testnet agent host")
+                .as_ref(),
+        )
+        .unwrap_or_else(|error| panic!("'{}' failed to sweep artifacts: {error}", self.name()))
     }
 
     /// Reports whether an agent's authoritative artifact root still exists.
-    pub fn artifact_root_exists(&self, agent_id: crate::AgentId) -> bool {
+    pub fn artifact_root_exists(&self, agent_id: node::AgentId) -> bool {
         self.inner
             .data_dir
             .join("agents")
@@ -455,7 +462,7 @@ impl Daemon {
         let dump = self
             .admin_client()
             .await
-            .debug_dump_verbose(verbose, crate::DebugFormat::Json)
+            .debug_dump_verbose(verbose, node::DebugFormat::Json)
             .await
             .unwrap_or_else(|error| {
                 panic!("'{}' failed to read its debug dump: {error}", self.name())
@@ -992,11 +999,11 @@ impl Daemon {
         runtime.client()
     }
 
-    pub(crate) async fn pairing_admin(&self) -> crate::installation::ProfileAdmin {
+    pub(crate) async fn pairing_admin(&self) -> node::installation::ProfileAdmin {
         if let Some(owner) = &self.inner.installation {
             return owner.installation_admin().await;
         }
-        crate::installation::ProfileAdmin::for_test(
+        node::installation::ProfileAdmin::for_test(
             self.try_parts().await.expect("daemon is running").client,
         )
     }
@@ -1017,7 +1024,7 @@ impl Daemon {
         let runtime = guard.as_ref()?;
         Some(DaemonParts {
             client: runtime.services.client.clone(),
-            agent_host: runtime.test_agent_host.clone(),
+            agent_host: runtime.agent_host.clone().expect("testnet agent host"),
             connections: runtime.services.connections.clone(),
             routing: runtime.services.routing.clone(),
             tunnels: runtime.services.tunnels.clone(),

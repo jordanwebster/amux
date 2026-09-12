@@ -142,7 +142,7 @@ pub(crate) fn pairing_channel(addr: SocketAddr) -> Result<Channel> {
 /// socket so an in-process "process exit" can sever it the way a real exit
 /// would (the same discipline as `serve_tcp_listener_tracked` on the
 /// accepting side). Pass `None` outside tests.
-pub(crate) fn trusted_device_channel_tracked(
+pub fn trusted_device_channel_tracked(
     addr: SocketAddr,
     identity: DeviceIdentity,
     trust_store: SharedTrustStore,

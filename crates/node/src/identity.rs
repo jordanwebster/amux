@@ -38,7 +38,7 @@ const ED25519_SPKI_PREFIX: [u8; 12] = [
 ];
 
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum IdentityError {
+pub enum IdentityError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("JSON error: {0}")]
@@ -64,15 +64,15 @@ pub(crate) enum IdentityError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeviceIdentity {
-    pub(crate) host_id: HostId,
+pub struct DeviceIdentity {
+    pub host_id: HostId,
     private_key_pkcs8: Vec<u8>,
     pubkey: Vec<u8>,
 }
 
 impl DeviceIdentity {
     #[allow(dead_code)]
-    pub(crate) fn public_key(&self) -> &[u8] {
+    pub fn public_key(&self) -> &[u8] {
         &self.pubkey
     }
 
@@ -367,9 +367,7 @@ pub(crate) fn ensure_device_files_with_trust_in(
     })
 }
 
-pub(crate) fn load_or_create_device_identity_in(
-    data_dir: &Path,
-) -> Result<DeviceIdentity, IdentityError> {
+pub fn load_or_create_device_identity_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {
     ensure_data_dir(data_dir)?;
     let host_id = load_or_create_host_id(&host_id_path(data_dir))?;
     let private_key_pkcs8 = load_or_create_device_key(&device_key_path(data_dir))?;
@@ -617,7 +615,7 @@ fn temp_path_for(path: &Path) -> PathBuf {
     path.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()))
 }
 
-pub(crate) fn device_key_path(data_dir: &Path) -> PathBuf {
+pub fn device_key_path(data_dir: &Path) -> PathBuf {
     data_dir.join(DEVICE_KEY_FILE)
 }
 

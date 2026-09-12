@@ -4,8 +4,8 @@ use node::AuthError;
 use node::installation::{
     BindError, BindRequest, BindTarget, Intent, NonPristine, Observed, OperationId,
 };
-use node::test_fixtures::Fault;
-use node::testnet::{InstallationHandle, TestNet, Via};
+use testnet::identity::Fault;
+use testnet::{InstallationHandle, TestNet, Via};
 
 fn request(installation: &InstallationHandle, user: &str, target: BindTarget) -> BindRequest {
     BindRequest {

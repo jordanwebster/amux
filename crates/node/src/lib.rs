@@ -2,40 +2,51 @@
 #[cfg(test)]
 extern crate self as node;
 pub mod agent_tools;
-mod agents;
+#[doc(hidden)]
+pub mod agents;
 mod audit;
-mod auth;
-mod config;
-mod connection;
+#[doc(hidden)]
+pub mod auth;
+#[doc(hidden)]
+pub mod config;
+#[doc(hidden)]
+pub mod connection;
 mod debug;
-mod dispatcher;
-use model::envelope;
-mod identity;
+#[doc(hidden)]
+pub mod dispatcher;
+#[doc(hidden)]
+pub use model::envelope;
+#[doc(hidden)]
+pub mod identity;
 pub mod installation;
-mod pairing;
+#[doc(hidden)]
+pub mod pairing;
 mod paths;
-mod profile;
+#[doc(hidden)]
+pub mod profile;
 mod resource_limits;
-mod routing;
-mod server;
-mod services;
+#[doc(hidden)]
+pub mod routing;
+#[doc(hidden)]
+pub mod server;
+#[doc(hidden)]
+pub mod services;
 pub mod setup;
 mod sleep_inhibitor;
 mod subscription;
+#[cfg(test)]
 #[doc(hidden)]
+#[path = "../../testnet/src/identity.rs"]
 pub mod test_fixtures;
-#[cfg(test)]
 #[doc(hidden)]
-pub mod testnet;
-mod transport;
-mod trust;
-mod tunnel;
+pub mod transport;
+#[doc(hidden)]
+pub mod trust;
+#[doc(hidden)]
+pub mod tunnel;
 pub mod update;
-mod user_state;
-
-#[cfg(test)]
-#[path = "../tests/spec/mod.rs"]
-mod spec;
+#[doc(hidden)]
+pub mod user_state;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

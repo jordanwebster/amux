@@ -2,7 +2,7 @@
 
 #[cfg(unix)]
 use node::installation::{InstallationError, Observed, ProfileEvent};
-use node::testnet::{TestNet, Via};
+use testnet::{TestNet, Via};
 
 /// Binding two accounts starts two full devices; each device pairs independently.
 #[tokio::test]
@@ -57,7 +57,7 @@ async fn concurrent_pairing_windows_share_no_secrets_limits_or_commits() {
     let phone = net.daemon("phone");
     let (qa, qb) = tokio::join!(a.start_qr_pairing(), b.start_qr_pairing());
     assert_ne!(qa.secret, qb.secret);
-    let wrong_qr = node::testnet::QrPayload {
+    let wrong_qr = testnet::QrPayload {
         host_id: b.host_id(),
         secret: qa.secret.clone(),
     };

@@ -1,5 +1,5 @@
-use node::test_fixtures::{IdentityServer, TestAccount};
 use node::{OAuthError, refresh_access_token, run_device_flow};
+use testnet::identity::{IdentityServer, TestAccount};
 
 #[tokio::test]
 async fn identity_fixture_drives_device_refresh_and_userinfo_flows() {

@@ -25,12 +25,12 @@ pub(crate) type LinkOutputTx = mpsc::Sender<pb::Message>;
 
 #[derive(Debug, thiserror::Error)]
 #[error("no live link to host {host_id}")]
-pub(crate) struct LinkUnavailable {
+pub struct LinkUnavailable {
     pub(crate) host_id: HostId,
 }
 
 #[derive(Default)]
-pub(crate) struct LinkRegistry {
+pub struct LinkRegistry {
     state: RwLock<LinkRegistryState>,
 }
 
@@ -41,7 +41,7 @@ struct LinkRegistryState {
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum LinkRole {
+pub enum LinkRole {
     Peer,
     CloudRelay,
 }
@@ -64,8 +64,7 @@ pub(crate) enum LinkCloseRequest {
 }
 
 impl LinkRegistry {
-    #[cfg(test)]
-    pub(crate) async fn cloud_link_ids(&self) -> Vec<String> {
+    pub async fn cloud_link_ids(&self) -> Vec<String> {
         let state = self.state.read().await;
         let mut ids: Vec<_> = state
             .writers
@@ -177,7 +176,7 @@ impl LinkRegistry {
 
     /// Requests closure of every link to `host_id` and waits until they are
     /// gone from the registry.
-    pub(crate) async fn close_host(&self, host_id: HostId) -> Vec<LinkId> {
+    pub async fn close_host(&self, host_id: HostId) -> Vec<LinkId> {
         let closing = {
             let state = self.state.read().await;
             state
@@ -221,7 +220,7 @@ impl LinkRegistry {
 
     /// A writer for any live link to `peer` — the forwarding rule's "do I
     /// have a direct link to dst" lookup.
-    pub(crate) async fn link_to_peer(&self, peer: HostId) -> Option<(LinkId, LinkOutputTx)> {
+    pub async fn link_to_peer(&self, peer: HostId) -> Option<(LinkId, LinkOutputTx)> {
         self.state
             .read()
             .await
