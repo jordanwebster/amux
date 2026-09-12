@@ -4,6 +4,24 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-12 — **The candidate gallery now scales to the complete selected iPhone catalogue.**
+The existing native design benchmark can now retain matched source and
+production originals plus sRGB review derivatives for either the first slice
+or all 33 selected, non-excluded design screens. The complete path uses one
+installed Debug app and one driving-door session for 66 light/dark production
+captures; Notifications remains an explicit product exclusion rather than a
+missing mapping. Its manifest hashes the full visual source, production view,
+fixture and shell inputs instead of the first slice alone. A first diagnostic
+run took 16.76 seconds to build and 56.07 seconds to open, capture and normalize
+the complete catalogue. It deliberately establishes no golden.
+
+That diagnostic also exposed where visual comparison is not yet honest: several
+older fixtures carry semantically representative but different transcript,
+account or host content from the selected source. Those pairs are inventory
+evidence, not fidelity claims. The first matched-content home/conversation/plan
+gallery remains preserved while the remaining fixtures and production surfaces
+are ported directly.
+
 2026-09-12 — **Corrected performance workloads invalidate the earlier all-green claim.**
 Independent review found that generated transcript rows nested their payload at
 the wrong level and that the cached fleet used the confirmed value for

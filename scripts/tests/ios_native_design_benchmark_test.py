@@ -24,16 +24,32 @@ class NativeDesignBenchmarkTests(unittest.TestCase):
         self.assertEqual(len(set(benchmark.VARIANTS[4])), 4)
 
     def test_review_uses_representative_state_in_production_routes(self):
-        self.assertEqual(benchmark.REVIEW_SCREENS, {
+        self.assertEqual(benchmark.SLICE_REVIEW_SCREENS, {
             "home": ("home", "representative-home"),
             "run": ("run", "representative-run"),
             "plan": ("plan", "representative-plan"),
         })
 
+    def test_full_review_covers_every_selected_design_capture(self):
+        captures = {
+            path.name.removesuffix(".only.light.png")
+            for path in (benchmark.ROOT / "ios/Goldens/References")
+                .glob("*.only.light.png")
+        }
+        # Notifications are an agreed product exclusion, not a silently
+        # omitted screen. Every other selected design capture has a real-shell
+        # fixture with the same public name.
+        self.assertEqual(captures - {"notification"},
+                         set(benchmark.FULL_REVIEW_SCREENS))
+        self.assertNotIn("notification", benchmark.FULL_REVIEW_SCREENS)
+        self.assertTrue(all(route == screen and fixture == screen
+                            for screen, (route, fixture)
+                            in benchmark.FULL_REVIEW_SCREENS.items()))
+
     def test_inventory_names_every_selected_source_capture(self):
         names = [
             f"design/captures/{screen}.only.{appearance}.png"
-            for screen in benchmark.REVIEW_SCREENS
+            for screen in benchmark.SLICE_REVIEW_SCREENS
             for appearance in ("light", "dark")
         ]
         self.assertEqual(len(names), 6)

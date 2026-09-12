@@ -30,10 +30,45 @@ VARIANTS = {
     2: ["production", "context-band"],
     4: ["production", "tight-gutter", "large-title", "context-band"],
 }
-REVIEW_SCREENS = {
+SLICE_REVIEW_SCREENS = {
     "home": ("home", "representative-home"),
     "run": ("run", "representative-run"),
     "plan": ("plan", "representative-plan"),
+}
+FULL_REVIEW_SCREENS = {
+    "home": ("home", "home"),
+    "home-quiet": ("home-quiet", "home-quiet"),
+    "run": ("run", "run"),
+    "run-live": ("run-live", "run-live"),
+    "voices": ("voices", "voices"),
+    "review-cta": ("review-cta", "review-cta"),
+    "ask-permission": ("ask-permission", "ask-permission"),
+    "ask-question": ("ask-question", "ask-question"),
+    "plan": ("plan", "plan"),
+    "diff": ("diff", "diff"),
+    "comment": ("comment", "comment"),
+    "typing": ("typing", "typing"),
+    "plus": ("plus", "plus"),
+    "settings": ("settings", "settings"),
+    "slash-typing": ("slash-typing", "slash-typing"),
+    "working": ("working", "working"),
+    "queued": ("queued", "queued"),
+    "overflow": ("overflow", "overflow"),
+    "agent-delete": ("agent-delete", "agent-delete"),
+    "hosts": ("hosts", "hosts"),
+    "pin": ("pin", "pin"),
+    "new-agent": ("new-agent", "new-agent"),
+    "offline": ("offline", "offline"),
+    "exited": ("exited", "exited"),
+    "profiles": ("profiles", "profiles"),
+    "you": ("you", "you"),
+    "delete": ("delete", "delete"),
+    "first-run": ("first-run", "first-run"),
+    "sign-in": ("sign-in", "sign-in"),
+    "first-run-paid": ("first-run-paid", "first-run-paid"),
+    "paywall": ("paywall", "paywall"),
+    "shake": ("shake", "shake"),
+    "dump": ("dump", "dump"),
 }
 SOURCE_INPUTS = [
     "design/fixtures.json",
@@ -160,14 +195,45 @@ def compare(expected, actual, output):
     return {"passed": result.returncode == 0, "detail": result.stdout.strip()}
 
 
-def inventory(design_source, appearances):
+def visual_inputs(base, full, production=False):
+    if not full:
+        return PRODUCTION_INPUTS if production else SOURCE_INPUTS
+    roots = ([
+        "ios/Packages/AmuxDesign/Sources",
+        "ios/Packages/AmuxCore/Sources/AmuxCore",
+        "ios/Packages/AmuxFeatures/Sources",
+        "ios/Packages/AmuxTestSupport/Sources",
+        "ios/Amux/Sources",
+        "ios/Amux/Debug",
+    ] if production else [
+        "ios/Sources/Components",
+        "ios/Sources/Design",
+        "ios/Sources/Model",
+        "ios/Sources/Screens",
+    ])
+    names = {
+        str(path.relative_to(base))
+        for root in roots
+        for path in (base / root).rglob("*.swift")
+    }
+    if not production:
+        names.update({
+            "design/fixtures.json",
+            "ios/Resources/Fonts/GeistMono.ttf",
+            "ios/Resources/Fonts/InstrumentSans.ttf",
+        })
+    return sorted(names)
+
+
+def inventory(design_source, appearances, review_screens, full):
     capture_names = [
         f"design/captures/{screen}.only.{appearance}.png"
-        for screen in REVIEW_SCREENS for appearance in appearances
+        for screen in review_screens for appearance in appearances
     ]
-    source_hashes = hashes(design_source, SOURCE_INPUTS + capture_names)
+    source_hashes = hashes(
+        design_source, visual_inputs(design_source, full) + capture_names)
     reference_hashes = {}
-    for screen in REVIEW_SCREENS:
+    for screen in review_screens:
         for appearance in appearances:
             name = f"{screen}.only.{appearance}.png"
             reference = ROOT / "ios/Goldens/References" / name
@@ -230,12 +296,12 @@ def batch(args, output, door):
             "capture_seconds": capture_seconds, "gallery_seconds": gallery_seconds}
 
 
-def review(args, output, door):
+def review(args, output, door, review_screens):
     cards = []
     images = []
     started = time.monotonic()
     door.request("designVariant", name="production")
-    for screen, (route, fixture) in REVIEW_SCREENS.items():
+    for screen, (route, fixture) in review_screens.items():
         for appearance in args.appearances:
             door.request("open", screen=route, fixture=fixture)
             door.request("appearance", appearance=appearance)
@@ -260,8 +326,11 @@ def review(args, output, door):
             ]})
     capture_seconds = time.monotonic() - started
     gallery_started = time.monotonic()
+    title = ("Complete selected design source vs production"
+             if args.review_scope == "all"
+             else "Selected design source vs production")
     write_gallery(
-        output, "Selected design source vs production",
+        output, title,
         "Matched content in light and dark. Display-P3 source and simulator originals are retained; the visible pairs are sRGB derivatives. Production uses the real iPhone status and safe areas. No image here is an approved golden.",
         cards)
     gallery_seconds = time.monotonic() - gallery_started
@@ -311,9 +380,17 @@ def main():
                         default=Path("/Users/jlw/.wt/trees/amux/appdesigns"))
     parser.add_argument("--skip-build", action="store_true",
                         help="Use the existing Debug app; records that build time was excluded")
+    parser.add_argument(
+        "--review-scope", choices=["slice", "all"], default="slice",
+        help="For review mode, capture the representative slice or every selected design screen")
     args = parser.parse_args()
     design_source = args.design_source.resolve()
-    source_hashes, reference_hashes = inventory(design_source, args.appearances)
+    review_screens = (FULL_REVIEW_SCREENS
+                      if args.mode == "review" and args.review_scope == "all"
+                      else SLICE_REVIEW_SCREENS)
+    full_review = args.mode == "review" and args.review_scope == "all"
+    source_hashes, reference_hashes = inventory(
+        design_source, args.appearances, review_screens, full_review)
     OUTPUT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     output = OUTPUT / f"{stamp}-{args.mode}-{uuid.uuid4().hex[:6]}"
@@ -336,7 +413,7 @@ def main():
         if args.mode == "batch":
             result = batch(args, output, door)
         elif args.mode == "review":
-            result = review(args, output, door)
+            result = review(args, output, door, review_screens)
         else:
             result = detection(args, output, door)
     finally:
@@ -344,6 +421,7 @@ def main():
 
     manifest = {
         "mode": args.mode,
+        "review_scope": args.review_scope if args.mode == "review" else None,
         "revision": command("git", "rev-parse", "HEAD"),
         "changes": command("git", "-c", "core.fsmonitor=false", "status", "--short"),
         "tracked_diff_sha256": hashlib.sha256(subprocess.check_output(
@@ -353,7 +431,8 @@ def main():
             "git", "rev-parse", "HEAD", timeout=30, cwd=design_source),
         "source_hashes": source_hashes,
         "preserved_reference_hashes": reference_hashes,
-        "production_hashes": hashes(ROOT, PRODUCTION_INPUTS),
+        "production_hashes": hashes(
+            ROOT, visual_inputs(ROOT, full_review, production=True)),
         "app": {"executable_sha256": sha256(APP / "Amux"),
                 "debug_dylib_sha256": sha256(APP / "Amux.debug.dylib")
                 if (APP / "Amux.debug.dylib").exists() else None},
