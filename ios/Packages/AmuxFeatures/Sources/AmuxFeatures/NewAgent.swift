@@ -98,20 +98,9 @@ public struct NewAgent: View {
                 .foregroundStyle(design.ink.color)
                 .identified("new-agent.title", value: "New Agent")
             HStack {
-                Button { actions(.cancel) } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .semibold))
-                        Text("Agents")
-                            .designFont(.body, design)
-                    }
-                    .foregroundStyle(design.accent.color)
-                    .thumbTarget(y: 13)
+                BackLink("Agents", identifier: "new-agent.back") {
+                    actions(.cancel)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back to Agents")
-                .identified("new-agent.back", label: "Back to Agents")
-                .reclaimingThumbTarget(y: 13)
                 Spacer()
             }
         }
@@ -326,26 +315,18 @@ public struct NewAgent: View {
     private var foot: some View {
         VStack {
             Spacer(minLength: 0)
-            Button { actions(.start) } label: {
-                ActionLabel(model.starting ? "Starting…" : "Start on \(machineName)", fill: true)
+            BottomAction {
+                Button { actions(.start) } label: {
+                    ActionLabel(
+                        model.starting ? "Starting…" : "Start on \(machineName)", fill: true)
+                }
+                .buttonStyle(.plain)
+                .disabled(!model.ready)
+                .opacity(model.ready ? 1 : 0.4)
+                .identified(
+                    "new-agent.start", label: "Start on \(machineName)",
+                    value: model.starting ? "starting" : "ready", enabled: model.ready)
             }
-            .buttonStyle(.plain)
-            .disabled(!model.ready)
-            .opacity(model.ready ? 1 : 0.4)
-            // On the button and not on the bar it sits in: the bar is pinned
-            // to the foot of a full-height stack, so a name given to it covers
-            // everything from here to the top of the page and a finger aimed
-            // at the middle of what that name covers lands nowhere near the
-            // one thing on it anybody presses.
-            .identified(
-                "new-agent.start", label: "Start on \(machineName)",
-                value: model.starting ? "starting" : "ready", enabled: model.ready)
-            .padding(14)
-            .frame(maxWidth: .infinity)
-            .frosted(RoundedRectangle(
-                cornerRadius: design.metrics.floatRadius, style: .continuous))
-            .padding(.horizontal, design.metrics.gutter)
-            .padding(.bottom, 8)
         }
     }
 }

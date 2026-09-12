@@ -83,20 +83,7 @@ public struct Paywall: View {
 
     private var backButton: some View {
         HStack {
-            Button { actions(.cancel) } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text(back)
-                        .designFont(.body, design)
-                }
-                .foregroundStyle(design.accent.color)
-                .thumbTarget(y: 13)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back to \(back)")
-            .identified("paywall.back", label: "Back to \(back)")
-            .reclaimingThumbTarget(y: 13)
+            BackLink(back, identifier: "paywall.back") { actions(.cancel) }
             Spacer()
         }
         .padding(.vertical, 8)
@@ -237,40 +224,34 @@ public struct Paywall: View {
     private var foot: some View {
         VStack {
             Spacer(minLength: 0)
-            VStack(spacing: 10) {
-                trouble
-        Button { actions(pressing) } label: {
-                    ActionLabel(title, kind: .primary, fill: true)
-                }
-                .buttonStyle(.plain)
-                .disabled(model.working || waiting)
-                .opacity(model.working || waiting ? 0.5 : 1)
-                // On the button rather than on the bar it sits in: the bar is
-                // pinned to the foot of a full-height stack, so a name given
-                // to it covers the whole page.
-                .identified(
-                    "paywall.buy", label: title, value: state,
-                    enabled: !model.working && !waiting)
-                if !model.entitled {
-                    Button { actions(.restore) } label: {
-                        Text("Restore Purchases")
-                            .designFont(.mono, design)
-                            .foregroundStyle(design.accent.color)
-                            .thumbTarget(y: 14)
+            BottomAction {
+                VStack(spacing: 10) {
+                    trouble
+                    Button { actions(pressing) } label: {
+                        ActionLabel(title, kind: .primary, fill: true)
                     }
                     .buttonStyle(.plain)
-                    .disabled(model.working)
+                    .disabled(model.working || waiting)
+                    .opacity(model.working || waiting ? 0.5 : 1)
                     .identified(
-                        "paywall.restore", label: "Restore Purchases", enabled: !model.working)
-                    .reclaimingThumbTarget(y: 14)
+                        "paywall.buy", label: title, value: state,
+                        enabled: !model.working && !waiting)
+                    if !model.entitled {
+                        Button { actions(.restore) } label: {
+                            Text("Restore Purchases")
+                                .designFont(.mono, design)
+                                .foregroundStyle(design.accent.color)
+                                .thumbTarget(y: 14)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.working)
+                        .identified(
+                            "paywall.restore", label: "Restore Purchases",
+                            enabled: !model.working)
+                        .reclaimingThumbTarget(y: 14)
+                    }
                 }
             }
-            .padding(14)
-            .frame(maxWidth: .infinity)
-            .frosted(RoundedRectangle(
-                cornerRadius: design.metrics.floatRadius, style: .continuous))
-            .padding(.horizontal, design.metrics.gutter)
-            .padding(.bottom, 8)
         }
     }
 

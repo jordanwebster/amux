@@ -69,20 +69,7 @@ public struct SignIn: View {
 
     private var backButton: some View {
         HStack {
-            Button { actions(.cancel) } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text(back)
-                        .designFont(.body, design)
-                }
-                .foregroundStyle(design.accent.color)
-                .thumbTarget(y: 13)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back to \(back)")
-            .identified("sign-in.back", label: "Back to \(back)")
-            .reclaimingThumbTarget(y: 13)
+            BackLink(back, identifier: "sign-in.back") { actions(.cancel) }
             Spacer()
         }
         .padding(.vertical, 8)
@@ -152,28 +139,21 @@ public struct SignIn: View {
     private var foot: some View {
         VStack {
             Spacer(minLength: 0)
-            VStack(spacing: 10) {
-                trouble
-                Button { actions(model.finished ? .done : .start) } label: {
-                    ActionLabel(title, kind: .primary, fill: true)
+            BottomAction {
+                VStack(spacing: 10) {
+                    trouble
+                    Button { actions(model.finished ? .done : .start) } label: {
+                        ActionLabel(title, kind: .primary, fill: true)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.working)
+                    .opacity(model.working ? 0.5 : 1)
+                    .identified(
+                        "sign-in.continue", label: title, value: state,
+                        enabled: !model.working)
+                    caption
                 }
-                .buttonStyle(.plain)
-                .disabled(model.working)
-                .opacity(model.working ? 0.5 : 1)
-                // On the button, not on the bar it sits in: a name given to
-                // the bar covers everything from here to the top of the page,
-                // and a finger aimed at the middle of what that name covers
-                // lands nowhere near the one thing anybody presses.
-                .identified(
-                    "sign-in.continue", label: title, value: state, enabled: !model.working)
-                caption
             }
-            .padding(14)
-            .frame(maxWidth: .infinity)
-            .frosted(RoundedRectangle(
-                cornerRadius: design.metrics.floatRadius, style: .continuous))
-            .padding(.horizontal, design.metrics.gutter)
-            .padding(.bottom, 8)
         }
     }
 

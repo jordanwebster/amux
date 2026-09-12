@@ -275,6 +275,69 @@ public struct GlassIcon: View {
     }
 }
 
+/// The way back from a pushed screen.
+///
+/// The selected presentation uses the same compact tinted label everywhere.
+/// The action and accessibility name remain explicit because production
+/// screens navigate real state rather than depicting a static destination.
+public struct BackLink: View {
+    @Environment(\.design) private var design
+    private let title: String
+    private let identifier: String
+    private let action: @MainActor () -> Void
+
+    public init(
+        _ title: String,
+        identifier: String,
+        action: @escaping @MainActor () -> Void
+    ) {
+        self.title = title
+        self.identifier = identifier
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 15, weight: .semibold))
+                Text(title)
+                    .designFont(.body, design)
+            }
+            .foregroundStyle(design.accent.color)
+            .thumbTarget(y: 13)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back to \(title)")
+        .identified(identifier, label: "Back to \(title)")
+        .reclaimingThumbTarget(y: 13)
+    }
+}
+
+/// A screen's primary action on glass above the home indicator.
+///
+/// Kept separate from the full-height screen so scrolling content can run
+/// behind it and every flow gets the same reachable geometry.
+public struct BottomAction<Content: View>: View {
+    @Environment(\.design) private var design
+    private let content: Content
+
+    public init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) { content }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frosted(RoundedRectangle(
+                cornerRadius: design.metrics.floatRadius,
+                style: .continuous))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+    }
+}
+
 /// Supporting prose, one step down from the thing it explains.
 public struct Explain: View {
     @Environment(\.design) private var design

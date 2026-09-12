@@ -65,20 +65,7 @@ public struct PairByCode: View {
 
     private var back: some View {
         HStack {
-            Button { actions(.cancel) } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text("Hosts")
-                        .designFont(.body, design)
-                }
-                .foregroundStyle(design.accent.color)
-                .thumbTarget(y: 13)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back to Hosts")
-            .identified("pin.back", label: "Back to Hosts")
-            .reclaimingThumbTarget(y: 13)
+            BackLink("Hosts", identifier: "pin.back") { actions(.cancel) }
             Spacer()
         }
         .padding(.vertical, 8)

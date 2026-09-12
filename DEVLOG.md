@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-12 — **Pushed flows now share the selected back chrome and action tray.**
+New Agent, pairing, sign-in and subscription no longer carry slightly different
+copies of the same back label and bottom glass geometry. The production
+components now own the source-selected 15-point chevron, three-point label gap,
+44-point interaction target, 14-by-12 tray inset, 12-point outer gutter and
+10-point home-indicator clearance. Each screen still supplies its real routing,
+enabled state and accessibility identity. The iOS unit matrix passes: 142
+package tests plus the application tests, with no golden changed.
+
 2026-09-12 — **The candidate gallery now scales to the complete selected iPhone catalogue.**
 The existing native design benchmark can now retain matched source and
 production originals plus sRGB review derivatives for either the first slice
