@@ -31,6 +31,15 @@ exists = 'test -f "$AMUX_CONFIG"'
 run = "cargo build --workspace --all-targets"
 needs = ["profile-config"]
 
+# What the canonical is kept warm with: the configurations every tree
+# inherits through wt's snapshot of it. `wt anchor` runs this in place of
+# `build`, in the background, after every tree creation and removal.
+[task.warm]
+needs = ["build", "test-build"]
+
+[task.test-build]
+run = "timeout 1200 cargo test --workspace --lib --tests --no-run"
+
 [task.test]
 run = 'scripts/workspace-test.sh "$@"'
 needs = ["test-recipes"]
