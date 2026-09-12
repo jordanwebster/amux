@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::DateTime;
+use redaction::RedactionSummary;
 use replay_support::{
     IoDirection, IoEvent, MANIFEST_SCHEMA_VERSION, Manifest, Observed, Recorded, Recording,
-    RedactionSummary, ReplayAdvance, ReplayClock, ReplayOptions, SourceKind,
-    replay_transport_with_controller, strict_replay,
+    ReplayAdvance, ReplayClock, ReplayOptions, SourceKind, replay_transport_with_controller,
+    strict_replay,
 };
 use semver::Version;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};

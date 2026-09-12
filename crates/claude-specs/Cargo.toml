@@ -10,6 +10,7 @@ chrono = { workspace = true }
 futures-core = "0.3"
 replay-support = { path = "../replay-support" }
 pty-host = { workspace = true }
+redaction = { workspace = true }
 semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

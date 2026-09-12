@@ -84,6 +84,7 @@ claude-specs = { path = "../claude-specs" }
 codex = { path = "../codex" }
 codex-specs = { path = "../codex-specs" }
 replay-support = { path = "../replay-support" }
+redaction = { workspace = true }
 tokio-tungstenite = { workspace = true }
 nix = { workspace = true }
 

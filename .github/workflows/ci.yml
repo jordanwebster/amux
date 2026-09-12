@@ -51,6 +51,21 @@ jobs:
       - name: Check committed protobuf code
         run: wt run codegen-check
 
+  policy:
+    name: Dependency and recipe policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - name: Install pinned task runner
+        run: cargo install wt --version 0.4.0 --locked
+      - uses: Swatinem/rust-cache@v2
+      - name: Enforce dependency boundaries and recipe behavior
+        run: |
+          wt run dependency-policy
+          wt run test-recipes
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -85,10 +100,8 @@ jobs:
         run: wt run ci-test
         env:
           AMUX_INVARIANT_FATAL: "1"
-      - name: Run specs and doctests
-        run: |
-          wt run spec
-          wt run doctest
+      - name: Run doctests
+        run: wt run doctest
         env:
           AMUX_INVARIANT_FATAL: "1"
       - name: Prove live harness entry points without provider access

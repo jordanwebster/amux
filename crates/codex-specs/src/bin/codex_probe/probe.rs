@@ -6,9 +6,10 @@ use chrono::Utc;
 use codex_specs::specs::{
     CAPTURE_MODEL, SpecSource, execute, fixtures_root, live_io_path, registry,
 };
+use redaction::Redaction;
 use replay_support::{
-    Manifest, ProbeAttempt, ProbeRun, Redaction, SourceKind, SpecEntry, append_verification,
-    load_recording, migrate_legacy_manifest, probe, registry_rows, sanitize,
+    Manifest, ProbeAttempt, ProbeRun, SourceKind, SpecEntry, append_verification, load_recording,
+    migrate_legacy_manifest, probe, registry_rows, sanitize,
 };
 use semver::Version;
 use uuid::Uuid;

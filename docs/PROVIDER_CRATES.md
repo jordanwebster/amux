@@ -20,7 +20,8 @@ policy.
 | `claude` | `claude::sdk::Session { events: EventStream, control: Control }` | Hosts Claude Code in stream-JSON mode. The ordered stream contains verbatim messages and typed permission, hook, elicitation, user-dialog and exit events; the control handle sends prompts and answers requests. It does not tail transcript files. |
 | `codex` | `codex::Session { events: ThreadEventStream, control: ThreadControl }` | Owns one Codex app-server thread event stream. The control handle starts and steers turns, interrupts, answers approvals, injects items, and exposes the durable thread id. |
 | `pty-host` | `PtyProcess { handle: PtyHandle, exit: ExitMonitor }` | Provides provider-neutral PTY spawn, one owned output stream, input, resize, process-group signalling and termination. Claude PTY, the Codex raw plane and the test agent use it. |
-| `replay-support` | `Recording`, `StrictReplay`, registries and probes | Supplies the shared, provider-neutral executable-specification corpus, sanitizing, inventory validation, strict replay, verification ledgers and additive drift reports. |
+| `redaction` | `Redaction`, `RedactionSummary` and structured/text redactors | Removes secrets, local paths and personal identifiers for production reports and captured test traffic. |
+| `replay-support` | `Recording`, `StrictReplay`, registries and probes | Supplies the shared, provider-neutral executable-specification corpus, inventory validation, strict replay, verification ledgers and additive drift reports. |
 
 `crates/agent-runtime/src/agents/claude` and
 `crates/agent-runtime/src/agents/codex` are adapters.

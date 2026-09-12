@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Utc};
 use clap::{Subcommand, ValueEnum};
 use node::{Config, DebugFormat};
-use replay_support::{Redaction, RedactionSummary, redact_text, redact_value};
+use redaction::{Redaction, RedactionSummary, redact_text, redact_value};
 use serde::{Deserialize, Serialize};
 use tui::replay::{self, Replay};
 use ui_runtime::report::{

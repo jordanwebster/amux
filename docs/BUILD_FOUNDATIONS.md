@@ -15,6 +15,7 @@ The production graph separates values from effects and composition:
 | `wire` | Protobuf schemas, committed generated code, codecs and domain conversions |
 | `settings` | Persisted configuration values and validation |
 | `artifacts` | Content-addressed storage and retention |
+| `redaction` | Secret, path and personal-identifier removal for production reports and captured test traffic |
 | `client` | Typed RPC clients over an explicitly supplied channel or endpoint |
 | `ui-state` | Pure state, messages, effects and update logic |
 | `ui-runtime` | Per-view connections, subscriptions, effects, reports and fetched resources |
@@ -24,11 +25,13 @@ The production graph separates values from effects and composition:
 | `tui` | Terminal interaction and rendering |
 | `amux` | Desktop CLI composition |
 
-`testnet`, `claude-specs`, `codex-specs` and `tui-fixtures` own reusable test
-scenarios and runners. They depend on production APIs. Product and build
-dependencies cannot reach them. Provider packages have no profile-sensitive
-build scripts; optimized tests therefore expose the same production API as
-ordinary builds.
+`replay-support`, `testnet`, `claude-specs`, `codex-specs` and `tui-fixtures`
+own reusable test scenarios and runners. They depend on production APIs.
+Product and build dependencies cannot reach them. The production `redaction`
+package keeps the useful desktop report sanitizer available without pulling in
+recordings, replay transports or scenario registries. Provider packages have
+no profile-sensitive build scripts; optimized tests therefore expose the same
+production API as ordinary builds.
 
 Node retains a private white-box harness under `src/testnet` for its own unit
 tests. It reaches internal service state by design and is not exported as a
@@ -36,13 +39,15 @@ reusable scenario API. Cross-package scenarios, recordings and embedded
 lifecycle tests belong to the support packages. TUI's unit-test crate includes
 the fixture implementation owned by `tui-fixtures`; this avoids a Cargo package
 cycle while keeping the fixture code out of normal product builds.
-Provider adapters that require private backend state remain beside that state
-behind an explicit test-support feature; the executable scenario and runner
-logic that consumes those adapters lives in `testnet`.
+Opaque provider adapters that require private backend state remain beside that
+state behind an explicit test-support feature. They expose raw input, output,
+startup and shutdown operations. `testnet` owns row collection, waits,
+assertions, A2A lifecycle orchestration and the executable runners.
 
-The dependency policy checks the direct local edges and the test-support
-exclusions. Package root exports are reviewed APIs; moving an implementation
-does not justify a compatibility package or an old package-name facade.
+The dependency policy checks direct local edges, recursively resolves each
+package's default feature graph and enforces the test-support exclusions.
+Package root exports are reviewed APIs; moving an implementation does not
+justify a compatibility package or an old package-name facade.
 
 The future native packages are extracted from working nativeapp code during
 integration:
@@ -82,6 +87,10 @@ provider-free embedded graph selects `node`, `client`, `ui-state` and
 The optimized test-build task compiles every library and integration harness
 under the release profile, proving that test support does not depend on a
 profile-selected production API.
+
+CI runs the same dependency and recipe-policy checks as local verification.
+The workspace test already executes the registered node and UI specification
+targets, so CI does not launch a duplicate specification pass.
 
 The no-network live-harness smoke runs each custom executable with no scenario
 arguments. Each must reach its own entry point, print usage and exit before it

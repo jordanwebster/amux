@@ -1,6 +1,10 @@
 use serde_json::Value;
 
 #[cfg(unix)]
+#[path = "support/a2a_harness.rs"]
+mod a2a_harness;
+
+#[cfg(unix)]
 #[path = "a2a_fixtures/claude_sdk.rs"]
 mod claude_sdk;
 

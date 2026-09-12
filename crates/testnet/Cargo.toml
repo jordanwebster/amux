@@ -24,6 +24,7 @@ claude = { workspace = true }
 claude-specs = { path = "../claude-specs" }
 codex = { path = "../codex" }
 codex-specs = { path = "../codex-specs" }
+host-api = { workspace = true }
 model = { workspace = true }
 replay-support = { path = "../replay-support" }
 serde_json = { workspace = true }

@@ -1,3 +1,14 @@
+2026-09-12 — **Close the final production and test-support boundary gaps.**
+Extracted diagnostic redaction into a small production package shared by the
+desktop report command and capture tooling, so the default desktop build keeps
+useful diagnostics without reaching replay infrastructure. Agent-runtime's
+opt-in test surface now exposes only opaque raw provider adapters; testnet owns
+row accumulation, waits, assertions and A2A lifecycle orchestration. The
+dependency policy resolves default feature graphs, and CI now enforces both
+dependency and recipe policy without repeating specification targets already
+executed by the workspace test. The extracted support suite and dependency
+policy pass through their declared wt recipes.
+
 2026-09-12 — **Measure final snapshot reuse and bounded stale-output behavior.**
 At clean revision `df4fa836`, wt 0.4.0 warmed a separate canonical in 81.228
 seconds, and two APFS snapshots reused its product and complete test output with
@@ -21,9 +32,9 @@ their custom main functions; a provider-free smoke recipe proves those entry
 points without contacting a provider. Reusable node scenarios and recordings
 live in `testnet`, while agent-runtime's test-support feature exposes the narrow
 constructors those scenarios need. The complete optimized test graph compiles
-the same APIs as ordinary tests. Desktop diagnostics are an optional default
-feature, and the provider-free release graph is checked to exclude replay and
-test packages. Claude explicitly enables semver serialization instead of
+the same APIs as ordinary tests. Desktop diagnostics remain enabled by default,
+and the shipping release graph is checked to exclude replay and test packages.
+Claude explicitly enables semver serialization instead of
 receiving it from that excluded graph. CI and release use wt 0.4.0 on its
 supported Linux/macOS hosts; native Windows remains an explicit platform gap.
 Code generation and migrated helper commands use locked resolution.

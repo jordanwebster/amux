@@ -125,7 +125,7 @@ fn redact_personal_identifiers(value: &mut Value) {
     match value {
         Value::Object(object) => {
             for (key, value) in object {
-                if replay_support::is_personal_identifier_key(key) && !value.is_null() {
+                if redaction::is_personal_identifier_key(key) && !value.is_null() {
                     *value = Value::String(IDENTIFIER_PLACEHOLDER.to_string());
                 } else {
                     redact_personal_identifiers(value);
@@ -163,7 +163,7 @@ fn surviving_personal_identifier_keys(value: &Value, found: &mut Vec<String>) {
     match value {
         Value::Object(object) => {
             for (key, value) in object {
-                if replay_support::is_personal_identifier_key(key)
+                if redaction::is_personal_identifier_key(key)
                     && !value.is_null()
                     && value.as_str() != Some(IDENTIFIER_PLACEHOLDER)
                 {

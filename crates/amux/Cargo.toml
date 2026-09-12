@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["diagnostics"]
-diagnostics = ["dep:replay-support"]
+diagnostics = []
 
 [lib]
 name = "amux"
@@ -27,7 +27,7 @@ claude = { workspace = true }
 tui = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
-replay-support = { path = "../replay-support", optional = true }
+redaction = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 serde_yaml = { workspace = true }

@@ -6,9 +6,10 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
 use claude_specs::specs::{SpecSource, execute, fixtures_root, pty_registry, sdk_registry};
+use redaction::Redaction;
 use replay_support::{
-    Manifest, ProbeAttempt, ProbeRun, Redaction, SourceKind, SpecEntry, append_verification,
-    load_recording, migrate_legacy_manifest, probe, registry_rows, sanitize,
+    Manifest, ProbeAttempt, ProbeRun, SourceKind, SpecEntry, append_verification, load_recording,
+    migrate_legacy_manifest, probe, registry_rows, sanitize,
 };
 use semver::Version;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

@@ -76,7 +76,7 @@ dependencies = [
  "node",
  "qrcode",
  "ratatui",
- "replay-support",
+ "redaction",
  "reqwest",
  "semver",
  "serde",
@@ -561,6 +561,7 @@ dependencies = [
  "claude",
  "futures-core",
  "pty-host",
+ "redaction",
  "replay-support",
  "semver",
  "serde",
@@ -625,6 +626,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "codex",
+ "redaction",
  "replay-support",
  "semver",
  "serde_json",
@@ -2152,6 +2154,7 @@ dependencies = [
  "prost",
  "prost-types",
  "rcgen",
+ "redaction",
  "replay-support",
  "reqwest",
  "ring",
@@ -3219,6 +3222,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redaction"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "unicode-width 0.2.2",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3261,6 +3273,7 @@ name = "replay-support"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "redaction",
  "semver",
  "serde",
  "serde_json",
@@ -4014,6 +4027,7 @@ dependencies = [
  "claude-specs",
  "codex",
  "codex-specs",
+ "host-api",
  "libc",
  "model",
  "node",

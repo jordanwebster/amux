@@ -20,6 +20,7 @@ ALLOWED_LOCAL = {
     # construction to the composition layer.
     "node": {"client", "host-api", "model", "settings", "wire"},
     "agent-runtime": {"artifacts", "claude", "codex", "host-api", "model", "pty-host"},
+    "redaction": set(),
     "ui-state": {"model"},
     "ui-runtime": {"artifacts", "client", "model", "ui-state"},
     "tui": {"ui-runtime", "ui-state"},
@@ -36,11 +37,11 @@ TEST_SUPPORT = {
 }
 SUPPORT_ALLOWED_LOCAL = {
     "testnet": {"node"},
-    "claude-specs": {"claude", "pty-host", "replay-support"},
-    "codex-specs": {"codex", "replay-support"},
+    "claude-specs": {"claude", "pty-host", "redaction", "replay-support"},
+    "codex-specs": {"codex", "redaction", "replay-support"},
     "tui-fixtures": {"tui", "ui-runtime", "ui-state"},
 }
-REPLAY_OPT_IN_OWNERS = {"amux", "claude"}
+REPLAY_OPT_IN_OWNERS = {"claude"}
 NO_BUILD_SCRIPT = set(ALLOWED_LOCAL) | {"claude", "codex"}
 MODEL_BANNED_DEPENDENCIES = {
     "tokio",
@@ -129,6 +130,32 @@ def main() -> int:
         if edges:
             failures.append(f"{name}: production/build edges reach test support: {sorted(edges)}")
 
+        optional_dependencies = {
+            dependency["name"]
+            for dependency in package["dependencies"]
+            if dependency["kind"] in (None, "build") and dependency.get("optional", False)
+        }
+        active_features = list(package.get("features", {}).get("default", []))
+        seen_features = set()
+        default_dependencies = set()
+        while active_features:
+            feature = active_features.pop()
+            if feature in seen_features:
+                continue
+            seen_features.add(feature)
+            if feature.startswith("dep:"):
+                default_dependencies.add(feature.removeprefix("dep:"))
+                continue
+            dependency = feature.split("/", 1)[0].removesuffix("?")
+            if dependency in optional_dependencies:
+                default_dependencies.add(dependency)
+            active_features.extend(package.get("features", {}).get(feature, []))
+        default_test_support = default_dependencies & TEST_SUPPORT
+        if default_test_support:
+            failures.append(
+                f"{name}: default feature graph activates test support: {sorted(default_test_support)}"
+            )
+
     replay_owners = {
         name
         for name, package in packages.items()
@@ -155,8 +182,6 @@ def main() -> int:
         )
         if replay is None or not replay["optional"]:
             failures.append(f"{owner}: replay-support must remain an opt-in edge")
-        if "replay-support" in packages[owner].get("features", {}).get("default", []):
-            failures.append(f"{owner}: default features must not name replay-support directly")
 
     for name in NO_BUILD_SCRIPT:
         package = packages.get(name)
@@ -178,13 +203,32 @@ def main() -> int:
     if orphaned_node_tests:
         failures.append(f"node: undeclared integration test sources: {orphaned_node_tests}")
 
+    provider_adapter = ROOT / "crates/agent-runtime/src/test_support_provider.rs"
+    if not provider_adapter.is_file():
+        failures.append("agent-runtime: missing narrow provider test adapter")
+    else:
+        adapter_text = provider_adapter.read_text()
+        for forbidden in ("Harness", "assert!(", "rows: Vec", "wait_for_type"):
+            if forbidden in adapter_text:
+                failures.append(
+                    f"agent-runtime: provider adapter owns support orchestration token {forbidden!r}"
+                )
+    for support_source in (
+        ROOT / "crates/testnet/tests/support/backend_harness.rs",
+        ROOT / "crates/testnet/tests/support/a2a_harness.rs",
+    ):
+        if not support_source.is_file():
+            failures.append(
+                f"testnet: missing support-owned harness {support_source.relative_to(ROOT)}"
+            )
+
     if failures:
         print("dependency policy failed:", file=sys.stderr)
         for failure in failures:
             print(f"  - {failure}", file=sys.stderr)
         return 1
     print(
-        "dependency policy passed for foundations, client/UI layers, and independent E2E wire use"
+        "dependency policy passed for production/default graphs, support ownership, client/UI layers, and independent E2E wire use"
     )
     return 0
 

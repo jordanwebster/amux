@@ -4,11 +4,14 @@ use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::test_support::{
+#[path = "support/backend_harness.rs"]
+mod backend_harness;
+
+use anyhow::{Context as _, Result, bail};
+use backend_harness::{
     ClaudePtyBackendHarness, ClaudeSdkBackendHarness, ClaudeSdkV1Input, CodexBackendHarness,
     CodexSdkV1Input,
 };
-use anyhow::{Context as _, Result, bail};
 use claude::sdk::{PermissionResult, QueryOptions};
 use codex::{
     ApprovalPolicy, Codex, CodexConfig, DynamicToolCallResponse, FunctionDynamicToolSpec,

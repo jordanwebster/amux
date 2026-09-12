@@ -9,8 +9,8 @@ mod suspend;
 
 pub use host::{AgentRuntime, AgentRuntimeFactory};
 
-#[cfg(feature = "test-support")]
-mod test_support_derived_rows;
+#[cfg(all(feature = "test-support", unix))]
+mod test_support_provider;
 
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
@@ -28,13 +28,13 @@ pub mod test_support {
     use uuid::Uuid;
 
     use crate::AgentRuntime;
-    pub use crate::agents::claude::sdk_io::ClaudeSdkV1Input;
     use crate::agents::{
         AgentSession, McpLaunchRoute, Plane, RawPtyTarget, SessionEvent, new_agent,
     };
-    pub use crate::test_support_derived_rows::{
-        ClaudePtyBackendHarness, ClaudeSdkA2aHarness, ClaudeSdkBackendHarness, CodexBackendHarness,
-        SdkRecipientRows,
+    #[cfg(unix)]
+    pub use crate::test_support_provider::{
+        ClaudeSdkFixtureInput, CodexFixtureInput, FixtureRowReader, StructuredBackendAdapter,
+        fixture_runtime, register_sdk_fixture,
     };
     pub type CodexSdkV1Input = model::CodexSdkInput;
 

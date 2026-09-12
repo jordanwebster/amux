@@ -18,6 +18,7 @@ members = [
     "crates/host-api",
     "crates/model",
     "crates/pty-host",
+    "crates/redaction",
     "crates/replay-support",
     "crates/settings",
     "crates/test-agent",
@@ -46,6 +47,7 @@ tui = { path = "crates/tui" }
 tui-fixtures = { path = "crates/tui-fixtures" }
 pty-host = { path = "crates/pty-host" }
 claude = { path = "crates/claude" }
+redaction = { path = "crates/redaction" }
 
 # Shared
 portable-pty = "0.9"
