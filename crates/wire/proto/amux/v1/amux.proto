@@ -2,7 +2,7 @@
 //
 // This file is the canonical protobuf source. Generated Rust types are
 // committed under crates/amux/src/protocol/generated/ — regenerate with
-// `wt run protobuf` after editing any proto here (CI fails on
+// `just protobuf` after editing any proto here (CI fails on
 // stale output) — and must be wrapped in domain types before being used by
 // application code.
 //

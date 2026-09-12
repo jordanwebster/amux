@@ -184,7 +184,7 @@ the redacted report files beside it.
 Run every committed fixture through the current renderer and privacy checks:
 
 ```console
-$ timeout 600 wt test -- every_committed_report_fixture_reproduces
+$ just test -- every_committed_report_fixture_reproduces
 ```
 
 ## Retention and build gating
@@ -227,9 +227,9 @@ work again. Repeated installation resume returns the completed report. Storage
 errors keep recovery pending and admission closed until cleanup succeeds.
 
 Replay the offline replacement regression with
-`timeout 900 wt run e2e -- update_two_profiles`. Its HTTP fixture serves a higher
+`just e2e -- update_two_profiles`. Its HTTP fixture serves a higher
 manifest version with the current executable. The runner updates a disposable
 copy, checks both running fleets, and verifies a pre-existing suspended record
 remains intact. It does not install a published release. The preparation,
 interruption and concurrent-resume cases run with
-`timeout 900 wt run spec -- profiles::update`.
+`just spec -- profiles::update`.

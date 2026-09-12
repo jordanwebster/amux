@@ -10,26 +10,26 @@ open-source licenses beside the assets.
 Run it through the declared task from the repository root:
 
 ```sh
-wt run shot -- list
-wt run shot -- render claude-idle --out target/shot/claude-idle.png
-wt run shot -- render claude-idle --theme light --color ansi \
+just shot -- list
+just shot -- render claude-idle --out target/shot/claude-idle.png
+just shot -- render claude-idle --theme light --color ansi \
   --out target/shot/claude-idle-light-ansi.png
-wt run shot -- render-set chat --out target/shot/chat
-wt run shot -- record-scroll claude --out target/shot/scroll
-wt run shot -- record-scroll codex --out target/shot/scroll
-wt run shot -- verify target/shot
+just shot -- render-set chat --out target/shot/chat
+just shot -- record-scroll claude --out target/shot/scroll
+just shot -- record-scroll codex --out target/shot/scroll
+just shot -- verify target/shot
 ```
 
 To reproduce the complete review bundle in one command, use the repository
 wrapper:
 
 ```sh
-wt run tui-evidence -- target/tui-evidence
+just tui-evidence -- target/tui-evidence
 ```
 
 Wt gives every worktree its own Cargo output and sweeps it after the task. The
-evidence task uses that same declared root, so it inherits the warm snapshot and
-does not create a hidden Cargo configuration outside wt's inventory.
+evidence task uses that same tree, so it inherits the warm snapshot and does
+not create a hidden Cargo configuration outside wt's inventory.
 
 The wrapper renders every declared set, records both agents' wheel sessions,
 captures the command help and fixture list, proves byte-for-byte repeatability,

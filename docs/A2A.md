@@ -203,8 +203,8 @@ only the host-generated completion and exit envelope IDs are normalized.
 The subprocess echoes each received prompt so the tests verify the wire text
 as well as the durable row. They do not require a provider login.
 
-Run `timeout 900 wt test -- a2a_fixture` to replay them. To deliberately
-regenerate the SDK rows, run `UPDATE_A2A_FIXTURES=1 timeout 900 wt test --
+Run `just test -- a2a_fixture` to replay them. To deliberately regenerate the
+SDK rows, run `UPDATE_A2A_FIXTURES=1 just test --
 a2a_fixture_claude_sdk`, then replay without the update flag.
 
 ### Codex

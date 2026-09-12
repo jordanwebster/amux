@@ -1,54 +1,48 @@
 # Running and designing tests
 
-Use the checkout's `wt` recipes so builds share one workspace dependency
-graph and tests have an outer timeout:
+Use the root `justfile` so builds share one workspace dependency graph and
+tests have an outer timeout:
 
 ```sh
-wt build                 # desktop product binaries only
-wt run check             # workspace libraries and binaries
-wt run test-build        # compile ordinary test harnesses
-wt test                  # execute the full workspace selection
-wt run doctest
-wt lint
-wt run spec
-wt run offline-test      # isolated HOME/config and denied external network
+just build                 # desktop product binaries only
+just check                 # workspace libraries and binaries
+just test-build            # compile ordinary test harnesses
+just test                  # execute the full workspace selection
+just doctest
+just lint
+just spec
+just offline-test          # isolated HOME/config and denied external network
 ```
 
-`wt test` runs every workspace target by default. To select test functions
+`just test` runs every workspace target by default. To select test functions
 inside every library, or one named integration-test target:
 
 ```sh
-wt test -- --lib sdk::query::tests
-wt test -- --test spec
-wt test -- --test spec some_test_name -- --exact
+just test -- --lib sdk::query::tests
+just test -- --test spec
+just test -- --test spec some_test_name -- --exact
 ```
 
-Arguments after the first `--` go to Cargo. A second `--` separates Cargo's
-arguments from the test harness's arguments. A name alone filters functions
+Cargo target arguments and filters follow the recipe name. A `--` separates
+Cargo's arguments from the test harness's arguments. A name alone filters functions
 inside every selected harness; it does not prevent unrelated harnesses from
 starting. Select a target when investigating one component. Target selection
 keeps `--workspace`. For routine component work, use the declared focused
 recipes; their smaller dependency closures may compile a different feature
 variant than full verification.
 
-Run `wt run test-recipes` to check argument forwarding without compiling.
-These checks also run automatically before `wt test`.
-
-`wt run optimized-test-build` compiles every workspace library and integration
-test under the release profile without executing it. CI runs this separately
-from the nonincremental `ci-test` profile because the two checks answer
-different questions: one catches optimization/release-cfg errors, while the
-other avoids incremental state on ephemeral test runners.
+Use `just test-crate model` for a focused package. `just test-build` compiles
+every workspace library and integration test without executing it.
 
 The opt-in provider harnesses and their argument, depfile, and redaction tests
-live under `crates/testnet/tests`. `wt test` compiles them and executes each
+live under `crates/testnet/tests`. `just test` compiles them and executes each
 custom entry point with no scenario; it prints usage and exits before opening
 an account or provider process. Real live scenarios still require an explicit
-`wt run codex-live`, `wt run claude-pty-live`, or `wt run claude-sdk-live`
+`just codex-live`, `just claude-pty-live`, or `just claude-sdk-live`
 command.
 
-Build output is wt's to keep bounded, not a recipe's. After every wt task
-that changed `target/`, and in `wt prune`, wt deletes superseded units,
+Build output is wt's to keep bounded, not a recipe's. After task execution in a
+wt-managed tree, and in `wt prune`, wt deletes superseded units,
 unreachable object files and excess incremental state by following Cargo's
 workspace units and dependency fingerprints. `wt ls --disk` sizes each tree's build output;
 `wt prune amux` shows what a sweep of every tree would reclaim before
@@ -71,8 +65,8 @@ harness runs them concurrently; each owns its replay streams and session state.
 Run the corpus or one scenario with:
 
 ```sh
-wt test -- --test spec_replay pty_replays
-wt test -- --test spec_replay pty_replays::plan_approve -- --exact
+just test -- --test spec_replay pty_replays
+just test -- --test spec_replay pty_replays::plan_approve -- --exact
 ```
 
 Recorded readiness waits for output notifications, and keyboard delays advance
@@ -87,7 +81,7 @@ timeout kills the harness, it may never report that captured output. Stream
 output during a focused hang investigation with:
 
 ```sh
-wt test -- --test spec_replay pty_replays::plan_approve -- --exact --nocapture
+just test -- --test spec_replay pty_replays::plan_approve -- --exact --nocapture
 ```
 
 Parallel tests can interleave streamed output; add `--test-threads=1` after the

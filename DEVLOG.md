@@ -9134,3 +9134,13 @@ measurement warned when the owned target reached 64,825,675,776 bytes, about
 401 MB above the 60 GiB pool. Product, full-suite, lint, release, E2E, and cross
 target reservations are raised from this evidence before rebuilding a clean
 managed target. The pool limit remains unchanged.
+
+2026-09-12 — **Just is the repository task runner.** The root task list now
+owns bounded build, test, lint, format, code generation, policy, release, E2E,
+embedded, mobile, live-provider and evidence commands. Wt retains only tree
+environment, profile setup, the seven repository tasks needed for compatibility,
+and the checkout daemon; its build, test and lint shims delegate to just. The
+complete local CI sequence passes, including 22 end-to-end scenarios, embedded
+tests and both iOS target checks. All three retained wt shims pass, and `wt
+tasks` exposes only the seven repository tasks plus the sync and verify
+composites.

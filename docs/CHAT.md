@@ -1182,7 +1182,7 @@ a PTY, connect to a daemon, or depend on the local terminal. From the repository
 root:
 
 ```sh
-timeout 900 wt build
+just build
 target/debug/amux-shot list
 target/debug/amux-shot render claude-idle --out target/shot/claude-idle.png
 target/debug/amux-shot render claude-idle --theme light --color ansi \
@@ -1268,8 +1268,9 @@ The opt-in harnesses `sdk_chat_live.sh`, `remote_open_live.sh`,
 conversation and asks, paired-host entry, creation defaults and overrides, and
 a user Stop hook under direct Claude and amux. They use isolated state and retain
 terminal frames and boundary evidence. The dialog gap above remains outside the
-successful live sequence. Workspace validation is `wt build`, `wt lint`,
-`wt test`, `wt run spec` and `wt run mobile-check`, under `timeout`.
+successful live sequence. Workspace validation is `just build`, `just lint`,
+`just test`, `just spec` and `just mobile-check`; each recipe carries its own
+timeout.
 
 ## Rejected alternatives
 

@@ -5,4 +5,4 @@ set -eu
 # same renderer after fetching the daemon inventory.
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
-wt test -- a2a_list
+just test -- a2a_list

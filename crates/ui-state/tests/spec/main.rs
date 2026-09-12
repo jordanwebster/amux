@@ -5,7 +5,7 @@
 //! normative design is `docs/UI.md`, and where prose and passing spec
 //! disagree, the spec wins.
 //!
-//! Run with: `wt run spec`
+//! Run with: `just spec`
 //!
 //! No tokio, no network, no clocks anywhere in this suite — everything is a
 //! pure fold. Every chapter registers its Msg sequences with the harness so

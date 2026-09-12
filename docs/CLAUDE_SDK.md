@@ -284,7 +284,7 @@ CLI's `planFilePath`. The plan opens the reader fullscreen, as in the PTY chat:
     # Plan: make the retry count configurable
     ...
     ## Verification
-    wt test -- sync
+    just test -- sync
 
     › 1. Approve — auto       agent proceeds, edits apply without asking
       2. Approve — manual     agent asks before each edit

@@ -1,6 +1,6 @@
 //! Full-frame goldens for the component gallery and exploration pair.
 //!
-//! Regenerate with `UPDATE_GOLDENS=1 wt run test-infrastructure -- --test
+//! Regenerate with `UPDATE_GOLDENS=1 just test-crate tui -- --features fixtures --test
 //! component_golden` and review both the text and semantic style maps.
 
 use ratatui::Terminal;

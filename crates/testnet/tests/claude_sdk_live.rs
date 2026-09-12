@@ -5,7 +5,7 @@
 //! first, then run every live invocation under an outer timeout:
 //!
 //! ```text
-//! AMUX_LIVE_OUT=.autopilot/evidence wt run claude-sdk-live -- all
+//! AMUX_LIVE_OUT=.autopilot/evidence just claude-sdk-live -- all
 //! ```
 //!
 //! `AMUX_CLAUDE_LIVE_MODEL` defaults to `haiku`. The suite uses the operator's
@@ -739,7 +739,7 @@ fn main() -> anyhow::Result<()> {
         let amux = target_debug.join("amux");
         if !amux.exists() {
             bail!(
-                "amux binary missing at {}; run `wt build` first",
+                "amux binary missing at {}; run `just build` first",
                 amux.display()
             );
         }

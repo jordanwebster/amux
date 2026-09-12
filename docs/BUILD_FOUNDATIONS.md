@@ -65,16 +65,15 @@ acceptance evidence.
 ## Reproducible task contract
 
 `rust-toolchain.toml` pins Rust 1.98.0, components and supported cross targets.
-Formatting names nightly 2026-08-30 explicitly. The supported task runner is
-wt 0.4.0. CI and release jobs install that exact released version with Cargo's
-locked resolution.
+Formatting names nightly 2026-08-30 explicitly. The root `justfile` is the
+supported task runner; wt 0.4.0 owns local worktrees, sessions and daemons.
 
-All normal work enters through `.wt.toml`. Cargo-producing tasks use
-`Cargo.lock`, and `scripts/with-git-revision.sh` supplies the current commit to
-the CLI build script. The environment value avoids checkout-specific Git watch
+All normal work enters through the root `justfile`. Cargo-producing tasks use
+`Cargo.lock`, and the exported `AMUX_GIT_SHA` supplies the current commit to the
+CLI build script. The environment value avoids checkout-specific Git watch
 paths, so moving identical sources at the same revision does not invalidate the
 binary. A changed commit still changes the embedded revision and relinks the
-product.
+product. `.wt.toml` delegates its small set of tree-facing tasks to `just`.
 
 The ordinary build selects only the desktop product binary; the screenshot
 generator has its own task. Focused component tests select
@@ -118,9 +117,10 @@ frames do not have complete debugger file/line information. Use the
 incremental state so ephemeral runners do not pay to create reusable sessions.
 Release remains a separate optimized, nonincremental configuration.
 
-`wt run debug-policy-check` verifies a named backtrace from an intentional test
-panic. On macOS it also verifies the product dSYM bundles emitted by the packed
-development configuration.
+The retired one-time debug-policy check verified a named backtrace from an
+intentional test panic and, on macOS, the product dSYM bundles emitted by the
+packed development configuration. Use `just full-debug` when complete debugger
+information is needed.
 
 Wt 0.4.0 is a POSIX tool. Declared CI and release tasks therefore run on Linux
 and macOS; WSL can use the Linux path, but this revision cannot execute the wt

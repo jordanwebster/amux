@@ -4,7 +4,7 @@
 //! passed. Run one scenario at a time, always under `timeout`:
 //!
 //! ```text
-//! AMUX_LIVE_OUT=target/claude-pty-live wt run claude-pty-live -- semantic_chat
+//! AMUX_LIVE_OUT=target/claude-pty-live just claude-pty-live -- semantic_chat
 //! ```
 //!
 //! `all` runs every maintained process-level scenario. Every scenario has one
@@ -331,7 +331,7 @@ fn finalize(
         "captured_at": chrono::Utc::now().to_rfc3339(),
         "claude_version": version,
         "model": model,
-        "harness": format!("wt run claude-pty-live -- {scenario}"),
+        "harness": format!("just claude-pty-live -- {scenario}"),
         "poisoned_daemon_env": poisoned,
         "notes": notes,
         "failure": failure,

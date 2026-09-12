@@ -23,7 +23,7 @@ sed -i '' "s/^version = \"${current}\"/version = \"${new_version}\"/" \
 
 # Update Cargo.lock
 cargo update --offline -p amux
-wt run release-check
+just release-check
 
 # Commit, tag, push
 git add crates/amux/Cargo.toml Cargo.lock

@@ -5,7 +5,7 @@
 //! then run every invocation under an outer timeout:
 //!
 //! ```text
-//! AMUX_LIVE_OUT=target/codex-live wt run codex-live -- all
+//! AMUX_LIVE_OUT=target/codex-live just codex-live -- all
 //! ```
 //!
 //! The suite drives the prebuilt `target/debug/amux`, which this target does
@@ -976,7 +976,7 @@ fn main() -> anyhow::Result<()> {
             "codex_version": version,
             "model": model,
             "timeout_seconds": spec.timeout.as_secs(),
-            "harness": format!("wt run codex-live -- {}", spec.id),
+            "harness": format!("just codex-live -- {}", spec.id),
             "synthetic_prompts": !matches!(spec.runner, Scenario::RawUnnamed | Scenario::RawNamed | Scenario::UnnamedReconnect),
             "isolated_codex_home": true,
             "notes": notes,

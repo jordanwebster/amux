@@ -386,12 +386,12 @@ Four tiers, in increasing cost:
    inert when no scenario is named.
 
 ```sh
-wt test
-AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna wt run codex-live -- all
+just test
+AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna just codex-live -- all
 ```
 
 The live suite is pinned to codex-cli 0.153.4. To check startup without model
-turns, run `wt run codex-live -- raw_unnamed raw_named unnamed_reconnect`.
+turns, run `just codex-live -- raw_unnamed raw_named unnamed_reconnect`.
 These scenarios require the vanilla TUI's local `/status` command to identify
 the expected thread, including after detach/reattach and app-server restart.
 Initial ANSI output alone is insufficient: Codex draws its startup screen

@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 pub(crate) fn assert_binary_is_current(amux: &Path) -> Result<()> {
     if !amux.exists() {
         bail!(
-            "amux binary missing at {}; run `wt build` first",
+            "amux binary missing at {}; run `just build` first",
             amux.display()
         );
     }
@@ -18,7 +18,7 @@ pub(crate) fn assert_binary_is_current_from_depfile(amux: &Path, depfile: &Path)
         .with_context(|| format!("stat {}", amux.display()))?;
     let contents = std::fs::read_to_string(depfile).with_context(|| {
         format!(
-            "amux dependency file missing or unreadable at {}; run `wt build` first",
+            "amux dependency file missing or unreadable at {}; run `just build` first",
             depfile.display()
         )
     })?;
@@ -27,14 +27,14 @@ pub(crate) fn assert_binary_is_current_from_depfile(amux: &Path, depfile: &Path)
             .and_then(|meta| meta.modified())
             .with_context(|| {
                 format!(
-                    "stat prerequisite {} from {}; rebuild with `wt build`",
+                    "stat prerequisite {} from {}; rebuild with `just build`",
                     path.display(),
                     depfile.display()
                 )
             })?;
         if modified > built {
             bail!(
-                "{} is older than dependency {}; run `wt build` — the live suite \
+                "{} is older than dependency {}; run `just build` — the live suite \
                  drives the prebuilt binary and would otherwise report on code it never ran",
                 amux.display(),
                 path.display()

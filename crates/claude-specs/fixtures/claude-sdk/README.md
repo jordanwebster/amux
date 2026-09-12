@@ -12,9 +12,9 @@ Subagent rows include completion notifications after the first turn result.
 Stream events are also compared directly with the recording's inbound JSON to
 prove that every field and event survives the adapter in order.
 
-Regenerate with `UPDATE_DERIVED_ROWS=1 timeout 900 wt test --
+Regenerate with `UPDATE_DERIVED_ROWS=1 just test --
 claude_sdk_derived_rows`, then verify with
-`timeout 900 wt test -- derived_rows` without the update flag.
+`just test -- derived_rows` without the update flag.
 
 Successful prompt writes publish a `user` row before any reply, with the input
 UUID (or hex bytes for a non-UUID input) as `uuid`. The hex `input_id` links the
