@@ -228,6 +228,9 @@ async fn runtime_reflects_daemon_state_in_the_model() {
         .await;
 }
 
+// Drives two runtimes over the installation's Unix socket, so it has no
+// Windows form.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn independent_runtimes_keep_account_identity_and_node_ownership_separate() {
     let _guard = embedded_server_test_guard().await;

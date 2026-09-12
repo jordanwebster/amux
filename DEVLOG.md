@@ -1,3 +1,8 @@
+2026-09-13 — **Gate the socket-driven runtime test to Unix.** The third CI run
+was green everywhere except the Windows test job, where one ui-runtime
+integration test called Unix-socket helpers that are themselves Unix-only.
+The test now compiles only on Unix, matching the helpers it uses.
+
 2026-09-13 — **Compile on Windows again.** The second CI run passed on Linux
 and macOS and failed only on Windows: the recipe wrapper path came from
 `justfile_directory()`, whose backslashes the shell swallowed, and the client
