@@ -9154,3 +9154,12 @@ cache and delegates to the same bounded recipes used locally. Tagged releases
 again produce Linux, Apple Silicon macOS and Windows artifacts, including the
 Windows rename, checksum and upload path. Both workflow files parse as YAML,
 and the CI workflow contains the exact eight-job command matrix.
+
+2026-09-12 — **Dependency policy is an edge contract, not an architecture
+proxy.** The checker is reduced to 79 lines that compare the declared production
+and support-package allowlists with Cargo metadata and reject every non-development
+edge from a production package into test infrastructure. Source-token guesses,
+file-presence assertions and build-measurement machinery are removed, along with
+the generated measurement directory. The complete local CI sequence remains
+green after the reduction: all workspace tests and doctests, release policy, 22
+end-to-end scenarios, the embedded boundary and both iOS targets pass.
