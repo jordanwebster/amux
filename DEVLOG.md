@@ -33,7 +33,7 @@ That green result is the required isolated streaming group. A subsequent
 coherent full run passes every hard budget and all other drift gates, but shows
 an order-dependent simulator discrepancy after cold and real-relay lifecycle
 work: one missed frame gives a 0.83ms/s median, and 75.3MB median footprint is
-0.05MB over the unchanged memory drift ceiling. This remains a red full
+about 0.10MB over the unchanged memory drift ceiling. This remains a red full
 qualification and is not hidden by the isolated pass. The final conversation
 journey, 668-control accessibility matrix, unit suites, lint and Release-scope
 inspection pass. A fresh exact-build gallery retains matched source and
