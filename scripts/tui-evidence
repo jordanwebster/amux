@@ -30,7 +30,7 @@ esac
 cd "$repo_root"
 
 shot() {
-    timeout 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"
+    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"
 }
 
 capture() {
@@ -91,20 +91,20 @@ shot record-scroll codex --out "$evidence_dir/scroll"
 
 echo "Capturing screenshot-tool commands"
 capture "$evidence_dir/tool/help.txt" \
-    timeout 600 cargo run --locked --quiet -p shot --bin amux-shot -- --help
+    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot -- --help
 capture "$evidence_dir/tool/list.txt" \
-    timeout 600 cargo run --locked --quiet -p shot --bin amux-shot -- list
+    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot -- list
 repeatability
 
 echo "Capturing mechanical demonstrations"
 capture "$evidence_dir/perf/perf-debug.txt" \
-    timeout 900 cargo test --locked -p tui --features fixtures --test perf -- --nocapture
+    "$(dirname "$0")/bounded" 900 cargo test --locked -p tui --features fixtures --test perf -- --nocapture
 capture "$evidence_dir/perf/perf-release.txt" \
-    timeout 900 cargo test --locked -p tui --features fixtures --release --test perf -- --nocapture
+    "$(dirname "$0")/bounded" 900 cargo test --locked -p tui --features fixtures --release --test perf -- --nocapture
 capture "$evidence_dir/themes/theme-loader-tests.txt" \
-    timeout 600 cargo test --locked -p tui theme:: -- --nocapture
+    "$(dirname "$0")/bounded" 600 cargo test --locked -p tui theme:: -- --nocapture
 capture "$evidence_dir/copy/osc52-transcript.txt" \
-    timeout 600 cargo test --locked -p tui osc52 -- --nocapture
+    "$(dirname "$0")/bounded" 600 cargo test --locked -p tui osc52 -- --nocapture
 
 for required_file in \
     "$evidence_dir/scroll/claude-wheel.gif" \

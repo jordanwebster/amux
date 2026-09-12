@@ -1,3 +1,14 @@
+2026-09-13 — **Make recipe timeouts portable and resolve the pinned nightly in
+CI.** The first CI run on the merged tree failed on macOS because every
+recipe called GNU `timeout`, which stock macOS and the runner image lack, and
+the format job named a dated nightly as an action version the toolchain
+action cannot resolve. Recipes and the test, spec and evidence scripts now
+bound commands through `scripts/bounded`, which uses `timeout` or `gtimeout`
+when present and otherwise supervises the process group from Python with GNU
+timeout's exit code. The format job passes the nightly date as the toolchain
+input. Both wrapper paths are exercised locally, and check, a focused test
+and all 412 specs pass through the wrapper.
+
 2026-09-13 — **Narrow node's hidden surface to one harness module.** Fourteen
 node modules had been made hidden-public wholesale so the promoted harness
 could reach them. They are private again; `node::harness` re-exports the
