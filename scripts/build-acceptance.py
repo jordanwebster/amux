@@ -235,11 +235,12 @@ def edit_model_body(tree: Path, cycle: int) -> None:
 
 def distribution(records: list[dict[str, object]], label_prefix: str) -> dict[str, object]:
     by_tree: dict[str, dict[str, object]] = {}
-    for tree in sorted({str(record["tree"]) for record in records}):
+    matching = [record for record in records if str(record["label"]).startswith(label_prefix)]
+    for tree in sorted({str(record["tree"]) for record in matching}):
         samples = [
             float(record["costs"]["wall_seconds"])
-            for record in records
-            if record["tree"] == tree and str(record["label"]).startswith(label_prefix)
+            for record in matching
+            if record["tree"] == tree
         ]
         by_tree[tree] = {
             "samples": len(samples),

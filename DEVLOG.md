@@ -10,6 +10,9 @@ test packages. Claude explicitly enables semver serialization instead of
 receiving it from that excluded graph. CI and release use wt 0.4.0 on its
 supported Linux/macOS hosts; native Windows remains an explicit platform gap.
 Code generation and migrated helper commands use locked resolution.
+The build acceptance runner groups steady-state medians only across disposable
+trees that emitted the requested sample, keeping the canonical warm record out
+of those distributions.
 
 2026-09-12 — **Record preliminary wt 0.4.0 acceptance evidence.** A clean canonical
 at `e85265e1` warmed in 78.757 seconds, after which two APFS snapshot trees
