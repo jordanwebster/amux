@@ -9,20 +9,24 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  AMUX_INVARIANT_FATAL: "1"
 
 jobs:
-  check:
-    name: Check
+  check-and-clippy:
+    name: Check and Clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Run declared check
-        run: wt run ci-check
+      - uses: extractions/setup-just@v2
+      - name: Check workspace
+        run: just check
+      - name: Run Clippy
+        run: just lint
 
   fmt:
     name: Format
@@ -33,129 +37,85 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly-2026-08-30
         with:
           components: rustfmt
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
       - name: Check formatting
-        run: wt run format-check
+        run: just fmt-check
 
-  codegen:
-    name: Protobuf codegen is current
+  codegen-and-policy:
+    name: Codegen and dependency policy
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
       - name: Check committed protobuf code
-        run: wt run codegen-check
-
-  policy:
-    name: Dependency and recipe policy
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.98.0
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
-      - uses: Swatinem/rust-cache@v2
-      - name: Enforce dependency boundaries and recipe behavior
-        run: |
-          wt run dependency-policy
-          wt run test-recipes
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.98.0
-        with:
-          components: clippy
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
-      - uses: Swatinem/rust-cache@v2
-      - name: Run clippy
-        run: wt lint
+        run: just codegen-check
+      - name: Enforce dependency boundaries
+        run: just dependency-policy
 
   test:
-    name: Test
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
       - uses: Swatinem/rust-cache@v2
-      - name: Run declared tests
-        run: wt run ci-test
-        env:
-          AMUX_INVARIANT_FATAL: "1"
+      - uses: extractions/setup-just@v2
+      - name: Run workspace tests
+        run: just test
       - name: Run doctests
-        run: wt run doctest
-        env:
-          AMUX_INVARIANT_FATAL: "1"
+        run: just doctest
 
   build:
-    name: Build
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
       - name: Build product release
-        run: wt run release-check
+        run: just release-check
 
   e2e:
-    name: E2E Tests
+    name: E2E (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       matrix:
-        # Native Windows cannot run wt 0.4.0; declared tasks run on POSIX hosts.
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
       - uses: Swatinem/rust-cache@v2
-      - name: Run declared E2E tests
-        run: wt run e2e
-        env:
-          AMUX_INVARIANT_FATAL: "1"
+      - uses: extractions/setup-just@v2
+      - name: Run end-to-end tests
+        run: just e2e
 
-  client-only:
-    name: Client-only (embedded)
+  embedded:
+    name: Embedded client
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.98.0
-        with:
-          components: clippy
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
       - name: Check provider-free client graph
-        run: wt run embedded-check
+        run: just embedded-check
       - name: Test embedded ownership boundary
-        run: wt run embedded-test
-        env:
-          AMUX_INVARIANT_FATAL: "1"
+        run: just embedded-test
 
   ios:
     name: iOS target check
@@ -166,8 +126,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
       - uses: Swatinem/rust-cache@v2
-      - name: Check provider-free iOS device and simulator graphs
-        run: wt run mobile-check
+      - uses: extractions/setup-just@v2
+      - name: Check iOS device and simulator graphs
+        run: just mobile-check

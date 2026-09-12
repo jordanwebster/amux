@@ -9144,3 +9144,13 @@ complete local CI sequence passes, including 22 end-to-end scenarios, embedded
 tests and both iOS target checks. All three retained wt shims pass, and `wt
 tasks` exposes only the seven repository tasks plus the sync and verify
 composites.
+
+2026-09-12 — **Continuous integration runs the repository task contract.**
+Eight jobs now exercise checks and Clippy, formatting, generated-code and
+dependency policy, tests and doctests on Linux, macOS and Windows, release
+builds on all three platforms, end-to-end scenarios on POSIX hosts, the
+embedded boundary, and both iOS targets. Every job installs just after its Rust
+cache and delegates to the same bounded recipes used locally. Tagged releases
+again produce Linux, Apple Silicon macOS and Windows artifacts, including the
+Windows rename, checksum and upload path. Both workflow files parse as YAML,
+and the CI workflow contains the exact eight-job command matrix.
