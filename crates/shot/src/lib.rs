@@ -1,4 +1,4 @@
-//! Deterministic raster captures of named `amux-tui` fixtures.
+//! Deterministic raster captures of named `tui` fixtures.
 
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Write};
@@ -44,7 +44,7 @@ const BOLD_ITALIC_FONT: &[u8] = include_bytes!("../assets/JetBrainsMono-BoldItal
 const SYMBOL_FONT: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
 
 #[cfg(test)]
-// Static non-ASCII chrome emitted by amux-tui. Model and user content is
+// Static non-ASCII chrome emitted by tui. Model and user content is
 // intentionally unbounded and still uses the documented missing-glyph box.
 const TUI_CHROME_GLYPHS: &str = "·±–—‘’“”←↑→↓↪⟳⌃⌄─│┌┐└┘▌▸●◌◐◑◒◓⚠✓✔✗›…⋮⋯⊘";
 

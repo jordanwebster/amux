@@ -1,7 +1,5 @@
-#![cfg(test_fixtures)]
-
-use amux::test_fixtures::{IdentityServer, TestAccount};
-use amux::{OAuthError, refresh_access_token, run_device_flow};
+use node::test_fixtures::{IdentityServer, TestAccount};
+use node::{OAuthError, refresh_access_token, run_device_flow};
 
 #[tokio::test]
 async fn identity_fixture_drives_device_refresh_and_userinfo_flows() {

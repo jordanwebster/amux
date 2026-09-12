@@ -1,14 +1,12 @@
 //! Embedded installation behavior through the public host and client APIs.
-extern crate node as amux;
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use amux::installation::{BindTarget, Observed, ProfileStatus};
-use amux::test_fixtures::{Fault, IdentityServer, TestAccount, TestRelay};
-use amux::{
+use node::installation::{BindTarget, Observed, ProfileStatus};
+use node::test_fixtures::{Fault, IdentityServer, TestAccount, TestRelay};
+use node::{
     AccessToken, AuthError, BindRequest, Client, CredentialProvider, CredentialSource, HostId,
     HostTrustStatus, Installation, InstallationOptions, InstallationRoot, InstallationSettings,
     Listeners, OAuthError, OperationId, PairingSecret, ProfileId, ShutdownReason,
@@ -498,8 +496,8 @@ fn embedded_ephemeral_storage_stays_in_container_tmpdir() {
 
             let profile_root = root.join("profiles").join(profile.record.id.to_string());
             let config_path = profile_root.join("config.yaml");
-            let config = amux::load_profile_config(&config_path).unwrap();
-            let paths = amux::installation::ProfilePaths::for_id(&root, profile.record.id)
+            let config = node::load_profile_config(&config_path).unwrap();
+            let paths = node::installation::ProfilePaths::for_id(&root, profile.record.id)
                 .unwrap();
             let cache = config.artifact_cache_dir();
             let reports = config.reports_dir();
@@ -554,7 +552,7 @@ async fn embedded_storage_reopens_long_roots_and_refuses_symlink_redirection() {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::symlink;
 
-    use amux::installation::{InstallationError, ProfilePaths};
+    use node::installation::{InstallationError, ProfilePaths};
 
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("embedded-app-storage-".repeat(8));

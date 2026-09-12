@@ -3,16 +3,16 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use amux::AgentParent;
-use amux::derived_rows_test_support::{ClaudeSdkA2aHarness, SdkRecipientRows};
-use amux::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
+use agent_runtime::test_support::{ClaudeSdkA2aHarness, SdkRecipientRows};
 use anyhow::{Context as _, Result};
 use claude::sdk::{QueryOptions, Session, UserMessage};
+use model::AgentParent;
+use model::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/a2a")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/a2a")
 }
 
 async fn provider(script: &Path, role: &str, id: Uuid) -> Result<Session> {
@@ -47,7 +47,7 @@ async fn delivered_rows(rows: &mut SdkRecipientRows, envelope: &Envelope) -> Res
                 message = Some(row);
             }
             Some("user") => {
-                assert_eq!(row["message"]["content"], amux::envelope::format(envelope));
+                assert_eq!(row["message"]["content"], model::envelope::format(envelope));
                 echoed = true;
             }
             _ => {}

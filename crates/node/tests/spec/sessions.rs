@@ -5,7 +5,7 @@
 //! administration belong to the installation owner and are absent from both
 //! profile sockets and peer tunnels.
 
-use amux::testnet::{TestNet, Via};
+use node::testnet::{TestNet, Via};
 
 /// B lists A's agents and attaches over a *direct* link: input and echoed
 /// output round-trip across the real tunnel. The laptop dials the desktop, so

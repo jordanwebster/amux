@@ -1,8 +1,8 @@
 //! Profile clients have independent selections and no installation administration.
 #![cfg(unix)]
 
-use amux::installation::{FrontDoor, rpc};
-use amux::testnet::{TestNet, Via};
+use node::installation::{FrontDoor, rpc};
+use node::testnet::{TestNet, Via};
 
 /// A paired peer can use agent calls, but lifecycle and trust administration is absent
 /// from its gRPC service. The installation owner still administers trust.
@@ -83,9 +83,9 @@ async fn two_clients_select_different_profiles_independently() {
         .find(|p| p.id == work.id.to_string())
         .unwrap();
     assert_ne!(selected_a.socket_path, selected_b.socket_path);
-    async fn connect(socket: &str) -> amux::Client {
-        amux::Server::builder()
-            .config(amux::Config {
+    async fn connect(socket: &str) -> node::Client {
+        node::Server::builder()
+            .config(node::Config {
                 socket_path: socket.into(),
                 ..Default::default()
             })

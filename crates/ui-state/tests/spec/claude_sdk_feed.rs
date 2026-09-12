@@ -34,9 +34,9 @@ fn rows(name: &str) -> Vec<Value> {
         "interrupted" => {
             include_str!("../../../claude-specs/fixtures/claude-sdk/interrupted.rows.jsonl")
         }
-        "recipient" => include_str!("../../../node/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
-        "completed" => include_str!("../../../node/tests/fixtures/a2a/sdk_completed.rows.jsonl"),
-        "exited" => include_str!("../../../node/tests/fixtures/a2a/sdk_exited.rows.jsonl"),
+        "recipient" => include_str!("../../../testnet/fixtures/a2a/sdk_recipient.rows.jsonl"),
+        "completed" => include_str!("../../../testnet/fixtures/a2a/sdk_completed.rows.jsonl"),
+        "exited" => include_str!("../../../testnet/fixtures/a2a/sdk_exited.rows.jsonl"),
         _ => panic!("unknown fixture"),
     };
     raw.lines()

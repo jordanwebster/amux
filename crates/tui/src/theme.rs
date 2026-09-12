@@ -520,7 +520,6 @@ impl Theme {
 
     /// A rectangle someone drew on a captured screen. Only a build that
     /// captures reports paints it.
-    #[cfg(any(debug_assertions, test))]
     pub(crate) fn mark(self) -> Style {
         Style::default()
             .fg(self.color(self.tokens.accent))
@@ -531,7 +530,6 @@ impl Theme {
     /// The cell the keyboard is pointing at while marking. It is the
     /// inverse of [`Self::mark`] so that it reads as a cursor whether it
     /// stands on plain screen or inside a rectangle already drawn.
-    #[cfg(any(debug_assertions, test))]
     pub(crate) fn mark_cursor(self) -> Style {
         Style::default()
             .fg(self.color(self.tokens.background))
@@ -541,7 +539,6 @@ impl Theme {
 
     /// The capture flow's prompt row, filled edge to edge so it reads as a
     /// question about the screen rather than part of it.
-    #[cfg(any(debug_assertions, test))]
     pub(crate) fn report_prompt(self) -> Style {
         Style::default()
             .fg(self.color(self.tokens.text))

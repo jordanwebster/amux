@@ -2,12 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-use amux::installation::{
-    InstallationRoot, OperationId, ProfileId, ProfileLabel, ProfilePaths, Registry, rpc,
-};
-use amux::{Config, InstallationConfig, ProfileConfig};
 use anyhow::Result;
 use client::FrontDoorClient;
+use node::installation::{
+    InstallationRoot, OperationId, ProfileId, ProfileLabel, ProfilePaths, Registry, rpc,
+};
+use node::{Config, InstallationConfig, ProfileConfig};
 
 pub fn configure(root: &Path, name: &str) -> Result<(Config, PathBuf)> {
     let root = root.canonicalize()?;

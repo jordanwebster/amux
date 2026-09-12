@@ -1,26 +1,23 @@
-// Test scaffolding exists only in debug profiles (see build.rs); a
-// release-profile test build compiles this crate empty rather than failing.
-#![cfg(all(unix, testnet))]
+#![cfg(unix)]
 
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use amux::claude_io::{
-    AskAnswer as PtyAskAnswer, Intent as PtyIntent, PermissionAnswer as PtyPermissionAnswer,
-    PlanAnswer as PtyPlanAnswer, QuestionAnswer as PtyQuestionAnswer,
-    QuestionResponse as PtyQuestionResponse,
-};
-use amux::claude_sdk_io::ClaudeSdkV1Input;
-use amux::codex_io::CodexSdkV1Input;
-use amux::derived_rows_test_support::{
-    ClaudePtyBackendHarness, ClaudeSdkBackendHarness, CodexBackendHarness,
+use agent_runtime::test_support::{
+    ClaudePtyBackendHarness, ClaudeSdkBackendHarness, ClaudeSdkV1Input, CodexBackendHarness,
+    CodexSdkV1Input,
 };
 use anyhow::{Context as _, Result, bail};
 use claude::sdk::{PermissionResult, QueryOptions};
 use codex::{
     ApprovalPolicy, Codex, CodexConfig, DynamicToolCallResponse, FunctionDynamicToolSpec,
     ListThreadsParams, SandboxMode, Thread, ThreadConfig,
+};
+use model::{
+    AskAnswer as PtyAskAnswer, ClaudePtyIntent as PtyIntent,
+    PermissionAnswer as PtyPermissionAnswer, PlanAnswer as PtyPlanAnswer,
+    QuestionAnswer as PtyQuestionAnswer, QuestionResponse as PtyQuestionResponse,
 };
 use replay_support::{
     IoDirection, Recording, ReplayAdvance, ReplayController, ReplayOptions, ReplayTransport,
@@ -76,19 +73,19 @@ struct Runtime {
 }
 
 fn fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows/codex")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../codex-specs/fixtures/codex")
 }
 
 fn claude_sdk_fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows/claude-sdk")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures/claude-sdk")
 }
 
 fn claude_sdk_recordings_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude/fixtures/sdk")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures/sdk")
 }
 
 fn claude_pty_fixtures_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rows/claude-pty")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../claude-specs/fixtures/claude-pty")
 }
 
 fn thread_config(spec: &str) -> ThreadConfig {

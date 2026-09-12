@@ -16,7 +16,7 @@ chrono = { workspace = true }
 futures-core = "0.3"
 pty-host = { workspace = true, optional = true }
 replay-support = { path = "../replay-support", optional = true }
-semver.workspace = true
+semver = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = { workspace = true, optional = true }

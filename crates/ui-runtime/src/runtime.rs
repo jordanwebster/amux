@@ -264,21 +264,17 @@ impl std::fmt::Display for Generation {
 /// A shell edge belonging to one selection: what a connection task or a
 /// stream task holds when it reports a result.
 ///
-/// Debug builds only, alongside the diagnostic trace. A test of switching
-/// needs a result that is genuinely in flight for the profile being left,
-/// and only something holding that profile's edge can produce one.
-#[cfg(debug_assertions)]
+/// Tests use this to model work genuinely in flight for the profile being
+/// left; integrations can use it when an operation must outlive a view.
 #[derive(Clone)]
 pub struct ShellEdge(MsgSink);
 
 /// The Runtime an edge was taken from — and every runtime switched to from
 /// it — has been dropped, so there is nothing left to report to.
-#[cfg(debug_assertions)]
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[error("the runtime this shell edge belonged to is gone")]
 pub struct RuntimeGone;
 
-#[cfg(debug_assertions)]
 impl ShellEdge {
     /// Report a result as a task of this selection would.
     pub async fn report(&self, msg: Msg) -> Result<(), RuntimeGone> {
@@ -492,7 +488,6 @@ impl Runtime {
     }
 
     /// This runtime's shell edge, as its own tasks hold it.
-    #[cfg(debug_assertions)]
     pub fn shell_edge(&self) -> ShellEdge {
         ShellEdge(self.msg_sink.clone())
     }

@@ -7,15 +7,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use amux::{
-    AgentIdentifier, AgentType, Client, Config, CreateAgentRequest, SendInputRequest,
-    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
-};
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use model::{CODEX_SDK_V1, CodexSdkInput as CodexSdkV1Input, TERMINAL_V1, TerminalV1Args};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
+use node::{
+    AgentIdentifier, AgentType, Client, Config, CreateAgentRequest, SendInputRequest,
+    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
+};
 use serde_json::json;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -297,7 +297,7 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
 
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        match amux::Server::builder()
+        match node::Server::builder()
             .config(scratch.config.clone())
             .daemon()
             .open()
@@ -342,7 +342,7 @@ fn target_debug_dir() -> Result<PathBuf> {
 pub struct StructuredCapture {
     agent: Uuid,
     client: Client,
-    stream: amux::SessionStream,
+    stream: node::SessionStream,
     rows: Vec<Row>,
     observed: File,
 }
@@ -452,7 +452,7 @@ impl StructuredCapture {
     }
 }
 
-pub async fn subscribe_raw(harness: &Harness, agent: Uuid) -> Result<amux::SessionStream> {
+pub async fn subscribe_raw(harness: &Harness, agent: Uuid) -> Result<node::SessionStream> {
     harness
         .client()
         .subscribe_session(SubscribeSessionRequest {
@@ -471,7 +471,7 @@ pub async fn subscribe_raw(harness: &Harness, agent: Uuid) -> Result<amux::Sessi
 }
 
 pub async fn raw_until(
-    stream: &mut amux::SessionStream,
+    stream: &mut node::SessionStream,
     timeout: Duration,
     needle: &[u8],
 ) -> Result<Vec<u8>> {
@@ -515,7 +515,7 @@ pub async fn raw_until(
     }
 }
 
-pub async fn drain_raw(stream: &mut amux::SessionStream) -> Result<Vec<u8>> {
+pub async fn drain_raw(stream: &mut node::SessionStream) -> Result<Vec<u8>> {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut bytes = Vec::new();
     loop {

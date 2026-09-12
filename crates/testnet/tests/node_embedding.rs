@@ -1,15 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use amux::installation::{
+use node::installation::{
     CredentialSource, Installation, InstallationOptions, InstallationRoot, InstallationSettings,
-    Listeners, OperationId, ProfilePaths, SuspendReason,
+    Listeners, OperationId, ProfilePaths,
 };
-use amux::{
-    AccessToken, AuthError, Config, CredentialProvider, Server, UpdateReporter, UpdateStatus,
+use node::{
+    AccessToken, AgentType, AuthError, Config, CreateAgentRequest, CredentialProvider, Server,
+    SuspendReason, UpdateReporter, UpdateStatus,
 };
-#[cfg(debug_assertions)]
-use amux::{AgentType, CreateAgentRequest};
 #[cfg(not(unix))]
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -53,7 +52,7 @@ async fn embedded_server_opens_client_service_client() {
     let agents = client.list_agents().await.unwrap();
     assert!(agents.is_empty());
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
 }
 
@@ -91,7 +90,7 @@ async fn daemon_open_uses_local_client_service() {
 
     assert!(client.list_agents().await.unwrap().is_empty());
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
     expect_client_closed(&client).await;
 }
@@ -118,7 +117,7 @@ async fn embedded_server_does_not_poll_for_updates() {
 
     let mut options = installation_options(&config, Listeners::InProcessOnly);
     options.settings.update_manifest_url = config.cloud_url.clone();
-    options.settings.status_reporters = amux::update::StatusReporters::Host {
+    options.settings.status_reporters = node::update::StatusReporters::Host {
         update: Some(Arc::new(CapturingUpdateReporter { tx })),
         subscription: None,
     };
@@ -134,13 +133,12 @@ async fn embedded_server_does_not_poll_for_updates() {
     );
 
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
     manifest_task.abort();
 }
 
 #[tokio::test]
-#[cfg(debug_assertions)]
 #[cfg_attr(
     windows,
     ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
@@ -155,7 +153,7 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
         ..Config::default()
     };
 
-    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let (installation, id) = hosted_installation(&config).await;
     let client = installation.client(id).unwrap();
 
     let agent_id = Uuid::new_v4();
@@ -177,13 +175,12 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
         .unwrap();
 
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
     expect_client_closed(&client).await;
 }
 
 #[tokio::test]
-#[cfg(debug_assertions)]
 #[cfg_attr(
     windows,
     ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
@@ -199,7 +196,7 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
         ..Config::default()
     };
 
-    let (installation, id) = owned_installation(&config, Listeners::InProcessOnly).await;
+    let (installation, id) = hosted_installation(&config).await;
     let client = installation.client(id).unwrap();
 
     let agent_id = Uuid::new_v4();
@@ -227,7 +224,7 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
     assert_eq!(summary.profiles[0].agent_ids.len(), 1);
     let paths = ProfilePaths::for_id(installation.root(), id).unwrap();
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
     expect_client_closed(&client).await;
     let suspended_path = paths.state_path.with_file_name("suspended.yaml");
@@ -238,7 +235,7 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
     );
 }
 
-async fn expect_client_closed(client: &amux::Client) {
+async fn expect_client_closed(client: &node::Client) {
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
             if client.list_agents().await.is_err() {
@@ -285,7 +282,7 @@ async fn config_split_embedded_without_credentials_stays_local() {
     let client = installation.client(id).unwrap();
     assert!(client.list_agents().await.unwrap().is_empty());
     installation
-        .shutdown(amux::ShutdownReason::UserRequested)
+        .shutdown(node::ShutdownReason::UserRequested)
         .await;
 }
 
@@ -381,10 +378,18 @@ async fn daemon_open_does_not_require_credentials() {
 async fn owned_installation(
     config: &Config,
     listeners: Listeners,
-) -> (Installation, amux::installation::ProfileId) {
+) -> (Installation, node::installation::ProfileId) {
     let installation = Installation::open(installation_options(config, listeners))
         .await
         .unwrap();
+    let profile = installation.create(OperationId::new(), None).await.unwrap();
+    (installation, profile.record.id)
+}
+
+async fn hosted_installation(config: &Config) -> (Installation, node::installation::ProfileId) {
+    let mut options = installation_options(config, Listeners::InProcessOnly);
+    options.host_factory = Some(Arc::new(agent_runtime::AgentRuntimeFactory));
+    let installation = Installation::open(options).await.unwrap();
     let profile = installation.create(OperationId::new(), None).await.unwrap();
     (installation, profile.record.id)
 }

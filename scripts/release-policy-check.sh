@@ -37,6 +37,14 @@ esac
     exit 1
 }
 
+shipping_tree=$(cargo tree --locked -p amux -e normal --no-default-features --prefix none)
+for excluded in replay-support testnet claude-specs codex-specs tui-fixtures test-agent shot; do
+    if printf '%s\n' "$shipping_tree" | grep -Eq "^${excluded} v"; then
+        echo "release-policy-check: shipping graph includes $excluded" >&2
+        exit 1
+    fi
+done
+
 help=$("$binary" --help)
 case "$help" in
     *debug*)
@@ -62,4 +70,4 @@ if "$binary" new test-agent >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "release policy excludes the debug command and development test agent"
+echo "release policy excludes diagnostics, development agents, and test-support packages"

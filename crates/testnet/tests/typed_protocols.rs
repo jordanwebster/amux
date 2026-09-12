@@ -1,5 +1,5 @@
-use amux::typed_protocol_test_support::{create_sdk, open_in_process_plane};
-use amux::{AgentKind, ClaudeDriver, Protocol, ProtocolError, claude_io};
+use agent_runtime::test_support::{create_sdk, open_in_process_plane};
+use model::{AgentKind, ClaudeDriver, Protocol, ProtocolError};
 
 async fn assert_not_exposed(kind: AgentKind, protocol: Protocol) {
     assert_eq!(
@@ -85,8 +85,5 @@ fn terminal_byte_payload_is_not_a_claude_transcript_intent() {
     // Field 1 is length-delimited there, while transcript field 1 is the
     // sequence varint, so the typed transcript decoder must refuse it.
     let terminal_input = b"\x0a\x03\x1b[A";
-    assert!(matches!(
-        claude_io::decode_pty_transcript_v1_input(terminal_input),
-        Err(ProtocolError::InvalidArgument { .. })
-    ));
+    assert!(wire::decode_claude_pty_input(terminal_input).is_err());
 }

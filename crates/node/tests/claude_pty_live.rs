@@ -23,8 +23,6 @@
 //! A failure always prints the assertion and this capture path. Taxonomy
 //! drift is written beside the run as data and never changes its exit code.
 
-extern crate node as amux;
-
 #[path = "claude_pty_live/args.rs"]
 mod args;
 #[path = "codex_live/depfile.rs"]
@@ -1020,7 +1018,7 @@ async fn attach_tool(
     scratch: &Scratch,
     model: &str,
 ) -> Result<serde_json::Value> {
-    use amux::{AgentIdentifier, ArtifactKind, ArtifactRef};
+    use node::{AgentIdentifier, ArtifactKind, ArtifactRef};
     use ui_state::attachments::{Mention, MentionKind, format_mention};
 
     const NAME: &str = "agent-attach-claude.png";
@@ -1392,7 +1390,7 @@ async fn a2a_roundtrip(
                 .is_some_and(|parent| parent.agent_id == parent_id)
         })
         .context("spawned Codex child missing from family inventory")?;
-    if child.kind != amux::AgentKind::Codex {
+    if child.kind != node::AgentKind::Codex {
         bail!("spawned child was {}, expected codex", child.kind);
     }
     let child_id = child.id;
@@ -1623,8 +1621,8 @@ async fn two_terminal_fanout(
     scratch: &Scratch,
     model: &str,
 ) -> Result<serde_json::Value> {
-    use amux::{SubscribeSessionEvent, SubscribeSessionRequest};
     use model::TERMINAL_V1;
+    use node::{SubscribeSessionEvent, SubscribeSessionRequest};
 
     let (mut session, cursor) = open(
         daemon,
@@ -3334,11 +3332,11 @@ async fn subscriptions(
 /// Claude. The transcript and hook CLI both live under the scratch daemon;
 /// no file beneath the user's real ~/.claude is read or written.
 async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<serde_json::Value> {
-    use amux::{
+    use model::{CLAUDE_PTY_TRANSCRIPT_V1 as PTY_TRANSCRIPT_V1, TERMINAL_V1};
+    use node::{
         AgentIdentifier, ClientError, ProtocolError, SendInputRequest, SubscribeSessionEvent,
         SubscribeSessionRequest,
     };
-    use model::{CLAUDE_PTY_TRANSCRIPT_V1 as PTY_TRANSCRIPT_V1, TERMINAL_V1};
     use uuid::Uuid;
     use wire::decode_claude_pty_output as decode_pty_transcript_v1_output;
 
@@ -3386,8 +3384,8 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
     };
     if !external.readonly
         || external.kind
-            != (amux::AgentKind::Claude {
-                driver: amux::ClaudeDriver::Pty,
+            != (node::AgentKind::Claude {
+                driver: node::ClaudeDriver::Pty,
             })
     {
         bail!("external inventory shape is not readonly PTY Claude: {external:?}");

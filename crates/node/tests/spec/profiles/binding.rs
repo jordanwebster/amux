@@ -1,11 +1,11 @@
 //! Login commits an account to a complete device; refusals cannot move it.
 
-use amux::AuthError;
-use amux::installation::{
+use node::AuthError;
+use node::installation::{
     BindError, BindRequest, BindTarget, Intent, NonPristine, Observed, OperationId,
 };
-use amux::test_fixtures::Fault;
-use amux::testnet::{InstallationHandle, TestNet, Via};
+use node::test_fixtures::Fault;
+use node::testnet::{InstallationHandle, TestNet, Via};
 
 fn request(installation: &InstallationHandle, user: &str, target: BindTarget) -> BindRequest {
     BindRequest {

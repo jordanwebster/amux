@@ -1,6 +1,6 @@
 //! Chapter 7 — Agent messaging and relationships.
 
-use amux::testnet::{TestNet, Via};
+use node::testnet::{TestNet, Via};
 
 /// A client may nominate a local live agent as the author of a message, but
 /// an arbitrary UUID never becomes authenticated provenance. The daemon must

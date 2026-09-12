@@ -6,7 +6,7 @@
 //! candidates. (docs/PROTOCOL.md "Routing: two rules"; docs/ARCHITECTURE.md
 //! "Service surface map", "The cloud deployment")
 
-use amux::testnet::{TestNet, Via};
+use node::testnet::{TestNet, Via};
 
 /// Two daemons attached to the same cloud user see each other come online —
 /// no trust required — and see each other disappear when one goes away.

@@ -3,7 +3,7 @@
 //! diff against the checked-in text. The frames match the aligned mockups
 //! in the TUI V1 spec verbatim. No network, no clocks, no flake.
 //!
-//! Regenerate with `UPDATE_GOLDENS=1 cargo test -p amux-tui --test golden`
+//! Regenerate with `UPDATE_GOLDENS=1 wt run test-tui -- --test golden`
 //! and review the diff like code.
 
 use chrono::{DateTime, TimeDelta, Utc};

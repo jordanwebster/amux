@@ -5,6 +5,10 @@ edition.workspace = true
 description = "Agent multiplexer - CLI binary"
 publish = false
 
+[features]
+default = ["diagnostics"]
+diagnostics = ["dep:replay-support"]
+
 [lib]
 name = "amux"
 path = "src/lib.rs"
@@ -23,7 +27,7 @@ claude = { workspace = true }
 tui = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
-replay-support = { path = "../replay-support" }
+replay-support = { path = "../replay-support", optional = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 serde_yaml = { workspace = true }

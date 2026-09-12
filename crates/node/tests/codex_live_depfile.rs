@@ -60,7 +60,7 @@ fn rejects_when_a_real_depfile_dependency_is_newer_than_the_binary() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("amux.proto"), "{error}");
-    assert!(error.contains("cargo build -p amux-cli"), "{error}");
+    assert!(error.contains("wt build"), "{error}");
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn missing_depfile_error_names_the_build_command() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("amux.d"), "{error}");
-    assert!(error.contains("cargo build -p amux-cli"), "{error}");
+    assert!(error.contains("wt build"), "{error}");
 }
 
 #[test]
@@ -105,5 +105,5 @@ fn missing_binary_error_names_the_build_command() {
 
     let error = assert_binary_is_current(&missing).unwrap_err().to_string();
     assert!(error.contains("amux"), "{error}");
-    assert!(error.contains("cargo build -p amux-cli"), "{error}");
+    assert!(error.contains("wt build"), "{error}");
 }

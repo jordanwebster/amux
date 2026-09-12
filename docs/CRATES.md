@@ -21,3 +21,8 @@ product and build dependencies may not reach them. TUI unit tests compile the
 support-owned fixture source in the TUI test crate because a Cargo dev edge
 would create a package cycle. Provider packages expose no profile-selected spec
 API. Run `wt run dependency-policy` to validate the boundary.
+
+Node still has a private `src/testnet` white-box harness for tests that exercise
+its internal service state. It is compiled only for node's own unit tests and is
+not a reusable scenario API. Cross-package scenarios, recordings and embedded
+ownership tests live in the support packages above.

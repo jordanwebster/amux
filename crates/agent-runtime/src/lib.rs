@@ -10,6 +10,9 @@ mod suspend;
 pub use host::{AgentRuntime, AgentRuntimeFactory};
 
 #[cfg(feature = "test-support")]
+mod test_support_derived_rows;
+
+#[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub mod test_support {
     use std::io;
@@ -17,12 +20,110 @@ pub mod test_support {
     use std::sync::Arc;
 
     use host_api::{HostConfig, LocalAgentHost, LocalAgentHostFactory};
-    use model::{Agent, AgentId, CreateAgentRequest, Protocol, ProtocolError};
+    use model::{
+        Agent, AgentId, AgentKind, AgentType, ClaudeDriver, CreateAgentRequest, Protocol,
+        ProtocolError,
+    };
     use tokio::sync::mpsc::OwnedPermit;
     use uuid::Uuid;
 
     use crate::AgentRuntime;
-    use crate::agents::{McpLaunchRoute, Plane, RawPtyTarget, SessionEvent};
+    pub use crate::agents::claude::sdk_io::ClaudeSdkV1Input;
+    use crate::agents::{
+        AgentSession, McpLaunchRoute, Plane, RawPtyTarget, SessionEvent, new_agent,
+    };
+    pub use crate::test_support_derived_rows::{
+        ClaudePtyBackendHarness, ClaudeSdkA2aHarness, ClaudeSdkBackendHarness, CodexBackendHarness,
+        SdkRecipientRows,
+    };
+    pub type CodexSdkV1Input = model::CodexSdkInput;
+
+    /// Construct a provider backend without starting an external process and
+    /// ask it for the selected protocol plane.
+    pub async fn open_in_process_plane(
+        kind: AgentKind,
+        protocol: Protocol,
+    ) -> Result<(), ProtocolError> {
+        let host = runtime(Uuid::new_v4());
+        let agent_id = Uuid::new_v4();
+        let request = CreateAgentRequest {
+            agent_id,
+            host_id: None,
+            name: Some("typed-protocol-test".into()),
+            agent_type: match kind {
+                AgentKind::Claude { driver } => AgentType::Claude { driver },
+                AgentKind::Codex => AgentType::Codex {
+                    model: None,
+                    approval_policy: None,
+                    sandbox_policy: None,
+                    resume_thread_id: None,
+                },
+                AgentKind::TestAgent => AgentType::TestAgent {
+                    command: TEST_ECHO_COMMAND.into(),
+                },
+            },
+            working_dir: std::env::temp_dir(),
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let deps = host.state().read().await.deps.clone();
+        let session: AgentSession = match kind {
+            AgentKind::Claude {
+                driver: ClaudeDriver::Pty,
+            } => Box::new(crate::agents::claude::ClaudeSession::scripted_for_testnet(
+                &request,
+                deps.runtime_dir.clone(),
+                deps.claude_version_cache.clone(),
+                deps.mcp_launch_route.clone(),
+                deps.claude_user_keymap_dir.clone(),
+            )),
+            AgentKind::Claude {
+                driver: ClaudeDriver::Sdk,
+            }
+            | AgentKind::Codex
+            | AgentKind::TestAgent => {
+                new_agent(&request, &deps).map_err(|error| ProtocolError::ServerError {
+                    message: error.to_string(),
+                })?
+            }
+        };
+        session.plane(protocol).map(|_| ())
+    }
+
+    /// Prove the SDK composition can construct its backend without launching it.
+    pub async fn create_sdk() -> Result<(), ProtocolError> {
+        let host = runtime(Uuid::new_v4());
+        let request = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: Some("sdk-placeholder".into()),
+            parent: None,
+            initial_prompt: None,
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            working_dir: std::env::temp_dir(),
+            args: Vec::new(),
+            terminal_size: None,
+        };
+        let state = host.state().read().await;
+        let session =
+            new_agent(&request, &state.deps).map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })?;
+        if session.kind()
+            != (AgentKind::Claude {
+                driver: ClaudeDriver::Sdk,
+            })
+        {
+            return Err(ProtocolError::ServerError {
+                message: "SDK constructor returned the wrong backend kind".into(),
+            });
+        }
+        Ok(())
+    }
 
     pub const TEST_ECHO_COMMAND: &str = "__amux_test_echo__";
     pub const TEST_DELAYED_DELIVERY_COMMAND: &str = "__amux_test_delayed_delivery__";

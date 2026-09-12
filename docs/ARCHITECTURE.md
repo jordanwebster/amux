@@ -52,12 +52,12 @@ Around the daemon sit its clients and consumers:
   content-addressed storage with an authoritative per-agent Owner role and a
   disposable per-viewing-profile Cache role. It depends on neither the daemon
   nor the UI, so another client can reuse the storage contract directly.
-- **Test harnesses**: the `testnet` support package builds production profile
-  runtimes and installations through public APIs —
-  real identities, real trust stores, real localhost TCP with device mTLS, an
-  optional in-process cloud relay — for the spec suite, plus `WirePeer`, a scripted
-  protocol actor for wire-conformance tests. `crates/e2e-runner` drives
-  real compiled binaries end to end.
+- **Test harnesses**: the `testnet` support package builds isolated embedded
+  installations through public APIs and owns reusable cross-package scenarios.
+  Node's own specification suite uses a private white-box harness for real
+  identities, trust stores, localhost TCP with device mTLS and an optional
+  in-process cloud relay. `crates/e2e-runner` drives real compiled binaries end
+  to end.
 
 ## Accounts, configuration and local entry points
 

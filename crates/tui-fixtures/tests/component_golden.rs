@@ -1,6 +1,6 @@
 //! Full-frame goldens for the component gallery and exploration pair.
 //!
-//! Regenerate with `UPDATE_GOLDENS=1 cargo test -p amux-tui --test
+//! Regenerate with `UPDATE_GOLDENS=1 wt run test-infrastructure -- --test
 //! component_golden` and review both the text and semantic style maps.
 
 use ratatui::Terminal;

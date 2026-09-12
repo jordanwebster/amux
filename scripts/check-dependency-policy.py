@@ -26,6 +26,7 @@ ALLOWED_LOCAL = {
     "e2e-runner": {"wire"},
 }
 TEST_SUPPORT = {
+    "replay-support",
     "testnet",
     "claude-specs",
     "codex-specs",
@@ -34,11 +35,12 @@ TEST_SUPPORT = {
     "shot",
 }
 SUPPORT_ALLOWED_LOCAL = {
+    "testnet": {"node"},
     "claude-specs": {"claude", "pty-host", "replay-support"},
     "codex-specs": {"codex", "replay-support"},
     "tui-fixtures": {"tui", "ui-runtime", "ui-state"},
 }
-REPLAY_PRODUCTION_OWNERS = {"amux", "claude"}
+REPLAY_OPT_IN_OWNERS = {"amux", "claude"}
 NO_BUILD_SCRIPT = set(ALLOWED_LOCAL) | {"claude", "codex"}
 MODEL_BANNED_DEPENDENCIES = {
     "tokio",
@@ -121,6 +123,7 @@ def main() -> int:
             dependency["name"] for dependency in package["dependencies"]
             if dependency.get("path") is not None
             and dependency["kind"] in (None, "build")
+            and not dependency.get("optional", False)
             and dependency["name"] in TEST_SUPPORT
         }
         if edges:
@@ -136,21 +139,24 @@ def main() -> int:
         )
         and name not in TEST_SUPPORT
     }
-    if replay_owners != REPLAY_PRODUCTION_OWNERS:
+    if replay_owners != REPLAY_OPT_IN_OWNERS:
         failures.append(
-            "replay-support: production owners are "
-            f"{sorted(replay_owners)}, expected {sorted(REPLAY_PRODUCTION_OWNERS)}"
+            "replay-support: opt-in owners are "
+            f"{sorted(replay_owners)}, expected {sorted(REPLAY_OPT_IN_OWNERS)}"
         )
-    claude_replay = next(
-        (
-            dependency
-            for dependency in packages["claude"]["dependencies"]
-            if dependency["name"] == "replay-support" and dependency["kind"] is None
-        ),
-        None,
-    )
-    if claude_replay is None or not claude_replay["optional"]:
-        failures.append("claude: replay-support must remain an opt-in test-support edge")
+    for owner in REPLAY_OPT_IN_OWNERS:
+        replay = next(
+            (
+                dependency
+                for dependency in packages[owner]["dependencies"]
+                if dependency["name"] == "replay-support" and dependency["kind"] is None
+            ),
+            None,
+        )
+        if replay is None or not replay["optional"]:
+            failures.append(f"{owner}: replay-support must remain an opt-in edge")
+        if "replay-support" in packages[owner].get("features", {}).get("default", []):
+            failures.append(f"{owner}: default features must not name replay-support directly")
 
     for name in NO_BUILD_SCRIPT:
         package = packages.get(name)
@@ -158,6 +164,19 @@ def main() -> int:
             continue
         if any("custom-build" in target["kind"] for target in package["targets"]):
             failures.append(f"{name}: ordinary builds must not run a build script")
+
+    node_test_sources = {
+        Path(target["src_path"]).resolve()
+        for target in packages["node"]["targets"]
+        if "test" in target["kind"]
+    }
+    orphaned_node_tests = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "crates/node/tests").glob("*.rs")
+        if path.resolve() not in node_test_sources
+    )
+    if orphaned_node_tests:
+        failures.append(f"node: undeclared integration test sources: {orphaned_node_tests}")
 
     if failures:
         print("dependency policy failed:", file=sys.stderr)

@@ -678,7 +678,7 @@ mod tests {
     /// picked. `amux attach` deliberately differs (it has no second key to
     /// offer); the command line's half of this pair is pinned by
     /// `entry_policy_attach_leads_with_the_codex_screen_on_this_machine`
-    /// in `amux-cli`, and `docs/CHAT.md` names the difference.
+    /// in the `amux` CLI, and `docs/CHAT.md` names the difference.
     #[test]
     fn entry_policy_a_local_codex_agent_keeps_the_configured_default() {
         let model = entry_model_with_kind(false, true, ui_state::AgentKind::Codex);

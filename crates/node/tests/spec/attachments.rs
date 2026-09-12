@@ -9,9 +9,9 @@ use std::process::Command;
 use std::str::FromStr;
 use std::time::Duration;
 
-use amux::testnet::{TestNet, Via};
-use amux::{ArtifactId, ArtifactKind, ClientError, DiffBase, ProtocolError};
 use artifacts::ARTIFACT_SIZE_CAP;
+use node::testnet::{TestNet, Via};
+use node::{ArtifactId, ArtifactKind, ClientError, DiffBase, ProtocolError};
 use tempfile::TempDir;
 use uuid::Uuid;
 

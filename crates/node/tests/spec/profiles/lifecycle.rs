@@ -1,8 +1,8 @@
 //! Cloud attachment is optional; deleting a device is final for every caller.
 
-use amux::ProtocolError;
-use amux::installation::{Intent, Observed, OperationId, ProfileEvent, ProfileStatus};
-use amux::testnet::{TestNet, Via, WatchProbe};
+use node::ProtocolError;
+use node::installation::{Intent, Observed, OperationId, ProfileEvent, ProfileStatus};
+use node::testnet::{TestNet, Via, WatchProbe};
 
 async fn devices() -> TestNet {
     TestNet::builder()
@@ -40,7 +40,7 @@ async fn logout_keeps_local_agents_artifacts_identity_and_trust() {
     let artifact = client
         .put_artifact(
             agent.id.into(),
-            amux::ArtifactKind::File,
+            node::ArtifactKind::File,
             "notes.txt",
             "text/plain",
             b"retained".to_vec(),
@@ -319,7 +319,7 @@ async fn delete_closes_every_transport_and_late_service_work_cannot_recreate_the
     let artifact = unix
         .put_artifact(
             agent.id.into(),
-            amux::ArtifactKind::File,
+            node::ArtifactKind::File,
             "notes.txt",
             "text/plain",
             b"retained".to_vec(),
@@ -371,7 +371,7 @@ async fn delete_closes_every_transport_and_late_service_work_cannot_recreate_the
     hold.release();
     assert!(matches!(
         refresh.await.unwrap(),
-        Err(amux::AuthError::Unauthenticated)
+        Err(node::AuthError::Unauthenticated)
     ));
     retained
         .assert_late_writes_rejected(&agent, &net.daemon("desk"), &artifact)
@@ -381,7 +381,7 @@ async fn delete_closes_every_transport_and_late_service_work_cannot_recreate_the
         "late operations recreated a deleted profile"
     );
     assert!(matches!(admin.resume(OperationId::new(), a.id).await,
-        Err(amux::installation::InstallationError::Deleted(id)) if id == a.id));
+        Err(node::installation::InstallationError::Deleted(id)) if id == a.id));
     assert!(admin.client(a.id).is_err());
     work.send("delete-isolated").await;
     work.expect_output("delete-isolated").await;

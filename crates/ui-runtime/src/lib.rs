@@ -11,8 +11,6 @@ pub use recorder::{
 pub use runtime::{
     AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ConnectFailure,
     ConnectFuture, Connector, Generation, LateResult, MsgTap, ProfileDirectory, ProfileEntry,
-    ReportExtras, ReportExtrasProvider, Runtime, RuntimeOptions, execute_put_then_send,
-    write_panic_report,
+    ReportExtras, ReportExtrasProvider, Runtime, RuntimeGone, RuntimeOptions, ShellEdge,
+    execute_put_then_send, write_panic_report,
 };
-#[cfg(debug_assertions)]
-pub use runtime::{RuntimeGone, ShellEdge};

@@ -1,12 +1,12 @@
 //! Updating an installation restores exactly the sessions that were running.
 
-use amux::installation::{AgentResumeStatus, OperationId, SuspendReason};
-#[cfg(unix)]
-use amux::installation::{FrontDoor, rpc};
-#[cfg(unix)]
-use amux::testnet::InstallationHandle;
-use amux::testnet::TestNet;
 use client::FrontDoorClient;
+use node::installation::{AgentResumeStatus, OperationId, SuspendReason};
+#[cfg(unix)]
+use node::installation::{FrontDoor, rpc};
+#[cfg(unix)]
+use node::testnet::InstallationHandle;
+use node::testnet::TestNet;
 
 async fn devices() -> TestNet {
     TestNet::builder()
@@ -162,7 +162,7 @@ async fn preparation_failure_leaves_every_agent_alive_and_reopens_admission() {
 #[cfg(unix)]
 #[tokio::test]
 async fn creation_during_preparation_is_rejected_before_storage_and_lifecycle_waits() {
-    use amux::{AgentType, CreateAgentRequest};
+    use node::{AgentType, CreateAgentRequest};
     let net = devices().await;
     let laptop = net.installation("laptop");
     let a = laptop.profile("personal");
@@ -495,7 +495,7 @@ async fn assert_failed_resume_releases_installation(
 async fn failed_agent_resume_releases_every_profile_before_and_after_restart() {
     use std::os::unix::fs::PermissionsExt;
 
-    use amux::{AgentType, CreateAgentRequest};
+    use node::{AgentType, CreateAgentRequest};
 
     let net = devices().await;
     let laptop = net.installation("laptop");

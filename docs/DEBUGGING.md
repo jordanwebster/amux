@@ -161,13 +161,13 @@ Graduation copies and redacts a report into the committed fixture root:
 
 ```console
 $ amux debug report graduate /path/to/report chat_agent_activity
-Graduated report to crates/amux-tui/tests/reports/chat_agent_activity
+Graduated report to crates/tui/tests/reports/chat_agent_activity
 ```
 
 The name must match `surface_subject`: lowercase ASCII letters and digits for
 the surface, an underscore, then lowercase letters, digits or underscores for
 the subject. Pass `--into <directory>` outside the repository or before
-`crates/amux-tui/tests/reports` exists. Graduation refuses an existing name;
+`crates/tui/tests/reports` exists. Graduation refuses an existing name;
 it never overwrites a fixture.
 
 Every source file is redacted. JSON is handled structurally, JSONL one value at

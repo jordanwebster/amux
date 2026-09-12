@@ -73,7 +73,7 @@ fn recorded(name: &str) -> Vec<Value> {
         "tasks" => {
             include_str!("../../claude-specs/fixtures/claude-sdk/subagent_task.rows.jsonl")
         }
-        "messaged" => include_str!("../../node/tests/fixtures/a2a/sdk_recipient.rows.jsonl"),
+        "messaged" => include_str!("../../testnet/fixtures/a2a/sdk_recipient.rows.jsonl"),
         "introspection" => {
             include_str!("../../claude-specs/fixtures/claude-sdk/introspection.rows.jsonl")
         }

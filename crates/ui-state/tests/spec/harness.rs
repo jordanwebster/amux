@@ -417,14 +417,14 @@ pub fn chat_session_id(fixture: &str) -> String {
 
 /// Rows of a graduated a2a carrier capture: a redacted, provenance-stamped
 /// recording of a real Claude 2.1.240 receiving an agent message over each
-/// carrier (`crates/node/tests/fixtures/a2a/`).
+/// carrier (`crates/testnet/fixtures/a2a/`).
 pub fn a2a_rows(fixture: &str) -> Vec<serde_json::Value> {
     let raw = match fixture {
         "socket_delivery" => {
-            include_str!("../../../node/tests/fixtures/a2a/socket_delivery.jsonl")
+            include_str!("../../../testnet/fixtures/a2a/socket_delivery.jsonl")
         }
-        "pty_delivery" => include_str!("../../../node/tests/fixtures/a2a/pty_delivery.jsonl"),
-        "mcp_tools" => include_str!("../../../node/tests/fixtures/a2a/mcp_tools.jsonl"),
+        "pty_delivery" => include_str!("../../../testnet/fixtures/a2a/pty_delivery.jsonl"),
+        "mcp_tools" => include_str!("../../../testnet/fixtures/a2a/mcp_tools.jsonl"),
         other => panic!("unknown a2a fixture {other}"),
     };
     raw.lines()

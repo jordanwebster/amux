@@ -13,8 +13,6 @@
 //! and the daemon socket under a temporary directory. Claude auto-update is
 //! disabled for the live child process.
 
-extern crate node as amux;
-
 #[cfg(unix)]
 #[allow(dead_code)]
 #[path = "support/live_installation.rs"]
@@ -40,15 +38,15 @@ fn main() -> anyhow::Result<()> {
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
 
-    use amux::{
-        AgentIdentifier, AgentType, ClaudeDriver, Client, Config, CreateAgentRequest,
-        SendInputRequest, SendMessageRequest, SubscribeSessionEvent, SubscribeSessionRequest,
-    };
     use anyhow::{Context, Result, anyhow, bail};
     use bytes::Bytes;
     use claude::sdk::PermissionResult;
     use claude_sdk_live::args;
     use model::{CLAUDE_SDK_V1, ClaudeSdkInput as ClaudeSdkV1Input};
+    use node::{
+        AgentIdentifier, AgentType, ClaudeDriver, Client, Config, CreateAgentRequest,
+        SendInputRequest, SendMessageRequest, SubscribeSessionEvent, SubscribeSessionRequest,
+    };
     use serde_json::{Value, json};
     use tempfile::TempDir;
     use uuid::Uuid;
@@ -286,7 +284,7 @@ fn main() -> anyhow::Result<()> {
     struct StructuredCapture {
         agent: Uuid,
         client: Client,
-        stream: amux::SessionStream,
+        stream: node::SessionStream,
         rows: Vec<Row>,
     }
 
@@ -741,7 +739,7 @@ fn main() -> anyhow::Result<()> {
         let amux = target_debug.join("amux");
         if !amux.exists() {
             bail!(
-                "amux binary missing at {}; run `cargo build -p amux-cli` first",
+                "amux binary missing at {}; run `wt build` first",
                 amux.display()
             );
         }
@@ -773,7 +771,7 @@ fn main() -> anyhow::Result<()> {
 
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            match amux::Server::builder()
+            match node::Server::builder()
                 .config(scratch.config.clone())
                 .daemon()
                 .open()

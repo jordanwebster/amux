@@ -1,4 +1,17 @@
-2026-09-12 — **Record final wt 0.4.0 acceptance evidence.** A clean canonical
+2026-09-12 — **Close verification gaps in the extracted package graph.** Node
+now declares every retained integration target, and its provider harnesses use
+their custom main functions; a provider-free smoke recipe proves those entry
+points without contacting a provider. Reusable node scenarios and recordings
+live in `testnet`, while agent-runtime's test-support feature exposes the narrow
+constructors those scenarios need. The complete optimized test graph compiles
+the same APIs as ordinary tests. Desktop diagnostics are an optional default
+feature, and the provider-free release graph is checked to exclude replay and
+test packages. Claude explicitly enables semver serialization instead of
+receiving it from that excluded graph. CI and release use wt 0.4.0 on its
+supported Linux/macOS hosts; native Windows remains an explicit platform gap.
+Code generation and migrated helper commands use locked resolution.
+
+2026-09-12 — **Record preliminary wt 0.4.0 acceptance evidence.** A clean canonical
 at `e85265e1` warmed in 78.757 seconds, after which two APFS snapshot trees
 started product and full test builds in 0.501–1.291 seconds with zero compiled
 units. Creating both logical 7.840 GB target snapshots consumed about 25.6 MB
@@ -10,6 +23,8 @@ configurations. It also reproduced wt's dependency-distinct root limitation:
 after full workspace test builds, focused model edits rebuilt 19 unchanged
 dependencies plus model. The repository keeps private incremental targets and
 records the required wt correction rather than reinstating its retired pool.
+This three-cycle, comment-edit run was later superseded by the final controlled
+workload with function-body edits and steady-state medians.
 
 2026-09-12 — **Qualify the final profile and wt retention behavior.** The
 declared debug-policy check proves named panic backtraces under the portable

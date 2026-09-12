@@ -145,7 +145,7 @@ impl AgentRuntime {
         self.artifact_owners.sweep_loaded(artifacts::EPHEMERAL_TTL)
     }
 
-    #[cfg(all(debug_assertions, unix))]
+    #[cfg(all(feature = "test-support", unix))]
     #[allow(dead_code)] // Consumed only by opt-in recorded-provider harnesses.
     pub(crate) async fn register_sdk_fixture(
         &self,

@@ -1,7 +1,7 @@
 # amux-shot
 
 `amux-shot` renders deterministic PNG screenshots and animated wheel recordings from the same pure
-`amux-tui::render` boundary used by the text goldens. It does not start a PTY,
+the `tui::render` boundary used by the text goldens. It does not start a PTY,
 connect to a daemon, or inspect the local terminal. Every capture uses a
 120-column by 40-row ratatui `TestBackend`, 10×20-pixel cells, and vendored
 JetBrains Mono faces with a DejaVu Sans fallback. Both fonts carry their

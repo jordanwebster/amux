@@ -4,7 +4,7 @@
 //! network, no clocks, no flake. The frames follow `docs/CHAT.md`
 //! §Wireframes (the normative visual language).
 //!
-//! Regenerate with `UPDATE_GOLDENS=1 cargo test -p amux-tui --test
+//! Regenerate with `UPDATE_GOLDENS=1 wt run test-tui -- --test
 //! chat_golden` and review the diff like code. Style maps (one char per
 //! cell classifying fg color/modifier) lock the semantic-token application
 //! per theme — the surface the text goldens are blind to.

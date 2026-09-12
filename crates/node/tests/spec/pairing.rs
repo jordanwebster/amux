@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use amux::testnet::{TestNet, Via};
+use node::testnet::{TestNet, Via};
 
 /// PIN pairing over direct TCP establishes mutual trust; afterwards both
 /// sides can call each other over the new direct link — the initiator as

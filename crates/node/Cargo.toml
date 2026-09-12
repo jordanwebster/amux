@@ -88,16 +88,39 @@ tokio-tungstenite = { workspace = true }
 nix = { workspace = true }
 
 [[test]]
+name = "codex_live_args"
+path = "tests/codex_live_args.rs"
+
+[[test]]
+name = "codex_live_depfile"
+path = "tests/codex_live_depfile.rs"
+
+[[test]]
+name = "claude_pty_live_args"
+path = "tests/claude_pty_live_args.rs"
+
+[[test]]
+name = "claude_pty_live_redact"
+path = "tests/claude_pty_live_redact.rs"
+
+[[test]]
+name = "claude_sdk_live_args"
+path = "tests/claude_sdk_live_args.rs"
+
+[[test]]
 name = "codex_live"
 path = "tests/codex_live.rs"
 required-features = ["test-support"]
+harness = false
 
 [[test]]
 name = "claude_pty_live"
 path = "tests/claude_pty_live.rs"
 required-features = ["test-support"]
+harness = false
 
 [[test]]
 name = "claude_sdk_live"
 path = "tests/claude_sdk_live.rs"
 required-features = ["test-support"]
+harness = false

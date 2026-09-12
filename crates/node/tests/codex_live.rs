@@ -19,8 +19,6 @@
 //! and include backend rows, provider IO, observed subscription rows, raw bytes
 //! where applicable, redacted copies, and version-stamped metadata.
 
-extern crate node as amux;
-
 #[cfg(unix)]
 #[allow(dead_code)]
 #[path = "support/live_installation.rs"]
@@ -251,7 +249,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     async fn attach_tool(harness: &mut Harness, model: &str) -> Result<Value> {
-        use amux::{AgentIdentifier, ArtifactKind, ArtifactRef};
+        use node::{AgentIdentifier, ArtifactKind, ArtifactRef};
         use ui_state::attachments::{Mention, MentionKind, format_mention};
 
         const NAME: &str = "agent-attach-codex.png";
@@ -481,8 +479,8 @@ fn main() -> anyhow::Result<()> {
             .find(|agent| agent.parent.is_some_and(|edge| edge.agent_id == parent))
             .context("spawned Claude child missing from family inventory")?;
         if child.kind
-            != (amux::AgentKind::Claude {
-                driver: amux::ClaudeDriver::Pty,
+            != (node::AgentKind::Claude {
+                driver: node::ClaudeDriver::Pty,
             })
         {
             bail!("spawned child was {}, expected claude/pty", child.kind);
@@ -729,13 +727,13 @@ fn main() -> anyhow::Result<()> {
         agent: uuid::Uuid,
         model: &str,
         thread_id: &str,
-    ) -> Result<(amux::SessionStream, Vec<u8>)> {
+    ) -> Result<(node::SessionStream, Vec<u8>)> {
         let mut raw = subscribe_raw(harness, agent).await?;
         let mut bytes = raw_until(&mut raw, RAW_TIMEOUT, model.as_bytes()).await?;
         harness
             .client()
-            .send_input(amux::SendInputRequest {
-                agent: amux::AgentIdentifier::Id(agent),
+            .send_input(node::SendInputRequest {
+                agent: node::AgentIdentifier::Id(agent),
                 input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
                 io_protocol: model::TERMINAL_V1.into(),
                 payload: bytes::Bytes::from_static(b"/status"),
@@ -747,8 +745,8 @@ fn main() -> anyhow::Result<()> {
         bytes.extend(raw_until(&mut raw, RAW_TIMEOUT, b"/status").await?);
         harness
             .client()
-            .send_input(amux::SendInputRequest {
-                agent: amux::AgentIdentifier::Id(agent),
+            .send_input(node::SendInputRequest {
+                agent: node::AgentIdentifier::Id(agent),
                 input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
                 io_protocol: model::TERMINAL_V1.into(),
                 payload: bytes::Bytes::from_static(b"\r"),

@@ -25,6 +25,7 @@ enum HostedPty {
     Process(Arc<pty_host::PtyProcess>),
     Claude(claude::pty::Control),
     #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)] // Used by development-profile test-agent scenarios.
     TestEcho(mpsc::Sender<Vec<u8>>),
 }
 
@@ -53,6 +54,7 @@ impl PtyHandle {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    #[allow(dead_code)] // Used by development-profile test-agent scenarios.
     pub(crate) fn test_echo() -> Self {
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
         let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));

@@ -14,3 +14,17 @@ uuid = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[dev-dependencies]
+agent-runtime = { workspace = true, features = ["test-support"] }
+anyhow = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+claude = { workspace = true }
+claude-specs = { path = "../claude-specs" }
+codex = { path = "../codex" }
+codex-specs = { path = "../codex-specs" }
+model = { workspace = true }
+replay-support = { path = "../replay-support" }
+serde_json = { workspace = true }
+wire = { workspace = true }

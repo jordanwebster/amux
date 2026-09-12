@@ -7,7 +7,7 @@
 //! child that is blocked on a command, a Claude child that finished, and a
 //! grandchild — because these surfaces exist to be read together.
 //!
-//! Regenerate with `UPDATE_GOLDENS=1 cargo test -p amux-tui --test a2a_chat`
+//! Regenerate with `UPDATE_GOLDENS=1 wt run test-tui -- --test a2a_chat`
 //! and review the diff like code.
 
 use chrono::{DateTime, Utc};

@@ -30,6 +30,16 @@ dependencies cannot reach them. Provider packages have no profile-sensitive
 build scripts; optimized tests therefore expose the same production API as
 ordinary builds.
 
+Node retains a private white-box harness under `src/testnet` for its own unit
+tests. It reaches internal service state by design and is not exported as a
+reusable scenario API. Cross-package scenarios, recordings and embedded
+lifecycle tests belong to the support packages. TUI's unit-test crate includes
+the fixture implementation owned by `tui-fixtures`; this avoids a Cargo package
+cycle while keeping the fixture code out of normal product builds.
+Provider adapters that require private backend state remain beside that state
+behind an explicit test-support feature; the executable scenario and runner
+logic that consumes those adapters lives in `testnet`.
+
 The dependency policy checks the direct local edges and the test-support
 exclusions. Package root exports are reviewed APIs; moving an implementation
 does not justify a compatibility package or an old package-name facade.
@@ -69,6 +79,14 @@ release task executes the resulting product and verifies that its debug command
 and development test-agent entry point are unavailable. The
 provider-free embedded graph selects `node`, `client`, `ui-state` and
 `ui-runtime` directly; it does not rely on disabling a product default feature.
+The optimized test-build task compiles every library and integration harness
+under the release profile, proving that test support does not depend on a
+profile-selected production API.
+
+The no-network live-harness smoke runs each custom executable with no scenario
+arguments. Each must reach its own entry point, print usage and exit before it
+opens an account or provider process. This catches a custom main accidentally
+being replaced by libtest while keeping real provider access opt-in.
 
 The offline test task preserves the installed Cargo and Rust toolchains while
 using a new HOME, Claude configuration directory and Codex home. Cargo is
@@ -94,6 +112,13 @@ Release remains a separate optimized, nonincremental configuration.
 `wt run debug-policy-check` verifies a named backtrace from an intentional test
 panic. On macOS it also verifies the product dSYM bundles emitted by the packed
 development configuration.
+
+Wt 0.4.0 is a POSIX tool. Declared CI and release tasks therefore run on Linux
+and macOS; WSL can use the Linux path, but this revision cannot execute the wt
+contract on native Windows. The target-specific Cargo setting avoids sending
+Apple's packed split-debuginfo option to MSVC, but no native Windows compile or
+debugger result is claimed. Restoring a native Windows artifact requires a wt
+release with Windows task support and platform CI evidence.
 
 ## Worktree reuse and retention
 
@@ -134,7 +159,7 @@ measurement recorded 41.52 seconds, 33.73 seconds, 4.06 seconds and 3.22 GB
 respectively. Those runs predated wt 0.4.0 and establish only the effect of the
 crate and recipe changes.
 
-The final wt 0.4.0 acceptance workload ran at revision `e85265e1` from a clean
+An earlier wt 0.4.0 acceptance workload ran at revision `e85265e1` from a clean
 canonical and two disposable snapshot worktrees. Warming the canonical took
 78.757 seconds of wall time, including 77.14 seconds reported by Cargo and 396
 compiled units. In the new trees, the initial product builds took 1.159–1.291
@@ -155,7 +180,9 @@ Clippy and product configurations consumed about 20.6 GB of volume free space.
 The figure includes legitimate new configurations and any other writers on the
 same volume during the run; it is not an exclusive accounting system.
 
-The run also found a wt 0.4.0 retention limitation. A package-focused test and
+That preliminary run used three comment-only source edits and immediate
+repeats, so its timing ranges are diagnostic rather than final steady-state
+evidence. It did find a wt 0.4.0 retention limitation. A package-focused test and
 a workspace-wide test can compile a workspace root with the same visible unit
 identity but different resolved dependency fingerprints. Wt keeps only the
 newest root in that slot. The first full test build consequently reclaimed 32
@@ -168,11 +195,13 @@ to reclaim. The required wt correction is documented in
 sweep prevents monotonic stale-object growth but does not preserve every valid
 focused/full-test variant.
 
-The acceptance runner writes task logs, timing fields, inventories, sweep
-notices, prune plans and volume samples under the ignored
+The current acceptance runner writes task logs, separate Cargo compile/link,
+linker-process, harness-launch and test-execution timing fields, inventories,
+sweep notices, prune plans and volume samples under the ignored
 `notes/build-foundations/measurements/` directory. It requires a clean commit,
-wt 0.4.0 and at least two cycles, creates only uniquely marked disposable
-resources, and prints rather than executes its cleanup commands.
+wt 0.4.0, at least five edit cycles and five steady-state samples, creates only
+uniquely marked disposable resources, and prints rather than executes its
+cleanup commands.
 
 ## Deferred work
 

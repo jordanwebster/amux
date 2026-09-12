@@ -22,14 +22,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use amux::{
-    AgentType, Client, Config, CreateAgentRequest, ProtocolError, SendInputRequest,
-    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
-};
 use anyhow::{Context, Result, anyhow, bail};
 use model::{
     CLAUDE_PTY_TRANSCRIPT_V1 as PTY_TRANSCRIPT_V1, ClaudePtyIntent as Intent,
     ClaudePtyTranscriptV1Input, TERMINAL_V1,
+};
+use node::{
+    AgentType, Client, Config, CreateAgentRequest, ProtocolError, SendInputRequest,
+    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
 };
 use tokio::sync::Mutex;
 use tokio::task::{AbortHandle, JoinHandle};
@@ -600,7 +600,7 @@ pub async fn start_daemon(scratch: &Scratch, env: &DaemonEnv) -> Result<ScratchD
     };
     let deadline = Instant::now() + Duration::from_secs(20);
     let client = loop {
-        match amux::Server::builder()
+        match node::Server::builder()
             .config(config.clone())
             .daemon()
             .open()
@@ -668,7 +668,7 @@ impl CaptureSession {
                 host_id: None,
                 name: Some(agent_name.clone()),
                 agent_type: AgentType::Claude {
-                    driver: amux::ClaudeDriver::Pty,
+                    driver: node::ClaudeDriver::Pty,
                 },
                 working_dir,
                 terminal_size: Some(TerminalSize {
@@ -999,7 +999,7 @@ impl CaptureSession {
                     }));
                     return Ok(());
                 }
-                Err(amux::ClientError::Protocol(ProtocolError::SequenceNumberMismatch {
+                Err(node::ClientError::Protocol(ProtocolError::SequenceNumberMismatch {
                     ..
                 })) => {
                     tokio::time::sleep(Duration::from_millis(150)).await;

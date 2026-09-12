@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, feature = "diagnostics"))]
 use amux::debug_cmd::{self, DebugCommands};
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
@@ -241,7 +241,7 @@ enum Commands {
     Update,
 
     /// Inspect daemon state and locally captured reports
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "diagnostics"))]
     Debug {
         #[command(subcommand)]
         command: DebugCommands,
@@ -420,7 +420,7 @@ async fn main() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, feature = "diagnostics"))]
     if let Commands::Debug {
         command: DebugCommands::Report { command },
     } = &command
@@ -819,7 +819,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             node::relay_stdio_to_unix_socket(&config.socket_path).await?;
         }
         Commands::Update => unreachable!("update dispatches before profile configuration"),
-        #[cfg(debug_assertions)]
+        #[cfg(all(debug_assertions, feature = "diagnostics"))]
         Commands::Debug { command } => match command {
             DebugCommands::Daemon { verbose, format } => {
                 let dump = server_client::debug(&config, verbose, format.into()).await?;
@@ -1400,7 +1400,11 @@ mod tests {
             })
             .count();
 
-        assert_eq!(debug_entries, usize::from(cfg!(debug_assertions)), "{help}");
+        assert_eq!(
+            debug_entries,
+            usize::from(cfg!(all(debug_assertions, feature = "diagnostics"))),
+            "{help}"
+        );
     }
 
     /// The config flag doubles as `AMUX_CONFIG`. Checked through the clap

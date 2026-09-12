@@ -6,7 +6,7 @@ description = "Desktop provider sessions and local agent hosting for amux"
 publish = false
 
 [features]
-test-support = ["claude/test-support"]
+test-support = ["claude/test-support", "dep:tempfile"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -25,7 +25,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 semver = { workspace = true }
 shell-words = { workspace = true }
-tempfile = { workspace = true }
+tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -36,6 +36,7 @@ uuid = { workspace = true }
 codex = { path = "../codex" }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio-tungstenite = { workspace = true }
 prost = { workspace = true }
 replay-support = { path = "../replay-support" }

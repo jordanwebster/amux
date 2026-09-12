@@ -1,6 +1,6 @@
 #![allow(clippy::result_large_err)]
 #[cfg(test)]
-extern crate self as amux;
+extern crate self as node;
 pub mod agent_tools;
 mod agents;
 mod audit;

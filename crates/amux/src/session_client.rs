@@ -1077,7 +1077,7 @@ mod attach {
     /// default. `amux attach` has no second key to offer, so the richer
     /// surface leads; the fleet's half is pinned by
     /// `entry_policy_a_local_codex_agent_keeps_the_configured_default` in
-    /// `amux-tui`, and `docs/CHAT.md` names the difference and why.
+    /// `tui`, and `docs/CHAT.md` names the difference and why.
     #[test]
     fn entry_policy_attach_leads_with_the_codex_screen_on_this_machine() {
         assert!(super::attach_opens_chat(&node::AgentKind::Codex, true));

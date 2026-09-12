@@ -34,6 +34,18 @@ variant than full verification.
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
+`wt run optimized-test-build` compiles every workspace library and integration
+test under the release profile without executing it. CI runs this separately
+from the nonincremental `ci-test` profile because the two checks answer
+different questions: one catches optimization/release-cfg errors, while the
+other avoids incremental state on ephemeral test runners.
+
+`wt run live-harness-check` compiles the opt-in provider harnesses. The
+provider-free `wt run live-harness-smoke` also executes their custom entry
+points with no scenarios; a valid harness prints usage and exits before opening
+an account or provider process. Real live scenarios still require an explicit
+provider command.
+
 Build output is wt's to keep bounded, not a recipe's. After every wt task
 that changed `target/`, and in `wt prune`, wt deletes superseded units,
 unreachable object files and excess incremental state by following Cargo's
@@ -44,6 +56,12 @@ is what reclaims its output entirely. Wt 0.4.0 can discard a valid narrow test
 graph after a workspace-wide test graph supersedes its root; the consequence
 and required correction are recorded in
 [wt output requirements](WT_OUTPUT_REQUIREMENTS.md).
+
+Wt 0.4.0 runs on POSIX systems, so the declared CI matrix covers Linux and
+macOS. WSL follows the Linux path. Native Windows compilation and debugger
+behavior remain an evidence gap until wt can execute the same declared tasks
+there; the Cargo profile itself keeps Apple-only split-debug flags target
+scoped.
 
 ## Recorded PTY tests
 

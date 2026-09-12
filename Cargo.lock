@@ -4005,13 +4005,25 @@ version = "0.1.0"
 name = "testnet"
 version = "0.1.0"
 dependencies = [
+ "agent-runtime",
+ "anyhow",
  "async-trait",
+ "bytes",
+ "chrono",
+ "claude",
+ "claude-specs",
+ "codex",
+ "codex-specs",
  "libc",
+ "model",
  "node",
+ "replay-support",
  "reqwest",
+ "serde_json",
  "tempfile",
  "tokio",
  "uuid",
+ "wire",
 ]
 
 [[package]]
