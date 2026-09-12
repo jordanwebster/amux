@@ -1,3 +1,12 @@
+2026-09-12 — **Move live provider harnesses to testnet.** The Codex, Claude
+PTY and Claude SDK process suites now live beside the other cross-crate
+scenarios, along with their argument, depfile, redaction and shared
+installation support. Testnet explicitly declares the three custom mains;
+ordinary workspace tests execute their no-scenario usage path without opening
+an account or provider process. Their declared tasks target testnet, the Codex
+help smoke prints its usage, and the full workspace test and all-target Clippy
+pass after moving the harness dependencies out of node.
+
 2026-09-12 — **Remove feature-selected test APIs from the crate graph.** Node,
 agent-runtime and Claude now compile their hidden harness seams as ordinary
 code. Claude carries replay support normally, and agent-runtime carries its

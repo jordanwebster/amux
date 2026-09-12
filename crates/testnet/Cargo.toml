@@ -22,10 +22,33 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 claude = { workspace = true }
 claude-specs = { path = "../claude-specs" }
+client = { workspace = true }
 codex = { path = "../codex" }
 codex-specs = { path = "../codex-specs" }
+gethostname = { workspace = true }
 host-api = { workspace = true }
 model = { workspace = true }
+nix = { workspace = true }
+redaction = { workspace = true }
 replay-support = { path = "../replay-support" }
+serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
 wire = { workspace = true }
+
+[[test]]
+name = "codex_live"
+path = "tests/codex_live.rs"
+harness = false
+
+[[test]]
+name = "claude_pty_live"
+path = "tests/claude_pty_live.rs"
+harness = false
+
+[[test]]
+name = "claude_sdk_live"
+path = "tests/claude_sdk_live.rs"
+harness = false

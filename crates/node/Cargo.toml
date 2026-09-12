@@ -66,14 +66,3 @@ windows-sys = { version = "0.61.2", features = [
 [dev-dependencies]
 agent-runtime = { workspace = true }
 artifacts = { workspace = true }
-prost-types = { workspace = true }
-ui-runtime = { workspace = true }
-ui-state = { workspace = true }
-claude = { workspace = true }
-claude-specs = { path = "../claude-specs" }
-codex = { path = "../codex" }
-codex-specs = { path = "../codex-specs" }
-replay-support = { path = "../replay-support" }
-redaction = { workspace = true }
-tokio-tungstenite = { workspace = true }
-nix = { workspace = true }

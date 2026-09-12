@@ -40,11 +40,12 @@ from the nonincremental `ci-test` profile because the two checks answer
 different questions: one catches optimization/release-cfg errors, while the
 other avoids incremental state on ephemeral test runners.
 
-`wt run live-harness-check` compiles the opt-in provider harnesses. The
-provider-free `wt run live-harness-smoke` also executes their custom entry
-points with no scenarios; a valid harness prints usage and exits before opening
+The opt-in provider harnesses and their argument, depfile, and redaction tests
+live under `crates/testnet/tests`. `wt test` compiles them and executes each
+custom entry point with no scenario; it prints usage and exits before opening
 an account or provider process. Real live scenarios still require an explicit
-provider command.
+`wt run codex-live`, `wt run claude-pty-live`, or `wt run claude-sdk-live`
+command.
 
 Build output is wt's to keep bounded, not a recipe's. After every wt task
 that changed `target/`, and in `wt prune`, wt deletes superseded units,

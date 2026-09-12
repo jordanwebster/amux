@@ -147,15 +147,15 @@ run = 'scripts/with-git-revision.sh scripts/spec-test.sh "$@"'
 
 # Opt-in real-Codex scenarios. The CLI must match the current sources.
 [task.codex-live]
-run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test codex_live -- "$@"'
+run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p testnet --test codex_live -- "$@"'
 needs = ["build"]
 
 [task.claude-pty-live]
-run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test claude_pty_live -- "$@"'
+run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p testnet --test claude_pty_live -- "$@"'
 needs = ["build"]
 
 [task.claude-sdk-live]
-run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test claude_sdk_live -- "$@"'
+run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p testnet --test claude_sdk_live -- "$@"'
 needs = ["build"]
 
 # Regenerates the committed protobuf code (crates/wire/src/generated)
