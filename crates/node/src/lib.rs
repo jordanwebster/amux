@@ -31,7 +31,6 @@ pub mod routing;
 pub mod server;
 #[doc(hidden)]
 pub mod services;
-pub mod setup;
 mod sleep_inhibitor;
 mod subscription;
 #[cfg(test)]
@@ -51,7 +50,7 @@ pub mod user_state;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use agents::{
-    Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, BaseIdentity, ClaudeDriver,
+    Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, BaseIdentity,
     CreateAgentRequest, DiffBase, DiffFile, DiffResponse, Protocol, SessionCloseReason,
     SubscribeSessionEvent, TerminalSize, WorkingOn,
 };
@@ -62,9 +61,8 @@ pub use client::{
     PairingSecret, PairingStart, PeerEntry, PeerReachability, SessionStream,
 };
 pub use config::{
-    ClaudeSettings, ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey,
-    OpenMode, ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
-    resolve_claude_driver,
+    ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey, OpenMode,
+    ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
 };
 pub use debug::DebugFormat;
 pub use installation::{

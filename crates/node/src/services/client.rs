@@ -2586,7 +2586,7 @@ mod tests {
     fn public_create_rpc_applies_claude_parent_permission_inheritance() {
         let mut caller = agent(1, 2, "parent");
         caller.kind = crate::AgentKind::Claude {
-            driver: crate::ClaudeDriver::Pty,
+            driver: model::ClaudeDriver::Pty,
         };
         caller.working_dir = PathBuf::from("/parent/work");
         let mut request = client::client_create_request_to_wire(crate::CreateAgentRequest {
@@ -2594,7 +2594,7 @@ mod tests {
             host_id: None,
             name: Some("child".to_string()),
             agent_type: crate::AgentType::Claude {
-                driver: crate::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             },
             working_dir: caller.working_dir.clone(),
             terminal_size: None,

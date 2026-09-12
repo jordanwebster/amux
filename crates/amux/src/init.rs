@@ -8,8 +8,8 @@
 
 use std::io::{self, Write};
 
-use node::setup::SetupError;
-use node::{Config, setup};
+use amux::setup::{self, SetupError};
+use node::Config;
 
 #[derive(Debug)]
 pub enum InitError {
@@ -213,7 +213,8 @@ fn parse_idle_sleep_choice(input: &str) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use node::{Config, setup};
+    use amux::setup;
+    use node::Config;
     use tempfile::tempdir;
 
     use super::{InitContext, InitStep, needs_init_inner, next_step, parse_idle_sleep_choice};

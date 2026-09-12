@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 
 use super::status::{Observed, RuntimeStatus};
 use crate::auth::CredentialProvider;
-use crate::config::{ClaudeSettings, Config, ConfigError, Keybinds, UiSettings};
+use crate::config::{Config, ConfigError, Keybinds, UiSettings};
 use crate::identity;
 use crate::server::ShutdownReason;
 use crate::services::{
@@ -45,7 +45,6 @@ pub struct InstallationSettings {
     pub prevent_idle_sleep: Option<bool>,
     pub keybinds: Keybinds,
     pub ui: UiSettings,
-    pub claude: ClaudeSettings,
     pub keymaps_dir: PathBuf,
     pub minimum_client_versions: HashMap<String, String>,
     pub update_manifest_url: String,
@@ -119,7 +118,6 @@ impl ProfileRuntimeOptions {
             prevent_idle_sleep: config.prevent_idle_sleep,
             keybinds: config.keybinds,
             ui: config.ui,
-            claude: config.claude,
             keymaps_dir: crate::keymap_dir(&config.data_dir),
             minimum_client_versions: config.minimum_client_versions,
             update_manifest_url: crate::InstallationConfig::default().update_manifest_url,
@@ -154,7 +152,7 @@ impl ProfileRuntimeOptions {
             minimum_client_versions: self.shared.minimum_client_versions.clone(),
             keybinds: self.shared.keybinds.clone(),
             ui: self.shared.ui.clone(),
-            claude: self.shared.claude.clone(),
+            claude: Default::default(),
             path: self.paths.config_path.clone(),
         }
     }
@@ -703,7 +701,6 @@ mod tests {
                 prevent_idle_sleep: Some(false),
                 keybinds: Keybinds::default(),
                 ui: UiSettings::default(),
-                claude: ClaudeSettings::default(),
                 keymaps_dir: root.join("installation-keymaps"),
                 minimum_client_versions: HashMap::new(),
                 update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),

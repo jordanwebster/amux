@@ -402,7 +402,6 @@ fn installation_options(config: &Config, listeners: Listeners) -> InstallationOp
             prevent_idle_sleep: Some(false),
             keybinds: config.keybinds.clone(),
             ui: config.ui.clone(),
-            claude: config.claude.clone(),
             keymaps_dir: config.state_path.parent().unwrap().join("keymaps"),
             minimum_client_versions: Default::default(),
             update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),

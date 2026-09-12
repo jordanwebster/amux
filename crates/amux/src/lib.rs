@@ -8,3 +8,4 @@
 #[cfg(all(debug_assertions, feature = "diagnostics"))]
 pub mod debug_cmd;
 pub mod diagnostics;
+pub mod setup;

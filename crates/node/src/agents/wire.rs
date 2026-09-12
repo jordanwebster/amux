@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use chrono::{TimeZone, Utc};
 #[cfg(test)]
 use model::AgentKind;
+use model::ClaudeDriver;
 use prost::Message as ProstMessage;
 use protocol_wire::DeleteAgentRequest;
 use uuid::Uuid;
@@ -10,10 +11,7 @@ use wire::{
     self as protocol_wire, agent_kind_from_wire, agent_kind_to_wire, claude_driver_from_wire, pb,
 };
 
-use super::{
-    Agent, AgentParent, ClaudeDriver, Protocol, SessionCloseReason, SubscribeSessionEvent,
-    WorkingOn,
-};
+use super::{Agent, AgentParent, Protocol, SessionCloseReason, SubscribeSessionEvent, WorkingOn};
 use crate::agents::{RenameAgentRequest, TerminalSize};
 use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 
@@ -1044,7 +1042,7 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from(OsString::from_vec(vec![0xff])),
             kind: AgentKind::Claude {
-                driver: crate::agents::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             },
             readonly: false,
             args: Vec::new(),

@@ -110,7 +110,7 @@ mod tests {
                 command: "claude".to_string(),
                 working_dir: std::path::PathBuf::from(OsString::from_vec(vec![0xff])),
                 kind: crate::agents::AgentKind::Claude {
-                    driver: crate::agents::ClaudeDriver::Pty,
+                    driver: model::ClaudeDriver::Pty,
                 },
                 readonly: false,
                 args: Vec::new(),

@@ -347,27 +347,3 @@ async fn config_split_daemon_owner_flushes_shutdown_and_releases_all_sockets() {
     .await
     .unwrap();
 }
-
-#[test]
-fn config_split_setup_writes_only_installation_preferences() {
-    let fixture = Fixture::new();
-    let before = std::fs::read(fixture.paths.config_path.clone().unwrap()).unwrap();
-    let mut selected = Config {
-        path: fixture.paths.config_path.clone(),
-        ..Config::default()
-    };
-    crate::setup::set_prevent_idle_sleep(&mut selected, true).unwrap();
-    assert_eq!(
-        fixture.load().unwrap().installation.prevent_idle_sleep,
-        Some(true)
-    );
-    crate::setup::clear_prevent_idle_sleep(&mut selected).unwrap();
-    assert_eq!(
-        fixture.load().unwrap().installation.prevent_idle_sleep,
-        None
-    );
-    assert_eq!(
-        std::fs::read(fixture.paths.config_path.unwrap()).unwrap(),
-        before
-    );
-}

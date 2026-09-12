@@ -167,7 +167,7 @@ async fn run_inner(
 
 fn default_agent_type(config: &Config) -> node::AgentType {
     node::AgentType::Claude {
-        driver: node::resolve_claude_driver(None, config),
+        driver: settings::resolve_claude_driver(None, config),
     }
 }
 
@@ -197,7 +197,7 @@ fn runtime_options(
 ) -> RuntimeOptions {
     // The local host id comes from the stored device identity — the wire
     // does not mark the local host (see docs/UI.md, subscription policy).
-    let local_host_id = node::setup::local_host_id(config);
+    let local_host_id = amux::setup::local_host_id(config);
     let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
     // The fold order is the runtime's to report. Reconstructing it from
     // outside would mean guessing how a drain batched, and a wrong guess is
@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(
             default_agent_type(&Config::default()),
             node::AgentType::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             }
         );
 
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(
             default_agent_type(&config),
             node::AgentType::Claude {
-                driver: node::ClaudeDriver::Sdk,
+                driver: model::ClaudeDriver::Sdk,
             }
         );
     }

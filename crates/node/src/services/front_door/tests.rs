@@ -40,7 +40,6 @@ async fn front(listeners: Listeners) -> (FrontDoor, tempfile::TempDir) {
                 prevent_idle_sleep: Some(false),
                 keybinds: Default::default(),
                 ui: Default::default(),
-                claude: Default::default(),
                 keymaps_dir: PathBuf::new(),
                 minimum_client_versions: HashMap::new(),
                 update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),

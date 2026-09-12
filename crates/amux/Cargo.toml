@@ -21,6 +21,7 @@ path = "src/main.rs"
 agent-runtime = { workspace = true }
 node = { workspace = true }
 model = { workspace = true }
+settings = { workspace = true }
 wire = { workspace = true }
 client = { workspace = true }
 claude = { workspace = true }

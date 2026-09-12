@@ -82,6 +82,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "settings",
  "sha2",
  "tempfile",
  "testnet",

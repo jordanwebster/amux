@@ -235,7 +235,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     // Unknown locality reads as local, the way the fleet's entry policy
     // reads it: the stored identity is missing only before this machine
     // has one, when every agent it can see is its own.
-    let local = node::setup::local_host_id(config).is_none_or(|local| local == agent.host_id);
+    let local = amux::setup::local_host_id(config).is_none_or(|local| local == agent.host_id);
     if attach_opens_chat(&agent.kind, local) {
         return crate::ui::run_for_agent(config.clone(), agent.id, None).await;
     }
@@ -1042,7 +1042,7 @@ mod attach {
         );
         assert_eq!(
             super::codex_configuration_facts(&AgentType::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             }),
             None
         );
@@ -1051,19 +1051,19 @@ mod attach {
     #[test]
     fn entry_policy_a_session_without_a_terminal_is_created_and_attached_as_chat() {
         let sdk_type = AgentType::Claude {
-            driver: node::ClaudeDriver::Sdk,
+            driver: model::ClaudeDriver::Sdk,
         };
         let sdk_kind = node::AgentKind::Claude {
-            driver: node::ClaudeDriver::Sdk,
+            driver: model::ClaudeDriver::Sdk,
         };
         assert!(!super::agent_type_exposes_terminal(&sdk_type));
         assert!(super::attach_opens_chat(&sdk_kind, true));
 
         let pty_type = AgentType::Claude {
-            driver: node::ClaudeDriver::Pty,
+            driver: model::ClaudeDriver::Pty,
         };
         let pty_kind = node::AgentKind::Claude {
-            driver: node::ClaudeDriver::Pty,
+            driver: model::ClaudeDriver::Pty,
         };
         assert!(super::agent_type_exposes_terminal(&pty_type));
         assert!(!super::attach_opens_chat(&pty_kind, true));
@@ -1084,7 +1084,7 @@ mod attach {
         assert!(super::attach_opens_chat(&node::AgentKind::Codex, false));
         assert!(!super::attach_opens_chat(
             &node::AgentKind::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             },
             true
         ));
@@ -1097,10 +1097,10 @@ mod attach {
     fn entry_policy_attach_opens_chat_for_providers_on_another_machine() {
         for kind in [
             node::AgentKind::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             },
             node::AgentKind::Claude {
-                driver: node::ClaudeDriver::Sdk,
+                driver: model::ClaudeDriver::Sdk,
             },
             node::AgentKind::Codex,
         ] {
@@ -1270,7 +1270,6 @@ mod attach {
                 prevent_idle_sleep: Some(false),
                 keybinds: Default::default(),
                 ui: Default::default(),
-                claude: Default::default(),
                 keymaps_dir: Default::default(),
                 minimum_client_versions: Default::default(),
                 update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
@@ -1391,11 +1390,11 @@ mod attach {
     fn list_names_every_kind_and_claude_driver() {
         let mut pty = listed_agent(1, "claude-pty");
         pty.kind = node::AgentKind::Claude {
-            driver: node::ClaudeDriver::Pty,
+            driver: model::ClaudeDriver::Pty,
         };
         let mut sdk = listed_agent(2, "claude-sdk");
         sdk.kind = node::AgentKind::Claude {
-            driver: node::ClaudeDriver::Sdk,
+            driver: model::ClaudeDriver::Sdk,
         };
         let mut codex = listed_agent(3, "codex");
         codex.kind = node::AgentKind::Codex;
@@ -1783,7 +1782,7 @@ mod attach {
             command: "claude".to_string(),
             working_dir: std::env::temp_dir(),
             kind: node::AgentKind::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             },
             readonly: false,
             args: Vec::new(),

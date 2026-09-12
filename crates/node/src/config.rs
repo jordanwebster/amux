@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 pub use settings::{
-    ClaudeSettings, ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey,
-    OpenMode, ProfileConfig, ThemeSetting, UiSettings, resolve_claude_driver,
+    ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey, OpenMode,
+    ProfileConfig, ThemeSetting, UiSettings,
 };
 
 use crate::installation::{InstallationSettings, ProfileId, ProfilePaths};
@@ -64,7 +64,6 @@ pub(crate) fn installation_settings(config: &InstallationConfig) -> Installation
         prevent_idle_sleep: config.prevent_idle_sleep,
         keybinds: config.keybinds.clone(),
         ui: config.ui.clone(),
-        claude: config.claude.clone(),
         keymaps_dir: config.keymaps_dir.clone(),
         minimum_client_versions: config.minimum_client_versions.clone(),
         update_manifest_url: config.update_manifest_url.clone(),

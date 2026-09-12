@@ -2,6 +2,11 @@
 
 pub use crate::services::front_door::{FrontDoor, FrontDoorListener};
 
+/// Return whether this platform can keep the installation awake while it runs.
+pub fn prevent_idle_sleep_supported() -> bool {
+    crate::sleep_inhibitor::supported()
+}
+
 /// Generated messages and clients for the installation's local gRPC boundary.
 pub mod rpc {
     pub use wire::{

@@ -240,7 +240,6 @@ fn options_with_credentials(
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
             ui: Default::default(),
-            claude: Default::default(),
             keymaps_dir: Default::default(),
             minimum_client_versions: Default::default(),
             update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),

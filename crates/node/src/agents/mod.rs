@@ -9,7 +9,7 @@ pub(crate) use ::wire::{
 };
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
 pub use model::{
-    Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, BaseIdentity, ClaudeDriver,
+    Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, BaseIdentity,
     CreateAgentRequest, DiffBase, DiffFile, DiffResponse, Protocol, RenameAgentRequest,
     SessionCloseReason, SpawnInheritance, SubscribeSessionEvent, TerminalSize, WorkingOn,
 };

@@ -89,7 +89,7 @@ impl Daemon {
                 host_id: None,
                 name: Some(name.to_string()),
                 agent_type: AgentType::Claude {
-                    driver: node::ClaudeDriver::Pty,
+                    driver: model::ClaudeDriver::Pty,
                 },
                 working_dir: working_dir.as_ref().to_path_buf(),
                 terminal_size: None,
@@ -635,7 +635,7 @@ impl Daemon {
                 host_id: None,
                 name: Some("claude-child".to_string()),
                 agent_type: AgentType::Claude {
-                    driver: node::ClaudeDriver::Pty,
+                    driver: model::ClaudeDriver::Pty,
                 },
                 working_dir: std::env::temp_dir(),
                 terminal_size: None,

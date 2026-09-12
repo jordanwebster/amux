@@ -42,10 +42,10 @@ fn main() -> anyhow::Result<()> {
     use bytes::Bytes;
     use claude::sdk::PermissionResult;
     use claude_sdk_live::args;
-    use model::{CLAUDE_SDK_V1, ClaudeSdkInput as ClaudeSdkV1Input};
+    use model::{CLAUDE_SDK_V1, ClaudeDriver, ClaudeSdkInput as ClaudeSdkV1Input};
     use node::{
-        AgentIdentifier, AgentType, ClaudeDriver, Client, Config, CreateAgentRequest,
-        SendInputRequest, SendMessageRequest, SubscribeSessionEvent, SubscribeSessionRequest,
+        AgentIdentifier, AgentType, Client, Config, CreateAgentRequest, SendInputRequest,
+        SendMessageRequest, SubscribeSessionEvent, SubscribeSessionRequest,
     };
     use serde_json::{Value, json};
     use tempfile::TempDir;

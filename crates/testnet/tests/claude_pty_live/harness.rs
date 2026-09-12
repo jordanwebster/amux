@@ -668,7 +668,7 @@ impl CaptureSession {
                 host_id: None,
                 name: Some(agent_name.clone()),
                 agent_type: AgentType::Claude {
-                    driver: node::ClaudeDriver::Pty,
+                    driver: model::ClaudeDriver::Pty,
                 },
                 working_dir,
                 terminal_size: Some(TerminalSize {

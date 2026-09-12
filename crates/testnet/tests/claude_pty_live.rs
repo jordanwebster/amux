@@ -3385,7 +3385,7 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
     if !external.readonly
         || external.kind
             != (node::AgentKind::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             })
     {
         bail!("external inventory shape is not readonly PTY Claude: {external:?}");

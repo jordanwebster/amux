@@ -346,13 +346,15 @@ pub(crate) struct DeviceFiles {
     pub(crate) trust_store: TrustStore,
 }
 
-pub(crate) fn device_files_ready_in(data_dir: &Path) -> bool {
+#[doc(hidden)]
+pub fn device_files_ready_in(data_dir: &Path) -> bool {
     data_dir_mode_ready(data_dir)
         && load_device_identity_in(data_dir).is_ok()
         && TrustStore::load_in(data_dir).is_ok()
 }
 
-pub(crate) fn ensure_device_files_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {
+#[doc(hidden)]
+pub fn ensure_device_files_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {
     Ok(ensure_device_files_with_trust_in(data_dir)?.identity)
 }
 
@@ -377,7 +379,8 @@ pub fn load_or_create_device_identity_in(data_dir: &Path) -> Result<DeviceIdenti
 /// Read the stored host id without touching key material. Read-only client
 /// plumbing: UIs use it to recognize the local host in inventory (the wire
 /// does not mark the local host).
-pub(crate) fn stored_host_id_in(data_dir: &Path) -> Option<HostId> {
+#[doc(hidden)]
+pub fn stored_host_id_in(data_dir: &Path) -> Option<HostId> {
     load_host_id(&host_id_path(data_dir)).ok()
 }
 

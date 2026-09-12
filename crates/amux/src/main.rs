@@ -326,7 +326,7 @@ enum CliClaudeDriver {
     Sdk,
 }
 
-impl From<CliClaudeDriver> for node::ClaudeDriver {
+impl From<CliClaudeDriver> for model::ClaudeDriver {
     fn from(value: CliClaudeDriver) -> Self {
         match value {
             CliClaudeDriver::Pty => Self::Pty,
@@ -1208,7 +1208,7 @@ fn parse_agent_type(s: &str) -> Result<AgentType> {
 
     match s.to_lowercase().as_str() {
         "claude" => Ok(AgentType::Claude {
-            driver: node::ClaudeDriver::Pty,
+            driver: model::ClaudeDriver::Pty,
         }),
         "codex" => Ok(AgentType::Codex {
             model: None,
@@ -1253,7 +1253,7 @@ fn configure_agent_type(
                 ));
             }
             Ok(AgentType::Claude {
-                driver: node::resolve_claude_driver(driver.map(Into::into), config),
+                driver: settings::resolve_claude_driver(driver.map(Into::into), config),
             })
         }
         AgentType::Codex {
@@ -1506,14 +1506,14 @@ mod tests {
     fn claude_driver_cli_uses_config_and_explicit_override() {
         let default_config = Config::default();
         for (args, expected) in [
-            (vec!["amux", "new", "claude"], node::ClaudeDriver::Pty),
+            (vec!["amux", "new", "claude"], model::ClaudeDriver::Pty),
             (
                 vec!["amux", "new", "claude", "--driver", "pty"],
-                node::ClaudeDriver::Pty,
+                model::ClaudeDriver::Pty,
             ),
             (
                 vec!["amux", "new", "claude", "--driver", "sdk"],
-                node::ClaudeDriver::Sdk,
+                model::ClaudeDriver::Sdk,
             ),
         ] {
             let cli = Cli::try_parse_from(args).unwrap();
@@ -1554,7 +1554,7 @@ mod tests {
             )
             .unwrap(),
             AgentType::Claude {
-                driver: node::ClaudeDriver::Sdk,
+                driver: model::ClaudeDriver::Sdk,
             }
         );
         assert_eq!(
@@ -1568,7 +1568,7 @@ mod tests {
             )
             .unwrap(),
             AgentType::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             }
         );
     }
@@ -1732,7 +1732,7 @@ mod tests {
     fn codex_creation_options_reject_other_agents() {
         let error = configure_agent_type(
             AgentType::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             },
             None,
             Some("gpt-5.4".to_string()),

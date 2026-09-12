@@ -106,8 +106,8 @@ impl DaemonApi for Client {
 trait ClientConnector: Send + Sync {
     async fn connect(&self) -> Result<Arc<dyn DaemonApi>>;
 
-    fn claude_driver(&self) -> node::ClaudeDriver {
-        node::resolve_claude_driver(None, &Config::default())
+    fn claude_driver(&self) -> model::ClaudeDriver {
+        settings::resolve_claude_driver(None, &Config::default())
     }
 }
 
@@ -121,8 +121,8 @@ impl ClientConnector for ConfigConnector {
         Ok(Arc::new(open_daemon(&self.config).await?))
     }
 
-    fn claude_driver(&self) -> node::ClaudeDriver {
-        node::resolve_claude_driver(None, &self.config)
+    fn claude_driver(&self) -> model::ClaudeDriver {
+        settings::resolve_claude_driver(None, &self.config)
     }
 }
 
@@ -580,8 +580,8 @@ impl ClientBackend {
                 });
                 if let node::AgentKind::Claude { driver } = agent.kind {
                     row["driver"] = json!(match driver {
-                        node::ClaudeDriver::Pty => "pty",
-                        node::ClaudeDriver::Sdk => "sdk",
+                        model::ClaudeDriver::Pty => "pty",
+                        model::ClaudeDriver::Sdk => "sdk",
                     });
                 }
                 row
@@ -734,7 +734,7 @@ mod attach_tests {
         connects: AtomicUsize,
         /// The driver this connector's configuration resolves to, as the
         /// real one reads it from the config file.
-        driver: node::ClaudeDriver,
+        driver: model::ClaudeDriver,
     }
 
     impl FakeConnector {
@@ -742,11 +742,11 @@ mod attach_tests {
             Self::driven(
                 daemon,
                 fail_first,
-                node::resolve_claude_driver(None, &Config::default()),
+                settings::resolve_claude_driver(None, &Config::default()),
             )
         }
 
-        fn driven(daemon: Arc<FakeDaemon>, fail_first: usize, driver: node::ClaudeDriver) -> Self {
+        fn driven(daemon: Arc<FakeDaemon>, fail_first: usize, driver: model::ClaudeDriver) -> Self {
             Self {
                 daemon,
                 fail_first,
@@ -767,7 +767,7 @@ mod attach_tests {
             }
         }
 
-        fn claude_driver(&self) -> node::ClaudeDriver {
+        fn claude_driver(&self) -> model::ClaudeDriver {
             self.driver
         }
     }
@@ -782,7 +782,7 @@ mod attach_tests {
     /// spawned child must never be an exception to the setting.
     #[tokio::test]
     async fn a2a_mcp_spawn_gives_a_claude_child_the_configured_driver() {
-        for driver in [node::ClaudeDriver::Sdk, node::ClaudeDriver::Pty] {
+        for driver in [model::ClaudeDriver::Sdk, model::ClaudeDriver::Pty] {
             let daemon = Arc::new(FakeDaemon::new(Vec::new()));
             let backend = ClientBackend {
                 connector: Arc::new(FakeConnector::driven(daemon.clone(), 0, driver)),
@@ -817,7 +817,7 @@ mod attach_tests {
             connector: Arc::new(FakeConnector::driven(
                 daemon.clone(),
                 0,
-                node::ClaudeDriver::Sdk,
+                model::ClaudeDriver::Sdk,
             )),
             identity: None,
         };
@@ -846,7 +846,7 @@ mod attach_tests {
         let config: Config = serde_yaml::from_str("claude:\n  driver: sdk\n").unwrap();
         let connector = ConfigConnector { config };
 
-        assert_eq!(connector.claude_driver(), node::ClaudeDriver::Sdk);
+        assert_eq!(connector.claude_driver(), model::ClaudeDriver::Sdk);
     }
 
     fn agent_with_kind(id: Uuid, host_id: Uuid, name: &str, kind: node::AgentKind) -> Agent {
@@ -873,7 +873,7 @@ mod attach_tests {
                 Uuid::from_u128(511),
                 "claude-worker",
                 node::AgentKind::Claude {
-                    driver: node::ClaudeDriver::Sdk,
+                    driver: model::ClaudeDriver::Sdk,
                 },
             ),
             agent_with_kind(
@@ -1323,7 +1323,7 @@ mod attach_tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/parent/work"),
             kind: node::AgentKind::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             },
             readonly: false,
             args: Vec::new(),

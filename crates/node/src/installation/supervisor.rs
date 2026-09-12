@@ -390,7 +390,6 @@ impl Installation {
             prevent_idle_sleep: options.settings.prevent_idle_sleep,
             keybinds: options.settings.keybinds.clone(),
             ui: options.settings.ui.clone(),
-            claude: options.settings.claude.clone(),
             keymaps_dir: options.settings.keymaps_dir.clone(),
             minimum_client_versions: options.settings.minimum_client_versions.clone(),
             update_manifest_url: options.settings.update_manifest_url.clone(),

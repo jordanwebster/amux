@@ -480,7 +480,7 @@ fn main() -> anyhow::Result<()> {
             .context("spawned Claude child missing from family inventory")?;
         if child.kind
             != (node::AgentKind::Claude {
-                driver: node::ClaudeDriver::Pty,
+                driver: model::ClaudeDriver::Pty,
             })
         {
             bail!("spawned child was {}, expected claude/pty", child.kind);

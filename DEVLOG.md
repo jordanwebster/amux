@@ -1,3 +1,13 @@
+2026-09-12 — **Move desktop setup and provider preferences out of node.** The
+amux application now owns first-run identity and keep-awake preference setup,
+including the config-split test that proves those writes leave profile files
+untouched. Claude defaults and driver selection are consumed directly from the
+settings and model packages; node no longer re-exports Claude-named settings or
+carries provider preferences through its installation runtime API. The empty
+client and protocol source directories are gone, while update supervision and
+the platform sleep inhibitor remain in node. The full workspace test suite,
+all-target Clippy and dependency policy pass.
+
 2026-09-12 — **Promote the whole-daemon harness into testnet.** Testnet now
 owns the topology builder, daemon and installation handles, identity service,
 wire actor, cloud relay and all 92 whole-daemon specs. The two former relay

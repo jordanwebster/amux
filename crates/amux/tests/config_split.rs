@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use node::installation::{InstallationRoot, ProfileId, ProfileLabel, ProfilePaths, Registry};
-use node::{InstallationConfig, ProfileConfig};
+use node::{Config, InstallationConfig, ProfileConfig};
 
 struct Fixture {
     _temp: tempfile::TempDir,
@@ -94,6 +94,32 @@ impl Drop for Fixture {
 
 fn write(path: &Path, value: &impl serde::Serialize) {
     std::fs::write(path, serde_yaml::to_string(value).unwrap()).unwrap();
+}
+
+#[test]
+fn config_split_setup_writes_only_installation_preferences() {
+    let fixture = Fixture::new();
+    let before = std::fs::read(&fixture.profile).unwrap();
+    let mut selected = Config {
+        path: Some(fixture.profile.clone()),
+        ..Config::default()
+    };
+
+    amux::setup::set_prevent_idle_sleep(&mut selected, true).unwrap();
+    assert_eq!(
+        InstallationConfig::from_file(fixture.installation.path.as_ref().unwrap())
+            .unwrap()
+            .prevent_idle_sleep,
+        Some(true)
+    );
+    amux::setup::clear_prevent_idle_sleep(&mut selected).unwrap();
+    assert_eq!(
+        InstallationConfig::from_file(fixture.installation.path.as_ref().unwrap())
+            .unwrap()
+            .prevent_idle_sleep,
+        None
+    );
+    assert_eq!(std::fs::read(&fixture.profile).unwrap(), before);
 }
 
 #[cfg(debug_assertions)]
