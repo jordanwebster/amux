@@ -44,10 +44,10 @@ pub mod registry;
 use std::path::PathBuf;
 
 pub use model::ProfileId;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use paths::MAX_CODEX_SOCKET_PATH_BYTES;
 pub use paths::ProfilePaths;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use paths::adjacent_codex_socket_path;
 pub use registry::{Binding, InstallationRoot, ProfileLabel, ProfileRecord, Registry};
 

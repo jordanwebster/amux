@@ -1,3 +1,8 @@
+2026-09-13 — **Gate the Codex socket path re-exports to Unix.** The fourth CI
+run failed only in the Windows test job: node re-exported two Unix-only socket
+path helpers for its tests without the platform gate their definitions carry.
+The re-exports now match.
+
 2026-09-13 — **Gate the socket-driven runtime test to Unix.** The third CI run
 was green everywhere except the Windows test job, where one ui-runtime
 integration test called Unix-socket helpers that are themselves Unix-only.
