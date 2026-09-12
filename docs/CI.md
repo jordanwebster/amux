@@ -28,6 +28,15 @@ it because no hardware row identifies it. When the app is finished, the closing
 work makes all of it required: the whole catalogue, every journey and a
 measured run against the recorded runner baseline.
 
+Three of the 124 simulator captures are explicitly marked flaky in the golden
+manifest: `strip.light`, `strip.dark`, and `ax-composer.dark`. They remain in
+every golden run, are compared at the unchanged tolerance, print their verdict,
+and retain expected, actual, and difference images in the uploaded CI artifact.
+Only a pixel-difference verdict is non-gating for those exact captures. A failed
+capture, missing baseline, or size change still fails. The manifest records the
+known two-physical-pixel transcript settling variation so the quarantine stays
+visible and can be removed when the simulator behavior is fixed.
+
 `timeout 900 wt run mobile-check` checks `amux`, `amux-ui` and `amux-mobile`
 for ARM iOS devices and simulators with default features disabled. It also
 rejects local-agent dependencies in that graph. Desktop host executables

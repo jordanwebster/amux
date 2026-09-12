@@ -49,6 +49,14 @@ pub enum GoldenOrigin {
     AddedState { reason: String },
 }
 
+/// A simulator rendering variation that is still captured, compared and
+/// reported, but whose pixel-difference verdict does not gate CI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoldenFlake {
+    pub appearances: Vec<Appearance>,
+    pub reason: String,
+}
+
 /// One row of the manifest: a golden this flight owes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoldenScreen {
@@ -62,8 +70,19 @@ pub struct GoldenScreen {
     pub fixture: String,
     #[serde(flatten)]
     pub origin: GoldenOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flaky: Option<GoldenFlake>,
     pub simulator: String,
     pub appearances: Vec<Appearance>,
+}
+
+impl GoldenScreen {
+    fn flaky_reason(&self, appearance: Appearance) -> Option<&str> {
+        self.flaky
+            .as_ref()
+            .filter(|flake| flake.appearances.contains(&appearance))
+            .map(|flake| flake.reason.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,8 +94,33 @@ impl GoldenManifest {
     pub fn read(path: &Path) -> Result<Self, GoldenError> {
         let text = std::fs::read_to_string(path)
             .map_err(|error| GoldenError::Io(format!("{}: {error}", path.display())))?;
-        serde_json::from_str(&text)
-            .map_err(|error| GoldenError::Io(format!("{}: {error}", path.display())))
+        let manifest: Self = serde_json::from_str(&text)
+            .map_err(|error| GoldenError::Io(format!("{}: {error}", path.display())))?;
+        for screen in &manifest.screens {
+            let Some(flake) = &screen.flaky else {
+                continue;
+            };
+            if flake.reason.trim().is_empty() {
+                return Err(GoldenError::Io(format!(
+                    "{}: flaky capture {} needs a reason",
+                    path.display(),
+                    screen.id
+                )));
+            }
+            if flake.appearances.is_empty()
+                || flake
+                    .appearances
+                    .iter()
+                    .any(|appearance| !screen.appearances.contains(appearance))
+            {
+                return Err(GoldenError::Io(format!(
+                    "{}: flaky capture {} must name one of its appearances",
+                    path.display(),
+                    screen.id
+                )));
+            }
+        }
+        Ok(manifest)
     }
 
     pub fn screen(&self, id: &str) -> Option<&GoldenScreen> {
@@ -352,6 +396,7 @@ pub fn reference_report(
 pub struct GoldenOutcome {
     pub id: String,
     pub appearance: Appearance,
+    pub flaky: Option<String>,
     pub verdict: GoldenVerdict,
 }
 
@@ -427,7 +472,12 @@ pub fn run(
                 // person was looking at from inside the process.
                 requests.push(json!({"kind": "display", "path": taken.to_string_lossy()}));
                 about.extend([screen.id.clone(), screen.id.clone(), screen.id.clone()]);
-                planned.push((screen.id.clone(), *appearance, taken));
+                planned.push((
+                    screen.id.clone(),
+                    *appearance,
+                    screen.flaky_reason(*appearance).map(str::to_string),
+                    taken,
+                ));
             }
         }
         requests.push(json!({"kind": "shutdown"}));
@@ -456,11 +506,12 @@ pub fn run(
             }
         }
 
-        for (id, appearance, taken) in planned {
+        for (id, appearance, flaky, taken) in planned {
             if let Some(message) = refusal.get(&id) {
                 outcomes.push(GoldenOutcome {
                     id,
                     appearance,
+                    flaky,
                     verdict: GoldenVerdict::CaptureFailed(message.clone()),
                 });
                 continue;
@@ -482,6 +533,7 @@ pub fn run(
             outcomes.push(GoldenOutcome {
                 id,
                 appearance,
+                flaky,
                 verdict,
             });
         }
@@ -496,6 +548,7 @@ const UNIMPLEMENTED: &str = "unimplemented: ";
 /// What a run amounts to: what broke, and what has not been built yet.
 pub struct GoldenReport {
     pub failed: Vec<String>,
+    pub flaky: Vec<String>,
     pub unimplemented: Vec<String>,
     pub total: usize,
 }
@@ -509,10 +562,12 @@ pub struct GoldenReport {
 /// question the branch's own verification asks between milestones: of the
 /// screens that exist today, does every one of them still draw what it was
 /// locked as. There, an unimplemented screen is reported and counted, and
-/// nothing else is forgiven: a screen that opened and has no baseline, or
-/// opened and drew something else, still fails.
+/// only an explicitly declared simulator pixel-difference flake is non-gating.
+/// A missing baseline, failed capture or size change still fails, including on
+/// a capture carrying flaky metadata.
 pub fn judge(outcomes: &[GoldenOutcome], built_only: bool) -> GoldenReport {
     let mut failed = Vec::new();
+    let mut flaky = Vec::new();
     let mut unimplemented = Vec::new();
     for outcome in outcomes {
         let name = format!("{}.{}", outcome.id, outcome.appearance);
@@ -520,12 +575,17 @@ pub fn judge(outcomes: &[GoldenOutcome], built_only: bool) -> GoldenReport {
             &outcome.verdict, GoldenVerdict::CaptureFailed(why) if why.starts_with(UNIMPLEMENTED));
         if built_only && unbuilt {
             unimplemented.push(name);
+        } else if outcome.flaky.is_some()
+            && matches!(outcome.verdict, GoldenVerdict::Different { .. })
+        {
+            flaky.push(name);
         } else if !outcome.verdict.passed() {
             failed.push(name);
         }
     }
     GoldenReport {
         failed,
+        flaky,
         unimplemented,
         total: outcomes.len(),
     }
@@ -625,23 +685,42 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let report = judge(&outcomes, built_only);
     let unimplemented: std::collections::BTreeSet<&String> = report.unimplemented.iter().collect();
+    let flaky: std::collections::BTreeSet<&String> = report.flaky.iter().collect();
     for outcome in &outcomes {
         let name = format!("{}.{}", outcome.id, outcome.appearance);
         let mark = if outcome.verdict.passed() {
             "ok"
         } else if unimplemented.contains(&name) {
             "not built"
+        } else if flaky.contains(&name) {
+            "FLAKY"
         } else {
             "FAILED"
         };
         println!("{mark} {name}: {}", outcome.verdict);
     }
     println!(
-        "{} captures, {} failed; triplets under {}",
+        "{} captures, {} failed, {} flaky; triplets under {}",
         report.total,
         report.failed.len(),
+        report.flaky.len(),
         out.display()
     );
+    let declared_flaky: Vec<_> = outcomes
+        .iter()
+        .filter_map(|outcome| {
+            outcome
+                .flaky
+                .as_ref()
+                .map(|reason| (format!("{}.{}", outcome.id, outcome.appearance), reason))
+        })
+        .collect();
+    if !declared_flaky.is_empty() {
+        println!("{} captures are marked flaky:", declared_flaky.len());
+        for (name, reason) in declared_flaky {
+            println!("  {name}: {reason}");
+        }
+    }
     if built_only {
         println!(
             "{} of {} captures unimplemented",
@@ -824,6 +903,16 @@ mod tests {
         GoldenOutcome {
             id: id.to_string(),
             appearance: Appearance::Light,
+            flaky: None,
+            verdict,
+        }
+    }
+
+    fn flaky_outcome(id: &str, verdict: GoldenVerdict) -> GoldenOutcome {
+        GoldenOutcome {
+            id: id.to_string(),
+            appearance: Appearance::Light,
+            flaky: Some("simulator text can settle two pixels apart".into()),
             verdict,
         }
     }
@@ -869,6 +958,31 @@ mod tests {
         let report = judge(&outcomes, false);
         assert!(report.unimplemented.is_empty());
         assert_eq!(report.failed, ["home.light"]);
+    }
+
+    #[test]
+    fn a_declared_flaky_pixel_difference_is_visible_but_does_not_fail() {
+        let outcomes = [flaky_outcome(
+            "strip",
+            GoldenVerdict::Different {
+                pixels: 900,
+                first: (1, 2),
+            },
+        )];
+        let report = judge(&outcomes, false);
+        assert!(report.failed.is_empty());
+        assert_eq!(report.flaky, ["strip.light"]);
+    }
+
+    #[test]
+    fn flaky_metadata_does_not_forgive_a_broken_capture() {
+        let outcomes = [flaky_outcome(
+            "strip",
+            GoldenVerdict::CaptureFailed("no window on screen".into()),
+        )];
+        let report = judge(&outcomes, false);
+        assert!(report.flaky.is_empty());
+        assert_eq!(report.failed, ["strip.light"]);
     }
 
     #[test]
@@ -1110,5 +1224,30 @@ mod tests {
                 assert!(!reason.is_empty(), "{} says why it is owed", screen.id);
             }
         }
+        assert_eq!(
+            manifest
+                .screens
+                .iter()
+                .map(|screen| screen.appearances.len())
+                .sum::<usize>(),
+            124
+        );
+        let mut flaky_captures: Vec<_> = manifest
+            .screens
+            .iter()
+            .flat_map(|screen| {
+                screen.flaky.iter().flat_map(|flake| {
+                    flake
+                        .appearances
+                        .iter()
+                        .map(|appearance| format!("{}.{}", screen.id, appearance))
+                })
+            })
+            .collect();
+        flaky_captures.sort();
+        assert_eq!(
+            flaky_captures,
+            ["ax-composer.dark", "strip.dark", "strip.light"]
+        );
     }
 }

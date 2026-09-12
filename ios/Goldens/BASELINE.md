@@ -13,6 +13,17 @@ Run `wt run ios-goldens` to compare every state. Run
 `wt run ios-goldens-reference` to place the 33 reference-backed screens beside
 the preserved designs.
 
+## Known flaky captures
+
+Three of the 124 captures are quarantined individually: `strip.light`,
+`strip.dark`, and `ax-composer.dark`. On the pinned simulator, their
+bottom-anchored transcript text can settle two physical pixels apart between
+launches even though UIKit reports identical scroll geometry. They are still
+captured and compared, and their triplets remain available for diagnosis. Only
+their pixel-difference result is non-gating; capture failures, missing
+baselines, and size changes still fail. The global tolerance remains two per
+channel with at most 64 differing pixels.
+
 ## Departures every screen shares
 
 The app images are photographs of the pinned iOS simulator after rendering has

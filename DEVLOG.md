@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-13 — **The three known simulator golden flakes are explicitly quarantined.**
+The golden manifest now marks only `strip.light`, `strip.dark`, and
+`ax-composer.dark` as affected by the reproducible two-physical-pixel transcript
+settling variation. All three remain among the 124 captures run and compared in
+CI, their ordinary verdicts and diagnostic triplets remain visible, and the
+manifest records why they are flaky. Only a pixel-difference verdict for those
+exact captures is non-gating; a missing baseline, failed capture, or size change
+still fails. The comparator's tolerance and differing-pixel ceiling are
+unchanged. `wt test -- golden` and `wt lint` pass. A focused simulator run
+captured both affected states in both appearances: the two differences in that
+run printed `FLAKY`, the matching captures printed `ok`, and the command exited
+successfully with all three declared quarantines listed.
+
 2026-09-13 — **The direct iPhone presentation is visually approved and locked.**
 The complete 108-image production gallery and the 42-image narrow-screen
 gallery were approved. All 124 catalogue captures were written as the new

@@ -345,6 +345,13 @@
       "fixture": "strip",
       "origin": "added_state",
       "reason": "the facts strip under a conversation",
+      "flaky": {
+        "appearances": [
+          "light",
+          "dark"
+        ],
+        "reason": "the pinned iOS simulator can settle bottom-anchored transcript text two physical pixels apart between launches despite identical UIKit scroll geometry"
+      },
       "simulator": "amux-golden",
       "appearances": [
         "light",
@@ -683,6 +690,12 @@
       "fixture": "composer-accessibility",
       "origin": "added_state",
       "reason": "the composer with a message half-written in it, at an accessibility text size",
+      "flaky": {
+        "appearances": [
+          "dark"
+        ],
+        "reason": "the pinned iOS simulator can settle bottom-anchored transcript text two physical pixels apart between launches despite identical UIKit scroll geometry"
+      },
       "simulator": "amux-golden",
       "appearances": [
         "light",
