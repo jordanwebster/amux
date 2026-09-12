@@ -5,7 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-claude = { path = "../claude", features = ["pty", "test-support"] }
+claude = { path = "../claude", features = ["pty"] }
 chrono = { workspace = true }
 futures-core = "0.3"
 replay-support = { path = "../replay-support" }

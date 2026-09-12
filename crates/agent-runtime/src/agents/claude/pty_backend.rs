@@ -224,7 +224,6 @@ impl ClaudePtyBackend {
         backend
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn scripted_for_testnet(
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
@@ -241,7 +240,6 @@ impl ClaudePtyBackend {
         )
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn scripted(
         req: &CreateAgentRequest,
         runtime_dir: PathBuf,
@@ -528,13 +526,11 @@ impl ClaudePtyBackend {
         }
     }
 
-    #[cfg(feature = "test-support")]
     #[allow(dead_code)] // Consumed only by the opt-in derived-row recorder.
     pub(crate) async fn current_seq_for_derived_rows(&self) -> u64 {
         self.log.current_seq().await
     }
 
-    #[cfg(feature = "test-support")]
     #[allow(dead_code)] // Consumed only by the opt-in derived-row recorder.
     pub(crate) async fn close_log_for_derived_rows(&self) {
         self.log.close().await;
@@ -1029,7 +1025,6 @@ fn external_session() -> (Session, mpsc::Sender<HookPayload>) {
     (session, hook_tx)
 }
 
-#[cfg(any(test, feature = "test-support"))]
 fn scripted_session(keymaps: &KeymapSources) -> (Session, mpsc::Sender<HookPayload>) {
     use tokio::io::AsyncReadExt;
 

@@ -20,6 +20,6 @@ ui-state = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-agent-runtime = { workspace = true, features = ["test-support"] }
-node = { workspace = true, features = ["test-support"] }
+agent-runtime = { workspace = true }
+node = { workspace = true }
 tempfile = { workspace = true }

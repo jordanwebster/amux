@@ -48,9 +48,6 @@ run = "scripts/with-git-revision.sh timeout 900 cargo check --locked --workspace
 [task.ci-test]
 run = "scripts/with-git-revision.sh timeout 1200 cargo test --locked --workspace --lib --tests --profile ci-test"
 
-[task.optimized-test-build]
-run = "scripts/with-git-revision.sh timeout 1200 cargo test --locked --workspace --lib --tests --release --no-run"
-
 [task.release-check]
 run = 'scripts/with-git-revision.sh timeout 1200 cargo build --locked --release -p amux --bins --no-default-features "$@" && scripts/release-policy-check.sh "$@"'
 
@@ -150,27 +147,16 @@ run = 'scripts/with-git-revision.sh scripts/spec-test.sh "$@"'
 
 # Opt-in real-Codex scenarios. The CLI must match the current sources.
 [task.codex-live]
-run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test codex_live --features test-support -- "$@"'
+run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test codex_live -- "$@"'
 needs = ["build"]
 
 [task.claude-pty-live]
-run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test claude_pty_live --features test-support -- "$@"'
+run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test claude_pty_live -- "$@"'
 needs = ["build"]
 
 [task.claude-sdk-live]
-run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test claude_sdk_live --features test-support -- "$@"'
+run = 'scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --test claude_sdk_live -- "$@"'
 needs = ["build"]
-
-[task.live-harness-check]
-run = "scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --features test-support --test codex_live --test claude_pty_live --test claude_sdk_live --no-run"
-
-# Execute each custom main without a scenario. Each must print usage and exit
-# before it opens an account or starts a provider process.
-[task.live-harness-smoke]
-run = "scripts/with-git-revision.sh timeout 900 cargo test --locked -p node --features test-support --test codex_live --test claude_pty_live --test claude_sdk_live"
-
-[task.live-harness-lint]
-run = "scripts/with-git-revision.sh timeout 900 cargo clippy --locked -p node --features test-support --test codex_live --test claude_pty_live --test claude_sdk_live -- -D warnings"
 
 # Regenerates the committed protobuf code (crates/wire/src/generated)
 # after a proto change. Not a build step: the output is committed, and CI

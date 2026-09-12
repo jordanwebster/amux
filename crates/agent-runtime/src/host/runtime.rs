@@ -28,7 +28,6 @@ use super::lifecycle::{
     withdraw_agent,
 };
 use super::{AgentServiceState, SharedAgentServiceState, session};
-#[cfg(any(test, feature = "test-support"))]
 use crate::agents::claude::ClaudeSession;
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentType, ArtifactOwners, CreateAgentRequest,
@@ -47,7 +46,6 @@ pub struct AgentRuntime {
     resume_lock: tokio::sync::Mutex<()>,
     artifact_owners: Arc<ArtifactOwners>,
     artifact_sweeper: tokio::task::JoinHandle<()>,
-    #[cfg(feature = "test-support")]
     pub(crate) test_cleanup: Option<PathBuf>,
 }
 
@@ -71,7 +69,6 @@ impl AgentRuntime {
     /// The private Codex fallback socket lives beside the configured amux
     /// socket; its short filename preserves as much `SUN_LEN` headroom as
     /// possible.
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn new_with_mcp_launch_route(
         route: McpLaunchRoute,
         claude_user_keymap_dir: PathBuf,
@@ -123,7 +120,6 @@ impl AgentRuntime {
             resume_lock: tokio::sync::Mutex::new(()),
             artifact_owners,
             artifact_sweeper,
-            #[cfg(feature = "test-support")]
             test_cleanup: None,
         }))
     }
@@ -140,12 +136,11 @@ impl AgentRuntime {
         self.host_id
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn sweep_artifacts_for_test(&self) -> Result<Vec<model::ArtifactId>, ProtocolError> {
         self.artifact_owners.sweep_loaded(artifacts::EPHEMERAL_TTL)
     }
 
-    #[cfg(all(feature = "test-support", unix))]
+    #[cfg(unix)]
     #[allow(dead_code)] // Consumed only by opt-in recorded-provider harnesses.
     pub(crate) async fn register_sdk_fixture(
         &self,
@@ -171,7 +166,6 @@ impl AgentRuntime {
         Ok(reader)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn register_scripted_claude(
         &self,
         request: CreateAgentRequest,
@@ -193,7 +187,6 @@ impl AgentRuntime {
         Ok(agent)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn end_scripted_session(&self, agent_id: Uuid) {
         self.event_tx
             .send(SessionEvent::Ended { agent_id })
@@ -201,7 +194,6 @@ impl AgentRuntime {
             .expect("scripted session event loop should be running");
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn deliver_scripted_hook(
         &self,
         agent_id: Uuid,
@@ -221,7 +213,6 @@ impl AgentRuntime {
 impl Drop for AgentRuntime {
     fn drop(&mut self) {
         self.artifact_sweeper.abort();
-        #[cfg(feature = "test-support")]
         if let Some(path) = self.test_cleanup.take() {
             let _ = std::fs::remove_dir_all(path);
         }

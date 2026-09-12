@@ -1,4 +1,4 @@
-//! Narrow adapters that let the external test-support package drive private
+//! Narrow adapters that let the external harness package drive private
 //! provider backends without owning their orchestration or assertions here.
 
 use std::path::{Path, PathBuf};

@@ -1,3 +1,15 @@
+2026-09-12 — **Remove feature-selected test APIs from the crate graph.** Node,
+agent-runtime and Claude now compile their hidden harness seams as ordinary
+code. Claude carries replay support normally, and agent-runtime carries its
+temporary-directory dependency normally, so workspace builds and tests no
+longer resolve different rlibs. Node's live provider targets are ordinary
+auto-discovered tests until they move to testnet, and the obsolete optimized
+test and live-harness policy tasks are gone. The unit graph reports one
+configuration for every listed workspace crate; the full workspace test,
+all-target Clippy, release product policy and dependency policy pass. The
+release graph now intentionally contains replay-support without linking its
+unreferenced code into the product.
+
 2026-09-12 — **Use one development configuration for products and tests.**
 Removed the test-only and CI-only Cargo profiles so product builds, workspace
 tests and focused tests reuse the same workspace crate artifacts. CI still

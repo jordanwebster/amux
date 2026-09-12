@@ -191,7 +191,7 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
         );
     }
     let providers = Providers::default();
-    let [phone_root, peer_root] = [InstallationRoot::Ephemeral, InstallationRoot::Ephemeral];
+    let [phone_root, peer_root] = [InstallationRoot::ephemeral(), InstallationRoot::ephemeral()];
     let installation = Installation::open(options("phone", providers.clone(), phone_root))
         .await
         .unwrap();
@@ -445,7 +445,7 @@ fn embedded_ephemeral_storage_stays_in_container_tmpdir() {
             let installation = Installation::open(options(
                 "phone",
                 Providers::default(),
-                InstallationRoot::Ephemeral,
+                InstallationRoot::ephemeral(),
             ))
             .await
             .unwrap();

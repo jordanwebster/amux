@@ -512,7 +512,6 @@ impl<P: BufferPolicy> BroadcastReader<P> {
     /// Production readers consume [`Self::read_event`] because they act on
     /// lag and epoch changes; only tests and the derived-rows fixture
     /// harness want items alone, so this exists under the harness's gate.
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn read(&mut self) -> Option<P::Item> {
         loop {
             match self.read_event().await? {

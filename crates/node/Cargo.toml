@@ -4,16 +4,6 @@ version = "0.6.0"
 edition.workspace = true
 description = "Identity, routing, and supervised node services for amux"
 publish = false
-autotests = false
-autoexamples = false
-
-[features]
-test-support = []
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(test_fixtures)',
-] }
 
 [dependencies]
 anyhow = { workspace = true }
@@ -74,7 +64,7 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [dev-dependencies]
-agent-runtime = { workspace = true, features = ["test-support"] }
+agent-runtime = { workspace = true }
 artifacts = { workspace = true }
 prost-types = { workspace = true }
 ui-runtime = { workspace = true }
@@ -87,41 +77,3 @@ replay-support = { path = "../replay-support" }
 redaction = { workspace = true }
 tokio-tungstenite = { workspace = true }
 nix = { workspace = true }
-
-[[test]]
-name = "codex_live_args"
-path = "tests/codex_live_args.rs"
-
-[[test]]
-name = "codex_live_depfile"
-path = "tests/codex_live_depfile.rs"
-
-[[test]]
-name = "claude_pty_live_args"
-path = "tests/claude_pty_live_args.rs"
-
-[[test]]
-name = "claude_pty_live_redact"
-path = "tests/claude_pty_live_redact.rs"
-
-[[test]]
-name = "claude_sdk_live_args"
-path = "tests/claude_sdk_live_args.rs"
-
-[[test]]
-name = "codex_live"
-path = "tests/codex_live.rs"
-required-features = ["test-support"]
-harness = false
-
-[[test]]
-name = "claude_pty_live"
-path = "tests/claude_pty_live.rs"
-required-features = ["test-support"]
-harness = false
-
-[[test]]
-name = "claude_sdk_live"
-path = "tests/claude_sdk_live.rs"
-required-features = ["test-support"]
-harness = false

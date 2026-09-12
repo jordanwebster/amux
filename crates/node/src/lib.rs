@@ -22,7 +22,6 @@ mod services;
 pub mod setup;
 mod sleep_inhibitor;
 mod subscription;
-#[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_fixtures;
 #[cfg(test)]
@@ -35,7 +34,7 @@ pub mod update;
 mod user_state;
 
 #[cfg(test)]
-#[path = "../tests/spec/main.rs"]
+#[path = "../tests/spec/mod.rs"]
 mod spec;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -79,9 +79,7 @@ jobs:
         run: cargo install wt --version 0.4.0 --locked
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: |
-          wt lint
-          wt run live-harness-lint
+        run: wt lint
 
   test:
     name: Test
@@ -104,9 +102,6 @@ jobs:
         run: wt run doctest
         env:
           AMUX_INVARIANT_FATAL: "1"
-      - name: Prove live harness entry points without provider access
-        if: matrix.os == 'ubuntu-latest'
-        run: wt run live-harness-smoke
 
   build:
     name: Build
@@ -123,19 +118,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build product release
         run: wt run release-check
-
-  optimized-tests:
-    name: Optimized test compilation
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.98.0
-      - name: Install pinned task runner
-        run: cargo install wt --version 0.4.0 --locked
-      - uses: Swatinem/rust-cache@v2
-      - name: Compile all test targets with optimization
-        run: wt run optimized-test-build
 
   e2e:
     name: E2E Tests

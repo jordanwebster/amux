@@ -39,13 +39,11 @@ use crate::services::{
 };
 #[cfg(test)]
 use crate::transport::in_process_transport_pair;
-#[cfg(any(test, feature = "test-support"))]
-use crate::transport::tcp_incoming;
 #[cfg(unix)]
 use crate::transport::unix_incoming;
 use crate::transport::{
     BoxedGrpcIo, InProcessConnection, TcpServerTransport, in_process_channel,
-    managed_in_process_transport_pair,
+    managed_in_process_transport_pair, tcp_incoming,
 };
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::tunnel::{TunnelPool, TunnelTransport};
@@ -152,7 +150,6 @@ impl CloudLinkService {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn serve_on_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
         spawn_cloud_link_service_server(self.clone(), tcp_incoming(listener))
     }

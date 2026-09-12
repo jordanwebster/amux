@@ -165,7 +165,7 @@ pub(crate) fn establish_cloud_connection(
     state: Arc<RwLock<ServerState>>,
     connector_ctx: LinkConnectorCtx,
     status: RuntimeStatus,
-    #[cfg(any(test, feature = "test-support"))] transport: Option<tonic::transport::Channel>,
+    transport: Option<tonic::transport::Channel>,
 ) -> CloudConnector {
     let (stop_tx, mut stop_rx) = watch::channel(false);
     let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
@@ -186,7 +186,6 @@ pub(crate) fn establish_cloud_connection(
                     connector_ctx.clone(),
                     stop_rx.clone(),
                     &status,
-                    #[cfg(any(test, feature = "test-support"))]
                     transport.clone(),
                 )
                 .await
@@ -278,7 +277,7 @@ async fn run_cloud_connection(
     connector_ctx: LinkConnectorCtx,
     mut stop_rx: watch::Receiver<bool>,
     status: &RuntimeStatus,
-    #[cfg(any(test, feature = "test-support"))] transport: Option<tonic::transport::Channel>,
+    transport: Option<tonic::transport::Channel>,
 ) -> std::result::Result<(), CloudConnectionError> {
     let prepared = tokio::select! {
         biased;
@@ -294,7 +293,6 @@ async fn run_cloud_connection(
         details,
         stop_rx,
         status,
-        #[cfg(any(test, feature = "test-support"))]
         transport,
     )
     .await
@@ -338,15 +336,12 @@ async fn run_cloud_connection_with_details(
     details: CloudRoutingConnectionDetails,
     stop_rx: watch::Receiver<bool>,
     status: &RuntimeStatus,
-    #[cfg(any(test, feature = "test-support"))] transport: Option<tonic::transport::Channel>,
+    transport: Option<tonic::transport::Channel>,
 ) -> std::result::Result<(), CloudConnectionError> {
     tracing::info!(host = %details.host, port = details.port, "connecting to cloud routing");
-    #[cfg(any(test, feature = "test-support"))]
     let channel = transport
         .map(Ok)
         .unwrap_or_else(|| cloud_routing_channel(details.host.clone(), details.port));
-    #[cfg(not(any(test, feature = "test-support")))]
-    let channel = cloud_routing_channel(details.host.clone(), details.port);
     let channel = channel.map_err(|error| CloudConnectionError::Retriable {
         msg: format!("Connection failed: {error}"),
         reset_backoff: false,

@@ -5,7 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-node = { workspace = true, features = ["test-support"] }
+node = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
@@ -16,7 +16,7 @@ uuid = { workspace = true }
 libc = { workspace = true }
 
 [dev-dependencies]
-agent-runtime = { workspace = true, features = ["test-support"] }
+agent-runtime = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }

@@ -23,9 +23,7 @@ pub(crate) use memory::{in_process_incoming, in_process_transport_pair};
 pub(crate) use single_io::channel_from_single_io;
 #[allow(unused_imports)]
 pub(crate) use ssh::{SshRelayIo, spawn_ssh_pair_recv, spawn_ssh_relay};
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) use tcp::tcp_incoming;
-pub(crate) use tcp::{TcpServerTransport, configure_tcp_keepalive};
+pub(crate) use tcp::{TcpServerTransport, configure_tcp_keepalive, tcp_incoming};
 use thiserror::Error;
 pub(crate) use tls::{
     create_tls_acceptor, pairing_channel, pairing_channel_from_io, tls_channel,

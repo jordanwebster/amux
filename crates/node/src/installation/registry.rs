@@ -39,8 +39,16 @@ pub enum InstallationRoot {
     /// disk, in a fresh directory under [`std::env::temp_dir()`] (the app
     /// container's tmp on iOS, TMPDIR on macOS), deleted when the installation
     /// is dropped. Hosts must supply a durable [`Self::OnDisk`] root instead.
-    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
     Ephemeral,
+}
+
+impl InstallationRoot {
+    /// Construct an unpersisted installation root for external test harnesses.
+    #[doc(hidden)]
+    pub fn ephemeral() -> Self {
+        Self::Ephemeral
+    }
 }
 
 /// Owns the lock descriptor; never unlink the lock file, which would let a new
@@ -141,9 +149,6 @@ pub struct Registry {
 
 impl Registry {
     pub fn open(root: InstallationRoot) -> Result<Self, InstallationError> {
-        #[cfg(not(any(test, feature = "test-support")))]
-        let InstallationRoot::OnDisk(path) = root;
-        #[cfg(any(test, feature = "test-support"))]
         let path = match root {
             InstallationRoot::OnDisk(path) => path,
             InstallationRoot::Ephemeral => {

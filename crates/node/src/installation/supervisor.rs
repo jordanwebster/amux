@@ -286,7 +286,6 @@ fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), Inst
 }
 
 impl Installation {
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn test_runtime(
         &self,
         id: ProfileId,
@@ -495,7 +494,6 @@ impl Installation {
         &self.inner.root
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) async fn use_test_cloud_transport(
         &self,
         id: ProfileId,

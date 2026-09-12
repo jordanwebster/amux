@@ -9,10 +9,9 @@ mod suspend;
 
 pub use host::{AgentRuntime, AgentRuntimeFactory};
 
-#[cfg(all(feature = "test-support", unix))]
+#[cfg(unix)]
 mod test_support_provider;
 
-#[cfg(feature = "test-support")]
 #[doc(hidden)]
 pub mod test_support {
     use std::io;

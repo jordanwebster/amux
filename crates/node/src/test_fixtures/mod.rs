@@ -556,7 +556,6 @@ impl Drop for TestRelay {
 
 /// Inject a connector observation into a live installation's production status
 /// adapter, without needing a particular cloud refusal or network transport.
-#[cfg(any(test, feature = "test-support"))]
 pub async fn report_profile_status(
     installation: &crate::installation::Installation,
     id: crate::installation::ProfileId,
