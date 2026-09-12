@@ -1,8 +1,8 @@
 # Golden frames are byte-contracts: tests compare them against LF-joined
 # rendered strings, so checkout must never translate their line endings
 # (Windows runners default to autocrlf).
-crates/amux-tui/tests/golden/*.txt text eol=lf
-crates/amux-cli/tests/fixtures/*.txt text eol=lf
+crates/*/tests/golden/*.txt text eol=lf
+crates/*/tests/fixtures/*.txt text eol=lf
 
 # Replay recordings are byte-contracts as well: each manifest stores a digest of
 # the recording beside it, so a checkout that translates line endings
@@ -17,8 +17,8 @@ crates/claude/keymaps/*.toml text eol=lf
 # Committed protobuf codegen: CI regenerates these and fails on any byte
 # difference, so checkout must not translate line endings; the descriptor
 # set is binary outright.
-crates/amux/src/protocol/generated/*.rs text eol=lf linguist-generated=true
-crates/amux/src/protocol/generated/*.bin binary
+crates/wire/src/generated/*.rs text eol=lf linguist-generated=true
+crates/wire/src/generated/*.bin binary
 
 # The attachment guide's canonical review example is compiled into a test that
 # compares it against LF-joined formatter output, so its line endings must

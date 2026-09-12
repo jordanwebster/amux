@@ -1,3 +1,9 @@
+2026-09-13 — **Protect renamed golden fixtures from line-ending translation.**
+The fifth CI run compiled and ran everywhere; the one Windows failure was a
+golden comparison whose fixture had been checked out with CRLF because
+`.gitattributes` still named the pre-split crate paths. The rules now match
+every crate's golden and fixture text and the wire crate's generated output.
+
 2026-09-13 — **Gate the Codex socket path re-exports to Unix.** The fourth CI
 run failed only in the Windows test job: node re-exported two Unix-only socket
 path helpers for its tests without the platform gate their definitions carry.
