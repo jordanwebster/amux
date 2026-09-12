@@ -494,11 +494,12 @@ fn socket_allocation_checks_platform_byte_limit_without_truncation() {
     ));
     let long_root = root.path().join("x".repeat(70));
     let registry = open(&long_root);
+    let paths = ProfilePaths::for_id(registry.path().unwrap(), ProfileId::new()).unwrap();
     assert!(matches!(
-        ProfilePaths::for_id(registry.path().unwrap(), ProfileId::new()),
+        validate_socket_path(&paths.socket_path),
         Err(InstallationError::SocketPathTooLong(_))
     ));
-    assert!(!long_root.join("profiles").exists());
+    assert!(long_root.join("profiles").is_dir());
     // Profile sockets at the platform limit still leave room for the shorter
     // Codex socket alongside them, without falling back to a shared /tmp path.
     let id = ProfileId::new();

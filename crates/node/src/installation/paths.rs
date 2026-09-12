@@ -33,8 +33,6 @@ impl ProfilePaths {
         let paths = Self::allocated(&root, id);
         let profiles = root.join("profiles");
         let directory = profiles.join(id.to_string());
-        #[cfg(unix)]
-        validate_socket_path(&paths.socket_path)?;
         for path in [
             &profiles,
             &directory,

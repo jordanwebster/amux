@@ -22,10 +22,24 @@ ALLOWED_LOCAL = {
     "agent-runtime": {"artifacts", "claude", "codex", "host-api", "model", "pty-host"},
     "ui-state": {"model"},
     "ui-runtime": {"artifacts", "client", "model", "ui-state"},
-    "tui": {"tui-fixtures", "ui-runtime", "ui-state"},
+    "tui": {"ui-runtime", "ui-state"},
     "e2e-runner": {"wire"},
 }
-TEST_SUPPORT = {"testnet", "claude-specs", "codex-specs", "test-agent"}
+TEST_SUPPORT = {
+    "testnet",
+    "claude-specs",
+    "codex-specs",
+    "tui-fixtures",
+    "test-agent",
+    "shot",
+}
+SUPPORT_ALLOWED_LOCAL = {
+    "claude-specs": {"claude", "pty-host", "replay-support"},
+    "codex-specs": {"codex", "replay-support"},
+    "tui-fixtures": {"tui", "ui-runtime", "ui-state"},
+}
+REPLAY_PRODUCTION_OWNERS = {"amux", "claude"}
+NO_BUILD_SCRIPT = set(ALLOWED_LOCAL) | {"claude", "codex"}
 MODEL_BANNED_DEPENDENCIES = {
     "tokio",
     "tonic",
@@ -69,6 +83,21 @@ def main() -> int:
                 f"{name}: local production dependencies are {sorted(local)}, expected {sorted(allowed)}"
             )
 
+    for name, allowed in SUPPORT_ALLOWED_LOCAL.items():
+        package = packages.get(name)
+        if package is None:
+            failures.append(f"missing required support package {name}")
+            continue
+        local = {
+            dependency["name"]
+            for dependency in package["dependencies"]
+            if dependency.get("path") is not None and dependency["kind"] != "dev"
+        }
+        if local != allowed:
+            failures.append(
+                f"{name}: local support dependencies are {sorted(local)}, expected {sorted(allowed)}"
+            )
+
     model = packages.get("model")
     if model is not None:
         dependency_names = {
@@ -97,7 +126,33 @@ def main() -> int:
         if edges:
             failures.append(f"{name}: production/build edges reach test support: {sorted(edges)}")
 
-    for name in ALLOWED_LOCAL:
+    replay_owners = {
+        name
+        for name, package in packages.items()
+        if any(
+            dependency["name"] == "replay-support"
+            and dependency["kind"] in (None, "build")
+            for dependency in package["dependencies"]
+        )
+        and name not in TEST_SUPPORT
+    }
+    if replay_owners != REPLAY_PRODUCTION_OWNERS:
+        failures.append(
+            "replay-support: production owners are "
+            f"{sorted(replay_owners)}, expected {sorted(REPLAY_PRODUCTION_OWNERS)}"
+        )
+    claude_replay = next(
+        (
+            dependency
+            for dependency in packages["claude"]["dependencies"]
+            if dependency["name"] == "replay-support" and dependency["kind"] is None
+        ),
+        None,
+    )
+    if claude_replay is None or not claude_replay["optional"]:
+        failures.append("claude: replay-support must remain an opt-in test-support edge")
+
+    for name in NO_BUILD_SCRIPT:
         package = packages.get(name)
         if package is None:
             continue

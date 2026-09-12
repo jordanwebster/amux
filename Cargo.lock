@@ -557,7 +557,18 @@ dependencies = [
 name = "claude-specs"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "claude",
+ "futures-core",
+ "pty-host",
+ "replay-support",
+ "semver",
+ "serde",
  "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -596,7 +607,6 @@ dependencies = [
  "chrono",
  "futures-util",
  "nix 0.31.3",
- "replay-support",
  "semver",
  "serde",
  "serde_json",
@@ -613,7 +623,15 @@ dependencies = [
 name = "codex-specs"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "codex",
+ "replay-support",
+ "semver",
  "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2114,8 +2132,10 @@ dependencies = [
  "bytes",
  "chrono",
  "claude",
+ "claude-specs",
  "client",
  "codex",
+ "codex-specs",
  "core-foundation",
  "curve25519-dalek",
  "futures-util",
@@ -3656,6 +3676,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tui",
+ "tui-fixtures",
  "ui-state",
 ]
 
@@ -3984,9 +4005,13 @@ version = "0.1.0"
 name = "testnet"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "libc",
  "node",
+ "reqwest",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -4452,7 +4477,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
- "tui-fixtures",
  "ui-runtime",
  "ui-state",
  "unicode-segmentation",
@@ -4464,6 +4488,19 @@ dependencies = [
 [[package]]
 name = "tui-fixtures"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "crossterm 0.29.0",
+ "gethostname",
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "tui",
+ "ui-runtime",
+ "ui-state",
+ "uuid",
+ "vt100",
+]
 
 [[package]]
 name = "tungstenite"

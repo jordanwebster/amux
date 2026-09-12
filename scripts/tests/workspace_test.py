@@ -25,10 +25,10 @@ class WorkspaceTestRecipe(unittest.TestCase):
             return result.stdout.strip()
 
     def test_default_and_name_filter_keep_full_coverage(self):
-        self.assertEqual(self.invoke(), "test --workspace --all-targets")
+        self.assertEqual(self.invoke(), "test --locked --workspace --all-targets")
         self.assertEqual(
             self.invoke("session_identity"),
-            "test --workspace --all-targets session_identity",
+            "test --locked --workspace --all-targets session_identity",
         )
 
     def test_explicit_target_limits_which_harnesses_start(self):
@@ -42,19 +42,19 @@ class WorkspaceTestRecipe(unittest.TestCase):
             with self.subTest(selection=selection):
                 self.assertEqual(
                     self.invoke(*selection, "identity"),
-                    "test --workspace " + " ".join([*selection, "identity"]),
+                    "test --locked --workspace " + " ".join([*selection, "identity"]),
                 )
 
     def test_harness_arguments_do_not_select_cargo_targets(self):
         self.assertEqual(
             self.invoke("identity", "--", "--test"),
-            "test --workspace --all-targets identity -- --test",
+            "test --locked --workspace --all-targets identity -- --test",
         )
 
     def test_architecture_target_is_not_a_test_target(self):
         self.assertEqual(
             self.invoke("--target", "aarch64-apple-darwin"),
-            "test --workspace --all-targets --target aarch64-apple-darwin",
+            "test --locked --workspace --all-targets --target aarch64-apple-darwin",
         )
 
 

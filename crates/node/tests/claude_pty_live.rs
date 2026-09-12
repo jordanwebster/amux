@@ -4,9 +4,7 @@
 //! passed. Run one scenario at a time, always under `timeout`:
 //!
 //! ```text
-//! cargo build -p amux-cli
-//! AMUX_LIVE_OUT=target/claude-pty-live timeout 600 \
-//!     cargo test -p amux --test claude_pty_live -- semantic_chat
+//! AMUX_LIVE_OUT=target/claude-pty-live wt run claude-pty-live -- semantic_chat
 //! ```
 //!
 //! `all` runs every maintained process-level scenario. Every scenario has one
@@ -24,6 +22,8 @@
 //! (fixture candidate) and `<name>.meta.json` (provenance + keystroke log).
 //! A failure always prints the assertion and this capture path. Taxonomy
 //! drift is written beside the run as data and never changes its exit code.
+
+extern crate node as amux;
 
 #[path = "claude_pty_live/args.rs"]
 mod args;
@@ -333,7 +333,7 @@ fn finalize(
         "captured_at": chrono::Utc::now().to_rfc3339(),
         "claude_version": version,
         "model": model,
-        "harness": format!("cargo test -p amux --test claude_pty_live -- {scenario}"),
+        "harness": format!("wt run claude-pty-live -- {scenario}"),
         "poisoned_daemon_env": poisoned,
         "notes": notes,
         "failure": failure,
@@ -1432,8 +1432,9 @@ async fn semantic_chat(
     scratch: &Scratch,
     model: &str,
 ) -> Result<serde_json::Value> {
-    use amux::claude_io::{
-        AskAnswer, Intent, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
+    use model::{
+        AskAnswer, ClaudePtyIntent as Intent, PermissionAnswer, PlanAnswer, QuestionAnswer,
+        QuestionResponse,
     };
 
     let (mut session, mut cursor) = open(
@@ -1622,8 +1623,8 @@ async fn two_terminal_fanout(
     scratch: &Scratch,
     model: &str,
 ) -> Result<serde_json::Value> {
-    use amux::terminal_io::TERMINAL_V1;
     use amux::{SubscribeSessionEvent, SubscribeSessionRequest};
+    use model::TERMINAL_V1;
 
     let (mut session, cursor) = open(
         daemon,
@@ -3333,13 +3334,13 @@ async fn subscriptions(
 /// Claude. The transcript and hook CLI both live under the scratch daemon;
 /// no file beneath the user's real ~/.claude is read or written.
 async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<serde_json::Value> {
-    use amux::claude_io::{PTY_TRANSCRIPT_V1, decode_pty_transcript_v1_output};
-    use amux::terminal_io::TERMINAL_V1;
     use amux::{
         AgentIdentifier, ClientError, ProtocolError, SendInputRequest, SubscribeSessionEvent,
         SubscribeSessionRequest,
     };
+    use model::{CLAUDE_PTY_TRANSCRIPT_V1 as PTY_TRANSCRIPT_V1, TERMINAL_V1};
     use uuid::Uuid;
+    use wire::decode_claude_pty_output as decode_pty_transcript_v1_output;
 
     let cwd = scratch.project_dir("external_readonly")?;
     let external_dir = scratch.root.join("external-session");
@@ -3456,12 +3457,10 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         format!("{}\n", captured.join("\n")),
     )?;
 
-    let payload = amux::claude_io::encode_pty_transcript_v1_input(
-        amux::claude_io::ClaudePtyTranscriptV1Input {
-            expected_seq: latest_seq,
-            intent: amux::claude_io::Intent::Prompt {
-                text: "readonly sessions refuse semantic input".to_owned(),
-            },
+    let payload = wire::encode_claude_pty_input(
+        latest_seq,
+        model::ClaudePtyIntent::Prompt {
+            text: "readonly sessions refuse semantic input".to_owned(),
         },
     );
     let readonly_error = daemon

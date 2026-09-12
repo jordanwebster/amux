@@ -6,7 +6,7 @@ description = "Desktop provider sessions and local agent hosting for amux"
 publish = false
 
 [features]
-test-support = []
+test-support = ["claude/test-support"]
 
 [dependencies]
 anyhow = { workspace = true }

@@ -16,10 +16,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tui::chat::{FeedScroll, handle_chat_mouse};
 use tui::clipboard::ClipboardContent;
-use tui::fixtures::{
+use tui::{ColorMode, FrameContext, Theme, render};
+use tui_fixtures::{
     Fixture, NamedState, ScriptStep, apply_step, fixture, long_feed, recording_start,
 };
-use tui::{ColorMode, FrameContext, Theme, render};
 use ui_state::{DiffBase, StructuredProtocol};
 
 /// The fixed terminal viewport used by every capture.
@@ -1109,8 +1109,8 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::style::{Color, Modifier};
     use tempfile::tempdir;
-    use tui::fixtures::NamedState;
     use tui::{ColorMode, Theme};
+    use tui_fixtures::NamedState;
     use ui_state::StructuredProtocol;
 
     use super::{
@@ -1324,7 +1324,7 @@ mod script_tests {
     use tempfile::tempdir;
     use tui::UiAction;
     use tui::chat::handle_chat_key;
-    use tui::fixtures::{apply_step, deliver_diff_response};
+    use tui_fixtures::{apply_step, deliver_diff_response};
     use ui_state::{ArtifactKind, ArtifactRef, BaseIdentity, Command, DiffFile, DiffResponse};
 
     use super::*;

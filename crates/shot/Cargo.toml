@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 ui-state = { workspace = true }
 tui = { workspace = true }
+tui-fixtures = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
 fontdue = { workspace = true }

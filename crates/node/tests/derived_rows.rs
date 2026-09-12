@@ -29,7 +29,7 @@ use replay_support::{
 use serde_json::{Value, json};
 
 const UPDATE_FLAG: &str = "UPDATE_DERIVED_ROWS";
-const MODEL: &str = codex::specs::CAPTURE_MODEL;
+const MODEL: &str = codex_specs::specs::CAPTURE_MODEL;
 const CLAUDE_SDK_DERIVATIONS: &[(&str, &str)] = &[
     ("text_turn", "session/text_turn"),
     ("controls", "control/permission_mode_and_model"),
@@ -370,12 +370,12 @@ async fn derive(spec: &str, recording_dir: &Path) -> Result<Vec<u8>> {
 async fn codex_derived_rows_match_recordings_byte_for_byte() -> Result<()> {
     let update = std::env::var_os(UPDATE_FLAG).is_some();
     let output_root = fixtures_root();
-    let expected_names = codex::specs::registry()
+    let expected_names = codex_specs::specs::registry()
         .iter()
         .map(|entry| format!("{}.rows.jsonl", entry.name))
         .collect::<BTreeSet<_>>();
-    for entry in codex::specs::registry() {
-        let recording_dir = codex::specs::fixtures_root().join(entry.recording);
+    for entry in codex_specs::specs::registry() {
+        let recording_dir = codex_specs::specs::fixtures_root().join(entry.recording);
         let actual = derive(entry.name, &recording_dir)
             .await
             .with_context(|| format!("derive {}", entry.name))?;
@@ -1163,7 +1163,7 @@ fn derived_pty_metadata(fixture: &str, recording: &Recording) -> Value {
 async fn claude_pty_derived_rows_match_recordings_byte_for_byte() -> Result<()> {
     let update = std::env::var_os(UPDATE_FLAG).is_some();
     let output_root = claude_pty_fixtures_root();
-    let registry_names = claude::specs::pty_registry()
+    let registry_names = claude_specs::specs::pty_registry()
         .iter()
         .map(|entry| entry.name)
         .collect::<BTreeSet<_>>();
@@ -1186,7 +1186,7 @@ async fn claude_pty_derived_rows_match_recordings_byte_for_byte() -> Result<()> 
     );
 
     for (recording_name, fixture) in CLAUDE_PTY_DERIVATIONS {
-        let recording_dir = claude::specs::pty::fixtures_root().join(recording_name);
+        let recording_dir = claude_specs::specs::pty::fixtures_root().join(recording_name);
         let recording = load_recording(&recording_dir)
             .with_context(|| format!("load Claude PTY recording {recording_name}"))?;
         let actual = derive_claude_pty(recording_name, &recording)

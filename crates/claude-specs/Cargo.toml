@@ -5,5 +5,19 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+claude = { path = "../claude", features = ["pty", "test-support"] }
+chrono = { workspace = true }
+futures-core = "0.3"
+replay-support = { path = "../replay-support" }
+pty-host = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
 
+[[bin]]
+name = "claude-probe"
+path = "src/bin/claude_probe/main.rs"

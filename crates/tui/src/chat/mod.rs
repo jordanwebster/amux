@@ -128,6 +128,23 @@ fn frame_parts(
 }
 
 impl ChatView {
+    /// Set expansion for a folded exploration run in this view instance.
+    ///
+    /// The identifier comes from the presentation feed. Keeping this operation
+    /// on the view prevents fixture and client code from depending on the
+    /// renderer's private viewport representation.
+    #[doc(hidden)]
+    pub fn set_exploration_run_expanded(&mut self, run_id: u64, expanded: bool) {
+        let run = blocks::RunKey(run_id);
+        if expanded {
+            self.viewport.expanded.insert(run);
+        } else {
+            self.viewport.expanded.remove(&run);
+        }
+        self.feed_metrics.replace(None);
+        self.paint_cache.replace(PaintCache::default());
+    }
+
     pub fn open(model: &Model, agent: AgentId, leader: char, kitty: bool) -> Option<Self> {
         let protocol = model.agent(agent)?.structured_protocol()?;
         let inner = match protocol {

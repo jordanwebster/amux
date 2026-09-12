@@ -19,6 +19,8 @@
 //! and include backend rows, provider IO, observed subscription rows, raw bytes
 //! where applicable, redacted copies, and version-stamped metadata.
 
+extern crate node as amux;
+
 #[cfg(unix)]
 #[allow(dead_code)]
 #[path = "support/live_installation.rs"]
@@ -735,7 +737,7 @@ fn main() -> anyhow::Result<()> {
             .send_input(amux::SendInputRequest {
                 agent: amux::AgentIdentifier::Id(agent),
                 input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: amux::terminal_io::TERMINAL_V1.into(),
+                io_protocol: model::TERMINAL_V1.into(),
                 payload: bytes::Bytes::from_static(b"/status"),
                 pin: Vec::new(),
             })
@@ -748,7 +750,7 @@ fn main() -> anyhow::Result<()> {
             .send_input(amux::SendInputRequest {
                 agent: amux::AgentIdentifier::Id(agent),
                 input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: amux::terminal_io::TERMINAL_V1.into(),
+                io_protocol: model::TERMINAL_V1.into(),
                 payload: bytes::Bytes::from_static(b"\r"),
                 pin: Vec::new(),
             })

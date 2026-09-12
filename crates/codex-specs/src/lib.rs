@@ -1,5 +1,7 @@
 //! Recorded Codex protocol corpus checks kept out of product dependency graphs.
 
+pub mod specs;
+
 use std::path::Path;
 
 pub fn validate_recordings(root: &Path) -> Result<usize, String> {

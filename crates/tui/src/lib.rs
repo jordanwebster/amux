@@ -7,13 +7,21 @@
 //! leaves as a Command through the runtime. `docs/UI.md` owns the design;
 //! the golden-frame suite locks every screen.
 
+// Unit tests that need full named views compile the implementation owned by
+// `tui-fixtures` in this crate context. A Cargo dev-dependency would form a
+// package cycle because the fixture owner exercises this library's public API.
+#[cfg(test)]
+extern crate self as tui;
+#[cfg(test)]
+#[path = "../../tui-fixtures/src/lib.rs"]
+pub mod fixtures;
+
 pub(crate) mod bindings;
 pub mod chat;
 pub mod chrome;
 pub mod clipboard;
 pub mod composer;
 pub mod diagnostics;
-pub mod fixtures;
 pub mod keys;
 pub(crate) mod markdown;
 pub mod render;

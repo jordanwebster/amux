@@ -22,21 +22,25 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use amux::claude_io::{
-    ClaudePtyTranscriptV1Input, Intent, PTY_TRANSCRIPT_V1, decode_pty_transcript_v1_output,
-    encode_pty_transcript_v1_input,
-};
-use amux::terminal_io::TERMINAL_V1;
 use amux::{
     AgentType, Client, Config, CreateAgentRequest, ProtocolError, SendInputRequest,
     SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
 };
 use anyhow::{Context, Result, anyhow, bail};
+use model::{
+    CLAUDE_PTY_TRANSCRIPT_V1 as PTY_TRANSCRIPT_V1, ClaudePtyIntent as Intent,
+    ClaudePtyTranscriptV1Input, TERMINAL_V1,
+};
 use tokio::sync::Mutex;
 use tokio::task::{AbortHandle, JoinHandle};
 use uuid::Uuid;
+use wire::decode_claude_pty_output as decode_pty_transcript_v1_output;
 
 use super::depfile::assert_binary_is_current;
+
+fn encode_pty_transcript_v1_input(input: ClaudePtyTranscriptV1Input) -> Vec<u8> {
+    wire::encode_claude_pty_input(input.expected_seq, input.intent)
+}
 
 #[derive(Default)]
 pub(super) struct RecorderState {

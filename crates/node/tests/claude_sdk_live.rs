@@ -5,15 +5,15 @@
 //! first, then run every live invocation under an outer timeout:
 //!
 //! ```text
-//! cargo build -p amux-cli
-//! AMUX_LIVE_OUT=.autopilot/evidence timeout 1500 \
-//!   cargo test -p amux --test claude_sdk_live -- all
+//! AMUX_LIVE_OUT=.autopilot/evidence wt run claude-sdk-live -- all
 //! ```
 //!
 //! `AMUX_CLAUDE_LIVE_MODEL` defaults to `haiku`. The suite uses the operator's
 //! existing Claude login while isolating amux state, XDG state, the project,
 //! and the daemon socket under a temporary directory. Claude auto-update is
 //! disabled for the live child process.
+
+extern crate node as amux;
 
 #[cfg(unix)]
 #[allow(dead_code)]
@@ -40,9 +40,6 @@ fn main() -> anyhow::Result<()> {
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
 
-    use amux::claude_sdk_io::{
-        CLAUDE_SDK_V1, ClaudeSdkV1Input, decode_claude_sdk_v1_output, encode_claude_sdk_v1_input,
-    };
     use amux::{
         AgentIdentifier, AgentType, ClaudeDriver, Client, Config, CreateAgentRequest,
         SendInputRequest, SendMessageRequest, SubscribeSessionEvent, SubscribeSessionRequest,
@@ -51,9 +48,14 @@ fn main() -> anyhow::Result<()> {
     use bytes::Bytes;
     use claude::sdk::PermissionResult;
     use claude_sdk_live::args;
+    use model::{CLAUDE_SDK_V1, ClaudeSdkInput as ClaudeSdkV1Input};
     use serde_json::{Value, json};
     use tempfile::TempDir;
     use uuid::Uuid;
+    use wire::{
+        decode_claude_sdk_output as decode_claude_sdk_v1_output,
+        encode_claude_sdk_input as encode_claude_sdk_v1_input,
+    };
 
     const READY_TIMEOUT: Duration = Duration::from_secs(90);
     const TURN_TIMEOUT: Duration = Duration::from_secs(240);
@@ -381,7 +383,6 @@ fn main() -> anyhow::Result<()> {
                 label,
                 ClaudeSdkV1Input::Prompt {
                     text: text.to_string(),
-                    image_blocks: Vec::new(),
                 },
             )
             .await
@@ -513,11 +514,11 @@ fn main() -> anyhow::Result<()> {
                 "permission-allow",
                 ClaudeSdkV1Input::PermissionDecision {
                     request_id: request_id.clone(),
-                    decision: PermissionResult::Allow {
+                    decision: serde_json::to_value(PermissionResult::Allow {
                         updated_input: Some(updated_input),
                         updated_permissions: None,
                         tool_use_id: None,
-                    },
+                    })?,
                 },
             )
             .await?;

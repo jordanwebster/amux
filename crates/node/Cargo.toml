@@ -80,7 +80,24 @@ prost-types = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
 claude = { workspace = true }
+claude-specs = { path = "../claude-specs" }
 codex = { path = "../codex" }
+codex-specs = { path = "../codex-specs" }
 replay-support = { path = "../replay-support" }
 tokio-tungstenite = { workspace = true }
 nix = { workspace = true }
+
+[[test]]
+name = "codex_live"
+path = "tests/codex_live.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "claude_pty_live"
+path = "tests/claude_pty_live.rs"
+required-features = ["test-support"]
+
+[[test]]
+name = "claude_sdk_live"
+path = "tests/claude_sdk_live.rs"
+required-features = ["test-support"]

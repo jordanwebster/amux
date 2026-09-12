@@ -4,15 +4,18 @@ use std::path::{Path, PathBuf};
 fn main() {
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let repo = manifest_dir.join("../..");
-    let dot_git = repo.join(".git");
-    println!("cargo:rerun-if-changed={}", dot_git.display());
-
-    let sha = git_sha(&repo).unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rerun-if-env-changed=AMUX_GIT_SHA");
+    let supplied = std::env::var("AMUX_GIT_SHA")
+        .ok()
+        .filter(|value| is_sha(value));
+    let sha = supplied.unwrap_or_else(|| git_sha(&repo).unwrap_or_else(|| "unknown".to_string()));
     println!("cargo:rustc-env=GIT_SHA={sha}");
 }
 
 fn git_sha(repo: &Path) -> Option<String> {
     let git_dir = git_dir(repo)?;
+    let dot_git = repo.join(".git");
+    println!("cargo:rerun-if-changed={}", dot_git.display());
     let head_path = git_dir.join("HEAD");
     println!("cargo:rerun-if-changed={}", head_path.display());
     let head = fs::read_to_string(&head_path).ok()?;

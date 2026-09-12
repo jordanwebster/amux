@@ -12,7 +12,9 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::sync::{broadcast, mpsc, oneshot, watch};
+#[cfg(any(test, feature = "test-support"))]
+use tokio::sync::oneshot;
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::hooks::{HookPayload, HookReceiver};
 use crate::launch::{Launch, pty_spawn_args};
@@ -43,6 +45,7 @@ pub struct DelaySource {
 #[derive(Clone)]
 enum DelayImplementation {
     Live,
+    #[cfg(any(test, feature = "test-support"))]
     Replay(replay_support::ReplayClock),
 }
 
@@ -53,6 +56,7 @@ impl DelaySource {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn replay(clock: replay_support::ReplayClock) -> Self {
         Self {
             implementation: DelayImplementation::Replay(clock),
@@ -65,6 +69,7 @@ impl DelaySource {
                 tokio::time::sleep(duration.min(Duration::from_millis(u64::from(MAX_DELAY_MS))))
                     .await;
             }
+            #[cfg(any(test, feature = "test-support"))]
             DelayImplementation::Replay(clock) => {
                 let _ = clock.advance_for(duration).await;
                 tokio::task::yield_now().await;
@@ -179,6 +184,7 @@ impl TranscriptSource {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn recorded(rows: mpsc::Receiver<(PathBuf, TranscriptRow)>) -> Self {
         Self {
             rows,
@@ -859,6 +865,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn from_recording(
     replay: &mut replay_support::StrictReplay,
     manifest: &replay_support::Manifest,
@@ -915,6 +922,7 @@ pub fn from_recording(
 /// Strict replay is line-oriented. PTY frames are hex-framed so arbitrary
 /// terminal bytes (including newlines) retain their exact boundaries.
 #[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn encode_recording_bytes(bytes: &[u8]) -> String {
     let mut encoded = String::with_capacity(4 + bytes.len() * 2);
     encoded.push_str("hex:");
@@ -925,6 +933,7 @@ pub fn encode_recording_bytes(bytes: &[u8]) -> String {
     encoded
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn decode_recording_bytes(line: &str) -> Option<Vec<u8>> {
     let encoded = line.strip_prefix("hex:")?;
     if encoded.len() % 2 != 0 {
@@ -936,6 +945,7 @@ fn decode_recording_bytes(line: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct RecordingFrameWriter {
     inner: Box<dyn AsyncWrite + Unpin + Send>,
     pending: Vec<u8>,
@@ -943,6 +953,7 @@ struct RecordingFrameWriter {
     framed_offset: usize,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl RecordingFrameWriter {
     fn new(inner: Box<dyn AsyncWrite + Unpin + Send>) -> Self {
         Self {
@@ -954,6 +965,7 @@ impl RecordingFrameWriter {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl AsyncWrite for RecordingFrameWriter {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -1191,6 +1203,7 @@ fn row_confirms_delivery(row: &Value, confirmation: &str) -> bool {
     enqueued || peer_user || queued_command
 }
 
+#[cfg(any(test, feature = "test-support"))]
 async fn pump_recorded_bytes(
     mut reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send>,
     tx: mpsc::Sender<Bytes>,
@@ -1212,6 +1225,7 @@ async fn pump_recorded_bytes(
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 async fn pump_hooks(
     mut reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send>,
     tx: mpsc::Sender<HookPayload>,
@@ -1232,6 +1246,7 @@ async fn pump_hooks(
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 async fn pump_transcript(
     mut reader: Box<dyn tokio::io::AsyncBufRead + Unpin + Send>,
     tx: mpsc::Sender<(PathBuf, TranscriptRow)>,

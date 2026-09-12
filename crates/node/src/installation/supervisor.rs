@@ -805,6 +805,9 @@ impl Inner {
         let record = self.state.lock().unwrap().active(id)?.status.record.clone();
         let result = async {
             let mut paths = ProfilePaths::for_id(&self.root, id)?;
+            if self.listeners.has_sockets() {
+                crate::installation::paths::validate_socket_path(&paths.socket_path)?;
+            }
             if let Some(reports_dir) = &self.config.reports_dir {
                 paths.reports_dir = reports_dir.clone();
             }

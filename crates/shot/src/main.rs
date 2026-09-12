@@ -6,8 +6,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use shot::{
     ShotError, append_set, record_draft, record_review, record_scroll, render_to_path, verify,
 };
-use tui::fixtures::{NamedState, all_states};
 use tui::{ColorMode, Theme, parse_theme_file, theme_from_file};
+use tui_fixtures::{NamedState, all_states};
 use ui_state::StructuredProtocol;
 
 const SET_NAMES: &[&str] = &[

@@ -1,3 +1,18 @@
+2026-09-12 — **Make build recipes truthful and move executable fixtures out of products.**
+All Cargo-producing wt recipes now use locked resolution and a revision wrapper
+that gives build scripts a checkout-independent commit identity. CI and release
+jobs require wt 0.4.0 and call declared recipes; embedded checks select the
+provider-free node/client/UI graph, while public embedded lifecycle tests live
+in `testnet`. Claude and Codex scenarios, recordings, replay runners, and probe
+binaries now belong to their specification packages without profile-sensitive
+build scripts. Named TUI states and their screenshot/performance suites now
+belong to `tui-fixtures`; `tui` has no production fixture dependency. The
+dependency policy enforces these support boundaries and permits Claude replay
+only through its explicit test-support feature. Apple development builds pack
+debug information, while test harnesses disable compiler debug information
+with a platform-portable Cargo setting. Focused embedded, support-package,
+node registry, TUI, dependency-policy, and live-harness compilation checks pass.
+
 2026-09-11 — **Extract transport-independent values, wire encoding, settings, and artifact storage.**
 Added `model`, `wire`, and `settings` packages with explicit dependency rules,
 renamed the content-addressed store to `artifacts`, and moved protobuf schemas,
