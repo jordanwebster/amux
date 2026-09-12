@@ -81,6 +81,20 @@ nix = { version = "0.31", features = ["process", "signal"] }
 
 # Tests must unwind, so an abort dev profile makes cargo compile every
 # dependency a second time for `cargo test`. Release keeps abort.
+# Cargo defaults macOS debug profiles to split-debuginfo = "unpacked", which
+# keeps every codegen unit's object file under target/<profile>/deps for the
+# debugger and never removes it; with incremental compilation each rebuild
+# leaves the previous session's objects behind. Measured at 26 GiB of the
+# canonical's 45 GiB target and 158 GiB in one worktree. "packed" keeps one
+# dSYM per product binary instead (dsymutil runs at link, for a few
+# binaries); test harnesses keep no debug map, and a panic still names its
+# file and line.
+[profile.dev]
+split-debuginfo = "packed"
+
+[profile.test]
+split-debuginfo = "off"
+
 [profile.release]
 panic = "abort"
 
