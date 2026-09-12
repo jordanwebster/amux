@@ -34,17 +34,17 @@ variant than full verification.
 Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
-Cargo-producing recipes reserve space in the repository's 60 GiB aggregate
-output pool before they start. `wt run output-inventory` is a fast view of
-owned output sizes, live task leases, and unowned roots. Add
-`-- --include-unmanaged` only for an explicit slower audit of historical roots.
-`wt run output-prune` lists inactive owned outputs; `-- --apply` removes those
-whole output directories after rechecking their marker and lease. The helper
-never removes an unmarked output or a symbolic-link root. Run `wt run
-test-output-budget` to exercise admission, cancellation, and reclamation.
-`wt run retention-workload` creates and removes three disposable worktrees for
-the ten-cycle concurrent edit/build/test acceptance workload; its measurements
-are written under the ignored `notes/build-foundations/measurements/` directory.
+Build output is wt's to keep bounded, not a recipe's. After every wt task
+that changed `target/`, and in `wt prune`, wt deletes what the workspace will
+never read again — superseded units, object files no live binary
+references, incremental state of configurations nothing builds — judged
+from `cargo metadata` and the units the workspace still reaches, never by
+age or directory name. `wt ls --disk` sizes each tree's build output;
+`wt prune amux` shows what a sweep of every tree would reclaim before
+applying it. A tree that is no longer needed is removed with `wt rm`, which
+is what reclaims its output entirely. See
+`notes/build-foundations/output-pool-retired.md` for why the repository's
+own output pool was retired.
 
 ## Recorded PTY tests
 

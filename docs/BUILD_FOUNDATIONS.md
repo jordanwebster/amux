@@ -422,47 +422,25 @@ Proposed initial storage policy, to be calibrated by clean measurements:
   delta in a controlled run. APFS clones/hardlinks and shared cache copies mean
   summing apparent directory sizes is not exclusive physical consumption.
 
-In addition to category alerts, propose an initial **60 GiB aggregate admission
-budget for amux's disposable worktree outputs**, with the shared 10 GiB compiler
-cache accounted separately. This is a proposed operational limit to validate,
-not a claim that today's builds fit it. At admission, reclaim eligible inactive
-outputs, account for active tasks' measured peak scratch needs, and queue/refuse
-new heavy work if the reserve cannot cover it. Report the category and owner
-responsible instead of silently raising the limit or retaining another copy.
-Use a safety reserve and monitor growth during builds; a strict physical byte
-ceiling requires filesystem quota support, since task-boundary checks alone
-cannot prevent compiler output overshoot. Simulator runtimes and pinned release
-evidence are separately reported machine storage, not hidden inside this budget.
-
-Before accepting the hygiene pass, the controlled three-worktree workload must
-fit an explicitly chosen aggregate budget and repeated edits must plateau after
-reclamation. If a fresh necessary build exceeds it, reduce its footprint or
-make the capacity decision explicit; age-based cleanup alone does not pass.
+An aggregate byte budget for the repository's outputs was implemented and
+then retired: it summed `du` per tree, and on APFS `du` counts every
+clone-shared extent once per tree — two clones of a 256 MiB file report
+768 MiB and cost nothing — so it measured a quantity that did not exist,
+and it could not see the largest growth at all: codegen-unit object files
+that rustc leaves under `deps/` for the debugger and never removes, 26 GiB
+of the canonical's 45 GiB `target` and 158 GiB in one worktree. Retention
+is wt's now (`notes/build-foundations/output-pool-retired.md`): every new
+tree is a snapshot of the canonical — sources with their modification
+times and the whole `target/`, cloned copy-on-write — so trees share what
+the canonical built until they change it; wt sweeps superseded units,
+unreferenced object files and dead incremental state after every task that
+changed `target/` and in `wt prune`; and the profiles here keep object
+files out of `deps/` in the first place. The `warm` task declares which
+configurations the canonical is kept warm with. If capacity ever needs
+managing, the quantity to manage is free space on the volume, which is
+measurable; exclusive per-tree physical usage is not.
 
 No cleanup was performed during the audit.
-
-The repository implementation places ordinary Cargo build, check, test,
-codegen, and lint recipes behind
-an output admission helper. A target becomes disposable only after the helper
-writes a versioned marker for the same repository pool. Each running task holds
-a process lease with its declared scratch reservation; the coordination lock is
-released while Cargo runs, so separate worktrees retain private output and can
-compile concurrently. Completion and forwarded termination refresh the cached
-allocated size and clear that task's lease. Long-running tasks refresh that
-measurement every 30 seconds and warn if participating outputs cross the
-admission budget. A later admission may reclaim an
-inactive marked target as one coherent directory, after rechecking both marker
-and lease.
-
-Ordinary inventory uses the cached measurements maintained at task boundaries.
-It reports unmarked historical roots without recursively measuring them, which
-keeps admission responsive even when old worktrees contain large targets. The
-explicit `--include-unmanaged` audit performs that slower scan. Unmanaged bytes
-are reported separately and excluded from the enforceable pool because the
-helper neither owns nor deletes them. The 60 GiB limit is therefore an
-admission bound for participating outputs, not a machine quota or a claim about
-all existing disk use. The compiler cache remains a separately reported 10 GiB
-category when its path is configured.
 
 ## Reproducible tasks and hermetic tests
 
@@ -620,7 +598,7 @@ requesting equivalents. Source audit: wt 0.3.0 and its local README/cookbook.
 | Now, existing API | Repo-scoped simulator mutex and bounded compile slots in amux recipes | Two trees contend explicitly; independent non-simulator work proceeds; wait time is visible. |
 | Now, existing API | Tree-owned simulator resource with unique name/UDID, cleanup tied to tree | Same app identifier can run on separate tree devices; deleting one tree leaves the other device/processes intact. |
 | High, new capability | Machine-scoped named capacity pools with shared/exclusive claims for compiler load, simulator pools and performance isolation | A performance run excludes compiler/capture jobs across repositories; normal jobs share a bounded pool. Lost owners release claims. Coordination covers wt-managed jobs; unrelated host load is detected and invalidates measurements. |
-| High, new capability | Declared disposable output roots, cache categories, quotas and leases; safe preview/prune | Disk reports distinguish compiler state, packaged products and captures; prune refuses active leases and never touches runtime reports or other trees. |
+| Delivered in wt | Snapshot creation, output roots, and a sweep after every task (see `notes/build-foundations/output-pool-retired.md`) | A new tree's first build compiles only what its branch changed; `wt prune` shows and reclaims superseded output in every tree; nothing outside a declared output root is ever deleted. |
 | High, new capability | Explain task decisions and artifact provenance in structured output | A no-op explains reused dependencies; a changed SDK/header forces the correct action; failure cannot reuse a stale success receipt. |
 | Conditional | Declared task inputs/outputs with content validity and local result reuse for pure orchestration steps | Same inputs in a second tree reuse packaging/codegen; changing an input, declared environment value or tool identity invalidates; effectful tasks never skip. |
 
@@ -741,7 +719,7 @@ authorization, ordering, lifecycle and release exclusions, must remain covered.
 | 4 | Define host lifecycle/operation contract, then extract agent runtime and rename remaining node library. Adapt installation factory and mobile composition; remove `local-agents` and desktop-only policy from shared node. | Provider-free mobile graph; node and runtime have no dependency on one another; deletion/write drain, suspend/resume, attachments, A2A and admission suites pass. |
 | 5 | Move testnet/provider specs/TUI fixtures, consolidate harness targets; remove profile gates and unnecessary production test dependencies. Simplify large service/pairing modules while preserving private tests. | Product dependency closures exclude test support. Debug and optimized test configurations work; release artifacts exclude test backend/tools. |
 | 6 | Extract reusable app-runtime, embedded-client and client-ffi from the native bridge; make slice/header/project/packaging dependencies explicit; replace competing bridge links; introduce simulator development profile and tree-owned devices. | Swift-only edit runs zero Rust compilation, header generation, framework assembly or bridge smoke; Rust edit rebuilds only needed slice; two trees run independently; release and hosted-test bridge checks pass. |
-| 7 | Compare profile/cache/runner choices; enable focused build/test recipes; unify CI recipes; enforce graph and storage budgets. Remove old profiles/output layouts only through declared cleanup. | No unexplained new configurations in a build→test→lint→build cycle; selected tests match intent; timed-out processes/resources are reclaimed; storage stays bounded. |
+| 7 | Compare profile/cache/runner choices; enable focused build/test recipes; unify CI recipes; enforce the dependency graph; leave output retention to wt. Remove old profiles/output layouts only through declared cleanup. | No unexplained new configurations in a build→test→lint→build cycle; selected tests match intent; timed-out processes/resources are reclaimed; storage stays bounded. |
 | 8 | Finish Bazel trial begun after step 3, using completed mobile artifact contracts; choose one supported build architecture before the native merge. | Publish measured adopt/defer decision against the gates above and retire the losing experimental path. |
 
 The host contract and mobile packaging are the two highest-risk steps; split
