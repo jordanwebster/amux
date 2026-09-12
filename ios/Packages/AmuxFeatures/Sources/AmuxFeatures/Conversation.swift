@@ -306,29 +306,8 @@ public struct Conversation: View {
     /// underneath it when it scrolls, which is the only arrangement in which
     /// frosting the top edge means anything.
     private var transcript: some View {
-        TranscriptContainer(resting: resting, moved: reading) {
-            if !subject.readable {
-                UnsupportedLayer(layer: "this agent’s transcript")
-                    .padding(.top, design.metrics.feedGap)
-            } else if typeSize.isAccessibilitySize, model.asks.panel != nil {
-                // The ask repeats the command and reason it needs. At large
-                // type, a clipped fragment of the feed behind the fixed pill
-                // provides no context and makes both surfaces harder to read.
-                EmptyView()
-            } else {
-                TranscriptFeed(rows: model.rows())
-            }
-            // The end of a run belongs in the feed rather than under it.
-            // It is the last thing that happened, in sequence after the
-            // last thing the agent said, and a run that ended is not a
-            // state of the screen you can act on — it is a fact about the
-            // transcript you scroll to the bottom of.
-            if let ended = subject.ended {
-                EndOfRun(ended: ended, age: subject.age, host: subject.host)
-                    .padding(.horizontal, design.metrics.gutter)
-                    .padding(.top, design.metrics.feedGap)
-            }
-        }
+        ConversationTranscript(
+            model: model, subject: subject, resting: resting, reading: reading)
         // The platform's effect, not a hand-drawn plate. Masking a glass layer
         // to make it fade stops it sampling what is behind it, so it renders
         // as a pane you can read straight through; this samples correctly.
@@ -390,78 +369,9 @@ public struct Conversation: View {
 
     @ViewBuilder
     private var standing: some View {
-        Group {
-            // Being asked whether to delete the agent outranks even an ask:
-            // nothing down here is worth offering while the question is
-            // whether this conversation is about to stop existing, and a
-            // composer left under the card would be a message you could start
-            // writing to something you are deleting.
-            // Being asked for a name is the same: one field at a time, and a
-            // composer under the card would be a second one.
-            if showing == .deleteAgent {
-                DeleteAgentCard(
-                    name: subject.name,
-                    cancel: { showing = nil },
-                    confirm: {
-                        showing = nil
-                        actions(.deleteAgent)
-                    })
-            } else if showing == .rename {
-                RenameCard(
-                    current: subject.name,
-                    cancel: { showing = nil },
-                    confirm: { name in
-                        showing = nil
-                        actions(.renamed(name))
-                    })
-            // An unanswered ask outranks everything else down here. Whatever
-            // else is true — a machine that has gone quiet, a layer catching
-            // up — the agent has stopped and is waiting on one answer, and
-            // that answer is the only thing worth offering.
-            } else if let panel = model.asks.panel {
-                AskPanelView(panel: panel) { actions(.answer(panel, $0)) }
-            } else if let state = ConversationFootState(
-                gate: model.gate, refusal: model.refusal, subject: subject) {
-                ConversationFoot(state: state) { actions(.retry) }
-            } else if let composer = ComposerState(
-                gate: model.gate, tail: model.tailRow, elapsed: subject.working) {
-                VStack(spacing: 8) {
-                    // Whatever is true about the turn, furthest from the box
-                    // and above anything opened from it. It is not a card
-                    // somebody opened, so it is never replaced by one: a
-                    // permission sheet does not stop a message being queued or
-                    // a task being worked on, and a card belongs against the
-                    // composer it was opened from.
-                    strip
-                    // Raised by what is being written rather than opened, so
-                    // it stacks with the cards rather than replacing them:
-                    // nothing can be open over the composer while a command is
-                    // being typed, because typing is what closes them.
-                    if let commands = SlashCommands.offered(
-                        for: model.draft, facts: model.facts, provider: model.provider) {
-                        SlashRows(commands: commands) { picked in
-                            model.draft.pick(picked)
-                            actions(.picking(picked))
-                        }
-                    }
-                    opened
-                    ComposerBox(
-                        state: composer, agent: subject.name, provider: model.provider,
-                        draft: Bindable(model).draft, dictation: model.dictation) { action in
-                            // What the plus and the chip open is this screen's
-                            // own state: both are about the message being
-                            // written, and nothing outside has to know one is
-                            // open. Pressing the same control again closes it.
-                            switch action {
-                            case .attach: showing = showing == .plus ? nil : .plus
-                            case .openSettings: showing = showing == .settings ? nil : .settings
-                            default: break
-                            }
-                            actions(action)
-                        }
-                }
-            }
-        }
+        ConversationStanding(
+            model: model, subject: subject, showing: $showing,
+            naming: naming, actions: actions)
     }
 
     /// Goes somewhere else, keyboard first.
@@ -494,67 +404,6 @@ public struct Conversation: View {
             true
         case .tasks, nil:
             false
-        }
-    }
-
-    /// The facts about the running turn, where there are any.
-    ///
-    /// Absent when nothing is true, which is most conversations: a band along
-    /// the bottom of every quiet screen would cost the feed a row to say
-    /// nothing. Whether the list is grown is this screen's own state, like
-    /// everything else the bottom of the conversation opens.
-    @ViewBuilder
-    private var strip: some View {
-        let facts = ConversationFacts(model)
-        let children = model.children(named: naming)
-        if !facts.isEmpty {
-            FactsStrip(
-                facts: facts, children: children, open: showing == .tasks,
-                grow: { showing = showing == .tasks ? nil : .tasks },
-                openChild: { child in
-                    if let agent = child.openable { leaving(.openChild(agent)) }
-                },
-                unqueue: {
-                    showing = nil
-                    actions(.unqueue)
-                })
-        }
-    }
-
-    /// Whatever the composer has opened over itself.
-    ///
-    /// One at a time, and each replaces the last: the permissions sheet opens
-    /// *alone*, from the row in the plus, and a stack of cards over a
-    /// conversation would leave nothing of the conversation to write about.
-    @ViewBuilder
-    private var opened: some View {
-        switch showing {
-        case .plus:
-            PlusCard(permission: ProviderPermission(model.provider.permission)) { choice in
-                if choice == .permissions {
-                    showing = .permissions
-                } else {
-                    showing = nil
-                }
-                actions(.attaching(choice))
-            }
-        case .settings:
-            SettingsCard(
-                provider: model.provider, refusal: model.settingsGate.refusal) { change in
-                    actions(.setting(change))
-                }
-        case .permissions:
-            PermissionsCard(
-                permission: ProviderPermission(model.provider.permission),
-                refusal: model.settingsGate.refusal) { change in
-                    actions(.setting(change))
-                }
-        // The strip is drawn by `strip`, below whatever is opened over the
-        // composer rather than in its place: it is a fact about the turn and
-        // not a card, so growing it does not close what somebody else opened
-        // and opening a card does not take it away.
-        case .overflow, .deleteAgent, .rename, .tasks, nil:
-            EmptyView()
         }
     }
 
@@ -659,6 +508,225 @@ public struct Conversation: View {
                 .lineLimit(1)
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The observable boundary for everything standing above the home indicator.
+///
+/// Draft edits, session gates and task facts belong here. Keeping them out of
+/// the conversation root means clearing a sent draft does not rebuild the
+/// chrome or re-evaluate the thousand-row transcript beside this control.
+private struct ConversationStanding: View {
+    let model: ConversationStore
+    let subject: ConversationSubject
+    @Binding var showing: ConversationOverlay?
+    let naming: (AgentId) -> String
+    let actions: @MainActor (ConversationAction) -> Void
+
+    @ViewBuilder
+    var body: some View {
+        Group {
+            // Being asked whether to delete the agent outranks even an ask:
+            // nothing down here is worth offering while the question is
+            // whether this conversation is about to stop existing, and a
+            // composer left under the card would be a message you could start
+            // writing to something you are deleting. Renaming is the same:
+            // one field at a time.
+            if showing == .deleteAgent {
+                DeleteAgentCard(
+                    name: subject.name,
+                    cancel: { showing = nil },
+                    confirm: {
+                        showing = nil
+                        actions(.deleteAgent)
+                    })
+            } else if showing == .rename {
+                RenameCard(
+                    current: subject.name,
+                    cancel: { showing = nil },
+                    confirm: { name in
+                        showing = nil
+                        actions(.renamed(name))
+                    })
+            } else if let panel = model.asks.panel {
+                AskPanelView(panel: panel) { actions(.answer(panel, $0)) }
+            } else if let state = ConversationFootState(
+                gate: model.gate, refusal: model.refusal, subject: subject) {
+                ConversationFoot(state: state) { actions(.retry) }
+            } else if let composer = ComposerState(
+                gate: model.gate, tail: activityTail, elapsed: subject.working) {
+                ConversationComposerStanding(
+                    model: model, subject: subject, state: composer,
+                    showing: $showing, naming: naming, actions: actions)
+            }
+        }
+    }
+
+    /// Only a running turn reads the transcript tail. A ready composer does
+    /// not derive anything from it, so arriving rows do not invalidate the
+    /// controls during the common streaming case.
+    private var activityTail: TranscriptRow? {
+        switch model.gate {
+        case .claudePty(.working), .claudeSdk(.working), .codex(.activeTurn):
+            model.tailRow
+        default:
+            nil
+        }
+    }
+
+}
+
+/// Draft-sized invalidations stop here. The surrounding footer chooses which
+/// state exists; this view handles the state that changes with every edit.
+private struct ConversationComposerStanding: View {
+    let model: ConversationStore
+    let subject: ConversationSubject
+    let state: ComposerState
+    @Binding var showing: ConversationOverlay?
+    let naming: (AgentId) -> String
+    let actions: @MainActor (ConversationAction) -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            strip
+            ConversationDraftCommands(model: model, actions: actions)
+            opened
+            ConversationComposerBox(
+                model: model, state: state, agent: subject.name,
+                showing: $showing, actions: actions)
+        }
+    }
+
+    @ViewBuilder
+    private var strip: some View {
+        let facts = ConversationFacts(model)
+        let children = model.children(named: naming)
+        if !facts.isEmpty {
+            FactsStrip(
+                facts: facts, children: children, open: showing == .tasks,
+                grow: { showing = showing == .tasks ? nil : .tasks },
+                openChild: { child in
+                    if let agent = child.openable { leaving(.openChild(agent)) }
+                },
+                unqueue: {
+                    showing = nil
+                    actions(.unqueue)
+                })
+        }
+    }
+
+    @ViewBuilder
+    private var opened: some View {
+        switch showing {
+        case .plus:
+            PlusCard(permission: ProviderPermission(model.provider.permission)) { choice in
+                showing = choice == .permissions ? .permissions : nil
+                actions(.attaching(choice))
+            }
+        case .settings:
+            SettingsCard(
+                provider: model.provider, refusal: model.settingsGate.refusal) { change in
+                    actions(.setting(change))
+                }
+        case .permissions:
+            PermissionsCard(
+                permission: ProviderPermission(model.provider.permission),
+                refusal: model.settingsGate.refusal) { change in
+                    actions(.setting(change))
+                }
+        case .overflow, .deleteAgent, .rename, .tasks, nil:
+            EmptyView()
+        }
+    }
+
+    private func leaving(_ action: ConversationAction) {
+        Keyboard.putDown()
+        actions(action)
+    }
+}
+
+private struct ConversationDraftCommands: View {
+    let model: ConversationStore
+    let actions: @MainActor (ConversationAction) -> Void
+
+    @ViewBuilder
+    var body: some View {
+        if let commands = SlashCommands.offered(
+            for: model.draft, facts: model.facts, provider: model.provider) {
+            SlashRows(commands: commands) { picked in
+                model.draft.pick(picked)
+                actions(.picking(picked))
+            }
+        }
+    }
+}
+
+private struct ConversationComposerBox: View {
+    let model: ConversationStore
+    let state: ComposerState
+    let agent: String
+    @Binding var showing: ConversationOverlay?
+    let actions: @MainActor (ConversationAction) -> Void
+
+    var body: some View {
+        ComposerBox(
+            state: state, agent: agent, provider: model.provider,
+            draft: Bindable(model).draft, dictation: model.dictation) { action in
+                switch action {
+                case .attach: showing = showing == .plus ? nil : .plus
+                case .openSettings: showing = showing == .settings ? nil : .settings
+                default: break
+                }
+                actions(action)
+            }
+    }
+}
+
+/// The observable transcript boundary.
+///
+/// A row arriving changes this view, not the conversation that owns it. The
+/// surrounding chrome and composer have their own state and should not be
+/// rebuilt fifty times a second just because the lazy feed gained a child.
+private struct ConversationTranscript: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.design) private var design
+    let model: ConversationStore
+    let subject: ConversationSubject
+    let resting: TranscriptResting?
+    let reading: (@MainActor (TranscriptResting) -> Void)?
+
+    var body: some View {
+        let rows = model.confirmedRows()
+        TranscriptContainer(resting: resting, moved: reading, tail: rows.last?.id) {
+            if !subject.readable {
+                UnsupportedLayer(layer: "this agent’s transcript")
+                    .padding(.top, design.metrics.feedGap)
+            } else if typeSize.isAccessibilitySize, model.asks.panel != nil {
+                // The ask repeats the command and reason it needs. At large
+                // type, a clipped fragment of the feed behind the fixed pill
+                // provides no context and makes both surfaces harder to read.
+                EmptyView()
+            } else {
+                TranscriptFeed(rows: rows)
+            }
+            // A finished run is the last event in the feed, not a screen
+            // state placed under it.
+            if let ended = subject.ended {
+                EndOfRun(ended: ended, age: subject.age, host: subject.host)
+                    .padding(.horizontal, design.metrics.gutter)
+                    .padding(.top, design.metrics.feedGap)
+            }
+        }
+        // A local send occupies the same bottom edge its confirmed row will
+        // inherit, without changing the lazy history merely to show one
+        // optimistic bubble. When the host echoes it, the inset disappears
+        // as the identical row arrives at the anchored tail.
+        .overlay(alignment: .bottom) {
+            if subject.readable,
+               !(typeSize.isAccessibilitySize && model.asks.panel != nil) {
+                PendingTranscriptFeed(model: model)
+            }
+        }
     }
 }
 

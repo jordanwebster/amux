@@ -40,32 +40,59 @@ struct TranscriptFeed: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                TranscriptRowView(
-                    row: row,
-                    railBegins: index > 0 && rows[index - 1].onRail,
-                    railContinues: index + 1 < rows.count && rows[index + 1].onRail)
-                    // Where this entry begins, measured against the page
-                    // rather than against the feed.
-                    //
-                    // Against the page is dearer — every visible row answers
-                    // again as the feed travels, rather than once when it is
-                    // laid out — and it is the only measurement that can be
-                    // believed. A feed lays its rows out with whatever heights
-                    // it has so far and settles them as the markdown below
-                    // finishes measuring, so an entry's place within the feed
-                    // is a number that quietly moves after it is read, and
-                    // reading a stale one put a reader back eleven rows from
-                    // where they were. A row's place on the page is either
-                    // current or the row is not on the page.
-                    .onGeometryChange(for: CGFloat.self) {
-                        $0.frame(in: .named(TranscriptTops.space)).minY
-                    } action: { tops?.begins(row.id, at: $0) }
-                    .onDisappear { tops?.forget(row.id) }
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, _ in
+                entry(at: index)
             }
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private func entry(at index: Int) -> some View {
+        let row = rows[index]
+        entry(
+            row,
+            railBegins: index > 0 && rows[index - 1].onRail,
+            railContinues: index + 1 < rows.count && rows[index + 1].onRail)
+    }
+
+    @ViewBuilder
+    private func entry(
+        _ row: TranscriptRow, railBegins: Bool, railContinues: Bool
+    ) -> some View {
+        let content = TranscriptRowView(
+            row: row, railBegins: railBegins, railContinues: railContinues)
+            .equatable()
+        if let tops {
+            // Where this entry begins, measured against the page rather than
+            // against the feed. This geometry is only installed by debug
+            // recording and restoration; the production screen has no
+            // consumer for it and should not recompute every visible row's
+            // global position whenever the tail grows.
+            content
+                .onGeometryChange(for: CGFloat.self) {
+                    $0.frame(in: .named(TranscriptTops.space)).minY
+                } action: { tops.begins(row.id, at: $0) }
+                .onDisappear { tops.forget(row.id) }
+        } else {
+            content
+        }
+    }
+}
+
+/// The optimistic tail is its own observation boundary. A local send can add
+/// one prompt without rebuilding the confirmed lazy history beside it.
+struct PendingTranscriptFeed: View {
+    @Environment(\.design) private var design
+    let model: ConversationStore
+
+    var body: some View {
+        ForEach(model.unacknowledged) { pending in
+            PromptSurface(text: pending.text)
+                .padding(.bottom, 15)
+                .padding(.horizontal, design.metrics.gutter)
+        }
     }
 }
 
@@ -139,9 +166,14 @@ struct TranscriptContainer<Content: View>: View {
     /// Told where the reader has come to rest, once they have taken the feed
     /// off its tail. Nothing in the shipping app listens.
     var moved: ((TranscriptResting) -> Void)?
+    /// The newest row now published to the view. Following this identity once
+    /// is cheaper and more stable than issuing a scroll from every geometry
+    /// change the resulting layout causes.
+    var tail: String?
     @ViewBuilder let content: Content
     @State private var position = ScrollPosition()
     @State private var readerMoved = false
+    @State private var openedAtTail = false
     @State private var tops = TranscriptTops()
     @State private var page = TranscriptPage()
 
@@ -152,7 +184,7 @@ struct TranscriptContainer<Content: View>: View {
         // transcript is read by dragging it wherever you like, not by settling
         // it onto whichever row is nearest.
         ScrollViewReader { entries in
-        ScrollView {
+        restoring(ScrollView {
             // Keep the lazy feed directly under the scroll view. A regular
             // stack around it asks for the whole history's size when a long
             // conversation is reopened, defeating lazy construction and
@@ -168,7 +200,7 @@ struct TranscriptContainer<Content: View>: View {
         // answers where it is now rather than where it sits in a feed whose
         // heights are still settling.
         .coordinateSpace(.named(TranscriptTops.space))
-        .environment(\.transcriptTops, tops)
+        .environment(\.transcriptTops, resting != nil || moved != nil ? tops : nil)
         .scrollIndicators(.hidden)
         // A transcript opens at its latest entry and stays there as it grows.
         // One put back where a recording left the reader must not: what is
@@ -177,31 +209,11 @@ struct TranscriptContainer<Content: View>: View {
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .initialOffset)
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .sizeChanges)
         .defaultScrollAnchor(.bottom, for: .alignment)
-        .scrollPosition($position)
-        .onScrollGeometryChange(for: TranscriptLayout.self) { geometry in
-            TranscriptLayout(geometry)
-        } action: { _, layout in
-            // A geometry callback runs while lazy measurements are being
-            // applied. Ask after that layout has finished, so the scroll uses
-            // the new heights and insets.
-            Task { @MainActor in
-                guard layout.containerSize.height > 0 else { return }
-                if resting != nil { restore() } else if !readerMoved {
-                    position.scrollTo(edge: .bottom)
-                }
-            }
-        }
-        // Where the page has reached, which the layout above deliberately
-        // does not notice. Two questions need it and neither is a reason to
-        // move the feed: which entry the reader has stopped on, and how far a
-        // restored position still has to go.
-        .onScrollGeometryChange(for: TranscriptReach.self) { geometry in
-            TranscriptReach(geometry)
-        } action: { _, reach in
-            page.readableTop = reach.insetTop
-            page.offset = reach.offset
-            guard resting != nil else { return }
-            Task { @MainActor in restore() }
+        .scrollPosition($position))
+        .onChange(of: tail, initial: true) { _, tail in
+            guard resting == nil, !readerMoved, !openedAtTail, tail != nil else { return }
+            openedAtTail = true
+            Task { @MainActor in position.scrollTo(edge: .bottom) }
         }
         .onScrollPhaseChange { _, phase in
             if phase == .tracking || phase == .interacting {
@@ -211,15 +223,48 @@ struct TranscriptContainer<Content: View>: View {
             // through. A transcript is scrolled in one gesture over hundreds
             // of entries, and a recording of every one of them would say
             // nothing a recording of the last one does not.
-            if phase == .idle, readerMoved, resting == nil,
+            if phase == .idle, readerMoved, resting == nil, let moved,
                let stopped = tops.resting(at: page.readableTop) {
-                moved?(stopped)
+                moved(stopped)
             }
         }
         .onChange(of: position.isPositionedByUser) { _, byReader in
             if byReader { readerMoved = true }
         }
         .onAppear { page.entries = entries }
+        }
+    }
+
+    /// Installs scroll geometry only for recording or restoring a reading
+    /// position. An ordinary conversation has neither consumer; writing
+    /// geometry into view state there would relayout the transcript while it
+    /// was already laying out a newly arrived row.
+    @ViewBuilder
+    private func restoring<Scrollable: View>(_ content: Scrollable) -> some View {
+        if resting != nil || moved != nil {
+            content
+                .onScrollGeometryChange(for: TranscriptLayout.self) { geometry in
+                    TranscriptLayout(geometry)
+                } action: { _, layout in
+                    // A geometry callback runs while lazy measurements are
+                    // being applied. Ask after that layout has finished.
+                    Task { @MainActor in
+                        guard layout.containerSize.height > 0, resting != nil else { return }
+                        restore()
+                    }
+                }
+                // Where the page has reached, separately from the layout
+                // changes that can put a restored reader back in place.
+                .onScrollGeometryChange(for: TranscriptReach.self) { geometry in
+                    TranscriptReach(geometry)
+                } action: { _, reach in
+                    page.readableTop = reach.insetTop
+                    page.offset = reach.offset
+                    guard resting != nil else { return }
+                    Task { @MainActor in restore() }
+                }
+        } else {
+            content
         }
     }
 
@@ -314,11 +359,17 @@ private struct TranscriptReach: Equatable {
 }
 
 /// One row, on the rail or breaking it.
-private struct TranscriptRowView: View {
+private struct TranscriptRowView: View, Equatable {
     @Environment(\.design) private var design
     let row: TranscriptRow
     let railBegins: Bool
     let railContinues: Bool
+
+    nonisolated static func == (left: Self, right: Self) -> Bool {
+        left.row == right.row
+            && left.railBegins == right.railBegins
+            && left.railContinues == right.railContinues
+    }
 
     var body: some View {
         switch row.kind {
@@ -512,12 +563,7 @@ private struct PromptSurface: View {
     var body: some View {
         HStack {
             Spacer(minLength: 44)
-            AttachedText(text: text) { said in
-                Text(said)
-                    .designFont(.body, design)
-                    .foregroundStyle(design.ink.color)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            words
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background {
@@ -527,6 +573,25 @@ private struct PromptSurface: View {
         }
         .accessibilityElement(children: .combine)
         .identified("transcript.prompt", label: text)
+    }
+
+    @ViewBuilder
+    private var words: some View {
+        if text.contains("<amux-attachment") {
+            AttachedText(text: text, prose: prose)
+        } else {
+            // A plain prompt is the common send path. The marker's absence is
+            // conclusive, so do not build the attachment parser's segmented
+            // view hierarchy merely to return this same string as prose.
+            prose(text)
+        }
+    }
+
+    private func prose(_ said: String) -> some View {
+        Text(said)
+            .designFont(.body, design)
+            .foregroundStyle(design.ink.color)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -614,21 +679,16 @@ private struct MarkdownBlockView: View {
                 .lineSpacing(DocumentMetrics.lineSpacing)
                 .fixedSize(horizontal: false, vertical: true)
         case .list(_, let items):
-            VStack(alignment: .leading, spacing: DocumentMetrics.listGap) {
-                ForEach(items) { item in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(item.marker)
-                            .designFont(.body, design)
-                            .foregroundStyle(design.inkFaint.color)
-                        Text(styledInline(item.text, design: design))
-                            .designFont(.body, design)
-                            .foregroundStyle(design.ink.color)
-                            .lineSpacing(DocumentMetrics.lineSpacing)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.leading, CGFloat(item.depth) * 16)
-                }
-            }
+            // A list is one flowing text block. Building a stack, row and two
+            // text views for every marker makes a fast transcript spend most
+            // of its main-thread time laying out punctuation. Non-breaking
+            // indentation and per-run colour retain the same hierarchy while
+            // one Text performs the line layout for the whole block.
+            Text(listText(items))
+                .designFont(.body, design)
+                .foregroundStyle(design.ink.color)
+                .lineSpacing(DocumentMetrics.listGap)
+                .fixedSize(horizontal: false, vertical: true)
         case .code(let language, let text):
             CodeBlock(language: language, text: text)
         case .quote(let lines):
@@ -653,6 +713,19 @@ private struct MarkdownBlockView: View {
                 .fill(design.hairline.color)
                 .frame(height: design.metrics.hairline)
         }
+    }
+
+    private func listText(_ items: [MarkdownBlock.Item]) -> AttributedString {
+        var result = AttributedString()
+        for (index, item) in items.enumerated() {
+            if index > 0 { result.append(AttributedString("\n")) }
+            var marker = AttributedString(
+                String(repeating: "\u{00A0}", count: item.depth * 4) + item.marker + "\u{00A0}\u{00A0}")
+            marker.foregroundColor = design.inkFaint.color
+            result.append(marker)
+            result.append(styledInline(item.text, design: design))
+        }
+        return result
     }
 }
 
@@ -976,7 +1049,10 @@ private struct OutputPreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(output.head)
+            // SwiftUI shapes the whole string before applying a line limit.
+            // Give it only the two lines the design actually exposes; a
+            // 200-line build log must not block the frame merely to be clipped.
+            Text(visibleHead)
                 .designFont(.monoSmall, design)
                 .foregroundStyle(design.inkMuted.color)
                 .lineLimit(2)
@@ -1001,6 +1077,13 @@ private struct OutputPreview: View {
     private var hiddenLabel: String {
         guard output.hidden > 0 else { return "more lines" }
         return "\(output.hidden) more line\(output.hidden == 1 ? "" : "s")"
+    }
+
+    private var visibleHead: String {
+        output.head
+            .split(separator: "\n", maxSplits: 2, omittingEmptySubsequences: false)
+            .prefix(2)
+            .joined(separator: "\n")
     }
 }
 

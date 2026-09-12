@@ -10,7 +10,7 @@ import Observation
 @Observable
 public final class ConversationStore {
     public let agent: AgentId
-    public private(set) var entries: [FeedEntry] = []
+    @ObservationIgnored public private(set) var entries: [FeedEntry] = []
     public private(set) var gate: SendGate = .unavailable
     public private(set) var phase: LayerPhase = .unavailable
     public private(set) var stream: StreamPhase?
@@ -86,7 +86,14 @@ public final class ConversationStore {
     /// often than it rewrites history; retaining this projection keeps every
     /// arriving row from folding the entire transcript again on the main
     /// actor.
-    private var projectedRows: [TranscriptRow] = []
+    @ObservationIgnored private var projectedRows: [TranscriptRow] = []
+    /// The view observes this small token rather than the projection's array
+    /// storage. Append-only streams are applied to the model immediately but
+    /// publish at most once per two 60 Hz frames, so a 50-row/second source
+    /// does not make SwiftUI lay out twice inside the same display interval.
+    private var projectionVersion: UInt64 = 0
+    @ObservationIgnored private var hasPublishedProjection = false
+    @ObservationIgnored private var projectionPublish: Task<Void, Never>?
 
     /// Operations dispatched from this conversation that have not been
     /// answered yet. An answer claims its entry and removes it, so a second
@@ -133,8 +140,12 @@ public final class ConversationStore {
     /// and replacing this one is a different event with no budget on it.
     public func sent(_ text: String) {
         sendTapped()
-        unacknowledged.append(PendingSend(text: text))
+        // Register for the transaction this mutation is about to cause. If
+        // the observer is installed after Observation has scheduled the view
+        // update, its empty Core Animation transaction can miss that commit
+        // boundary and report a later one instead.
         Signposts.emitWhenDrawn(.echoCommitted)
+        unacknowledged.append(PendingSend(text: text))
     }
 
     /// The transcript as a reader sees it: what the host has sent, then
@@ -155,7 +166,23 @@ public final class ConversationStore {
     }
 
     public func rows() -> [TranscriptRow] {
-        projectedRows + unacknowledged.map {
+        guard !unacknowledged.isEmpty else { return projectedRows }
+        var rows = projectedRows
+        rows.reserveCapacity(rows.count + unacknowledged.count)
+        rows.append(contentsOf: pendingRows())
+        return rows
+    }
+
+    /// Rows confirmed by the host, kept separate so drawing one optimistic
+    /// prompt does not copy a thousand-row transcript just to append it.
+    public func confirmedRows() -> [TranscriptRow] {
+        _ = projectionVersion
+        return projectedRows
+    }
+
+    /// Prompts sent from this phone and not yet echoed by the host.
+    public func pendingRows() -> [TranscriptRow] {
+        unacknowledged.map {
             TranscriptRow(
                 id: "pending-\($0.id.uuidString)", layer: layer,
                 kind: .prompt(text: $0.text))
@@ -169,12 +196,8 @@ public final class ConversationStore {
     /// one still running.
     public var tailRow: TranscriptRow? {
         guard unacknowledged.isEmpty else { return nil }
-        return Array(entries.suffix(Self.tailRead)).transcriptRows().last
+        return projectedRows.last
     }
-
-    /// How many entries back the open row can be. A folded run of reads and
-    /// searches is several entries and one row, and nothing else folds.
-    private static let tailRead = 8
 
     public func apply(_ event: Event) {
         switch event {
@@ -265,6 +288,7 @@ public final class ConversationStore {
         guard !update.append.isEmpty else {
             if removedPrefix || !update.replace.isEmpty {
                 projectedRows = entries.transcriptRows()
+                publishProjection()
             }
             return
         }
@@ -291,6 +315,7 @@ public final class ConversationStore {
         } else {
             projectedRows = entries.transcriptRows()
         }
+        publishProjection(coalescing: isPlainAppend)
         reconcile(update.append)
         for _ in update.append { Signposts.emit(.streamRow) }
         Signposts.emit(.transcriptCommit)
@@ -318,5 +343,28 @@ public final class ConversationStore {
         }
         projectedRows.removeLast()
         projectedRows.append(contentsOf: Array(entries[runStart...]).transcriptRows())
+    }
+
+    /// Makes the newest projection visible to Observation.
+    ///
+    /// Initial content and structural rewrites are synchronous. Only ordinary
+    /// tail appends are gathered, with a bound short enough that a 60 Hz
+    /// display can miss at most two frames while the model itself remains
+    /// fully current.
+    private func publishProjection(coalescing: Bool = false) {
+        if !hasPublishedProjection || !coalescing {
+            projectionPublish?.cancel()
+            projectionPublish = nil
+            hasPublishedProjection = true
+            projectionVersion &+= 1
+            return
+        }
+        guard projectionPublish == nil else { return }
+        projectionPublish = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(33))
+            guard !Task.isCancelled, let self else { return }
+            projectionPublish = nil
+            projectionVersion &+= 1
+        }
     }
 }

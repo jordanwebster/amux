@@ -32,6 +32,36 @@ public struct IdentifiedElements: PreferenceKey {
     }
 }
 
+private struct ReportsIdentifiedElementsKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private struct ReportedIdentifierPrefixKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+private struct ReportsIdentifiedElementGeometryKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+private extension EnvironmentValues {
+    var reportsIdentifiedElements: Bool {
+        get { self[ReportsIdentifiedElementsKey.self] }
+        set { self[ReportsIdentifiedElementsKey.self] = newValue }
+    }
+
+
+    var reportedIdentifierPrefix: String? {
+        get { self[ReportedIdentifierPrefixKey.self] }
+        set { self[ReportedIdentifierPrefixKey.self] = newValue }
+    }
+
+    var reportsIdentifiedElementGeometry: Bool {
+        get { self[ReportsIdentifiedElementGeometryKey.self] }
+        set { self[ReportsIdentifiedElementGeometryKey.self] = newValue }
+    }
+}
+
 extension View {
     /// Names something on screen once, for everybody who needs the name.
     ///
@@ -61,37 +91,71 @@ extension View {
     ) -> some View {
         modifier(Identify(identifier: identifier, label: label, value: value, enabled: enabled))
     }
+
+    /// Enables the geometry report consumed by the in-process driver.
+    ///
+    /// Accessibility identifiers are always installed by ``identified``.
+    /// Geometry preferences are substantially dearer during a streaming
+    /// transcript, so a screen only produces them when a driver or benchmark
+    /// has explicitly installed the matching preference observer.
+    public func reportingIdentifiedElements(
+        prefix: String? = nil, includeGeometry: Bool = true
+    ) -> some View {
+        environment(\.reportsIdentifiedElements, true)
+            .environment(\.reportedIdentifierPrefix, prefix)
+            .environment(\.reportsIdentifiedElementGeometry, includeGeometry)
+    }
 }
 
 private struct Identify: ViewModifier {
+    @Environment(\.reportsIdentifiedElements) private var reports
+    @Environment(\.reportedIdentifierPrefix) private var prefix
+    @Environment(\.reportsIdentifiedElementGeometry) private var includeGeometry
     let identifier: String
     let label: String?
     let value: String?
     let enabled: Bool
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content.background {
-            GeometryReader { geometry in
-                Color.clear.preference(
+        if reports, prefix.map({ identifier.hasPrefix($0) }) ?? true {
+            if includeGeometry {
+                content.background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: IdentifiedElements.self,
+                            value: [IdentifiedElement(
+                                identifier: identifier, label: label, value: value,
+                                // The size is the one the layout gave this thing, and
+                                // the position is where it ended up. They come from
+                                // different places on purpose. A presentation can put
+                                // a whole screen through a transform — the drawer
+                                // slides the conversation aside and shrinks it — and
+                                // that transform moves and resizes what is drawn
+                                // without the layout ever hearing about it. Where a
+                                // thing is is then a fact about the transform; how big
+                                // it was laid out is not, and it is the second one
+                                // that says whether a control was given the room a
+                                // thumb needs.
+                                frame: CGRect(
+                                    origin: geometry.frame(in: .global).origin,
+                                    size: geometry.size),
+                                enabled: enabled)])
+                    }
+                }
+            } else {
+                // Some probes need proof that an exact view participated in
+                // the committed transaction, but make no assertion about its
+                // position. Do not add global-coordinate layout work to those
+                // measurements just to fill a field they never read.
+                content.preference(
                     key: IdentifiedElements.self,
                     value: [IdentifiedElement(
                         identifier: identifier, label: label, value: value,
-                        // The size is the one the layout gave this thing, and
-                        // the position is where it ended up. They come from
-                        // different places on purpose. A presentation can put
-                        // a whole screen through a transform — the drawer
-                        // slides the conversation aside and shrinks it — and
-                        // that transform moves and resizes what is drawn
-                        // without the layout ever hearing about it. Where a
-                        // thing is is then a fact about the transform; how big
-                        // it was laid out is not, and it is the second one
-                        // that says whether a control was given the room a
-                        // thumb needs.
-                        frame: CGRect(
-                            origin: geometry.frame(in: .global).origin,
-                            size: geometry.size),
-                        enabled: enabled)])
+                        frame: .zero, enabled: enabled)])
             }
+        } else {
+            content
         }
     }
 }

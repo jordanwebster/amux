@@ -64,6 +64,8 @@ public struct BenchConversationScreen: View {
     private let fleet: FleetStore
     private let hosts: HostsStore
     private let subject: ConversationSubject
+    private let identifierPrefix: String
+    private let includeIdentifierGeometry: Bool
     private let drew: (@Sendable ([IdentifiedElement]) -> Void)?
 
     /// `drew`, when it is given, is handed everything on the page that named
@@ -81,18 +83,21 @@ public struct BenchConversationScreen: View {
         fleet: FleetStore,
         hosts: HostsStore,
         subject: ConversationSubject,
+        identifierPrefix: String = "transcript.",
+        includeIdentifierGeometry: Bool = true,
         drew: (@Sendable ([IdentifiedElement]) -> Void)? = nil
     ) {
         self.model = model
         self.fleet = fleet
         self.hosts = hosts
         self.subject = subject
+        self.identifierPrefix = identifierPrefix
+        self.includeIdentifierGeometry = includeIdentifierGeometry
         self.drew = drew
     }
 
     public var body: some View {
         watched(page)
-            .identified("bench.conversation", value: "\(model.entries.count)")
     }
 
     private var page: some View {
@@ -109,7 +114,14 @@ public struct BenchConversationScreen: View {
     @ViewBuilder
     private func watched(_ content: some View) -> some View {
         if let drew {
-            content.onPreferenceChange(IdentifiedElements.self) { drew($0) }
+            content
+                // The echo and laziness probes read transcript rows only.
+                // Reporting unrelated chrome and composer geometry inside
+                // their timing would measure the instrument, not the row.
+                .reportingIdentifiedElements(
+                    prefix: identifierPrefix,
+                    includeGeometry: includeIdentifierGeometry)
+                .onPreferenceChange(IdentifiedElements.self) { drew($0) }
         } else {
             content
         }

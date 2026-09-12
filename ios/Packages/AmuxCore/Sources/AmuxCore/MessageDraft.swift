@@ -638,6 +638,13 @@ extension Bridge {
     /// Anything the shared parser does not accept stays prose, byte for byte,
     /// which is what a reader on any other client will see too.
     public static func attachments(in text: String) -> [Segment] {
+        // The canonical element always begins with this marker. Its absence
+        // is a conclusive prose-only result, so avoid crossing into Rust,
+        // serialising that same string as JSON and decoding it back on every
+        // layout of the overwhelmingly common plain transcript row. A string
+        // containing the marker still goes through the shared parser; Swift
+        // never decides whether a candidate is valid.
+        guard text.contains("<amux-attachment") else { return [.prose(text)] }
         guard let json = amux_mobile_attachments(text) else { return [] }
         defer { amux_mobile_free(json) }
         let data = Data(String(cString: json).utf8)

@@ -4,6 +4,41 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-12 — **Corrected performance workloads invalidate the earlier all-green claim.**
+Independent review found that generated transcript rows nested their payload at
+the wrong level and that the cached fleet used the confirmed value for
+`awaiting`. The generator and focused tests now assert the real prose, tool,
+output and edit distribution, grouping, and cached-to-confirmed transition. A
+replacement- and eviction-only projection regression is covered as well.
+
+The corrected workload exposed production invalidation costs. Confirmed rows,
+pending sends, chrome, session footer and editable composer now have separate
+observation boundaries; append-only row publication is bounded to 33ms while
+the store applies every event immediately. Plain attachment-free messages avoid
+the shared-parser crossing, and clipped command output shapes only its two
+visible lines. Accessibility identifiers remain in Release, while expensive
+geometry reporting is enabled only by the driver that consumes it. The
+1,000-row optimistic echo now passes at 2.3ms median and 4.3ms worst, and the
+complete iOS unit matrix passes.
+
+The corrected 50-row/second stream now passes every unchanged hard budget and
+drift gate: 0.0ms/s median and worst hitch time, 25.1% median main-thread CPU,
+72.5MB median footprint, and zero idle commits. The final coalesced draw remains
+inside the timed interval, but the harness waits for it without starting three
+auxiliary display links that previously perturbed missed-frame accounting. No
+budget, tolerance or baseline changed. The earlier devlog performance numbers
+from malformed workload data are superseded by this corrected evidence.
+
+That green result is the required isolated streaming group. A subsequent
+coherent full run passes every hard budget and all other drift gates, but shows
+an order-dependent simulator discrepancy after cold and real-relay lifecycle
+work: one missed frame gives a 0.83ms/s median, and 75.3MB median footprint is
+0.05MB over the unchanged memory drift ceiling. This remains a red full
+qualification and is not hidden by the isolated pass. The final conversation
+journey, 668-control accessibility matrix, unit suites, lint and Release-scope
+inspection pass. A fresh exact-build gallery retains matched source and
+production originals in both appearances; no golden changed.
+
 2026-09-12 — **The representative iPhone flow is now a direct production port.**
 Home, conversation and the plan card use the selected source layout and
 components through the real shell, stores, router and native editor. Shared tab

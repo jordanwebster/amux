@@ -128,6 +128,20 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(store.rows(), store.entries.transcriptRows())
     }
 
+    func testAnEvictionOnlyUpdateRefreshesTheProjection() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: (0..<4).map { row($0, seq: $0 + 1, text: "row-\($0)") },
+            replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 4, append: [], replace: [], evicted: 2)))
+
+        XCTAssertEqual(text(store), ["row-2", "row-3"])
+        XCTAssertEqual(store.firstPosition, 2)
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+    }
+
     func testAReplayFromBeforeWhatIsHeldBecomesTheWholeFeed() {
         let store = ConversationStore(agent: agent)
         store.apply(.feed(FeedUpdate(

@@ -162,7 +162,11 @@ final class PerformanceSuite: XCTestCase {
         // to have.
         let drawn = DrawnElements()
         let window = harness.show {
-            self.page(harness, agent: agent, model: model) { drawn.record($0) }
+            self.page(
+                harness, agent: agent, model: model,
+                identifierPrefix: "transcript.prompt",
+                includeIdentifierGeometry: false
+            ) { drawn.record($0) }
         }
         defer { window.isHidden = true }
         await harness.deliver(Harness.encoded([
@@ -269,6 +273,13 @@ final class PerformanceSuite: XCTestCase {
         let interval = Duration.seconds(1) / 50
         let delivery = harness.deliver(batches, every: interval)
         await delivery.value
+        // The store keeps every row synchronously and coalesces only view
+        // invalidations. Leave longer than that bound plus one natural display
+        // interval for the final publication and draw before stopping either
+        // clock. `Harness.settle` creates its own display links; starting them
+        // inside missed-frame accounting would make the instrument perturb the
+        // cadence it is measuring.
+        try await Task.sleep(for: .milliseconds(50))
         let hitch = frames.stop()
         let percent = cpu.percent()
         let footprint = Footprint.megabytes()
@@ -304,6 +315,8 @@ final class PerformanceSuite: XCTestCase {
     @MainActor
     private func page(
         _ harness: Harness, agent: AgentId, model: ConversationStore,
+        identifierPrefix: String = "transcript.",
+        includeIdentifierGeometry: Bool = true,
         drew: (@Sendable ([IdentifiedElement]) -> Void)? = nil
     ) -> some View {
         BenchConversationScreen(
@@ -313,6 +326,8 @@ final class PerformanceSuite: XCTestCase {
             subject: ConversationSubject(
                 name: "measured", host: "bench", directory: "~/src/amux",
                 age: "2m", working: "12s"),
+            identifierPrefix: identifierPrefix,
+            includeIdentifierGeometry: includeIdentifierGeometry,
             drew: drew)
     }
 

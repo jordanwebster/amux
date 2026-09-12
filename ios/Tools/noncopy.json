@@ -736,6 +736,7 @@
       {"literal": "\"\\(digits).\"", "context": "return (true, depth, \"\\(digits).\",", "reason": "Markdown parsing syntax, preserved verbatim.", "count": 1}
     ],
     "ios/Packages/AmuxCore/Sources/AmuxCore/MessageDraft.swift": [
+      {"literal": "\"<amux-attachment\"", "context": "guard text.contains(\"<amux-attachment\") else { return [.prose(text)] }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"image\"", "context": "case \"image\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"file\"", "context": "case \"file\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"text\"", "context": "case \"text\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1162,7 +1163,7 @@
       {"literal": "\"entry\"", "context": "\"entry\": .string(\"tool\"),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"tool\"", "context": "\"entry\": .string(\"tool\"),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"name\"", "context": "\"name\": .string(name),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
-      {"literal": "\"grouped\"", "context": "\"grouped\": .bool(grouped),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
+      {"literal": "\"group_with_previous\"", "context": "\"group_with_previous\": .bool(grouped),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"invocation\"", "context": "\"invocation\": invocation,", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"outcome\"", "context": "\"outcome\": .object([", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"outcome\"", "context": "\"outcome\": .string(\"success\"),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
@@ -1172,11 +1173,9 @@
       {"literal": "\"output\"", "context": "\"facts\": .string(\"output\"),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"head\"", "context": "\"head\": .string(head),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"truncated\"", "context": "\"truncated\": .bool(truncated),", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
-      {"literal": "\"id\"", "context": "var fields: [String: JSONValue] = [\"id\": .int(id), \"seq\": .int(id)]", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
-      {"literal": "\"seq\"", "context": "var fields: [String: JSONValue] = [\"id\": .int(id), \"seq\": .int(id)]", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
-      {"literal": "\"kind\"", "context": "fields[\"kind\"] = .object([\"entry\": body[\"entry\"] ?? .string(\"rule\")])", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
-      {"literal": "\"entry\"", "context": "fields[\"kind\"] = .object([\"entry\": body[\"entry\"] ?? .string(\"rule\")])", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 2},
-      {"literal": "\"rule\"", "context": "fields[\"kind\"] = .object([\"entry\": body[\"entry\"] ?? .string(\"rule\")])", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
+      {"literal": "\"id\"", "context": "\"id\": .int(id), \"seq\": .int(id), \"kind\": body,", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
+      {"literal": "\"seq\"", "context": "\"id\": .int(id), \"seq\": .int(id), \"kind\": body,", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
+      {"literal": "\"kind\"", "context": "\"id\": .int(id), \"seq\": .int(id), \"kind\": body,", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"reading\"", "context": "private static let verbs = [\"reading\", \"folding\", \"pinning\", \"measuring\", \"drawing\", \"pairing\"]", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"folding\"", "context": "private static let verbs = [\"reading\", \"folding\", \"pinning\", \"measuring\", \"drawing\", \"pairing\"]", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"pinning\"", "context": "private static let verbs = [\"reading\", \"folding\", \"pinning\", \"measuring\", \"drawing\", \"pairing\"]", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
@@ -1603,8 +1602,7 @@
       {"literal": "\"probe.home.row.\\(row.id.description)\"", "context": ".identified(\"probe.home.row.\\(row.id.description)\", label: row.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"probe.home\"", "context": ".identified(\"probe.home\", value: \"\\(rows.count)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"\\(rows.count)\"", "context": ".identified(\"probe.home\", value: \"\\(rows.count)\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"bench.conversation\"", "context": ".identified(\"bench.conversation\", value: \"\\(model.entries.count)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"\\(model.entries.count)\"", "context": ".identified(\"bench.conversation\", value: \"\\(model.entries.count)\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1}
+      {"literal": "\"transcript.\"", "context": "identifierPrefix: String = \"transcript.\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/ProbeScreen.swift": [
       {"literal": "\"probe.title\"", "context": ".identified(\"probe.title\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1674,6 +1672,7 @@
       {"literal": "\"chevron.forward\"", "context": "case .command: \"chevron.forward\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift": [
+      {"literal": "\"<amux-attachment\"", "context": "if text.contains(\"<amux-attachment\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"compaction\"", "context": "kind: \"compaction\", glyph: \"arrow.down.right.and.arrow.up.left\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"arrow.down.right.and.arrow.up.left\"", "context": "kind: \"compaction\", glyph: \"arrow.down.right.and.arrow.up.left\",", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"compacted \u00b7 \\(tokens(before)) \\u{2192} \\(tokens(after))\"", "context": "return \"compacted \u00b7 \\(tokens(before)) \\u{2192} \\(tokens(after))\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},

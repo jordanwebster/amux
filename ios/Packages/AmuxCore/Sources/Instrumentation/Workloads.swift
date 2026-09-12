@@ -96,7 +96,8 @@ public enum Workloads {
                 displayName: name,
                 attention: attention,
                 phase: phase,
-                lastActivity: now.addingTimeInterval(-60 * minutesAgo))
+                lastActivity: now.addingTimeInterval(-60 * minutesAgo),
+                awaiting: !reconciled)
         }
         return Fleet(epoch: 1, agents: agents, hosts: hosts, reconciled: reconciled)
     }
@@ -214,7 +215,7 @@ public enum Workloads {
         row(id, .object([
             "entry": .string("tool"),
             "name": .string(name),
-            "grouped": .bool(grouped),
+            "group_with_previous": .bool(grouped),
             "invocation": invocation,
             "outcome": .object([
                 "outcome": .string("success"),
@@ -228,12 +229,9 @@ public enum Workloads {
     }
 
     private static func row(_ id: Int, _ body: JSONValue) -> FeedEntry {
-        var fields: [String: JSONValue] = ["id": .int(id), "seq": .int(id)]
-        if case .object(let object) = body {
-            for (key, value) in object { fields[key] = value }
-        }
-        fields["kind"] = .object(["entry": body["entry"] ?? .string("rule")])
-        return FeedEntry(layer: .claudePty, row: .object(fields))
+        FeedEntry(layer: .claudePty, row: .object([
+            "id": .int(id), "seq": .int(id), "kind": body,
+        ]))
     }
 
     // MARK: - Words and identity

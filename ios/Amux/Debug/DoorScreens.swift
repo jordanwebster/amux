@@ -275,6 +275,7 @@ struct DrivenRoot<Content: View>: View {
         // for less motion that they did not.
         .transformEnvironment(\.reducesMotion) { $0 = $0 || host.reduceMotion }
         .transformEnvironment(\.reducesTransparency) { $0 = $0 || host.reduceTransparency }
+        .reportingIdentifiedElements()
         .onPreferenceChange(IdentifiedElements.self) { declared in
             Task { @MainActor in DoorHost.shared.declared = declared }
         }

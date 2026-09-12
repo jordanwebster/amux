@@ -18,6 +18,12 @@ final class WorkloadTests: XCTestCase {
             fleet.agents.filter { $0.lastActivity <= Workloads.now.addingTimeInterval(-86_400) }.count,
             5)
         XCTAssertFalse(fleet.reconciled, "a cached fleet has not been confirmed by a host")
+        XCTAssertTrue(
+            fleet.agents.allSatisfy(\.awaiting),
+            "every cached card is waiting to be confirmed by its host")
+        XCTAssertTrue(
+            Workloads.cachedFleet(reconciled: true).agents.allSatisfy { !$0.awaiting },
+            "a confirmed fleet contains confirmed cards")
         XCTAssertEqual(Set(fleet.agents.map(\.id)).count, 40, "every agent is its own")
     }
 
@@ -40,12 +46,32 @@ final class WorkloadTests: XCTestCase {
         XCTAssertEqual(rows.filter { $0.entryKind == "message" }.count, 550)
         XCTAssertEqual(rows.filter { $0.entryKind == "tool" }.count, 400)
         XCTAssertEqual(rows.filter { $0.entryKind == "rule" }.count, 50)
-        let folded = rows.filter { $0.row["grouped"]?.boolValue == true }
+        let folded = rows.filter { $0.row["kind"]?["group_with_previous"]?.boolValue == true }
         XCTAssertEqual(folded.count, 100)
         let long = rows.filter {
-            ($0.row["outcome"]?["facts"]?["head"]?.stringValue ?? "").split(separator: "\n").count > 200
+            ($0.row["kind"]?["outcome"]?["facts"]?["head"]?.stringValue ?? "")
+                .split(separator: "\n").count > 200
         }
         XCTAssertEqual(long.count, 50)
+        let projected = rows.transcriptRows()
+        XCTAssertEqual(projected.filter {
+            if case .prose(let markdown, _) = $0.kind { return markdown.contains("**") }
+            return false
+        }.count, 550)
+        let exploration = projected.compactMap { row -> (reads: Int, searches: Int)? in
+            guard case .exploration(let reads, let searches, _, _) = row.kind else { return nil }
+            return (reads, searches)
+        }
+        XCTAssertEqual(exploration.reduce(0) { $0 + $1.reads }, 100)
+        XCTAssertEqual(exploration.reduce(0) { $0 + $1.searches }, 200)
+        XCTAssertEqual(projected.filter {
+            if case .ran(_, _, let output) = $0.kind { return output?.hidden == -1 }
+            return false
+        }.count, 50)
+        XCTAssertEqual(projected.filter {
+            if case .edit = $0.kind { return true }
+            return false
+        }.count, 50)
         XCTAssertEqual(Set(rows.map(\.rowId)).count, 1_000, "every row has its own identity")
     }
 
