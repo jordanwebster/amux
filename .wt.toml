@@ -63,14 +63,8 @@ run = "scripts/with-git-revision.sh timeout 600 scripts/codegen-check.sh"
 [task.offline-test]
 run = "scripts/with-git-revision.sh timeout 1200 scripts/offline-check.sh cargo test --locked --workspace --lib --tests"
 
-[task.build-report]
-run = 'python3 scripts/build-foundations-run.py report "$@"'
-
-[task.build-inventory]
-run = 'python3 scripts/build-foundations-run.py inventory "$@"'
-
-[task.build-benchmark]
-run = 'python3 scripts/build-foundations-run.py benchmark "$@"'
+[task.build-acceptance]
+run = 'timeout 3600 python3 scripts/build-acceptance.py "$@"'
 
 # What the canonical is kept warm with: the configurations every tree
 # inherits through wt's snapshot of it. `wt anchor` runs this in place of

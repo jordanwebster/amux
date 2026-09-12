@@ -1,3 +1,13 @@
+2026-09-12 — **Replace the retired cache benchmark with a wt acceptance workload.**
+The declared measurement task now creates an isolated registered canonical at
+the current clean commit, warms its product and test configurations, snapshots
+two disposable worktrees, and drives the same focused-test, full-test-build,
+lint, and product-return sequence concurrently through wt. It records command
+logs, compile/link and test time, Cargo roots, loose objects, incremental
+sessions, logical per-tree sizes, volume free space, and wt's prune plan. The
+helper refuses any wt version other than 0.4.0, never enables sccache, and names
+the exact uniquely owned paths that may be cleaned after inspection.
+
 2026-09-12 — **Make build recipes truthful and move executable fixtures out of products.**
 All Cargo-producing wt recipes now use locked resolution and a revision wrapper
 that gives build scripts a checkout-independent commit identity. CI and release
