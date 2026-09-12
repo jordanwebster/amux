@@ -1,3 +1,11 @@
+2026-09-13 — **Narrow node's hidden surface to one harness module.** Fourteen
+node modules had been made hidden-public wholesale so the promoted harness
+could reach them. They are private again; `node::harness` re-exports the
+roughly forty items testnet actually uses, with a `runtime` submodule for the
+profile runtime constructors, and testnet imports only that path. Envelope
+parsing in the harness now names `model` directly. Format, workspace Clippy,
+the node, testnet, amux and ui-runtime suites and the dependency policy pass.
+
 2026-09-12 — **Close the review findings before merge.** The release policy
 script now finds the Windows product when no target is given, so the
 platform build job can pass. The fake identity service is an ordinary hidden

@@ -15,11 +15,10 @@ use std::time::{Duration, SystemTime};
 
 use futures_util::{Stream, stream};
 use node::HostId;
-use node::config::Config;
-use node::connection::ConnectionManager;
-use node::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
-use node::services::CloudLinkService;
-use node::transport::TcpServerTransport;
+use node::harness::{
+    AuthenticatedLinkUser, CloudLinkService, Config, ConnectionManager, LinkTokenAuthenticator,
+    TcpServerTransport,
+};
 use node::user_state::ServerState;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};

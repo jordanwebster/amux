@@ -2,35 +2,23 @@
 #[cfg(test)]
 extern crate self as node;
 pub mod agent_tools;
-#[doc(hidden)]
-pub mod agents;
+mod agents;
 mod audit;
-#[doc(hidden)]
-pub mod auth;
-#[doc(hidden)]
-pub mod config;
-#[doc(hidden)]
-pub mod connection;
+mod auth;
+mod config;
+mod connection;
 mod debug;
-#[doc(hidden)]
-pub mod dispatcher;
-#[doc(hidden)]
-pub use model::envelope;
-#[doc(hidden)]
-pub mod identity;
+mod dispatcher;
+use model::envelope;
+mod identity;
 pub mod installation;
-#[doc(hidden)]
-pub mod pairing;
+mod pairing;
 mod paths;
-#[doc(hidden)]
-pub mod profile;
+mod profile;
 mod resource_limits;
-#[doc(hidden)]
-pub mod routing;
-#[doc(hidden)]
-pub mod server;
-#[doc(hidden)]
-pub mod services;
+mod routing;
+mod server;
+mod services;
 mod sleep_inhibitor;
 mod subscription;
 /// The fake identity service and account fixtures shared by node's own tests
@@ -38,15 +26,47 @@ mod subscription;
 /// it without a feature and without a second copy of node's types.
 #[doc(hidden)]
 pub mod test_fixtures;
-#[doc(hidden)]
-pub mod transport;
-#[doc(hidden)]
-pub mod trust;
-#[doc(hidden)]
-pub mod tunnel;
+mod transport;
+mod trust;
+mod tunnel;
 pub mod update;
 #[doc(hidden)]
 pub mod user_state;
+
+/// Internals the `testnet` harness needs to assemble whole daemons in-process.
+/// Hidden and unstable: reachable only for test infrastructure, never for
+/// products, and widened only when a harness verb needs another item.
+#[doc(hidden)]
+pub mod harness {
+    pub use crate::agents::{
+        AgentEvent, Protocol, SendInputRequest, SessionInputEvent, agent_from_wire,
+    };
+    pub use crate::auth::AuthError;
+    pub use crate::config::Config;
+    pub use crate::connection::ConnectionManager;
+    pub use crate::dispatcher::TrackedTcpConnections;
+    pub use crate::identity::{DeviceIdentity, device_key_path, load_or_create_device_identity_in};
+    pub use crate::routing::{
+        AuthenticatedLinkUser, Capabilities, Host, HostEntry, HostTrustStatus, LinkConnectorAuth,
+        LinkConnectorToken, LinkConnectorTokenRefresher, LinkTokenAuthenticator, Route,
+        RoutingCore, RoutingEvent, host_to_wire,
+    };
+    pub use crate::server::ShutdownReason;
+    pub use crate::services::{
+        AgentServiceCtx, ClientService, CloudLinkService, PeerTrustCommitContext, PeerTrustUpdate,
+        commit_peer_trust,
+    };
+    pub use crate::transport::{TcpServerTransport, trusted_device_channel_tracked};
+    pub use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
+    pub use crate::tunnel::TunnelPool;
+
+    pub mod runtime {
+        pub use crate::profile::runtime::{
+            CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
+            start,
+        };
+    }
+}
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

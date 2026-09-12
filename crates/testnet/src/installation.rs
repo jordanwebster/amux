@@ -5,12 +5,12 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
+use node::harness::runtime::{ProfileRuntime, RuntimeFixtures};
 use node::installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
     ProfileEvent, ProfileId, ProfilePaths, ProfileStatus, ProfileWatch,
 };
-use node::profile::runtime::{ProfileRuntime, RuntimeFixtures};
 
 use super::daemon::{CloudAttachment, DaemonInner, TestArtifactClock};
 use super::{Daemon, NetInner};
@@ -30,7 +30,7 @@ pub(super) struct ProfileSpec {
 
 struct ProfileFixture {
     tcp_addr: Option<SocketAddr>,
-    tracked_tcp: node::dispatcher::TrackedTcpConnections,
+    tracked_tcp: node::harness::TrackedTcpConnections,
     clock: Arc<TestArtifactClock>,
 }
 
@@ -358,7 +358,7 @@ impl Profile {
 
     /// Force refresh through the runtime's installed credential provider and
     /// await its commit or refusal. No credential material leaves the fixture.
-    pub async fn refresh_credentials(&self) -> Result<(), node::auth::AuthError> {
+    pub async fn refresh_credentials(&self) -> Result<(), node::harness::AuthError> {
         let owner = self.daemon.inner.installation.as_ref().unwrap();
         owner
             .installation
@@ -380,7 +380,7 @@ impl Profile {
 
     #[cfg(unix)]
     pub async fn socket_client(&self) -> node::Client {
-        let config = node::config::Config {
+        let config = node::harness::Config {
             socket_path: self.paths().socket_path,
             ..Default::default()
         };
@@ -634,8 +634,8 @@ pub(super) async fn start(
 /// Service contexts retained independently of their runtime and transports.
 /// Exercises late work at the commit boundary, beyond closed-client checks.
 pub struct RetainedProfileWork {
-    pub(crate) agent: node::services::AgentServiceCtx,
-    pub(crate) pairing: node::services::PeerTrustCommitContext,
+    pub(crate) agent: node::harness::AgentServiceCtx,
+    pub(crate) pairing: node::harness::PeerTrustCommitContext,
 }
 
 impl RetainedProfileWork {
@@ -646,10 +646,10 @@ impl RetainedProfileWork {
         payload: &[u8],
     ) -> Result<(), node::ProtocolError> {
         self.agent
-            .send_input(node::agents::SendInputRequest {
+            .send_input(node::harness::SendInputRequest {
                 agent_id: agent.id,
-                protocol: node::agents::Protocol::TestEchoV1,
-                event: node::agents::SessionInputEvent::Input {
+                protocol: node::harness::Protocol::TestEchoV1,
+                event: node::harness::SessionInputEvent::Input {
                     input_id: vec![1],
                     payload: payload.to_vec(),
                 },
@@ -681,9 +681,9 @@ impl RetainedProfileWork {
         use wire;
         use wire::agent_service_server::AgentService;
         let (id, key) = peer.identity_on_disk();
-        let error = node::services::commit_peer_trust(
+        let error = node::harness::commit_peer_trust(
             self.pairing.clone(),
-            node::services::PeerTrustUpdate::new(id, key, peer.name().into(), None),
+            node::harness::PeerTrustUpdate::new(id, key, peer.name().into(), None),
         )
         .await
         .unwrap_err();
@@ -728,7 +728,7 @@ impl RetainedProfileWork {
             self.diff(agent).await.unwrap_err().code(),
             tonic::Code::FailedPrecondition
         );
-        let error = <node::services::AgentServiceCtx as AgentService>::send_input(
+        let error = <node::harness::AgentServiceCtx as AgentService>::send_input(
             &self.agent,
             tonic::Request::new(wire::SendInputRequest {
                 agent_id: agent.id.as_bytes().to_vec(),

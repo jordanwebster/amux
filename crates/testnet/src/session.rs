@@ -278,11 +278,11 @@ impl Daemon {
             .await
             .unwrap_or_else(|error| panic!("subscribe to echo child '{name}': {error}"));
         let encoded = echoed_envelope(&mut stream, name, "an initial child prompt").await;
-        let parsed = node::envelope::parse(&encoded)
+        let parsed = model::envelope::parse(&encoded)
             .unwrap_or_else(|error| panic!("initial child prompt did not parse: {error}"));
         assert_eq!(parsed.from_id, Some(parent.id));
         assert_eq!(parsed.from_kind.as_deref(), Some(parent.kind.provider()));
-        assert_eq!(parsed.kind, node::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.kind, model::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, prompt);
         child
     }
@@ -363,7 +363,7 @@ impl Daemon {
             .removed_children
             .into_iter()
             .map(|agent| {
-                node::agents::agent_from_wire(agent)
+                node::harness::agent_from_wire(agent)
                     .expect("removed child decodes")
                     .id
             })
@@ -436,7 +436,7 @@ impl Daemon {
                 tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
                     .await
                     .expect("fleet snapshot completes"),
-                Ok(node::agents::AgentEvent::SnapshotComplete)
+                Ok(node::harness::AgentEvent::SnapshotComplete)
             ) {
                 break;
             }
@@ -454,7 +454,7 @@ impl Daemon {
                 .await
                 .expect("status update reaches the fleet stream")
                 .expect("fleet stream remains open");
-            if let node::agents::AgentEvent::AgentUpdated { agent } = event
+            if let node::harness::AgentEvent::AgentUpdated { agent } = event
                 && agent.id == child.id
             {
                 break agent.working_on.expect("status update carries working_on");
@@ -479,7 +479,7 @@ impl Daemon {
                 .await
                 .expect("completion clear reaches the fleet stream")
                 .expect("fleet stream remains open");
-            if let node::agents::AgentEvent::AgentUpdated { agent } = event
+            if let node::harness::AgentEvent::AgentUpdated { agent } = event
                 && agent.id == child.id
             {
                 assert!(agent.working_on.is_none());
@@ -570,7 +570,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         parts
             .client
-            .apply_agent_event(node::agents::AgentEvent::AgentUp {
+            .apply_agent_event(node::harness::AgentEvent::AgentUp {
                 agent: child.clone(),
             })
             .await;
@@ -599,7 +599,7 @@ impl Daemon {
         let unreachable = response
             .unreachable_children
             .into_iter()
-            .map(|agent| node::agents::agent_from_wire(agent).expect("unreachable child decodes"))
+            .map(|agent| node::harness::agent_from_wire(agent).expect("unreachable child decodes"))
             .collect::<Vec<_>>();
         assert_eq!(unreachable.len(), 1);
         assert_eq!(unreachable[0].id, child.id);
@@ -685,14 +685,19 @@ impl Daemon {
         assert_parent_lifecycle_envelope(
             &completed,
             &child,
-            node::envelope::EnvelopeKind::Completed,
+            model::envelope::EnvelopeKind::Completed,
             last_assistant_message,
         );
 
         agent_runtime::test_support::end_scripted_session(parts.agent_host.as_ref(), child_id)
             .await;
         let exited = echoed_envelope(&mut stream, parent_name, "an exited message").await;
-        assert_parent_lifecycle_envelope(&exited, &child, node::envelope::EnvelopeKind::Exited, "");
+        assert_parent_lifecycle_envelope(
+            &exited,
+            &child,
+            model::envelope::EnvelopeKind::Exited,
+            "",
+        );
     }
 
     /// Asserts that the daemon rejects an agent-authored message when the
@@ -764,13 +769,13 @@ impl Daemon {
             encoded.contains("from=\"human\""),
             "the echoed tag carries human provenance"
         );
-        let parsed = node::envelope::parse(&encoded)
+        let parsed = model::envelope::parse(&encoded)
             .unwrap_or_else(|error| panic!("echoed envelope did not parse: {error}"));
         assert_eq!(parsed.id, envelope_id);
         assert_eq!(parsed.from, "human");
         assert_eq!(parsed.from_id, None);
         assert_eq!(parsed.from_kind, None);
-        assert_eq!(parsed.kind, node::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.kind, model::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, text);
     }
 
@@ -862,13 +867,13 @@ impl Daemon {
             encoded.contains(&format!("from-kind=\"{}\"", sender.kind.provider())),
             "the echoed tag carries the daemon-resolved agent kind"
         );
-        let parsed = node::envelope::parse(&encoded)
+        let parsed = model::envelope::parse(&encoded)
             .unwrap_or_else(|error| panic!("echoed envelope did not parse: {error}"));
         assert_eq!(parsed.id, envelope_id);
         assert_eq!(parsed.from, format!("{sender_name}/{}", sender.host_id));
         assert_eq!(parsed.from_id, Some(sender.id));
         assert_eq!(parsed.from_kind.as_deref(), Some(sender.kind.provider()));
-        assert_eq!(parsed.kind, node::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.kind, model::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, text);
     }
 
@@ -892,7 +897,7 @@ impl Daemon {
             .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
         parts
             .client
-            .apply_agent_event(node::agents::AgentEvent::AgentUp {
+            .apply_agent_event(node::harness::AgentEvent::AgentUp {
                 agent: recipient.clone(),
             })
             .await;
@@ -1184,10 +1189,10 @@ async fn echoed_envelope(
 fn assert_parent_lifecycle_envelope(
     encoded: &str,
     child: &Agent,
-    kind: node::envelope::EnvelopeKind,
+    kind: model::envelope::EnvelopeKind,
     text: &str,
 ) {
-    let parsed = node::envelope::parse(encoded)
+    let parsed = model::envelope::parse(encoded)
         .unwrap_or_else(|error| panic!("parent lifecycle envelope did not parse: {error}"));
     assert_eq!(parsed.from_id, Some(child.id));
     assert_eq!(parsed.from_kind.as_deref(), Some("claude"));

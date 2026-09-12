@@ -10,20 +10,15 @@ use chrono::{DateTime, TimeDelta, Utc};
 use client::Client;
 use host_api::LocalAgentHost;
 use node::HostId;
-use node::connection::ConnectionManager;
-use node::dispatcher::TrackedTcpConnections;
-use node::identity::{device_key_path, load_or_create_device_identity_in};
-use node::profile::runtime::{
+use node::harness::runtime::{
     self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
 };
-use node::routing::{
-    HostEntry, HostTrustStatus, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
-    Route, RoutingCore,
+use node::harness::{
+    ClientService, ConnectionManager, HostEntry, HostTrustStatus, LinkConnectorAuth,
+    LinkConnectorToken, LinkConnectorTokenRefresher, Reachability, Route, RoutingCore,
+    SharedTrustStore, ShutdownReason, TrackedTcpConnections, TunnelPool, device_key_path,
+    load_or_create_device_identity_in,
 };
-use node::server::ShutdownReason;
-use node::services::ClientService;
-use node::trust::{Reachability, SharedTrustStore};
-use node::tunnel::TunnelPool;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tonic::transport::{Channel, Endpoint};
@@ -176,7 +171,7 @@ pub(crate) async fn start_daemon_runtime(
         (None, Some(addr)) => Some(bind_addr_with_retries(addr).await),
         (None, None) => None,
     };
-    let config = node::config::Config {
+    let config = node::harness::Config {
         host_name: inner.name.clone(),
         socket_path: inner.data_dir.join("amux.sock"),
         state_path: inner.data_dir.join("state.yaml"),
@@ -184,7 +179,7 @@ pub(crate) async fn start_daemon_runtime(
         tcp_port: inner.tcp_addr.map(|addr| addr.port()),
 
         prevent_idle_sleep: Some(false),
-        ..node::config::Config::default()
+        ..node::harness::Config::default()
     };
     let mut options = ProfileRuntimeOptions::from_legacy_config(
         config,
@@ -299,7 +294,7 @@ impl Daemon {
                     && parts.routing.routes_to(other.host_id()).await.is_empty()
                     && parts.connections.known_routes(other.host_id()).await.is_empty()
                     && !parts.routing.routing_events_snapshot().await.iter().any(|event| {
-                        matches!(event, node::routing::RoutingEvent::ClaimUp { host, .. } if host.id == other.host_id())
+                        matches!(event, node::harness::RoutingEvent::ClaimUp { host, .. } if host.id == other.host_id())
                     })
             },
             self.failure_dump(),
@@ -378,17 +373,17 @@ impl Daemon {
     pub async fn cannot_authenticate_to(&self, other: &Daemon) {
         let identity = load_or_create_device_identity_in(&self.inner.data_dir).unwrap();
         let (_, pubkey) = other.identity_on_disk();
-        let mut trust = node::trust::TrustStore::default();
+        let mut trust = node::harness::TrustStore::default();
         trust.insert_for_test(
             other.host_id(),
-            node::trust::TrustEntry {
+            node::harness::TrustEntry {
                 pubkey,
                 name: other.name().into(),
                 paired_at: Utc::now(),
                 reachabilities: vec![],
             },
         );
-        let channel = node::transport::trusted_device_channel_tracked(
+        let channel = node::harness::trusted_device_channel_tracked(
             other
                 .inner
                 .tcp_addr

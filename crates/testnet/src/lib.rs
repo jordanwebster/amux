@@ -65,8 +65,9 @@ use std::sync::Arc;
 use assertions::eventually;
 use daemon::{CloudAttachment, DaemonInner, start_daemon_runtime};
 pub use daemon::{Daemon, ExpiringJwt, RouteAssertion, RoutedStream};
-use node::identity::{DeviceIdentity, load_or_create_device_identity_in};
-use node::trust::{Reachability, TrustEntry, TrustStore};
+use node::harness::{
+    DeviceIdentity, Reachability, TrustEntry, TrustStore, load_or_create_device_identity_in,
+};
 pub use pairing::{PairAttempt, Pin, QrPayload};
 use relay::CloudRelay;
 pub use session::EchoSession;

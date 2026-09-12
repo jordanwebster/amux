@@ -15,4 +15,4 @@ pub use reachability::ReachabilityLinkConnector;
 pub(crate) use startup::{
     CloudConnector, DeviceRuntimeSecurity, establish_cloud_connection, start_user_services,
 };
-pub use startup::{CloudLinkService, StartedRoutingServices, StartedUserServices};
+pub use startup::{CloudLinkService, StartedUserServices};

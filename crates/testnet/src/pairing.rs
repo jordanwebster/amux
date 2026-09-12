@@ -285,7 +285,7 @@ impl PairAttempt<'_> {
         self.from
             .spawn_direct_link(
                 self.to.host_id(),
-                node::trust::Reachability::DirectTcp { addr },
+                node::harness::Reachability::DirectTcp { addr },
             )
             .await;
         Ok(())
