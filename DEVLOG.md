@@ -1,3 +1,20 @@
+2026-09-12 — **Measure final snapshot reuse and bounded stale-output behavior.**
+At clean revision `df4fa836`, wt 0.4.0 warmed a separate canonical in 81.228
+seconds, and two APFS snapshots reused its product and complete test output with
+zero compilation in 1.098–1.248 and 0.471–0.472 seconds respectively. Creating
+both 8.192 GB logical snapshots consumed 17.45 MiB of volume free space. Five
+concurrent function-edit/test/lint/product cycles stabilized at 13.834–13.886
+GB logical output and 352 incremental sessions per tree; an empty final prune
+and full cleanup confirmed stale output did not grow across cycles. Five no-edit
+samples produced 0.350–0.353 second focused-test medians and 0.798–0.858 second
+product medians. The run separately recorded Cargo compile/link wall time,
+summed linker process time, harness launch and test execution. It also confirmed
+wt's dependency-distinct-root limitation: the first focused test after a full
+test graph rebuilt 19 unchanged dependencies plus model, while its next four
+no-edit samples compiled nothing. Added legitimate configurations in the two
+live trees changed volume free space by 20.48 GiB; per-tree logical sizes are
+reported separately and are not summed as exclusive storage.
+
 2026-09-12 — **Close verification gaps in the extracted package graph.** Node
 now declares every retained integration target, and its provider harnesses use
 their custom main functions; a provider-free smoke recipe proves those entry

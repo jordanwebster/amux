@@ -157,45 +157,67 @@ second clean product build, a 76.21 second focused monolith test, a 7.89 second
 private edit rebuild and 4.39 GB of logical product output. A first post-split
 measurement recorded 41.52 seconds, 33.73 seconds, 4.06 seconds and 3.22 GB
 respectively. Those runs predated wt 0.4.0 and establish only the effect of the
-crate and recipe changes.
+crate and recipe changes. A later three-cycle run at `e85265e1` used
+comment-only edits; its ranges are historical diagnostics and are superseded
+by the controlled run below.
 
-An earlier wt 0.4.0 acceptance workload ran at revision `e85265e1` from a clean
-canonical and two disposable snapshot worktrees. Warming the canonical took
-78.757 seconds of wall time, including 77.14 seconds reported by Cargo and 396
-compiled units. In the new trees, the initial product builds took 1.159–1.291
-seconds and the initial full test builds took 0.501–0.507 seconds; Cargo
-compiled zero units in all four tasks. Each tree reported about 7.840 GB of
-logical target data, while creating both snapshots reduced volume free space
-by about 25.6 MB. The logical
-sizes therefore cannot be added to estimate physical use.
+The final controlled workload ran at clean revision `df4fa836` with Cargo and
+Rust 1.98.0, wt 0.4.0, sccache disabled, a separate warm canonical and two
+concurrent disposable worktrees. Warming product and test output took 81.228
+seconds wall and 80.18 seconds of Cargo compile/link wall time. Timed linker
+processes contributed 24.102 seconds in aggregate; linker durations can overlap
+and therefore are not subtracted from Cargo wall time.
 
-Three concurrent edit/test/lint/build cycles reached 13.321 GB logical output
-and 32,052 files per tree after introducing the needed configurations. The
-second and third cycles stayed in the 13.321–13.429 GB range; their incremental
-session counts stayed between 312 and 315. Immediate repeated focused tests
-took 0.338–0.360 seconds, and repeated product builds took 0.818–1.015 seconds,
-all with zero compiled units.
-After snapshot creation, the two live trees' added focused, workspace-test,
-Clippy and product configurations consumed about 20.6 GB of volume free space.
-The figure includes legitimate new configurations and any other writers on the
-same volume during the run; it is not an exclusive accounting system.
+The two new snapshots initially reported 8.192 GB of logical target data each,
+but creating both changed volume free space by only 18,296,832 bytes (17.45
+MiB). Their product builds took 1.098–1.248 seconds and complete test builds
+took 0.471–0.472 seconds with zero compiled or linked units. This is the reuse
+expected when identical sources and the embedded revision move to another
+checkout.
 
-That preliminary run used three comment-only source edits and immediate
-repeats, so its timing ranges are diagnostic rather than final steady-state
-evidence. It did find a wt 0.4.0 retention limitation. A package-focused test and
-a workspace-wide test can compile a workspace root with the same visible unit
-identity but different resolved dependency fingerprints. Wt keeps only the
-newest root in that slot. The first full test build consequently reclaimed 32
-units, and each next edited focused model test rebuilt 19 unchanged dependencies
-before rebuilding `model`. An immediate no-edit repeat compiled nothing. The product
-configuration did not oscillate beyond the crates legitimately invalidated by
-each source edit. After the third cycle, a dry-run prune found nothing further
-to reclaim. The required wt correction is documented in
-[wt output requirements](WT_OUTPUT_REQUIREMENTS.md). Until it is released, the
-sweep prevents monotonic stale-object growth but does not preserve every valid
-focused/full-test variant.
+Each of five cycles made a real private function-body edit, ran its focused
+test, compiled all workspace tests, linted the workspace and returned to the
+product. After the first new configurations were established, cycles two
+through five had these medians and ranges across both trees:
 
-The current acceptance runner writes task logs, separate Cargo compile/link,
+| Task | Median | Range | Work observed |
+| --- | ---: | ---: | --- |
+| Focused model test | 5.697 s | 5.504–6.650 s | 20 compiled units, 0.350–0.697 s harness launch, at most 0.01 s test execution |
+| Complete test build | 24.251 s | 23.551–24.869 s | 16 compiled/linked workspace test units; no execution |
+| Workspace lint | 7.019 s | 6.862–7.105 s | 16 checked workspace units, no linking |
+| Product rebuild | 10.645 s | 10.091–10.720 s | 12 source-dependent units; about 0.58–0.67 s summed linker time in the last cycle |
+| Immediate product repeat | 0.835 s | 0.776–0.891 s | zero compiled or linked units |
+
+Five final no-edit samples per tree gave focused-test medians of 0.353 and
+0.350 seconds and product-build medians of 0.798 and 0.858 seconds. The first
+focused sample after the complete test graph still took 5.699–5.830 seconds and
+compiled 20 units; the remaining four took 0.336–0.358 seconds and compiled
+nothing. Harness launch on those no-op focused tests was 5–6 ms and the tests
+reported 0.00 seconds of execution.
+
+Per-tree output reached a stable range after the second cycle: 13.834–13.886 GB
+logical, 35,013–35,026 files and exactly 352 incremental sessions at the
+product-repeat boundaries. The final inventories reported 13.903 GB logical
+and 35,218 files per tree. Every observed Cargo output root was `target`.
+Adding the two trees' legitimate focused, workspace-test, Clippy and product
+configurations changed volume free space by 21,993,431,040 bytes (20.48 GiB)
+after snapshot creation. No other Cargo workload from this checkout ran during
+the measurement, although the volume metric can still include operating-system
+activity. After the inspected cleanup removed both disposable trees and their
+marked root, free space returned slightly above its pre-run value.
+
+Wt repeatedly removed superseded roots and excess incremental sessions; the
+inventory remained bounded and the final dry-run prune was empty. It also
+reproduced wt 0.4.0's dependency-distinct-root limitation. A focused test and a
+workspace-wide test can produce useful roots with the same visible identity
+but different dependency fingerprints. The workspace test sweep removed 32
+units, so each next focused edit rebuilt 19 unchanged dependencies plus
+`model`. This is predictable at the graph transition rather than an
+every-other-run oscillation, but it is avoidable recompilation and does not
+satisfy the stronger goal of preserving both live configurations. The required
+wt correction is documented in [wt output requirements](WT_OUTPUT_REQUIREMENTS.md).
+
+The acceptance runner stores task logs, separate Cargo compile/link,
 linker-process, harness-launch and test-execution timing fields, inventories,
 sweep notices, prune plans and volume samples under the ignored
 `notes/build-foundations/measurements/` directory. It requires a clean commit,

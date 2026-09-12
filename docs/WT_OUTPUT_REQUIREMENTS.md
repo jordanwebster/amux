@@ -23,10 +23,10 @@ focused tests with full verification.
 
 Wt 0.4.0's sweep selects the newest workspace unit for each visible identity
 and follows dependencies from that unit. It does not include the unit's direct
-dependency fingerprints in the root slot. In the measured amux workload, the
-full test build removed 31 units after a focused test. After the next source
-edit, the focused test rebuilt 19 unchanged third-party crates. Running the
-same focused test immediately again compiled zero units. Timestamp ties can
+dependency fingerprints in the root slot. In the final controlled amux
+workload, each full test build removed 32 units after a focused test. After the
+next source edit, the focused test rebuilt 19 unchanged third-party crates.
+Running the same focused test immediately again compiled zero units. Timestamp ties can
 also retain both variants temporarily, which makes the result timing-sensitive.
 
 Wt should treat dependency-distinct workspace roots as simultaneously live
