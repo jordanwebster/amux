@@ -13,7 +13,7 @@ same Rust dependencies and wire code on every machine.
 
 ## Profiles
 
-The completed Rust and native workspace has four purposeful profiles:
+Three profiles are defined here; the native app adds a fourth:
 
 | Profile | Purpose |
 | --- | --- |
@@ -22,12 +22,11 @@ The completed Rust and native workspace has four purposeful profiles:
 | `full-debug` | A `dev` build with complete debug information for debugger sessions |
 | `mobile` | The native app's shipping library: size optimization, fat LTO, one codegen unit, and aborting panics |
 
-This branch defines the first three. The native app integration adds `mobile`
-with the app library and its packaging recipes; it is not an alternate profile
-for ordinary Rust tests. There is no separate `test` or CI profile, so one
-development configuration of each workspace crate serves product builds,
-focused tests, and the full test build. CI disables incremental compilation
-through its environment.
+`mobile` arrives with the app library and its packaging recipes; it is not an
+alternate profile for ordinary Rust tests. There is no separate `test` or CI
+profile, so one development configuration of each workspace crate serves
+product builds, focused tests, and the full test build. CI disables
+incremental compilation through its environment.
 
 On Apple targets, development builds use packed split debug information. That
 keeps debugger symbols in dSYM bundles instead of leaving every incremental

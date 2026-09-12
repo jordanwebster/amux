@@ -406,7 +406,8 @@ fn unique_token(kind: &str, sub: &str) -> String {
     )
 }
 
-pub(crate) fn relay_token(label: &str) -> String {
+#[doc(hidden)]
+pub fn relay_token(label: &str) -> String {
     format!("fixture-relay-{label}")
 }
 
@@ -454,9 +455,9 @@ fn json_response(status: StatusCode, body: serde_json::Value) -> Response<Full<B
 /// Inject a connector observation into a live installation's production status
 /// adapter, without needing a particular cloud refusal or network transport.
 pub async fn report_profile_status(
-    installation: &node::installation::Installation,
-    id: node::installation::ProfileId,
-    observed: node::installation::Observed,
+    installation: &crate::installation::Installation,
+    id: crate::installation::ProfileId,
+    observed: crate::installation::Observed,
 ) {
     let runtime = installation.test_runtime(id).await.expect("profile exists");
     runtime

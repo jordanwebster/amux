@@ -35,7 +35,7 @@ pub fn prevent_idle_sleep_supported() -> bool {
 /// True when the identity/trust files in `config.data_dir` already exist and
 /// validate.
 pub fn device_identity_ready(config: &Config) -> bool {
-    node::identity::device_files_ready_in(&config.data_dir)
+    node::device_files_ready_in(&config.data_dir)
 }
 
 /// The host id of this device's stored identity, if initialized. Read-only:
@@ -47,13 +47,13 @@ pub fn local_host_id(config: &Config) -> Option<model::HostId> {
 
 /// See [`local_host_id`]; explicit data dir for tests and embedding.
 pub fn local_host_id_in(data_dir: &Path) -> Option<model::HostId> {
-    node::identity::stored_host_id_in(data_dir)
+    node::stored_host_id_in(data_dir)
 }
 
 /// Ensure the device identity and trust-store files from
 /// `docs/ARCHITECTURE.md` exist in `config.data_dir`.
 pub fn ensure_device_identity(config: &Config) -> Result<(), SetupError> {
-    node::identity::ensure_device_files_in(&config.data_dir)
+    node::ensure_device_files_in(&config.data_dir)
         .map_err(|error| SetupError::Identity(error.to_string()))?;
     Ok(())
 }
@@ -152,7 +152,7 @@ mod tests {
         let dir = tempdir().unwrap();
         assert_eq!(local_host_id_in(dir.path()), None);
 
-        let identity = node::identity::ensure_device_files_in(dir.path()).unwrap();
+        let identity = node::ensure_device_files_in(dir.path()).unwrap();
         assert_eq!(local_host_id_in(dir.path()), Some(identity.host_id));
     }
 

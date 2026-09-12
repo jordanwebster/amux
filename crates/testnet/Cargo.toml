@@ -14,9 +14,6 @@ chrono = { workspace = true }
 client = { workspace = true }
 futures-util = { workspace = true }
 host-api = { workspace = true }
-http-body-util = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
 node = { workspace = true }
 model = { workspace = true }
 reqwest = { workspace = true }
@@ -41,7 +38,6 @@ codex = { path = "../codex" }
 codex-specs = { path = "../codex-specs" }
 gethostname = { workspace = true }
 model = { workspace = true }
-nix = { workspace = true }
 redaction = { workspace = true }
 replay-support = { path = "../replay-support" }
 serde = { workspace = true }
@@ -63,3 +59,6 @@ harness = false
 name = "claude_sdk_live"
 path = "tests/claude_sdk_live.rs"
 harness = false
+
+[target.'cfg(unix)'.dev-dependencies]
+nix = { workspace = true }

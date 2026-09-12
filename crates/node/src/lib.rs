@@ -33,9 +33,10 @@ pub mod server;
 pub mod services;
 mod sleep_inhibitor;
 mod subscription;
-#[cfg(test)]
+/// The fake identity service and account fixtures shared by node's own tests
+/// and the `testnet` harness. Compiled unconditionally so the harness can use
+/// it without a feature and without a second copy of node's types.
 #[doc(hidden)]
-#[path = "../../testnet/src/identity.rs"]
 pub mod test_fixtures;
 #[doc(hidden)]
 pub mod transport;
@@ -65,6 +66,7 @@ pub use config::{
     ProfileConfig, ResolvedConfig, ThemeSetting, UiSettings, load_profile_config,
 };
 pub use debug::DebugFormat;
+pub use identity::{device_files_ready_in, ensure_device_files_in, stored_host_id_in};
 pub use installation::{
     BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
     InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,

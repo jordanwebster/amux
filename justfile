@@ -1,5 +1,6 @@
 set shell := ["sh", "-cu"]
 set windows-shell := ["sh", "-cu"]
+set positional-arguments
 
 export AMUX_GIT_SHA := `git rev-parse HEAD`
 
@@ -17,11 +18,11 @@ check:
 
 # Run workspace tests, preserving explicit Cargo target selections.
 test *ARGS:
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; scripts/workspace-test.sh "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/workspace-test.sh "$@"
 
 # Run tests for one named workspace crate.
 test-crate CRATE *ARGS:
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 900 cargo test --locked -p {{CRATE}} "$@"
+    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; timeout 900 cargo test --locked -p "$crate" "$@"
 
 # Compile every ordinary workspace test target without running it.
 test-build:
@@ -33,7 +34,7 @@ doctest:
 
 # Run the whole-daemon and UI-state specification suites.
 spec *ARGS:
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; scripts/spec-test.sh "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/spec-test.sh "$@"
 
 # Lint every workspace target with warnings denied.
 lint:
@@ -57,7 +58,7 @@ codegen-check:
 
 # Build test binaries and run the end-to-end scenarios.
 e2e *ARGS: e2e-build
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 900 target/debug/e2e-runner run --amux-binary target/debug/amux --test-agent-binary target/debug/test-agent "$@"
+    if [ "${1-}" = -- ]; then shift; fi; timeout 900 target/debug/e2e-runner run --amux-binary target/debug/amux --test-agent-binary target/debug/test-agent "$@"
 
 # Build the binaries used by end-to-end scenarios.
 e2e-build:
@@ -65,8 +66,8 @@ e2e-build:
 
 # Build the shipping binary and enforce the release dependency policy.
 release-check *ARGS:
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 1200 cargo build --locked --release -p amux --bins --no-default-features "$@"
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; scripts/release-policy-check.sh "$@"
+    if [ "${1-}" = -- ]; then shift; fi; timeout 1200 cargo build --locked --release -p amux --bins --no-default-features "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/release-policy-check.sh "$@"
 
 # Check the provider-free graph used by embedded clients.
 embedded-check:
@@ -91,23 +92,23 @@ full-debug:
 
 # Run selected live Codex scenarios.
 codex-live *ARGS: build
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 900 cargo test --locked -p testnet --test codex_live -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; timeout 900 cargo test --locked -p testnet --test codex_live -- "$@"
 
 # Run selected live Claude PTY scenarios.
 claude-pty-live *ARGS: build
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 900 cargo test --locked -p testnet --test claude_pty_live -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; timeout 900 cargo test --locked -p testnet --test claude_pty_live -- "$@"
 
 # Run selected live Claude SDK scenarios.
 claude-sdk-live *ARGS: build
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 900 cargo test --locked -p testnet --test claude_sdk_live -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; timeout 900 cargo test --locked -p testnet --test claude_sdk_live -- "$@"
 
 # Render or inspect deterministic TUI evidence.
 shot *ARGS:
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; timeout 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"
 
 # Generate and verify the complete TUI evidence bundle.
 tui-evidence *ARGS:
-    set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 1800 scripts/tui-evidence "$@"
+    if [ "${1-}" = -- ]; then shift; fi; timeout 1800 scripts/tui-evidence "$@"
 
 # Enforce production and test-infrastructure dependency boundaries.
 dependency-policy:

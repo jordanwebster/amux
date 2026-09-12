@@ -28,9 +28,10 @@ if [ -n "$target" ]; then
 else
     binary="target/release/amux"
 fi
-case "$target" in
-    *windows*) binary="$binary.exe" ;;
-esac
+# Windows products carry an extension whether or not a --target was given.
+if [ ! -x "$binary" ] && [ -x "$binary.exe" ]; then
+    binary="$binary.exe"
+fi
 
 [ -x "$binary" ] || {
     echo "release-policy-check: release product is missing: $binary" >&2

@@ -43,7 +43,12 @@
 
 mod assertions;
 mod daemon;
-pub mod identity;
+/// The fake identity service (token minting, relay assignment) that stands in
+/// for amux.sh. It lives in node so node's unit tests and this harness share
+/// one implementation; the relay is the other, separate half of the cloud.
+pub mod identity {
+    pub use node::test_fixtures::*;
+}
 mod installation;
 pub mod relay;
 pub use installation::{

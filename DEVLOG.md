@@ -1,3 +1,15 @@
+2026-09-12 — **Close the review findings before merge.** The release policy
+script now finds the Windows product when no target is given, so the
+platform build job can pass. The fake identity service is an ordinary hidden
+module of node that testnet re-exports, replacing the last cross-crate
+`#[path]` include; the identity bootstrap that desktop setup needs is
+documented node API rather than a reach into a hidden module. Recipes use
+just's positional arguments so quoted arguments survive, nix is a unix-only
+development dependency, testnet drops three unused HTTP dependencies, and the
+build page no longer counts a profile this branch does not define. Check,
+Clippy, format, doctests, the node, testnet and amux suites and the release
+policy check pass.
+
 2026-09-12 — **Move desktop setup and provider preferences out of node.** The
 amux application now owns first-run identity and keep-awake preference setup,
 including the config-split test that proves those writes leave profile files
