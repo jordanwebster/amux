@@ -50,7 +50,9 @@ mod method {
     pub(super) const PROFILE_START_PAIRING_NAME: &str = "/amux.v1.ProfileService/StartPairing";
 }
 
-pub use connect::{ConnectError, connect_socket};
+pub use connect::ConnectError;
+#[cfg(unix)]
+pub use connect::connect_socket;
 pub use front_door::FrontDoorClient;
 pub use profile::ProfileAdminClient;
 pub use wire::{

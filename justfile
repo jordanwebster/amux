@@ -5,7 +5,7 @@ set positional-arguments
 export AMUX_GIT_SHA := `git rev-parse HEAD`
 
 # Wall-clock bound for every recipe; portable where GNU timeout is absent.
-bounded := justfile_directory() / "scripts/bounded"
+bounded := "scripts/bounded"
 
 # List the available repository tasks.
 default:

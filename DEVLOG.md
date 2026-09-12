@@ -1,3 +1,13 @@
+2026-09-13 — **Compile on Windows again.** The second CI run passed on Linux
+and macOS and failed only on Windows: the recipe wrapper path came from
+`justfile_directory()`, whose backslashes the shell swallowed, and the client
+crate re-exported its Unix-socket connector unconditionally. The wrapper path
+is relative to the justfile, the re-export is Unix-only, and an artifact
+index import that only Unix used moved to its use site. Every crate that does
+not pull `ring` now cross-checks for the Windows target from macOS with no
+errors; node, testnet and the test targets that embed them are checked only
+by the Windows CI job.
+
 2026-09-13 — **Make recipe timeouts portable and resolve the pinned nightly in
 CI.** The first CI run on the merged tree failed on macOS because every
 recipe called GNU `timeout`, which stock macOS and the runner image lack, and
