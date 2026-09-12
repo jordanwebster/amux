@@ -10,7 +10,7 @@ rules that keep per-agent knowledge in the right place. Companions:
 `docs/A2A.md` owns the message and parent/child lifecycle the client projects.
 The executable half of this document is the ui-state spec suite in
 `crates/ui-state/tests/spec/` plus the native-chat golden suites in
-`crates/tui-fixtures/tests/`; where prose and passing spec disagree, the spec
+`crates/tui/tests/`; where prose and passing spec disagree, the spec
 wins.
 
 Crate shape: `amux` composes `node`, `agent-runtime` and `tui`; `tui` consumes

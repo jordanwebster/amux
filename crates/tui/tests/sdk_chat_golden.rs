@@ -8,9 +8,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
+use tui::fixtures::{NamedState, fixture};
 use tui::view::{UiAction, ViewState};
 use tui::{ChatView, ColorMode, FrameContext, Theme, render};
-use tui_fixtures::{NamedState, fixture};
 use ui_state::claude_sdk::{ClaudeSdkCommand, FeedEntryKind, Finality};
 use ui_state::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, ServerMsg, StreamEntry, StreamMsg,
@@ -899,7 +899,7 @@ fn sdk_chat_context_overlay_lists_the_breakdown() {
 /// capture would show an empty overlay to whoever reads it.
 #[test]
 fn sdk_chat_context_named_state_shows_the_answered_breakdown() {
-    let fixture = tui_fixtures::fixture(tui_fixtures::NamedState::ClaudeSdkContextBreakdown);
+    let fixture = tui::fixtures::fixture(tui::fixtures::NamedState::ClaudeSdkContextBreakdown);
     let backend = TestBackend::new(WIDTH, HEIGHT);
     let mut terminal = Terminal::new(backend).expect("terminal");
     let context = FrameContext {

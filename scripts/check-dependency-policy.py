@@ -30,7 +30,6 @@ TEST_SUPPORT = {
     "testnet",
     "claude-specs",
     "codex-specs",
-    "tui-fixtures",
     "test-agent",
     "shot",
 }
@@ -38,7 +37,6 @@ SUPPORT_ALLOWED_LOCAL = {
     "testnet": {"node"},
     "claude-specs": {"claude", "pty-host", "redaction", "replay-support"},
     "codex-specs": {"codex", "redaction", "replay-support"},
-    "tui-fixtures": {"tui", "ui-runtime", "ui-state"},
 }
 NO_BUILD_SCRIPT = set(ALLOWED_LOCAL) | {"claude", "codex"}
 MODEL_BANNED_DEPENDENCIES = {

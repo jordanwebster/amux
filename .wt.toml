@@ -116,7 +116,7 @@ run = "scripts/with-git-revision.sh timeout 600 cargo test --locked -p ui-state"
 run = "scripts/with-git-revision.sh timeout 900 cargo test --locked -p ui-runtime"
 
 [task.test-tui]
-run = "scripts/with-git-revision.sh timeout 900 cargo test --locked -p tui"
+run = "scripts/with-git-revision.sh timeout 900 cargo test --locked -p tui --features fixtures"
 
 [task.test-shot]
 run = "scripts/with-git-revision.sh timeout 900 cargo test --locked -p shot"
@@ -128,7 +128,7 @@ run = 'scripts/with-git-revision.sh timeout 600 cargo run --locked --quiet -p sh
 run = 'scripts/with-git-revision.sh timeout 1800 scripts/tui-evidence "$@"'
 
 [task.test-infrastructure]
-run = "scripts/with-git-revision.sh timeout 600 cargo test --locked -p testnet -p claude-specs -p codex-specs -p tui-fixtures"
+run = "scripts/with-git-revision.sh timeout 600 cargo test --locked -p testnet -p claude-specs -p codex-specs"
 
 [task.dependency-policy]
 run = "timeout 60 python3 scripts/check-dependency-policy.py"

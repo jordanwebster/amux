@@ -23,7 +23,6 @@ members = [
     "crates/settings",
     "crates/test-agent",
     "crates/testnet",
-    "crates/tui-fixtures",
     "crates/wire",
     "crates/xtask",
 ]
@@ -44,7 +43,6 @@ artifacts = { path = "crates/artifacts" }
 ui-runtime = { path = "crates/ui-runtime" }
 ui-state = { path = "crates/ui-state" }
 tui = { path = "crates/tui" }
-tui-fixtures = { path = "crates/tui-fixtures" }
 pty-host = { path = "crates/pty-host" }
 claude = { path = "crates/claude" }
 redaction = { path = "crates/redaction" }

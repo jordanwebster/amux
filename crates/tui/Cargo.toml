@@ -5,6 +5,9 @@ edition.workspace = true
 description = "amux chrome TUI: the fleet around raw attach"
 publish = false
 
+[features]
+fixtures = []
+
 # Rendering consumes pure UI state; the event loop uses ui-runtime for effects.
 [dependencies]
 ui-runtime = { workspace = true }
@@ -38,3 +41,28 @@ gethostname = { workspace = true }
 tempfile = { workspace = true }
 unicode-width = "0.2"
 vt100 = "0.15"
+
+[[test]]
+name = "backend_vocabulary"
+path = "tests/backend_vocabulary.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "component_golden"
+path = "tests/component_golden.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "perf"
+path = "tests/perf.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "sdk_chat_golden"
+path = "tests/sdk_chat_golden.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "switcher_frames"
+path = "tests/switcher_frames.rs"
+required-features = ["fixtures"]

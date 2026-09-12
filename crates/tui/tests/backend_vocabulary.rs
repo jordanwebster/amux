@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use tui::fixtures::{NamedState, all_states, fixture};
 use tui::{FrameContext, Theme, render};
-use tui_fixtures::{NamedState, all_states, fixture};
 
 /// Words that name how an agent is driven rather than what it is doing.
 const MACHINERY_WORDS: &[&str] = &["sdk", "pty", "driver", "backend", "unsupported"];

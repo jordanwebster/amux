@@ -1,3 +1,12 @@
+2026-09-12 — **Fold deterministic fixtures into the TUI package.** The fixture
+registry, builders and five focused suites now live under `tui` behind its
+non-default `fixtures` feature. Shot enables that feature directly, so the
+paste-back `tui-fixtures` package and its workspace and policy edges are gone.
+The focused TUI suite, shot suite and shot help command pass. The unit graph
+continues to show one configuration for every listed crate except `tui`, whose
+second configuration is intentional: the development-only shot tool enables
+fixtures while the product does not.
+
 2026-09-12 — **Move live provider harnesses to testnet.** The Codex, Claude
 PTY and Claude SDK process suites now live beside the other cross-crate
 scenarios, along with their argument, depfile, redaction and shared

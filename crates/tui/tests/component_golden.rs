@@ -6,9 +6,9 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use tui::fixtures::{NamedState, fixture};
 use tui::report_flow::paint;
 use tui::{ColorMode, FrameContext, Theme, render};
-use tui_fixtures::{NamedState, fixture};
 use ui_runtime::report::Mark;
 
 const VIEWPORT: (u16, u16) = (120, 40);

@@ -13,16 +13,17 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKi
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::{Value, json};
-use tui::chat::{handle_chat_key, handle_chat_mouse};
-use tui::switcher::SwitcherState;
-use tui::view::Mode;
-use tui::{ChatView, FrameContext, Theme, ViewState, render};
 use ui_runtime::ProfileEntry;
 use ui_state::{
     Agent, AgentId, Command, HostEntry, HostId, HostTrustStatus, Model, Msg, OpId, OpOutcome,
     ProfileId, ServerMsg, StreamEntry, StreamMsg, StructuredProtocol, update,
 };
 use uuid::Uuid;
+
+use crate::chat::{handle_chat_key, handle_chat_mouse};
+use crate::switcher::SwitcherState;
+use crate::view::Mode;
+use crate::{ChatView, FrameContext, Theme, ViewState, render};
 
 const NOW: &str = "2026-08-12T09:12:30Z";
 const SESSION: &str = "22222222-2222-4222-8222-222222222222";
@@ -323,7 +324,7 @@ pub enum ScriptStep {
     Paste(String),
     /// Ctrl+V with a stated clipboard, so a recording does not depend on
     /// what the recording machine happens to be holding.
-    Clipboard(tui::clipboard::ClipboardContent),
+    Clipboard(crate::clipboard::ClipboardContent),
     /// The daemon answers the review chord with the fixture's frozen diff.
     FrozenDiff(ui_state::DiffBase),
     /// The conversation under the chat becomes another named state's: how
@@ -365,14 +366,14 @@ fn key_label(key: KeyEvent) -> String {
     label
 }
 
-fn clipboard_label(content: &tui::clipboard::ClipboardContent) -> String {
+fn clipboard_label(content: &crate::clipboard::ClipboardContent) -> String {
     match content {
-        tui::clipboard::ClipboardContent::Image { mime, bytes } => {
+        crate::clipboard::ClipboardContent::Image { mime, bytes } => {
             format!("{mime} ({} bytes)", bytes.len())
         }
-        tui::clipboard::ClipboardContent::Path(path) => path.display().to_string(),
-        tui::clipboard::ClipboardContent::Text(text) => format!("{} chars", text.chars().count()),
-        tui::clipboard::ClipboardContent::Empty => "an empty clipboard".to_string(),
+        crate::clipboard::ClipboardContent::Path(path) => path.display().to_string(),
+        crate::clipboard::ClipboardContent::Text(text) => format!("{} chars", text.chars().count()),
+        crate::clipboard::ClipboardContent::Empty => "an empty clipboard".to_string(),
     }
 }
 
@@ -383,11 +384,11 @@ pub fn apply_step(fixture: &mut Fixture, step: &ScriptStep) {
         ScriptStep::Type(text) => review_type(fixture, text),
         ScriptStep::Paste(text) => {
             let chat = fixture.view.chat.as_mut().expect("chat open");
-            tui::chat::handle_chat_paste(chat, &fixture.model, text);
+            crate::chat::handle_chat_paste(chat, &fixture.model, text);
         }
         ScriptStep::Clipboard(content) => {
             let chat = fixture.view.chat.as_mut().expect("chat open");
-            tui::chat::handle_chat_clipboard(chat, &fixture.model, content.clone());
+            crate::chat::handle_chat_clipboard(chat, &fixture.model, content.clone());
         }
         ScriptStep::FrozenDiff(base) => deliver_frozen_diff(fixture, base.clone()),
         ScriptStep::Conversation(state) => {
@@ -419,7 +420,7 @@ fn deliver_frozen_diff(fixture: &mut Fixture, base: ui_state::DiffBase) {
     deliver_diff_response(
         fixture,
         command,
-        tui::review::fixture::sample_diff_response(base),
+        crate::review::fixture::sample_diff_response(base),
     );
 }
 
@@ -1007,7 +1008,7 @@ fn switched_fleet_fixture() -> Fixture {
 fn sdk_fleet_help_fixture() -> Fixture {
     let mut fixture = mixed_fleet_fixture();
     fixture.view.selected = select_row(&fixture, agent_id(StructuredProtocol::ClaudeSdk));
-    fixture.view.mode = tui::view::Mode::Help;
+    fixture.view.mode = crate::view::Mode::Help;
     fixture
 }
 
@@ -1016,7 +1017,7 @@ fn sdk_fleet_help_fixture() -> Fixture {
 /// the ranking changes: a hard-coded index would quietly select a
 /// neighbour instead of failing.
 fn select_row(fixture: &Fixture, agent: AgentId) -> usize {
-    tui::view::visible_rows(&fixture.model, &fixture.view)
+    crate::view::visible_rows(&fixture.model, &fixture.view)
         .iter()
         .position(|row| row.card().is_some_and(|card| card.agent.id == agent))
         .expect("fixture fleet holds the agent")
@@ -1960,10 +1961,10 @@ fn codex_long_row(index: usize) -> Value {
 mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use tui::{FrameContext, Theme, render};
     use ui_state::StructuredProtocol;
 
     use super::{NamedState, all_states, fixture, long_feed};
+    use crate::{FrameContext, Theme, render};
 
     #[test]
     fn names_round_trip_and_are_unique() {

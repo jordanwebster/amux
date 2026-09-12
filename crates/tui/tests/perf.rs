@@ -5,8 +5,8 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use tui::chat::{handle_chat_key, handle_chat_mouse};
+use tui::fixtures::{Fixture, long_feed};
 use tui::{FrameContext, PaintStats, Theme, render};
-use tui_fixtures::{Fixture, long_feed};
 use ui_state::StructuredProtocol;
 
 const VIEWPORT: (u16, u16) = (120, 40);

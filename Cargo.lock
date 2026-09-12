@@ -3678,7 +3678,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tui",
- "tui-fixtures",
  "ui-state",
 ]
 
@@ -4504,23 +4503,6 @@ dependencies = [
  "ui-state",
  "unicode-segmentation",
  "unicode-width 0.2.2",
- "uuid",
- "vt100",
-]
-
-[[package]]
-name = "tui-fixtures"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "crossterm 0.29.0",
- "gethostname",
- "ratatui",
- "serde_json",
- "tempfile",
- "tui",
- "ui-runtime",
- "ui-state",
  "uuid",
  "vt100",
 ]

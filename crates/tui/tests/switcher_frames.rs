@@ -7,8 +7,8 @@
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use tui::fixtures::{NamedState, fixture};
 use tui::{ColorMode, FrameContext, Theme, render};
-use tui_fixtures::{NamedState, fixture};
 
 const VIEWPORT: (u16, u16) = (120, 40);
 
