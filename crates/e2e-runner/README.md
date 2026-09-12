@@ -1,9 +1,9 @@
 # E2E runner
 
-Run real CLI and agent processes with `wt run e2e`, or select test names with
-`wt run e2e -- profile`. Tests live in `e2e-tests/*.test`. Set
+Run real CLI and agent processes with `just e2e`, or select test names with
+`just e2e -- profile`. Tests live in `e2e-tests/*.test`. Set
 `E2E_TRANSCRIPT_DIR` to capture commands and their actual output as text files.
-The runner's default binary build also goes through `wt build`.
+The runner's default binary build also goes through `just e2e-build`.
 
 Each `config` defines an isolated installation. `profiles: [personal, work]`
 creates named unbound profiles within it; otherwise it has one profile named

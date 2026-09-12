@@ -1,0 +1,22 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition.workspace = true
+description = "Explicit RPC clients for amux nodes and installations"
+publish = false
+
+[dependencies]
+bytes = { workspace = true }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+hyper-util = { workspace = true }
+model = { workspace = true }
+prost = { workspace = true }
+ring = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+tower = { workspace = true }
+uuid = { workspace = true }
+wire = { workspace = true }

@@ -11,7 +11,7 @@ live_init() {
   for dependency in timeout tmux python3; do
     command -v "$dependency" >/dev/null 2>&1 || live_fail "$dependency is required"
   done
-  [ -x "$amux_bin" ] || live_fail "amux not found at $amux_bin; run wt build"
+  [ -x "$amux_bin" ] || live_fail "amux not found at $amux_bin; run just build"
   evidence_dir=${1:-"$repo_root/.autopilot/evidence/live/$live_name"}
   mkdir -p "$evidence_dir"
   evidence_dir=$(CDPATH='' cd -- "$evidence_dir" && pwd -P)

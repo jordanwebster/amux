@@ -63,7 +63,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-[ -x "$amux_bin" ] || fail "amux binary not found at $amux_bin; run wt build"
+[ -x "$amux_bin" ] || fail "amux binary not found at $amux_bin; run just build"
 command -v tmux >/dev/null 2>&1 || fail "tmux is required"
 command -v claude >/dev/null 2>&1 || fail "Claude Code is required"
 command -v python3 >/dev/null 2>&1 || fail "python3 is required for JSON validation"

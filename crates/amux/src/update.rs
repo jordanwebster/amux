@@ -1,90 +1,527 @@
-//! Update checking: fetches the release manifest and compares versions.
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result, bail};
+use node::InstallationConfig;
+pub(crate) use node::update::MarkerFileReporter;
+use semver::Version;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
-mod markers;
-pub use markers::MarkerFileReporter;
+use crate::front_door;
 
-/// Select persistent per-profile status on desktop or callbacks owned by a host.
-#[derive(Clone, Default)]
-pub enum StatusReporters {
-    #[default]
-    None,
-    UpdateMarkerFiles,
-    Host {
-        update: Option<std::sync::Arc<dyn UpdateReporter>>,
-    },
-}
+#[cfg(test)]
+mod tests {
+    use node::{UpdateInfo, UpdateReporter, UpdateStatus};
 
-pub(crate) struct ResolvedReporters {
-    pub update: Option<std::sync::Arc<dyn UpdateReporter>>,
-}
+    use super::*;
 
-impl StatusReporters {
-    pub(crate) fn resolve(&self, state_path: &std::path::Path) -> ResolvedReporters {
-        match self {
-            Self::None => ResolvedReporters { update: None },
-            Self::UpdateMarkerFiles => ResolvedReporters {
-                update: Some(std::sync::Arc::new(MarkerFileReporter::from_state_path(
-                    state_path,
-                ))),
-            },
-            Self::Host { update } => ResolvedReporters {
-                update: update.clone(),
-            },
-        }
+    async fn manifest_fixture(
+        route: &'static str,
+        version: &'static str,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                let request = String::from_utf8_lossy(&request);
+                let path = request.split_whitespace().nth(1).unwrap_or("");
+                let (status, version) = if path == route {
+                    ("200 OK", version)
+                } else if path == "/current.json" {
+                    ("200 OK", env!("CARGO_PKG_VERSION"))
+                } else {
+                    ("404 Not Found", "0.0.0")
+                };
+                let body =
+                    format!(r#"{{"version":"{version}","release_notes":"","platforms":{{}}}}"#);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+        (url, server)
     }
-}
 
-/// Result of an update check.
-#[derive(Debug, Clone)]
-pub struct UpdateInfo {
-    pub current_version: String,
-    pub update_version: String,
-}
+    #[tokio::test]
+    async fn desktop_installation_markers_reach_cli_and_clear_on_update() {
+        use node::installation::{
+            Installation, InstallationRoot, Observed, ProfileId, ProfileLabel, ProfilePaths,
+            Registry,
+        };
+        use testnet::identity::report_profile_status;
 
-#[derive(Debug, Clone)]
-pub enum UpdateStatus {
-    /// `Some(info)` reports an available update; `None` clears that status.
-    Available(Option<UpdateInfo>),
-    /// `Some(min)` reports a required minimum version; `None` clears it.
-    Required(Option<String>),
-}
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let temp = testnet::identity::short_installation_root();
+            let root = std::fs::canonicalize(temp.path()).unwrap();
+            let (cloud_url, cloud_server) = manifest_fixture("/manifest.json", "100.0.0").await;
+            let (update_url, manifest_server) = manifest_fixture("/releases/desktop.json", "99.0.0").await;
+            let mut config = InstallationConfig {
+                root: root.clone(),
+                path: Some(root.join("config.yaml")),
+                front_door_socket: root.join("amux.sock"),
+                keymaps_dir: root.join("keymaps"),
+                prevent_idle_sleep: Some(false),
+                update_manifest_url: format!("{update_url}/releases/desktop.json"),
+                ..InstallationConfig::default()
+            };
+            std::fs::write(config.path.as_ref().unwrap(), serde_yaml::to_string(&config).unwrap()).unwrap();
+            let ids = [ProfileId::new(), ProfileId::new()];
+            let mut registry = Registry::open(InstallationRoot::OnDisk(root.clone())).unwrap();
+            let mut readers = Vec::new();
+            for id in ids {
+                registry.create(id, ProfileLabel::default()).unwrap();
+                let paths = ProfilePaths::for_id(&root, id).unwrap();
+                let profile = node::ProfileConfig {
+                    installation_config: config.path.clone().unwrap(),
+                    socket_path: paths.socket_path,
+                    data_dir: paths.data_dir,
+                    state_path: paths.state_path,
+                    cloud_url: cloud_url.clone(),
+                    lan: Default::default(),
+                    cloud_refresh_secs: None,
+                };
+                let path = paths.config_path.unwrap();
+                std::fs::write(&path, serde_yaml::to_string(&profile).unwrap()).unwrap();
+                // Resolve exactly the config path used by CLI selection and TUI startup.
+                let resolved = node::load_profile_config(&path).unwrap();
+                readers.push(MarkerFileReporter::from_state_path(&resolved.profile.state_path));
+            }
+            drop(registry);
+            let owner = Installation::from_config(
+                config.clone(),
+                Some(std::sync::Arc::new(agent_runtime::AgentRuntimeFactory)),
+            )
+            .await
+            .unwrap();
+            for id in ids {
+                owner.client(id).unwrap().list_agents().await.unwrap();
+            }
+            while readers.iter().any(|reader| reader.read_update_marker().is_none()) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            for (id, reader) in ids.iter().zip(&readers) {
+                let marker = reader.read_update_marker().unwrap();
+                assert_eq!(marker.update_version, "99.0.0", "profile {id} used its cloud URL instead of the installation update source");
+                assert_eq!(marker.current_version, env!("CARGO_PKG_VERSION"));
+                let selected = node::load_profile_config(
+                    &root.join("profiles").join(id.to_string()).join("config.yaml"),
+                ).unwrap();
+                crate::client_common::print_update_banner(&selected.profile.state_path);
+            }
+            println!("Both desktop profiles show installation release 99.0.0; the separate cloud server advertises 100.0.0.");
+            report_profile_status(&owner, ids[0], Observed::UpdateRequired { minimum_version: Some("99.0.0".into()) }).await;
+            report_profile_status(&owner, ids[1], Observed::Connected {
+                tier: node::Tier::Pro,
+                carrier: node::installation::RelayCarrier::Tcp,
+            }).await;
+            assert_eq!(readers[0].read_active_update_required(env!("CARGO_PKG_VERSION")).as_deref(), Some("99.0.0"));
+            assert!(readers[1].read_update_required().is_none());
+            let selected = node::load_profile_config(
+                &root.join("profiles").join(ids[0].to_string()).join("config.yaml"),
+            ).unwrap();
+            crate::client_common::print_update_banner(&selected.profile.state_path);
+            println!("Desktop profile A reads update-required=99.0.0; profile B connecting leaves it intact.");
 
-pub trait UpdateReporter: Send + Sync + 'static {
-    fn report(&self, status: UpdateStatus);
+            report_profile_status(&owner, ids[1], Observed::UpdateRequired { minimum_version: Some("98.0.0".into()) }).await;
+            for (reader, version) in readers.iter().zip(["99.0.0", "98.0.0"]) {
+                reader.dismiss_update_required(version);
+            }
+            // Serve the current version to exercise cleanup without replacing this test executable.
+            config.update_manifest_url = format!("{update_url}/current.json");
+            run_update(&config).await.unwrap();
+            for (reader, version) in readers.iter().zip(["99.0.0", "98.0.0"]) {
+                assert!(reader.read_update_marker().is_none());
+                assert!(reader.read_update_required().is_none());
+                assert!(!reader.is_update_dismissed(version));
+            }
+            println!("amux update (already current): update-required and update-dismissed clear in both profile state directories.");
+            owner.shutdown(node::ShutdownReason::UserRequested).await;
+
+            for reader in &readers {
+                reader.report(UpdateStatus::Required(Some("99.0.0".into())));
+            }
+            run_update(&config).await.unwrap();
+            for reader in &readers {
+                assert!(reader.read_update_required().is_none());
+            }
+            println!("amux update also clears both profiles while the installation is stopped.");
+            assert!(!root.join("state/state.yaml").exists());
+            manifest_server.abort();
+            cloud_server.abort();
+        }).await.expect("desktop marker regression timed out");
+    }
+
+    #[tokio::test]
+    async fn replacement_failure_preserves_binary_and_runs_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("amux");
+        std::fs::write(&executable, b"previous executable").unwrap();
+        let mut recovered = false;
+        let error = replace_or_recover(
+            &directory.path().join("missing-download"),
+            &executable,
+            async {
+                assert_eq!(std::fs::read(&executable).unwrap(), b"previous executable");
+                recovered = true;
+                Ok(())
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(recovered);
+        assert!(error.to_string().contains("failed to replace binary"));
+        assert_eq!(std::fs::read(&executable).unwrap(), b"previous executable");
+    }
+
+    #[tokio::test]
+    async fn replacement_success_does_not_run_failure_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("amux");
+        let download = directory.path().join("download");
+        std::fs::write(&executable, b"previous executable").unwrap();
+        std::fs::write(&download, b"new executable").unwrap();
+        replace_or_recover(&download, &executable, async {
+            panic!("recovery must only run when replacement fails")
+        })
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&executable).unwrap(), b"new executable");
+    }
+
+    #[test]
+    fn available_marker_round_trips_and_clears() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+        let info = UpdateInfo {
+            current_version: "0.3.0".to_string(),
+            update_version: "0.4.0".to_string(),
+        };
+
+        reporter.report(UpdateStatus::Available(Some(info.clone())));
+
+        let marker = reporter.read_update_marker().unwrap();
+        assert_eq!(marker.current_version, info.current_version);
+        assert_eq!(marker.update_version, info.update_version);
+
+        reporter.report(UpdateStatus::Available(None));
+
+        assert!(reporter.read_update_marker().is_none());
+        assert!(!reporter.update_marker_path().exists());
+    }
+
+    #[test]
+    fn required_marker_dismissal_round_trips_and_clears() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+
+        reporter.report(UpdateStatus::Required(Some("0.4.0".to_string())));
+
+        assert_eq!(reporter.read_update_required().as_deref(), Some("0.4.0"));
+        assert!(!reporter.is_update_dismissed("0.4.0"));
+
+        reporter.dismiss_update_required("0.4.0");
+
+        assert!(reporter.is_update_dismissed("0.4.0"));
+        assert!(!reporter.is_update_dismissed("0.5.0"));
+
+        reporter.report(UpdateStatus::Required(None));
+
+        assert_eq!(reporter.read_update_required(), None);
+        assert!(!reporter.is_update_dismissed("0.4.0"));
+    }
+
+    #[tokio::test]
+    async fn profile_runtime_local_lifecycle_preserves_update_markers() {
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let temp = tempfile::tempdir().unwrap();
+            let config = node::Config {
+                state_path: temp.path().join("state.yaml"),
+                data_dir: temp.path().join("data"),
+                socket_path: temp.path().join("amux.sock"),
+
+                prevent_idle_sleep: Some(false),
+                ..node::Config::default()
+            };
+            let reporter = Arc::new(MarkerFileReporter::from_state_path(&config.state_path));
+            reporter.report(UpdateStatus::Required(Some("99.0.0".into())));
+            reporter.dismiss_update_required("99.0.0");
+
+            let root = testnet::identity::short_installation_root();
+            let installation = node::Installation::open(node::InstallationOptions {
+                root: node::InstallationRoot::OnDisk(root.path().into()),
+                settings: node::InstallationSettings {
+                    host_name: config.host_name,
+                    prevent_idle_sleep: Some(false),
+                    keybinds: config.keybinds,
+                    ui: config.ui,
+                    keymaps_dir: temp.path().join("keymaps"),
+                    minimum_client_versions: Default::default(),
+                    update_manifest_url: "http://127.0.0.1:1/manifest.json".into(),
+                    status_reporters: node::update::StatusReporters::Host {
+                        update: Some(reporter.clone()),
+                    },
+                },
+                listeners: node::Listeners::InProcessOnly,
+                credentials: node::CredentialSource::ProfileFiles,
+                identity_http: Default::default(),
+                host_factory: None,
+            }).await.unwrap();
+            let id = installation.create(node::OperationId::new(), None).await.unwrap().record.id;
+            let client = installation.client(id).unwrap();
+            client.list_agents().await.unwrap();
+            assert_eq!(reporter.read_update_required().as_deref(), Some("99.0.0"));
+            assert!(reporter.is_update_dismissed("99.0.0"));
+            println!("Runtime started: update-required=99.0.0 and update-dismissed=99.0.0 remain visible");
+
+            drop(client);
+            installation.shutdown(node::ShutdownReason::UserRequested).await;
+
+            assert_eq!(reporter.read_update_required().as_deref(), Some("99.0.0"));
+            assert!(reporter.is_update_dismissed("99.0.0"));
+            println!("Embedded owner stopped: update-required=99.0.0 and update-dismissed=99.0.0 remain visible");
+        })
+        .await
+        .expect("runtime marker test timed out");
+    }
+
+    #[test]
+    fn active_required_marker_clears_when_current_satisfies_minimum() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+
+        reporter.report(UpdateStatus::Required(Some("0.4.0".to_string())));
+        reporter.dismiss_update_required("0.4.0");
+
+        assert_eq!(reporter.read_active_update_required("0.4.0"), None);
+        assert_eq!(reporter.read_update_required(), None);
+        assert!(!reporter.is_update_dismissed("0.4.0"));
+    }
+
+    #[test]
+    fn active_required_marker_retains_when_current_is_below_minimum() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+
+        reporter.report(UpdateStatus::Required(Some("0.4.0".to_string())));
+
+        assert_eq!(
+            reporter.read_active_update_required("0.3.0").as_deref(),
+            Some("0.4.0")
+        );
+        assert_eq!(reporter.read_update_required().as_deref(), Some("0.4.0"));
+    }
 }
 
 #[derive(Deserialize)]
 struct Manifest {
     version: String,
+    release_notes: String,
+    platforms: HashMap<String, PlatformBinary>,
 }
 
-async fn fetch_manifest(url: &str) -> Result<Manifest, reqwest::Error> {
-    let resp = reqwest::get(url).await?.error_for_status()?;
-    resp.json().await
+#[derive(Deserialize)]
+struct PlatformBinary {
+    url: String,
+    sha256: String,
 }
 
-/// Check the remote manifest for a newer version. Returns `Some(UpdateInfo)` if
-/// the manifest version is strictly greater than `current_version`.
-pub async fn check_for_update(manifest_url: &str, current_version: &str) -> Option<UpdateInfo> {
-    let manifest = match fetch_manifest(manifest_url).await {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::debug!(error = %e, "update check failed");
-            return None;
-        }
-    };
-
-    let current = semver::Version::parse(current_version).ok()?;
-    let latest = semver::Version::parse(&manifest.version).ok()?;
-
-    if latest > current {
-        Some(UpdateInfo {
-            current_version: current_version.to_string(),
-            update_version: manifest.version,
-        })
-    } else {
-        None
+fn platform_key() -> &'static str {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        "macos-arm64"
     }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        "macos-x86_64"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        "linux-x86_64"
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        "linux-arm64"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        "windows-x86_64"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    {
+        "windows-arm64"
+    }
+    #[cfg(not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "macos", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "aarch64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "aarch64"),
+    )))]
+    {
+        compile_error!("unsupported platform for update")
+    }
+}
+
+async fn fetch_manifest(url: &str) -> Result<Manifest> {
+    let resp = reqwest::get(url)
+        .await
+        .context("failed to fetch manifest")?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("manifest request failed with status {status}");
+    }
+    resp.json().await.context("failed to parse manifest")
+}
+
+async fn download_and_verify(url: &str, expected_sha256: &str, exe_dir: &Path) -> Result<PathBuf> {
+    let resp = reqwest::get(url)
+        .await
+        .with_context(|| format!("failed to download binary from {url}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        bail!("binary download failed with status {status}");
+    }
+    let bytes = resp.bytes().await.context("failed to read binary body")?;
+
+    let hash = Sha256::digest(&bytes);
+    let actual_sha256 = format!("{hash:x}");
+    if actual_sha256 != expected_sha256 {
+        bail!("SHA256 mismatch: expected {expected_sha256}, got {actual_sha256}");
+    }
+
+    let tmp_path = exe_dir.join(".amux-update.tmp");
+    std::fs::write(&tmp_path, &bytes).context("failed to write temp binary")?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
+        .context("failed to set temp binary permissions")?;
+
+    Ok(tmp_path)
+}
+
+fn replace_binary(temp: &Path, target: &Path) -> Result<()> {
+    std::fs::rename(temp, target).context("failed to replace binary")
+}
+
+async fn replace_or_recover(
+    temp: &Path,
+    target: &Path,
+    recovery: impl std::future::Future<Output = Result<()>>,
+) -> Result<()> {
+    if let Err(error) = replace_binary(temp, target) {
+        recovery
+            .await
+            .with_context(|| format!("{error:#}; the previous server could not resume"))?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn clear_profile_markers(config: &InstallationConfig) -> Result<()> {
+    let profiles = match std::fs::read_dir(config.root.join("profiles")) {
+        Ok(profiles) => profiles,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).context("failed to enumerate profile markers"),
+    };
+    for entry in profiles {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir()
+            || entry
+                .file_name()
+                .to_str()
+                .and_then(|name| uuid::Uuid::parse_str(name).ok())
+                .is_none()
+        {
+            continue;
+        }
+        let path = entry.path().join("config.yaml");
+        if !path.exists() {
+            continue;
+        }
+        let resolved = node::load_profile_config(&path)?;
+        MarkerFileReporter::from_state_path(&resolved.profile.state_path).clear_all();
+    }
+    Ok(())
+}
+
+pub async fn run_update(config: &InstallationConfig) -> Result<()> {
+    let current =
+        Version::parse(env!("CARGO_PKG_VERSION")).context("failed to parse current version")?;
+
+    let manifest_url = &config.update_manifest_url;
+    println!("Checking for updates...");
+    let manifest = fetch_manifest(manifest_url).await?;
+
+    let latest = Version::parse(&manifest.version)
+        .with_context(|| format!("invalid version in manifest: {}", manifest.version))?;
+
+    if latest <= current {
+        println!("Already up to date (v{current}).");
+        clear_profile_markers(config)?;
+        return Ok(());
+    }
+
+    println!("Update available: v{current} -> v{latest}");
+    if !manifest.release_notes.is_empty() {
+        println!("{}", manifest.release_notes);
+    }
+
+    let platform = platform_key();
+    let binary = manifest
+        .platforms
+        .get(platform)
+        .with_context(|| format!("no binary available for platform {platform}"))?;
+
+    let current_exe =
+        std::env::current_exe().context("failed to determine current executable path")?;
+    let exe_dir = current_exe
+        .parent()
+        .context("executable has no parent directory")?
+        .to_path_buf();
+
+    println!("Downloading...");
+    let tmp_path = download_and_verify(&binary.url, &binary.sha256, &exe_dir).await?;
+
+    let was_running = front_door::suspend_for_update_if_running(config).await?;
+
+    replace_or_recover(&tmp_path, &current_exe, async {
+        if was_running {
+            front_door::resume_with_executable(config, &current_exe).await?;
+        }
+        Ok(())
+    })
+    .await?;
+    println!("Updated to v{latest}.");
+
+    // A marker cleanup error must not leave the updated daemon stopped.
+    let markers_cleared = clear_profile_markers(config);
+
+    if was_running {
+        println!("Restarting server...");
+        front_door::resume_with_executable(config, &current_exe).await?;
+    }
+
+    markers_cleared
 }

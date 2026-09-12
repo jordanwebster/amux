@@ -2,16 +2,15 @@
 name = "codex"
 version = "0.1.0"
 edition.workspace = true
+publish = false
 
 [dependencies]
 anyhow.workspace = true
 chrono = { workspace = true }
 futures-util.workspace = true
-replay-support = { path = "../replay-support" }
 semver = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
-tempfile = { workspace = true }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
@@ -22,6 +21,5 @@ uuid = { workspace = true }
 nix.workspace = true
 tokio-tungstenite.workspace = true
 
-[[bin]]
-name = "codex-probe"
-path = "src/bin/codex_probe/main.rs"
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -36,7 +36,7 @@ routing instances are forwarding infrastructure, not device profiles.
 
 Around the daemon sit its clients and consumers:
 
-- **CLI** (`crates/amux-cli`): discovers and administers profiles through the
+- **CLI** (`crates/amux`): discovers and administers profiles through the
   installation's front door, then uses the selected profile's `ClientService`
   for agent operations. Hidden subcommands are protocol plumbing:
   `amux relay --profile <UUID>` bridges stdin/stdout to that profile's socket
@@ -44,20 +44,20 @@ Around the daemon sit its clients and consumers:
   `amux pair-recv` runs the responder side of an SSH pairing identity
   exchange, and `amux mcp agent` serves the agent tools over stdio MCP.
   [`A2A.md`](./A2A.md) owns that tool contract.
-- **UI runtime** (`crates/amux-ui`): a reactive client library over the
+- **UI runtime** (`crates/ui-runtime`): a reactive client library over the
   same `ClientService` surface, for embedding in apps. It joins attachment
   puts before a send, folds stream refs, fetches opened artifacts through the
   viewing-profile cache, and leaves presentation to its client.
-- **Artifact library** (`crates/amux-artifacts`): dependency-light
+- **Artifact library** (`crates/artifacts`): dependency-light
   content-addressed storage with an authoritative per-agent Owner role and a
   disposable per-viewing-profile Cache role. It depends on neither the daemon
   nor the UI, so another client can reuse the storage contract directly.
-- **Test harnesses**: debug builds compile an in-process harness
-  (`amux::testnet`) that builds production profile runtimes and installations —
-  real identities, real trust stores, real localhost TCP with device mTLS, an
-  optional in-process cloud relay — for the spec suite, plus `WirePeer`, a scripted
-  protocol actor for wire-conformance tests. `crates/e2e-runner` drives
-  real compiled binaries end to end.
+- **Test harnesses**: the `testnet` support package builds isolated embedded
+  installations through public APIs and owns reusable cross-package scenarios.
+  Node's own specification suite uses a private white-box harness for real
+  identities, trust stores, localhost TCP with device mTLS and an optional
+  in-process cloud relay. `crates/e2e-runner` drives real compiled binaries end
+  to end.
 
 ## Accounts, configuration and local entry points
 
@@ -238,7 +238,7 @@ The layering is deliberate:
    a PTY, hook stream, transcript stream, and observed version in one source
    bundle; its SDK driver owns the stream-JSON event/control boundary. Codex
    owns one app-server thread event/control boundary.
-3. **`crates/amux/src/agents/claude` and `agents/codex`** are adapters. They
+3. **`crates/agent-runtime/src/agents/claude` and `agents/codex`** are adapters. They
    translate provider events into amux-owned structured rows, route typed input
    to controls, supply the A2A carrier, and persist only the provider identity
    needed for resume.
@@ -417,7 +417,7 @@ described in [`A2A.md`](./A2A.md).
 ## Attachment storage and routing
 
 An agent's daemon is the sole owner of that agent's artifacts. It opens one
-`amux_artifacts::Owner` at
+`artifacts::Owner` at
 `<data_dir>/agents/<agent-id>/artifacts`, loads the index once, and keeps it in
 memory. Content starts ephemeral, is pinned when a sent message explicitly
 names its id, is swept after one hour if still ephemeral, and is deleted with
@@ -432,7 +432,7 @@ the provider input; it replays all pinned refs when a session subscription
 opens. Diff computation also happens there, in the agent's working directory,
 and stores the returned patch as a Diff artifact.
 
-Every viewing profile uses one `amux_artifacts::Cache` shared across its agents.
+Every viewing profile uses one `artifacts::Cache` shared across its agents.
 It fetches through `GetArtifact`, verifies content identities, persists recency,
 and uses only byte-bounded LRU eviction. Its root is
 `<data_dir>/cache/artifacts`; the shared `ui.artifact_cache_mib` preference sets

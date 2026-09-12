@@ -2,24 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_yaml::{Mapping, Value};
-
-use crate::config::Config;
-use crate::identity::{IdentityError, ensure_device_files_in};
+use settings::Config;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
-    #[error("state error: {0}")]
-    State(String),
     #[error("config error: {0}")]
     Config(String),
     #[error("identity error: {0}")]
     Identity(String),
-}
-
-impl From<IdentityError> for SetupError {
-    fn from(error: IdentityError) -> Self {
-        Self::Identity(error.to_string())
-    }
 }
 
 /// Persist `prevent_idle_sleep` to `config.yaml` and update the in-memory
@@ -39,31 +29,32 @@ pub fn clear_prevent_idle_sleep(config: &mut Config) -> Result<(), SetupError> {
 
 /// Return whether prevent-idle-sleep support is actually available at runtime.
 pub fn prevent_idle_sleep_supported() -> bool {
-    crate::sleep_inhibitor::supported()
+    node::installation::prevent_idle_sleep_supported()
 }
 
 /// True when the identity/trust files in `config.data_dir` already exist and
 /// validate.
 pub fn device_identity_ready(config: &Config) -> bool {
-    crate::identity::device_files_ready_in(&config.data_dir)
+    node::device_files_ready_in(&config.data_dir)
 }
 
 /// The host id of this device's stored identity, if initialized. Read-only:
 /// clients use it to recognize the local host in inventory (the wire does
 /// not mark the local host).
-pub fn local_host_id(config: &Config) -> Option<crate::HostId> {
+pub fn local_host_id(config: &Config) -> Option<model::HostId> {
     local_host_id_in(&config.data_dir)
 }
 
 /// See [`local_host_id`]; explicit data dir for tests and embedding.
-pub fn local_host_id_in(data_dir: &Path) -> Option<crate::HostId> {
-    crate::identity::stored_host_id_in(data_dir)
+pub fn local_host_id_in(data_dir: &Path) -> Option<model::HostId> {
+    node::stored_host_id_in(data_dir)
 }
 
 /// Ensure the device identity and trust-store files from
 /// `docs/ARCHITECTURE.md` exist in `config.data_dir`.
 pub fn ensure_device_identity(config: &Config) -> Result<(), SetupError> {
-    ensure_device_files_in(&config.data_dir)?;
+    node::ensure_device_files_in(&config.data_dir)
+        .map_err(|error| SetupError::Identity(error.to_string()))?;
     Ok(())
 }
 
@@ -161,7 +152,7 @@ mod tests {
         let dir = tempdir().unwrap();
         assert_eq!(local_host_id_in(dir.path()), None);
 
-        let identity = crate::identity::ensure_device_files_in(dir.path()).unwrap();
+        let identity = node::ensure_device_files_in(dir.path()).unwrap();
         assert_eq!(local_host_id_in(dir.path()), Some(identity.host_id));
     }
 

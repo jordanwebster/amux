@@ -1,0 +1,20 @@
+[package]
+name = "wire"
+version = "0.1.0"
+edition.workspace = true
+description = "Committed protobuf types and codecs for the amux protocol"
+publish = false
+
+[dependencies]
+bytes = { workspace = true }
+chrono = { workspace = true }
+model = { workspace = true }
+prost = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+prost-types = { workspace = true }

@@ -3,5 +3,6 @@ name = "test-agent"
 version = "0.1.0"
 edition = "2024"
 description = "Simple echo agent for E2E testing"
+publish = false
 
 [dependencies]

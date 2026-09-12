@@ -161,13 +161,13 @@ Graduation copies and redacts a report into the committed fixture root:
 
 ```console
 $ amux debug report graduate /path/to/report chat_agent_activity
-Graduated report to crates/amux-tui/tests/reports/chat_agent_activity
+Graduated report to crates/tui/tests/reports/chat_agent_activity
 ```
 
 The name must match `surface_subject`: lowercase ASCII letters and digits for
 the surface, an underscore, then lowercase letters, digits or underscores for
 the subject. Pass `--into <directory>` outside the repository or before
-`crates/amux-tui/tests/reports` exists. Graduation refuses an existing name;
+`crates/tui/tests/reports` exists. Graduation refuses an existing name;
 it never overwrites a fixture.
 
 Every source file is redacted. JSON is handled structurally, JSONL one value at
@@ -184,7 +184,7 @@ the redacted report files beside it.
 Run every committed fixture through the current renderer and privacy checks:
 
 ```console
-$ timeout 600 wt test -- every_committed_report_fixture_reproduces
+$ just test -- every_committed_report_fixture_reproduces
 ```
 
 ## Retention and build gating
@@ -227,9 +227,9 @@ work again. Repeated installation resume returns the completed report. Storage
 errors keep recovery pending and admission closed until cleanup succeeds.
 
 Replay the offline replacement regression with
-`timeout 900 wt run e2e -- update_two_profiles`. Its HTTP fixture serves a higher
+`just e2e -- update_two_profiles`. Its HTTP fixture serves a higher
 manifest version with the current executable. The runner updates a disposable
 copy, checks both running fleets, and verifies a pre-existing suspended record
 remains intact. It does not install a published release. The preparation,
 interruption and concurrent-resume cases run with
-`timeout 900 wt run spec -- profiles::update`.
+`just spec -- profiles::update`.

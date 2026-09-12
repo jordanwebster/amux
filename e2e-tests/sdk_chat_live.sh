@@ -15,7 +15,7 @@ live_init "$out"
 rows_bin=$repo_root/target/debug/examples/sdk_rows
 mcp_bin=$repo_root/target/debug/claude-probe
 for executable in "$rows_bin" "$mcp_bin"; do
-  [ -x "$executable" ] || live_fail "$executable is missing; run wt build"
+  [ -x "$executable" ] || live_fail "$executable is missing; run just build"
 done
 command -v claude >/dev/null 2>&1 || live_fail 'Claude Code is required'
 live_say "Claude: $(timeout 15 claude --version)"

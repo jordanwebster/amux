@@ -1,0 +1,74 @@
+[package]
+name = "node"
+version = "0.6.0"
+edition.workspace = true
+description = "Identity, routing, and supervised node services for amux"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+model = { workspace = true }
+wire = { workspace = true }
+settings = { workspace = true }
+client = { workspace = true }
+host-api = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+prost = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+tower = { workspace = true }
+hyper-util = { workspace = true }
+hyper = { workspace = true }
+http-body-util = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+futures-util = { workspace = true }
+yamux = { workspace = true }
+quinn = { workspace = true }
+gethostname = { workspace = true }
+oauth2 = { workspace = true }
+async-trait = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = { workspace = true }
+rustls-pemfile = { workspace = true }
+ring = { workspace = true }
+curve25519-dalek = { workspace = true }
+rcgen = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+socket2 = { workspace = true }
+chrono = { workspace = true }
+semver = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+shell-words = { workspace = true }
+base64 = "0.22"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.9"
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+mdns-sd = "0.21"
+if-addrs = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Power",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+agent-runtime = { workspace = true }
+artifacts = { workspace = true }
