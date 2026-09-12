@@ -18,7 +18,7 @@ identifies the set, fixture names, dimensions and SHA-256 hashes.
 From the repository root, regenerate and validate the committed set:
 
 ```sh
-timeout 900 wt build
+just build
 timeout 120 target/debug/amux-shot render-set profiles --out docs/screenshots/profiles
 timeout 120 target/debug/amux-shot verify docs/screenshots/profiles
 ```
@@ -37,5 +37,5 @@ layout and fixture content. Runtime tests exercise switching and rejection of
 late inventory, session, attachment and command results from the old profile:
 
 ```sh
-timeout 900 wt test -- switcher
+just test -- switcher
 ```

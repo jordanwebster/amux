@@ -1,0 +1,1133 @@
+// amux protocol vNext.
+//
+// This file is the canonical protobuf source. Generated Rust types are
+// committed under crates/amux/src/protocol/generated/ — regenerate with
+// `just protobuf` after editing any proto here (CI fails on
+// stale output) — and must be wrapped in domain types before being used by
+// application code.
+//
+// The amux runtime uses gRPC services for application calls.
+// Host-to-host links use LinkService.Connect, whose bidi stream carries the
+// Message envelope defined below.
+
+syntax = "proto3";
+
+package amux.v1;
+
+import "amux/v1/claude.proto";
+import "amux/v1/codex.proto";
+import "amux/v1/test_agent.proto";
+
+// ---------------------------------------------------------------------------
+// Common
+// ---------------------------------------------------------------------------
+
+message Empty {}
+
+// In-band marker that a local subscription's snapshot has been flushed
+// (agent/host inventory subscriptions). The link layer has no snapshot
+// phase: the neighbor snapshot is a field of Hello/HelloAccepted.
+message SnapshotComplete {}
+
+// In-band marker that a session replay has been flushed.
+message ReplayComplete {
+  // Opaque position at the replay boundary when the selected protocol has one.
+  optional bytes cursor = 1;
+}
+
+// Agent-independent raw terminal byte-plane payloads.
+message TerminalV1Args {
+  optional TerminalSize terminal_size = 1;
+  optional TerminalV1ReplayQuery replay_query = 2;
+}
+
+message TerminalV1ReplayQuery {
+  oneof query {
+    uint64 tail_bytes = 1;
+  }
+}
+
+message TerminalV1Input {
+  bytes payload = 1;
+}
+
+message TerminalV1Output {
+  bytes payload = 1;
+}
+
+message AgentKind {
+  oneof kind {
+    ClaudeKind claude = 1;
+    CodexKind codex = 2;
+    TestAgentKind test_agent = 3;
+  }
+}
+
+message ClaudeKind {
+  ClaudeDriver driver = 1;
+}
+
+message CodexKind {}
+message TestAgentKind {}
+
+enum AgentProtocol {
+  AGENT_PROTOCOL_UNSPECIFIED = 0;
+  AGENT_PROTOCOL_TERMINAL_V1 = 1;
+  AGENT_PROTOCOL_CLAUDE_PTY_TRANSCRIPT_V1 = 2;
+  AGENT_PROTOCOL_CLAUDE_SDK_V1 = 3;
+  AGENT_PROTOCOL_CODEX_SDK_V1 = 4;
+  AGENT_PROTOCOL_TEST_ECHO_V1 = 5;
+}
+
+message ProtocolNotExposed {
+  AgentKind kind = 1;
+  AgentProtocol protocol = 2;
+}
+
+message AgentRef {
+  oneof identifier {
+    bytes agent_id = 1;
+    string name = 2;
+  }
+}
+
+enum ArtifactKind {
+  ARTIFACT_KIND_UNSPECIFIED = 0;
+  ARTIFACT_KIND_IMAGE = 1;
+  ARTIFACT_KIND_FILE = 2;
+  ARTIFACT_KIND_DIFF = 3;
+}
+
+message ArtifactRef {
+  string id = 1;
+  ArtifactKind kind = 2;
+  string name = 3;
+  string mime = 4;
+  uint64 size = 5;
+}
+
+message DiffBase {
+  oneof base {
+    Empty working_tree = 1;
+    string branch = 2;
+  }
+}
+
+message BaseIdentity {
+  DiffBase base = 1;
+  string head = 2;
+  optional string merge_base = 3;
+  repeated PathBlob blobs = 4;
+}
+
+message PathBlob {
+  string path = 1;
+  string blob = 2;
+}
+
+message DiffFile {
+  string path = 1;
+  uint32 added = 2;
+  uint32 removed = 3;
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+  repeated ErrorDetail details = 3;
+}
+
+message ErrorDetail {
+  // Fully-qualified message name, e.g. "amux.v1.UpdateRequired".
+  string type = 1;
+  // Proto-encoded detail message of the named type.
+  bytes value = 2;
+}
+
+message UpdateRequired {
+  string minimum_version = 1;
+  string current_version = 2;
+  optional string update_url = 3;
+}
+
+message ProtocolVersionMismatch {
+  repeated uint32 supported_protocol_versions = 1;
+  repeated uint32 peer_supported_protocol_versions = 2;
+}
+
+message SequenceNumberMismatch {
+  uint64 expected = 1;
+  uint64 actual = 2;
+}
+
+message AttachmentMissing {
+  string id = 1;
+}
+
+message AttachmentTooLarge {
+  uint64 size = 1;
+  uint64 max = 2;
+}
+
+message ArtifactCorrupt {
+  string id = 1;
+}
+
+message DiffUnavailable {
+  string message = 1;
+}
+
+message AmbiguousAgentName {
+  string name = 1;
+  repeated bytes agent_ids = 2;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_CANCELLED = 1;
+  ERROR_CODE_INVALID_ARGUMENT = 2;
+  ERROR_CODE_NOT_FOUND = 3;
+  ERROR_CODE_ALREADY_EXISTS = 4;
+  ERROR_CODE_PERMISSION_DENIED = 5;
+  ERROR_CODE_UNAUTHENTICATED = 6;
+  ERROR_CODE_FAILED_PRECONDITION = 7;
+  ERROR_CODE_ABORTED = 8;
+  ERROR_CODE_RESOURCE_EXHAUSTED = 9;
+  ERROR_CODE_UNIMPLEMENTED = 10;
+  ERROR_CODE_UNAVAILABLE = 11;
+  ERROR_CODE_UNREACHABLE = 12;
+  ERROR_CODE_INTERNAL = 13;
+  ERROR_CODE_PAYMENT_REQUIRED = 14;
+  ERROR_CODE_DATA_LOSS = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Transport setup and control
+// ---------------------------------------------------------------------------
+
+// Host-to-host link stream envelope exchanged by LinkService.Connect.
+message Message {
+  oneof body {
+    Hello hello = 1;
+    HelloAck hello_ack = 2;
+    NeighborUp neighbor_up = 3;
+    NeighborDown neighbor_down = 4;
+    TunnelOpen tunnel_open = 5;
+    TunnelData tunnel_data = 6;
+    TunnelClose tunnel_close = 7;
+    Reauth reauth = 8;
+    LinkClose link_close = 9;
+  }
+}
+
+// The handshake carries the sender's current neighbor snapshot; everything
+// after it is a delta (NeighborUp/NeighborDown) by definition.
+message Hello {
+  repeated uint32 supported_protocol_versions = 1;
+  Host host = 2;
+  repeated Host neighbors = 3;
+}
+
+message HelloAck {
+  oneof outcome {
+    HelloAccepted accepted = 1;
+    Error error = 2;
+  }
+}
+
+message HelloAccepted {
+  uint32 protocol_version = 1;
+  Host host = 2;
+  repeated Host neighbors = 3;
+}
+
+// "I have a direct link to this host." Strictly adjacency: a node never
+// advertises anything it learned from someone else.
+message NeighborUp {
+  Host host = 1;
+}
+
+// "I lost my last direct link to this host."
+message NeighborDown {
+  bytes host_id = 1;
+  optional string reason = 2;
+}
+
+// Opens a tunnel: the only frame that allocates endpoint state. The reply
+// address (`src`) travels exactly once, here; replies leave on the link the
+// tunnel's frames arrive on, addressed `dst = src`. There is no open-ack —
+// the pinned mTLS handshake inside the tunnel is the acknowledgement, and
+// rejection is TunnelClose.
+message TunnelOpen {
+  // A plain 16-byte UUID minted by the initiator.
+  bytes tunnel_id = 1;
+  // The initiator's host_id: where replies go.
+  bytes src = 2;
+  // The destination host_id. A relay forwards iff it has a direct link to
+  // dst; otherwise the frame is dropped. dst == self delivers locally.
+  bytes dst = 3;
+}
+
+// Carries tunnel bytes (payload <= 64 KiB). Data for an unknown tunnel_id is
+// a protocol violation by a confused or stale peer: it is dropped without
+// allocating anything, and the link stays up.
+message TunnelData {
+  bytes tunnel_id = 1;
+  bytes dst = 2;
+  bytes payload = 3;
+}
+
+// Ends a tunnel. Sent proactively on normal teardown from either endpoint;
+// a TunnelClose for an unknown tunnel_id is dropped. Tunnels also die with
+// the link they are pinned to.
+message TunnelClose {
+  bytes tunnel_id = 1;
+  bytes dst = 2;
+}
+
+// Fire-and-forget credential refresh on the cloud link, sent before the
+// current token expires. There is no acknowledgement — the protocol never
+// acknowledges housekeeping; it only signals state changes. The receiver's
+// only answers are silence (refresh accepted, the link continues) or
+// `LinkClose(AUTH_EXPIRED)` (the sender reconnects with a fresh token).
+message Reauth {
+  string auth_token = 1;
+}
+
+message Capabilities {
+  repeated string features = 1;
+  repeated SupportedAgentType supported_agents = 2;
+}
+
+message SupportedAgentType {
+  AgentKind kind = 1;
+}
+
+// "The link is closed now, here's why." No grace period: a receiver treats
+// the link as gone the moment this arrives.
+message LinkClose {
+  LinkCloseReason reason = 1;
+  optional Error error = 2;
+}
+
+enum LinkCloseReason {
+  LINK_CLOSE_REASON_UNSPECIFIED = 0;
+  LINK_CLOSE_REASON_USER_SHUTDOWN = 1;
+  LINK_CLOSE_REASON_UPDATING = 2;
+  LINK_CLOSE_REASON_SUSPENDING = 3;
+  LINK_CLOSE_REASON_RESTARTING = 4;
+  LINK_CLOSE_REASON_AUTH_EXPIRED = 5;
+  LINK_CLOSE_REASON_PROTOCOL_ERROR = 6;
+  LINK_CLOSE_REASON_UPDATE_REQUIRED = 7;
+  LINK_CLOSE_REASON_USER_REVOKED = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Link service
+// ---------------------------------------------------------------------------
+
+service LinkService {
+  // Host-to-host link. The bidi stream IS the link: opening it (after
+  // successful auth + handshake) brings the link up; closing it tears the
+  // link down. Neighbor events and tunnel frames flow inside the Message
+  // envelope after the handshake completes.
+  rpc Connect(stream Message) returns (stream Message);
+}
+
+message Host {
+  bytes host_id = 1;
+  string name = 2;
+  string version = 3;
+  Capabilities capabilities = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Pairing service
+// ---------------------------------------------------------------------------
+
+service PairingService {
+  rpc Pair(stream PairMessage) returns (stream PairMessage);
+}
+
+message PairMessage {
+  oneof body {
+    bytes spake2_message = 1;
+    bytes key_confirmation = 2;
+    bytes sealed_identity = 3;
+    PairingError error = 4;
+    PairingComplete pairing_complete = 5;
+  }
+}
+
+message PairingComplete {}
+
+message PairingError {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    NOT_IN_PAIRING_MODE = 1;
+    INVALID_PIN = 2;
+    PROTOCOL_VIOLATION = 3;
+    TIMEOUT = 4;
+    USER_REJECTED = 5;
+    SELF_PAIRING = 6;
+  }
+
+  Reason reason = 1;
+  string detail = 2;
+}
+
+message PairingIdentity {
+  bytes host_id = 1;
+  bytes pubkey = 2;
+  string name = 3;
+}
+
+message ListHostsRequest {}
+message ListHostsResponse {
+  repeated HostEntry hosts = 1;
+}
+
+enum HostTrustStatus {
+  HOST_TRUST_STATUS_UNSPECIFIED = 0;
+  TRUSTED = 1;
+  UNTRUSTED_BUT_ONLINE = 2;
+}
+
+message HostEntry {
+  bytes host_id = 1;
+  string name = 2;
+  // Presence, derived from routing: adjacent, or claimed adjacent by a
+  // neighbor.
+  bool online = 3;
+  optional string version = 4;
+  optional Capabilities capabilities = 5;
+  HostTrustStatus trust_status = 6;
+  // The outcome of the daemon's last failed dial attempt at this host,
+  // cleared when a route comes up. Nothing probes, so this is all the
+  // daemon honestly knows; "never tried / no news" is
+  // `!online && last_dial_error` unset, derived client-side if needed.
+  optional string last_dial_error = 7;
+}
+
+message Agent {
+  bytes agent_id = 1;
+  bytes host_id = 2;
+  optional string name = 3;
+  string command = 4;
+  string working_dir = 5;
+  AgentKind kind = 6;
+  reserved 7;
+  bool readonly = 8;
+  repeated string args = 9;
+  int64 created_at_unix_ms = 10;
+  optional AgentParent parent = 11;
+  optional WorkingOn working_on = 12;
+}
+
+message AgentParent {
+  bytes agent_id = 1;
+  bytes host_id = 2;
+}
+
+message WorkingOn {
+  string text = 1;
+  int64 updated_at_unix_ms = 2;
+}
+
+message Envelope {
+  bytes id = 1;
+  optional bytes context = 2;
+  Sender from = 3;
+  AgentParent to = 4;
+  EnvelopeKind kind = 5;
+  string text = 6;
+}
+
+message Sender {
+  oneof value {
+    AgentSender agent = 1;
+    Human human = 2;
+  }
+}
+
+message AgentSender {
+  bytes agent_id = 1;
+  bytes host_id = 2;
+  string name = 3;
+  string kind = 4;
+}
+
+message Human {}
+
+enum EnvelopeKind {
+  ENVELOPE_KIND_UNSPECIFIED = 0;
+  ENVELOPE_KIND_MESSAGE = 1;
+  ENVELOPE_KIND_COMPLETED = 2;
+  ENVELOPE_KIND_EXITED = 3;
+}
+
+message AgentUp {
+  Agent agent = 1;
+}
+message AgentUpdated {
+  Agent agent = 1;
+}
+message AgentDown {
+  bytes agent_id = 1;
+  optional string reason = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Agent service
+// ---------------------------------------------------------------------------
+
+service AgentService {
+  // Subscribe to this host's agent inventory: snapshot (one AgentUp per
+  // currently-known agent) then SnapshotComplete then deltas.
+  // Hosts with no supported agents MUST reject with FAILED_PRECONDITION.
+  rpc SubscribeAgentEvents(SubscribeAgentEventsRequest) returns (stream SubscribeAgentEventsResponse);
+
+  rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
+  rpc RenameAgent(RenameAgentRequest) returns (RenameAgentResponse);
+  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
+  rpc SendMessage(Envelope) returns (SendMessageResponse);
+  rpc SetAgentStatus(SetAgentStatusRequest) returns (SetAgentStatusResponse);
+
+  // Subscribe to an agent's session output. The selected oneof arm names the
+  // protocol and carries its typed arguments.
+  rpc SubscribeSession(SubscribeSessionRequest) returns (stream SubscribeSessionResponse);
+
+  // Send input/control to an agent independently of subscriptions.
+  rpc SendInput(SendInputRequest) returns (SendInputResponse);
+
+  rpc PutArtifact(PutArtifactRequest) returns (PutArtifactResponse);
+  rpc GetArtifact(GetArtifactRequest) returns (GetArtifactResponse);
+  rpc Diff(DiffRequest) returns (DiffResponse);
+}
+
+message SubscribeAgentEventsRequest {}
+
+message SubscribeAgentEventsResponse {
+  oneof event {
+    AgentUp agent_up = 10;
+    AgentDown agent_down = 11;
+    AgentUpdated agent_updated = 12;
+
+    SnapshotComplete snapshot_complete = 100;
+  }
+}
+
+message CreateAgentRequest {
+  bytes agent_id = 1;
+  optional string name = 2;
+  optional AgentParent parent = 3;
+  optional string initial_prompt = 4;
+
+  oneof agent {
+    ClaudeCreateConfig claude = 10;
+    CodexCreateConfig codex = 11;
+    // Dev/test only. Production servers MUST reject this with UNIMPLEMENTED.
+    TestAgentCreateConfig test_agent = 100;
+  }
+}
+
+message CreateAgentResponse {
+  Agent agent = 1;
+}
+
+message RenameAgentRequest {
+  bytes agent_id = 1;
+  string name = 2;
+}
+message RenameAgentResponse {
+  Agent agent = 1;
+}
+
+message DeleteAgentRequest {
+  bytes agent_id = 1;
+}
+
+message DeleteAgentResponse {
+  repeated Agent removed_children = 1;
+  repeated Agent unreachable_children = 2;
+}
+
+message SendMessageResponse {
+  bytes envelope_id = 1;
+}
+
+message SetAgentStatusRequest {
+  bytes agent_id = 1;
+  optional string working_on = 2;
+}
+
+message SetAgentStatusResponse {}
+
+// ---------------------------------------------------------------------------
+// Sessions
+// ---------------------------------------------------------------------------
+
+message SubscribeSessionRequest {
+  bytes agent_id = 1;
+  oneof protocol {
+    TerminalV1Args terminal_v1 = 10;
+    ClaudePtyTranscriptV1Args claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Args claude_sdk_v1 = 12;
+    CodexSdkV1Args codex_sdk_v1 = 13;
+    TestEchoV1Args test_echo_v1 = 100;
+  }
+}
+
+message SubscribeSessionResponse {
+  oneof event {
+    SessionOpened opened = 1;
+    SessionOutput output = 2;
+    ReplayComplete replay_complete = 3;
+    SessionClosed closed = 4;
+  }
+}
+
+message SendInputRequest {
+  bytes agent_id = 1;
+  // Client-generated id for correlating protocol-defined input results.
+  bytes input_id = 2;
+  repeated string pin = 3;
+  oneof event {
+    TerminalV1Input terminal_v1 = 10;
+    ClaudePtyTranscriptV1Input claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Input claude_sdk_v1 = 12;
+    CodexSdkV1Input codex_sdk_v1 = 13;
+    SessionControl control = 20;
+    TestEchoV1Input test_echo_v1 = 100;
+  }
+}
+
+message SendInputResponse {}
+
+message PutArtifactRequest {
+  bytes agent_id = 1;
+  ArtifactKind kind = 2;
+  string name = 3;
+  string mime = 4;
+  bytes bytes = 5;
+}
+
+message PutArtifactResponse {
+  ArtifactRef artifact = 1;
+}
+
+message GetArtifactRequest {
+  bytes agent_id = 1;
+  string id = 2;
+}
+
+message GetArtifactResponse {
+  ArtifactRef artifact = 1;
+  bytes bytes = 2;
+}
+
+message DiffRequest {
+  bytes agent_id = 1;
+  DiffBase base = 2;
+}
+
+message DiffResponse {
+  ArtifactRef artifact = 1;
+  string patch = 2;
+  BaseIdentity identity = 3;
+  repeated DiffFile files = 4;
+}
+
+// Side-channel control event. It is a directive about the session itself,
+// rather than data flowing through one provider protocol.
+message SessionControl {
+  oneof control {
+    TerminalSize resize = 1;
+  }
+}
+
+message SessionOpened {}
+
+message SessionOutput {
+  oneof output {
+    TerminalV1Output terminal_v1 = 10;
+    ClaudePtyTranscriptV1Output claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Output claude_sdk_v1 = 12;
+    CodexSdkV1Output codex_sdk_v1 = 13;
+    TestEchoV1Output test_echo_v1 = 100;
+  }
+}
+
+message SessionClosed {
+  oneof reason {
+    AgentDeleted agent_deleted = 1;
+    AgentExited agent_exited = 2;
+    HostUnreachable host_unreachable = 3;
+    InternalError internal_error = 4;
+  }
+}
+
+message AgentDeleted {}
+message AgentExited {
+  optional int32 exit_code = 1;
+}
+message HostUnreachable {}
+message InternalError {
+  string detail = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Client service
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Installation front door (local Unix socket and in-process only)
+// ---------------------------------------------------------------------------
+
+service ProfileService {
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
+  // Snapshot, SnapshotComplete, then ordered events; ABORTED requires a fresh watch.
+  rpc WatchProfiles(WatchProfilesRequest) returns (stream WatchProfilesResponse);
+  rpc CreateProfile(CreateProfileRequest) returns (ProfileInfo);
+  rpc BindProfile(BindProfileRequest) returns (ProfileInfo);
+  rpc LogoutProfile(ProfileOperation) returns (ProfileInfo);
+  rpc PauseProfile(ProfileOperation) returns (ProfileInfo);
+  rpc ResumeProfile(ProfileOperation) returns (ProfileInfo);
+  rpc RenameProfile(RenameProfileRequest) returns (ProfileInfo);
+  rpc DeleteProfile(DeleteProfileRequest) returns (DeleteProfileResponse);
+  rpc StartPairing(ProfileStartPairingRequest) returns (StartPairingResponse);
+  rpc GetPairingStatus(ProfilePairingStatusRequest) returns (GetPairingStatusResponse);
+  rpc CancelPairing(ProfileOperation) returns (CancelPairingResponse);
+  rpc PairPeer(ProfilePairPeerRequest) returns (PairPeerResponse);
+  rpc PairPinCloudPeer(ProfilePairPinCloudPeerRequest) returns (PairPinCloudPeerResponse);
+  rpc PairQrCloudPeer(ProfilePairQrCloudPeerRequest) returns (PairQrCloudPeerResponse);
+  rpc ListPeers(ProfileRequest) returns (ListPeersResponse);
+  rpc GetPeer(ProfileGetPeerRequest) returns (GetPeerResponse);
+  rpc Unpair(ProfileUnpairRequest) returns (UnpairResponse);
+  rpc ListPairingCandidates(ProfileRequest) returns (ListPairingCandidatesResponse);
+  rpc DebugProfile(ProfileDebugRequest) returns (DebugResponse);
+}
+
+service InstallationService {
+  rpc GetInfo(GetInfoRequest) returns (InstallationInfo);
+  rpc SuspendAll(SuspendAllRequest) returns (SuspendAllResponse);
+  rpc ResumeAll(ResumeAllRequest) returns (ResumeAllResponse);
+  rpc Shutdown(InstallationShutdownRequest) returns (ShutdownResponse);
+  rpc DebugInstallation(DebugRequest) returns (DebugResponse);
+}
+
+enum Intent {
+  INTENT_UNSPECIFIED = 0;
+  INTENT_UNBOUND = 1;
+  INTENT_BOUND = 2;
+  INTENT_LOGGED_OUT = 3;
+  INTENT_PAUSED = 4;
+}
+enum Observed {
+  OBSERVED_UNSPECIFIED = 0;
+  OBSERVED_LOCAL = 1;
+  OBSERVED_CONNECTING = 2;
+  OBSERVED_CONNECTED = 3;
+  OBSERVED_RETRYING = 4;
+  OBSERVED_AUTHENTICATION_REQUIRED = 5;
+  OBSERVED_SUBSCRIPTION_REQUIRED = 6;
+  OBSERVED_UPDATE_REQUIRED = 7;
+  OBSERVED_STARTUP_FAILED = 8;
+}
+message ProfileInfo {
+  string id = 1;
+  string label = 2;
+  string email = 3;
+  string account_name = 4;
+  string socket_path = 5;
+  string host_id = 6;
+  Intent intent = 7;
+  Observed observed = 8;
+  uint64 revision = 9;
+  string startup_error = 10;
+  bool available = 11;
+  optional string minimum_version = 12;
+}
+message ListProfilesRequest {}
+message ListProfilesResponse { repeated ProfileInfo profiles = 1; }
+message WatchProfilesRequest {}
+message WatchProfilesResponse {
+  uint64 sequence = 1;
+  oneof event {
+    ProfileInfo upserted = 2;
+    string removed_id = 3;
+    SnapshotComplete snapshot_complete = 4;
+  }
+}
+message CreateProfileRequest { string operation_id = 1; optional string label = 2; }
+message ProfileRequest { string profile_id = 1; }
+message ProfileOperation { string operation_id = 1; string profile_id = 2; }
+message BindProfileRequest {
+  string operation_id = 1;
+  optional string profile_id = 2;
+  string cloud_url = 3;
+  string staged_refresh_token = 4;
+  bool adopt_non_pristine = 5;
+}
+message RenameProfileRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  uint64 expected_revision = 3;
+  optional string override_name = 4;
+}
+message DeleteProfileRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  uint64 confirm_revision = 3;
+}
+message DeleteProfileResponse {}
+message ProfileStartPairingRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  StartPairingRequest pairing = 3;
+}
+message ProfilePairingStatusRequest { string profile_id = 1; }
+message ProfilePairPeerRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PairPeerRequest pairing = 3;
+}
+message ProfilePairPinCloudPeerRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PairPinCloudPeerRequest pairing = 3;
+}
+message ProfilePairQrCloudPeerRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PairQrCloudPeerRequest pairing = 3;
+}
+message ProfileGetPeerRequest { string profile_id = 1; PeerRef peer = 2; }
+message ProfileUnpairRequest {
+  string operation_id = 1;
+  string profile_id = 2;
+  PeerRef peer = 3;
+  string reason = 4;
+}
+message ListPairingCandidatesResponse { repeated HostEntry hosts = 1; }
+message ProfileDebugRequest { string profile_id = 1; DebugRequest debug = 2; }
+message GetInfoRequest {}
+message InstallationInfo {
+  string version = 1;
+  string root = 2;
+  string front_door_path = 3;
+}
+message SuspendAllRequest { string operation_id = 1; SuspendReason reason = 2; }
+message ProfileSuspendResult { string profile_id = 1; uint64 suspended_count = 2; repeated string agent_ids = 3; }
+message SuspendAllResponse { repeated ProfileSuspendResult profiles = 1; }
+message ResumeAllRequest { string operation_id = 1; }
+enum AgentResumeStatus {
+  AGENT_RESUME_STATUS_UNSPECIFIED = 0;
+  AGENT_RESUME_STATUS_RESUMED = 1;
+  AGENT_RESUME_STATUS_ALREADY_RUNNING = 2;
+  AGENT_RESUME_STATUS_FAILED = 3;
+}
+message AgentResumeResult { string agent_id = 1; AgentResumeStatus status = 2; }
+message ProfileResumeResult {
+  string profile_id = 1;
+  uint64 resumed_count = 2;
+  uint64 failed_count = 3;
+  repeated AgentResumeResult agents = 4;
+  optional string error = 5;
+}
+message ResumeAllResponse { repeated ProfileResumeResult profiles = 1; }
+message InstallationShutdownRequest { string operation_id = 1; }
+
+// New architecture client-facing service.
+service ClientService {
+  rpc ListHosts(ListHostsRequest) returns (ListHostsResponse);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc SubscribeHosts(SubscribeHostsRequest) returns (stream SubscribeHostsResponse);
+  rpc SubscribeAgents(SubscribeAgentsRequest) returns (stream SubscribeAgentsResponse);
+
+  rpc CreateAgent(ClientCreateAgentRequest) returns (CreateAgentResponse);
+  rpc RenameAgent(ClientRenameAgentRequest) returns (RenameAgentResponse);
+  rpc DeleteAgent(ClientDeleteAgentRequest) returns (DeleteAgentResponse);
+  rpc SendMessage(ClientSendMessageRequest) returns (SendMessageResponse);
+  rpc SetAgentStatus(ClientSetAgentStatusRequest) returns (SetAgentStatusResponse);
+
+  rpc SubscribeSession(ClientSubscribeSessionRequest) returns (stream SubscribeSessionResponse);
+  rpc SendInput(ClientSendInputRequest) returns (SendInputResponse);
+  rpc PutArtifact(ClientPutArtifactRequest) returns (PutArtifactResponse);
+  rpc GetArtifact(ClientGetArtifactRequest) returns (GetArtifactResponse);
+  rpc Diff(ClientDiffRequest) returns (DiffResponse);
+
+  rpc Debug(DebugRequest) returns (DebugResponse);
+
+  rpc HandleHook(HandleHookRequest) returns (HandleHookResponse);
+}
+
+message ListAgentsRequest {}
+message ListAgentsResponse {
+  repeated Agent agents = 1;
+}
+
+message SubscribeHostsRequest {}
+message SubscribeHostsResponse {
+  oneof event {
+    HostUpdated host_updated = 1;
+    HostRemoved host_removed = 2;
+    SnapshotComplete snapshot_complete = 100;
+  }
+}
+
+message HostUpdated {
+  HostEntry host = 1;
+}
+
+message HostRemoved {
+  bytes host_id = 1;
+}
+
+message SubscribeAgentsRequest {}
+message SubscribeAgentsResponse {
+  oneof event {
+    AgentUp agent_up = 1;
+    AgentDown agent_down = 2;
+    AgentUpdated agent_updated = 3;
+    SnapshotComplete snapshot_complete = 100;
+  }
+}
+
+message ClientCreateAgentRequest {
+  bytes agent_id = 1;
+  optional string name = 2;
+  optional bytes host_id = 3;
+  optional AgentParent parent = 4;
+  optional string initial_prompt = 5;
+
+  oneof agent {
+    ClaudeCreateConfig claude = 10;
+    CodexCreateConfig codex = 11;
+    TestAgentCreateConfig test_agent = 100;
+  }
+}
+
+message ClientRenameAgentRequest {
+  AgentRef agent = 1;
+  string name = 2;
+}
+
+message ClientDeleteAgentRequest {
+  AgentRef agent = 1;
+  optional bytes caller_agent_id = 2;
+}
+
+message ClientSendMessageRequest {
+  AgentRef to = 1;
+  string text = 2;
+  optional bytes context = 3;
+  optional bytes from_agent_id = 4;
+}
+
+message ClientSetAgentStatusRequest {
+  AgentRef agent = 1;
+  optional string working_on = 2;
+}
+
+message ClientSubscribeSessionRequest {
+  AgentRef agent = 1;
+  oneof protocol {
+    TerminalV1Args terminal_v1 = 10;
+    ClaudePtyTranscriptV1Args claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Args claude_sdk_v1 = 12;
+    CodexSdkV1Args codex_sdk_v1 = 13;
+    TestEchoV1Args test_echo_v1 = 100;
+  }
+}
+
+message ClientSendInputRequest {
+  AgentRef agent = 1;
+  bytes input_id = 2;
+  repeated string pin = 3;
+  oneof event {
+    TerminalV1Input terminal_v1 = 10;
+    ClaudePtyTranscriptV1Input claude_pty_transcript_v1 = 11;
+    ClaudeSdkV1Input claude_sdk_v1 = 12;
+    CodexSdkV1Input codex_sdk_v1 = 13;
+    SessionControl control = 20;
+    TestEchoV1Input test_echo_v1 = 100;
+  }
+}
+
+message ClientPutArtifactRequest {
+  AgentRef agent = 1;
+  ArtifactKind kind = 2;
+  string name = 3;
+  string mime = 4;
+  bytes bytes = 5;
+  // Agent-originated puts are pinned and announced on the agent's output
+  // stream before this call returns. The client service accepts this only
+  // for an agent hosted by the local daemon.
+  bool agent_attach = 6;
+}
+
+message ClientGetArtifactRequest {
+  AgentRef agent = 1;
+  string id = 2;
+}
+
+message ClientDiffRequest {
+  AgentRef agent = 1;
+  DiffBase base = 2;
+}
+
+message HandleHookRequest {
+  bytes agent_id = 1;
+  bytes payload = 2;
+  bool external = 3;
+  map<string, string> env = 4;
+}
+
+message HandleHookResponse {}
+
+// SSH bootstrap includes the local selector needed for subsequent stdio relays.
+message SshPairingIdentity {
+  PairingIdentity identity = 1;
+  string profile_id = 2;
+}
+
+message SshTarget {
+  string target = 1;
+  string profile_id = 2;
+}
+
+message PairPeerRequest {
+  PairingIdentity peer = 1;
+
+  oneof reachability {
+    SshTarget ssh_target = 2;
+    string direct_tcp_addr = 3;
+  }
+}
+
+message PairPeerResponse {}
+
+message PairPinCloudPeerRequest {
+  bytes host_id = 1;
+  string pin = 2;
+}
+
+message PairPinCloudPeerResponse {
+  PairingIdentity peer = 1;
+}
+
+message PairQrCloudPeerRequest {
+  bytes host_id = 1;
+  bytes secret = 2;
+}
+
+message PairQrCloudPeerResponse {
+  PairingIdentity peer = 1;
+}
+
+message PeerRef {
+  oneof identifier {
+    bytes host_id = 1;
+    string name = 2;
+  }
+}
+
+message PeerReachability {
+  oneof kind {
+    Empty cloud = 1;
+    SshTarget ssh_target = 2;
+    string direct_tcp_addr = 3;
+  }
+}
+
+message PeerEntry {
+  bytes host_id = 1;
+  string name = 2;
+  bytes pubkey = 3;
+  int64 paired_at_unix_ms = 4;
+  repeated PeerReachability reachabilities = 5;
+}
+
+message ListPeersRequest {}
+message ListPeersResponse {
+  repeated PeerEntry peers = 1;
+}
+
+message GetPeerRequest {
+  PeerRef peer = 1;
+}
+message GetPeerResponse {
+  PeerEntry peer = 1;
+}
+
+message UnpairRequest {
+  PeerRef peer = 1;
+  string reason = 2;
+}
+message UnpairResponse {
+  PeerEntry removed_peer = 1;
+}
+
+message DebugRequest {
+  bool verbose = 1;
+  DebugFormat format = 2;
+}
+
+enum DebugFormat {
+  DEBUG_FORMAT_UNSPECIFIED = 0;
+  DEBUG_FORMAT_YAML = 1;
+  DEBUG_FORMAT_JSON = 2;
+}
+
+message DebugResponse {
+  string dump = 1;
+}
+
+message ShutdownResponse {}
+
+enum SuspendReason {
+  SUSPEND_REASON_UNSPECIFIED = 0;
+  SUSPEND_REASON_USER = 1;
+  SUSPEND_REASON_UPDATE = 2;
+}
+
+message StartPairingRequest {
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    PIN = 1;
+    QR = 2;
+  }
+
+  Mode mode = 1;
+  bool require_lan_direct = 2;
+  // Operator-chosen reusable PIN for unattended demos. When set, `mode`
+  // must be PIN; the session lasts `ttl_seconds` instead of the one-shot
+  // window and is neither consumed by success nor locked out by failures.
+  optional DemoPairing demo = 3;
+}
+
+message DemoPairing {
+  string pin = 1;
+  uint64 ttl_seconds = 2;
+}
+
+message StartPairingResponse {
+  PairingIdentity identity = 1;
+  uint64 ttl_seconds = 2;
+  optional uint32 tcp_port = 3;
+  string cloud_url = 4;
+
+  oneof secret {
+    string pin = 10;
+    bytes qr_secret = 11;
+  }
+}
+
+message GetPairingStatusRequest {}
+message GetPairingStatusResponse {
+  bool active = 1;
+}
+
+message CancelPairingRequest {}
+message CancelPairingResponse {}

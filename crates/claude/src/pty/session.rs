@@ -53,6 +53,7 @@ impl DelaySource {
         }
     }
 
+    #[doc(hidden)]
     pub fn replay(clock: replay_support::ReplayClock) -> Self {
         Self {
             implementation: DelayImplementation::Replay(clock),
@@ -859,6 +860,7 @@ pub fn from_sources(sources: Sources, keymaps: &super::keymap::KeymapSources) ->
     }
 }
 
+#[doc(hidden)]
 pub fn from_recording(
     replay: &mut replay_support::StrictReplay,
     manifest: &replay_support::Manifest,

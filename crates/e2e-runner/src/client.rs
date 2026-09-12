@@ -10,11 +10,7 @@ use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 #[cfg(unix)]
 use tower::service_fn;
-
-#[allow(dead_code, clippy::enum_variant_names)]
-mod rpc {
-    tonic::include_proto!("amux.v1");
-}
+use wire as rpc;
 
 #[derive(Debug, Subcommand)]
 pub enum ClientCommand {

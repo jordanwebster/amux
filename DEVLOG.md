@@ -1,3 +1,229 @@
+2026-09-13 — **Narrow node's hidden surface to one harness module.** Fourteen
+node modules had been made hidden-public wholesale so the promoted harness
+could reach them. They are private again; `node::harness` re-exports the
+roughly forty items testnet actually uses, with a `runtime` submodule for the
+profile runtime constructors, and testnet imports only that path. Envelope
+parsing in the harness now names `model` directly. Format, workspace Clippy,
+the node, testnet, amux and ui-runtime suites and the dependency policy pass.
+
+2026-09-12 — **Close the review findings before merge.** The release policy
+script now finds the Windows product when no target is given, so the
+platform build job can pass. The fake identity service is an ordinary hidden
+module of node that testnet re-exports, replacing the last cross-crate
+`#[path]` include; the identity bootstrap that desktop setup needs is
+documented node API rather than a reach into a hidden module. Recipes use
+just's positional arguments so quoted arguments survive, nix is a unix-only
+development dependency, testnet drops three unused HTTP dependencies, and the
+build page no longer counts a profile this branch does not define. Check,
+Clippy, format, doctests, the node, testnet and amux suites and the release
+policy check pass.
+
+2026-09-12 — **Move desktop setup and provider preferences out of node.** The
+amux application now owns first-run identity and keep-awake preference setup,
+including the config-split test that proves those writes leave profile files
+untouched. Claude defaults and driver selection are consumed directly from the
+settings and model packages; node no longer re-exports Claude-named settings or
+carries provider preferences through its installation runtime API. The empty
+client and protocol source directories are gone, while update supervision and
+the platform sleep inhibitor remain in node. The full workspace test suite,
+all-target Clippy and dependency policy pass.
+
+2026-09-12 — **Promote the whole-daemon harness into testnet.** Testnet now
+owns the topology builder, daemon and installation handles, identity service,
+wire actor, cloud relay and all 92 whole-daemon specs. The two former relay
+fixtures are one registry-authenticated implementation, while node exposes only
+the hidden internals the harness needs; test-only provider composition remains
+in testnet rather than entering node's production dependency graph. The spec
+inventory remains 412 tests (92 testnet and 320 UI-state), node's unit-only
+harness runs 399 tests in about 7.3 seconds, and the embedded fixture tests,
+full specs, workspace tests, dependency policy and all-target Clippy pass.
+
+2026-09-12 — **Fold deterministic fixtures into the TUI package.** The fixture
+registry, builders and five focused suites now live under `tui` behind its
+non-default `fixtures` feature. Shot enables that feature directly, so the
+paste-back `tui-fixtures` package and its workspace and policy edges are gone.
+The focused TUI suite, shot suite and shot help command pass. The unit graph
+continues to show one configuration for every listed crate except `tui`, whose
+second configuration is intentional: the development-only shot tool enables
+fixtures while the product does not.
+
+2026-09-12 — **Move live provider harnesses to testnet.** The Codex, Claude
+PTY and Claude SDK process suites now live beside the other cross-crate
+scenarios, along with their argument, depfile, redaction and shared
+installation support. Testnet explicitly declares the three custom mains;
+ordinary workspace tests execute their no-scenario usage path without opening
+an account or provider process. Their declared tasks target testnet, the Codex
+help smoke prints its usage, and the full workspace test and all-target Clippy
+pass after moving the harness dependencies out of node.
+
+2026-09-12 — **Remove feature-selected test APIs from the crate graph.** Node,
+agent-runtime and Claude now compile their hidden harness seams as ordinary
+code. Claude carries replay support normally, and agent-runtime carries its
+temporary-directory dependency normally, so workspace builds and tests no
+longer resolve different rlibs. Node's live provider targets are ordinary
+auto-discovered tests until they move to testnet, and the obsolete optimized
+test and live-harness policy tasks are gone. The unit graph reports one
+configuration for every listed workspace crate; the full workspace test,
+all-target Clippy, release product policy and dependency policy pass. The
+release graph now intentionally contains replay-support without linking its
+unreferenced code into the product.
+
+2026-09-12 — **Use one development configuration for products and tests.**
+Removed the test-only and CI-only Cargo profiles so product builds, workspace
+tests and focused tests reuse the same workspace crate artifacts. CI still
+disables incremental compilation through its environment. The retired debug
+policy check had already proved named panic backtraces under the development
+profile and packed dSYMs on Apple; that one-time evidence does not remain as a
+permanent task.
+
+2026-09-12 — **Rewrite the native integration contract around a generic app
+layer.** An audit of this branch found the crate graph sound but the proof
+machinery excessive, and the native instructions over-specified. The
+integration document now describes three reusable app crates (runtime,
+embedded node owner, C ABI) with one dependency rule, a merge procedure with
+a rename table, the port of nativeapp's profile-keyed harness onto the host
+factory and provider source seams, the control door as a `testnet serve`
+binary, and six acceptance items. Manifest digests, symbol audits and
+concurrent native worktree proofs are no longer required. The plan to
+simplify this branch before merge is working material under `notes/`.
+
+2026-09-12 — **Close the final production and test-support boundary gaps.**
+Extracted diagnostic redaction into a small production package shared by the
+desktop report command and capture tooling, so the default desktop build keeps
+useful diagnostics without reaching replay infrastructure. Agent-runtime's
+opt-in test surface now exposes only opaque raw provider adapters; testnet owns
+row accumulation, waits, assertions and A2A lifecycle orchestration. The
+dependency policy resolves default feature graphs, and CI now enforces both
+dependency and recipe policy without repeating specification targets already
+executed by the workspace test. The extracted support suite and dependency
+policy pass through their declared wt recipes.
+
+2026-09-12 — **Measure final snapshot reuse and bounded stale-output behavior.**
+At clean revision `df4fa836`, wt 0.4.0 warmed a separate canonical in 81.228
+seconds, and two APFS snapshots reused its product and complete test output with
+zero compilation in 1.098–1.248 and 0.471–0.472 seconds respectively. Creating
+both 8.192 GB logical snapshots consumed 17.45 MiB of volume free space. Five
+concurrent function-edit/test/lint/product cycles stabilized at 13.834–13.886
+GB logical output and 352 incremental sessions per tree; an empty final prune
+and full cleanup confirmed stale output did not grow across cycles. Five no-edit
+samples produced 0.350–0.353 second focused-test medians and 0.798–0.858 second
+product medians. The run separately recorded Cargo compile/link wall time,
+summed linker process time, harness launch and test execution. It also confirmed
+wt's dependency-distinct-root limitation: the first focused test after a full
+test graph rebuilt 19 unchanged dependencies plus model, while its next four
+no-edit samples compiled nothing. Added legitimate configurations in the two
+live trees changed volume free space by 20.48 GiB; per-tree logical sizes are
+reported separately and are not summed as exclusive storage.
+
+2026-09-12 — **Close verification gaps in the extracted package graph.** Node
+now declares every retained integration target, and its provider harnesses use
+their custom main functions; a provider-free smoke recipe proves those entry
+points without contacting a provider. Reusable node scenarios and recordings
+live in `testnet`, while agent-runtime's test-support feature exposes the narrow
+constructors those scenarios need. The complete optimized test graph compiles
+the same APIs as ordinary tests. Desktop diagnostics remain enabled by default,
+and the shipping release graph is checked to exclude replay and test packages.
+Claude explicitly enables semver serialization instead of
+receiving it from that excluded graph. CI and release use wt 0.4.0 on its
+supported Linux/macOS hosts; native Windows remains an explicit platform gap.
+Code generation and migrated helper commands use locked resolution.
+The build acceptance runner groups steady-state medians only across disposable
+trees that emitted the requested sample, keeping the canonical warm record out
+of those distributions.
+
+2026-09-12 — **Record preliminary wt 0.4.0 acceptance evidence.** A clean canonical
+at `e85265e1` warmed in 78.757 seconds, after which two APFS snapshot trees
+started product and full test builds in 0.501–1.291 seconds with zero compiled
+units. Creating both logical 7.840 GB target snapshots consumed about 25.6 MB
+of volume free space. Three concurrent edit/test/lint/product cycles stabilized
+at 13.321–13.429 GB logical output per tree, immediate no-edit repeats compiled
+nothing, and the final dry-run prune found no stale output. The workload
+consumed about 20.6 GB after snapshot creation for the two trees' legitimate
+configurations. It also reproduced wt's dependency-distinct root limitation:
+after full workspace test builds, focused model edits rebuilt 19 unchanged
+dependencies plus model. The repository keeps private incremental targets and
+records the required wt correction rather than reinstating its retired pool.
+This three-cycle, comment-edit run was later superseded by the final controlled
+workload with function-body edits and steady-state medians.
+
+2026-09-12 — **Qualify the final profile and wt retention behavior.** The
+declared debug-policy check proves named panic backtraces under the portable
+zero-debug test profile and validates packed product dSYMs on Apple targets.
+Screenshot tooling now uses the worktree's declared Cargo root and locked
+resolution instead of creating a hidden target, and ordinary/release builds no
+longer compile that development tool. The release task also executes the built
+product to prove its debug command and development test agent are unavailable.
+That optimized build exposed release-only non-exhaustive agent matches; the
+composition and provider runtime now reject the unshipped backend explicitly.
+Platform-only path helpers are also
+compiled only where used, keeping the iOS compositions warning-free. The maintained build and native
+integration documents describe the implemented crate boundaries, wt 0.4.0
+snapshot/sweep strategy, measured APFS volume behavior, sccache removal and
+deferred Bazel decision. The concurrent acceptance run also found that wt can
+retire a dependency-distinct focused test graph after a workspace test; the
+precise upstream retention and native output-discovery requirements are
+recorded without adding another repository output pool.
+
+2026-09-12 — **Replace the retired cache benchmark with a wt acceptance workload.**
+The declared measurement task now creates an isolated registered canonical at
+the current clean commit, warms its product and test configurations, snapshots
+two disposable worktrees, and drives the same focused-test, full-test-build,
+lint, and product-return sequence concurrently through wt. It records command
+logs, compile/link and test time, Cargo roots, loose objects, incremental
+sessions, logical per-tree sizes, volume free space, and wt's prune plan. The
+helper refuses any wt version other than 0.4.0, never enables sccache, and names
+the exact uniquely owned paths that may be cleaned after inspection.
+
+2026-09-12 — **Make build recipes truthful and move executable fixtures out of products.**
+All Cargo-producing wt recipes now use locked resolution and a revision wrapper
+that gives build scripts a checkout-independent commit identity. CI and release
+jobs require wt 0.4.0 and call declared recipes; embedded checks select the
+provider-free node/client/UI graph, while public embedded lifecycle tests live
+in `testnet`. Claude and Codex scenarios, recordings, replay runners, and probe
+binaries now belong to their specification packages without profile-sensitive
+build scripts. Named TUI states and their screenshot/performance suites now
+belong to `tui-fixtures`; `tui` has no production fixture dependency. The
+dependency policy enforces these support boundaries and permits Claude replay
+only through its explicit test-support feature. Apple development builds pack
+debug information, while test harnesses disable compiler debug information
+with a platform-portable Cargo setting. Focused embedded, support-package,
+node registry, TUI, dependency-policy, and live-harness compilation checks pass.
+
+2026-09-11 — **Extract transport-independent values, wire encoding, settings, and artifact storage.**
+Added `model`, `wire`, and `settings` packages with explicit dependency rules,
+renamed the content-addressed store to `artifacts`, and moved protobuf schemas,
+committed generated output, error codecs, shared agent/session/host/artifact
+values, and persisted preferences to their owners. E2E now consumes committed
+wire types without a build script, so ordinary builds do not invoke protoc.
+Workspace membership is explicit and every package is unpublished. Focused
+model (2), wire (6), settings (36), and artifact (21) tests pass; the amux
+library's full 50.43-second test run and the independent E2E compile pass. The
+dependency policy confirms the value package has no local production dependency
+or async/transport/filesystem API.
+
+2026-09-11 — **Make build-foundation measurements reproducible and owned.**
+Added named wt recipes for structured build reports, target inventory, and the
+controlled before/after workload. Reports bind tool and source identities,
+commands, timings, cache snapshots, lock observations, and output sizes to
+explicitly owned compiler directories and disposable checkouts.
+
+2026-09-11 — **Name shared client foundations for desktop and mobile reuse.**
+Revise the build proposal and implementation brief to separate reusable rich-client
+sessions/projection from embedded-node ownership and C bindings. The intended
+packages are app-runtime, embedded-client and client-ffi. Shared APIs must support
+attached clients and independent views without phone-specific selection or
+background policy. Extract these packages from the native bridge at integration;
+the current Rust pass establishes instance, identity and ownership boundaries.
+
+2026-09-11 — **Audit codebase and build foundations.** Record a proposed Rust
+crate graph, native bridge/build changes, reproducible test and toolchain policy,
+worktree resource/cache ownership, and a bounded Bazel evaluation. The native
+worktree's target inventory reports 171.12 GiB, including 101.57 GiB of retained
+Rust objects and 39.34 GiB of incremental state; the plan makes aggregate disk
+budgets and repeated-workload storage stability acceptance requirements.
+This is an architecture proposal grounded in source and existing artifacts;
+no product changes, cleanup, or fresh performance qualification were performed.
+
 2026-09-06 — **Integrate fast provider tests with current main.** Keep the
 existing-shell subprocess fixture and main's separate five-second initialization
 budget; the bounded-output close assertion retains its one-second deadline.
@@ -8764,3 +8990,209 @@ daemon stopped. Bare report names still use the selected profile's reports
 directory. CLI regressions compare the replayed frame with the saved frame,
 cover absent configuration and stopped installations, and verify that a
 listening installation socket receives no connection during explicit replay.
+
+2026-09-11 — **Clients, UI state and UI resources now have separate build
+boundaries.** RPC access lives in `client` and accepts an explicit channel or
+socket; it neither discovers configuration nor starts a node. The pure reducer
+lives in `ui-state`, while connections, tasks, artifact viewing and reports live
+in `ui-runtime`. The terminal package is now `tui`, and the deterministic image
+tool is package `shot` while retaining the `amux-shot` executable. Shared
+provider inputs and payload codecs moved into `model` and `wire`, so none of
+these packages reaches through the node for protocol values. A live embedded
+test runs two independent UI instances against different profiles, proves their
+inventories remain disjoint, drops one, and then performs an operation through
+the other while the externally owned installation remains available. Focused
+client, reducer, runtime, TUI and shot recipes pass, and the dependency policy
+now enforces these direct local edges.
+
+2026-09-11 — **Profile lifecycle admission is an owned host contract.** The
+operation gate moved into `host-api`. Accepted work carries an opaque owned
+lease, and deletion or trust commits carry an opaque exclusive barrier; neither
+side can retain or expose a borrowed Tokio lock guard. Closing admission first
+rejects queued and future operations, while the barrier waits for work already
+accepted before storage teardown proceeds. A focused host-api race test and the
+existing installation deletion race both exercise that ordering through real
+async contention.
+
+2026-09-11 — **The node and provider runtime now compose through an owned host
+API.** Provider sessions, persistence, attachments, artifact retention and
+cleanup moved to `agent-runtime`; the node decodes requests, enforces routing
+and profile authority, and persists only an opaque update payload. Installation
+startup accepts an optional host factory, creates one isolated runtime per
+profile, and advertises the capabilities returned by that runtime. Embedded
+owners omit the factory. The old feature selected host construction and public
+provider codec facades were removed from the product path. Packages now use
+their intended names: `node` is the provider free service library, while
+`amux` is the CLI product that composes node, runtime and TUI. Declared checks
+compile `node` and `agent-runtime` independently and compile the complete host
+product successfully.
+
+2026-09-11 — **Test data now has explicit package owners.** `claude-specs` and
+`codex-specs` own and validate the recorded provider row corpora,
+`tui-fixtures` owns the stable named-state registry consumed by TUI renders,
+and `testnet` owns public-API installation fixtures with independent temporary
+roots. The node no longer runs a profile-sensitive build script or auto-builds
+provider probes and examples as part of ordinary package tests. A declared
+infrastructure recipe validates both provider corpora and exercises two
+isolated embedded node owners; the existing TUI golden harnesses read their
+provider rows from the new package locations.
+
+2026-09-11 — **Build intent is explicit and reproducible.** Rust 1.98.0 and
+its cross targets/components are pinned, while formatting uses the separately
+pinned 2026-08-30 nightly. Product build, workspace check, test compilation,
+doctest, offline, codegen, E2E prerequisite, release, iOS and full-debug work
+now have named wt recipes. Development uses line-table debug information with
+incremental compilation; CI uses matching non-incremental profiles. CI and
+release configurations use the pinned compiler and corrected `amux` package.
+The product/library Clippy recipe passes with warnings denied. Full test
+compilation currently identifies remaining monolith-era test imports, recorded
+in the build-foundations progress log for the integration verification.
+
+2026-09-11 — **Disposable build outputs have an admission boundary.** A small
+repository helper inventories allocated bytes, defaults aggregate admission to
+60 GiB, refuses reservations that do not fit, and lists only inactive output
+sets carrying this repository's ownership marker as prune candidates. The
+coordination lock is nonblocking, and apply mode revalidates ownership before
+removing a coherent target directory. Existing unmarked and active worktree
+outputs are reported but never deleted. A controlled proof refused 2 bytes
+under a 1-byte budget, admitted 1 MiB under 1 GiB, and listed the resulting
+4 KiB owned output only in dry-run mode.
+
+2026-09-11 — **Architecture boundaries are checked and documented.** The
+dependency policy now covers node, agent runtime and production access to test
+support, alongside the value, wire, client and UI layers. Crate documentation
+describes explicit connection and lifecycle ownership, and the native handoff
+names the concrete `app-runtime`, `embedded-client` and `client-ffi` extraction
+responsibilities without adding empty packages. Device and ARM64-simulator iOS
+checks pass for the provider-free node/client/UI graph. The comparable after
+benchmark measured a 41.52 s clean product build, 0.226 s median warm build,
+33.73 s focused test, 4.06 s private edit rebuild and 3.22 GB logical clean
+output. Generator freshness and workspace doctests pass.
+
+2026-09-11 — **Extracted crates retain their integration test seams.** Node's
+cross-crate fixtures are now enabled through an explicit development-only
+feature, allowing CLI and UI-runtime tests to construct isolated installations
+without restoring the old product feature graph. Runtime session tests consume
+typed host events directly, provider replays resolve fixtures from their owning
+spec packages, and CLI tests supply the desktop host factory when they exercise
+test-agent sessions. Profile-adoption coverage now writes the retained-owner
+layout used by the extracted artifact runtime. The workspace test targets
+compile, and the repaired runtime, session and adoption tests pass.
+
+2026-09-12 — **Node extraction preserves the complete lifecycle and topology
+suite.** Dormant unit modules and the whole multi-daemon specification now
+compile only in the node test target, with provider fixtures crossing an
+explicit `agent-runtime` test-support API. The production host contract keeps
+prepared state opaque: the runtime owns serialization and failed-session
+retention, while the node owns the installation journal and typed resume
+results. A factory can restore opaque prepared state when a profile cannot
+start, preserving recovery ordering without teaching the node the provider's
+disk format. The declared node recipe passes all 491 tests, including
+concurrent profile updates, unavailable-host recovery, routing failover,
+authorization, attachments and A2A. All-target Clippy passes with warnings
+denied, and the pinned formatter now covers the extracted workspace.
+
+2026-09-12 — **Declared builds participate in bounded output retention.** The
+ordinary build, check, test, codegen, and lint recipes now reserve capacity in a
+configurable 60 GiB pool, record a process lease while their command runs, refresh
+their target's allocated
+size periodically and on exit, and forwards cancellation to the complete child
+process group.
+Admission accounts for concurrent reservations and may reclaim only another
+inactive target with the same versioned ownership marker. Fast inventory uses
+maintained measurements and leaves historical unmarked roots untraversed; an
+explicit slower audit can measure them without making them eligible for
+deletion. Focused tests cover refusal, live lease accounting, cancellation,
+inactive reclamation, and symbolic-link rejection, and a wrapped model test
+passes against the real checkout output.
+
+2026-09-12 — **Retention has a reproducible concurrent-worktree workload.** A
+declared wt recipe creates three detached disposable wt trees, directs their
+Cargo writes into independently owned nested targets, alternates a behavior-
+preserving model function edit, and starts the same focused build/test in all
+three trees for ten cycles. It records task overlap, allocated bytes after each
+cycle, a forced coherent reclamation halfway through, post-rebuild size spread,
+cancellation lease cleanup, and one-byte-budget refusal before removing only
+the trees it created. Wt's automatically seeded parent targets remain unowned
+and excluded from the experiment.
+
+2026-09-12 — **The retention runner reports setup failures directly.** Its
+disposable tree labels stay within wt's derived-resource name limit, and a
+failed `wt new` now includes the captured diagnostic instead of surfacing only
+Python's subprocess exception.
+
+2026-09-12 — **Concurrent output retention passes its controlled workload.**
+All ten cycles overlapped across three independent trees. The first compile and
+test took 11.99–12.30 seconds per tree; warm edited cycles took 0.91–1.29
+seconds. Reclaiming one owned output after cycle five forced a 4.65-second
+rebuild. The final three outputs occupied 335,929,344 allocated bytes under a
+4 GiB pool, and their combined size varied by 221,184 bytes across the final
+three cycles. Cancellation cleared its lease, and a one-byte pool refused
+admission with exit 75. The daemon resource probe now requires the tree socket
+before invoking the client, so never-started disposable trees are not mistaken
+for live external daemons during teardown.
+
+2026-09-12 — **UI runtime integration owns its desktop test host explicitly.**
+The all-target workspace suite no longer depends on node's unit-test cfg to
+silently supply an agent runtime. The UI runtime integration harness declares
+the development-only agent-runtime edge and passes its factory into each
+embedded installation it creates. Production UI runtime dependencies remain
+client-side, while the integration still proves real agent, artifact, account,
+and independent-view lifetimes under focused and workspace feature graphs.
+
+2026-09-12 — **Ordinary product builds remain warning-free after test support
+extraction.** The internal prepared-state re-export and direct MCP-route
+constructor now compile only for their actual test-support consumers. Desktop
+composition continues through `AgentRuntimeFactory`; the product build no longer
+retains imports or constructors used solely by cross-crate fixtures.
+
+2026-09-12 — **Output reservations follow observed feature-graph transitions.**
+The first final full-suite-to-product transition added about 13.37 GB because
+the product removes test-support feature unification and therefore needs its
+own dependency artifacts. The 4 GiB product reservation was too small; periodic
+measurement warned when the owned target reached 64,825,675,776 bytes, about
+401 MB above the 60 GiB pool. Product, full-suite, lint, release, E2E, and cross
+target reservations are raised from this evidence before rebuilding a clean
+managed target. The pool limit remains unchanged.
+
+2026-09-12 — **Just is the repository task runner.** The root task list now
+owns bounded build, test, lint, format, code generation, policy, release, E2E,
+embedded, mobile, live-provider and evidence commands. Wt retains only tree
+environment, profile setup, the seven repository tasks needed for compatibility,
+and the checkout daemon; its build, test and lint shims delegate to just. The
+complete local CI sequence passes, including 22 end-to-end scenarios, embedded
+tests and both iOS target checks. All three retained wt shims pass, and `wt
+tasks` exposes only the seven repository tasks plus the sync and verify
+composites.
+
+2026-09-12 — **Continuous integration runs the repository task contract.**
+Eight jobs now exercise checks and Clippy, formatting, generated-code and
+dependency policy, tests and doctests on Linux, macOS and Windows, release
+builds on all three platforms, end-to-end scenarios on POSIX hosts, the
+embedded boundary, and both iOS targets. Every job installs just after its Rust
+cache and delegates to the same bounded recipes used locally. Tagged releases
+again produce Linux, Apple Silicon macOS and Windows artifacts, including the
+Windows rename, checksum and upload path. Both workflow files parse as YAML,
+and the CI workflow contains the exact eight-job command matrix.
+
+2026-09-12 — **Dependency policy is an edge contract, not an architecture
+proxy.** The checker is reduced to 79 lines that compare the declared production
+and support-package allowlists with Cargo metadata and reject non-development
+edges from production packages into scenario and executable test packages. The
+accepted `claude` to `replay-support` edge remains explicit. Source-token guesses,
+file-presence assertions and build-measurement machinery are removed, along with
+the generated measurement directory. The complete local CI sequence remains
+green after the reduction: all workspace tests and doctests, release policy, 22
+end-to-end scenarios, the embedded boundary and both iOS targets pass.
+
+2026-09-12 — **Build and test documentation describes the finished contract.**
+One build page now covers the pinned toolchains, purposeful profiles, committed
+protobuf output, just-owned tasks and wt's warm worktree snapshots without
+preserving benchmark history. The crate guide reflects testnet as the public
+harness, TUI-owned fixtures and desktop-owned setup; the test guide is organized
+around unit, prose-spec, integration, PTY end-to-end and future phone-journey
+tiers. The wt output report moved to the wt repository. The final unit graph has
+one configuration for every core crate and the allowed fixture-enabled second
+TUI configuration. The spec inventory remains 412 tests (320 reducer and 92
+whole-daemon), all local documentation links resolve, the retired-token grep is
+empty outside this log, and the complete local CI recipe passes.

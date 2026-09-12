@@ -2,4 +2,5 @@
 
 set -eu
 
-exec timeout 900 cargo test --workspace --test spec "$@"
+timeout 900 cargo test --locked -p ui-state --test spec "$@"
+exec timeout 900 cargo test --locked -p testnet --test spec "$@"

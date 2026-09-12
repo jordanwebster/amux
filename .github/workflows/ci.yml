@@ -8,25 +8,25 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  AMUX_INVARIANT_FATAL: "1"
 
 jobs:
-  check:
-    name: Check
+  check-and-clippy:
+    name: Check and Clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Run cargo check
-        run: |
-          cargo check --workspace --all-targets
-          # These live suites are opt-in (`test = false`), so all-targets does
-          # not select them unless they are named explicitly.
-          cargo check -p amux \
-            --test claude_pty_live \
-            --test codex_live \
-            --test claude_sdk_live
+      - uses: extractions/setup-just@v2
+      - name: Check workspace
+        run: just check
+      - name: Run Clippy
+        run: just lint
 
   fmt:
     name: Format
@@ -34,51 +34,30 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly-2026-08-30
         with:
           components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
       - name: Check formatting
-        run: cargo +nightly fmt --all -- --check
+        run: just fmt-check
 
-  codegen:
-    name: Protobuf codegen is current
+  codegen-and-policy:
+    name: Codegen and dependency policy
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
-      - name: Regenerate committed protobuf code
-        run: cargo run -p xtask -- codegen
-      - name: Committed output matches the protos
-        run: |
-          if [ -n "$(git status --porcelain crates/amux/src/protocol/generated)" ]; then
-            git --no-pager diff -- crates/amux/src/protocol/generated
-            echo "::error::committed protobuf codegen is stale; run 'cargo run -p xtask -- codegen' and commit the result"
-            exit 1
-          fi
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Run clippy
-        run: |
-          cargo clippy --workspace --all-targets -- -D warnings
-          cargo clippy -p amux \
-            --test claude_pty_live \
-            --test codex_live \
-            --test claude_sdk_live \
-            -- -D warnings
+      - uses: extractions/setup-just@v2
+      - name: Check committed protobuf code
+        run: just codegen-check
+      - name: Enforce dependency boundaries
+        run: just dependency-policy
 
   test:
-    name: Test
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -86,19 +65,16 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
-      - name: Run tests
-        run: cargo test --workspace --all-targets
-        env:
-          AMUX_INVARIANT_FATAL: "1"
-      - name: Run spec tests
-        run: cargo test --workspace --test spec
-        env:
-          AMUX_INVARIANT_FATAL: "1"
+      - uses: extractions/setup-just@v2
+      - name: Run workspace tests
+        run: just test
+      - name: Run doctests
+        run: just doctest
 
   build:
-    name: Build
+    name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -106,51 +82,40 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
-      - name: Build release
-        run: cargo build --workspace --release
+      - uses: extractions/setup-just@v2
+      - name: Build product release
+        run: just release-check
 
   e2e:
-    name: E2E Tests
+    name: E2E (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       matrix:
-        # Windows disabled: ConPTY screen-rendering artifacts need further work
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
-      - name: Build workspace
-        run: cargo build --workspace
-      - name: Run E2E tests
-        run: target/debug/e2e-runner run --amux-binary target/debug/amux --test-agent-binary target/debug/test-agent
-        env:
-          AMUX_INVARIANT_FATAL: "1"
+      - uses: extractions/setup-just@v2
+      - name: Run end-to-end tests
+        run: just e2e
 
-  client-only:
-    name: Client-only (embedded)
+  embedded:
+    name: Embedded client
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - uses: dtolnay/rust-toolchain@1.98.0
       - uses: Swatinem/rust-cache@v2
-      # The embedded client build (`default-features = false`) drops the
-      # local-agent runtime. Integration tests (embedded.rs, spec) assume that
-      # runtime, so they are intentionally excluded here — lib only.
-      - name: Build amux (no default features)
-        run: cargo build -p amux --no-default-features
-      - name: Test amux lib (no default features)
-        run: cargo test -p amux --lib --no-default-features
-        env:
-          AMUX_INVARIANT_FATAL: "1"
-      - name: Clippy amux (no default features)
-        run: cargo clippy -p amux --no-default-features -- -D warnings
+      - uses: extractions/setup-just@v2
+      - name: Check provider-free client graph
+        run: just embedded-check
+      - name: Test embedded ownership boundary
+        run: just embedded-test
 
   ios:
     name: iOS target check
@@ -158,16 +123,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.0
         with:
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
       - uses: Swatinem/rust-cache@v2
-      # Cross-check the lib for the targets the React Native app builds
-      # (device + both simulator arches). This exercises the `target_os = "ios"`
-      # paths that host builds never compile, and confirms `portable-pty` stays
-      # out of the embedded build.
-      - name: Check amux for iOS device + simulator targets
-        run: |
-          cargo check -p amux --no-default-features --target aarch64-apple-ios
-          cargo check -p amux --no-default-features --target aarch64-apple-ios-sim
-          cargo check -p amux --no-default-features --target x86_64-apple-ios
+      - uses: extractions/setup-just@v2
+      - name: Check iOS device and simulator graphs
+        run: just mobile-check

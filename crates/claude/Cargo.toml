@@ -2,6 +2,7 @@
 name = "claude"
 version = "0.1.0"
 edition.workspace = true
+publish = false
 
 [features]
 default = []
@@ -14,13 +15,12 @@ chrono = { workspace = true }
 futures-core = "0.3"
 pty-host = { workspace = true, optional = true }
 replay-support = { path = "../replay-support" }
-semver.workspace = true
+semver = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = { workspace = true, optional = true }
 shell-words.workspace = true
 thiserror.workspace = true
-tempfile = { workspace = true }
 tokio.workspace = true
 tokio-util.workspace = true
 toml = { workspace = true, optional = true }
@@ -30,7 +30,5 @@ uuid.workspace = true
 name = "claude-hook"
 path = "src/bin/claude_hook.rs"
 
-[[bin]]
-name = "claude-probe"
-path = "src/bin/claude_probe/main.rs"
-required-features = ["pty"]
+[dev-dependencies]
+tempfile = { workspace = true }

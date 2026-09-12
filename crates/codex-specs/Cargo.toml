@@ -1,0 +1,21 @@
+[package]
+name = "codex-specs"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+chrono = { workspace = true }
+codex = { path = "../codex" }
+redaction = { workspace = true }
+replay-support = { path = "../replay-support" }
+semver = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[[bin]]
+name = "codex-probe"
+path = "src/bin/codex_probe/main.rs"

@@ -12,7 +12,7 @@ subject; when two overlap, the owner named here wins.
   surfaces, isolation scope and internal layering.
 - `A2A.md` — agent-to-agent messaging and families: envelopes, provider
   carriers, model-facing tools, parent/child lifecycle, and client behavior.
-- `UI.md` — the client layer: the amux-ui reducer core, the
+- `UI.md` — the client layer: the ui-state reducer core, the
   kernel/per-agent-layer split, edge contracts, and the TUI.
 - `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the
   client layer it stands on; includes the full-screen frame, interaction
@@ -27,6 +27,8 @@ subject; when two overlap, the owner named here wins.
 - `DEBUGGING.md` — agent workflow for profile debug reports: report locations,
   installation log tails, bundle layout, replay, marked tweaks, redaction,
   graduation and committed fixtures.
+- [Build](BUILD.md) — toolchain and profile choices, reproducible tasks,
+  committed protobuf output, and warm worktree snapshots.
 - `TESTING.md` — workspace test commands, focused target selection, and
   choosing protocol or subprocess boundaries for tests.
 - `CODEX.md` — the OpenAI Codex integration: process ownership, the two
@@ -34,7 +36,7 @@ subject; when two overlap, the owner named here wins.
   client-side layer that folds it.
 - `CLAUDE_TRANSCRIPT.md` — the grounded Claude Code transcript taxonomy
   consumed by the capture drift tooling and its committed fixtures.
-- `../crates/amux-shot/README.md` — the committed 120×40 PNG and wheel-recording
+- `../crates/shot/README.md` — the committed 120×40 PNG and wheel-recording
   tool for named TUI states.
 - [Profile screenshots](screenshots/profiles/README.md) — the switcher and
   both account fleets, with hashes and reproducible capture commands.
@@ -43,7 +45,7 @@ subject; when two overlap, the owner named here wins.
   ledgers.
 - `KEYMAPS.md` — semantic Claude PTY input; keymap data, resolution,
   interpretation, provenance, management and screen-detection limits.
-- `../crates/amux/tests/spec/` — the executable spec. The suite reads as
+- `../crates/testnet/tests/spec/` and `../crates/ui-state/tests/spec/` — the executable specs. The suites read as
   documentation and locks the protocol's guarantees; run it with
-  `timeout 600 wt run spec`.
+  `just spec`.
 - `../DEVLOG.md` — recent work history and decisions.

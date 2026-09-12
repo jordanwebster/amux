@@ -203,8 +203,8 @@ only the host-generated completion and exit envelope IDs are normalized.
 The subprocess echoes each received prompt so the tests verify the wire text
 as well as the durable row. They do not require a provider login.
 
-Run `timeout 900 wt test -- a2a_fixture` to replay them. To deliberately
-regenerate the SDK rows, run `UPDATE_A2A_FIXTURES=1 timeout 900 wt test --
+Run `just test -- a2a_fixture` to replay them. To deliberately regenerate the
+SDK rows, run `UPDATE_A2A_FIXTURES=1 just test --
 a2a_fixture_claude_sdk`, then replay without the update flag.
 
 ### Codex
@@ -297,4 +297,4 @@ remain opt-in because they require the operator's authenticated installations.
 `e2e-tests/sdk_chat_live.sh` captures an SDK parent creating a child, answering
 its permission request and exchanging messages, including both chats and the
 family view. The redacted parent rows also replay through the client in
-`crates/amux-ui/tests/spec/fixtures/claude_sdk/converse.rows.jsonl`.
+`crates/claude-specs/fixtures/claude-sdk/converse.rows.jsonl`.
