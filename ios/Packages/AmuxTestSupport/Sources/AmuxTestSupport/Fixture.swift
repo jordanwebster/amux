@@ -150,15 +150,16 @@ public struct Fixture: Identifiable, Sendable {
     /// connected to has none, and says its address instead.
     public static let several = [
         AccountEntry(
-            account: ScriptedCloudState.ada,
+            account: SignedInAccount(
+                id: AccountId("jordan"), email: "jordan@fastmail.com", displayName: "Jordan"),
             entitlement: .active(grant: .purchased(.web), renews: nil), hosts: 3),
         AccountEntry(
             account: SignedInAccount(
-                id: AccountId("acme"), email: "ada@acme.example", displayName: "Acme"),
+                id: AccountId("acme"), email: "jordan@acme.co", displayName: "Acme"),
             entitlement: .active(grant: .purchased(.appStore), renews: nil), attention: 1),
         AccountEntry(
             account: SignedInAccount(
-                id: AccountId("side"), email: "side@example.com", displayName: "Side project"),
+                id: AccountId("side"), email: "jw@fox.dev", displayName: "Side project"),
             signedIn: false),
     ]
 }

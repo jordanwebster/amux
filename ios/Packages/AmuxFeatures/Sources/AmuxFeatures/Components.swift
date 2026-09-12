@@ -169,6 +169,67 @@ public struct RowGroup<Item: Identifiable, Content: View>: View {
     }
 }
 
+/// A settings-style row: a label, its current value, and somewhere to go.
+///
+/// Interaction stays outside this view so the same production presentation
+/// can be used for a button or for a fact that has nowhere deeper to open.
+public struct FieldRow: View {
+    @Environment(\.design) private var design
+    private let label: String
+    private let value: String?
+    private let mono: Bool
+    private let glyph: String?
+    private let chevron: Bool
+    private let tint: Color?
+
+    public init(
+        label: String,
+        value: String? = nil,
+        mono: Bool = false,
+        glyph: String? = nil,
+        chevron: Bool = true,
+        tint: Color? = nil
+    ) {
+        self.label = label
+        self.value = value
+        self.mono = mono
+        self.glyph = glyph
+        self.chevron = chevron
+        self.tint = tint
+    }
+
+    public var body: some View {
+        HStack(spacing: 10) {
+            if let glyph {
+                Image(systemName: glyph)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(design.inkMuted.color)
+                    .frame(width: 20)
+            }
+            Text(label)
+                .designFont(.body, design)
+                .foregroundStyle(tint ?? design.ink.color)
+            Spacer(minLength: 10)
+            if let value {
+                Text(value)
+                    .designFont(mono ? .mono : .body, design)
+                    .foregroundStyle(design.inkMuted.color)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(design.inkFaint.color)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+}
+
 /// A section header. Quiet, uppercase, and never coloured — a heading is
 /// structure, not attention.
 public struct SectionHead: View {

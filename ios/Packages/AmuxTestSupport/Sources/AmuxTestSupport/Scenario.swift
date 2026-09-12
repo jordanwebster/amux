@@ -50,19 +50,35 @@ public enum Scenario {
     public static let hosts: [HostState] = [
         HostState(entry: HostEntry(
             id: studio, name: "Studio", online: true, version: "0.4.0",
-            platform: "macOS"), epoch: 1),
+            platform: "Mac Studio"), epoch: 1),
         HostState(entry: HostEntry(
             id: mini, name: "mini", online: true, version: "0.4.0",
-            platform: "macOS"), epoch: 1),
+            platform: "Mac mini"), epoch: 1),
         HostState(entry: HostEntry(
             id: air, name: "air", online: false, version: "0.4.0",
-            lastDialError: "no route to host", platform: "macOS"), epoch: 1),
+            lastDialError: "no route to host", platform: "MacBook Air"), epoch: 1),
+    ]
+
+    /// The complete machine list used by the selected Hosts and New Agent
+    /// presentations. Pairing scenarios use `hosts` because in those states
+    /// homelab is still the offer being considered rather than a trusted host.
+    public static let catalogueHosts: [HostState] = hosts + [
+        HostState(entry: HostEntry(
+            id: homelab, name: "homelab", online: true, version: "0.4.0",
+            platform: "Linux"), epoch: 1),
     ]
 
     /// The same machines on a morning when all three answer. What a phone
     /// hears before one of them goes away, so a fixture can put a machine's
     /// departure in the past by playing both.
     public static let reachableHosts: [HostState] = hosts.map { host in
+        var reachable = host
+        reachable.entry.online = true
+        reachable.entry.lastDialError = nil
+        return reachable
+    }
+
+    public static let reachableCatalogueHosts: [HostState] = catalogueHosts.map { host in
         var reachable = host
         reachable.entry.online = true
         reachable.entry.lastDialError = nil

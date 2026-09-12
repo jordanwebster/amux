@@ -330,16 +330,20 @@ public enum Fixtures {
         // row can say how long it has been gone. A machine that was already
         // away the first time the phone heard of it says only that it is.
         Fixture(id: "hosts", screen: .hosts) { bundle in
-            States.open(bundle, hosts: Scenario.reachableHosts)
-            States.lostHost(bundle, Scenario.air, minutesAgo: 8)
+            States.open(bundle, hosts: Scenario.reachableCatalogueHosts)
+            States.lostHost(
+                bundle, Scenario.air, minutesAgo: 8,
+                hosts: Scenario.reachableCatalogueHosts)
             States.trusted(bundle)
         },
         // The same screen with the keys read rather than counted: whole
         // fingerprints, this phone's first, and the one thing there is to do
         // about a machine that should not have one any more.
         Fixture(id: "devices", screen: .hosts) { bundle in
-            States.open(bundle, hosts: Scenario.reachableHosts)
-            States.lostHost(bundle, Scenario.air, minutesAgo: 8)
+            States.open(bundle, hosts: Scenario.reachableCatalogueHosts)
+            States.lostHost(
+                bundle, Scenario.air, minutesAgo: 8,
+                hosts: Scenario.reachableCatalogueHosts)
             States.trusted(bundle)
             bundle.hosts.readDevices()
         },
@@ -358,7 +362,8 @@ public enum Fixtures {
         // account whose Codex card has a list to open, and one without is not.
         Fixture(id: "new-agent", screen: .newAgent) { bundle in
             States.open(
-                bundle, agent: Scenario.agentId("spec-suite"),
+                bundle, hosts: Scenario.catalogueHosts,
+                agent: Scenario.agentId("spec-suite"),
                 session: Sessions.codex())
             States.offers(bundle)
         },
@@ -409,8 +414,8 @@ public enum Fixtures {
         // billing.
         Fixture(id: "delete", screen: .delete, accounts: renewing,
                 deletion: Fixture.Deleting(
-                    account: ScriptedCloudState.ada.id,
-                    typed: ScriptedCloudState.ada.email)) { bundle in
+                    account: renewing[0].id,
+                    typed: renewing[0].account.email)) { bundle in
             States.open(bundle)
             States.trusted(bundle)
         },
@@ -421,8 +426,8 @@ public enum Fixtures {
             deletion: .blockedByRenewal(source: .appStore, manageURL: appStoreSubscriptions)),
                 accounts: renewing,
                 deletion: Fixture.Deleting(
-                    account: ScriptedCloudState.ada.id,
-                    typed: ScriptedCloudState.ada.email,
+                    account: renewing[0].id,
+                    typed: renewing[0].account.email,
                     phase: .blocked(source: .appStore, manageURL: appStoreSubscriptions))
         ) { bundle in
             States.open(bundle)

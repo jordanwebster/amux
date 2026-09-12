@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-12 — **Accounts and hosts now use the selected production form language.**
+The source settings row is now one production component shared by account and
+host facts. Account rows directly use the selected 30-point monogram, caption
+hierarchy, capsule attention count, compact checkmark, twelve-point alignment
+and fourteen-point dividers; the You page uses the source's eighteen-point
+section rhythm and appearance control geometry. Its help group now also says
+what a report contains. The selected host scenario now carries all four source
+machines with their actual hardware labels, so the production screen reads
+three reachable and one offline and chooses the corresponding Mac Studio, Mac
+mini, laptop and Linux glyphs. Pairing scenarios retain homelab as an untrusted
+offer, keeping that service boundary truthful. A focused fixture suite passes
+all 25 cases after this split; no golden changed.
+
 2026-09-12 — **Pushed flows now share the selected back chrome and action tray.**
 New Agent, pairing, sign-in and subscription no longer carry slightly different
 copies of the same back label and bottom glass geometry. The production

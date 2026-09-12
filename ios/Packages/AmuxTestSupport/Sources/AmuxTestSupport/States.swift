@@ -68,9 +68,10 @@ public enum States {
     @MainActor
     public static func lostHost(
         _ bundle: StoreBundle, _ id: HostId, minutesAgo: Double,
-        agents: [AgentCard] = Scenario.agents
+        agents: [AgentCard] = Scenario.agents,
+        hosts: [HostState] = Scenario.reachableHosts
     ) {
-        let after = Scenario.reachableHosts.map { host -> HostState in
+        let after = hosts.map { host -> HostState in
             guard host.entry.id == id else { return host }
             var lost = host
             lost.entry.online = false

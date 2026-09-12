@@ -113,7 +113,7 @@ public struct HostsTab: View {
                 if !model.offline.isEmpty {
                     group(
                         title: "Offline", hosts: model.offline,
-                        caption: "These agents’ state is unknown until the host returns.")
+                        caption: "Agents on an offline host report their state as unknown.")
                 }
                 if !model.discovered.isEmpty { offers }
                 if model.hosts.isEmpty && model.discovered.isEmpty { empty }
@@ -302,6 +302,9 @@ public struct HostsTab: View {
     /// glyph is the first thing read and a wrong one is a wrong answer.
     private func glyph(_ host: HostEntry) -> String {
         switch host.platform {
+        case "Mac Studio": "desktopcomputer"
+        case "Mac mini": "macmini"
+        case "MacBook Air": "laptopcomputer"
         case "Linux": "server.rack"
         case "Windows": "pc"
         default: "desktopcomputer"
@@ -368,30 +371,14 @@ private struct Fact: Identifiable, Equatable {
 }
 
 private struct FactRow: View {
-    @Environment(\.design) private var design
     let fact: Fact
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(fact.label)
-                .designFont(.body, design)
-                .foregroundStyle(design.ink.color)
-            Spacer(minLength: 8)
-            Text(fact.value)
-                .designFont(fact.mono ? .mono : .body, design)
-                .foregroundStyle(fact.mono ? design.inkMuted.color : design.ink.color)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if fact.opensDevices {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(design.inkFaint.color)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
+        FieldRow(
+            label: fact.label,
+            value: fact.value,
+            mono: fact.mono,
+            chevron: fact.opensDevices)
         .accessibilityElement(children: .combine)
         .identified(
             "hosts.fact.\(fact.label.lowercased().replacingOccurrences(of: " ", with: "-"))",
@@ -531,5 +518,3 @@ private struct DevicesSheet: View {
             value: device.fingerprint)
     }
 }
-
-

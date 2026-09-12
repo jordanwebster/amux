@@ -34,7 +34,7 @@ struct AccountRow: View {
 
     var body: some View {
         Button { actions(entry.signedIn ? .select(entry.id) : .signIn(entry.id)) } label: {
-            HStack(spacing: 13) {
+            HStack(spacing: 12) {
                 InitialsDisc(entry: entry, filled: selected)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(entry.name)
@@ -42,8 +42,8 @@ struct AccountRow: View {
                         .foregroundStyle(entry.signedIn ? design.ink.color : design.inkMuted.color)
                         .lineLimit(1)
                     Text(entry.line)
-                        .designFont(.monoSmall, design)
-                        .foregroundStyle(design.inkMuted.color)
+                        .designFont(.caption, design)
+                        .foregroundStyle(design.inkFaint.color)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -65,12 +65,12 @@ struct AccountRow: View {
     private var trailing: some View {
         if selected {
             Image(systemName: "checkmark")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(design.accent.color)
                 .accessibilityHidden(true)
         } else if !entry.signedIn {
             Text("Sign In")
-                .designFont(.mono, design)
+                .designFont(.caption, design)
                 .foregroundStyle(design.accent.color)
         } else if let waiting = entry.attention, waiting > 0 {
             // Only ever drawn from a count something actually reported. An
@@ -78,8 +78,9 @@ struct AccountRow: View {
             Text("\(waiting)")
                 .designFont(.monoSmall, design)
                 .foregroundStyle(design.onAccent.color)
-                .frame(minWidth: 24, minHeight: 24)
-                .background(Circle().fill(design.accent.color))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(design.accent.color))
                 .accessibilityLabel("\(waiting) need you")
                 // Named in its own right: the row's own name carries what the
                 // row says about the account, and the number is a fact about
@@ -96,14 +97,15 @@ struct InitialsDisc: View {
     @Environment(\.design) private var design
     let entry: AccountEntry
     let filled: Bool
-    var size: CGFloat = 34
+    var size: CGFloat = 30
 
     var body: some View {
         Text(initials)
-            .designFont(.monoSmall, design)
+            .font(.system(size: size * 0.36, weight: .semibold))
             .foregroundStyle(filled ? design.onAccent.color : design.inkMuted.color)
             .frame(width: size, height: size)
             .background(Circle().fill(filled ? design.accent.color : design.sunken.color))
+            .opacity(entry.signedIn ? 1 : 0.5)
             .accessibilityHidden(true)
     }
 
@@ -146,13 +148,13 @@ public struct AccountSwitcher: View {
                 Rectangle()
                     .fill(design.hairline.color)
                     .frame(height: design.metrics.hairline)
-                    .padding(.leading, 61)
+                    .padding(.leading, 14)
             }
             Button { actions(.add) } label: {
-                HStack(spacing: 13) {
+                HStack(spacing: 12) {
                     Image(systemName: "plus")
-                        .font(.system(size: 17, weight: .medium))
-                        .frame(width: 34)
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 30)
                     Text("Add Account")
                         .designFont(.body, design)
                     Spacer(minLength: 0)
@@ -243,7 +245,7 @@ public struct YouScreen: View {
         ZStack {
             Ground()
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
+                VStack(alignment: .leading, spacing: 18) {
                     Text("You")
                         .designFont(.screenTitle, design)
                         .foregroundStyle(design.ink.color)
@@ -272,13 +274,13 @@ public struct YouScreen: View {
                     AccountRow(
                         entry: entry, selected: entry.id == accounts.selected, actions: actions)
                         .padding(.horizontal, 14)
-                    rule(inset: 61)
+                    rule(inset: 14)
                 }
                 Button { actions(.add) } label: {
-                    HStack(spacing: 13) {
+                    HStack(spacing: 12) {
                         Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .medium))
-                            .frame(width: 34)
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 30)
                         Text("Add Account")
                             .designFont(.body, design)
                         Spacer(minLength: 0)
@@ -333,7 +335,7 @@ public struct YouScreen: View {
     /// Appearance is the value, not a page holding it: three words, and the
     /// screen changes under your thumb.
     private var appearanceRow: some View {
-        HStack {
+        HStack(spacing: 12) {
             Text("Appearance")
                 .designFont(.body, design)
                 .foregroundStyle(design.ink.color)
@@ -343,11 +345,11 @@ public struct YouScreen: View {
                 choice("Dark", .dark)
                 choice("System", nil)
             }
-            .padding(3)
+            .padding(2)
             .background(Capsule().fill(design.sunken.color))
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.vertical, 9)
         .accessibilityElement(children: .contain)
         .identified("you.appearance", value: appearance?.rawValue ?? "system")
     }
@@ -356,21 +358,21 @@ public struct YouScreen: View {
         let chosen = appearance == wanted
         return Button { actions(.appearance(wanted)) } label: {
             Text(title)
-                .designFont(.monoSmall, design)
+                .designFont(.caption, design)
                 .foregroundStyle(chosen ? design.ground.color : design.inkMuted.color)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .background {
                     if chosen { Capsule().fill(design.ink.color) }
                 }
-                .thumbTarget(y: 7)
+                .thumbTarget(y: 8)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(chosen ? [.isSelected] : [])
         .identified(
             "you.appearance.\(wanted?.rawValue ?? "system")", label: title,
             value: chosen ? "chosen" : "not chosen")
-        .reclaimingThumbTarget(y: 7)
+        .reclaimingThumbTarget(y: 8)
     }
 
     private var help: some View {
@@ -383,12 +385,18 @@ public struct YouScreen: View {
                 // Only where the tools to write one exist. A build a person
                 // installs has no report to send.
                 if debugTools {
-                    rule(inset: 47)
+                    rule(inset: 14)
                     glyphRow("Report a Problem", glyph: "ladybug", id: "report") {
                         actions(.report)
                     }
                 }
             }
+            Text("A report includes a screenshot, this phone's log and your hosts' state.")
+                .designFont(.caption, design)
+                .foregroundStyle(design.inkFaint.color)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 4)
+                .identified("you.help.caption")
         }
     }
 
@@ -399,22 +407,7 @@ public struct YouScreen: View {
         press: @escaping @MainActor () -> Void
     ) -> some View {
         Button(action: press) {
-            HStack(spacing: 8) {
-                Text(title)
-                    .designFont(.body, design)
-                    .foregroundStyle(design.ink.color)
-                Spacer(minLength: 8)
-                Text(value)
-                    .designFont(mono ? .mono : .body, design)
-                    .foregroundStyle(design.inkMuted.color)
-                    .lineLimit(1)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(design.inkFaint.color)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .contentShape(Rectangle())
+            FieldRow(label: title, value: value, mono: mono)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
@@ -426,15 +419,10 @@ public struct YouScreen: View {
         press: @escaping @MainActor () -> Void
     ) -> some View {
         Button(action: press) {
-            HStack {
-                Text(title)
-                    .designFont(.body, design)
-                    .foregroundStyle(danger ? design.removed.color : design.accent.color)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .contentShape(Rectangle())
+            FieldRow(
+                label: title,
+                chevron: false,
+                tint: danger ? design.removed.color : design.accent.color)
         }
         .buttonStyle(.plain)
         .identified("you.\(id)", label: title)
@@ -444,22 +432,7 @@ public struct YouScreen: View {
         _ title: String, glyph: String, id: String, press: @escaping @MainActor () -> Void
     ) -> some View {
         Button(action: press) {
-            HStack(spacing: 13) {
-                Image(systemName: glyph)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(design.inkMuted.color)
-                    .frame(width: 34)
-                Text(title)
-                    .designFont(.body, design)
-                    .foregroundStyle(design.ink.color)
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(design.inkFaint.color)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .contentShape(Rectangle())
+            FieldRow(label: title, glyph: glyph)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
