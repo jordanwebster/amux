@@ -1,3 +1,16 @@
+2026-09-12 — **Record final wt 0.4.0 acceptance evidence.** A clean canonical
+at `e85265e1` warmed in 78.757 seconds, after which two APFS snapshot trees
+started product and full test builds in 0.501–1.291 seconds with zero compiled
+units. Creating both logical 7.840 GB target snapshots consumed about 25.6 MB
+of volume free space. Three concurrent edit/test/lint/product cycles stabilized
+at 13.321–13.429 GB logical output per tree, immediate no-edit repeats compiled
+nothing, and the final dry-run prune found no stale output. The workload
+consumed about 20.6 GB after snapshot creation for the two trees' legitimate
+configurations. It also reproduced wt's dependency-distinct root limitation:
+after full workspace test builds, focused model edits rebuilt 19 unchanged
+dependencies plus model. The repository keeps private incremental targets and
+records the required wt correction rather than reinstating its retired pool.
+
 2026-09-12 — **Qualify the final profile and wt retention behavior.** The
 declared debug-policy check proves named panic backtraces under the portable
 zero-debug test profile and validates packed product dSYMs on Apple targets.

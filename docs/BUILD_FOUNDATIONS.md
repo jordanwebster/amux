@@ -134,31 +134,36 @@ measurement recorded 41.52 seconds, 33.73 seconds, 4.06 seconds and 3.22 GB
 respectively. Those runs predated wt 0.4.0 and establish only the effect of the
 crate and recipe changes.
 
-The wt 0.4.0 acceptance workload used a clean canonical at the tested revision
-and two disposable snapshot worktrees. Warming the canonical took 81.803
-seconds of wall time, including 80.48 seconds reported by Cargo and 398 compiled
-units. In both new trees, the initial product build took 1.098–1.234 seconds and
-the initial full test build took 0.438 seconds; Cargo compiled zero units in all
-four tasks. Each tree reported about 7.995 GB of logical target data, while
-creating both snapshots reduced volume free space by about 15.2 MB. The logical
+The final wt 0.4.0 acceptance workload ran at revision `e85265e1` from a clean
+canonical and two disposable snapshot worktrees. Warming the canonical took
+78.757 seconds of wall time, including 77.14 seconds reported by Cargo and 396
+compiled units. In the new trees, the initial product builds took 1.159–1.291
+seconds and the initial full test builds took 0.501–0.507 seconds; Cargo
+compiled zero units in all four tasks. Each tree reported about 7.840 GB of
+logical target data, while creating both snapshots reduced volume free space
+by about 25.6 MB. The logical
 sizes therefore cannot be added to estimate physical use.
 
-Three concurrent edit/test/lint/build cycles reached about 13.5 GB logical
-output per tree after introducing the needed configurations. File and
-incremental-session counts levelled off in the last two cycles. Immediate
-repeated product builds took 0.815–0.986 seconds with zero compiled units.
+Three concurrent edit/test/lint/build cycles reached 13.321 GB logical output
+and 32,052 files per tree after introducing the needed configurations. The
+second and third cycles stayed in the 13.321–13.429 GB range; their incremental
+session counts stayed between 312 and 315. Immediate repeated focused tests
+took 0.338–0.360 seconds, and repeated product builds took 0.818–1.015 seconds,
+all with zero compiled units.
 After snapshot creation, the two live trees' added focused, workspace-test,
-Clippy and product configurations consumed about 21.2 GB of volume free space.
+Clippy and product configurations consumed about 20.6 GB of volume free space.
 The figure includes legitimate new configurations and any other writers on the
 same volume during the run; it is not an exclusive accounting system.
 
 The run also found a wt 0.4.0 retention limitation. A package-focused test and
 a workspace-wide test can compile a workspace root with the same visible unit
 identity but different resolved dependency fingerprints. Wt keeps only the
-newest root in that slot. The full test build consequently reclaimed 31 units,
-and the next edited focused model test rebuilt 19 unchanged dependencies before
-rebuilding `model`. An immediate no-edit repeat compiled nothing. The product
-configuration did not oscillate. The required wt correction is documented in
+newest root in that slot. The first full test build consequently reclaimed 32
+units, and each next edited focused model test rebuilt 19 unchanged dependencies
+before rebuilding `model`. An immediate no-edit repeat compiled nothing. The product
+configuration did not oscillate beyond the crates legitimately invalidated by
+each source edit. After the third cycle, a dry-run prune found nothing further
+to reclaim. The required wt correction is documented in
 [wt output requirements](WT_OUTPUT_REQUIREMENTS.md). Until it is released, the
 sweep prevents monotonic stale-object growth but does not preserve every valid
 focused/full-test variant.
