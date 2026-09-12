@@ -460,7 +460,11 @@ private struct ConversationPage: View {
             case .open(let other):
                 stores.fleet.opened(other)
                 router.show(.conversation(other))
-            case .newAgent: router.open(.newAgent)
+            // The form says its way back is Agents, not the conversation it
+            // covered. Replace that conversation so a successful creation
+            // also leaves one conversation above the fleet rather than a
+            // hidden trail of every place creation was entered from.
+            case .newAgent: router.show(.newAgent)
             case .hosts: router.select(.hosts)
             case .you: router.select(.you)
             case .dismiss: break

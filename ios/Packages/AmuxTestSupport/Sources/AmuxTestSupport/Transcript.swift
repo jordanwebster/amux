@@ -261,40 +261,88 @@ public enum Transcript {
         ]))
     }
 
-    /// The conversation as the design tells it: a prompt about pairing copy,
-    /// a look around the code, a change, a check that passes, and a request to
-    /// run the suite before calling it done.
-    public static let pairingCopy: [FeedEntry] = [
-        prompt(0, seq: 1, text: """
-            Make the pairing failures indistinguishable in the client too — the error copy \
-            currently leaks which host rejected us.
-            """),
-        thinking(1, seq: 2, seconds: 8),
-        read(2, seq: 3, path: "crates/amux-ui/src/pairing.rs"),
-        search(3, seq: 4, query: "\"INVALID_PIN\"", grouped: true),
-        message(4, seq: 5, text: """
+    /// The conversation used behind composer sheets and decisions. It mirrors
+    /// the selected design's shared context rather than borrowing the longer
+    /// run screen, so every overlay has the same visible transcript.
+    public static let conversation: [FeedEntry] = [
+        prompt(
+            0, seq: 1,
+            text: "Collapse the pairing errors onto one string, and make sure nothing reads INVALID_PIN by name."),
+        read(1, seq: 2, path: "crates/amux-ui/src/pairing.rs"),
+        search(2, seq: 3, query: "\"INVALID_PIN\"", grouped: true),
+        read(3, seq: 4, path: "crates/amux/src/pairing/mod.rs", grouped: true),
+        edit(
+            4, seq: 5, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14,
+            lines: [
+                "  let message = match status {",
+                "-   Code::NotFound => \"no such host\",",
+                "+   _ => \"Pairing failed. Check the code\",",
+                "  };",
+            ]),
+        ran(5, seq: 6, command: "cargo check -p amux-ui", output: "", meta: "4.2s"),
+        edit(
+            6, seq: 7, path: "crates/amux-ui/src/effect.rs", added: 2, removed: 2,
+            lines: [
+                "- case .invalidPin: return oldMessage",
+                "+ case .pairingFailed: return message",
+            ]),
+        wrote(7, seq: 8, path: "crates/amux-ui/tests/spec/pairing_copy.rs", lines: 38),
+        message(8, seq: 9, text: """
             Found it. The client maps three distinct gRPC statuses onto three different \
-            strings, so the copy leaks exactly what the protocol deliberately hides. I've \
+            strings, so the copy leaks exactly what the protocol deliberately hides. I have \
             collapsed them onto one message and deleted the branch.
             """),
-        edit(5, seq: 6, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14, lines: [
-            "  let message = match status {",
-            "-   Code::NotFound => \"no such host\",",
-            "-   Code::Unauthenticated => \"wrong PIN\",",
-            "-   Code::DeadlineExceeded => \"expired\",",
-            "+   // One string for every failure: the",
-            "+   // protocol refuses to tell them apart,",
-            "+   // and so must we.",
-            "+   _ => \"Pairing failed. Check the code\",",
-            "  };",
-        ]),
-        ran(6, seq: 7, command: "cargo check -p amux-ui", output: "Finished in 4.2s"),
-        message(7, seq: 8, text: """
-            `cargo check` is clean. Before I call it done I'd like to run the spec suite — \
+        ran(9, seq: 10, command: "cargo test -p amux-ui", output: "", meta: "22s"),
+        message(10, seq: 11, text: """
+            `cargo check` is clean. Before I call it done I would like to run the spec suite — \
             three tests assert on the old error strings and I want to see them fail loudly \
             rather than guess.
             """),
     ]
+
+    /// The longer selected run. Every source row is represented as a real
+    /// runtime feed entry rather than as capture-only presentation data.
+    public static let run: [FeedEntry] = [
+        prompt(
+            20, seq: 1,
+            text: "Collapse the pairing errors onto one string, and make sure nothing reads INVALID_PIN by name."),
+        read(21, seq: 2, path: "crates/amux-ui/src/pairing.rs"),
+        read(22, seq: 3, path: "crates/amux-ui/src/model.rs", grouped: true),
+        search(23, seq: 4, query: "\"INVALID_PIN\"", grouped: true),
+        read(24, seq: 5, path: "crates/amux/src/pairing/mod.rs", grouped: true),
+        search(25, seq: 6, query: "\"Code::Unauthenticated\"", grouped: true),
+        read(26, seq: 7, path: "crates/amux-ui/tests/spec/pairing.rs", grouped: true),
+        edit(
+            27, seq: 8, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14,
+            lines: [
+                "  let message = match status {",
+                "-   Code::NotFound => \"no such host\",",
+                "+   _ => \"Pairing failed. Check the code\",",
+                "  };",
+            ]),
+        ran(
+            28, seq: 9, command: "cargo check -p amux-ui",
+            output: "error[E0308]: mismatched types", truncated: true,
+            meta: "4.2s", hidden: 214),
+        read(29, seq: 10, path: "crates/amux-ui/src/effect.rs"),
+        edit(
+            30, seq: 11, path: "crates/amux-ui/src/effect.rs", added: 2, removed: 2,
+            lines: [
+                "- case .invalidPin: return oldMessage",
+                "+ case .pairingFailed: return message",
+            ]),
+        ran(31, seq: 12, command: "cargo check -p amux-ui", output: "", meta: "3.8s"),
+        wrote(32, seq: 13, path: "crates/amux-ui/tests/spec/pairing_copy.rs", lines: 38),
+        denied(33, seq: 14, command: "rm -rf target", kind: "permission_denied"),
+        message(34, seq: 15, text: """
+            Done. The three status arms are one arm now, and the new test asserts on the \
+            single string rather than on which one it was.
+            """),
+    ]
+
+    /// Existing behavior fixtures use this spelling. Visual states choose the
+    /// shorter shared conversation or the longer run explicitly.
+    public static let pairingCopy = conversation
 
     /// The same conversation with the agent's closing message carrying an
     /// attachment, the way an agent's `attach` tool leaves one: as an element
@@ -306,7 +354,7 @@ public enum Transcript {
     public static func pairingCopy(attaching attachment: DraftAttachment) -> [FeedEntry] {
         guard let token = Bridge.token(for: attachment) else { return pairingCopy }
         return pairingCopy.dropLast() + [
-            message(7, seq: 8, text: """
+            message(10, seq: 11, text: """
                 `cargo check` is clean; the whole of its output is here.
 
                 \(token.element)
@@ -320,9 +368,9 @@ public enum Transcript {
     /// The same conversation with the turn still open: the person has asked
     /// for the suite and the command is still running.
     public static var live: [FeedEntry] {
-        pairingCopy + [
-            prompt(8, seq: 9, text: "Good. Now run the whole suite and tell me what breaks."),
-            running(9, seq: 10, command: "cargo test --workspace"),
+        run + [
+            prompt(35, seq: 16, text: "Good. Now run the whole suite and tell me what breaks."),
+            running(36, seq: 17, command: "cargo test --workspace"),
         ]
     }
 
@@ -486,9 +534,8 @@ public enum Transcript {
         ]))
     }
 
-    /// A larger patch, for the page that reads one rather than the chip that
-    /// counts one: four files, two of them worth folding away, and a file
-    /// whose path sorts nowhere near where the patch listed it.
+    /// The selected review: four files in the producer's narrative order, two
+    /// of them only headings, with the same visible hunks the design uses.
     ///
     /// Separate from ``changes`` on purpose. The chip's arithmetic is locked
     /// to that two-file patch, and growing it to give the review page
@@ -496,147 +543,60 @@ public enum Transcript {
     public static let review = ReviewDocument(
         files: [
             ReviewFile(
-                path: "src/pairing.rs", added: 9, removed: 14,
+                path: "crates/amux-ui/src/lib.rs", added: 0, removed: 2,
+                rows: [], hunkStarts: []),
+            ReviewFile(
+                path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14,
                 rows: [
-                    DiffRow(old: 116, new: 116, kind: .context,
-                            text: "  fn describe(status: Status) -> &'static str {"),
-                    DiffRow(old: 117, new: 117, kind: .context, text: "      let code = status.code();"),
                     DiffRow(old: 118, new: 118, kind: .context,
-                            text: "      let message = match status {"),
+                            text: "  let message = match status {"),
                     DiffRow(old: 119, new: nil, kind: .removed,
-                            text: "-         Code::NotFound => \"no such host\","),
+                            text: "-   Code::NotFound => \"no such host\","),
                     DiffRow(old: 120, new: nil, kind: .removed,
-                            text: "-         Code::Unauthenticated => \"wrong PIN\","),
+                            text: "-   Code::Unauthenticated => \"wrong PIN\","),
                     DiffRow(old: 121, new: nil, kind: .removed,
-                            text: "-         Code::DeadlineExceeded => \"expired\","),
-                    DiffRow(old: 122, new: nil, kind: .removed,
-                            text: "-         Code::PermissionDenied => \"refused\","),
-                    DiffRow(old: 123, new: nil, kind: .removed,
-                            text: "-         Code::Internal => \"internal error\","),
+                            text: "-   Code::DeadlineExceeded => \"expired\","),
+                    DiffRow(old: nil, new: 122, kind: .added,
+                            text: "+   // One string for every failure: the protocol"),
+                    DiffRow(old: nil, new: 123, kind: .added,
+                            text: "+   // refuses to tell them apart, and so must we."),
+                    DiffRow(old: nil, new: 124, kind: .added,
+                            text: "+   _ => \"Pairing failed. Check the code\","),
+                    DiffRow(old: 122, new: 125, kind: .context, text: "  };"),
+                    DiffRow(old: nil, new: nil, kind: .boundary, text: ""),
+                    DiffRow(old: 118, new: nil, kind: .removed,
+                            text: "- pub const INVALID_PIN: &str = \"wrong PIN\";"),
+                    DiffRow(old: 119, new: nil, kind: .removed,
+                            text: "- pub const NO_SUCH_HOST: &str = \"no such host\";"),
+                    DiffRow(old: 120, new: nil, kind: .removed,
+                            text: "- pub const EXPIRED: &str = \"expired\";"),
+                    DiffRow(old: 121, new: 121, kind: .context,
+                            text: "  pub const PAIRING_FAILED: &str ="),
+                ],
+                hunkStarts: [0, 9]),
+            ReviewFile(
+                path: "crates/amux-ui/tests/spec/pairing.rs", added: 6, removed: 12,
+                rows: [
+                    DiffRow(old: 118, new: nil, kind: .removed,
+                            text: "-   assert_eq!(msg, \"wrong PIN\");"),
                     DiffRow(old: nil, new: 119, kind: .added,
-                            text: "+         // One string for every failure: the protocol"),
-                    DiffRow(old: nil, new: 120, kind: .added,
-                            text: "+         // refuses to tell them apart, and so must we."),
-                    DiffRow(old: nil, new: 121, kind: .added,
-                            text: "+         _ => \"Pairing failed. Check the code\","),
-                    DiffRow(old: 124, new: 122, kind: .context, text: "      };"),
-                    DiffRow(old: nil, new: nil, kind: .boundary, text: ""),
-                    DiffRow(old: 208, new: 206, kind: .context, text: "  pub mod errors {"),
-                    DiffRow(old: 209, new: nil, kind: .removed,
-                            text: "-     pub const INVALID_PIN: &str = \"wrong PIN\";"),
-                    DiffRow(old: 210, new: nil, kind: .removed,
-                            text: "-     pub const NO_SUCH_HOST: &str = \"no such host\";"),
-                    DiffRow(old: 211, new: nil, kind: .removed,
-                            text: "-     pub const EXPIRED: &str = \"expired\";"),
-                    DiffRow(old: 212, new: nil, kind: .removed,
-                            text: "-     pub const REFUSED: &str = \"refused\";"),
-                    DiffRow(old: 213, new: nil, kind: .removed,
-                            text: "-     pub const INTERNAL: &str = \"internal error\";"),
-                    DiffRow(old: nil, new: 207, kind: .added,
-                            text: "+     pub const PAIRING_FAILED: &str ="),
-                    DiffRow(old: nil, new: 208, kind: .added,
-                            text: "+         \"Pairing failed. Check the code\";"),
-                    DiffRow(old: 214, new: 209, kind: .context, text: "  }"),
-                    DiffRow(old: nil, new: nil, kind: .boundary, text: ""),
-                    DiffRow(old: 260, new: 255, kind: .context, text: "  impl Pairing {"),
-                    DiffRow(old: 261, new: nil, kind: .removed,
-                            text: "-     pub fn hint(&self) -> Option<&'static str> { self.hint }"),
-                    DiffRow(old: 262, new: nil, kind: .removed,
-                            text: "-     pub fn retryable(&self) -> bool { self.code.is_retryable() }"),
-                    DiffRow(old: 263, new: nil, kind: .removed,
-                            text: "-     pub fn attempts(&self) -> u8 { self.attempts }"),
-                    DiffRow(old: 264, new: nil, kind: .removed,
-                            text: "-     pub fn expired(&self) -> bool { self.deadline < now() }"),
-                    DiffRow(old: nil, new: 256, kind: .added,
-                            text: "+     pub fn attempts(&self) -> u8 { self.attempts }"),
-                    DiffRow(old: nil, new: 257, kind: .added,
-                            text: "+     pub fn expired(&self) -> bool { self.deadline < now() }"),
-                    DiffRow(old: nil, new: 258, kind: .added,
-                            text: "+     pub fn describe(&self) -> &'static str { describe(self.status) }"),
-                    DiffRow(old: nil, new: 259, kind: .added,
-                            text: "+     pub fn retryable(&self) -> bool { self.code.is_retryable() }"),
-                    DiffRow(old: 265, new: 260, kind: .context, text: "  }"),
-                ],
-                hunkStarts: [0, 13, 24]),
-            ReviewFile(
-                path: "spec/pairing.rs", added: 6, removed: 12,
-                rows: [
-                    DiffRow(old: 41, new: 41, kind: .context,
-                            text: "  fn wrong_pin_is_indistinguishable() {"),
-                    DiffRow(old: 42, new: nil, kind: .removed,
-                            text: "-     assert_eq!(describe(not_found()), \"no such host\");"),
-                    DiffRow(old: 43, new: nil, kind: .removed,
-                            text: "-     assert_eq!(describe(unauthenticated()), \"wrong PIN\");"),
-                    DiffRow(old: 44, new: nil, kind: .removed,
-                            text: "-     assert_eq!(describe(deadline()), \"expired\");"),
-                    DiffRow(old: 45, new: nil, kind: .removed,
-                            text: "-     assert_eq!(describe(denied()), \"refused\");"),
-                    DiffRow(old: nil, new: 42, kind: .added,
-                            text: "+     let one = describe(unauthenticated());"),
-                    DiffRow(old: nil, new: 43, kind: .added,
-                            text: "+     let other = describe(not_found());"),
-                    DiffRow(old: nil, new: 44, kind: .added,
-                            text: "+     assert_eq!(one, other, \"two failures must read alike\");"),
-                    DiffRow(old: 46, new: 45, kind: .context, text: "  }"),
-                    DiffRow(old: nil, new: nil, kind: .boundary, text: ""),
-                    DiffRow(old: 88, new: 87, kind: .context, text: "  fn expired_pin_is_refused() {"),
-                    DiffRow(old: 89, new: nil, kind: .removed,
-                            text: "-     assert!(matches!(err, Error::Expired));"),
-                    DiffRow(old: 90, new: nil, kind: .removed,
-                            text: "-     assert_eq!(err.hint(), Some(\"expired\"));"),
-                    DiffRow(old: 91, new: nil, kind: .removed,
-                            text: "-     assert_eq!(err.attempts(), 3);"),
-                    DiffRow(old: 92, new: nil, kind: .removed,
-                            text: "-     assert!(err.retryable());"),
-                    DiffRow(old: 93, new: nil, kind: .removed,
-                            text: "-     assert!(!err.expired());"),
-                    DiffRow(old: 94, new: nil, kind: .removed,
-                            text: "-     assert_eq!(err.code(), Code::DeadlineExceeded);"),
-                    DiffRow(old: 95, new: nil, kind: .removed,
-                            text: "-     assert_eq!(err.describe(), \"expired\");"),
-                    DiffRow(old: 96, new: nil, kind: .removed,
-                            text: "-     assert_eq!(err.to_string(), \"expired\");"),
-                    DiffRow(old: nil, new: 88, kind: .added,
-                            text: "+     assert_eq!(err.describe(), PAIRING_FAILED);"),
-                    DiffRow(old: nil, new: 89, kind: .added,
-                            text: "+     assert!(err.retryable());"),
-                    DiffRow(old: nil, new: 90, kind: .added,
-                            text: "+     assert_eq!(err.attempts(), 3);"),
-                    DiffRow(old: 97, new: 91, kind: .context, text: "  }"),
-                ],
-                hunkStarts: [0, 10]),
-            ReviewFile(
-                path: "lib.rs", added: 0, removed: 2,
-                rows: [
-                    DiffRow(old: 12, new: 12, kind: .context, text: "  pub mod pairing;"),
-                    DiffRow(old: 13, new: nil, kind: .removed, text: "- pub mod pairing_errors;"),
-                    DiffRow(old: 14, new: nil, kind: .removed, text: "- pub mod pairing_hints;"),
-                    DiffRow(old: 15, new: 13, kind: .context, text: "  pub mod relay;"),
+                            text: "+   assert_eq!(msg, PAIRING_FAILED);"),
+                    DiffRow(old: 119, new: 120, kind: .context, text: "  }"),
                 ],
                 hunkStarts: [0]),
             ReviewFile(
-                path: "PROTOCOL.md", added: 3, removed: 0,
-                rows: [
-                    DiffRow(old: 74, new: 74, kind: .context, text: "  ## Pairing failures"),
-                    DiffRow(old: nil, new: 75, kind: .added,
-                            text: "+ A failed pairing reports one message whatever went wrong."),
-                    DiffRow(old: nil, new: 76, kind: .added,
-                            text: "+ Distinguishing them would tell an attacker which half of a"),
-                    DiffRow(old: nil, new: 77, kind: .added,
-                            text: "+ code was right, so the protocol refuses to."),
-                    DiffRow(old: 75, new: 78, kind: .context, text: "  "),
-                ],
-                hunkStarts: [0]),
+                path: "docs/PROTOCOL.md", added: 3, removed: 0,
+                rows: [], hunkStarts: []),
         ],
         identity: BaseIdentity(
             base: .branch("main"),
             head: "9f2c1b40a7e3d58f6b0c2a94d13e7f85c6b2a0d9",
             mergeBase: "4a7d3e91c2b508f6a1d94e73b0c528f6d1a934e7",
             blobs: [
-                ["src/pairing.rs", "b71c3f0a"],
-                ["spec/pairing.rs", "5c0a91de"],
-                ["lib.rs", "2d8e46b1"],
-                ["PROTOCOL.md", "8f13c7a2"],
+                ["crates/amux-ui/src/lib.rs", "2d8e46b1"],
+                ["crates/amux-ui/src/pairing.rs", "b71c3f0a"],
+                ["crates/amux-ui/tests/spec/pairing.rs", "5c0a91de"],
+                ["docs/PROTOCOL.md", "8f13c7a2"],
             ]))
 
     /// The artifact the frozen patch is. A digest rather than a UUID, because

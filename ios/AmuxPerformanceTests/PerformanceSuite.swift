@@ -46,6 +46,7 @@ final class PerformanceSuite: XCTestCase {
             for workload in [Workload.latency0, .latency100] {
                 for _ in 0..<samples {
                     run.record(try await reconciliation(latency: workload))
+                    await Harness.settleAfterSample()
                 }
             }
         }
@@ -53,16 +54,19 @@ final class PerformanceSuite: XCTestCase {
         if inputs.measures(.echo) {
             for _ in 0..<samples {
                 run.record(try await echo())
+                await Harness.settleAfterSample()
             }
         }
 
         if inputs.measures(.streaming) {
             for _ in 0..<samples {
                 for sample in try await streamingScroll() { run.record(sample) }
+                await Harness.settleAfterSample()
             }
 
             for _ in 0..<samples {
                 run.record(try await idle())
+                await Harness.settleAfterSample()
             }
         }
 
@@ -242,37 +246,38 @@ final class PerformanceSuite: XCTestCase {
         Signposts.reset()
 
         let agent = AgentId(UUID())
-        let entries = Workloads.conversation(agent: agent, rows: 1_000)
+        // Build the runtime's already-encoded input before the final settle.
+        // Encoding a thousand callback payloads on the main actor after that
+        // settle can leave unrelated SwiftUI work waiting when frame
+        // accounting begins.
+        var batches: [String] = []
+        var position: UInt64 = 1_000
+        for row in Workloads.stream(agent: agent).lazy.flatMap({ $0 }) {
+            batches.append(Harness.encoded([Workloads.append([row], to: agent, at: position)]))
+            position += 1
+        }
         // The screen reads the conversation store the runtime's own events
         // land in, so a row's journey from the bridge to a drawn view is the
         // app's whole journey rather than a shortcut the test took.
         let model = harness.stores.conversation(agent)
         let window = harness.show { self.page(harness, agent: agent, model: model) }
         defer { window.isHidden = true }
-        await harness.deliver(Harness.encoded([
+        var initial = Harness.encoded([
             .session(Sessions.claude(agent: agent)),
-            Workloads.append(entries, to: agent, at: 0),
-        ]))
+            Workloads.append(Workloads.conversation(agent: agent, rows: 1_000), to: agent, at: 0),
+        ])
+        await harness.deliver(initial)
+        initial.removeAll(keepingCapacity: false)
         await harness.settle()
-
-        // The rows arrive as the runtime would hand them over: fifty a
-        // second, coalesced into one batch per frame rather than one lump a
-        // second, because that is what the bridge's frame interval does to a
-        // stream before the app ever sees it.
-        let arrivals = Workloads.stream(agent: agent).flatMap { $0 }
-        var batches: [String] = []
-        var position = UInt64(entries.count)
-        for row in arrivals {
-            batches.append(Harness.encoded([Workloads.append([row], to: agent, at: position)]))
-            position += 1
-        }
 
         let frames = FrameWatch()
         let cpu = CPUWatch()
         frames.start()
         let interval = Duration.seconds(1) / 50
-        let delivery = harness.deliver(batches, every: interval)
-        await delivery.value
+        do {
+            let delivery = harness.deliver(batches, every: interval)
+            await delivery.value
+        }
         // The store keeps every row synchronously and coalesces only view
         // invalidations. Leave longer than that bound plus one natural display
         // interval for the final publication and draw before stopping either
@@ -282,6 +287,15 @@ final class PerformanceSuite: XCTestCase {
         try await Task.sleep(for: .milliseconds(50))
         let hitch = frames.stop()
         let percent = cpu.percent()
+
+        // Footprint belongs to the app, not to the workload generator. The
+        // corrected generator's rows and one JSON string per callback are much
+        // larger than the malformed data the original baseline happened to
+        // retain. Production has only the decoded store at this point, so
+        // release the driver's duplicate input and completed task before
+        // asking the process how much memory the shipped screen occupies.
+        batches.removeAll(keepingCapacity: false)
+        await Task.yield()
         let footprint = Footprint.megabytes()
 
         XCTAssertEqual(

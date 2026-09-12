@@ -44,8 +44,8 @@ final class ClaudeSessionsTests: JourneyCase {
         try prompt(app, runner, agent: createdID, text: "Created SDK prompt", reply: "The SDK session received your prompt.")
         record["createdConversation"] = try reading(runner, createdID, layer: "claude_sdk")
 
-        pressTab(app, "Agents")
-        press(app, "home.row.\(runner.agent)")
+        press(app, "conversation.drawer")
+        press(app, "drawer.row.\(runner.agent)")
         waitFor(app, "composer", "the existing SDK agent has no composer")
         try prompt(app, runner, agent: runner.agent, text: "Existing SDK prompt", reply: "The SDK session received your prompt.")
         record["sdkConversation"] = try reading(runner, runner.agent, layer: "claude_sdk")
@@ -60,8 +60,8 @@ final class ClaudeSessionsTests: JourneyCase {
         }, "the SDK model change was not reported back to the phone")
         record["sdkModel"] = said(try declared(runner), "composer.model")?.value ?? ""
 
-        pressTab(app, "Agents")
-        press(app, "home.row.\(pty)")
+        press(app, "conversation.drawer")
+        press(app, "drawer.row.\(pty)")
         waitFor(app, "composer", "the existing PTY agent has no composer")
         try prompt(app, runner, agent: pty, text: "Existing PTY prompt", reply: "The PTY session received your prompt.")
         record["ptyConversation"] = try reading(runner, pty, layer: "claude_pty")
@@ -82,13 +82,31 @@ final class ClaudeSessionsTests: JourneyCase {
         XCTAssertTrue(NSDictionary(dictionary: try observe(control, pty)).isEqual(to: ptyBefore))
 
         // A directory that does not exist is refused by normal host validation.
-        pressTab(app, "Agents")
-        press(app, "home.newAgent")
+        press(app, "conversation.drawer")
+        press(app, "drawer.newAgent")
         waitFor(app, "new-agent", "New Agent did not reopen")
         press(app, "new-agent.directory")
         waitFor(app, "new-agent.browse", "the directory chooser did not open")
-        try door(runner, .init(kind: "type", text: directory + "/does-not-exist-for-sdk-journey", identifier: "new-agent.typed"))
+        let missing = directory + "/does-not-exist-for-sdk-journey"
+        let typed = app.textFields.matching(identifier: "new-agent.typed").firstMatch
+        XCTAssertTrue(typed.waitForExistence(timeout: waiting),
+                      "the directory chooser has no native path field")
+        typed.tap()
+        typed.typeText(missing)
+        XCTAssertTrue(waitUntil {
+            self.said(
+                (try? self.declared(runner, settling: false)) ?? [],
+                "new-agent.typed")?.value == missing
+        }, "the native field did not publish the complete typed path")
+        XCTAssertTrue(waitUntil { self.element(app, "new-agent.typed.use").isEnabled },
+                      "Use stayed disabled after the path was typed")
         press(app, "new-agent.typed.use")
+        waitForNo(app, "new-agent.browse", "using the typed path did not close the chooser")
+        XCTAssertTrue(waitUntil {
+            self.said(
+                (try? self.declared(runner, settling: false)) ?? [],
+                "new-agent.directory")?.value == missing
+        }, "the typed path was not selected before Start was pressed")
         try start(app, runner)
         waitFor(app, "new-agent.refusal", "the host's refused creation has no designed failure state")
         XCTAssertFalse(element(app, "conversation").exists)

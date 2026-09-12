@@ -24,7 +24,7 @@ public enum Sessions {
             asks: asks,
             facts: .claudePty(.object([
                 "layer": .string("claude_pty"),
-                "session": .object(["permission_mode": .string("default"), "ai_title": .null,
+                "session": .object(["permission_mode": .string("acceptEdits"), "ai_title": .null,
                                     "agent_name": .null]),
                 "accepted_plans": .array([]),
                 "echoes": .array([]),
@@ -88,13 +88,7 @@ public enum Sessions {
             ProviderCommand(name: "compact", source: .string("claude"), terminalOnly: false),
             ProviderCommand(name: "doctor", source: .string("claude"), terminalOnly: true),
         ],
-        permission: .object(["provider": .string("claude"), "mode": .string("default")]))
-
-    public static var representativeProvider: ProviderFacts {
-        var facts = claudeProvider
-        facts.effort = "high"
-        return facts
-    }
+        permission: .object(["provider": .string("claude"), "mode": .string("acceptEdits")]))
 
     public static let codexProvider = ProviderFacts(
         model: "gpt-5.2",
@@ -204,27 +198,8 @@ public enum Sessions {
             "tool_name": .string("ExitPlanMode"),
             "invocation": .object([
                 "tool": .string("plan"),
-                "plan": .string(planMarkdown),
-                "plan_file_path": .null,
-            ]),
-            "suggestions": .array([]),
-        ]),
-        "state": .object(["state": .string("pending")]),
-        "document": .null,
-    ]))
-
-    /// The source design.s matched-content plan, carried through the same parser.
-    public static let representativePlan = Ask(layer: .claudePty, body: .object([
-        "id": .int(30), "seq": .int(30),
-        "tool_use_id": .string("toolu_30"),
-        "session_ask_id": .string("ask-30"),
-        "kind": .object([
-            "ask": .string("permission"),
-            "tool_name": .string("ExitPlanMode"),
-            "invocation": .object([
-                "tool": .string("plan"),
                 "plan_title": .string("Collapse the pairing failures onto one message"),
-                "plan": .string(representativePlanMarkdown),
+                "plan": .string(planMarkdown),
                 "plan_file_path": .null,
             ]),
             "suggestions": .array([]),
@@ -307,23 +282,6 @@ public enum Sessions {
     }
 
     public static let planMarkdown = """
-        The client maps gRPC statuses onto distinct strings in three places. The protocol \
-        refuses to distinguish them, so the client must not either.
-
-        ## Approach
-
-        1. Read every call site that maps a gRPC status to a string — 6 files
-        2. Replace the match in `amux-ui/src/pairing.rs` with one arm
-        3. Delete the three error constants nothing else reads
-        4. Update the two spec tests that assert on the old strings
-
-        ## What I will not do
-
-        - Touch the daemon-side mapping
-        - Change the retry budget, which looks wrong but is a separate change
-        """
-
-    public static let representativePlanMarkdown = """
         The client maps gRPC statuses onto distinct strings in three places. The protocol \
         refuses to distinguish them, so the client must not either. This is a small change \
         with a wide blast radius, because the strings are asserted on in specs.

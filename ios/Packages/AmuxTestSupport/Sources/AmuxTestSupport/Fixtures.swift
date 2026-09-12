@@ -9,7 +9,7 @@ import Foundation
 /// a send that was refused, an upload that failed, and the whole thing at an
 /// accessibility type size.
 public enum Fixtures {
-    public static let all: [Fixture] = catalogue + states + reviewCandidates
+    public static let all: [Fixture] = catalogue + states
 
     /// What the cloud says when it turns a sign-in away. Written once because
     /// two states read it: what the scripted cloud throws, and what the screen
@@ -27,7 +27,6 @@ public enum Fixtures {
 
     public static func isOpenable(_ screen: Screen, state: String) -> Bool {
         isBuilt(screen, state: state)
-            || reviewCandidates.contains { $0.screen == screen && $0.id == state }
     }
 
     /// One state this build can be asked for: a screen and what fills it.
@@ -153,7 +152,7 @@ public enum Fixtures {
 
         // 2 · A conversation
         Fixture(id: "run", screen: .run) { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            States.open(bundle, entries: Transcript.run, session: Sessions.claude())
         },
         Fixture(id: "run-live", screen: .runLive) { bundle in
             States.open(bundle, entries: Transcript.live,
@@ -179,7 +178,7 @@ public enum Fixtures {
                         session: Sessions.claude(gate: .needsYou, asks: [Sessions.claudeQuestion]))
         },
         Fixture(id: "plan", screen: .plan) { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy,
+            States.open(bundle, entries: Array(Transcript.conversation.prefix(6)),
                         session: Sessions.claude(gate: .needsYou, asks: [Sessions.claudePlan]))
         },
         // A review part-way through being written: two files folded away, two
@@ -197,7 +196,7 @@ public enum Fixtures {
                         session: Sessions.claude(), changes: Transcript.review)
             States.reviewed(bundle)
             guard let review = bundle.review(Scenario.focus) else { return }
-            review.select(LineRange(file: 3, from: 9, to: 10))
+            review.select(LineRange(file: 1, from: 4, to: 5))
             review.draft = """
                 The catch-all swallows Code::Internal too, which isn't a \
                 pairing failure. Match the three explicitly and let the rest \
@@ -297,10 +296,11 @@ public enum Fixtures {
         // and says when it started, and the composer names both.
         Fixture(id: "working", screen: .working) { bundle in
             States.open(
-                bundle, agents: Scenario.working, entries: Transcript.live,
+                bundle, agents: Scenario.working, entries: Transcript.conversation,
                 session: Sessions.claude(
-                    gate: .working, phase: "running",
-                    provider: Sessions.claudeProvider(running: Sessions.todos)))
+                    gate: .working, phase: "thinking",
+                    provider: Sessions.claudeProvider(running: Sessions.todos),
+                    family: Sessions.started))
         },
         // A message waiting for the turn to end, with everything else that is
         // true about the turn beside it: the task being worked on and its
@@ -309,9 +309,9 @@ public enum Fixtures {
         // draws the strip.
         Fixture(id: "queued", screen: .queued) { bundle in
             States.open(
-                bundle, agents: Scenario.startedWork, entries: Transcript.live,
+                bundle, agents: Scenario.startedWork, entries: Transcript.conversation,
                 session: Sessions.claude(
-                    gate: .working, phase: "running",
+                    gate: .working, phase: "thinking",
                     provider: Sessions.claudeProvider(running: Sessions.todos),
                     queue: Sessions.heldMessage, family: Sessions.started))
         },
@@ -483,26 +483,6 @@ public enum Fixtures {
         accounts[0].entitlement = .active(grant: .purchased(.appStore), renews: Scenario.now.addingTimeInterval(11 * 24 * 60 * 60))
         return accounts
     }()
-
-    /// Matched-content states used before any new baseline is accepted.
-    /// They are openable through the Debug door but absent from `built`, so
-    /// catalogue sweeps do not mistake review candidates for approved screens.
-    public static let reviewCandidates: [Fixture] = [
-        Fixture(id: "representative-home", screen: .home) { bundle in
-            States.open(bundle, hosts: Scenario.reachableHosts)
-        },
-        Fixture(id: "representative-run", screen: .run) { bundle in
-            States.open(bundle, hosts: Scenario.reachableHosts,
-                        entries: Transcript.representativeTurn,
-                        session: Sessions.claude(provider: Sessions.representativeProvider))
-        },
-        Fixture(id: "representative-plan", screen: .plan) { bundle in
-            States.open(bundle, hosts: Scenario.reachableHosts,
-                        entries: Transcript.representativePlanContext,
-                        session: Sessions.claude(
-                            gate: .needsYou, asks: [Sessions.representativePlan]))
-        },
-    ]
 
     /// States a screenshot of a good morning never shows.
     public static let states: [Fixture] = [

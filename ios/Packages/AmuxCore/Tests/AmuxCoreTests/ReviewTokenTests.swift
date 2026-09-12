@@ -12,8 +12,8 @@ import XCTest
 final class ReviewTokenTests: XCTestCase {
     private func written() -> ReviewStore {
         let review = ReviewStore(diff: Self.diff, document: Self.document)
-        review.comment(LineRange(file: 1, from: 1, to: 3), "This collapses two cases into one.")
-        review.comment(LineRange(file: 0, from: 1, to: 1), "Say which message.")
+        review.comment(LineRange(file: 0, from: 1, to: 3), "This collapses two cases into one.")
+        review.comment(LineRange(file: 1, from: 1, to: 1), "Say which message.")
         return review
     }
 
@@ -86,8 +86,8 @@ final class ReviewTokenTests: XCTestCase {
         guard case .review(_, let comments) = mention.kind else {
             return XCTFail("the attachment came back as something other than a review")
         }
-        // Ordered the way the frozen patch lists its files, which is the
-        // shared model's order and not the alphabetical one the page reads in.
+        // Ordered the way the frozen patch lists its files, which is also the
+        // order the page preserves.
         XCTAssertEqual(comments.map(\.path), ["src/pairing.rs", "PROTOCOL.md"])
 
         let markdown = try XCTUnwrap(comments.first { $0.path == "PROTOCOL.md" })

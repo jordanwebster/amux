@@ -81,7 +81,7 @@ public struct ReportOffer: ViewModifier {
                         // Leave room near the corner for a system thumbnail.
                         // This is only a layout inset: iOS does not expose its
                         // preview's geometry and can cover the whole app.
-                        .padding(.leading, 76)
+                        .padding(.leading, 101)
                         // Above the composer and the tab bar, both of which
                         // live against the bottom of whatever screen has them.
                         .padding(.bottom, 108)
@@ -134,9 +134,9 @@ public struct ReportScreen: View {
             VStack(spacing: 0) {
                 bar
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 12) {
                         frame.disabled(model.uploadBundle != nil)
-                        guidance("Draw a box around each problem and add a note.")
+                        guidance("Drag a box around anything wrong. Each box takes a note.")
                         ForEach(Array(model.draft.marks.enumerated()), id: \.offset) { at, mark in
                             markNote(at: at, mark: mark).disabled(model.uploadBundle != nil)
                         }
@@ -145,8 +145,9 @@ public struct ReportScreen: View {
                         if case .failed(let why) = model.sending { refusal(why) }
                         if case .sent(let receipt) = model.sending { sent(receipt) }
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 32)
+                    .padding(.horizontal, design.metrics.gutter)
+                    .padding(.top, 4)
+                    .padding(.bottom, 16)
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
@@ -162,19 +163,9 @@ public struct ReportScreen: View {
     /// Cancel, the title, and the one thing that leaves the phone.
     private var bar: some View {
         HStack {
-            Button { actions(.cancel) } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
-                    Text("Cancel")
-                        .designFont(.body, design)
-                }
-                .foregroundStyle(design.accent.color)
-                .thumbTarget(y: 13)
-            }
-            .buttonStyle(.plain)
-            .identified("report.cancel", label: "Cancel")
-            .reclaimingThumbTarget(y: 13)
+            BackLink(
+                "Cancel", identifier: "report.cancel", accessibilityLabel: "Cancel"
+            ) { actions(.cancel) }
             Spacer(minLength: 8)
             Text("Report")
                 .designFont(.bodyEmphasis, design)
@@ -195,8 +186,8 @@ public struct ReportScreen: View {
                 .reclaimingThumbTarget(x: 5, y: 13)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.horizontal, design.metrics.gutter)
+        .padding(.vertical, 10)
     }
 
     /// Send, or Retry once the cloud has already turned one down. The same
@@ -302,18 +293,17 @@ public struct ReportScreen: View {
             // the box around it — so the line it wraps on depends on what the
             // field measured itself at, which is not the same on two runs.
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(13)
             .background(
                 RoundedRectangle(cornerRadius: 18, style: .continuous).fill(design.raised.color))
             .identified("report.note", label: "What went wrong?", value: model.draft.note)
     }
 
-    /// The two lines that say what to do and what is being sent, set in the
-    /// mono face the design uses for anything the app is stating about itself.
+    /// The two lines that say what to do and what is being sent.
     private func guidance(_ text: String) -> some View {
         Text(text)
-            .designFont(.monoSmall, design)
-            .foregroundStyle(design.inkMuted.color)
+            .designFont(.caption, design)
+            .foregroundStyle(design.inkFaint.color)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -412,13 +402,13 @@ struct FrozenFrameView: View {
                         drew(ReportMark(rectangle.scaled(by: 1 / scale)))
                     })
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         // A hairline round it, because a photograph of this app on this app's
         // own ground has no edge of its own: the two grounds are the same
         // colour and the picture would bleed into the screen holding it.
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(design.hairline.color, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(design.hairline.color, lineWidth: design.metrics.hairline)
         }
         .identified("report.frame", value: "\(marks.count) marked")
     }

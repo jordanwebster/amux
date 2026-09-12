@@ -148,11 +148,13 @@ private struct Identify: ViewModifier {
                 // the committed transaction, but make no assertion about its
                 // position. Do not add global-coordinate layout work to those
                 // measurements just to fill a field they never read.
-                content.preference(
-                    key: IdentifiedElements.self,
-                    value: [IdentifiedElement(
-                        identifier: identifier, label: label, value: value,
-                        frame: .zero, enabled: enabled)])
+                content.background {
+                    Color.clear.preference(
+                        key: IdentifiedElements.self,
+                        value: [IdentifiedElement(
+                            identifier: identifier, label: label, value: value,
+                            frame: .zero, enabled: enabled)])
+                }
             }
         } else {
             content

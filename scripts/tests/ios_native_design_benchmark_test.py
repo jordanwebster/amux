@@ -23,11 +23,11 @@ class NativeDesignBenchmarkTests(unittest.TestCase):
         self.assertIn("large-title", benchmark.VARIANTS[4])
         self.assertEqual(len(set(benchmark.VARIANTS[4])), 4)
 
-    def test_review_uses_representative_state_in_production_routes(self):
+    def test_review_uses_canonical_source_matched_state_in_production_routes(self):
         self.assertEqual(benchmark.SLICE_REVIEW_SCREENS, {
-            "home": ("home", "representative-home"),
-            "run": ("run", "representative-run"),
-            "plan": ("plan", "representative-plan"),
+            "home": ("home", "home"),
+            "run": ("run", "run"),
+            "plan": ("plan", "plan"),
         })
 
     def test_full_review_covers_every_selected_design_capture(self):
@@ -54,6 +54,26 @@ class NativeDesignBenchmarkTests(unittest.TestCase):
         ]
         self.assertEqual(len(names), 6)
         self.assertEqual(len(set(names)), 6)
+
+    def test_adaptation_review_covers_real_input_accessibility_and_failures(self):
+        states = benchmark.ADAPTATION_REVIEW_STATES
+        self.assertEqual(
+            states["composer-keyboard"],
+            ("typing", "typing", [(
+                "type", {"identifier": "composer.field", "text": ""})]))
+        self.assertEqual(states["home-large-type"][:2],
+                         ("home", "home-accessibility"))
+        self.assertEqual(states["conversation-reduced-effects"][:2],
+                         ("run", "run-reduced"))
+        for expected in ("host-lost-mid-turn", "send-refused", "sign-in-refused",
+                         "deletion-blocked", "report-upload-failed"):
+            self.assertIn(expected, states)
+
+    def test_gallery_explains_each_deliberate_departure(self):
+        notes = " ".join(benchmark.REVIEW_NOTES)
+        for subject in ("safe areas", "color", "capabilities", "Pairing",
+                        "system log", "hunk context", "Mute", "Notifications"):
+            self.assertIn(subject, notes)
 
 
 if __name__ == "__main__":

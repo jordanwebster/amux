@@ -345,15 +345,18 @@ public struct BackLink: View {
     @Environment(\.design) private var design
     private let title: String
     private let identifier: String
+    private let spokenLabel: String
     private let action: @MainActor () -> Void
 
     public init(
         _ title: String,
         identifier: String,
+        accessibilityLabel: String? = nil,
         action: @escaping @MainActor () -> Void
     ) {
         self.title = title
         self.identifier = identifier
+        spokenLabel = accessibilityLabel ?? "Back to \(title)"
         self.action = action
     }
 
@@ -366,12 +369,12 @@ public struct BackLink: View {
                     .designFont(.body, design)
             }
             .foregroundStyle(design.accent.color)
-            .thumbTarget(y: 13)
+            .thumbTarget(x: 1, y: 13)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Back to \(title)")
-        .identified(identifier, label: "Back to \(title)")
-        .reclaimingThumbTarget(y: 13)
+        .accessibilityLabel(spokenLabel)
+        .identified(identifier, label: spokenLabel)
+        .reclaimingThumbTarget(x: 1, y: 13)
     }
 }
 

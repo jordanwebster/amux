@@ -1006,6 +1006,12 @@ public enum Door {
     /// screen can tell which it is holding.
     public static let scriptedCloudArgument = "amux-scripted-cloud"
 
+    /// `-amux-element-geometry`: include the app-layout rectangles used by
+    /// placement-sensitive debug journeys. Normal journeys read the system's
+    /// accessibility frames instead, avoiding a geometry reader on every
+    /// named element.
+    public static let elementGeometryArgument = "amux-element-geometry"
+
     /// `-amux-link URL`: a link the launch was opened with, handed to the app
     /// before its first frame exactly as the system hands one over.
     ///

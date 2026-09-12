@@ -27,16 +27,17 @@ public enum ReviewAction: Equatable, Sendable {
 /// It is one document rather than a file list you drill into. A phone review
 /// is read the way a patch is read — top to bottom, in order — and a list of
 /// files that each open a page of their own turns twelve taps into the price
-/// of reading twelve short changes. So every file is here, alphabetically, and
-/// the way to skip one is to fold it rather than to leave the page.
+/// of reading twelve short changes. So every file stays in the producer's
+/// narrative order, and the way to skip one is to fold it rather than to leave
+/// the page.
 ///
-/// Two things the design drops on purpose. There are no hunk headers: `@@ -118,7
-/// +118,6 @@` is a machine's sentence about coordinates that the row numbers
-/// beside every line already state, and on a narrow screen it costs a line of
-/// text per hunk to say it again. And nothing scrolls sideways: a line too long
-/// for the display wraps, because a horizontal scroll view inside a vertical
-/// one on a phone means neither gesture is reliable and the text at the end of
-/// a long line is exactly where the interesting part of a change tends to be.
+/// The runtime currently carries each hunk's first row but not its contextual
+/// title, so this screen does not invent one. Machine-coordinate headers such
+/// as `@@ -118,7 +118,6 @@` add no information beyond the row numbers already
+/// shown. Nothing scrolls sideways: a line too long for the display wraps,
+/// because a horizontal scroll view inside a vertical one on a phone makes
+/// neither gesture reliable and the end of a long line is often the important
+/// part of a change.
 public struct DiffPage: View {
     @Environment(\.design) private var design
     private let model: ReviewStore
@@ -211,21 +212,8 @@ public struct DiffPage: View {
     /// The way out, what this is, and how much has been said about it.
     private var chrome: some View {
         HStack(alignment: .center, spacing: 8) {
-            Button { actions(.back) } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 17, weight: .semibold))
-                    Text(subject)
-                        .designFont(.identifier, design)
-                        .lineLimit(1)
-                }
-                .foregroundStyle(design.accent.color)
-                .thumbTarget(y: 13)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back to \(subject)")
-            .identified("review.back", label: "Back to \(subject)")
-            .reclaimingThumbTarget(y: 13)
+            BackLink(subject, identifier: "review.back") { actions(.back) }
+                .lineLimit(1)
             Spacer(minLength: 4)
             VStack(spacing: 0) {
                 Text("Review")
@@ -281,10 +269,7 @@ public struct DiffPage: View {
             ActionLabel(attachTitle, kind: .primary, fill: true)
         }
         .buttonStyle(.plain)
-        .padding(10)
-        .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 10)
+        .modifier(ReviewBottomAction())
         .accessibilityLabel(attachTitle)
         .identified("review.attach", label: attachTitle)
     }
@@ -292,6 +277,14 @@ public struct DiffPage: View {
     private var attachTitle: String {
         let count = model.comments.count
         return "Attach Review \u{00B7} \(count) comment\(count == 1 ? "" : "s")"
+    }
+}
+
+/// Keeps the shared bottom tray around a button without erasing its concrete
+/// type before accessibility modifiers are applied.
+private struct ReviewBottomAction: ViewModifier {
+    func body(content: Content) -> some View {
+        BottomAction { content }
     }
 }
 

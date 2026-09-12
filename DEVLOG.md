@@ -4,6 +4,75 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-12 — **The complete selected iPhone presentation is now one production UI.**
+The remaining writing, decision, review, account, host, onboarding and report
+surfaces now use the selected source layouts and shared production components.
+Their development scenarios supply matched content to the same shell, stores,
+routes and native editor used with live services; no parallel port, migration
+theme or Release preview path remains. The consolidated candidate gallery pairs
+all 33 selected source screens with production in light and dark, and separately
+shows 21 production-only narrow, accessibility, keyboard and interaction states
+in both appearances. The smallest supported iPhone has its own 42-image
+adaptation gallery. These are review candidates only: no golden was established
+or updated.
+
+The final production-component iteration measurement still compiles alternatives
+together and uses one installation. Two ideas took 18.58 seconds and four took
+22.98 seconds, including a structural context-band alternative. The two-idea
+round remains faster than the isolated source app's measured 20–21 second round;
+the four-idea round is roughly 9–14% slower. The simple manifest gallery remains
+the review and future-golden extension point rather than a port of the source
+web harness.
+
+The complete real-service journey initially exposed an accessibility-only
+layout cycle at the largest text size. The conversation was sizing its bottom
+panel from the transcript viewport that panel itself reduced, while the debug
+driver attached a global-coordinate geometry reader to every named element.
+The panel is now capped from the stable outer page. During real VoiceOver runs,
+the driver keeps identifiers, spoken values and enabled state but takes live
+reachability frames from the accessibility client; the all-state audit remains
+the exact 44-point layout authority. Exact global frame probes are now confined
+to fixed capture/audit states and explicit placement- or field-targeted journeys,
+so an ordinary growing live transcript does not attach one to every row. The
+focused and complete VoiceOver journeys now run without
+geometry-cycle, same-frame preference, scroll-geometry, main-thread-busy or
+idle-timeout diagnostics. The complete journey covers the fleet, conversation
+selection, decisions, writing, hosts and unreachable-host presentation at the
+largest text size with VoiceOver actually enabled.
+
+The authoritative coherent optimized run passes every unchanged hard budget:
+445.7ms worst cold first frame, 4.4ms worst optimistic echo, zero measured
+streaming hitches, 25.5% worst main-thread CPU, zero idle commits and 75.3MB
+median footprint against the 250MB hard ceiling. It remains red against the
+unchanged historical 10% relative memory threshold by about 0.066MB. That
+68.4MB history was produced by the previously malformed near-empty workload,
+so it is not a valid baseline for the corrected 1,000-row screen, but it has not
+been refreshed or relaxed. Sequence-retention, driver-buffer and instrumentation
+experiments are preserved as before/after evidence rather than selected green
+runs. Physical ProMotion hitch behavior and physical-phone cold start remain
+unqualified.
+
+The final coherent real-service journey passes cold and warm home, conversation,
+permission and question decisions, review, writing, Claude sessions, host
+lifecycle and creation, accounts, reports, accessibility and production startup.
+Host creation uses real native text fields and XCUITest keyboard input; replacing
+an already rejected directory clears it through the native text-input delegate
+before typing the new value. The exhaustive static accessibility audit covers
+679 controls across 63 states, all named and at least 44 points. Visual
+interactions, Release scope, debug-door symbol stripping, loopback, the repository
+recipe suite, lint and the full iOS unit matrix pass.
+
+One final comprehensive verifier passed formatting, lint, the full Rust/Python
+and specification suites, both mobile targets, iOS library and simulator checks,
+Debug and Release builds, loopback, iOS units and debug-door/Release inspection.
+It then stopped at the expected old-baseline gate: 120 of 124 screenshots differ
+after the direct visual replacement. No golden was changed. An immediate direct
+build took 16.46 seconds and reused all three Rust mobile archives in 0.40 seconds
+or less, confirming nested verification no longer invalidates their cache. The
+frozen-code review gallery was recaptured with all 33 selected source screens in
+both appearances plus 21 production-only adaptation states in both appearances;
+the narrow-screen gallery contains the same 42 adaptation captures.
+
 2026-09-12 — **Accounts and hosts now use the selected production form language.**
 The source settings row is now one production component shared by account and
 host facts. Account rows directly use the selected 30-point monogram, caption

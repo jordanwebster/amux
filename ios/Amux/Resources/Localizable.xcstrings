@@ -1,6 +1,30 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "A report includes a screenshot and available session and host records.": {
+      "comment": "Caption under the debug reporting actions on the You screen. Used in Accounts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A report includes a screenshot and available session and host records."
+          }
+        }
+      }
+    },
+    "Agents on an offline host report their state as unknown.": {
+      "comment": "Explanation below the offline hosts group. Used in HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents on an offline host report their state as unknown."
+          }
+        }
+      }
+    },
     "Outside the working tree": {
       "comment": "English app copy. Used in TranscriptRows.swift.",
       "extractionState": "manual",

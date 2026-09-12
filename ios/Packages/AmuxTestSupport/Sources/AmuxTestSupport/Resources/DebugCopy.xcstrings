@@ -1,6 +1,18 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Drag a box around anything wrong. Each box takes a note.": {
+      "comment": "Instruction above the editable problem notes on the debug report screen. Used in Report.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag a box around anything wrong. Each box takes a note."
+          }
+        }
+      }
+    },
     "LOCAL FLEET": {
       "comment": "English app copy. Used in DesignVariant.swift.",
       "extractionState": "manual",

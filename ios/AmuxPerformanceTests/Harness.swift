@@ -17,12 +17,13 @@ import XCTest
 final class Harness {
     let stores: StoreBundle
     private let bridge: BridgeClient
+    private let root: URL
     private var pump: Task<Void, Never>?
     private var window: UIWindow?
 
     init() throws {
         let directories = FileManager.default
-        let root = directories.temporaryDirectory
+        root = directories.temporaryDirectory
             .appendingPathComponent("perf-\(UUID().uuidString)", isDirectory: true)
         let data = root.appendingPathComponent("data", isDirectory: true)
         let cache = root.appendingPathComponent("cache", isDirectory: true)
@@ -154,11 +155,30 @@ final class Harness {
         pump?.cancel()
         pump = nil
         bridge.stop()
+        // A UIWindowScene retains every window attached to it, including a
+        // hidden one. Merely dropping this harness's reference therefore left
+        // the complete SwiftUI hierarchy from each sample alive for the rest
+        // of a coherent run. Detach both sides of that relationship so the
+        // next sample really does start with no preceding view tree.
         window?.isHidden = true
+        window?.rootViewController = nil
+        window?.windowScene = nil
         window = nil
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    /// Gives UIKit, Core Animation and the stopped runtime the same run-loop
+    /// turns in which to release their deferred state before the next sample
+    /// declares itself a clean process-local reset.
+    static func settleAfterSample() async {
+        for _ in 0..<3 { await nextFrame() }
     }
 
     private func frame() async {
+        await Self.nextFrame()
+    }
+
+    private static func nextFrame() async {
         await withCheckedContinuation { continuation in
             DisplayTick.once { continuation.resume() }
         }

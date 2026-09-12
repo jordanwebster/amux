@@ -98,11 +98,22 @@ public final class FrameWatch {
     }
 
     @objc private func fired(_ link: CADisplayLink) {
+        // A newly registered display link may first report the timestamp of a
+        // frame presented before `start()`. Comparing the next callback with
+        // that stale frame invents a missed interval at the beginning of the
+        // measurement. Establish the first post-start frame as the origin.
+        guard link.timestamp >= startedAt else {
+            previous = nil
+            return
+        }
         frames += 1
         let expected = max(link.targetTimestamp - link.timestamp, 0.001)
         if let previous {
             let actual = link.timestamp - previous
-            if actual > expected { hitchSeconds += actual - expected }
+            if actual > expected {
+                let overrun = actual - expected
+                hitchSeconds += overrun
+            }
         }
         previous = link.timestamp
     }

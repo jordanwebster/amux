@@ -285,6 +285,11 @@ public struct Conversation: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { chrome }
         .safeAreaInset(edge: .bottom, spacing: 0) { foot }
+        // Measure the stable outer page rather than the transcript viewport.
+        // The bottom inset reduces that viewport; using the reduced height to
+        // cap the inset makes each side resize the other at accessibility
+        // text sizes and can leave SwiftUI cycling between two layouts.
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
         // A name put on a container is handed down to everything under it the
         // system does not already treat as its own, so without this the pill,
         // the chip and every row answer to "conversation" — for VoiceOver and
@@ -317,7 +322,6 @@ public struct Conversation: View {
         // instead of starting at the chrome's lower boundary.
         .ignoresSafeArea(edges: .top)
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
     }
 
     /// The most of the page the foot may take. The rest belongs to the pill

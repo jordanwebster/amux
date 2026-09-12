@@ -135,14 +135,12 @@ public final class ReviewStore {
     /// was actually read.
     public let diff: ArtifactId
     public let document: ReviewDocument
-    /// The document's files in the order the page reads them: alphabetical,
-    /// by the ordering a person alphabetises with rather than by byte value,
-    /// so `PROTOCOL.md` sorts among the paths and not before all of them.
+    /// The document's files in the order the producer presented them.
     ///
-    /// A patch's own order is the order git walked it, which is neither
-    /// alphabetical nor stable between two runs over the same tree. Every
-    /// address into this review — a row reference, a range, a comment's
-    /// position — is an index into this order and no other.
+    /// File order is part of a review's narrative: a small declaration can
+    /// intentionally lead into its implementation and tests. Every address
+    /// into this review — a row reference, a range, a comment's position — is
+    /// an index into this order and no other.
     public let files: [ReviewFile]
     /// Files folded away, by path. Nothing is folded to begin with: a review
     /// opens showing what changed.
@@ -158,9 +156,7 @@ public final class ReviewStore {
     public init(diff: ArtifactId, document: ReviewDocument) {
         self.diff = diff
         self.document = document
-        self.files = document.files.sorted {
-            $0.path.localizedStandardCompare($1.path) == .orderedAscending
-        }
+        self.files = document.files
     }
 
     /// This review as the composer will hold it: the element it is sent as,

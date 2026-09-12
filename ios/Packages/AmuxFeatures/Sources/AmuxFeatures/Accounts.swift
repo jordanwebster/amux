@@ -365,14 +365,14 @@ public struct YouScreen: View {
                 .background {
                     if chosen { Capsule().fill(design.ink.color) }
                 }
-                .thumbTarget(y: 8)
+                .thumbTarget(y: 9)
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(chosen ? [.isSelected] : [])
         .identified(
             "you.appearance.\(wanted?.rawValue ?? "system")", label: title,
             value: chosen ? "chosen" : "not chosen")
-        .reclaimingThumbTarget(y: 8)
+        .reclaimingThumbTarget(y: 9)
     }
 
     private var help: some View {
@@ -391,7 +391,7 @@ public struct YouScreen: View {
                     }
                 }
             }
-            Text("A report includes a screenshot, this phone's log and your hosts' state.")
+            Text("A report includes a screenshot and available session and host records.")
                 .designFont(.caption, design)
                 .foregroundStyle(design.inkFaint.color)
                 .fixedSize(horizontal: false, vertical: true)

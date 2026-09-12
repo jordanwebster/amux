@@ -75,7 +75,8 @@ class JourneyCase: XCTestCase {
     ///     process, and neither can be driven from here.
     func launch(
         _ runner: Runner, signedIn: Bool = true, link: String? = nil,
-        as user: String? = nil, token: String? = nil, scripted: Bool = false
+        as user: String? = nil, token: String? = nil, scripted: Bool = false,
+        elementGeometry: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         let credential = signedIn ? [
@@ -86,6 +87,11 @@ class JourneyCase: XCTestCase {
         app.launchArguments = ["-amux-door-port", runner.doorPort]
             + credential
             + (scripted ? ["-amux-scripted-cloud"] : [])
+            // Exact app-layout rectangles are expensive and normally duplicate
+            // the accessibility frames XCUITest already has. A journey asks
+            // for them only when app-layout placement is itself the behavior
+            // under test, such as drawing report marks on the frozen frame.
+            + (elementGeometry ? ["-amux-element-geometry"] : [])
             + (link.map { ["-amux-link", $0] } ?? [])
         app.launch()
         return app

@@ -225,7 +225,8 @@ fn write_png(path: &Path, image: &Image) -> Result<(), GoldenError> {
         .map_err(|error| GoldenError::Png(error.to_string()))
 }
 
-/// Compares two captures and writes the pair and their difference.
+/// Compares two captures, retains the pair, and writes a difference only when
+/// the comparison fails.
 ///
 /// The tolerance is per channel, because a capture of the same screen on the
 /// same simulator can differ by a value or two where a gradient is dithered,
@@ -289,8 +290,8 @@ pub fn diff(
             }
         }
     }
-    write_png(&out.join("diff.png"), &marked)?;
     if differing > max_differing_pixels {
+        write_png(&out.join("diff.png"), &marked)?;
         return Ok(GoldenVerdict::Different {
             pixels: differing,
             first: first.expect("a differing pixel has a position"),
@@ -884,7 +885,7 @@ mod tests {
         );
         assert!(out.join("expected.png").is_file());
         assert!(out.join("actual.png").is_file());
-        assert!(out.join("diff.png").is_file());
+        assert!(!out.join("diff.png").exists());
     }
 
     #[test]
@@ -914,6 +915,7 @@ mod tests {
             }
             other => panic!("expected a difference, got {other}"),
         }
+        assert!(room.path().join("out/diff.png").is_file());
     }
 
     #[test]

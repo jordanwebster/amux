@@ -99,7 +99,7 @@ final class ReportsTests: JourneyCase {
         cast = try Cast(ProcessInfo.processInfo.environment)
         defer { try? write("reports.json") }
 
-        app = launch(runner, scripted: true)
+        app = launch(runner, scripted: true, elementGeometry: true)
         try door(runner, .init(kind: "pairByCode", host: cast.machine, pin: cast.code))
         waitFor(app, "home", "the home never appeared")
         XCTAssertTrue(waitUntil { !self.identifiers(self.app, startingWith: "home.row.").isEmpty },
@@ -377,6 +377,17 @@ final class ReportsTests: JourneyCase {
         let field = app.textFields.matching(identifier: identifier).firstMatch
         guard field.waitForExistence(timeout: waiting) else {
             return XCTFail("there is no field named \(identifier)")
+        }
+        // A report grows as rectangles gain notes. Reach a later field the
+        // way a person does instead of assuming every possible report still
+        // fits above the home indicator after the direct layout port.
+        for _ in 0..<4 where !field.isHittable {
+            // Stay in the scroll view's trailing gutter. A swipe through the
+            // frozen picture is a box-drawing gesture by design.
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.78))
+            let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.28))
+            from.press(forDuration: 0.05, thenDragTo: to)
+            _ = waitUntil(within: 1) { field.isHittable }
         }
         if !waitUntil(within: 10, { field.isHittable }) {
             // What the screen was when a finger could not reach the field,

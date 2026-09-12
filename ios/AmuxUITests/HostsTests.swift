@@ -556,7 +556,7 @@ final class HostsTests: JourneyCase {
     /// machine refuses a create that leaves the driver unsaid, so an agent
     /// standing there as `claude/sdk` is an agent whose request named it.
     private func agentsStartedOnAMachineThatSaysWhatTheyAre() throws {
-        let app = launch(runner)
+        let app = launch(runner, elementGeometry: true)
         XCTAssertTrue(waitUntil { (try? self.reconciled()) == true },
                       "the phone never reached the relay")
         let before = try inventory("laptop").agents
@@ -599,11 +599,51 @@ final class HostsTests: JourneyCase {
 
         /// Opens New Agent on laptop, whatever the last thing on screen was.
         func openNewAgent() {
-            pressTab(app, "Agents")
-            waitFor(app, "home.newAgent", "the fleet offered no way to start an agent")
-            press(app, "home.newAgent")
+            if element(app, "conversation").exists {
+                press(app, "conversation.drawer")
+                waitFor(app, "drawer.newAgent", "the conversation offered no way to start an agent")
+                press(app, "drawer.newAgent")
+            } else {
+                pressTab(app, "Agents")
+                waitFor(app, "home.newAgent", "the fleet offered no way to start an agent")
+                press(app, "home.newAgent")
+            }
             waitFor(app, "new-agent", "New Agent never opened")
             press(app, "new-agent.host.\(cast.laptop)")
+        }
+
+        /// Enters text through the native field and waits for SwiftUI to
+        /// publish it before an action whose enabled state depends on it.
+        func typeInField(
+            _ identifier: String, _ text: String, replacing old: String = ""
+        ) throws {
+            let field = app.textFields.matching(identifier: identifier).firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: waiting),
+                          "nothing editable is named \(identifier)")
+            field.tap()
+            if !old.isEmpty {
+                XCTAssertEqual(field.value as? String, old,
+                               "\(identifier) did not retain the path being replaced")
+                _ = try door(runner, .init(kind: "clear", identifier: identifier))
+                XCTAssertTrue(waitUntil { field.value as? String == "" },
+                              "\(identifier) did not clear its previous text")
+            }
+            field.typeText(text)
+            XCTAssertTrue(waitUntil { field.value as? String == text },
+                          "\(identifier) did not publish the complete text")
+        }
+
+        func useTypedPath(_ path: String, replacing old: String = "") throws {
+            try typeInField("new-agent.typed", path, replacing: old)
+            XCTAssertTrue(waitUntil { self.element(app, "new-agent.typed.use").isEnabled },
+                          "Use stayed disabled after the path was typed")
+            press(app, "new-agent.typed.use")
+            waitForNo(app, "new-agent.browse", "using the typed path did not close the chooser")
+            XCTAssertTrue(waitUntil {
+                self.said(
+                    (try? self.declared(runner, settling: false)) ?? [],
+                    "new-agent.directory")?.value == path
+            }, "the typed path was not selected before Start was pressed")
         }
 
         // MARK: A directory the machine was used in.
@@ -632,8 +672,7 @@ final class HostsTests: JourneyCase {
         openNewAgent()
         press(app, "new-agent.directory")
         waitFor(app, "new-agent.browse", "the directory chooser never opened")
-        try door(runner, .init(kind: "type", text: cast.repository,
-                               identifier: "new-agent.search"))
+        try typeInField("new-agent.search", cast.repository)
         waitFor(app, "new-agent.project.\(cast.repository)",
                 "searching laptop's repositories found nothing")
         press(app, "new-agent.project.\(cast.repository)")
@@ -649,9 +688,7 @@ final class HostsTests: JourneyCase {
         openNewAgent()
         press(app, "new-agent.directory")
         waitFor(app, "new-agent.browse", "the directory chooser never opened")
-        try door(runner, .init(kind: "type", text: cast.refusedPath,
-                               identifier: "new-agent.typed"))
-        press(app, "new-agent.typed.use")
+        try useTypedPath(cast.refusedPath)
         let refusal = pressStart(app, "a path the machine cannot use was not refused on screen")
         record["whatTheMachineSaidAboutAPathItRefused"] = refusal ?? ""
         XCTAssertFalse(refusal?.isEmpty ?? true,
@@ -663,16 +700,18 @@ final class HostsTests: JourneyCase {
         waitFor(app, "new-agent.browse", "the directory chooser never reopened")
         // The field still holds the path that was refused: typing adds to what
         // is there, so the typo comes out before the right one goes in.
-        try door(runner, .init(kind: "clear", identifier: "new-agent.typed"))
-        try door(runner, .init(kind: "type", text: cast.typedPath,
-                               identifier: "new-agent.typed"))
-        press(app, "new-agent.typed.use")
+        try useTypedPath(cast.typedPath, replacing: cast.refusedPath)
         if let refused = pressStart(app, "starting in a typed path started nothing") {
             XCTFail("laptop refused a path typed by hand: \(refused)")
         }
         waitFor(app, "conversation", "the agent started in a typed path opened nothing")
         let fromATypedPath = try newest("starting in a typed path reached no new agent")
         record["startedFromATypedPath"] = fromATypedPath["working_dir"] as? String ?? ""
+
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let inside = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        edge.press(forDuration: 0.05, thenDragTo: inside)
+        waitFor(app, "home", "leaving the created agent did not return to the fleet")
 
         // MARK: And the phone's own fleet agrees with the machine.
         let names = Set(created.compactMap { $0["name"] as? String })
@@ -691,7 +730,6 @@ final class HostsTests: JourneyCase {
         try control.ask(["AgentPlay": ["agent": "fix-login", "steps": [
             ["Markdown": ["text": "Reading the parser before anything else."]],
         ]]])
-        pressTab(app, "Agents")
         waitFor(app, "home.row.\(runner.agent)", "the machine's own agent is not on the fleet")
         press(app, "home.row.\(runner.agent)")
         waitFor(app, "conversation", "the seeded agent's conversation did not open")
@@ -744,7 +782,8 @@ final class HostsTests: JourneyCase {
         record["watchingBeforeRevoking"] = streams
         XCTAssertTrue(held, "reading desktop's agent held no stream: \(streams)")
 
-        pressTab(app, "Hosts")
+        press(app, "conversation.drawer")
+        press(app, "drawer.hosts")
         waitFor(app, "hosts.row.\(cast.desktop)", "desktop is not among the machines")
         waitFor(app, "hosts.fact.paired-devices", "the Hosts tab does not say what this phone is")
         press(app, "hosts.fact.paired-devices")

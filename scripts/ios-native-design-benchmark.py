@@ -31,9 +31,9 @@ VARIANTS = {
     4: ["production", "tight-gutter", "large-title", "context-band"],
 }
 SLICE_REVIEW_SCREENS = {
-    "home": ("home", "representative-home"),
-    "run": ("run", "representative-run"),
-    "plan": ("plan", "representative-plan"),
+    "home": ("home", "home"),
+    "run": ("run", "run"),
+    "plan": ("plan", "plan"),
 }
 FULL_REVIEW_SCREENS = {
     "home": ("home", "home"),
@@ -70,6 +70,40 @@ FULL_REVIEW_SCREENS = {
     "shake": ("shake", "shake"),
     "dump": ("dump", "dump"),
 }
+ADAPTATION_REVIEW_STATES = {
+    "home-large-type": ("home", "home-accessibility", []),
+    "conversation-large-type": ("run", "run-accessibility", []),
+    "composer-large-type": ("typing", "composer-accessibility", []),
+    "conversation-reduced-effects": ("run", "run-reduced", []),
+    "composer-keyboard": (
+        "typing", "typing", [("type", {"identifier": "composer.field", "text": ""})]),
+    "claude-permissions": ("settings", "permissions-claude", []),
+    "codex-permissions": ("settings", "permissions-codex", []),
+    "codex-permission-request": ("ask-permission", "ask-permission-codex", []),
+    "finished-review": ("review-cta", "finished", []),
+    "pair-confirmation": ("pair-confirm", "pair-confirm", []),
+    "host-lost-mid-turn": ("run", "host-lost", []),
+    "unreadable-agent": ("home", "home-unreadable", []),
+    "transcript-only": ("run", "strip", []),
+    "send-refused": ("working", "send-refused", []),
+    "sign-in-refused": ("sign-in", "sign-in-failed", []),
+    "deletion-blocked": ("delete", "delete-blocked", []),
+    "report-upload-failed": ("dump", "upload-failed", []),
+    "paywall-web": ("paywall", "paywall-web", []),
+    "paywall-pending": ("paywall", "paywall-pending", []),
+    "paywall-refused": ("paywall", "paywall-failed", []),
+    "paywall-unconfirmed": ("paywall", "paywall-unconfirmed", []),
+}
+REVIEW_NOTES = [
+    "The source draws a fixed phone and simulated status bar; production uses the real simulator window, status bar, safe areas, keyboard, and native editors.",
+    "Source and simulator originals use different capture color encodings. The visible pairs are normalized to sRGB and the originals remain beside them.",
+    "Account initials, subscription source, host ordering, offline duration, and machine availability come from production state rather than decorative source constants.",
+    "Provider settings, slash commands, first-run actions, and pre-session model choices remain gated by capabilities the running services actually advertise.",
+    "Pairing names the selected host and its real five-minute offer lifetime; the static source says two minutes.",
+    "Reports use native per-mark note editors and include available session and host records. The app cannot truthfully promise access to the phone's system log.",
+    "Review hunk context titles remain absent because the runtime diff document carries only hunk starts; production preserves accurate line numbers and does not invent labels.",
+    "Mute and Notifications remain explicit product exclusions. Neither is hidden in the production UI or silently omitted from Release inspection.",
+]
 SOURCE_INPUTS = [
     "design/fixtures.json",
     "ios/Resources/Fonts/GeistMono.ttf",
@@ -99,7 +133,7 @@ PRODUCTION_INPUTS = [
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Composer.swift",
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift",
     "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift",
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/RepresentativeFixtures.swift",
+    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift",
     "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Sessions.swift",
     "ios/Amux/Debug/DesignVariant.swift",
 ]
@@ -244,7 +278,7 @@ def inventory(design_source, appearances, review_screens, full):
     return source_hashes, reference_hashes
 
 
-def write_gallery(output, title, introduction, cards):
+def write_gallery(output, title, introduction, cards, notes=()):
     markup = []
     for card in cards:
         images = "".join(
@@ -253,16 +287,22 @@ def write_gallery(output, title, introduction, cards):
             f'<figcaption>{html.escape(image["label"])}</figcaption></figure>'
             for image in card["images"])
         markup.append(f'<section><h2>{html.escape(card["title"])}</h2><div>{images}</div></section>')
+    note_markup = ""
+    if notes:
+        items = "".join(f"<li>{html.escape(note)}</li>" for note in notes)
+        note_markup = f"<aside><h2>Known adaptations and review points</h2><ul>{items}</ul></aside>"
     page = f"""<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>{html.escape(title)}</title>
 <style>
 body {{ font: 15px system-ui; margin: 24px; background: #e9e9e7; color: #171717 }}
 h1 {{ margin-bottom: 6px }} p {{ max-width: 70ch }} section {{ margin: 30px 0 }}
+aside {{ max-width: 76ch; padding: 4px 18px 10px; background: #fff8; border-radius: 14px }}
+aside h2 {{ font-size: 17px }} aside li {{ margin: 7px 0 }}
 section>div {{ display: flex; gap: 18px; overflow-x: auto; align-items: start }}
 figure {{ margin: 0; flex: 0 0 260px }} img {{ width: 260px; height: auto; display: block }}
 figcaption {{ margin-top: 7px; font-weight: 600 }}
-</style><h1>{html.escape(title)}</h1><p>{html.escape(introduction)}</p>{''.join(markup)}
+</style><h1>{html.escape(title)}</h1><p>{html.escape(introduction)}</p>{note_markup}{''.join(markup)}
 """
     (output / "index.html").write_text(page)
 
@@ -276,7 +316,7 @@ def batch(args, output, door):
         card = {"title": appearance.capitalize(), "images": []}
         for variant in variants:
             door.request("designVariant", name=variant)
-            door.request("open", screen="home", fixture="representative-home")
+            door.request("open", screen="home", fixture="home")
             door.request("appearance", appearance=appearance)
             door.request("settle")
             path = door.capture(f"home.{variant}.{appearance}.png")
@@ -296,7 +336,7 @@ def batch(args, output, door):
             "capture_seconds": capture_seconds, "gallery_seconds": gallery_seconds}
 
 
-def review(args, output, door, review_screens):
+def review(args, output, door, review_screens, adaptation_states):
     cards = []
     images = []
     started = time.monotonic()
@@ -324,15 +364,38 @@ def review(args, output, door, review_screens):
                 {"file": source_srgb.name, "label": "Selected SwiftUI source"},
                 {"file": native_srgb.name, "label": "Production shell"},
             ]})
+    for name, (route, fixture, actions) in adaptation_states.items():
+        for appearance in args.appearances:
+            door.request("open", screen=route, fixture=fixture)
+            door.request("appearance", appearance=appearance)
+            door.request("settle")
+            for kind, fields in actions:
+                door.request(kind, **fields)
+                door.request("settle")
+            native = door.capture(f"{name}.production.{appearance}.png")
+            native_srgb = normalize(
+                native, output / f"{name}.production.{appearance}.srgb.png")
+            row = {"state": name, "route": route, "fixture": fixture,
+                   "appearance": appearance, "production_original": native.name,
+                   "production_srgb": native_srgb.name,
+                   "production_sha256": sha256(native), "actions": actions}
+            images.append(row)
+            cards.append({"title": f"{name} · {appearance}", "images": [
+                {"file": native_srgb.name,
+                 "label": "Production shell adaptation / behavior state"},
+            ]})
     capture_seconds = time.monotonic() - started
     gallery_started = time.monotonic()
-    title = ("Complete selected design source vs production"
-             if args.review_scope == "all"
-             else "Selected design source vs production")
+    if args.review_scope == "all":
+        title = "Complete selected design source vs production"
+    elif args.review_scope == "states":
+        title = "Production adaptation and behavior states"
+    else:
+        title = "Selected design source vs production"
     write_gallery(
         output, title,
-        "Matched content in light and dark. Display-P3 source and simulator originals are retained; the visible pairs are sRGB derivatives. Production uses the real iPhone status and safe areas. No image here is an approved golden.",
-        cards)
+        "Matched content and production-only adaptations in the requested appearances. Display-P3 source and simulator originals are retained; visible images are sRGB derivatives. No image here is an approved golden.",
+        cards, REVIEW_NOTES)
     gallery_seconds = time.monotonic() - gallery_started
     return {"images": images, "capture_and_normalize_seconds": capture_seconds,
             "gallery_seconds": gallery_seconds}
@@ -343,7 +406,7 @@ def detection(args, output, door):
     started = time.monotonic()
     door.request("assist", motion=False, transparency=False)
     door.request("designVariant", name="production")
-    door.request("open", screen="home", fixture="representative-home")
+    door.request("open", screen="home", fixture="home")
     door.request("appearance", appearance="light")
     door.request("settle")
     baseline = door.capture("detection.baseline.png")
@@ -355,7 +418,7 @@ def detection(args, output, door):
     ]:
         door.request("assist", motion=False, transparency=transparent)
         door.request("designVariant", name=variant)
-        door.request("open", screen="home", fixture="representative-home")
+        door.request("open", screen="home", fixture="home")
         door.request("appearance", appearance="light")
         door.request("settle")
         image = door.capture(f"detection.{name}.png")
@@ -381,14 +444,18 @@ def main():
     parser.add_argument("--skip-build", action="store_true",
                         help="Use the existing Debug app; records that build time was excluded")
     parser.add_argument(
-        "--review-scope", choices=["slice", "all"], default="slice",
+        "--review-scope", choices=["slice", "all", "states"], default="slice",
         help="For review mode, capture the representative slice or every selected design screen")
     args = parser.parse_args()
     design_source = args.design_source.resolve()
     review_screens = (FULL_REVIEW_SCREENS
                       if args.mode == "review" and args.review_scope == "all"
+                      else {} if args.mode == "review" and args.review_scope == "states"
                       else SLICE_REVIEW_SCREENS)
-    full_review = args.mode == "review" and args.review_scope == "all"
+    adaptation_states = (ADAPTATION_REVIEW_STATES
+                         if args.mode == "review" and args.review_scope in ("all", "states")
+                         else {})
+    full_review = args.mode == "review" and args.review_scope in ("all", "states")
     source_hashes, reference_hashes = inventory(
         design_source, args.appearances, review_screens, full_review)
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -413,7 +480,7 @@ def main():
         if args.mode == "batch":
             result = batch(args, output, door)
         elif args.mode == "review":
-            result = review(args, output, door, review_screens)
+            result = review(args, output, door, review_screens, adaptation_states)
         else:
             result = detection(args, output, door)
     finally:

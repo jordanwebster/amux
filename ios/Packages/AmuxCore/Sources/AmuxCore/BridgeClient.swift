@@ -132,21 +132,27 @@ public final class BridgeClient: Sendable {
         var malformed: [String] { lock.withLock { unreadable } }
 
         func receive(_ json: UnsafePointer<CChar>) {
-            // The callback already hands us UTF-8 bytes. Turning them into a
-            // Swift string and immediately back into bytes performs two
-            // allocations on every runtime update, including the fleet
-            // confirmation that gates reconnect latency.
-            let data = Data(
-                bytesNoCopy: UnsafeMutableRawPointer(mutating: json),
-                count: strlen(json), deallocator: .none)
-            guard let batch = try? decoder.decode([Event].self, from: data) else {
-                lock.withLock { unreadable.append(String(decoding: data, as: UTF8.self)) }
-                return
-            }
-            batches.yield(batch)
-            for event in batch {
-                guard case .tokenRequest(let request, let account) = event else { continue }
-                client?.answerToken(request, for: account)
+            // Rust invokes this on its own worker rather than a UIKit event
+            // loop, so there is no system autorelease pool around Foundation's
+            // decoder. Drain callback-local temporary objects here instead of
+            // retaining them for the lifetime of a busy streaming worker.
+            autoreleasepool {
+                // The callback already hands us UTF-8 bytes. Turning them into
+                // a Swift string and immediately back into bytes performs two
+                // allocations on every runtime update, including the fleet
+                // confirmation that gates reconnect latency.
+                let data = Data(
+                    bytesNoCopy: UnsafeMutableRawPointer(mutating: json),
+                    count: strlen(json), deallocator: .none)
+                guard let batch = try? decoder.decode([Event].self, from: data) else {
+                    lock.withLock { unreadable.append(String(decoding: data, as: UTF8.self)) }
+                    return
+                }
+                batches.yield(batch)
+                for event in batch {
+                    guard case .tokenRequest(let request, let account) = event else { continue }
+                    client?.answerToken(request, for: account)
+                }
             }
         }
     }

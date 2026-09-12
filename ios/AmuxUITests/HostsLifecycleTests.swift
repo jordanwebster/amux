@@ -104,9 +104,12 @@ final class HostsLifecycleTests: JourneyCase {
         //
         // Leaving it releases the stream it asked for, and nothing later —
         // no outage, no recovery — is allowed to ask for it again.
-        pressTab(app, "Agents")
-        // Reaching for the tab you are already on is the way out of a
-        // conversation, so this is a person leaving one.
+        // The selected conversation has no tab bar: leave it through the
+        // platform back gesture, keeping the composer as the only surface at
+        // the bottom of the screen.
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let inside = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        edge.press(forDuration: 0.05, thenDragTo: inside)
         waitFor(app, "home", "leaving the conversation did not lead back to the fleet")
         XCTAssertFalse(element(app, "conversation").exists,
                        "the conversation is still on screen after leaving it")

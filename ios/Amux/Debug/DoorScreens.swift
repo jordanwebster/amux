@@ -219,7 +219,10 @@ enum DoorScreens {
 /// under the appearance and type size it was asked for, and the app itself
 /// when nothing has asked for anything.
 struct DrivenRoot<Content: View>: View {
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State private var host = DoorHost.shared
+    private let elementGeometry = ProcessInfo.processInfo.arguments.contains(
+        "-\(Door.elementGeometryArgument)")
     private let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -275,7 +278,17 @@ struct DrivenRoot<Content: View>: View {
         // for less motion that they did not.
         .transformEnvironment(\.reducesMotion) { $0 = $0 || host.reduceMotion }
         .transformEnvironment(\.reducesTransparency) { $0 = $0 || host.reduceTransparency }
-        .reportingIdentifiedElements()
+        // Exact element geometry belongs to driven captures, the all-state
+        // audit, and journeys that explicitly target fields by placement. A
+        // live journey already has XCUITest's accessibility frames;
+        // attaching a global-coordinate GeometryReader to every transcript
+        // element there makes a long, growing feed continuously renegotiate
+        // geometry and can prevent the app from becoming idle. Keep the shared
+        // identifiers and spoken values in every Debug session, but install the
+        // extra layout probes only for a fixed state or an explicit opt-in.
+        .reportingIdentifiedElements(
+            includeGeometry: !voiceOver
+                && (elementGeometry || host.screen != nil || host.replayed != nil))
         .onPreferenceChange(IdentifiedElements.self) { declared in
             Task { @MainActor in DoorHost.shared.declared = declared }
         }

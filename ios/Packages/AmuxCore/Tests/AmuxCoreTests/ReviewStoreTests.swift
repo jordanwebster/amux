@@ -10,18 +10,17 @@ final class ReviewStoreTests: XCTestCase {
         ReviewStore(diff: ArtifactId("sha256:abc"), document: Self.document)
     }
 
-    /// Every address into a review is an index into the page's own order, and
-    /// that order is alphabetical rather than the order the patch listed.
-    func testFilesReadInAlphabeticalOrderRatherThanThePatchsOrder() {
+    /// Every address into a review is an index into the producer's order.
+    func testFilesReadInTheDocumentsOrder() {
         XCTAssertEqual(
             Self.document.files.map(\.path), ["src/pairing.rs", "PROTOCOL.md"])
-        XCTAssertEqual(store().files.map(\.path), ["PROTOCOL.md", "src/pairing.rs"])
+        XCTAssertEqual(store().files.map(\.path), ["src/pairing.rs", "PROTOCOL.md"])
     }
 
     /// A removed row is only in the old file and an added row only in the new,
     /// so a range across both is addressed on the side each end lives on.
     func testARangeIsAddressedOnTheSideEachEndLivesOn() throws {
-        let anchor = try XCTUnwrap(store().anchor(LineRange(file: 1, from: 1, to: 3)))
+        let anchor = try XCTUnwrap(store().anchor(LineRange(file: 0, from: 1, to: 3)))
         XCTAssertEqual(anchor.path, "src/pairing.rs")
         XCTAssertEqual(anchor.startSide, .old)
         XCTAssertEqual(anchor.startLine, 119)
@@ -34,15 +33,15 @@ final class ReviewStoreTests: XCTestCase {
     /// that ends on one is not taken: a sheet opened on it could not be sent.
     func testARangeEndingOnAHunkBreakIsNotTaken() {
         let review = store()
-        review.select(LineRange(file: 1, from: 3, to: 4))
+        review.select(LineRange(file: 0, from: 3, to: 4))
         XCTAssertNil(review.selection)
-        XCTAssertNil(review.anchor(LineRange(file: 1, from: 3, to: 4)))
+        XCTAssertNil(review.anchor(LineRange(file: 0, from: 3, to: 4)))
     }
 
     func testCommentsAccumulateInTheOrderTheDocumentReads() {
         let review = store()
-        review.comment(LineRange(file: 1, from: 3, to: 3), "said second")
-        review.comment(LineRange(file: 0, from: 1, to: 1), "said first")
+        review.comment(LineRange(file: 1, from: 1, to: 1), "said second")
+        review.comment(LineRange(file: 0, from: 3, to: 3), "said first")
         XCTAssertEqual(review.comments.map(\.text), ["said first", "said second"])
         XCTAssertEqual(review.comments(in: "src/pairing.rs"), 1)
         XCTAssertEqual(review.comments(in: "PROTOCOL.md"), 1)
@@ -52,7 +51,7 @@ final class ReviewStoreTests: XCTestCase {
     /// the words while losing the lines would put them somewhere nobody chose.
     func testCancellingAnUnfinishedCommentKeepsNothing() {
         let review = store()
-        review.select(LineRange(file: 1, from: 1, to: 2))
+        review.select(LineRange(file: 0, from: 1, to: 2))
         review.draft = "half a thought"
         review.cancel()
         XCTAssertNil(review.selection)
@@ -68,19 +67,19 @@ final class ReviewStoreTests: XCTestCase {
 
     func testACommentIsDrawnUnderTheRowItEndsOn() throws {
         let review = store()
-        review.comment(LineRange(file: 1, from: 1, to: 3), "about the whole run")
+        review.comment(LineRange(file: 0, from: 1, to: 3), "about the whole run")
         let comment = try XCTUnwrap(review.comments.first)
-        XCTAssertEqual(review.row(of: comment), RowRef(file: 1, row: 3))
-        XCTAssertEqual(review.comments(under: RowRef(file: 1, row: 3)).count, 1)
-        XCTAssertTrue(review.comments(under: RowRef(file: 1, row: 1)).isEmpty)
+        XCTAssertEqual(review.row(of: comment), RowRef(file: 0, row: 3))
+        XCTAssertEqual(review.comments(under: RowRef(file: 0, row: 3)).count, 1)
+        XCTAssertTrue(review.comments(under: RowRef(file: 0, row: 1)).isEmpty)
     }
 
     func testARangeNamesItselfByRowsOfThePatch() {
         XCTAssertEqual(
-            store().describe(LineRange(file: 1, from: 1, to: 3)),
+            store().describe(LineRange(file: 0, from: 1, to: 3)),
             "3 lines in src/pairing.rs")
         XCTAssertEqual(
-            store().describe(LineRange(file: 0, from: 1, to: 1)),
+            store().describe(LineRange(file: 1, from: 1, to: 1)),
             "1 line in PROTOCOL.md")
     }
 

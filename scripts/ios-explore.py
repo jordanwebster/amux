@@ -256,14 +256,6 @@ def capture(record, args):
     known.update({"shell-home": dict(id="shell-home", fixture="sample"),
                   "shell-conversation": dict(id="shell-conversation", fixture="conversation"),
                   "focus-probe": dict(id="focus-probe", screen="typing", fixture="typing")})
-    known.update({
-        "representative-home": dict(
-            id="representative-home", screen="home", fixture="representative-home"),
-        "representative-run": dict(
-            id="representative-run", screen="run", fixture="representative-run"),
-        "representative-plan": dict(
-            id="representative-plan", screen="plan", fixture="representative-plan"),
-    })
     screens = [known[name] for name in args.screens]
     udid = ios_simulators.ensure(args.simulator)
     ios_simulators.pin(udid)

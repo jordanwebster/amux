@@ -14,6 +14,28 @@ import tomllib
 # app's debug configuration links by path.
 DRIVING_FRAMEWORK = "AmuxMobileDebugTools.xcframework"
 DRIVING_SLICE = "ios-arm64-simulator"
+RUST_TARGETS = Path("target/ios/rust-cargo")
+
+
+def build_environment(triple: str, *, debug_tools: bool = False) -> dict[str, str]:
+    environment = os.environ.copy()
+    # Static archives embed native objects whose contents can change without
+    # changing Rust metadata. Cargo tracks those inputs; wrapper caches may not.
+    environment["RUSTC_WRAPPER"] = ""
+    # Cargo fingerprints build scripts with SDKROOT, including host-side
+    # dependencies shared by cross targets. Alternating simulator and device
+    # SDKs in one target directory therefore recompiles the graph on every
+    # invocation. The driving bridge also changes features throughout that
+    # graph. Give all three variants stable caches; their archives are still
+    # staged into the XCFramework paths consumed by Xcode.
+    variant = f"{triple}-debug-tools" if debug_tools else triple
+    environment["CARGO_TARGET_DIR"] = str((RUST_TARGETS / variant).resolve())
+    environment["IPHONEOS_DEPLOYMENT_TARGET"] = "26.0"
+    sdk = "iphonesimulator" if triple.endswith("-sim") else "iphoneos"
+    environment["SDKROOT"] = subprocess.check_output(
+        ["xcrun", "--sdk", sdk, "--show-sdk-path"], text=True, timeout=30,
+    ).strip()
+    return environment
 
 
 def build(triple: str, output: Path, *, debug_tools: bool = False) -> str:
@@ -26,15 +48,7 @@ def build(triple: str, output: Path, *, debug_tools: bool = False) -> str:
     if debug_tools:
         command.extend(["--features", "debug-tools"])
     print(f"Building {triple} with the workspace mobile profile", flush=True)
-    environment = os.environ.copy()
-    # Static archives embed native objects whose contents can change without
-    # changing Rust metadata. Cargo tracks those inputs; wrapper caches may not.
-    environment["RUSTC_WRAPPER"] = ""
-    environment["IPHONEOS_DEPLOYMENT_TARGET"] = "26.0"
-    sdk = "iphonesimulator" if triple.endswith("-sim") else "iphoneos"
-    environment["SDKROOT"] = subprocess.check_output(
-        ["xcrun", "--sdk", sdk, "--show-sdk-path"], text=True, timeout=30,
-    ).strip()
+    environment = build_environment(triple, debug_tools=debug_tools)
     with messages_path.open("w") as messages:
         subprocess.run(command, stdout=messages, check=True, timeout=900, env=environment)
 

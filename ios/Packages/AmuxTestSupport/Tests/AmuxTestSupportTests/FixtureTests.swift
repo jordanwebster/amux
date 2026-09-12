@@ -118,7 +118,7 @@ final class FixtureTests: XCTestCase {
         let bundle = StoreBundle(account: AccountId("ada"), clock: { Scenario.now })
         Fixtures.named("run")!.apply(bundle)
         let conversation = bundle.conversation(Scenario.focus)
-        XCTAssertEqual(conversation.entries.count, Transcript.pairingCopy.count)
+        XCTAssertEqual(conversation.entries.count, Transcript.run.count)
         XCTAssertEqual(conversation.entries.first?.entryKind, "prompt")
         XCTAssertTrue(conversation.asks.isEmpty)
         XCTAssertEqual(conversation.gate, .claudePty(.ready))

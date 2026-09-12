@@ -558,8 +558,20 @@ final class AccountsTests: JourneyCase {
         press(app, "you.support")
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         record["supportLeftTheApp"] = safari.wait(for: .runningForeground, timeout: 20)
-        record["supportOpened"] = safari.textFields.firstMatch.value as? String
-            ?? safari.otherElements["URL"].value as? String ?? ""
+        // Safari's compact iPhone chrome does not always expose an address
+        // text field until the bar is pressed. Leaving this app is the
+        // behavior under test; record the address when either accessibility
+        // representation is available without making a missing private child
+        // fail an otherwise completed handoff.
+        let address = safari.textFields.firstMatch
+        let url = safari.otherElements["URL"]
+        record["supportOpened"] = if address.exists {
+            address.value as? String ?? ""
+        } else if url.exists {
+            url.value as? String ?? ""
+        } else {
+            ""
+        }
         app.activate()
         waitFor(app, "you", "the app did not come back from the support address")
     }
