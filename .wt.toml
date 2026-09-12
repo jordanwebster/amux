@@ -42,10 +42,6 @@ run = "scripts/with-git-revision.sh timeout 600 cargo test --locked --workspace 
 [task.full-debug]
 run = "scripts/with-git-revision.sh timeout 900 cargo build --locked -p amux --bins --profile full-debug"
 
-[task.debug-policy-check]
-run = "scripts/with-git-revision.sh timeout 300 scripts/debug-policy-check.sh"
-needs = ["build"]
-
 [task.ci-check]
 run = "scripts/with-git-revision.sh timeout 900 cargo check --locked --workspace --lib --bins --profile ci"
 

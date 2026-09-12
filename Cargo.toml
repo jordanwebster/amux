@@ -114,8 +114,6 @@ similar = "3"
 qrcode = { version = "0.14", default-features = false }
 nix = { version = "0.31", features = ["process", "signal"] }
 
-# Tests must unwind, so an abort dev profile makes cargo compile every
-# dependency a second time for `cargo test`. Release keeps abort.
 # Cargo defaults macOS debug profiles to split-debuginfo = "unpacked", which
 # keeps every codegen unit's object file under target/<profile>/deps for the
 # debugger and never removes it; with incremental compilation each rebuild
@@ -123,27 +121,15 @@ nix = { version = "0.31", features = ["process", "signal"] }
 # canonical's 45 GiB target and 158 GiB in one worktree. "packed" keeps one
 # dSYM per product binary instead (dsymutil runs at link, for a few binaries).
 # The Apple-only rustflag lives in .cargo/config.toml so Windows never receives
-# a split-debuginfo value it does not support. Test harnesses disable compiler
-# debug information portably; a panic still names its source assertion.
+# a split-debuginfo value it does not support. Development and tests share this
+# profile so each workspace crate has one reusable configuration.
 [profile.dev]
 debug = "line-tables-only"
 incremental = true
 panic = "unwind"
 
-[profile.test]
-debug = 0
-incremental = true
-
 [profile.release]
 panic = "abort"
-incremental = false
-
-[profile.ci]
-inherits = "dev"
-incremental = false
-
-[profile.ci-test]
-inherits = "test"
 incremental = false
 
 [profile.full-debug]

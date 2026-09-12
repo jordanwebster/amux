@@ -1,3 +1,11 @@
+2026-09-12 — **Use one development configuration for products and tests.**
+Removed the test-only and CI-only Cargo profiles so product builds, workspace
+tests and focused tests reuse the same workspace crate artifacts. CI still
+disables incremental compilation through its environment. The retired debug
+policy check had already proved named panic backtraces under the development
+profile and packed dSYMs on Apple; that one-time evidence does not remain as a
+permanent task.
+
 2026-09-12 — **Rewrite the native integration contract around a generic app
 layer.** An audit of this branch found the crate graph sound but the proof
 machinery excessive, and the native instructions over-specified. The
