@@ -6,6 +6,9 @@ typography, spacing, surfaces, colours, and control hierarchy. Added states use
 the same design language and are named below so the app's own edge cases remain
 reviewable.
 
+The complete light/dark catalogue was approved from the consolidated production
+gallery on 2026-09-12 and established as the native baseline on 2026-09-13.
+
 Run `wt run ios-goldens` to compare every state. Run
 `wt run ios-goldens-reference` to place the 33 reference-backed screens beside
 the preserved designs.
@@ -27,6 +30,13 @@ screens name the actual billing source.
 The golden door opens one screen directly, so root-screen goldens do not include
 the tab bar. The shell itself draws the approved floating three-item bar and
 removes it from pushed screens.
+
+The production Home scenario includes its offline-host exception, Hosts keeps
+the runtime store's ordering, and You names the entitlement source rather than
+inventing a renewal period the service does not provide. The native composer,
+keyboard and real safe areas can leave less trailing transcript visible than
+the static source capture. These are truthful production adaptations within the
+approved presentation.
 
 ## probe
 

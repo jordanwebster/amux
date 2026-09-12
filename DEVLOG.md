@@ -4,6 +4,28 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-13 — **The direct iPhone presentation is visually approved and locked.**
+The complete 108-image production gallery and the 42-image narrow-screen
+gallery were approved. All 124 catalogue captures were written as the new
+native goldens without changing the comparator's per-channel value tolerance of two
+or 64-pixel ceiling. An ordinary comparison matched 121 captures exactly. The
+expanded task strip and the dark accessibility composer can settle their
+transcript text two physical pixels apart between otherwise identical simulator
+launches; UIKit reports identical scroll geometry in both positions. This is a
+known simulator capture flake, not a product layout difference, and the
+comparison remains strict rather than aligning or forgiving it.
+
+The corrected coherent performance workload was also approved as the new
+pinned-Mac baseline. A fresh whole recording run met every unchanged hard
+budget: 444.5ms median and 451.7ms worst cold frame, 2.7/4.0-frame optimistic
+echo, 0.0ms/s median streaming hitch time, 25.3% median main-thread CPU, zero
+idle commits, 75.38MB median footprint against the 250MB hard ceiling, 241.7ms
+foreground recovery, and one foreground connection per host with none in the
+background. The recorder correctly refused to overwrite an existing baseline
+that its relative gate rejected, so the explicitly approved coherent medians
+were applied directly; ordinary runs remain subject to both hard and relative
+limits. No budget or tolerance changed.
+
 2026-09-12 — **The complete selected iPhone presentation is now one production UI.**
 The remaining writing, decision, review, account, host, onboarding and report
 surfaces now use the selected source layouts and shared production components.
