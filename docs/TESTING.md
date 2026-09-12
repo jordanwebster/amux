@@ -1,120 +1,107 @@
 # Running and designing tests
 
-Use the root `justfile` so builds share one workspace dependency graph and
-tests have an outer timeout:
+`just --list` is the test command catalogue. The recipes below share the
+workspace lockfile and carry outer timeouts; a timeout is a hang to diagnose,
+not a reason to silently lengthen a deadline.
+
+## 1. Crate unit tests
+
+Unit tests live beside the code whose value or state transition they exercise.
+Run one crate, optionally with Cargo and harness arguments:
 
 ```sh
-just build                 # desktop product binaries only
-just check                 # workspace libraries and binaries
-just test-build            # compile ordinary test harnesses
-just test                  # execute the full workspace selection
-just doctest
-just lint
+just test-crate model
+just test-crate claude -- sdk::query::tests
+just test-crate model -- envelope::tests -- --exact
+```
+
+Use values and explicit signals for parsing, reducer and concurrency tests.
+When an assertion concerns command arguments, environment or working
+directory, inspect the prepared command rather than launching a provider.
+
+## 2. Prose specifications
+
+Executable specs state whole behaviors in domain language. The daemon specs
+under `crates/testnet/tests/spec` use the public `TestNet` harness; the reducer
+specs under `crates/ui-state/tests/spec` use the same messages clients see.
+
+```sh
 just spec
-just offline-test          # isolated HOME/config and denied external network
+just spec -- a2a_cross_device
 ```
 
-`just test` runs every workspace target by default. To select test functions
-inside every library, or one named integration-test target:
+The two spec targets are part of `just test`; `just spec` is the focused
+way to read or diagnose them.
+
+## 3. Cross-crate integration tests
+
+Integration tests live under `crates/testnet/tests`,
+`crates/ui-runtime/tests`, and `crates/amux/tests`. Run the full workspace or
+select a Cargo target:
 
 ```sh
-just test -- --lib sdk::query::tests
-just test -- --test spec
-just test -- --test spec some_test_name -- --exact
+just test
+just test-build
+just test -- --test embedding
+just test-crate testnet -- --test embedding
+just doctest
+just offline-test
 ```
 
-Cargo target arguments and filters follow the recipe name. A `--` separates
-Cargo's arguments from the test harness's arguments. A name alone filters functions
-inside every selected harness; it does not prevent unrelated harnesses from
-starting. Select a target when investigating one component. Target selection
-keeps `--workspace`. For routine component work, use the declared focused
-recipes; their smaller dependency closures may compile a different feature
-variant than full verification.
-
-Use `just test-crate model` for a focused package. `just test-build` compiles
-every workspace library and integration test without executing it.
-
-The opt-in provider harnesses and their argument, depfile, and redaction tests
-live under `crates/testnet/tests`. `just test` compiles them and executes each
-custom entry point with no scenario; it prints usage and exits before opening
-an account or provider process. Real live scenarios still require an explicit
-`just codex-live`, `just claude-pty-live`, or `just claude-sdk-live`
-command.
-
-Build output is wt's to keep bounded, not a recipe's. After task execution in a
-wt-managed tree, and in `wt prune`, wt deletes superseded units,
-unreachable object files and excess incremental state by following Cargo's
-workspace units and dependency fingerprints. `wt ls --disk` sizes each tree's build output;
-`wt prune amux` shows what a sweep of every tree would reclaim before
-applying it. A tree that is no longer needed is removed with `wt rm`, which
-is what reclaims its output entirely. Wt 0.4.0 can discard a valid narrow test
-graph after a workspace-wide test graph supersedes its root; the consequence
-and required correction are recorded in
-[wt output requirements](WT_OUTPUT_REQUIREMENTS.md).
-
-Wt 0.4.0 runs on POSIX systems, so the declared CI matrix covers Linux and
-macOS. WSL follows the Linux path. Native Windows compilation and debugger
-behavior remain an evidence gap until wt can execute the same declared tasks
-there; the Cargo profile itself keeps Apple-only split-debug flags target
-scoped.
-
-## Recorded PTY tests
-
-Each recorded Claude PTY scenario is a separate test. The standard Rust test
-harness runs them concurrently; each owns its replay streams and session state.
-Run the corpus or one scenario with:
+A name alone filters functions inside every selected harness; it does not stop
+unrelated harnesses from starting. Select `--lib` or `--test NAME` when the
+target matters. One `--` separates Cargo arguments from harness arguments.
+For example:
 
 ```sh
-just test -- --test spec_replay pty_replays
 just test -- --test spec_replay pty_replays::plan_approve -- --exact
-```
-
-Recorded readiness waits for output notifications, and keyboard delays advance
-the replay clock. Completing a replay closes its recorded output streams before waiting
-for the simulated process to exit. Live terminal settling waits do not apply
-to recorded sessions; shutdown timeouts are failures.
-
-## Output when diagnosing failures
-
-Rust normally captures test output and reports it for failed tests. If an outer
-timeout kills the harness, it may never report that captured output. Stream
-output during a focused hang investigation with:
-
-```sh
 just test -- --test spec_replay pty_replays::plan_approve -- --exact --nocapture
 ```
 
-Parallel tests can interleave streamed output; add `--test-threads=1` after the
-second `--` when ordering matters. A binary stalled before its first instruction
-has no test output to display, even with capture disabled.
+Recorded PTY scenarios own their streams and virtual clocks, so the Rust
+harness may run them concurrently. Add `--test-threads=1` after the second
+`--` only when ordered diagnostic output matters.
 
-## Choose the boundary the assertion needs
+The live-provider entry points also live in `testnet`. Ordinary workspace
+tests invoke each custom main with no scenario; it prints usage and exits
+before opening an account or provider process. Real provider access is always
+explicit:
 
-Test parsing and state transitions with values, and concurrency with explicit
-signals. Inspect the prepared command when asserting CLI arguments,
-environment, or working directory. Use the provider's in-memory stream
-transport when asserting protocol messages, session identity, or row order.
+```sh
+just codex-live -- SCENARIO
+just claude-pty-live -- SCENARIO
+just claude-sdk-live -- SCENARIO
+```
 
-Use real child processes for OS behavior: pipe backpressure, exit status,
-stderr, signals, and waiting for a child to exit. On Unix, simple fixtures can
-run script text through an existing `/bin/sh -c` invocation. Keep scenario
-state local to that child; do not change the test process's global environment
-or create a fresh executable script for each scenario.
+## 4. PTY end-to-end tests
 
-An executable's launch is subject to host security assessment. On macOS, a
-tiny new script can queue behind another worktree's large test executable for
-seconds before running its first instruction. That is not a protocol or
-shutdown failure. Process fixtures should report readiness before measuring
-the behavior under test, with a separate bounded startup check. A test of
-startup itself must retain the startup deadline.
+`e2e-runner` launches real CLI, daemon and test-agent processes and compares
+their terminal conversations with `e2e-tests/*.test`.
 
-Shutdown tests should prove that completion waits for exit, not merely that a
-signal was sent. For example, hold the child inside its signal handler until
-the test releases it, assert that shutdown remains pending, then release and
-await completion. Arrange cleanup even if setup or an assertion fails.
+```sh
+just e2e
+just e2e -- profile
+```
 
-A timeout is a failure to investigate. A passing rerun alone does not identify
-the cause, and increasing deadlines or rerunning until green is not a fix.
-Capture the executable, process state, and whether it reached readiness. If
-macOS shows a verification dialog, correlate its exact executable with
-`syspolicyd` logs before attributing a test failure to it.
+Use this tier for OS behavior such as pipe backpressure, exit status, signals
+and process shutdown. A fixture must report readiness before a behavior
+deadline starts, and shutdown tests must prove that the child exited rather
+than merely that a signal was sent.
+
+## 5. Phone journeys
+
+The native app merge adds phone journeys driven against `testnet serve`: real
+daemon and relay processes, scripted providers, and the app's own UI. They are
+invoked through the native app's `just ios journey` recipe, not by reaching
+into the harness with an ad-hoc command. This branch prepares the harness and
+task boundary; the journey runner arrives with the native code described in
+[native integration](NATIVE_INTEGRATION.md).
+
+## Failure evidence
+
+Rust reports captured output for a failed test, but an outer timeout may kill a
+harness before it can do so. Rerun the narrow target with `--nocapture` and
+record whether its executable reached readiness. On macOS, a new executable
+can pause under host security assessment before its first instruction; match
+the exact process with system logs before calling that a protocol or shutdown
+failure. A passing rerun alone does not explain the original failure.

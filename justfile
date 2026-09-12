@@ -109,7 +109,7 @@ shot *ARGS:
 tui-evidence *ARGS:
     set -- {{ARGS}}; if [ "${1-}" = -- ]; then shift; fi; timeout 1800 scripts/tui-evidence "$@"
 
-# Enforce production and test-support dependency boundaries.
+# Enforce production and test-infrastructure dependency boundaries.
 dependency-policy:
     timeout 60 python3 scripts/check-dependency-policy.py
 

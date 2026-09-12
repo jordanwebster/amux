@@ -9157,9 +9157,22 @@ and the CI workflow contains the exact eight-job command matrix.
 
 2026-09-12 — **Dependency policy is an edge contract, not an architecture
 proxy.** The checker is reduced to 79 lines that compare the declared production
-and support-package allowlists with Cargo metadata and reject every non-development
-edge from a production package into test infrastructure. Source-token guesses,
+and support-package allowlists with Cargo metadata and reject non-development
+edges from production packages into scenario and executable test packages. The
+accepted `claude` to `replay-support` edge remains explicit. Source-token guesses,
 file-presence assertions and build-measurement machinery are removed, along with
 the generated measurement directory. The complete local CI sequence remains
 green after the reduction: all workspace tests and doctests, release policy, 22
 end-to-end scenarios, the embedded boundary and both iOS targets pass.
+
+2026-09-12 — **Build and test documentation describes the finished contract.**
+One build page now covers the pinned toolchains, purposeful profiles, committed
+protobuf output, just-owned tasks and wt's warm worktree snapshots without
+preserving benchmark history. The crate guide reflects testnet as the public
+harness, TUI-owned fixtures and desktop-owned setup; the test guide is organized
+around unit, prose-spec, integration, PTY end-to-end and future phone-journey
+tiers. The wt output report moved to the wt repository. The final unit graph has
+one configuration for every core crate and the allowed fixture-enabled second
+TUI configuration. The spec inventory remains 412 tests (320 reducer and 92
+whole-daemon), all local documentation links resolve, the retired-token grep is
+empty outside this log, and the complete local CI recipe passes.

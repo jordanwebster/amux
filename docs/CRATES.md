@@ -1,33 +1,45 @@
 # Crate boundaries
 
-The workspace uses one lockfile and explicit members. `model` owns shared values
-without I/O. `wire` owns protobuf messages, committed generated code and
-encoding. `settings` owns persisted configuration values, `artifacts` owns
-content-addressed bytes, and `redaction` owns the sanitizer shared by production
-diagnostic reports and support tooling.
+| Layer | Crates |
+| --- | --- |
+| Values and protocol | `model`, `wire`, `settings`, `artifacts`, `redaction`, `client` |
+| Daemon | `host-api`, `node`, `agent-runtime`, `claude`, `codex`, `pty-host` |
+| Clients | `ui-state`, `ui-runtime`, `tui` |
+| Products and tools | `amux`, `shot`, `xtask` |
+| Test infrastructure | `testnet`, `replay-support`, `claude-specs`, `codex-specs`, `e2e-runner`, `test-agent` |
 
-`client` connects to an explicitly supplied channel or endpoint. `ui-state` is
-the pure reducer. `ui-runtime` owns connections, effects, subscriptions and
-report resources for one view instance. `tui` owns terminal rendering and input.
+The values and protocol layer keeps shared meaning below effects. `model`
+owns provider-neutral values without I/O; `wire` owns protobuf schemas,
+committed generated code and conversions. `settings` owns persisted
+configuration, `artifacts` owns content-addressed storage, `redaction` owns
+sanitization, and `client` provides typed RPC clients over supplied channels
+or endpoints.
 
-`host-api` is the owned asynchronous contract between `node` and
-`agent-runtime`. `node` owns identity, trust, routing, admission and installation
-lifecycle. `agent-runtime` owns providers, sessions, persistence, attachments,
-diffs and artifact retention. The `amux` package composes them for desktop; an
-embedded node supplies no host factory.
+The daemon layer separates network and installation ownership from provider
+processes. `host-api` is the asynchronous boundary: `node` owns identity,
+trust, routing, admission, services and installation lifecycle, while
+`agent-runtime` owns provider sessions, persistence, attachments, diffs and
+artifact retention. The provider and PTY crates implement those sessions.
+`node` has no private `src/testnet` harness; whole-daemon behavior belongs to
+`testnet`.
 
-`replay-support`, `testnet`, `claude-specs`, `codex-specs` and `tui-fixtures`
-own reusable test scenarios, fixtures and their runners. They consume
-production APIs; product and build dependencies may not reach them, including
-through default features. TUI unit tests compile the support-owned fixture
-source in the TUI test crate because a Cargo dev edge would create a package
-cycle. Provider packages expose no profile-selected spec API. Run
-`just dependency-policy` to validate the boundary.
+The client layer separates pure state from effects and presentation.
+`ui-state` is the reducer, `ui-runtime` owns per-view connections,
+subscriptions, effects and report resources, and `tui` owns terminal input
+and rendering. TUI fixtures live inside `tui` and compile only for its tests
+or explicit fixture consumers; they are not a separate package.
 
-Node still has a private `src/testnet` white-box harness for tests that exercise
-its internal service state. It is compiled only for node's own unit tests and is
-not a reusable scenario API. Cross-package scenarios, recordings and embedded
-ownership tests live in the support packages above.
-Agent-runtime's opt-in test surface consists of opaque adapters over its private
-provider constructors. The support package owns waits, row accumulation,
-assertions and lifecycle orchestration.
+The product and tools layer composes rather than re-exports the lower layers.
+`amux` owns desktop setup and the CLI, `shot` renders deterministic TUI
+evidence, and `xtask` generates committed wire output. An embedded
+`node::Installation` may omit the host factory and therefore starts no
+provider runtime.
+
+The scenario and executable support packages consume production APIs, never
+the reverse. `testnet` is the public harness for whole-daemon prose specs,
+cross-crate integration, embedded ownership, and live-provider entry points;
+the provider spec crates own recordings, while `e2e-runner` and `test-agent`
+drive real-process scenarios. `replay-support` is the deliberate exception: it
+owns replay transports shared by `claude` and the spec packages, and its normal
+edge from `claude` is accepted in the shipping dependency graph. Run `just
+dependency-policy` to compare the protected edges with the declared allowlist.

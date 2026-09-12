@@ -46,12 +46,12 @@ crate under a `cfg`.
 ## Before you start
 
 `main` must already contain the finished restructure: the `testnet` crate is
-the harness (not a private module of `node`); no crate has a `test-support`
-feature; there is no `cfg(testnet)` anywhere; tasks run through `just`; CI
-does not install `wt`. Check with:
+the harness (not a private module of `node`); no Cargo feature exists only to
+expose test helpers; production files contain no profile-selected harness
+branches; tasks run through `just`; CI does not install `wt`. Check with:
 
 ```sh
-git grep -n 'test-support\|cfg(testnet)' -- crates && echo "not ready" || echo "ready"
+just dependency-policy
 just --list
 ```
 
@@ -93,18 +93,18 @@ Placement of the daemon features written on `nativeapp`:
 
 ## Step 2: port the harness extensions onto seams
 
-`nativeapp` compiled the harness into the product under a `cfg(testnet)` set
-by a build script on the debug profile, reaching it through about a hundred
-conditional sites in fifteen production files. `main` replaced that pattern
-with injection points: an installation accepts a `host_factory`; a provider
-session is built `from_sources`; `agent-runtime` exposes narrow, always
-compiled, hidden adapters over its backends.
+`nativeapp` compiled the harness into the product through a build-script flag
+selected by the debug profile, reaching it through about a hundred conditional
+sites in fifteen production files. `main` replaced that pattern with injection
+points: an installation accepts a `host_factory`; a provider session is built
+`from_sources`; `agent-runtime` exposes narrow, always compiled, hidden adapters
+over its backends.
 
 Do:
 
-1. Delete `crates/amux/build.rs` (now `crates/node`) and every
-   `#[cfg(testnet)]` and `#[cfg(not(testnet))]` site. Production structs
-   carry no `Option<script::Provider>` field.
+1. Delete `crates/amux/build.rs` (now `crates/node`) and every conditional site
+   controlled by its harness flag. Production structs carry no
+   `Option<script::Provider>` field.
 2. Scripted Claude PTY and SDK providers become a `LocalAgentHostFactory`
    implementation in `testnet`. The factory's sessions are built through
    `claude::pty::Session::from_sources` and the SDK session's transport

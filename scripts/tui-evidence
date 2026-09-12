@@ -98,9 +98,9 @@ repeatability
 
 echo "Capturing mechanical demonstrations"
 capture "$evidence_dir/perf/perf-debug.txt" \
-    timeout 900 cargo test --locked -p tui-fixtures --test perf -- --nocapture
+    timeout 900 cargo test --locked -p tui --features fixtures --test perf -- --nocapture
 capture "$evidence_dir/perf/perf-release.txt" \
-    timeout 900 cargo test --locked -p tui-fixtures --release --test perf -- --nocapture
+    timeout 900 cargo test --locked -p tui --features fixtures --release --test perf -- --nocapture
 capture "$evidence_dir/themes/theme-loader-tests.txt" \
     timeout 600 cargo test --locked -p tui theme:: -- --nocapture
 capture "$evidence_dir/copy/osc52-transcript.txt" \

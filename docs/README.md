@@ -27,10 +27,8 @@ subject; when two overlap, the owner named here wins.
 - `DEBUGGING.md` — agent workflow for profile debug reports: report locations,
   installation log tails, bundle layout, replay, marked tweaks, redaction,
   graduation and committed fixtures.
-- [Build foundations](BUILD_FOUNDATIONS.md) — crate ownership, reproducible
-  tasks, debug profiles, worktree snapshot reuse and measured retention limits.
-- [Wt output requirements](WT_OUTPUT_REQUIREMENTS.md) — the remaining Cargo
-  graph retention and native output-discovery requirements for wt.
+- [Build](BUILD.md) — toolchain and profile choices, reproducible tasks,
+  committed protobuf output, and warm worktree snapshots.
 - `TESTING.md` — workspace test commands, focused target selection, and
   choosing protocol or subprocess boundaries for tests.
 - `CODEX.md` — the OpenAI Codex integration: process ownership, the two
