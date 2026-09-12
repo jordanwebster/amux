@@ -297,4 +297,4 @@ remain opt-in because they require the operator's authenticated installations.
 `e2e-tests/sdk_chat_live.sh` captures an SDK parent creating a child, answering
 its permission request and exchanging messages, including both chats and the
 family view. The redacted parent rows also replay through the client in
-`crates/amux-ui/tests/spec/fixtures/claude_sdk/converse.rows.jsonl`.
+`crates/claude-specs/fixtures/claude-sdk/converse.rows.jsonl`.

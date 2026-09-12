@@ -1,11 +1,11 @@
-//! The amux-ui spec suite (tier 1).
+//! The ui-state spec suite (tier 1).
 //!
 //! Reducer prose specs: ordered Msg sequences in, Model assertions out.
-//! Chapters read as documentation, mirroring `crates/amux/tests/spec/`; the
+//! Chapters read as documentation; the
 //! normative design is `docs/UI.md`, and where prose and passing spec
 //! disagree, the spec wins.
 //!
-//! Run with: `timeout 600 cargo test -p amux-ui --test spec`
+//! Run with: `wt run spec`
 //!
 //! No tokio, no network, no clocks anywhere in this suite — everything is a
 //! pure fold. Every chapter registers its Msg sequences with the harness so

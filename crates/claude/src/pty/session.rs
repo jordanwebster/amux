@@ -11,7 +11,9 @@ use std::time::Duration;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+#[cfg(any(test, feature = "test-support"))]
+use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(any(test, feature = "test-support"))]
 use tokio::sync::oneshot;
 use tokio::sync::{broadcast, mpsc, watch};

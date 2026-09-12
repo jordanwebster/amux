@@ -27,7 +27,7 @@ run = ["python3", "scripts/worktree-profile.py", "{{root()}}/.wt/amux", "{{name(
 exists = 'test -f "$AMUX_CONFIG"'
 
 [task.build]
-run = "scripts/with-git-revision.sh timeout 900 cargo build --locked -p amux -p shot --bins"
+run = "scripts/with-git-revision.sh timeout 900 cargo build --locked -p amux --bins"
 needs = ["profile-config"]
 
 [task.check]
@@ -40,7 +40,11 @@ run = "scripts/with-git-revision.sh timeout 1200 cargo test --locked --workspace
 run = "scripts/with-git-revision.sh timeout 600 cargo test --locked --workspace --doc"
 
 [task.full-debug]
-run = "scripts/with-git-revision.sh timeout 900 cargo build --locked -p amux -p shot --bins --profile full-debug"
+run = "scripts/with-git-revision.sh timeout 900 cargo build --locked -p amux --bins --profile full-debug"
+
+[task.debug-policy-check]
+run = "scripts/with-git-revision.sh timeout 300 scripts/debug-policy-check.sh"
+needs = ["build"]
 
 [task.ci-check]
 run = "scripts/with-git-revision.sh timeout 900 cargo check --locked --workspace --lib --bins --profile ci"
@@ -49,13 +53,10 @@ run = "scripts/with-git-revision.sh timeout 900 cargo check --locked --workspace
 run = "scripts/with-git-revision.sh timeout 1200 cargo test --locked --workspace --lib --tests --profile ci-test"
 
 [task.release-check]
-run = 'scripts/with-git-revision.sh timeout 1200 cargo build --locked --release -p amux -p shot --bins "$@"'
+run = 'scripts/with-git-revision.sh timeout 1200 cargo build --locked --release -p amux --bins "$@" && scripts/release-policy-check.sh "$@"'
 
 [task.format-check]
 run = "cargo +nightly-2026-08-30 fmt --all -- --check"
-
-[task.format]
-run = "cargo +nightly-2026-08-30 fmt --all"
 
 [task.codegen-check]
 run = "scripts/with-git-revision.sh timeout 600 scripts/codegen-check.sh"
@@ -123,6 +124,12 @@ run = "scripts/with-git-revision.sh timeout 900 cargo test --locked -p tui"
 
 [task.test-shot]
 run = "scripts/with-git-revision.sh timeout 900 cargo test --locked -p shot"
+
+[task.shot]
+run = 'scripts/with-git-revision.sh timeout 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"'
+
+[task.tui-evidence]
+run = 'scripts/with-git-revision.sh timeout 1800 scripts/tui-evidence "$@"'
 
 [task.test-infrastructure]
 run = "scripts/with-git-revision.sh timeout 600 cargo test --locked -p testnet -p claude-specs -p codex-specs -p tui-fixtures"

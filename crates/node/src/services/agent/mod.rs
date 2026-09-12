@@ -523,7 +523,12 @@ fn create_rpc_to_domain_request(
             Vec::new(),
         ),
         #[cfg(not(any(debug_assertions, test)))]
-        CreateAgentConfig::TestAgent { .. } => {
+        CreateAgentConfig::TestAgent {
+            command,
+            working_dir,
+            terminal_size,
+        } => {
+            let _ = (command, working_dir, terminal_size);
             return Err(ProtocolError::Unimplemented {
                 message: "test-agent creation is unavailable in release builds".into(),
             });

@@ -2340,7 +2340,7 @@ async fn compact(
 // --- Phase 3 encoding-verification scenarios --------------------------------
 //
 // Each scenario exists to confirm one C6 keystroke table empirically before
-// the amux-ui encoding module states it. Assertions are structural (world +
+// the ui-state encoding module states it. Assertions are structural (world +
 // row shapes), never prose; the `notes` object records the observed evidence
 // the phase report cites.
 
@@ -3520,7 +3520,7 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
 
 /// Non-gating capture probe for the permission digit table's open >=2-
 /// suggestion shape. A successful capture is the prerequisite for extending
-/// amux-ui's encoder; failure preserves the capture and changes no encoding.
+/// ui-state's encoder; failure preserves the capture and changes no encoding.
 async fn permission_multi_probe(
     daemon: &ScratchDaemon,
     scratch: &Scratch,

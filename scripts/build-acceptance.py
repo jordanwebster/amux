@@ -183,6 +183,7 @@ def main() -> None:
     command(["wt", "--home", str(wt_home), "register", str(canonical), "--label", label, "--yes"], canonical)
     records: list[dict[str, object]] = []
     records.append(run_task(wt_home, canonical, "warm", "canonical-warm", evidence))
+    after_canonical_warm = volume(output)
 
     trees = []
     for suffix in ("a", "b"):
@@ -206,6 +207,9 @@ def main() -> None:
             with source.open("a") as handle:
                 handle.write(f"\n// build acceptance edit {cycle}\n")
         records.extend(run_pair(wt_home, trees, "test-model", f"cycle-{cycle}-focused", evidence))
+        records.extend(
+            run_pair(wt_home, trees, "test-model", f"cycle-{cycle}-focused-repeat", evidence)
+        )
         records.extend(run_pair(wt_home, trees, "test-build", f"cycle-{cycle}-test-build", evidence))
         records.extend(run_pair(wt_home, trees, "lint", f"cycle-{cycle}-lint", evidence))
         records.extend(run_pair(wt_home, trees, "build", f"cycle-{cycle}-product", evidence))
@@ -242,6 +246,7 @@ def main() -> None:
         },
         "volume": {
             "before_bytes": initial_volume,
+            "after_canonical_warm_bytes": after_canonical_warm,
             "after_snapshot_creation_bytes": after_snapshots,
             "after_workload_bytes": volume(output),
         },

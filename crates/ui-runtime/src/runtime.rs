@@ -41,7 +41,7 @@ use crate::report::{
 };
 
 /// Reducer build identity, stamped into reports.
-pub const BUILD: &str = concat!("amux-ui/", env!("CARGO_PKG_VERSION"));
+pub const BUILD: &str = concat!("ui-runtime/", env!("CARGO_PKG_VERSION"));
 
 /// One ordered Msg stream; producers wait when it is full (lossless).
 const MSG_CHANNEL_CAPACITY: usize = 1024;
@@ -1311,7 +1311,7 @@ fn open_with_platform_viewer(meta: &ArtifactMeta, path: &Path) -> io::Result<()>
     Ok(())
 }
 
-fn platform_open_command(meta: &ArtifactMeta, path: &Path) -> io::Result<std::process::Command> {
+fn platform_open_command(meta: &ArtifactMeta, _path: &Path) -> io::Result<std::process::Command> {
     // Only the macOS viewer chooses its application from the artifact kind.
     #[cfg(not(target_os = "macos"))]
     let _ = meta;
@@ -1342,7 +1342,7 @@ fn platform_open_command(meta: &ArtifactMeta, path: &Path) -> io::Result<std::pr
     ));
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
-        command.arg(path);
+        command.arg(_path);
         Ok(command)
     }
 }

@@ -36,7 +36,7 @@ routing instances are forwarding infrastructure, not device profiles.
 
 Around the daemon sit its clients and consumers:
 
-- **CLI** (`crates/amux-cli`): discovers and administers profiles through the
+- **CLI** (`crates/amux`): discovers and administers profiles through the
   installation's front door, then uses the selected profile's `ClientService`
   for agent operations. Hidden subcommands are protocol plumbing:
   `amux relay --profile <UUID>` bridges stdin/stdout to that profile's socket
@@ -44,7 +44,7 @@ Around the daemon sit its clients and consumers:
   `amux pair-recv` runs the responder side of an SSH pairing identity
   exchange, and `amux mcp agent` serves the agent tools over stdio MCP.
   [`A2A.md`](./A2A.md) owns that tool contract.
-- **UI runtime** (`crates/amux-ui`): a reactive client library over the
+- **UI runtime** (`crates/ui-runtime`): a reactive client library over the
   same `ClientService` surface, for embedding in apps. It joins attachment
   puts before a send, folds stream refs, fetches opened artifacts through the
   viewing-profile cache, and leaves presentation to its client.
@@ -52,8 +52,8 @@ Around the daemon sit its clients and consumers:
   content-addressed storage with an authoritative per-agent Owner role and a
   disposable per-viewing-profile Cache role. It depends on neither the daemon
   nor the UI, so another client can reuse the storage contract directly.
-- **Test harnesses**: debug builds compile an in-process harness
-  (`amux::testnet`) that builds production profile runtimes and installations —
+- **Test harnesses**: the `testnet` support package builds production profile
+  runtimes and installations through public APIs —
   real identities, real trust stores, real localhost TCP with device mTLS, an
   optional in-process cloud relay — for the spec suite, plus `WirePeer`, a scripted
   protocol actor for wire-conformance tests. `crates/e2e-runner` drives
@@ -238,7 +238,7 @@ The layering is deliberate:
    a PTY, hook stream, transcript stream, and observed version in one source
    bundle; its SDK driver owns the stream-JSON event/control boundary. Codex
    owns one app-server thread event/control boundary.
-3. **`crates/amux/src/agents/claude` and `agents/codex`** are adapters. They
+3. **`crates/agent-runtime/src/agents/claude` and `agents/codex`** are adapters. They
    translate provider events into amux-owned structured rows, route typed input
    to controls, supply the A2A carrier, and persist only the provider identity
    needed for resume.

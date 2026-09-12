@@ -12,9 +12,9 @@ owns the Codex chat, which this one deliberately resembles; and
 folds. Where prose and a passing specification disagree, the specification wins.
 
 Recorded wire shapes come from Claude Code 2.1.260 under
-`crates/claude/fixtures/sdk/` — `question_asked`, `plan_reviewed`,
+`crates/claude-specs/fixtures/sdk/` — `question_asked`, `plan_reviewed`,
 `elicitation_accepted` — and the older corpus at 2.1.247/2.1.251. The live
-conversation fixture under `crates/amux-ui/tests/spec/fixtures/claude_sdk/`
+conversation fixture under `crates/claude-specs/fixtures/claude-sdk/`
 was captured at 2.1.261. Dialog routing was inspected in that installed binary;
 those source findings are distinguished below from recorded traffic.
 

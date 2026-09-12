@@ -1,7 +1,7 @@
 //! Debug-only command tree and local report operations.
 //!
 //! This module is absent from release builds along with the CLI surface that
-//! reaches it. The report bundle itself remains in `amux-ui` so release builds
+//! reaches it. The report bundle itself remains in `ui-runtime` so release builds
 //! can still write degraded tripwire and panic reports.
 
 use std::path::{Path, PathBuf};

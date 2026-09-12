@@ -62,7 +62,7 @@ enum Commands {
 
     /// Create a new agent session
     New {
-        /// Agent type: claude, codex, or test-agent (test-agent only in dev builds)
+        /// Agent type: claude or codex
         agent_type: String,
 
         /// Override the configured Claude driver (Claude agents only)
@@ -1281,6 +1281,10 @@ fn configure_agent_type(
             }
             Ok(AgentType::TestAgent { command })
         }
+        #[cfg(not(any(debug_assertions, test)))]
+        AgentType::TestAgent { .. } => Err(anyhow!(
+            "test-agent creation is unavailable in release builds"
+        )),
     }
 }
 

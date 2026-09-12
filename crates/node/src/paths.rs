@@ -10,10 +10,12 @@ use std::path::{Path, PathBuf};
 ///
 /// On Windows, maps XDG conventions to standard Windows directories:
 /// `.config` -> `%APPDATA%`, `.local/state` -> `%LOCALAPPDATA%` (fallback `%APPDATA%`).
+#[cfg(not(target_os = "ios"))]
 pub(crate) fn xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
     xdg_dir_with_home(env_var, default_suffix, home_dir())
 }
 
+#[cfg(not(target_os = "ios"))]
 fn xdg_dir_with_home(env_var: &str, default_suffix: &str, home_dir: Option<PathBuf>) -> PathBuf {
     if let Ok(val) = std::env::var(env_var) {
         return PathBuf::from(val);
@@ -37,6 +39,7 @@ fn xdg_dir_with_home(env_var: &str, default_suffix: &str, home_dir: Option<PathB
 }
 
 /// Resolve the amux application directory within an XDG base directory.
+#[cfg(not(target_os = "ios"))]
 pub(crate) fn amux_xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
     xdg_dir(env_var, default_suffix).join("amux")
 }

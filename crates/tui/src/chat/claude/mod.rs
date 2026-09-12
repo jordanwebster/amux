@@ -479,7 +479,7 @@ impl View {
 }
 
 /// The current entry watermark for an agent's feed: `evicted + retained`,
-/// which equals the layer's next entry id (invariant-checked in amux-ui).
+/// which equals the layer's next entry id (invariant-checked in ui-state).
 /// The paused rule's `N new entries` derives from the difference.
 pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
     model

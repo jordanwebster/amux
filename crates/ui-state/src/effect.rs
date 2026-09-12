@@ -1,4 +1,4 @@
-//! Effects: what the shell must do. Internal to the amux-ui runtime, never a
+//! Effects: what the shell must do. Internal to the UI runtime, never a
 //! public contract between processes. `update` returns them as data; the
 //! shell executes them against `model::Client` and feeds results back as Msgs.
 //! Replay folds Msgs but never executes Effects.

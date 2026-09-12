@@ -441,6 +441,10 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
         AgentType::TestAgent { command } => {
             Ok(Box::new(TestAgentSession::new(req, command.clone())))
         }
+        #[cfg(not(any(debug_assertions, test)))]
+        AgentType::TestAgent { .. } => Err(anyhow::anyhow!(
+            "test-agent sessions are unavailable in release builds"
+        )),
     }
 }
 

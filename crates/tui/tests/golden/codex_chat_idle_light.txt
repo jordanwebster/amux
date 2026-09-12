@@ -3,7 +3,7 @@
                                                                                                                         
 ▎   Run the focused tests.                                                                                              
                                                                                                                         
-  ✔ $ cargo test -p amux-ui · done · exit 0                                                                             
+  ✔ $ cargo test -p ui-state · done · exit 0                                                                            
     └ cwd /work/amux                                                                                                    
     └ stdout: 42 passed                                                                                                 
                                                                                                                         

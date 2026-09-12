@@ -1,3 +1,21 @@
+2026-09-12 — **Qualify the final profile and wt retention behavior.** The
+declared debug-policy check proves named panic backtraces under the portable
+zero-debug test profile and validates packed product dSYMs on Apple targets.
+Screenshot tooling now uses the worktree's declared Cargo root and locked
+resolution instead of creating a hidden target, and ordinary/release builds no
+longer compile that development tool. The release task also executes the built
+product to prove its debug command and development test agent are unavailable.
+That optimized build exposed release-only non-exhaustive agent matches; the
+composition and provider runtime now reject the unshipped backend explicitly.
+Platform-only path helpers are also
+compiled only where used, keeping the iOS compositions warning-free. The maintained build and native
+integration documents describe the implemented crate boundaries, wt 0.4.0
+snapshot/sweep strategy, measured APFS volume behavior, sccache removal and
+deferred Bazel decision. The concurrent acceptance run also found that wt can
+retire a dependency-distinct focused test graph after a workspace test; the
+precise upstream retention and native output-discovery requirements are
+recorded without adding another repository output pool.
+
 2026-09-12 — **Replace the retired cache benchmark with a wt acceptance workload.**
 The declared measurement task now creates an isolated registered canonical at
 the current clean commit, warms its product and test configurations, snapshots

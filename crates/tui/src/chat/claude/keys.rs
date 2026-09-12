@@ -1,6 +1,6 @@
 //! Chat key handling: keys mutate View and produce `UiAction`s; all
 //! domain writes leave as Commands through the runtime (never bytes —
-//! answers live in amux-ui's C6 module).
+//! answers live in ui-state's Claude write module).
 //!
 //! The binding set is `docs/CHAT.md` §Keybindings' plain tier, derived in
 //! `docs/CHAT.md` §Keybindings: readline is law inside the composer

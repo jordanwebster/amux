@@ -35,16 +35,15 @@ Run `wt run test-recipes` to check argument forwarding without compiling.
 These checks also run automatically before `wt test`.
 
 Build output is wt's to keep bounded, not a recipe's. After every wt task
-that changed `target/`, and in `wt prune`, wt deletes what the workspace will
-never read again — superseded units, object files no live binary
-references, incremental state of configurations nothing builds — judged
-from `cargo metadata` and the units the workspace still reaches, never by
-age or directory name. `wt ls --disk` sizes each tree's build output;
+that changed `target/`, and in `wt prune`, wt deletes superseded units,
+unreachable object files and excess incremental state by following Cargo's
+workspace units and dependency fingerprints. `wt ls --disk` sizes each tree's build output;
 `wt prune amux` shows what a sweep of every tree would reclaim before
 applying it. A tree that is no longer needed is removed with `wt rm`, which
-is what reclaims its output entirely. See
-`notes/build-foundations/output-pool-retired.md` for why the repository's
-own output pool was retired.
+is what reclaims its output entirely. Wt 0.4.0 can discard a valid narrow test
+graph after a workspace-wide test graph supersedes its root; the consequence
+and required correction are recorded in
+[wt output requirements](WT_OUTPUT_REQUIREMENTS.md).
 
 ## Recorded PTY tests
 

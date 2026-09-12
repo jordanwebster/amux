@@ -7,43 +7,29 @@ connect to a daemon, or inspect the local terminal. Every capture uses a
 JetBrains Mono faces with a DejaVu Sans fallback. Both fonts carry their
 open-source licenses beside the assets.
 
-The crate is a workspace member but is intentionally outside the workspace's
-default members. Run it explicitly from the repository root:
+Run it through the declared task from the repository root:
 
 ```sh
-cargo run -p amux-shot -- list
-cargo run -p amux-shot -- render claude-idle --out target/shot/claude-idle.png
-cargo run -p amux-shot -- render claude-idle --theme light --color ansi \
+wt run shot -- list
+wt run shot -- render claude-idle --out target/shot/claude-idle.png
+wt run shot -- render claude-idle --theme light --color ansi \
   --out target/shot/claude-idle-light-ansi.png
-cargo run -p amux-shot -- render-set chat --out target/shot/chat
-cargo run -p amux-shot -- record-scroll claude --out target/shot/scroll
-cargo run -p amux-shot -- record-scroll codex --out target/shot/scroll
-cargo run -p amux-shot -- verify target/shot
+wt run shot -- render-set chat --out target/shot/chat
+wt run shot -- record-scroll claude --out target/shot/scroll
+wt run shot -- record-scroll codex --out target/shot/scroll
+wt run shot -- verify target/shot
 ```
 
 To reproduce the complete review bundle in one command, use the repository
 wrapper:
 
 ```sh
-scripts/tui-evidence target/tui-evidence
+wt run tui-evidence -- target/tui-evidence
 ```
 
-If your Cargo configuration shares one build cache across several checkouts of
-this repository — a `build.build-dir`, or a `CARGO_TARGET_DIR` pointing outside
-the checkout — the build can fail before it draws anything. The protobuf wire
-types are generated into `OUT_DIR` beneath that cache, so one checkout may
-compile against types generated from another checkout's `.proto` files, and the
-resulting errors name symbols that exist in neither tree. The same applies if
-the cache is simply not writable. Give the run its own directory:
-
-```sh
-CARGO_TARGET_DIR=target/shot cargo run -p amux-shot -- render claude-idle \
-  --out target/shot/claude-idle.png
-```
-
-`scripts/tui-evidence` already does this for you: it clears any inherited
-build-directory setting and defaults `CARGO_TARGET_DIR` to
-`target/tui-evidence`, so evidence stays reproducible from a clean checkout.
+Wt gives every worktree its own Cargo output and sweeps it after the task. The
+evidence task uses that same declared root, so it inherits the warm snapshot and
+does not create a hidden Cargo configuration outside wt's inventory.
 
 The wrapper renders every declared set, records both agents' wheel sessions,
 captures the command help and fixture list, proves byte-for-byte repeatability,

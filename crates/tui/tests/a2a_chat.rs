@@ -189,7 +189,7 @@ fn stop_row() -> Value {
 
 /// The generic `<amux …>` tag the paste carrier delivers, formatted exactly
 /// as the daemon's formatter writes it. Spelled out rather than imported:
-/// this crate consumes `amux-ui` only, and the agreement between the two
+/// this crate consumes `ui-state` only, and the agreement between the two
 /// spellings is asserted in the reducer specs, not here.
 fn amux_tag(kind: &str, from: &str, host: &str, text: &str) -> String {
     format!(

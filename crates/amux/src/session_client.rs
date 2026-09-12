@@ -195,7 +195,6 @@ fn agent_type_exposes_terminal(agent_type: &AgentType) -> bool {
             node::AgentKind::Claude { driver: *driver }.exposes(node::Protocol::TerminalV1)
         }
         AgentType::Codex { .. } => node::AgentKind::Codex.exposes(node::Protocol::TerminalV1),
-        #[cfg(any(debug_assertions, test))]
         AgentType::TestAgent { .. } => {
             node::AgentKind::TestAgent.exposes(node::Protocol::TerminalV1)
         }

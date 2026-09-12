@@ -13,7 +13,7 @@
 │   src/retry.rs                                                                                                        
 │    1 │ -const RETRIES: u8 = 3;                                                                                        
 │    1 │ +const RETRIES: u8 = 6;                                                                                        
-│ ▸ $ cargo test -p amux-ui · running                                                                                   
+│ ▸ $ cargo test -p ui-state · running                                                                                  
 │   └ cwd /work/amux                                                                                                    
 │   └ stdout: running 42 tests                                                                                          
 │ ✔ MCP issues::lookup · done                                                                                           

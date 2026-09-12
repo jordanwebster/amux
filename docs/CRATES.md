@@ -16,5 +16,8 @@ diffs and artifact retention. The `amux` package composes them for desktop; an
 embedded node supplies no host factory.
 
 `testnet`, `claude-specs`, `codex-specs` and `tui-fixtures` own reusable test
-infrastructure. Product graphs may not depend on them. Run `wt run
-dependency-policy` to validate the boundary.
+scenarios, fixtures and their runners. They consume public production APIs;
+product and build dependencies may not reach them. TUI unit tests compile the
+support-owned fixture source in the TUI test crate because a Cargo dev edge
+would create a package cycle. Provider packages expose no profile-selected spec
+API. Run `wt run dependency-policy` to validate the boundary.

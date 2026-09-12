@@ -22,7 +22,8 @@ policy.
 | `pty-host` | `PtyProcess { handle: PtyHandle, exit: ExitMonitor }` | Provides provider-neutral PTY spawn, one owned output stream, input, resize, process-group signalling and termination. Claude PTY, the Codex raw plane and the test agent use it. |
 | `replay-support` | `Recording`, `StrictReplay`, registries and probes | Supplies the shared, provider-neutral executable-specification corpus, sanitizing, inventory validation, strict replay, verification ledgers and additive drift reports. |
 
-`crates/amux/src/agents/claude` and `crates/amux/src/agents/codex` are adapters.
+`crates/agent-runtime/src/agents/claude` and
+`crates/agent-runtime/src/agents/codex` are adapters.
 They translate crate events into the protocol rows owned by amux, route typed
 input to the control handle, implement delivery carriers, and save the minimum
 provider identity needed to resume. Provider behavior does not belong there.

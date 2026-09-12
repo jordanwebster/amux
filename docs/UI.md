@@ -3,28 +3,28 @@
 Status: normative, with full native layers for Claude PTY (`docs/CHAT.md`)
 and Codex (`docs/CODEX.md`), and a full native layer and TUI chat for Claude
 driven over stream-JSON (`docs/CLAUDE_SDK.md`).
-This document owns the client side of amux: the `amux-ui` state library,
-its renderers (the TUI first, desktop and mobile clients later), and the
+This document owns the client side of amux: the `ui-state` reducer,
+the resource-owning `ui-runtime`, its renderers (the TUI first, desktop and mobile clients later), and the
 rules that keep per-agent knowledge in the right place. Companions:
 `docs/PROTOCOL.md` owns the wire, `docs/ARCHITECTURE.md` owns the system.
 `docs/A2A.md` owns the message and parent/child lifecycle the client projects.
-The executable half of this document is the amux-ui spec suite in
-`crates/amux-ui/tests/spec/` plus the native-chat golden suites in
-`crates/amux-tui/tests/`; where prose and passing spec disagree, the spec
+The executable half of this document is the ui-state spec suite in
+`crates/ui-state/tests/spec/` plus the native-chat golden suites in
+`crates/tui-fixtures/tests/`; where prose and passing spec disagree, the spec
 wins.
 
-Crate shape: `amux-cli` → { `amux-tui`, `amux` }; `amux-tui` → `amux-ui` →
-`amux`. One shipped binary — `amux-tui` is a library the CLI invokes (bare
-`amux` opens it), never a second executable. The TUI consumes `amux-ui`
-exclusively; it never reads `amux::Client` directly. There is exactly one
-reducer implementation — this crate. One Runtime per client process, one
-Model per daemon connection; renderers access the Model in-process by
+Crate shape: `amux` composes `node`, `agent-runtime` and `tui`; `tui` consumes
+`ui-state` through `ui-runtime`, and `ui-runtime` consumes the explicit-channel
+`client`. One shipped binary — `tui` is a library the CLI invokes (bare
+`amux` opens it), never a second executable. There is exactly one reducer
+implementation in `ui-state`. Each view owns a runtime and subscriptions;
+several views may share an account connection. Renderers access the Model in-process by
 borrow or (later) out-of-process via serialized Deltas — never by
 reimplementation.
 
 ## The reducer core
 
-`amux-ui` is a reducer over reified inputs. Three commitments, from which
+`ui-state` is a reducer over reified inputs. Three commitments, from which
 everything else here follows:
 
 1. **Inputs are reified.** Every stimulus — server event, user command,
@@ -34,7 +34,7 @@ everything else here follows:
    randomness, and observed time enter through Msgs; reducer-visible
    collections have canonical iteration order.
 3. **Effects are data.** `update` returns them; the runtime shell executes
-   them against `amux::Client` and feeds the results back as Msgs.
+   them through `client::Client` and feeds the results back as Msgs.
 
 High-rate streams are coalesced into batched Msgs **before recording** —
 the recorded Msg is the batch, so replay is independent of arrival
@@ -80,7 +80,7 @@ in, state folds, deltas out.
   state IS this", never "this happened"; applying one takes a keyed store
   and last-write-wins, zero domain logic. When serialized across a
   process boundary: sequence numbers plus snapshot-on-subscribe. This
-  boundary is a *local projection surface* between amux-ui and its own
+  boundary is a *local projection surface* between ui-state and its own
   renderers — it carries interpreted Model state by design and is
   distinct from the peer wire, which the facts-only rule below governs.
 - **`Effect`** — reducer → shell. Internal, never a public contract.
@@ -228,7 +228,7 @@ fallback, and degradation is always to `Unknown`, never to a wrong badge.
 ## Facts, translation, interpretation
 
 The boundary between `amux` (core) and the UI layer, stated as three
-verbs. This rule governs the peer wire; amux-ui's Delta boundary to its
+verbs. This rule governs the peer wire; ui-state's Delta boundary to its
 own renderers is a different surface (above).
 
 - Core **transports facts**: it parses, types, frames, injects, links —

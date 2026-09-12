@@ -1,6 +1,6 @@
 //! Deterministic named states shared by visual tests and screenshot tools.
 //!
-//! Fixtures enter through `amux-ui` messages, just like the runtime. They do
+//! Fixtures enter through `ui-state` messages, just like the runtime. They do
 //! not construct provider layers or feed entries directly, so captures keep
 //! exercising the reducer boundary that production uses.
 
@@ -1867,7 +1867,7 @@ fn codex_idle_rows() -> Vec<Value> {
         codex_ready(),
         json!({"type":"turn/started","turn":{"id":"turn-done","status":"inProgress"}}),
         json!({"type":"item/completed","turnId":"turn-done","item":{"id":"user-idle","type":"userMessage","content":[{"type":"text","text":"Run the focused tests."}]}}),
-        json!({"type":"item/completed","item":{"id":"cmd-idle","type":"commandExecution","command":"cargo test -p amux-ui","cwd":"/work/amux","status":"completed","exitCode":0,"aggregatedOutput":"42 passed"}}),
+        json!({"type":"item/completed","item":{"id":"cmd-idle","type":"commandExecution","command":"cargo test -p ui-state","cwd":"/work/amux","status":"completed","exitCode":0,"aggregatedOutput":"42 passed"}}),
         json!({"type":"item/completed","item":{"id":"msg-idle","type":"agentMessage","text":"All focused tests pass.","phase":"final_answer"}}),
         // What the session reports the thread costing, which the meter
         // and the breakdown overlay both read.
@@ -1883,7 +1883,7 @@ fn codex_working_rows() -> Vec<Value> {
         json!({"type":"item/completed","turnId":"turn-live","item":{"id":"user-live","type":"userMessage","content":[{"type":"text","text":"Make retries configurable."}]}}),
         json!({"type":"item/started","item":{"id":"reason-live","type":"reasoning","content":[],"summary":[]}}),
         json!({"type":"item/reasoning/summaryTextDelta","itemId":"reason-live","summaryIndex":0,"delta":"Inspecting retry policy"}),
-        json!({"type":"item/started","item":{"id":"cmd-live","type":"commandExecution","command":"cargo test -p amux-ui","cwd":"/work/amux","status":"inProgress"}}),
+        json!({"type":"item/started","item":{"id":"cmd-live","type":"commandExecution","command":"cargo test -p ui-state","cwd":"/work/amux","status":"inProgress"}}),
         json!({"type":"item/commandExecution/outputDelta","itemId":"cmd-live","stream":"stdout","delta":"running 42 tests\n"}),
         json!({"type":"item/started","item":{"id":"msg-live","type":"agentMessage","text":"Tests are still running.","phase":"commentary"}}),
         // What the session reports the thread costing, which the meter

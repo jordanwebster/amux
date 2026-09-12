@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 const GOLDEN_VIEWPORT: (u16, u16) = (120, 40);
 
-// --- fixture builders (mirroring the amux-ui spec harness) ----------------
+// --- fixture builders (mirroring the ui-state spec harness) ---------------
 
 fn t0() -> DateTime<Utc> {
     DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture epoch")

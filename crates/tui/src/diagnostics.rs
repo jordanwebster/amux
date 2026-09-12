@@ -1,6 +1,6 @@
 //! What a captured report needs from outside the TUI.
 //!
-//! The TUI consumes `amux-ui` exclusively and never touches `amux::Client`,
+//! The TUI consumes `ui-state` through `ui-runtime` and never opens a node service,
 //! so it cannot ask the daemon for its state, resolve the log path, or know
 //! which commit it was built from. The embedding shell knows all three and
 //! hands them over as this source. Fetching the dump is a closure rather

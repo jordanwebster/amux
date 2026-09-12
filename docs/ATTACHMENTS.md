@@ -86,7 +86,7 @@ frames the UTF-8 comment text so arbitrary newlines or heading-like text cannot
 be mistaken for another comment. Comments have no approve/request-changes
 verdict; surrounding prose is the review's general comment.
 
-The non-visual review model and parser live in `amux-ui`. It preserves files,
+The non-visual review model and parser live in `ui-state`. It preserves files,
 hunks, numbered row facts, anchors, quoted rows, comments, and base identity.
 The TUI owns only cursor, selection, folds, overlays, editor, scroll, width,
 and painting.
