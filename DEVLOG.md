@@ -1,3 +1,14 @@
+2026-09-12 — **Rewrite the native integration contract around a generic app
+layer.** An audit of this branch found the crate graph sound but the proof
+machinery excessive, and the native instructions over-specified. The
+integration document now describes three reusable app crates (runtime,
+embedded node owner, C ABI) with one dependency rule, a merge procedure with
+a rename table, the port of nativeapp's profile-keyed harness onto the host
+factory and provider source seams, the control door as a `testnet serve`
+binary, and six acceptance items. Manifest digests, symbol audits and
+concurrent native worktree proofs are no longer required. The plan to
+simplify this branch before merge is working material under `notes/`.
+
 2026-09-12 — **Close the final production and test-support boundary gaps.**
 Extracted diagnostic redaction into a small production package shared by the
 desktop report command and capture tooling, so the default desktop build keeps

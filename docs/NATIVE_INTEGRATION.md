@@ -1,127 +1,204 @@
-# Native application integration
+# Integrating the native app branch
 
-Nativeapp adapts to the Rust foundations as a separate integration change. It
-extracts three packages from its working bridge and runtime code; this branch
-does not provide empty package shells. The combined code is mergeable only
-after the native implementation and evidence below exist.
+This is the procedure for bringing the `nativeapp` branch (the iPhone app,
+its Rust bridge, and the daemon features written alongside it) into `main`,
+and the shape the code must have when that is done. It is written for the
+person or agent doing the merge, who has not seen the history of either
+branch.
 
-## Package responsibilities
+## The end state
 
-`app-runtime` owns reusable rich-client sessions, account-scoped cache and
-projection, operation routing and typed presentation state. It accepts supplied
-client connections and administration capabilities. It may depend on `model`,
-`settings`, `client`, `ui-state`, `ui-runtime` and `artifacts`; it must not
-depend on `node`, launch an installation, choose a device credential store or
-assume a phone lifecycle. Presentation values remain independent of SwiftUI,
-UIKit, AppKit, C pointers and JSON.
+The app layer is three small crates that any rich client reuses: the iPhone
+app today, Mac and Windows desktop apps later, whether they embed a node or
+attach to a daemon that is already running.
 
-`embedded-client` owns embedded node startup, credentials and orderly shutdown.
-It constructs a provider-free `node::Installation`, obtains explicit channels
-or endpoints from that owner and supplies them to clients. It stops only the
-resources it created. Attaching app-runtime to an external desktop daemon does
-not give it shutdown authority over that daemon.
+| Crate | Owns | May depend on | Must not depend on |
+| --- | --- | --- | --- |
+| `app-runtime` | Account-scoped sessions, the projection from reducer state to typed presentation values, the fleet cache, and the frame-coalesced event queue | `model`, `settings`, `client`, `ui-state`, `ui-runtime`, `artifacts` | `node`, anything provider-specific, any platform SDK |
+| `app-embedded` | Starting, credentialing and stopping a provider-free `node::Installation`, holding the relay link, and handing clients to `app-runtime` | `node`, `client`, `app-runtime` | provider crates, test infrastructure (except `testnet` behind the `debug-tools` feature) |
+| `app-ffi` | The C ABI: exported symbols, JSON in and out, callbacks, opaque handles, cancellation, foreign lifetime rules; the `staticlib`/`cdylib` crate type; the `cbindgen` build script | `app-runtime`, `app-embedded` | anything else |
 
-`client-ffi` is the language boundary. It owns serialization, exported symbols,
-callbacks, opaque handles, cancellation and foreign-language lifetime rules.
-It translates typed app-runtime values at the edge. Node internals and provider
-objects do not cross the ABI.
+The one rule that matters: nothing in `app-runtime` imports `node`. A desktop
+app that attaches to a running daemon uses `app-runtime` and `app-ffi`
+without `app-embedded`. Presentation values are plain Rust and JSON; no
+SwiftUI, UIKit, AppKit or C pointer types appear outside `app-ffi`.
 
-Every operation carries its account/profile identity. Session, view and
-subscription handles have independent ownership. Multiple windows or screens
-may observe different accounts, and several views may share one account
-session. Closing a view cancels only its subscriptions and pending view work;
-it does not stop other views, the shared session or an attached daemon.
-Platform shells own navigation, visibility/background policy, refresh cadence,
-file selection, notifications and credential-store adapters.
+Ownership rules the code must keep:
 
-## Build composition
+- Every operation carries its account. A reply cannot be credited to the
+  wrong account.
+- Sessions, views and subscriptions are independently owned handles. Closing
+  a view cancels its own subscriptions and pending work, nothing else.
+- Closing every view never stops a daemon the app attached to. Only
+  `app-embedded` stops an installation, and only the one it created.
+- Rust never talks to the identity service on behalf of a rich client. The
+  platform's own account client obtains connect tokens; `app-embedded`
+  receives tokens through a callback and connects to the relay it is told
+  to use.
+- The exported symbol prefix is `amux_app_`. The bridge is not phone-shaped.
 
-Each application configuration selects exactly one bridge implementation and
-links it once. Development simulator iteration builds only the needed simulator
-slice with an incremental development profile. It does not use the shipping
-profile's fat LTO or single codegen unit.
+The harness the phone is tested against is the `testnet` crate: a declared
+topology of real daemons, one fake relay, one fake identity service, and
+scripted providers, driven in-process by Rust specs and out-of-process
+through `testnet serve`. Nothing test-shaped is compiled into a product
+crate under a `cfg`.
 
-The current unconditional native recipe must be replaced. It builds shipping
-simulator, shipping device and debug-tools simulator variants, recreates
-frameworks and runs linkage smoke before ordinary app and unit-test work. The
-replacement separates these paths:
+## Before you start
 
-- A simulator development task builds one selected bridge and only the active
-  architecture, then packages it only when its Rust library or public header
-  changed.
-- Swift-only edits do no Rust compilation, unchanged-header generation or
-  framework repackaging.
-- An explicit verification task builds all required simulator/device slices,
-  packages the shipping XCFramework or framework set and runs linkage checks.
-- Release tasks use the shipping optimization profile and repeat multi-slice
-  packaging and final linkage/architecture validation.
+`main` must already contain the finished restructure: the `testnet` crate is
+the harness (not a private module of `node`); no crate has a `test-support`
+feature; there is no `cfg(testnet)` anywhere; tasks run through `just`; CI
+does not install `wt`. Check with:
 
-Each packaged artifact has a manifest containing its Rust revision, target,
-profile, features, exported-header digest and library digest. A consumer rejects
-a mismatched manifest rather than relying on framework search order or force
-loading one of several bridges.
+```sh
+git grep -n 'test-support\|cfg(testnet)' -- crates && echo "not ready" || echo "ready"
+just --list
+```
 
-## Output and resource ownership
+## Step 1: merge, do not rebase
 
-Every native Cargo root must be visible through wt's supported output-root
-mechanism. A `.rustc_info.json` and Cargo profile directories nested somewhere
-under `target/ios/...` are not automatically discoverable. Either simplify the
-layout into declared roots or extend wt's adapter/configuration, then verify the
-effective roots with wt diagnostics and a real post-task sweep. The outstanding
-wt capability is described in [wt output requirements](WT_OUTPUT_REQUIREMENTS.md).
+On the `nativeapp` branch, merge `main` once. The branch has several hundred
+commits; rebasing or cherry-picking is not an option. A dry run before the
+restructure finished showed about 75 conflicts, and git follows most files
+across the crate moves by rename detection. Resolve in this order, because
+each layer's names feed the next: `Cargo.toml` and `Cargo.lock`, then `node`,
+then `ui-state` and `ui-runtime`, then `tui`, then `agent-runtime`, then
+tests.
 
-Cargo output, DerivedData, packaged frameworks, test results and simulators are
-different resource classes:
+Old name to new name:
 
-- Each worktree owns mutable Cargo and DerivedData roots. They are never shared
-  writable across worktrees.
-- Generated frameworks are derived outputs with manifests; tasks replace only
-  the variant they own and remove it with its owning worktree.
-- Test results have a named producer and retention policy. Diagnostic captures
-  are retained only with an explicit owner and purpose.
-- Simulator names, devices, installed bundle state, Keychain state and captures
-  are worktree-scoped. Teardown removes only a simulator the same worktree
-  created.
-- Cargo fingerprint sweeping applies only to Cargo roots. Native artifacts use
-  their native lifecycle and must not be deleted because a Cargo unit appears
-  stale.
+| On `nativeapp` | On `main` |
+| --- | --- |
+| `amux::` (the library) | `node::` for identity, trust, routing, services, installation; `model::` for shared values; `wire::` for protobuf types and codecs; `client::` for RPC clients; `settings::` for persisted configuration |
+| `amux_ui::{Model, Msg, update, ...}` (pure state) | `ui_state::` |
+| `amux_ui::{Runtime, RuntimeOptions, ...}` (effects, connections) | `ui_runtime::` |
+| `amux_tui::` | `tui::` |
+| `amux_artifacts::` | `artifacts::` |
+| `amux-cli` (binary crate) | `amux` |
+| `amux-shot` | `shot` |
+| `amux::testnet::` | `testnet::` |
+| `crates/amux/proto`, `crates/amux/src/protocol/generated` | `crates/wire/proto`, `crates/wire/src/generated`; regenerate with `just protobuf` |
+| `local-agents` feature | gone; the CLI composes `agent-runtime` explicitly, embedded nodes pass `host_factory: None` |
 
-## Shipping exclusions
+Placement of the daemon features written on `nativeapp`:
 
-The shipping Rust dependency closure and packaged artifacts must exclude
-`agent-runtime`, `claude`, `codex`, `pty-host`, `replay-support`, `testnet`,
-`test-agent`, `claude-specs`, `codex-specs`, `tui-fixtures`, `shot` and desktop
-provider binaries. Verify both Cargo metadata and final linked symbols/archive
-members. The embedded graph includes only the provider-free node and the client,
-state, runtime and bridge layers required by the app.
+- The embedded relay, `RelayEndpoint`, `RelayConnection`, `DisconnectReason`:
+  `node`'s transport layer.
+- Repositories, revocation, pairing changes, the admin client: the `node`
+  module of the same name.
+- Claude and Codex proto additions: `wire`, then `just protobuf`.
+- UI queue, provider, report and runtime changes: pure state and reducer
+  logic in `ui-state`; anything that owns a connection, task, file or timer
+  in `ui-runtime`.
 
-## Combined-code acceptance
+## Step 2: port the harness extensions onto seams
 
-Run these checks in the native branch after integrating the foundation commit:
+`nativeapp` compiled the harness into the product under a `cfg(testnet)` set
+by a build script on the debug profile, reaching it through about a hundred
+conditional sites in fifteen production files. `main` replaced that pattern
+with injection points: an installation accepts a `host_factory`; a provider
+session is built `from_sources`; `agent-runtime` exposes narrow, always
+compiled, hidden adapters over its backends.
 
-1. Start and shut down an embedded installation repeatedly, including failure
-   during startup and cancellation while callbacks are in flight. Prove
-   lifecycle ordering and one terminal callback per owned handle.
-2. Attach to an external daemon, close all views and confirm the daemon remains
-   running and usable by another client.
-3. Exercise at least two accounts and two independently owned views. Closing or
-   changing selection in one must not cancel the other or route an operation to
-   the wrong account.
-4. Verify callback serialization, queueing, cancellation and handle release
-   across the language boundary, including late callbacks after a view closes.
-5. For every app configuration, inspect linkage and prove exactly one bridge is
-   selected with the expected architecture and manifest.
-6. Measure an initial simulator build, a no-op rebuild, a Swift-only edit and a
-   representative Rust edit. The Swift-only path must show no Cargo invocation,
-   header generation or framework repackaging.
-7. Run the explicit shipping multi-slice packaging/linkage task and verify the
-   provider and test-infrastructure exclusions above.
-8. Run two concurrent native worktrees with independent Cargo roots,
-   DerivedData, simulators, bundle state and result paths. Exercise startup,
-   callbacks and teardown in both, then show wt discovers and sweeps every Cargo
-   root without touching the other worktree.
-9. Run supported device and simulator tests, plus platform CI for architectures
-   unavailable locally. Record unavailable checks as gaps rather than passes.
+Do:
 
-Bazel is deferred. It is neither a foundation completion criterion nor a
-nativeapp merge requirement.
+1. Delete `crates/amux/build.rs` (now `crates/node`) and every
+   `#[cfg(testnet)]` and `#[cfg(not(testnet))]` site. Production structs
+   carry no `Option<script::Provider>` field.
+2. Scripted Claude PTY and SDK providers become a `LocalAgentHostFactory`
+   implementation in `testnet`. The factory's sessions are built through
+   `claude::pty::Session::from_sources` and the SDK session's transport
+   seam, fed by the script. `register_scripted_claude`,
+   `register_scripted_provider` and `end_scripted_session` on the agent host
+   disappear; the topology declares which daemon uses the scripted factory.
+3. Move `script.rs`, `sdk.rs`, `latency.rs`, `client.rs` and the added
+   operator verbs into `crates/testnet/src`. Verb names do not change.
+4. Move the served control door (`Topology`, `Control`, `Reply`,
+   `Readiness`, and `ScriptFromReport`) from `e2e-runner` into a `serve`
+   binary in `testnet`. `e2e-runner` goes back to running PTY scripts.
+   Readiness reports the relay address and the fake identity service's
+   address separately; phone journeys keep handing the app a static token
+   because the phone's identity client is Swift and is tested with a
+   scripted Swift adapter.
+5. One invariant, written in `testnet`'s crate documentation: every control
+   verb of the door is a method on the harness with the same name, so an
+   in-process spec and a phone journey are the same sentence.
+6. Fold the echo test agent into a trivial script if it is still used
+   anywhere the scripted providers are available.
+
+## Step 3: split the bridge
+
+`crates/amux-mobile` becomes the three crates above.
+
+- `projection.rs`, `cache.rs`, the queue and account-session bookkeeping
+  from `runtime.rs`: `app-runtime`.
+- Installation startup, credentials, relay link, shutdown from
+  `runtime.rs`, and the embedded relay glue: `app-embedded`.
+- `lib.rs`: `app-ffi`, symbols renamed from `amux_mobile_` to `amux_app_`,
+  and the Swift `Bridge.swift`/`BridgeClient.swift` updated in the same
+  commit. The generated header is a build output, not a committed file.
+- `debug-tools` stays as a feature of `app-embedded`, and is the only place a
+  product crate may depend on `testnet`. It is never a default feature.
+- Tests that need only the projection and queue run under `cargo test -p
+  app-runtime` with no node, no cbindgen and no static library build.
+
+## Step 4: build recipes
+
+iOS recipes join the root `justfile` as a module (`mod ios` in the justfile,
+`ios/justfile` for the recipes), so `just --list` shows them and `just ios
+build` runs them. Ownership stays with the iOS code; the recipe names from
+the branch are kept.
+
+Replace the unconditional bridge recipe that built three variants, recreated
+frameworks and ran linkage smoke before ordinary work with:
+
+- `just ios rust`: builds one slice, the active simulator architecture with
+  `debug-tools`, under the `dev` profile, into one Cargo target directory for
+  that triple. It packages the framework only when the Rust library or the
+  generated header changed.
+- `just ios build`, `just ios unit`: depend on `ios rust`. A Swift-only edit
+  runs no cargo, generates no header and repackages nothing.
+- `just ios package`: builds every required simulator and device slice under
+  the `mobile` profile, assembles the shipping XCFramework, and runs the
+  linkage check. Release recipes depend on this one.
+
+The `mobile` profile (fat LTO, one codegen unit, size optimisation, abort) is
+used only by `ios package` and release. Do not export `SDKROOT` for the
+whole recipe environment: host-side build scripts are fingerprinted with it,
+so alternating simulator and device builds invalidate each other. `cc`
+selects the SDK from the target triple on its own; if a crate still needs
+the variable, set it for that one cross-compiling cargo invocation only.
+
+Output ownership is simple: each worktree owns its Cargo output, its
+`DerivedData`, its packaged frameworks under `target/ios`, and any simulator
+it created. Removing the worktree removes all of it. Nothing else needs to
+discover or sweep these paths.
+
+## Step 5: acceptance
+
+Run and record these after the merge builds cleanly. Each is a test or a
+recipe that exists in the tree, not a claim.
+
+1. `just ci` and every `just ios` verification recipe pass on macOS; the
+   platform CI matrix passes.
+2. Start and stop an embedded installation repeatedly, including a failure
+   during startup and a stop while callbacks are in flight. Exactly one
+   terminal callback per owned handle, every time.
+3. Attach to an external daemon, close every view, and confirm the daemon
+   still serves another client.
+4. Two accounts, two independently owned views: closing one or changing its
+   selection neither cancels the other nor routes an operation to the wrong
+   account.
+5. Measure an initial simulator build, a no-op rebuild, a Swift-only edit and
+   a Rust edit. The Swift-only path shows no cargo invocation.
+6. `cargo tree -p app-ffi -e normal` contains no provider crate, no
+   `agent-runtime`, no `pty-host`, and no test infrastructure unless
+   `debug-tools` is enabled.
+
+## Explicitly not required
+
+Manifest and digest handshakes between the app and the framework; audits of
+linked symbols or archive members; proving two native worktrees can run
+concurrently; teaching `wt` to discover nested Cargo roots; any second build
+system. If one of these turns out to be needed, it is a separate decision,
+not part of this integration.
