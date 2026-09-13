@@ -75,7 +75,7 @@ public struct AgentsDrawer: View {
                 GlassIcon(glyph: "plus", prominent: true, size: 30)
                     .thumbTarget(x: 7, y: 7)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("New Agent")
             .identified("drawer.newAgent", label: "New Agent")
             .reclaimingThumbTarget(x: 7, y: 7)
@@ -116,7 +116,7 @@ public struct AgentsDrawer: View {
                         // the panel disagree with the list it came from.
                         if row.readable {
                             Button { actions(.open(row.id)) } label: { content }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.amuxRow)
                                 .accessibilityLabel(spoken(row))
                                 .accessibilityAddTraits(row.id == current ? [.isSelected] : [])
                                 .identified(
@@ -188,7 +188,7 @@ public struct AgentsDrawer: View {
             .foregroundStyle(design.inkMuted.color)
             .frame(minHeight: 44)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .accessibilityLabel(title)
         .identified(identifier, label: title)
     }
@@ -260,7 +260,6 @@ public struct DrawerOverlay<Content: View>: View {
     /// enough that the conversation behind it is still visibly there.
     public static var width: CGFloat { 302 }
 
-    @Environment(\.reducesMotion) private var reduceMotion
     @Binding private var open: Bool
     private let drawer: AgentsDrawer
     private let content: Content
@@ -309,7 +308,7 @@ public struct DrawerOverlay<Content: View>: View {
                 .accessibilityHidden(progress == 0)
         }
         .gesture(drag)
-        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: open)
+        .moving(value: open)
     }
 
     /// Tapping the sliver of the screen you came from puts it back. It is the

@@ -48,7 +48,7 @@ struct ModelChip: View {
                 .background { Capsule().fill(design.sunken.color.opacity(0.7)) }
                 .thumbTarget(y: 9)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Model and Effort, \(label)")
             .identified("composer.model", label: "Model and Effort", value: label)
             .reclaimingThumbTarget(y: 9)
@@ -128,7 +128,7 @@ struct SettingsCard: View {
             .contentShape(Rectangle())
             .thumbTarget(y: 2)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityLabel(model.name)
         .accessibilityAddTraits(chosen ? [.isSelected] : [])
         .identified(
@@ -317,7 +317,7 @@ struct PermissionsCard: View {
             .frame(minHeight: 52)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityLabel(
             [choice.name, choice.detail].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(choice.selected ? [.isSelected] : [])

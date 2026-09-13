@@ -105,7 +105,7 @@ struct ComposerBox: View {
                         .frame(width: 28, height: 28)
                         .thumbTarget(x: 9, y: 9)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .accessibilityLabel("Clear")
                 .identified("composer.clear", label: "Clear")
                 .reclaimingThumbTarget(x: 9, y: 9)
@@ -150,7 +150,7 @@ struct ComposerBox: View {
                     .thumbTarget(x: 7, y: 7)
                     .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Attach")
             .identified("composer.attach", label: "Attach")
             .reclaimingThumbTarget(x: 7, y: 7)
@@ -167,7 +167,7 @@ struct ComposerBox: View {
                     .thumbTarget(x: 7, y: 7)
                     .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel(dictation.active ? "Stop Dictation" : "Dictate")
             .identified("composer.dictate", label: dictation.active ? "Stop Dictation" : "Dictate")
             .reclaimingThumbTarget(x: 7, y: 7)
@@ -191,14 +191,14 @@ struct ComposerBox: View {
             Button { actions(.interrupt) } label: {
                 RoundButton(glyph: "stop.fill", filled: true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Stop")
             .identified("composer.interrupt", label: "Stop")
         } else {
             Button { actions(.send) } label: {
                 RoundButton(glyph: "arrow.up", filled: written)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .disabled(!written)
             .accessibilityLabel(state.busy ? "Queue" : "Send")
             .identified(

@@ -121,7 +121,7 @@ struct DeleteAccountCard: View {
                     .foregroundStyle(design.accent.color)
                     .thumbTarget(y: 13)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .identified(
                     "delete.manage", label: "Cancel Renewal in \(source.place)",
                     value: manageURL.absoluteString)
@@ -187,7 +187,7 @@ struct DeleteAccountCard: View {
             Button { actions(.cancel) } label: {
                 ActionLabel("Cancel", kind: .quiet, fill: true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .identified("delete.cancel", label: "Cancel")
             Button { actions(.confirm) } label: {
                 Text(model.working ? "Deleting…" : "Delete")
@@ -202,7 +202,7 @@ struct DeleteAccountCard: View {
                             .fill(design.removed.color)
                     }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             // Until the address is this account's, the one press that cannot
             // be undone is not available at all — greyed rather than hidden,
             // so what the field is for is obvious from the button it unlocks.
@@ -258,7 +258,7 @@ public struct DeleteAccountOverlay<Content: View>: View {
         ZStack {
             content
             if let entry, model.account == entry.id {
-                Color.black.opacity(0.32)
+                Color.black.opacity(Glass.scrim)
                     .ignoresSafeArea()
                     .onTapGesture { actions(.cancel) }
                     .accessibilityHidden(true)
@@ -268,5 +268,6 @@ public struct DeleteAccountOverlay<Content: View>: View {
                     .padding(.bottom, 10)
             }
         }
+        .moving(value: entry.map { model.account == $0.id } ?? false)
     }
 }

@@ -76,6 +76,10 @@ public enum Glass {
     /// in both: on a light ground it takes the content back a quarter of the
     /// way and on a dark one it does almost nothing, which is right, because a
     /// dark screen already reads the floating surface as nearer.
+    ///
+    /// One number for every screen. Six surfaces used to dim their backdrop by
+    /// six slightly different amounts, which nobody chose — it is the kind of
+    /// difference that only shows up when two of them open in the same minute.
     public static let scrim: Double = 0.25
 }
 
@@ -84,8 +88,14 @@ public enum Glass {
 /// It is a view of its own rather than a modifier because it is also the way
 /// out: everything in this app that opens over the conversation closes by a
 /// press anywhere else, and a card with no visible dismissal and no dimmed
-/// ground is a trap. Nothing about it moves — it is drawn on screens that are
-/// photographed, and a fade is a clock.
+/// ground is a trap.
+///
+/// It fades. A whole screen changing brightness between two frames is the one
+/// thing in a set of menus that reads as a fault rather than as a style, and
+/// the reason it used to cut — that a fade is a clock, and these screens are
+/// photographed — is answered by holding it still in front of a camera rather
+/// than by never moving at all. The caller supplies the curve by animating
+/// whatever decides the scrim is there.
 public struct Scrim: View {
     private let dismiss: () -> Void
 
@@ -101,6 +111,7 @@ public struct Scrim: View {
             .onTapGesture(perform: dismiss)
             .accessibilityLabel("Close")
             .accessibilityAddTraits(.isButton)
+            .transition(.opacity)
     }
 }
 

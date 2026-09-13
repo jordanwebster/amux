@@ -133,7 +133,7 @@ struct ConversationFoot: View {
                 Button(action: retry) {
                     ActionLabel("Retry Now", kind: .outline, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .padding(.top, 12)
                 .accessibilityLabel("Retry Now")
                 .identified("conversation.retry", label: "Retry Now")

@@ -281,8 +281,14 @@ public struct Conversation: View {
                 // chrome, so this is the reference's eight-point attachment
                 // below the controls rather than a duplicated chrome height.
                 .padding(.top, 8)
+                // Out of the control that opened it. The ellipsis does not
+                // move while this arrives, which is what makes it read as
+                // hanging from the button rather than replacing it.
+                .transition(.scale(scale: 0.94, anchor: .topTrailing)
+                    .combined(with: .opacity))
             }
         }
+        .moving(value: showing)
         .safeAreaInset(edge: .top, spacing: 0) { chrome }
         .safeAreaInset(edge: .bottom, spacing: 0) { foot }
         // Measure the stable outer page rather than the transcript viewport.
@@ -427,7 +433,7 @@ public struct Conversation: View {
                 GlassIcon(glyph: "ellipsis", size: 36)
                     .thumbTarget(x: 4, y: 4)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("More")
             .identified("conversation.overflow", label: "More")
             .reclaimingThumbTarget(x: 4, y: 4)
@@ -464,7 +470,7 @@ public struct Conversation: View {
                             .foregroundStyle(design.inkMuted.color)
                             .thumbTarget(x: 15, y: 15)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .accessibilityLabel("Agents")
                     .identified("conversation.drawer", label: "Agents")
                     .reclaimingThumbTarget(x: 15, y: 15)
@@ -490,7 +496,7 @@ public struct Conversation: View {
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Agents")
             .identified("conversation.drawer", label: "Agents")
             subjectLabel.padding(.trailing, 14)
@@ -564,6 +570,7 @@ private struct ConversationStanding: View {
                     showing: $showing, naming: naming, actions: actions)
             }
         }
+        .moving(value: showing)
     }
 
     /// Only a running turn reads the transcript tail. A ready composer does
@@ -627,21 +634,31 @@ private struct ConversationComposerStanding: View {
                 showing = choice == .permissions ? .permissions : nil
                 actions(.attaching(choice))
             }
+            .transition(Self.growingFromTheFooter)
         case .settings:
             SettingsCard(
                 provider: model.provider, refusal: model.settingsGate.refusal) { change in
                     actions(.setting(change))
                 }
+                .transition(Self.growingFromTheFooter)
         case .permissions:
             PermissionsCard(
                 permission: ProviderPermission(model.provider.permission),
                 refusal: model.settingsGate.refusal) { change in
                     actions(.setting(change))
                 }
+                .transition(Self.growingFromTheFooter)
         case .overflow, .deleteAgent, .rename, .tasks, nil:
             EmptyView()
         }
     }
+
+    /// Out of the footer's leading corner, where the plus and the model chip
+    /// both are. The card still takes its row above the composer — it must
+    /// not cover the field it is about to be used with — but it grows from
+    /// the control rather than appearing at arm's length from it.
+    private static let growingFromTheFooter: AnyTransition =
+        .scale(scale: 0.94, anchor: .bottomLeading).combined(with: .opacity)
 
     private func leaving(_ action: ConversationAction) {
         Keyboard.putDown()
@@ -768,7 +785,7 @@ struct ChangesChip: View {
             .background { Color.clear.frosted(Capsule()) }
             .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .accessibilityLabel(
             "Review \(changes.insertions) added, \(changes.deletions) removed")
         .identified(

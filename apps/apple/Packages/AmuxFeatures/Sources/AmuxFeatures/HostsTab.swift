@@ -54,6 +54,7 @@ public struct HostsTab: View {
                     .transition(.move(edge: .bottom))
             }
         }
+        .moving(value: model.readingDevices)
         // A screen is a container of the things on it, not a name for all of
         // them. Without this the system spreads this identifier over every
         // element underneath — the title, the buttons, the rows — so
@@ -84,7 +85,7 @@ public struct HostsTab: View {
                 GlassIcon(glyph: "plus", prominent: true)
                     .thumbTarget(x: 5, y: 5)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Pair a Host")
             .identified("hosts.pair", label: "Pair a Host")
             .reclaimingThumbTarget(x: 5, y: 5)
@@ -161,7 +162,7 @@ public struct HostsTab: View {
             Button { actions(.pair(host.id)) } label: {
                 ActionLabel("Pair", kind: .outline)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .accessibilityLabel("Pair with \(host.name)")
             .identified("hosts.pair.\(host.id)", label: "Pair with \(host.name)")
         }
@@ -202,7 +203,7 @@ public struct HostsTab: View {
             RowGroup(items: facts(roster)) { fact in
                 if fact.opensDevices {
                     Button { model.readDevices() } label: { FactRow(fact: fact) }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.amuxRow)
                 } else {
                     FactRow(fact: fact)
                 }
@@ -258,7 +259,7 @@ public struct HostsTab: View {
             Button { actions(.pair(model.discovered.first?.id)) } label: {
                 ActionLabel("Pair a Host", kind: .outline)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .identified("hosts.empty.pair", label: "Pair a Host")
         }
         .identified("hosts.empty", value: "No hosts yet")
@@ -290,7 +291,7 @@ public struct HostsTab: View {
             .padding(.vertical, 12)
             .frame(minHeight: 44)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityLabel(spoken(host))
         .identified(
             "hosts.row.\(host.id)", label: spoken(host),
@@ -406,7 +407,7 @@ private struct DevicesSheet: View {
         .background(alignment: .top) {
             // A tap outside closes it. Nothing has been withdrawn by opening
             // the list, so leaving costs nothing and does not ask.
-            Color.black.opacity(0.28)
+            Color.black.opacity(Glass.scrim)
                 .ignoresSafeArea()
                 .onTapGesture { model.stopReadingDevices() }
         }
@@ -426,7 +427,7 @@ private struct DevicesSheet: View {
                 Button { model.stopReadingDevices() } label: {
                     ActionLabel("Done", kind: .plain)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .identified("hosts.devices.done", label: "Done")
             }
             // Long enough to overflow on a phone paired with many machines,
@@ -505,7 +506,7 @@ private struct DevicesSheet: View {
             Button { actions(.revoke(device.host)) } label: {
                 ActionLabel("Revoke", kind: .outline)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .accessibilityLabel("Revoke \(device.name)")
             .identified("hosts.revoke.\(device.host)", label: "Revoke \(device.name)")
         }

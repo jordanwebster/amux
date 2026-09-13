@@ -116,7 +116,7 @@ public struct AgentsHome: View {
                             GlassIcon(glyph: "line.3.horizontal.decrease")
                                 .thumbTarget(x: 5, y: 5)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.amuxControl)
                         .accessibilityLabel("Filter Agents")
                         .identified("home.filter", label: "Filter Agents", value: filter.rawValue)
                         .reclaimingThumbTarget(x: 5, y: 5)
@@ -133,7 +133,7 @@ public struct AgentsHome: View {
                         GlassIcon(glyph: "plus", prominent: true)
                             .thumbTarget(x: 5, y: 5)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .accessibilityLabel("New Agent")
                     .identified("home.newAgent", label: "New Agent")
                     .reclaimingThumbTarget(x: 5, y: 5)
@@ -162,7 +162,7 @@ public struct AgentsHome: View {
                 }
                 .thumbTarget(y: 7)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Agents, switch account")
             .identified(
                 "home.title", label: "Agents, switch account",
@@ -295,6 +295,13 @@ public struct AgentsHome: View {
             .padding(.horizontal, design.metrics.gutter)
             .padding(.top, 6)
             .padding(.bottom, 120)
+            // Keyed on which rows are where and nothing else. A row is
+            // equatable over its whole card, so animating on the sections
+            // themselves would set the list moving every time an agent
+            // changed its headline or aged by a minute. Safe because
+            // regrouping only happens on a refresh, which is something the
+            // reader did.
+            .moving(value: sections.map { $0.rows.map(\.id) })
         }
         .scrollIndicators(.hidden)
         .refreshable { actions(.refresh) }
@@ -310,7 +317,7 @@ public struct AgentsHome: View {
         // saying so where it stands.
         if row.readable {
             Button { actions(.open(row.id)) } label: { content }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxRow)
                 .accessibilityLabel(spoken(row))
                 .identified(
                     "home.row.\(row.id)", label: spoken(row),
@@ -373,7 +380,7 @@ public struct AgentsHome: View {
                 .frame(minHeight: 44)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow(cornerRadius: design.metrics.cardRadius))
         .accessibilityLabel("\(title), \(names)")
         .identified("home.fold.\(section.id)", label: "\(title), \(names)", value: names)
     }
@@ -428,7 +435,7 @@ public struct AgentsHome: View {
                 .frame(minHeight: 44)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow(cornerRadius: design.metrics.cardRadius))
         .accessibilityLabel(text)
         .identified("home.exceptions", label: text, value: text)
     }
@@ -457,7 +464,7 @@ public struct AgentsHome: View {
             } label: {
                 ActionLabel(gateActionTitle, kind: .primary, fill: true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel(gateActionTitle)
             .identified("home.empty.action", label: gateActionTitle)
         }

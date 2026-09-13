@@ -41,7 +41,7 @@ struct SlashRows: View {
             .contentShape(Rectangle())
             .thumbTarget(y: 4)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityLabel("/\(command.name), \(command.origin)")
         .identified("slash.\(command.name)", label: "/\(command.name)", value: command.origin)
         .reclaimingThumbTarget(y: 4)

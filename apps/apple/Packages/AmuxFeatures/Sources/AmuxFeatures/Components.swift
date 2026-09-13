@@ -371,7 +371,7 @@ public struct BackLink: View {
             .foregroundStyle(design.accent.color)
             .thumbTarget(x: 1, y: 13)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .accessibilityLabel(spokenLabel)
         .identified(identifier, label: spokenLabel)
         .reclaimingThumbTarget(x: 1, y: 13)

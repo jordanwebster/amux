@@ -1,3 +1,52 @@
+2026-09-13 — **Gave the app a motion axis, and a press something to answer
+with.** The design system defined colour, type, metrics and surfaces as values
+and said nothing about time, so every moving thing in the app was a literal
+invented where it stood: 0.28 in the drawer, 1.1 in the composer, 0.18 three
+times in the diff page. Across twenty-seven view files the whole inventory of
+motion was one drawer animation, three scroll easings, three sheet transitions
+that never fired, and the composer's travelling segment. The stillness is
+deliberate and stays; what was wrong is that every state change was a cut.
+
+`Motion` names two curves and one tempo, beside `Glass` rather than on `Design`
+for the same reason `Glass` is there: a skin decides colour and type, and
+nothing about a palette implies a duration. Everything that changes state goes
+through `moving(_:value:)`, which holds still in front of a camera and for a
+reader who asked for less motion, so the two reasons to stop moving are decided
+once instead of remembered at each call site.
+
+The three sheets that declared `.transition(.move(edge: .bottom))` and hard cut
+now slide. Nothing set their gates inside an animation and no container carried
+one, so the transition had never run: the directory chooser, the device list
+and the comment sheet all appeared between two frames. The intent was in the
+source and only the wiring was missing.
+
+Six surfaces dimmed their backdrop by six slightly different amounts, which
+nobody chose. One number now, and the scrim fades rather than cutting — a whole
+screen changing brightness in a single frame is the one thing in a set of menus
+that reads as a fault. The reason it used to cut, that a fade is a clock and
+these screens are photographed, is answered by holding it still in front of a
+camera instead of never moving at all.
+
+The plus and the model chip sit on the composer's footer row, and their cards
+appeared a row above them, shoving the control the thumb had just pressed
+downward on the way in. They grow out of that corner now. The overflow already
+hung correctly from its ellipsis and was the model for it.
+
+And the press. `.plain` draws a custom label exactly as written and adds no
+pressed state at all, so every button in the app — ninety of them in the
+screens, and the tab bar in the shell — absorbed a touch and showed nothing
+until the screen changed, which reads as a dropped press, and the reader
+presses again. Rows light, because shrinking one would pull it away
+from the rows either side; controls give, because a discrete object takes a
+press the way a key does. Under Reduce Motion a control dims rather than
+scaling, so the answer survives without the movement.
+
+The fleet reorders on a curve, keyed on which rows are where and nothing else —
+a row is equatable over its whole card, so keying on the sections would set the
+list moving every time an agent aged by a minute. Safe because regrouping only
+happens on a refresh, which is something the reader did. The task strip's fold
+stops snapping between two corner radii.
+
 2026-09-13 — **Made the simulator recipe's bound a backstop again.** Creating
 and booting the two pinned simulators from nothing takes a cold runner most of
 the twelve minutes the recipe allowed it: 687 seconds on the run that passed,

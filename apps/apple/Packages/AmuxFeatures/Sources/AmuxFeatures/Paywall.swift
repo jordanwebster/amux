@@ -153,7 +153,7 @@ public struct Paywall: View {
             .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .disabled(model.working)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(chosen ? [.isSelected] : [])
@@ -230,7 +230,7 @@ public struct Paywall: View {
                     Button { actions(pressing) } label: {
                         ActionLabel(title, kind: .primary, fill: true)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .disabled(model.working || waiting)
                     .opacity(model.working || waiting ? 0.5 : 1)
                     .identified(
@@ -243,7 +243,7 @@ public struct Paywall: View {
                                 .foregroundStyle(design.accent.color)
                                 .thumbTarget(y: 14)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.amuxControl)
                         .disabled(model.working)
                         .identified(
                             "paywall.restore", label: "Restore Purchases",

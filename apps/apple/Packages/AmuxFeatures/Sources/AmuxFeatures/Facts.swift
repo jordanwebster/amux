@@ -67,6 +67,7 @@ struct FactsStrip: View {
         .frosted(
             RoundedRectangle(cornerRadius: open ? 24 : 21, style: .continuous),
             wash: open ? 0.88 : Glass.wash)
+        .moving(value: open)
         .accessibilityElement(children: .contain)
         .identified("facts", value: open ? "open" : "folded")
     }
@@ -106,7 +107,7 @@ struct FactsStrip: View {
                         .frame(width: 32, height: 44)
                         .thumbTarget(x: 7)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .accessibilityLabel(open ? "Hide Tasks" : "Show Tasks")
                 .identified("facts.grow", label: open ? "Hide Tasks" : "Show Tasks")
                 .reclaimingThumbTarget(x: 7)
@@ -160,7 +161,7 @@ struct FactsStrip: View {
             .frame(minHeight: 52)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .disabled(!queued.changeable)
         .accessibilityLabel("Queued: \(queued.text)")
         .accessibilityHint("Unqueues it back into the field")
@@ -239,7 +240,7 @@ private struct StartedPanel: View {
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityLabel(spoken(child))
         .identified("conversation.child.\(child.id)", label: spoken(child))
     }

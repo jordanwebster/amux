@@ -876,7 +876,7 @@ private struct ExplorationRow: View {
                 }
                 .thumbTarget(y: 13)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .accessibilityLabel("\(counts), \(anchor)")
             .identified(
                 "transcript.exploration", label: "\(counts), \(anchor)",
@@ -950,7 +950,7 @@ private struct PlanVerdictRow: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .disabled(verdict.markdown == nil)
             if open, let markdown = verdict.markdown {
                 Prose(markdown: markdown, open: false)
@@ -1121,7 +1121,7 @@ private struct AgentMessageRow: View {
                 }
                 .thumbTarget(y: 13)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .accessibilityLabel("\(from): \(text)")
             .identified(
                 "transcript.agent-message", label: "\(from): \(text)",

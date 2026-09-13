@@ -52,7 +52,7 @@ struct AccountRow: View {
             .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .identified(
@@ -164,7 +164,7 @@ public struct AccountSwitcher: View {
                 .padding(.horizontal, 14)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .identified("accounts.add", label: "Add Account")
         }
         .frosted(
@@ -194,7 +194,7 @@ struct SwitcherOverlay<Content: View>: View {
                 // Everything under the panel is dimmed and takes the tap that
                 // puts it away: a panel you have to aim at a close button to
                 // dismiss is a panel that traps a thumb.
-                Color.black.opacity(0.22)
+                Color.black.opacity(Glass.scrim)
                     .padding(.top, 76)
                     .ignoresSafeArea(edges: [.horizontal, .bottom])
                     .onTapGesture { actions(.dismiss) }
@@ -208,6 +208,7 @@ struct SwitcherOverlay<Content: View>: View {
                     .padding(.top, 76)
             }
         }
+        .moving(value: open)
     }
 }
 
@@ -290,7 +291,7 @@ public struct YouScreen: View {
                     .padding(.vertical, 13)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxRow)
                 .identified("you.add", label: "Add Account")
             }
         }
@@ -367,7 +368,7 @@ public struct YouScreen: View {
                 }
                 .thumbTarget(y: 9)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .accessibilityAddTraits(chosen ? [.isSelected] : [])
         .identified(
             "you.appearance.\(wanted?.rawValue ?? "system")", label: title,
@@ -409,7 +410,7 @@ public struct YouScreen: View {
         Button(action: press) {
             FieldRow(label: title, value: value, mono: mono)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityElement(children: .combine)
         .identified("you.\(id)", label: title, value: value)
     }
@@ -424,7 +425,7 @@ public struct YouScreen: View {
                 chevron: false,
                 tint: danger ? design.removed.color : design.accent.color)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .identified("you.\(id)", label: title)
     }
 
@@ -434,7 +435,7 @@ public struct YouScreen: View {
         Button(action: press) {
             FieldRow(label: title, glyph: glyph)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityElement(children: .combine)
         .identified("you.\(id)", label: title)
     }

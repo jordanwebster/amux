@@ -72,7 +72,7 @@ struct OverflowMenu: View {
             .contentShape(Rectangle())
             .thumbTarget(y: 1)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityLabel([label, detail].compactMap { $0 }.joined(separator: ", "))
         .identified(
             "overflow.\(label.lowercased().replacingOccurrences(of: " ", with: "-"))",
@@ -137,12 +137,12 @@ struct RenameCard: View {
                 Button(action: cancel) {
                     ActionLabel("Cancel", kind: .quiet, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .identified("rename.cancel", label: "Cancel")
                 Button { confirm(chosen) } label: {
                     ActionLabel("Rename", kind: .primary, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .disabled(chosen.isEmpty)
                 .opacity(chosen.isEmpty ? 0.4 : 1)
                 .identified("rename.confirm", label: "Rename")
@@ -187,7 +187,7 @@ struct DeleteAgentCard: View {
                 Button(action: cancel) {
                     ActionLabel("Cancel", kind: .quiet, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .identified("agent-delete.cancel", label: "Cancel")
                 Button(action: confirm) {
                     Text("Delete")
@@ -202,7 +202,7 @@ struct DeleteAgentCard: View {
                                 .fill(design.removed.color)
                         }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .identified("agent-delete.confirm", label: "Delete")
             }
             .padding(.top, 2)
