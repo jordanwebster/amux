@@ -38,7 +38,11 @@ jobs:
       - name: Install build tools
         run: brew install xcodegen
       - name: Build the app for the golden simulator
-        run: just ios build
+        # The restored cache can carry an xcframework whose binary it did not
+        # keep, and the bridge recipe then calls it current. Start clean.
+        run: |
+          rm -rf target/ios
+          just ios build
       - name: Drive the app through the unit suites
         run: just ios unit || true
       - name: Capture without restarting the device
