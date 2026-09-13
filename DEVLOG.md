@@ -372,6 +372,25 @@ goodbye, explicit queries replace the standing browser, and a monotonic pause
 over thirty seconds triggers a fresh query after wake. Focused discovery tests
 cover TXT round trips, fan-out, address replacement and wake detection; workspace
 lint passes.
+2026-09-13 — **Moved the Retry Now contract off the network.** The burst test
+failed on Windows again, and for the reason the first attempt had already
+named without following far enough: a press must be listened to within a
+second of the last one honoured, and the test was spending that second on a
+real failed connection. A runner slow enough to take a second over one dial
+sees the tenth press arrive after the cooldown has passed, which is a second
+shortened wait and a correct connection failing a test.
+
+No budget measured against wall time survives that. So the cooldown and the
+coalescing are now settled against the retry itself, next to the code, on a
+clock that is entirely simulated: a burst cuts short exactly one wait, the
+wait after it is the four seconds the backoff had already chosen rather than
+another round of dialling, and a press a whole cooldown later is listened to.
+None of it touches a socket.
+
+What still runs against a live relay is what only a live relay can show: that
+a press reaches a real connection and cuts its wait short, and that the phone
+recovers when the relay comes back. Neither needs to time anything.
+
 2026-09-13 — **Fixed the two real breakages in CI.** The move to `apps/apple/`
 lengthened four paths past rustfmt's line budget, in the iOS verification
 gate and the golden-manifest tests, so formatting failed and took the whole

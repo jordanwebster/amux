@@ -673,4 +673,111 @@ mod tests {
         );
         println!("cleartext relay with no supplied trust: TCP only, nothing learned about UDP");
     }
+
+    /// The connection's own loop with the dial taken out of it: it waits, and
+    /// what it does when the wait ends is count an attempt. Advancing the
+    /// clock and asking for a retry are every input the real loop has, so a
+    /// test that has both can say what the real loop would do — without a
+    /// relay, a socket, or a second of anybody's wall time.
+    fn connection(retry: &Arc<RelayRetry>, backoff: Duration) -> tokio::task::JoinHandle<()> {
+        let retry = Arc::clone(retry);
+        tokio::spawn(async move {
+            loop {
+                retry.wait(backoff).await;
+                retry.attempted();
+            }
+        })
+    }
+
+    /// Moves the clock and lets the connection act on what that woke. The
+    /// advance alone only fires the timer; the task it belongs to still needs
+    /// a turn before the test can ask what it did.
+    async fn advance(duration: Duration) {
+        tokio::time::advance(duration).await;
+        tokio::task::yield_now().await;
+    }
+
+    /// Nothing has asked, so nothing happens early: the wait runs its course
+    /// and the dial that follows it belongs to the backoff.
+    #[tokio::test(start_paused = true)]
+    async fn a_wait_nobody_shortens_runs_its_course() {
+        let retry = Arc::new(RelayRetry::default());
+        let _connection = connection(&retry, Duration::from_secs(4));
+        tokio::task::yield_now().await;
+
+        advance(Duration::from_millis(3_900)).await;
+        assert_eq!(retry.attempts(), 0, "the wait ended early");
+
+        advance(Duration::from_millis(200)).await;
+        assert_eq!(retry.attempts(), 1, "the wait never ended");
+        assert_eq!(
+            retry.shortened(),
+            0,
+            "a wait was cut short before anything had asked"
+        );
+    }
+
+    /// Ten presses in half a second are one person pressing again because
+    /// nothing looked like it happened. One of them is listened to, and the
+    /// wait after it is the one the backoff had already chosen — otherwise a
+    /// control that can be held down turns an unreachable relay into a tight
+    /// reconnect loop, which is the whole reason the backoff exists.
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_requests_cuts_short_exactly_one_wait() {
+        let retry = Arc::new(RelayRetry::default());
+        let _connection = connection(&retry, Duration::from_secs(4));
+        tokio::task::yield_now().await;
+
+        for _ in 0..10 {
+            retry.now();
+            advance(Duration::from_millis(50)).await;
+        }
+        assert_eq!(
+            retry.shortened(),
+            1,
+            "ten presses cut short {} waits, not one",
+            retry.shortened()
+        );
+        assert_eq!(
+            retry.attempts(),
+            1,
+            "ten presses dialled {} times, not once",
+            retry.attempts()
+        );
+
+        // The early dial started the ordinary four-second wait, not another
+        // round of dialling.
+        advance(Duration::from_millis(3_000)).await;
+        assert_eq!(retry.attempts(), 1, "the early dial started a tight loop");
+        advance(Duration::from_millis(600)).await;
+        assert_eq!(retry.attempts(), 2, "the backoff never came round");
+        assert_eq!(
+            retry.shortened(),
+            1,
+            "the backoff coming round was counted as somebody asking"
+        );
+    }
+
+    /// A press a whole cooldown after the last one is somebody asking again,
+    /// not the same press arriving twice, and it is listened to.
+    #[tokio::test(start_paused = true)]
+    async fn a_request_after_the_cooldown_is_listened_to() {
+        let retry = Arc::new(RelayRetry::default());
+        let _connection = connection(&retry, Duration::from_secs(4));
+        tokio::task::yield_now().await;
+
+        retry.now();
+        advance(Duration::from_millis(10)).await;
+        assert_eq!(retry.shortened(), 1, "the first press was dropped");
+
+        advance(RETRY_COOLDOWN).await;
+        retry.now();
+        advance(Duration::from_millis(10)).await;
+        assert_eq!(
+            retry.shortened(),
+            2,
+            "a press a whole cooldown later was dropped as too soon"
+        );
+        assert_eq!(retry.attempts(), 2, "the second press never dialled");
+    }
 }
