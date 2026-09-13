@@ -1,3 +1,19 @@
+2026-09-13 — **Split the repository's licensing by directory.** The core is
+now dual-licensed MIT or Apache-2.0, the Rust ecosystem's convention, so
+anything depending on amux composes with it without reasoning about licences.
+The iPhone app at `ios/` is source-available under the Functional Source
+License 1.1 with an Apache 2.0 future licence: everything is permitted except
+shipping it as a competing product, and every version converts to Apache-2.0
+two years after it is published.
+
+The two-year clock runs per version from the day code is made available, which
+for a public repository is the day a commit is pushed. Nothing has to be
+tracked, no change date nominated, and several applications on different
+release schedules need no shared calendar — each commit dates itself. The terms land
+before the app itself does, so no version of it is ever published under a
+licence that does not mean to cover it. The app moves to `apps/apple/` after
+the merge, taking its licence with it.
+
 2026-09-13 — **Protect renamed golden fixtures from line-ending translation.**
 The fifth CI run compiled and ran everywhere; the one Windows failure was a
 golden comparison whose fixture had been checked out with CRLF because

@@ -1,21 +1,60 @@
-MIT License
+amux licensing
+==============
 
-Copyright (c) 2026 Jordan Webster
+This repository holds two kinds of software under two different licences.
+Which one applies depends only on where a file lives.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Everything outside `ios/`
+-------------------------
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+The amux core — the multiplexer, the daemon, the protocols, the transport,
+the terminal client, the libraries and the tooling — is dual-licensed under
+either of
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+  * MIT license ([LICENSE-MIT](LICENSE-MIT))
+  * Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option. This is open source, and it is the same choice the Rust
+ecosystem offers, so amux composes with it without anyone having to think
+about licences.
+
+Unless you state otherwise, any contribution you intentionally submit for
+inclusion in this part of the work, as defined in the Apache-2.0 licence,
+is dual licensed as above, with no additional terms or conditions.
+
+Everything inside `ios/`
+------------------------
+
+The iPhone app is licensed under the
+Functional Source License, version 1.1, with an Apache 2.0 future licence
+(FSL-1.1-ALv2). See [ios/LICENSE](ios/LICENSE) for the terms.
+
+The FSL is **source-available, not open source**. You may read, build,
+modify and redistribute the application code for any purpose except
+competing with us: broadly, shipping it to other people as a product or
+service that substitutes for amux or for what we offer using it. Internal
+use, non-commercial research and education, and professional services
+around amux are all explicitly permitted.
+
+Every version becomes Apache-2.0 two years after we publish it. That clock
+runs per version, from the day the code is made available — for this
+repository, the day a commit is pushed. Nothing has to be tracked or
+renewed, and no date has to be nominated: a commit two years old is
+Apache-2.0, whatever has happened to the app since.
+
+Why the split
+-------------
+
+amux is meant to be a utility other software can depend on, so its core
+asks nothing of you. The applications are the product, and the FSL protects
+them from being resold out from under us while still letting you read the
+source, build it yourself, fix it, and keep using what you have built. The
+two-year conversion is the promise that this protection expires rather than
+accumulates.
+
+The app currently lives at `ios/` and will move to `apps/apple/`, alongside
+whatever other applications follow it. The licence moves with it; the terms
+do not change.
+
+[docs/LICENSING.md](docs/LICENSING.md) answers the questions this summary
+raises.
