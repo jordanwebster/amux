@@ -49,6 +49,11 @@ pub struct Topology {
     #[serde(default = "default_cloud_url")]
     pub cloud_url: String,
     pub users: Vec<String>,
+    /// What each account buys, where it is not the default. An account left
+    /// out is on the paid tier, which is what every topology written before
+    /// tiers existed assumed.
+    #[serde(default)]
+    pub tiers: HashMap<String, node::Tier>,
     pub daemons: Vec<DaemonDecl>,
     pub paired: Vec<(String, String, PairVia)>,
     pub agents: Vec<AgentDecl>,
@@ -65,8 +70,18 @@ pub struct Topology {
 #[serde(deny_unknown_fields)]
 pub struct DaemonDecl {
     pub name: String,
-    pub user: String,
+    /// The cloud account this machine is signed in to, where it is signed in
+    /// to one. A declaration with no user is a device nobody has signed in on
+    /// — a phone before its first account — which still pairs with and
+    /// reaches the machines on its own network.
+    #[serde(default)]
+    pub user: Option<String>,
     pub repository_roots: Vec<PathBuf>,
+    /// Whether this machine is on the network when the topology starts: an
+    /// advertisement a browsing device resolves, as if it had just been
+    /// switched on beside it.
+    #[serde(default)]
+    pub lan: bool,
     /// Provider transport for every SDK session this host creates, including
     /// requests that arrive later from a paired client.
     #[serde(default)]
@@ -164,6 +179,30 @@ pub enum Control {
     },
     Latency {
         millis: u64,
+    },
+    /// Puts a machine on this network, as an advertisement a device browsing
+    /// would resolve. Nothing is trusted by it: what it offers a browser is a
+    /// name, an identity claim and addresses to try.
+    Announce {
+        daemon: String,
+    },
+    /// Takes it off again, the way a machine going away says goodbye.
+    Withdraw {
+        daemon: String,
+    },
+    /// Changes what one cloud account buys, from the next token it is issued.
+    /// Links already up keep the tier they were admitted on until they
+    /// re-authenticate, which is what makes a flip observable rather than
+    /// instantaneous.
+    Tier {
+        user: String,
+        tier: node::Tier,
+    },
+    /// Eats or restores every direct UDP datagram involving a machine, which
+    /// is the network a phone on a hotel connection is on.
+    UdpBlocked {
+        daemon: String,
+        blocked: bool,
     },
     AgentEmit {
         agent: String,
@@ -309,6 +348,9 @@ impl Topology {
                 "empty or duplicate user: {user}"
             );
         }
+        for user in topology.tiers.keys() {
+            ensure!(users.contains(user), "unknown user in tiers: {user}");
+        }
         let mut daemons = HashSet::new();
         for daemon in &mut topology.daemons {
             // Daemon names become directory components inside TestNet's temporary root.
@@ -317,11 +359,9 @@ impl Topology {
                 "invalid or duplicate daemon: {}",
                 daemon.name
             );
-            ensure!(
-                users.contains(&daemon.user),
-                "unknown user: {}",
-                daemon.user
-            );
+            if let Some(user) = &daemon.user {
+                ensure!(users.contains(user), "unknown user: {user}");
+            }
             for root in &mut daemon.repository_roots {
                 *root = resolve_directory(&base, root)?;
             }
@@ -471,8 +511,16 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
     for daemon in &topology.daemons {
         builder = builder
             .daemon(&daemon.name)
-            .cloud_user(&daemon.user)
             .repository_roots(daemon.repository_roots.clone());
+        if let Some(user) = &daemon.user {
+            builder = builder.cloud_user(user);
+            // Declared before the machine starts as well as after, so its own
+            // link is admitted on the tier its account has rather than on the
+            // default and then corrected.
+            if let Some(tier) = topology.tiers.get(user) {
+                builder = builder.cloud_tier(*tier);
+            }
+        }
     }
     for (a, b, via) in &topology.paired {
         builder = builder.paired(
@@ -485,6 +533,16 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
         );
     }
     let net = builder.start().await;
+    // Before anything outside this process can ask for a token: what an
+    // account buys has to be settled before the first device signs in with it.
+    for (user, tier) in &topology.tiers {
+        net.cloud_user_tier(user, *tier);
+    }
+    // A machine declared to be on this network is on it from the start, so a
+    // device that browses before sending any control verb finds it there.
+    for daemon in topology.daemons.iter().filter(|daemon| daemon.lan) {
+        net.announce(&net.daemon(&daemon.name));
+    }
     for (name, script) in &topology.sdk_scripts {
         net.daemon(name).script_sdk_sessions(script.clone()).await;
     }
@@ -663,6 +721,13 @@ async fn apply(
             ensure!(millis <= 1000, "relay latency must not exceed 1000 ms");
             net.relay_latency(millis);
         }
+        Control::Announce { daemon: name } => net.announce(&daemon(&name)?),
+        Control::Withdraw { daemon: name } => net.withdraw(&daemon(&name)?),
+        Control::Tier { user, tier } => net.cloud_user_tier(&user, tier),
+        Control::UdpBlocked {
+            daemon: name,
+            blocked,
+        } => net.udp_blocked(&daemon(&name)?, blocked),
         Control::AgentEmit { agent, rows } => {
             scripted(&agent)?.provider.claude()?.emit(rows).await?;
         }
@@ -1205,8 +1270,24 @@ mod tests {
             admin.confirm_pair(pending).await.unwrap();
             c.can_call(&a).await;
 
+            // A machine can be put on this network and taken off it again,
+            // and the datagrams a direct link runs on can be eaten. What each
+            // does is the harness's own claim, proved in the spec suite; what
+            // is proved here is that the door names them and reaches them.
+            control.ack(json!({"Announce":{"daemon":"c"}})).await;
+            control.ack(json!({"Withdraw":{"daemon":"c"}})).await;
+            control
+                .ack(json!({"UdpBlocked":{"daemon":"c","blocked":true}}))
+                .await;
+            control
+                .ack(json!({"UdpBlocked":{"daemon":"c","blocked":false}}))
+                .await;
+
             for invalid in [
                 json!({"Connections":{"daemon":"missing"}}),
+                json!({"Announce":{"daemon":"missing"}}),
+                json!({"Withdraw":{"daemon":"missing"}}),
+                json!({"UdpBlocked":{"daemon":"missing","blocked":true}}),
                 json!({"SeverDirect":{"a":"a","b":"a"}}),
                 json!({"EstablishDirect":{"a":"a","b":"b"}}),
                 json!({"StartPinPairing":{"daemon":"b","ttl_secs":0}}),
@@ -1222,6 +1303,49 @@ mod tests {
         assert!(TcpStream::connect(relay).await.is_err());
         assert!(TcpStream::connect(address).await.is_err());
         eprintln!("Network control cleanup verified: relay and control refuse connections");
+    }
+
+    fn topology(name: &str) -> Topology {
+        Topology::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join(format!("../../e2e-tests/topologies/{name}")),
+        )
+        .unwrap()
+    }
+
+    /// A phone's first network: one machine on it, nobody signed in anywhere,
+    /// and the machine already announcing itself when the topology comes up.
+    #[tokio::test]
+    async fn testnet_serve_starts_a_network_with_nobody_signed_in() {
+        let topology = topology("onramp.json");
+        assert!(topology.users.is_empty());
+        let (net, ready, _agents) = start(&topology, "127.0.0.1:1".parse().unwrap())
+            .await
+            .unwrap();
+        assert!(ready.users.is_empty(), "nobody is signed in here");
+        let workstation = net.daemon("workstation");
+        assert!(
+            net.discovery_events().iter().any(|event| matches!(
+                event,
+                node::discovery::DiscoveryEvent::Found(advert)
+                    if advert.host_id == workstation.host_id()
+            )),
+            "a machine declared to be on this network is on it from the start"
+        );
+    }
+
+    /// An account that has not paid for the relay. Its machine's own link is
+    /// admitted on that tier rather than on the default.
+    #[tokio::test]
+    async fn testnet_serve_starts_an_account_on_the_tier_its_topology_declares() {
+        let topology = topology("free-tier.json");
+        let (net, _ready, _agents) = start(&topology, "127.0.0.1:1".parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            net.daemon("workstation").refresh_entitlement().await,
+            node::Tier::Free
+        );
     }
 
     #[tokio::test]

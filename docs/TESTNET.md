@@ -27,7 +27,8 @@ with a topology file:
 target/debug/testnet serve --topology e2e-tests/topologies/two-hosts.json
 ```
 
-A topology is a JSON object with a `cloud_url` and four required lists.
+A topology is a JSON object with a `cloud_url` and four required lists, plus
+an optional `tiers`.
 Omitting `cloud_url` uses the installation default, `https://amux.sh`. For example,
 `e2e-tests/topologies/two-hosts.json` contains:
 
@@ -46,9 +47,33 @@ Omitting `cloud_url` uses the installation default, `https://amux.sh`. For examp
 }
 ```
 
-User labels are unique and each daemon names a declared user. Pairings name
+A daemon may declare `"lan": true`, which puts it on the network when the
+topology starts, so a device that browses before sending any control verb
+finds it there. `e2e-tests/topologies/onramp.json` is the smallest such
+network: one machine on this network, nobody signed in anywhere.
+
+```json
+{
+  "cloud_url": "https://amux.sh",
+  "users": [],
+  "daemons": [
+    {"name": "workstation", "repository_roots": ["../.."], "lan": true}
+  ],
+  "paired": [],
+  "agents": []
+}
+```
+
+`tiers` says what an account buys where it is not the paid default, and is
+applied before anything can ask for a token — so a device signing in with that
+account is admitted on it. `e2e-tests/topologies/free-tier.json` is one account
+that has not paid for the relay, with one machine on it.
+
+User labels are unique. A daemon names a declared user, or names none at all,
+which is a device nobody has signed in on: it still pairs with and reaches the
+machines on its own network, and has no relay. Pairings name
 two distinct daemons and use `Cloud` or `Tcp`; cloud pairings must share a
-user. Daemon and agent names are unique within their lists and may contain
+user, so a daemon with no user pairs directly. Daemon and agent names are unique within their lists and may contain
 ASCII letters, digits, hyphens, underscores and periods, except `.` or `..`.
 Each daemon's `repository_roots` configures its host repository enumeration; an
 empty list exposes no enumerated repositories. Successfully created agent
@@ -128,6 +153,10 @@ sentence, and adding a verb means adding the method first.
 | `{"StartPinPairing":{"daemon":"desktop","ttl_secs":30}}` | Start PIN pairing with a TTL of 1–3,600 seconds; return the six-digit `pin`. |
 | `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, naming the configured cloud identity. |
 | `{"Latency":{"millis":100}}` | Delay each newly received TCP chunk entering the relay by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
+| `{"Announce":{"daemon":"workstation"}}` | Put the machine on this network, as an advertisement a browsing device resolves. Nothing is trusted by it: what a browser gets is a name, an identity claim and addresses to try. |
+| `{"Withdraw":{"daemon":"workstation"}}` | Take it off again, the way a machine going away says goodbye. |
+| `{"Tier":{"user":"personal","tier":"pro"}}` | Change what an account buys, from the next token it is issued. Links already up keep the tier they were admitted on until they re-authenticate, which is what makes the change observable rather than instantaneous. |
+| `{"UdpBlocked":{"daemon":"phone","blocked":true}}` | Eat or restore every direct UDP datagram involving the machine — the network a phone on a hotel connection is on. |
 | `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. RPC tunnels are not additional links. |
 | `{"Inventory":{"daemon":"desktop"}}` | Return the daemon's agents with their UUID, kind and driver, plus the devices it trusts. |
 | `"Shutdown"` | Stop daemons and relay, remove temporary state, acknowledge and exit. SIGTERM also cleans up. |
