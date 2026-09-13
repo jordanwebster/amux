@@ -1,3 +1,22 @@
+2026-09-13 — **A test network can be announced, withdrawn and re-tiered from
+outside the process.** The harness could already put a machine on the network,
+take it off, change what an account buys and eat direct datagrams; a topology
+file and the served control door could not say any of it. A declared machine may
+now be on the network from the start, so a browsing device finds it without
+sending a verb first, and a topology may declare what each account buys, applied
+before anything can ask for a token so the first sign-in is admitted on that tier
+rather than corrected afterwards. Two new networks describe a phone's first day:
+one machine and nobody signed in anywhere, and one account that has not paid for
+the relay.
+
+A daemon may now omit its account, which is a device nobody has signed in on.
+Such a machine is off the relay entirely — it had been attaching under the
+harness's own default identity, which is not the network a signed-out phone is
+on — and cannot pair through the cloud, since it has no identity to pair
+through. Changing an account's tier refuses a label the topology never declared,
+which would otherwise have invented an account nothing asks about and made a
+misspelling look like it worked.
+
 2026-09-13 — **A phone runs with nobody signed in, and what the account buys
 travels with its token.** Starting the app's embedded node no longer requires an
 account or a relay. With neither, it opens one profile — the one the last
