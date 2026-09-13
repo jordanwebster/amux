@@ -363,6 +363,7 @@ mod tests {
                 node::HostVia::Offline
             },
             signed_in: Some(true),
+            platform: None,
         }
     }
 
@@ -371,6 +372,7 @@ mod tests {
             host_id: uuid::Uuid::from_u128(id),
             name: name.into(),
             pubkey: vec![7; 32],
+            fingerprint: "aa:bb".into(),
             paired_at: chrono::DateTime::from_timestamp(200, 0).unwrap(),
             reachabilities: vec![reachability],
         }

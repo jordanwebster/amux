@@ -131,3 +131,61 @@ jobs:
       - uses: extractions/setup-just@v2
       - name: Check iOS device and simulator graphs
         run: just mobile-check
+
+  ios-verify:
+    name: iOS verification
+    runs-on: macos-26
+    # Leave time for setup, reference pairing and uploads after verification times out.
+    timeout-minutes: 270
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version | grep -Fx 'Xcode 26.6'
+      - name: Assert simulator runtime and device type
+        run: |
+          xcrun simctl list runtimes --json | jq -e '.runtimes[] | select(.identifier == "com.apple.CoreSimulator.SimRuntime.iOS-26-5" and .isAvailable == true)'
+          xcrun simctl list devicetypes --json | jq -e '.devicetypes[] | select(.identifier == "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro")'
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-08-30
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - name: Install build tools
+        run: brew install xcodegen
+      - name: Run iOS verification
+        # The runner uses its own recorded baseline when one is committed.
+        # Without one, verification records that performance was not measured.
+        env:
+          AMUX_PERF_MACHINE: macos-26
+        run: just ios verify
+      - name: Pair preserved design references
+        if: always()
+        run: just ios goldens-reference
+      - name: Upload performance results and limits
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-performance
+          path: |
+            target/ios/perf
+            apps/apple/Perf/baselines
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload golden triplets, reference pairs and journeys
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-verification-captures
+          path: |
+            target/ios/goldens
+            target/ios/journeys
+            target/ios/scope-audit
+          if-no-files-found: warn
+          retention-days: 7

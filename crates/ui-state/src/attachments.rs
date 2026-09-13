@@ -270,6 +270,89 @@ impl DraftAttachment {
     }
 }
 
+/// A paste this many lines long, or this many characters long, is long enough
+/// to bury the sentence around it, so it becomes one atomic Text attachment
+/// instead of filling the draft.
+///
+/// One spelling for every client: a paragraph that becomes a token in the
+/// terminal has to become one on the phone, or the same message written in two
+/// places arrives as two different things.
+pub const PASTE_TOKEN_LINES: usize = 8;
+pub const PASTE_TOKEN_CHARS: usize = 1000;
+
+/// The `name` a pasted-text attachment carries into the feed. Pasted text has
+/// no source filename, and the mention format requires a name.
+pub const PASTED_NAME: &str = "pasted text";
+
+/// What a paste becomes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Pasted {
+    /// Short enough to read in place: it stays ordinary composer text.
+    Prose(String),
+    /// Long enough to bury the sentence around it: one atomic token, named
+    /// and counted rather than shown.
+    Text { body: String, lines: u32 },
+}
+
+/// Routes a paste by size. The text is taken as given; whatever sanitising a
+/// client's own input path needs happens before this.
+pub fn paste(text: &str) -> Pasted {
+    let lines = text.lines().count().max(1);
+    if lines < PASTE_TOKEN_LINES && text.chars().count() < PASTE_TOKEN_CHARS {
+        return Pasted::Prose(text.to_owned());
+    }
+    Pasted::Text {
+        body: text.to_owned(),
+        lines: lines as u32,
+    }
+}
+
+/// The mention a long paste is sent as.
+pub fn text_mention(body: String, lines: u32) -> Mention {
+    Mention {
+        kind: MentionKind::Text { body, lines },
+        name: PASTED_NAME.to_string(),
+        size: None,
+        path: None,
+    }
+}
+
+/// The display name and mime a review attachment carries.
+///
+/// One spelling for every client: the phone and the terminal both send the
+/// same element, and a review that arrived under a different name would read
+/// as a different kind of thing in the feed.
+pub const REVIEW_NAME: &str = "review";
+pub const DIFF_MIME: &str = "text/x-diff";
+
+/// The mention a review is sent as, and the artifact reference that pins its
+/// frozen patch for whoever reads it.
+///
+/// The attachment carries no bytes: the diff is already stored where it was
+/// produced, so this rides the send only to keep it alive for the reader.
+pub fn review_mention(review: &crate::review::Review) -> (Mention, DraftAttachment) {
+    let header = review.header();
+    let diff = header.diff.clone();
+    let mention = Mention {
+        kind: MentionKind::Review {
+            header,
+            comments: review.comments().to_vec(),
+        },
+        name: REVIEW_NAME.to_string(),
+        size: None,
+        path: None,
+    };
+    let attachment = DraftAttachment {
+        id: diff,
+        kind: ArtifactKind::Diff,
+        name: REVIEW_NAME.to_string(),
+        mime: DIFF_MIME.to_string(),
+        size: 0,
+        bytes: None,
+    };
+    (mention, attachment)
+}
+
 /// Splits text into prose and valid attachment elements.
 ///
 /// Invalid candidates remain byte-for-byte in prose. Scanning resumes after

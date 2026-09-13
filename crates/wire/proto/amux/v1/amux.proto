@@ -312,6 +312,10 @@ message Host {
   string name = 2;
   string version = 3;
   Capabilities capabilities = 4;
+  // What kind of machine this is, in the host's own words: the operating
+  // system it runs, as it named itself when it was built. A host that
+  // predates this field says nothing rather than guessing.
+  optional string platform = 5;
   optional bool signed_in = 6;
 }
 
@@ -335,6 +339,7 @@ message PairMessage {
 }
 
 message PairingComplete {}
+message PairingAbandoned {}
 
 message PairingError {
   enum Reason {
@@ -358,8 +363,6 @@ message PairingIdentity {
   // Authenticated along with the responder identity by SPAKE2 sealing.
   int64 expires_at_unix_ms = 4;
 }
-
-message PairingAbandoned {}
 
 message ListHostsRequest {}
 message ListHostsResponse {
@@ -388,6 +391,9 @@ message HostEntry {
   optional string last_dial_error = 7;
   HostVia via = 8;
   optional bool signed_in = 9;
+  // The machine's kind, as it announced itself in the handshake. Unset for a
+  // host that has never been adjacent, because nothing else knows it.
+  optional string platform = 10;
 }
 
 enum HostVia {
@@ -492,6 +498,7 @@ service AgentService {
   rpc PutArtifact(PutArtifactRequest) returns (PutArtifactResponse);
   rpc GetArtifact(GetArtifactRequest) returns (GetArtifactResponse);
   rpc Diff(DiffRequest) returns (DiffResponse);
+  rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
 }
 
 message SubscribeAgentEventsRequest {}
@@ -870,6 +877,7 @@ service ClientService {
   rpc PutArtifact(ClientPutArtifactRequest) returns (PutArtifactResponse);
   rpc GetArtifact(ClientGetArtifactRequest) returns (GetArtifactResponse);
   rpc Diff(ClientDiffRequest) returns (DiffResponse);
+  rpc ListRepositories(ClientListRepositoriesRequest) returns (ListRepositoriesResponse);
 
   rpc Debug(DebugRequest) returns (DebugResponse);
 
@@ -898,9 +906,17 @@ message HostRemoved {
   bytes host_id = 1;
 }
 
+// Last complete inventory observed from one remote host. Subsequent snapshots
+// and confirmed deletions replace this membership; reachability loss does not.
+message HostInventory {
+  bytes host_id = 1;
+  repeated bytes agent_ids = 2;
+}
+
 message SubscribeAgentsRequest {}
 message SubscribeAgentsResponse {
   oneof event {
+    HostInventory host_inventory = 4;
     AgentUp agent_up = 1;
     AgentDown agent_down = 2;
     AgentUpdated agent_updated = 3;
@@ -1153,3 +1169,25 @@ message GetPairingStatusResponse {
 
 message CancelPairingRequest {}
 message CancelPairingResponse {}
+
+// Host-owned discovery; the client chooses a host, never a search root.
+message ListRepositoriesRequest {
+  optional string query = 1;
+  uint32 limit = 2;
+}
+message ClientListRepositoriesRequest {
+  bytes host_id = 1;
+  optional string query = 2;
+  uint32 limit = 3;
+}
+message ListRepositoriesResponse {
+  repeated ProjectEntry recent = 1;
+  repeated ProjectEntry repositories = 2;
+  repeated string roots = 3;
+}
+message ProjectEntry {
+  string path = 1;
+  string name = 2;
+  optional int64 last_used_unix_ms = 3;
+}
+

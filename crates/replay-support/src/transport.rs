@@ -668,7 +668,7 @@ impl AsyncWrite for ReplayWriter {
                 return std::task::Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "unexpected replay write at index {}: {line}",
+                        "ReplayWriteMismatch: unexpected replay write at index {}: {line}",
                         state.validated_writes
                     ),
                 )));
@@ -693,7 +693,7 @@ impl AsyncWrite for ReplayWriter {
                 });
                 return std::task::Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("replay write mismatch at index {expected_idx}"),
+                    format!("ReplayWriteMismatch: replay write mismatch at index {expected_idx}"),
                 )));
             };
 

@@ -320,6 +320,8 @@ impl PairingService {
             PairingRead::PeerError(error) => {
                 audit::pairing_failure("spake2", "peer rejected pairing");
                 if error.reason == wire::pb::pairing_error::Reason::UserRejected as i32 {
+                    // Release the attempt before acknowledging cancellation so callers
+                    // can immediately begin again without consuming an attempt slot.
                     drop(attempt);
                     send_body(
                         &outbound,
@@ -859,7 +861,7 @@ impl wire::pairing_service_server::PairingService for PairingService {
             })?;
         let (tx, rx) = mpsc::channel(8);
         let service = self.clone();
-        let responder_timeout = self.spake2_responder_timeout;
+        let responder_timeout = self.spake2_responder_timeout.min(attempt.remaining());
         tokio::spawn(async move {
             let responder = service.run_spake2_responder(
                 attempt,
@@ -1284,7 +1286,7 @@ fn pair_mode_status(error: crate::pairing::PairModeError) -> Status {
     use crate::pairing::PairModeError;
 
     match error {
-        PairModeError::NotActive => pairing_status(Code::FailedPrecondition, "NOT_IN_PAIRING_MODE"),
+        PairModeError::NotActive => pairing_status(Code::PermissionDenied, "INVALID_PIN"),
         PairModeError::AlreadyActive
         | PairModeError::InvalidPinFormat
         | PairModeError::SecretGeneration => pairing_status(Code::Internal, "PAIR_MODE_ERROR"),
@@ -1305,6 +1307,9 @@ fn peer_pairing_error_status(error: wire::pb::PairingError) -> Status {
     use wire::pb::pairing_error::Reason;
 
     let reason = Reason::try_from(error.reason).unwrap_or(Reason::Unspecified);
+    if matches!(reason, Reason::InvalidPin | Reason::NotInPairingMode) {
+        return pairing_status(Code::PermissionDenied, "INVALID_PIN");
+    }
     let code = match reason {
         Reason::NotInPairingMode => Code::FailedPrecondition,
         Reason::InvalidPin => Code::PermissionDenied,
@@ -1636,8 +1641,8 @@ mod tests {
             .pair(tonic::Request::new(outbound))
             .await
             .unwrap_err();
-        assert_eq!(error.code(), Code::FailedPrecondition);
-        assert_eq!(error.message(), "NOT_IN_PAIRING_MODE");
+        assert_eq!(error.code(), Code::PermissionDenied);
+        assert_eq!(error.message(), "INVALID_PIN");
         task.abort();
     }
 
@@ -1883,8 +1888,8 @@ mod tests {
             .pair(tonic::Request::new(outbound))
             .await
             .unwrap_err();
-        assert_eq!(error.code(), Code::FailedPrecondition);
-        assert_eq!(error.message(), "NOT_IN_PAIRING_MODE");
+        assert_eq!(error.code(), Code::PermissionDenied);
+        assert_eq!(error.message(), "INVALID_PIN");
 
         drop(tx);
         drop(held_attempts);
@@ -1912,7 +1917,10 @@ mod tests {
                 });
                 match client.pair(tonic::Request::new(outbound)).await {
                     Ok(response) => return (tx, response.into_inner()),
-                    Err(error) if error.code() == Code::FailedPrecondition => {
+                    Err(error)
+                        if error.code() == Code::PermissionDenied
+                            && error.message() == "INVALID_PIN" =>
+                    {
                         tokio::time::sleep(Duration::from_millis(5)).await;
                     }
                     Err(error) => panic!("unexpected pairing error: {error}"),
@@ -2052,6 +2060,7 @@ mod tests {
             .apply_claim_up(
                 relay,
                 Host {
+                    platform: None,
                     id: peer.host_id,
                     name: "peer".to_string(),
                     version: "test".to_string(),
@@ -2322,6 +2331,7 @@ mod tests {
             .apply_claim_up(
                 relay,
                 Host {
+                    platform: None,
                     id: peer.host_id,
                     name: "peer".to_string(),
                     version: "test".to_string(),
@@ -2408,6 +2418,7 @@ mod tests {
                 Host {
                     id: peer.host_id,
                     name: "old".to_string(),
+                    platform: None,
                     version: "test".to_string(),
                     capabilities: Capabilities::default(),
                     signed_in: Some(true),

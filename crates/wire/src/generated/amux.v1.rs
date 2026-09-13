@@ -198,7 +198,7 @@ pub struct ClaudeSdkV1Output {
 pub struct ClaudeSdkV1Input {
     #[prost(
         oneof = "claude_sdk_v1_input::Input",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18"
     )]
     pub input: ::core::option::Option<claude_sdk_v1_input::Input>,
 }
@@ -222,6 +222,8 @@ pub mod claude_sdk_v1_input {
         SetModel(super::ClaudeSdkSetModel),
         #[prost(message, tag = "17")]
         RequestContextBreakdown(super::ClaudeSdkRequestContextBreakdown),
+        #[prost(message, tag = "18")]
+        SetEffort(super::ClaudeSdkSetEffort),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -295,6 +297,12 @@ pub struct ClaudeSdkSetModel {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkRequestContextBreakdown {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkSetEffort {
+    /// Absent clears the session effort override.
+    #[prost(string, optional, tag = "1")]
+    pub effort: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ClaudeDriver {
@@ -367,7 +375,7 @@ pub struct CodexSdkV1Output {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CodexSdkV1Input {
-    #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4")]
+    #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub input: ::core::option::Option<codex_sdk_v1_input::Input>,
 }
 /// Nested message and enum types in `CodexSdkV1Input`.
@@ -382,6 +390,14 @@ pub mod codex_sdk_v1_input {
         Interrupt(super::CodexSdkV1Interrupt),
         #[prost(message, tag = "4")]
         ApprovalDecision(super::CodexSdkV1ApprovalDecision),
+        #[prost(message, tag = "5")]
+        SetModel(super::CodexSdkV1SetModel),
+        #[prost(message, tag = "6")]
+        SetEffort(super::CodexSdkV1SetEffort),
+        #[prost(message, tag = "7")]
+        SetPreset(super::CodexSdkV1SetPreset),
+        #[prost(message, tag = "8")]
+        Command(super::CodexSdkV1Command),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -410,6 +426,30 @@ pub struct CodexSdkV1ApprovalDecision {
     pub request_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "2")]
     pub decision: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetModel {
+    #[prost(string, tag = "1")]
+    pub model: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetEffort {
+    #[prost(string, tag = "1")]
+    pub effort: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetPreset {
+    #[prost(string, tag = "1")]
+    pub approval: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub sandbox: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1Command {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub args: ::prost::alloc::string::String,
 }
 /// Dev/test-only agent creation config and echo protocol payloads.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -776,6 +816,11 @@ pub struct Host {
     pub version: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "4")]
     pub capabilities: ::core::option::Option<Capabilities>,
+    /// What kind of machine this is, in the host's own words: the operating
+    /// system it runs, as it named itself when it was built. A host that
+    /// predates this field says nothing rather than guessing.
+    #[prost(string, optional, tag = "5")]
+    pub platform: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(bool, optional, tag = "6")]
     pub signed_in: ::core::option::Option<bool>,
 }
@@ -804,6 +849,8 @@ pub mod pair_message {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairingComplete {}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PairingAbandoned {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairingError {
     #[prost(enumeration = "pairing_error::Reason", tag = "1")]
@@ -878,8 +925,6 @@ pub struct PairingIdentity {
     pub expires_at_unix_ms: i64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct PairingAbandoned {}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListHostsRequest {}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListHostsResponse {
@@ -912,6 +957,10 @@ pub struct HostEntry {
     pub via: i32,
     #[prost(bool, optional, tag = "9")]
     pub signed_in: ::core::option::Option<bool>,
+    /// The machine's kind, as it announced itself in the handshake. Unset for a
+    /// host that has never been adjacent, because nothing else knows it.
+    #[prost(string, optional, tag = "10")]
+    pub platform: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Agent {
@@ -1593,17 +1642,28 @@ pub struct HostRemoved {
     #[prost(bytes = "vec", tag = "1")]
     pub host_id: ::prost::alloc::vec::Vec<u8>,
 }
+/// Last complete inventory observed from one remote host. Subsequent snapshots
+/// and confirmed deletions replace this membership; reachability loss does not.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HostInventory {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub agent_ids: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeAgentsRequest {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeAgentsResponse {
-    #[prost(oneof = "subscribe_agents_response::Event", tags = "1, 2, 3, 100")]
+    #[prost(oneof = "subscribe_agents_response::Event", tags = "4, 1, 2, 3, 100")]
     pub event: ::core::option::Option<subscribe_agents_response::Event>,
 }
 /// Nested message and enum types in `SubscribeAgentsResponse`.
 pub mod subscribe_agents_response {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Event {
+        #[prost(message, tag = "4")]
+        HostInventory(super::HostInventory),
         #[prost(message, tag = "1")]
         AgentUp(super::AgentUp),
         #[prost(message, tag = "2")]
@@ -2035,6 +2095,41 @@ pub struct GetPairingStatusResponse {
 pub struct CancelPairingRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CancelPairingResponse {}
+/// Host-owned discovery; the client chooses a host, never a search root.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListRepositoriesRequest {
+    #[prost(string, optional, tag = "1")]
+    pub query: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "2")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClientListRepositoriesRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, optional, tag = "2")]
+    pub query: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "3")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListRepositoriesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub recent: ::prost::alloc::vec::Vec<ProjectEntry>,
+    #[prost(message, repeated, tag = "2")]
+    pub repositories: ::prost::alloc::vec::Vec<ProjectEntry>,
+    #[prost(string, repeated, tag = "3")]
+    pub roots: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProjectEntry {
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(int64, optional, tag = "3")]
+    pub last_used_unix_ms: ::core::option::Option<i64>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum AgentProtocol {
@@ -3256,6 +3351,30 @@ pub mod agent_service_client {
             req.extensions_mut().insert(GrpcMethod::new("amux.v1.AgentService", "Diff"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn list_repositories(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.AgentService/ListRepositories",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.AgentService", "ListRepositories"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -3369,6 +3488,13 @@ pub mod agent_service_server {
             &self,
             request: tonic::Request<super::DiffRequest>,
         ) -> std::result::Result<tonic::Response<super::DiffResponse>, tonic::Status>;
+        async fn list_repositories(
+            &self,
+            request: tonic::Request<super::ListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        >;
     }
     #[derive(Debug)]
     pub struct AgentServiceServer<T> {
@@ -3928,6 +4054,52 @@ pub mod agent_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DiffSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.AgentService/ListRepositories" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListRepositoriesSvc<T: AgentService>(pub Arc<T>);
+                    impl<
+                        T: AgentService,
+                    > tonic::server::UnaryService<super::ListRepositoriesRequest>
+                    for ListRepositoriesSvc<T> {
+                        type Response = super::ListRepositoriesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListRepositoriesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AgentService>::list_repositories(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListRepositoriesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -6826,6 +6998,30 @@ pub mod client_service_client {
                 .insert(GrpcMethod::new("amux.v1.ClientService", "Diff"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn list_repositories(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ClientListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ClientService/ListRepositories",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ClientService", "ListRepositories"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn debug(
             &mut self,
             request: impl tonic::IntoRequest<super::DebugRequest>,
@@ -7002,6 +7198,13 @@ pub mod client_service_server {
             &self,
             request: tonic::Request<super::ClientDiffRequest>,
         ) -> std::result::Result<tonic::Response<super::DiffResponse>, tonic::Status>;
+        async fn list_repositories(
+            &self,
+            request: tonic::Request<super::ClientListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        >;
         async fn debug(
             &self,
             request: tonic::Request<super::DebugRequest>,
@@ -7714,6 +7917,52 @@ pub mod client_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DiffSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ClientService/ListRepositories" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListRepositoriesSvc<T: ClientService>(pub Arc<T>);
+                    impl<
+                        T: ClientService,
+                    > tonic::server::UnaryService<super::ClientListRepositoriesRequest>
+                    for ListRepositoriesSvc<T> {
+                        type Response = super::ListRepositoriesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ClientListRepositoriesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ClientService>::list_repositories(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListRepositoriesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

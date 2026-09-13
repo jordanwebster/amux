@@ -44,6 +44,8 @@ pub(crate) fn update_command(
         }
         ClaudeSdkCommand::CyclePermissionMode { .. }
         | ClaudeSdkCommand::SetModel { .. }
+        | ClaudeSdkCommand::SetEffort { .. }
+        | ClaudeSdkCommand::SetPermissionMode { .. }
         | ClaudeSdkCommand::RequestContextBreakdown { .. } => matches!(
             gate,
             SendGate::Ready | SendGate::Working | SendGate::NeedsYou
@@ -118,6 +120,12 @@ pub(crate) fn update_command(
             ClaudeSdkInput::SetModel {
                 model: selection.clone(),
             }
+        }
+        ClaudeSdkCommand::SetEffort { effort, .. } => ClaudeSdkInput::SetEffort {
+            effort: effort.clone(),
+        },
+        ClaudeSdkCommand::SetPermissionMode { mode, .. } => {
+            ClaudeSdkInput::SetPermissionMode { mode: mode.clone() }
         }
         ClaudeSdkCommand::RequestContextBreakdown { .. } => ClaudeSdkInput::RequestContextBreakdown,
     };

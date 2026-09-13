@@ -57,11 +57,12 @@ pub mod harness {
     };
     pub use crate::server::{ShutdownReason, TLS_HANDSHAKE_TIMEOUT};
     pub use crate::services::{
-        AgentServiceCtx, ClientService, CloudLinkServer, FREE_TIER_REFRESH_INTERVAL,
-        PeerTrustCommitContext, PeerTrustUpdate, commit_peer_trust,
+        AgentServiceCtx, ClientService, CloudLinkServer, DeviceRuntimeSecurity,
+        FREE_TIER_REFRESH_INTERVAL, PeerTrustCommitContext, PeerTrustUpdate, StartedUserServices,
+        commit_peer_trust, start_user_services,
     };
     pub use crate::transport::{
-        pairing_quic_client_config, relay_quic_client_config_with_roots,
+        InProcessConnection, pairing_quic_client_config, relay_quic_client_config_with_roots,
         relay_quic_server_config_from_der,
     };
     pub use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
@@ -109,18 +110,21 @@ pub use identity::{device_files_ready_in, ensure_device_files_in, stored_host_id
 #[cfg(unix)]
 pub use installation::adjacent_link_socket_path;
 pub use installation::{
-    BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
-    InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
-    ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
-    SuspendReason, SuspendReport,
+    BindError, BindRequest, BindTarget, CloudServiceId, CredentialSource, Installation,
+    InstallationError, InstallationOptions, InstallationRoot, InstallationSettings, Listeners,
+    OperationId, ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch,
+    RelocationPolicy, ResumeReport, SuspendReason, SuspendReport,
 };
 pub use model::{
-    AgentId, AgentIdentifier, ArtifactId, ArtifactKind, HostId, PeerIdentifier, ProtocolError,
-    SendInputRequest, SendMessageRequest, SetAgentStatusRequest, SubscribeSessionRequest,
+    AgentId, AgentIdentifier, ArtifactId, ArtifactKind, DisconnectReason, HostId,
+    ListRepositoriesRequest, ListRepositoriesResponse, PeerIdentifier, ProjectEntry, ProtocolError,
+    RelayConnection, SendInputRequest, SendMessageRequest, SetAgentStatusRequest,
+    SubscribeSessionRequest,
 };
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_quic};
 pub use pairing::qr::{
-    QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
+    QrPairingError, QrPairingPayload, encode_qr_pairing_invitation, encode_qr_pairing_payload,
+    parse_qr_pairing_payload,
 };
 pub use pairing::ssh::{
     SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_initiator,
@@ -133,7 +137,9 @@ pub use paths::{default_data_dir, default_log_path, keymap_dir};
 pub use routing::{
     Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, HostVia, SupportedAgentType,
 };
-pub use server::{DaemonBuilder, Server, ServerBuilder, ServerError, ShutdownReason};
-pub use transport::TransportError;
+pub use server::{
+    DaemonBuilder, EmbeddedRuntime, Server, ServerBuilder, ServerError, ShutdownReason,
+};
+pub use transport::{EmbeddedRelay, RelayEndpoint, RelayRetry, TransportError};
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 pub use wire::PROTOCOL_VERSION;

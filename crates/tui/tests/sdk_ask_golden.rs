@@ -88,6 +88,7 @@ fn base(readonly: bool) -> Vec<Msg> {
         last_dial_error: None,
         via: ui_state::HostVia::Direct,
         signed_in: Some(true),
+        platform: None,
     };
     let mut agent = an_sdk_agent();
     agent.readonly = readonly;

@@ -1,0 +1,1020 @@
+[
+  {
+    "Connection": {
+      "state": "connecting",
+      "reason": null
+    }
+  },
+  {
+    "Fleet": {
+      "epoch": 1,
+      "agents": [
+        {
+          "agent": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "host_id": "00000000-0000-0000-0000-000000000002",
+            "name": "Fix login",
+            "command": "provider",
+            "working_dir": "/work",
+            "kind": {
+              "kind": "claude",
+              "driver": "pty"
+            },
+            "readonly": false,
+            "args": [],
+            "created_at": "2023-11-14T22:13:20Z"
+          },
+          "display_name": "Fix login",
+          "attention": {
+            "attention": "idle"
+          },
+          "phase": {
+            "phase": "running"
+          },
+          "last_activity": "2023-11-14T22:13:20Z"
+        }
+      ],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null,
+            "via": "direct",
+            "signed_in": null,
+            "platform": null
+          },
+          "epoch": 1
+        }
+      ],
+      "reconciled": true
+    }
+  },
+  {
+    "Session": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "gate": {
+        "layer": "claude_pty",
+        "value": "ready"
+      },
+      "phase": {
+        "layer": "claude_pty",
+        "value": {
+          "phase": "idle",
+          "tag": "inferred"
+        }
+      },
+      "stream": {
+        "stream_phase": "live"
+      },
+      "asks": [],
+      "facts": {
+        "layer": "claude_pty",
+        "session": {
+          "permission_mode": null,
+          "model": null,
+          "context_used_tokens": null,
+          "ai_title": null,
+          "agent_name": null
+        },
+        "accepted_plans": [],
+        "echoes": []
+      },
+      "provider": {
+        "model": null,
+        "effort": null,
+        "models": [],
+        "efforts": [],
+        "commands": [],
+        "permission": {
+          "provider": "claude",
+          "mode": null
+        },
+        "todos": null
+      },
+      "settings_gate": {
+        "gate": "pty_settings_unavailable"
+      },
+      "queue": null,
+      "family": []
+    }
+  },
+  {
+    "Feed": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "base": 0,
+      "append": [
+        {
+          "layer": "claude_pty",
+          "row": {
+            "id": 0,
+            "seq": 1,
+            "kind": {
+              "entry": "message",
+              "message_id": "message-0",
+              "segments": [
+                "Hello"
+              ],
+              "content": [
+                {
+                  "segment": "prose",
+                  "value": "Hello"
+                }
+              ],
+              "finality": {
+                "finality": "final",
+                "stop_reason": "end_turn"
+              }
+            }
+          }
+        }
+      ],
+      "replace": [],
+      "evicted": 0
+    }
+  },
+  {
+    "TokenRequest": {
+      "request_id": 7,
+      "account": "personal"
+    }
+  },
+  {
+    "OpResult": {
+      "op": "00000000-0000-0000-0000-000000000003",
+      "outcome": {
+        "outcome": "input_sent"
+      }
+    }
+  },
+  {
+    "OpResult": {
+      "op": "00000000-0000-0000-0000-000000000004",
+      "outcome": {
+        "outcome": "error",
+        "error": {
+          "error": "general",
+          "message": "send refused",
+          "auth_required": false,
+          "subscription_required": false
+        }
+      }
+    }
+  },
+  {
+    "Diff": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "diff": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "document": {
+        "files": [
+          {
+            "path": "one.rs",
+            "added": 1,
+            "removed": 1,
+            "rows": [
+              {
+                "old": 1,
+                "new": null,
+                "kind": "removed",
+                "text": "-old"
+              },
+              {
+                "old": null,
+                "new": 1,
+                "kind": "added",
+                "text": "+new"
+              }
+            ],
+            "hunk_starts": [
+              0
+            ]
+          }
+        ],
+        "identity": {
+          "base": {
+            "kind": "working_tree"
+          },
+          "head": "abc",
+          "merge_base": null,
+          "blobs": []
+        }
+      }
+    }
+  },
+  {
+    "Feed": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "base": 1,
+      "append": [],
+      "replace": [
+        [
+          0,
+          {
+            "layer": "claude_pty",
+            "row": {
+              "id": 0,
+              "seq": 1,
+              "kind": {
+                "entry": "message",
+                "message_id": "message-0",
+                "segments": [
+                  "Hello",
+                  "Updated"
+                ],
+                "content": [
+                  {
+                    "segment": "prose",
+                    "value": "Hello\n\nUpdated"
+                  }
+                ],
+                "finality": {
+                  "finality": "final",
+                  "stop_reason": "end_turn"
+                }
+              }
+            }
+          }
+        ]
+      ],
+      "evicted": 0
+    }
+  },
+  {
+    "Fleet": {
+      "epoch": 1,
+      "agents": [
+        {
+          "agent": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "host_id": "00000000-0000-0000-0000-000000000002",
+            "name": "Fix login",
+            "command": "provider",
+            "working_dir": "/work",
+            "kind": {
+              "kind": "codex"
+            },
+            "readonly": false,
+            "args": [],
+            "created_at": "2023-11-14T22:13:20Z"
+          },
+          "display_name": "Fix login",
+          "attention": {
+            "attention": "idle"
+          },
+          "phase": {
+            "phase": "running"
+          },
+          "last_activity": "2023-11-14T22:13:20Z"
+        }
+      ],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null,
+            "via": "direct",
+            "signed_in": null,
+            "platform": null
+          },
+          "epoch": 1
+        }
+      ],
+      "reconciled": true
+    }
+  },
+  {
+    "Session": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "gate": {
+        "layer": "codex",
+        "value": "ready"
+      },
+      "phase": {
+        "layer": "codex",
+        "value": {
+          "phase": "idle"
+        }
+      },
+      "stream": {
+        "stream_phase": "live"
+      },
+      "asks": [],
+      "facts": {
+        "layer": "codex",
+        "active_turn_id": null
+      },
+      "provider": {
+        "model": null,
+        "effort": null,
+        "models": [],
+        "efforts": [],
+        "commands": [],
+        "permission": {
+          "provider": "unavailable"
+        },
+        "todos": null
+      },
+      "settings_gate": {
+        "gate": "ready"
+      },
+      "queue": null,
+      "family": []
+    }
+  },
+  {
+    "Feed": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "base": 0,
+      "append": [
+        {
+          "layer": "codex",
+          "row": {
+            "id": 0,
+            "seq": 2,
+            "kind": {
+              "entry": "message",
+              "item_id": "m",
+              "text": "Hello",
+              "content": [
+                {
+                  "segment": "prose",
+                  "value": "Hello"
+                }
+              ],
+              "phase": "final_answer",
+              "finality": "open"
+            }
+          }
+        }
+      ],
+      "replace": [],
+      "evicted": 0
+    }
+  },
+  {
+    "Fleet": {
+      "epoch": 1,
+      "agents": [
+        {
+          "agent": {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "host_id": "00000000-0000-0000-0000-000000000002",
+            "name": "Fix login",
+            "command": "provider",
+            "working_dir": "/work",
+            "kind": {
+              "kind": "claude",
+              "driver": "sdk"
+            },
+            "readonly": false,
+            "args": [],
+            "created_at": "2023-11-14T22:13:20Z"
+          },
+          "display_name": "Fix login",
+          "attention": {
+            "attention": "unknown"
+          },
+          "phase": {
+            "phase": "running"
+          },
+          "last_activity": "2023-11-14T22:13:20Z"
+        }
+      ],
+      "hosts": [
+        {
+          "entry": {
+            "id": "00000000-0000-0000-0000-000000000002",
+            "name": "studio",
+            "online": true,
+            "version": null,
+            "capabilities": null,
+            "trust_status": "trusted",
+            "last_dial_error": null,
+            "via": "direct",
+            "signed_in": null,
+            "platform": null
+          },
+          "epoch": 1
+        }
+      ],
+      "reconciled": true
+    }
+  },
+  {
+    "Session": {
+      "agent": "00000000-0000-0000-0000-000000000001",
+      "gate": {
+        "layer": "claude_sdk",
+        "value": "unknown"
+      },
+      "phase": {
+        "layer": "claude_sdk",
+        "value": {
+          "phase": "unknown"
+        }
+      },
+      "stream": {
+        "stream_phase": "live"
+      },
+      "asks": [],
+      "facts": {
+        "layer": "claude_sdk",
+        "session": {
+          "model": "claude-haiku-4-5-20251001",
+          "effort": null,
+          "models": [
+            {
+              "value": "default",
+              "resolved_model": "claude-opus-5[1m]",
+              "display_name": "Default (recommended)",
+              "supported_effort_levels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "value": "opus[1m]",
+              "resolved_model": "claude-opus-5[1m]",
+              "display_name": "Opus (1M context)",
+              "supported_effort_levels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "value": "claude-fable-5[1m]",
+              "resolved_model": "claude-fable-5",
+              "display_name": "Fable",
+              "supported_effort_levels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "value": "sonnet",
+              "resolved_model": "claude-sonnet-5",
+              "display_name": "Sonnet",
+              "supported_effort_levels": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "value": "haiku",
+              "resolved_model": "claude-haiku-4-5-20251001",
+              "display_name": "Haiku",
+              "supported_effort_levels": null
+            }
+          ],
+          "permission_mode": "default",
+          "context": {
+            "used_tokens": 27910,
+            "window_tokens": 200000,
+            "source": "result_usage"
+          },
+          "mcp_servers": [
+            {
+              "name": "plugin:stripe:stripe",
+              "status": "connected"
+            },
+            {
+              "name": "linear-server",
+              "status": "connected"
+            },
+            {
+              "name": "claude.ai Google Drive",
+              "status": "needs-auth"
+            },
+            {
+              "name": "claude.ai Google Calendar",
+              "status": "connected"
+            },
+            {
+              "name": "claude.ai Gmail",
+              "status": "connected"
+            }
+          ],
+          "slash_commands": [
+            "autopilot",
+            "delegate",
+            "frontend-design",
+            "handoff",
+            "intake",
+            "tasks",
+            "deep-research",
+            "stripe:explain-error",
+            "stripe:test-cards",
+            "stripe:connect-recommend",
+            "stripe:connect-required-verification-information",
+            "stripe:stripe-apps",
+            "stripe:stripe-best-practices",
+            "stripe:stripe-directory",
+            "stripe:stripe-docs",
+            "stripe:stripe-projects",
+            "stripe:upgrade-stripe",
+            "design-sync",
+            "dataviz",
+            "update-config",
+            "verify",
+            "debug",
+            "code-review",
+            "simplify",
+            "batch",
+            "fewer-permission-prompts",
+            "doctor",
+            "loop",
+            "schedule",
+            "claude-api",
+            "run",
+            "run-skill-generator",
+            "agents",
+            "auto-mode-setup",
+            "autocompact",
+            "clear",
+            "color",
+            "compact",
+            "config",
+            "context",
+            "effort",
+            "fast",
+            "heapdump",
+            "init",
+            "mcp",
+            "import",
+            "model",
+            "__remote-workflow",
+            "workflow-launch-exec",
+            "reload-skills",
+            "rename",
+            "ultrareview",
+            "security-review",
+            "usage-credits",
+            "extra-usage",
+            "usage",
+            "insights",
+            "recap",
+            "goal",
+            "design",
+            "design-consent",
+            "design-revoke",
+            "list-agents",
+            "team-onboarding"
+          ],
+          "terminal_slash_commands": [
+            "doctor",
+            "color"
+          ]
+        }
+      },
+      "provider": {
+        "model": "claude-haiku-4-5-20251001",
+        "effort": null,
+        "models": [
+          {
+            "id": "default",
+            "name": "Default (recommended)",
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": null
+          },
+          {
+            "id": "opus[1m]",
+            "name": "Opus (1M context)",
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": null
+          },
+          {
+            "id": "claude-fable-5[1m]",
+            "name": "Fable",
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": null
+          },
+          {
+            "id": "sonnet",
+            "name": "Sonnet",
+            "efforts": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "default_effort": null
+          },
+          {
+            "id": "haiku",
+            "name": "Haiku",
+            "efforts": [],
+            "default_effort": null
+          }
+        ],
+        "efforts": [],
+        "commands": [
+          {
+            "name": "autopilot",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "delegate",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "frontend-design",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "handoff",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "intake",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "tasks",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "deep-research",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:explain-error",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:test-cards",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:connect-recommend",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:connect-required-verification-information",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-apps",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-best-practices",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-directory",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-docs",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:stripe-projects",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "stripe:upgrade-stripe",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "design-sync",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "dataviz",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "update-config",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "verify",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "debug",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "code-review",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "simplify",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "batch",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "fewer-permission-prompts",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "doctor",
+            "source": "claude",
+            "terminal_only": true
+          },
+          {
+            "name": "loop",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "schedule",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "claude-api",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "run",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "run-skill-generator",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "agents",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "auto-mode-setup",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "autocompact",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "clear",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "color",
+            "source": "claude",
+            "terminal_only": true
+          },
+          {
+            "name": "compact",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "config",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "context",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "effort",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "fast",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "heapdump",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "init",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "mcp",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "import",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "model",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "__remote-workflow",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "workflow-launch-exec",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "reload-skills",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "rename",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "ultrareview",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "security-review",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "usage-credits",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "extra-usage",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "usage",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "insights",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "recap",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "goal",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "design",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "design-consent",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "design-revoke",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "list-agents",
+            "source": "claude",
+            "terminal_only": false
+          },
+          {
+            "name": "team-onboarding",
+            "source": "claude",
+            "terminal_only": false
+          }
+        ],
+        "permission": {
+          "provider": "claude",
+          "mode": "default"
+        },
+        "todos": null
+      },
+      "settings_gate": {
+        "gate": "claude_sdk",
+        "reason": "unknown"
+      },
+      "queue": null,
+      "family": []
+    }
+  },
+  {
+    "Connection": {
+      "state": "disconnected",
+      "reason": "unreachable"
+    }
+  },
+  {
+    "Invariant": {
+      "detail": "example diagnostic"
+    }
+  },
+  {
+    "Attention": {
+      "account": "work",
+      "waiting": 2
+    }
+  },
+  {
+    "Devices": {
+      "identity": {
+        "host": "00000000-0000-0000-0000-000000000009",
+        "name": "iPhone",
+        "fingerprint": "4f2a91c05b7e8d3a6c14f0928be5d7a3419c60fe2d8b7a05c31e94f2ab7d69c1"
+      },
+      "devices": [
+        {
+          "host": "00000000-0000-0000-0000-000000000001",
+          "name": "studio",
+          "fingerprint": "e04a7b12c98d3f5601ae72b4d8c05913f6a2e7dbc4051829f3b6ad70e91c58d2",
+          "paired_at": "2023-11-14T22:13:20Z"
+        }
+      ]
+    }
+  }
+]

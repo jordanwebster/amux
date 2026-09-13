@@ -117,7 +117,14 @@ pub(crate) fn claude_frame_parts(
                 .is_some_and(|layer| layer.history_truncated()),
             loading,
         },
-        activity: activity_row(model, chat, ctx, readonly, working),
+        activity: crate::chat::queue::strip(
+            model,
+            chat.agent,
+            activity_row(model, chat, ctx, readonly, working),
+            theme,
+            width,
+            chat.inline_ask.is_none(),
+        ),
         bottom,
         overlay,
     }

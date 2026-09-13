@@ -1,9 +1,19 @@
 # Debugging from a report
 
-A debug report is a frozen terminal frame plus the state needed to reproduce
-it. Start with the report directory instead of asking the person who captured
-it to reconstruct the session from memory. Reports never leave the machine;
-amux does not upload or share them.
+A debug report is a frozen frame plus the state needed to reproduce it. The
+frame is either the cells a terminal drew, in `frame.txt` and `frame.styles`,
+or the picture a phone composited, in `frame.png` with its point size and scale
+recorded in `report.json`. Marked rectangles are measured in whatever the frame
+is measured in: terminal cells, or points on the phone. Start with the report
+directory instead of asking the person who captured it to reconstruct the
+session from memory.
+
+Nothing is uploaded in the background. A report captured here stays here. A
+report captured on the phone also stays on the phone until the person who
+captured it presses Send on the report screen: that sends one bundle — the
+picture, the recordings, the rectangles they drew and the notes they wrote — to
+their own amux account, and nothing else leaves the phone. Sending is always
+theirs to do, once, per report.
 
 If your prompt contains only this document and a report directory, begin by
 running `amux debug report replay <report-directory>`. Then read `report.json`
@@ -22,6 +32,20 @@ dragging and a keyboard fallback are available. Finishing writes and
 self-replays the bundle, then repaints live state; the flow's own inputs never
 enter the captured trace. The chrome is suspended during raw attach, so detach
 before capturing an agent's screen.
+
+On the phone the same flow starts from a screenshot. iOS notifies the app after
+taking the system screenshot. The app immediately freezes its own composited
+frame, the runtime's recording and the view-state trace before showing report
+controls. The app frame may differ from the system screenshot; there is no
+guaranteed maximum delay between the two captures.
+
+An app-owned Report pill opens the report on that already frozen frame. A tap
+elsewhere in the app dismisses the offer and releases the capture. The system
+owns its screenshot preview, which may be a thumbnail or cover the app; the
+app cannot position its prompt relative to that preview. Returning to the app
+finds the same offer and frozen frame, without a Share step or Photos access.
+Report a Problem under Help on the You tab also freezes the screen before
+opening the report. Both entry points exist only in debug builds.
 
 ## Find the report
 
@@ -138,6 +162,21 @@ $ amux debug report replay /path/to/report --at 12 --styles
 `--at` accepts draw-event indices, not arbitrary event counts. Replay is local
 and deterministic: it contacts no daemon, opens no terminal, dispatches no
 agent command and uses the times and viewport recorded in the trace.
+
+A bundle from the phone records `native_view` as its trace kind, and nothing
+here draws those screens. Replay says so, writes `unchecked` as the verdict
+rather than a comparison it never made, and names the recipe that does redraw
+it:
+
+```console
+$ amux debug report replay /path/to/phone-report
+Unchecked: this report carries a native view trace, so nothing here can redraw it.
+Replay it on the platform that drew it: just ios replay /path/to/phone-report
+```
+
+`amux debug report show` reads a phone bundle like any other, and graduation
+copies its picture across untouched — there is no text in a screenshot to
+redact, and what it shows is the screen the report is about.
 
 ## Work a tweak inside its marks
 

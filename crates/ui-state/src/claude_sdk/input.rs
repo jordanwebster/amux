@@ -27,6 +27,14 @@ pub enum ClaudeSdkCommand {
         agent: AgentId,
         model: Option<String>,
     },
+    SetEffort {
+        agent: AgentId,
+        effort: Option<String>,
+    },
+    SetPermissionMode {
+        agent: AgentId,
+        mode: String,
+    },
     RequestContextBreakdown {
         agent: AgentId,
     },
@@ -40,6 +48,8 @@ impl ClaudeSdkCommand {
             | Self::Interrupt { agent }
             | Self::CyclePermissionMode { agent }
             | Self::SetModel { agent, .. }
+            | Self::SetEffort { agent, .. }
+            | Self::SetPermissionMode { agent, .. }
             | Self::RequestContextBreakdown { agent } => *agent,
         }
     }

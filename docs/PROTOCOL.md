@@ -87,6 +87,22 @@ until their configured expiry. SSH pairing instead exchanges identities over
 the already-authenticated SSH stream and records outbound reachability only on
 the side that knows how to dial it.
 
+Clients can pause SPAKE2 before granting trust. `begin_pair_pin` and
+`begin_pair_qr` return a `PendingPeer` carrying the authenticated host id,
+name, SHA-256 public-key fingerprint and expiry, with the expiry sealed inside
+the responder identity. Neither trust store changes during this phase. The
+local profile administration handle retains the open stream behind an opaque,
+single-use token; unresolved streams expire after at most five minutes and at
+most 32 are retained. That token is a local capability, not a serializable
+trust decision a client could recreate from the identity fields it displays.
+`confirm_pair` sends the initiator's sealed identity, waits for the
+responder's trust commit and stores the peer. `abandon_pair` sends a rejection
+and waits for `PairingAbandoned`, which the responder sends after releasing the
+attempt. Cancelling leaves existing trust unchanged and consumes no guess, and
+dropping a pending value grants no trust. Begin, confirm, abandon and device
+identity inspection are served only by `ProfileService` on the installation
+front door, never by a profile socket or a peer stream.
+
 ## Chapter 3: Presence
 
 Presence comes from the link control protocol. `Hello` and `HelloAck` each
@@ -100,6 +116,13 @@ through a relay when that relay says it has an adjacent link to the host. This
 can make an untrusted host a pairing candidate, but does not grant authority or
 make a discovery result online. Losing the last route leaves a trusted host in
 inventory as offline.
+
+A host also announces what kind of machine it is: `platform` names the
+operating system the daemon was built for, in the host's own words. It is
+optional because a host built before the field existed says nothing, and a
+machine whose kind is unknown is not the same as one claiming to be nothing in
+particular. Nothing routes or authorizes on it; it exists so a client can tell
+one device from another in a list.
 
 ## Chapter 4: Routing and failover
 

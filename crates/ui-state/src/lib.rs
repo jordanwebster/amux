@@ -17,6 +17,8 @@ pub mod diff;
 mod effect;
 mod model;
 mod msg;
+pub mod provider;
+pub mod queue;
 pub mod review;
 mod update;
 
@@ -30,8 +32,9 @@ pub use ::model::{
     HostTrustStatus, HostVia, ProfileId, Protocol, RelayCarrier, Tier, WorkingOn,
 };
 pub use attachments::{
-    ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DraftAttachment, Mention,
-    MentionKind, Segment, format_mention, split_mentions,
+    ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DIFF_MIME, DraftAttachment,
+    Mention, MentionKind, PASTE_TOKEN_CHARS, PASTE_TOKEN_LINES, PASTED_NAME, Pasted, REVIEW_NAME,
+    Segment, format_mention, paste, review_mention, split_mentions, text_mention,
 };
 pub use claude::{ClaudeCommand, SendGate};
 pub use claude_sdk::{ClaudeSdkCommand, ClaudeSdkInput, SdkAnswer};
@@ -41,6 +44,8 @@ pub use msg::{
     Command, DisconnectReason, Ephemeral, FlowClass, Msg, OpError, OpId, OpOutcome, ServerMsg,
     StreamCloseReason, StreamEntry, StreamMsg,
 };
+pub use provider::ProviderFacts;
+pub use queue::{Draft, DraftSegment, QueueCommand, QueueDelivery, QueuedMessage};
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
 
 pub use self::model::{

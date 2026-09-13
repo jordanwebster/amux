@@ -35,7 +35,7 @@ pub(crate) use host_api::OperationGate;
 pub use supervisor::{
     AgentResumeResult, AgentResumeStatus, CredentialSource, Installation, InstallationOptions,
     Intent, OperationId, ProfileEvent, ProfileResumeResult, ProfileStatus, ProfileSuspendResult,
-    ProfileWatch, ResumeReport, SuspendReason, SuspendReport,
+    ProfileWatch, RelocationPolicy, ResumeReport, SuspendReason, SuspendReport,
 };
 
 pub use crate::profile::runtime::{InstallationSettings, Listeners};
@@ -45,10 +45,10 @@ pub mod registry;
 use std::path::PathBuf;
 
 pub use model::ProfileId;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use paths::MAX_CODEX_SOCKET_PATH_BYTES;
 pub use paths::ProfilePaths;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use paths::adjacent_codex_socket_path;
 #[cfg(unix)]
 pub use paths::adjacent_link_socket_path;

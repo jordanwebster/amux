@@ -10,7 +10,8 @@ pub use recorder::{
 };
 pub use runtime::{
     AttachmentClient, AttachmentClientFuture, AttachmentOpener, BUILD, ConnectFailure,
-    ConnectFuture, Connector, Generation, LateResult, MsgTap, ProfileDirectory, ProfileEntry,
-    ReportExtras, ReportExtrasProvider, Runtime, RuntimeGone, RuntimeOptions, ShellEdge,
-    execute_put_then_send, write_panic_report,
+    ConnectFuture, Connector, Generation, HostEventStream, HostEventStreamFuture, HostInventory,
+    LateResult, MsgTap, ProfileDirectory, ProfileEntry, ReportExtras, ReportExtrasProvider,
+    Runtime, RuntimeGone, RuntimeOptions, ShellEdge, execute_put, execute_put_then_send,
+    write_panic_report,
 };

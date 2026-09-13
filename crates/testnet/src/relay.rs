@@ -1,16 +1,18 @@
-//! In-process cloud relay for testnet topologies.
+//! A configured cloud identity and its independently addressed test relay.
 //!
 //! Mirrors the assembly used by the startup tests: a real
-//! [`CloudLinkServer`] served over localhost TCP, with a token in `Hello`
+//! [`CloudLinkServer`] served over localhost TCP and QUIC, with a token
 //! registry standing in for JWT validation. Daemons in a `TestNet` share one
 //! cloud user by default, so the relay bridges them exactly like production
 //! cloud routing does for one account; the builder's `cloud_user` verb
-//! attaches a daemon under a different user, and per-token TTLs let the
-//! Reauth flow be driven hermetically.
+//! attaches a daemon under a different user, per-token TTLs let the Reauth
+//! flow be driven hermetically, and per-user tiers let free-tier refusals be
+//! exercised without an identity service.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use futures_util::{Stream, stream};
@@ -24,18 +26,18 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
-use wire;
 
 use super::assertions::POLL_INTERVAL;
+use super::latency::Delayed;
 
 /// OS-level handles to every TCP connection the relay has accepted, so an
-/// outage can sever them for real (tonic's spawned connection tasks outlive
-/// an aborted accept loop).
+/// outage can sever them for real (spawned connection tasks outlive an
+/// aborted accept loop).
 type TrackedConnections = Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
 
 /// What the relay's authenticator knows about one bearer token. The
 /// authenticated session expires `ttl` after each validation, standing in
-/// for a JWT `exp` claim.
+/// for a JWT `exp` claim, and carries the tier the token was minted with.
 #[derive(Clone, Copy)]
 pub(crate) struct RegisteredToken {
     pub(crate) user_id: Uuid,
@@ -46,25 +48,38 @@ pub(crate) struct RegisteredToken {
 /// Shared token → user/TTL registry; the relay's authenticator reads it and
 /// test verbs (different cloud users, short-lived JWTs) write it.
 pub(crate) type TokenRegistry = Arc<std::sync::RwLock<HashMap<String, RegisteredToken>>>;
+
+/// Shared account → tier registry, so a test can change what an account is
+/// entitled to and see it minted into the account's next token.
 pub(crate) type UserTierRegistry = Arc<std::sync::RwLock<HashMap<Uuid, node::Tier>>>;
 
 /// TTL for ordinary (non-expiring-test) testnet tokens.
 const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(3600);
 
 pub struct CloudRelay {
-    pub addr: SocketAddr,
-    pub(crate) host_id: HostId,
+    pub(crate) url: String,
+    pub(crate) relay: Relay,
     /// The default cloud user's bearer token.
     pub(crate) token: String,
     user_id: Uuid,
     tokens: TokenRegistry,
     user_tiers: UserTierRegistry,
     failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
-    quic_server_config: quinn::ServerConfig,
-    quic_client_config: quinn::ClientConfig,
     /// builder `cloud_user` label → that user's `(user_id, token)`.
     user_labels: std::sync::Mutex<HashMap<String, (Uuid, String)>>,
+}
+
+/// Carries authenticated device traffic; cloud identity and token issuance
+/// belong to [`CloudRelay`], which supplies this relay's address to devices.
+pub(crate) struct Relay {
+    pub(crate) addr: SocketAddr,
+    pub(crate) host_id: HostId,
+    tokens: TokenRegistry,
+    failures: Arc<std::sync::RwLock<HashMap<Uuid, tonic::Status>>>,
     server: Mutex<Option<RunningCloud>>,
+    latency_millis: Arc<AtomicU64>,
+    quic_server_config: quinn::ServerConfig,
+    quic_client_config: quinn::ClientConfig,
 }
 
 struct RunningCloud {
@@ -75,7 +90,7 @@ struct RunningCloud {
 }
 
 impl RunningCloud {
-    /// Kills the accept loop and severs every accepted socket. Daemons see
+    /// Kills the accept loops and severs every accepted socket. Daemons see
     /// their relay links fail like a genuine outage, not a graceful drain.
     fn sever(mut self) {
         self.quic_endpoint
@@ -106,7 +121,13 @@ impl Drop for RunningCloud {
 }
 
 impl CloudRelay {
+    /// A cloud named by the default installation configuration, with a fresh
+    /// loopback relay.
     pub async fn start() -> Self {
+        Self::start_with_url(super::default_cloud_url()).await
+    }
+
+    pub(crate) async fn start_with_url(url: String) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("bind testnet cloud relay listener");
@@ -133,50 +154,55 @@ impl CloudRelay {
                     tier: node::Tier::Pro,
                 },
             );
-        let relay = Self {
+        let failures = Arc::default();
+        let relay = Relay {
             addr,
             host_id: Uuid::new_v4(),
+            tokens: tokens.clone(),
+            failures: Arc::clone(&failures),
+            server: Mutex::new(None),
+            latency_millis: Arc::default(),
+            quic_server_config,
+            quic_client_config,
+        };
+        relay.serve(listener).await;
+        Self {
+            url,
+            relay,
             token,
             user_id,
             tokens,
             user_tiers,
-            failures: Arc::default(),
-            quic_server_config,
-            quic_client_config,
+            failures,
             user_labels: std::sync::Mutex::new(HashMap::new()),
-            server: Mutex::new(None),
-        };
-        relay.serve(listener).await;
-        relay
+        }
     }
 
-    async fn serve(&self, listener: TcpListener) {
-        let state = testnet_server_state("cloud", self.host_id, None);
-        state.write().await.is_cloud_server = true;
-        let service = CloudLinkServer::with_authenticator(
-            state,
-            Arc::new(RegistryTokenAuthenticator {
-                tokens: self.tokens.clone(),
-                failures: self.failures.clone(),
-            }),
-        );
-        let connections: TrackedConnections = Arc::default();
-        let tcp_task =
-            service.serve_on_incoming(tracked_tcp_incoming(listener, connections.clone()));
-        let quic_endpoint =
-            bind_quic_addr_with_retries(self.quic_server_config.clone(), self.addr).await;
-        let quic_task =
-            service.serve_on_quic_endpoint(quic_endpoint.clone(), TLS_HANDSHAKE_TIMEOUT);
-        *self.server.lock().await = Some(RunningCloud {
-            service,
-            tasks: vec![tcp_task, quic_task],
-            quic_endpoint,
-            connections,
-        });
+    /// The relay assigned by this cloud, independent of its identity URL.
+    pub fn relay_addr(&self) -> SocketAddr {
+        self.relay.addr
     }
 
+    /// The client configuration trusting this relay's QUIC certificate.
     pub(crate) fn quic_client_config(&self) -> quinn::ClientConfig {
-        self.quic_client_config.clone()
+        self.relay.quic_client_config.clone()
+    }
+
+    /// Registers or returns the relay account identified by `label`.
+    pub fn register_user(&self, label: &str) -> RelayUser {
+        let (user_id, token) = self.credentials_for_user(label);
+        RelayUser { user_id, token }
+    }
+
+    /// Uses this relay's plaintext transport for an unbound profile.
+    pub async fn use_for_profile(
+        &self,
+        installation: &node::Installation,
+        id: node::ProfileId,
+    ) -> Result<(), node::installation::InstallationError> {
+        installation
+            .use_test_cloud_transport(id, self.relay.addr)
+            .await
     }
 
     pub(crate) fn reject_user(&self, label: &str, error: Option<tonic::Status>) {
@@ -216,7 +242,8 @@ impl CloudRelay {
     }
 
     /// Registers a bearer token the relay will accept for `user_id`, with
-    /// authenticated sessions that expire `ttl` after each validation.
+    /// authenticated sessions that expire `ttl` after each validation. The
+    /// tier is the one the account currently holds.
     pub(crate) fn register_token(&self, token: &str, user_id: Uuid, ttl: Duration) {
         let tier = self
             .user_tiers
@@ -263,20 +290,35 @@ impl CloudRelay {
             .expect("testnet user tier registry poisoned")
             .insert(user_id, tier);
     }
+}
 
-    /// Registers or returns the relay account identified by `label`.
-    pub fn register_user(&self, label: &str) -> RelayUser {
-        let (user_id, token) = self.credentials_for_user(label);
-        RelayUser { user_id, token }
-    }
-
-    /// Uses this relay's plaintext transport for an unbound profile.
-    pub async fn use_for_profile(
-        &self,
-        installation: &node::Installation,
-        id: node::ProfileId,
-    ) -> Result<(), node::installation::InstallationError> {
-        installation.use_test_cloud_transport(id, self.addr).await
+impl Relay {
+    async fn serve(&self, listener: TcpListener) {
+        let state = testnet_server_state("relay", self.host_id, None);
+        state.write().await.is_cloud_server = true;
+        let service = CloudLinkServer::with_authenticator(
+            state,
+            Arc::new(RegistryTokenAuthenticator {
+                tokens: self.tokens.clone(),
+                failures: self.failures.clone(),
+            }),
+        );
+        let connections: TrackedConnections = Arc::default();
+        let tcp_task = service.serve_on_incoming(tracked_tcp_incoming(
+            listener,
+            connections.clone(),
+            self.latency_millis.clone(),
+        ));
+        let quic_endpoint =
+            bind_quic_addr_with_retries(self.quic_server_config.clone(), self.addr).await;
+        let quic_task =
+            service.serve_on_quic_endpoint(quic_endpoint.clone(), TLS_HANDSHAKE_TIMEOUT);
+        *self.server.lock().await = Some(RunningCloud {
+            service,
+            tasks: vec![tcp_task, quic_task],
+            quic_endpoint,
+            connections,
+        });
     }
 
     /// Attempts a routed `ClientService.ListAgents` call from the relay's
@@ -310,6 +352,19 @@ impl CloudRelay {
         }
     }
 
+    /// Which hosts this account is connected to the relay by, and how many
+    /// links each holds.
+    pub(crate) async fn links_for(&self, user_id: Uuid) -> Vec<(HostId, usize)> {
+        let service = {
+            let guard = self.server.lock().await;
+            guard.as_ref().map(|running| running.service.clone())
+        };
+        match service {
+            Some(service) => service.user_links(user_id).await,
+            None => Vec::new(),
+        }
+    }
+
     /// Takes the relay down hard: stops accepting and severs every accepted
     /// socket, so daemons observe a genuine outage (links fail, routes drop).
     pub(crate) async fn go_offline(&self) {
@@ -329,6 +384,10 @@ impl CloudRelay {
 
     pub(crate) async fn is_online(&self) -> bool {
         self.server.lock().await.is_some()
+    }
+
+    pub(crate) fn set_latency(&self, millis: u64) {
+        self.latency_millis.store(millis, Ordering::SeqCst);
     }
 }
 
@@ -363,21 +422,27 @@ pub struct RelayUser {
 }
 
 /// Accepts TCP connections like the production relay, but keeps an OS-level
-/// duplicate handle to each socket so [`RunningCloud::sever`] can cut them.
+/// duplicate handle to each socket so [`RunningCloud::sever`] can cut them,
+/// and delays received bytes by the relay's configured latency.
 fn tracked_tcp_incoming(
     listener: TcpListener,
     connections: TrackedConnections,
-) -> impl Stream<Item = std::io::Result<TcpStream>> + Send + 'static {
-    stream::unfold((listener, connections), |(listener, connections)| async {
-        let item = accept_tracked(&listener, &connections).await;
-        Some((item, (listener, connections)))
-    })
+    latency: Arc<AtomicU64>,
+) -> impl Stream<Item = std::io::Result<Delayed<TcpStream>>> + Send + 'static {
+    stream::unfold(
+        (listener, connections, latency),
+        |(listener, connections, latency)| async {
+            let item = accept_tracked(&listener, &connections, latency.clone()).await;
+            Some((item, (listener, connections, latency)))
+        },
+    )
 }
 
 async fn accept_tracked(
     listener: &TcpListener,
     connections: &TrackedConnections,
-) -> std::io::Result<TcpStream> {
+    latency: Arc<AtomicU64>,
+) -> std::io::Result<Delayed<TcpStream>> {
     let (stream, _addr) = listener.accept().await?;
     if let Err(error) = stream.set_nodelay(true) {
         tracing::warn!(error = %error, "failed to set TCP_NODELAY");
@@ -389,7 +454,7 @@ async fn accept_tracked(
             .expect("testnet cloud connection registry poisoned")
             .push(duplicate);
     }
-    TcpStream::from_std(std_stream)
+    Ok(Delayed::new(TcpStream::from_std(std_stream)?, latency))
 }
 
 /// Binds `addr`, retrying briefly: right after a relay or daemon shutdown the

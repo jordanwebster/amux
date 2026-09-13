@@ -292,3 +292,78 @@ fn uuid_from_bytes(name: &str, bytes: Vec<u8>) -> Result<Uuid, DecodeError> {
     })?;
     Ok(Uuid::from_bytes(bytes))
 }
+
+impl From<model::ListRepositoriesResponse> for wire::ListRepositoriesResponse {
+    fn from(value: model::ListRepositoriesResponse) -> Self {
+        fn entry(value: model::ProjectEntry) -> wire::ProjectEntry {
+            wire::ProjectEntry {
+                path: value.path.to_string_lossy().into_owned(),
+                name: value.name,
+                last_used_unix_ms: value.last_used.map(|time| time.timestamp_millis()),
+            }
+        }
+        Self {
+            recent: value.recent.into_iter().map(entry).collect(),
+            repositories: value.repositories.into_iter().map(entry).collect(),
+            roots: value
+                .roots
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
+        }
+    }
+}
+
+impl TryFrom<wire::ListRepositoriesResponse> for model::ListRepositoriesResponse {
+    type Error = String;
+
+    fn try_from(value: wire::ListRepositoriesResponse) -> Result<Self, Self::Error> {
+        fn entry(value: wire::ProjectEntry) -> Result<model::ProjectEntry, String> {
+            Ok(model::ProjectEntry {
+                path: value.path.into(),
+                name: value.name,
+                last_used: value
+                    .last_used_unix_ms
+                    .map(|time| {
+                        chrono::DateTime::from_timestamp_millis(time)
+                            .ok_or_else(|| "invalid ProjectEntry.last_used_unix_ms".to_owned())
+                    })
+                    .transpose()?,
+            })
+        }
+        Ok(Self {
+            recent: value
+                .recent
+                .into_iter()
+                .map(entry)
+                .collect::<Result<_, _>>()?,
+            repositories: value
+                .repositories
+                .into_iter()
+                .map(entry)
+                .collect::<Result<_, _>>()?,
+            roots: value.roots.into_iter().map(PathBuf::from).collect(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod repository_tests {
+    use super::*;
+
+    #[test]
+    fn repositories_invalid_wire_timestamp_is_a_decode_error() {
+        let result = model::ListRepositoriesResponse::try_from(wire::ListRepositoriesResponse {
+            recent: vec![wire::ProjectEntry {
+                path: "/project".into(),
+                name: "project".into(),
+                last_used_unix_ms: Some(i64::MAX),
+            }],
+            ..Default::default()
+        });
+        assert_eq!(
+            result.unwrap_err(),
+            "invalid ProjectEntry.last_used_unix_ms"
+        );
+    }
+}

@@ -231,12 +231,14 @@ fn options_with_credentials(
     credentials: CredentialSource,
 ) -> InstallationOptions {
     InstallationOptions {
+        relocation: Default::default(),
         root,
         listeners: Listeners::InProcessOnly,
         credentials,
         identity_http: reqwest::Client::new(),
         host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
         settings: InstallationSettings {
+            repository_roots: Vec::new(),
             host_name: "binding-test".into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),

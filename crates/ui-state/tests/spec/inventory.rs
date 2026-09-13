@@ -227,3 +227,139 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
         ("inventory::stale_rename", stale_rename_sequence()),
     ]
 }
+
+/// A conversation left open stays subscribed through both a transport close
+/// and the temporary disappearance of its host's inventory.
+#[test]
+fn attached_remote_conversations_rejoin_after_an_outage() {
+    use ui_state::{ServerMsg, StreamCloseReason, StreamMsg, update};
+
+    for kind in [
+        ui_state::AgentKind::Claude {
+            driver: ui_state::ClaudeDriver::Pty,
+        },
+        ui_state::AgentKind::Claude {
+            driver: ui_state::ClaudeDriver::Sdk,
+        },
+        ui_state::AgentKind::Codex,
+    ] {
+        for readonly in [false, true] {
+            let mut remote = an_agent("open-chat", "hetzner");
+            remote.kind = kind;
+            remote.readonly = readonly;
+            let mut model = fold(seq([
+                base(),
+                vec![host_up(&a_host("hetzner")), agent_up(&remote)],
+            ]));
+            let requested = update(&mut model, Msg::UserAttached { agent: remote.id });
+            assert_eq!(requested.len(), 1);
+            assert!(update(&mut model, agent_up(&remote)).is_empty());
+
+            update(
+                &mut model,
+                Msg::Stream {
+                    agent: remote.id,
+                    event: StreamMsg::Closed {
+                        reason: StreamCloseReason::TransportError {
+                            message: "relay lost".into(),
+                        },
+                    },
+                },
+            );
+            assert_eq!(update(&mut model, agent_up(&remote)), requested);
+
+            for offline_first in [false, true] {
+                let mut outage = vec![
+                    Msg::Server(ServerMsg::AgentRemoved { id: remote.id }),
+                    host_up(&an_offline_host("hetzner")),
+                ];
+                if offline_first {
+                    outage.reverse();
+                }
+                for msg in outage {
+                    update(&mut model, msg);
+                }
+                // Recorder checkpoints must remember intent even without a card.
+                model = serde_json::from_value(serde_json::to_value(model).unwrap()).unwrap();
+                update(&mut model, host_up(&a_host("hetzner")));
+                assert_eq!(update(&mut model, agent_up(&remote)), requested);
+                assert!(update(&mut model, agent_up(&remote)).is_empty());
+            }
+
+            // A confirmed deletion releases the attachment, so an inventory
+            // upsert alone cannot subscribe this remote agent again.
+            update(
+                &mut model,
+                Msg::Server(ServerMsg::AgentRemoved { id: remote.id }),
+            );
+            update(
+                &mut model,
+                Msg::Server(ServerMsg::HostInventory {
+                    host_id: remote.host_id,
+                    agent_ids: vec![],
+                }),
+            );
+            assert!(update(&mut model, agent_up(&remote)).is_empty());
+        }
+    }
+}
+
+/// Closing a conversation gives back the stream it asked for — and only that.
+///
+/// The eager inventory policy keeps a stream open for every agent on this
+/// machine that is not readonly, because its badge is worth one whether or
+/// not anybody is reading it, so closing a conversation on one of those
+/// changes nothing but the attachment. Everything else — an agent on another
+/// machine, or a readonly one, which the eager policy skips — has a stream
+/// only because somebody opened it, so closing the conversation closes the
+/// stream and a later inventory upsert does not bring it back.
+#[test]
+fn a_closed_conversation_lets_go_of_the_stream_it_asked_for() {
+    use ui_state::{Effect, update};
+
+    // The host the agent runs on, whether it is readonly, and whether the
+    // eager policy would have opened its stream without anybody asking.
+    for (on, readonly, eager) in [
+        ("hetzner", false, false),
+        ("hetzner", true, false),
+        ("nova", false, true),
+        ("nova", true, false),
+    ] {
+        let mut agent = an_agent(&format!("chat-{on}-{readonly}"), on);
+        agent.readonly = readonly;
+        let mut model = fold(seq([base(), vec![host_up(&a_host("hetzner"))]]));
+
+        let inventory = update(&mut model, agent_up(&agent));
+        assert_eq!(
+            inventory.len(),
+            usize::from(eager),
+            "{on} readonly={readonly}"
+        );
+        update(&mut model, Msg::UserAttached { agent: agent.id });
+        assert!(model.is_attached(agent.id));
+        assert!(model.stream(agent.id).is_some(), "{on} readonly={readonly}");
+
+        let released = update(&mut model, Msg::UserDetached { agent: agent.id });
+        assert!(
+            !model.is_attached(agent.id),
+            "a closed conversation is not open: {on} readonly={readonly}"
+        );
+        if eager {
+            assert!(released.is_empty(), "the badge still wants this stream");
+            assert!(model.stream(agent.id).is_some());
+            continue;
+        }
+        assert!(
+            matches!(released.as_slice(), [Effect::CloseStream { agent: closed }] if *closed == agent.id),
+            "the stream nobody asked for any more stays open: {released:?}"
+        );
+        assert!(model.stream(agent.id).is_none());
+        // The inventory keeps arriving; it must not re-open what was closed.
+        assert!(update(&mut model, agent_up(&agent)).is_empty());
+        assert!(model.stream(agent.id).is_none());
+        // Opening it again is ordinary.
+        let reopened = update(&mut model, Msg::UserAttached { agent: agent.id });
+        assert_eq!(reopened.len(), 1, "{on} readonly={readonly}");
+        assert!(model.is_attached(agent.id));
+    }
+}

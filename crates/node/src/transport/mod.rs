@@ -1,5 +1,6 @@
 //! Transport helpers for gRPC services.
 
+mod embedded_relay;
 mod io;
 mod memory;
 mod single_io;
@@ -11,15 +12,15 @@ mod unix;
 
 use std::time::Duration;
 
+pub use embedded_relay::{EmbeddedRelay, RelayEndpoint, RelayRetry};
 pub(crate) use io::{
     BoxedGrpcAuth, BoxedGrpcConnectInfo, BoxedGrpcIo, GrpcIo, PreTrustPairingReachability,
     TrustedPeerConnections,
 };
+pub use memory::InProcessConnection;
 #[cfg(test)]
 pub(crate) use memory::in_process_transport_pair;
-pub(crate) use memory::{
-    InProcessConnection, ShutdownIo, in_process_channel, managed_in_process_transport_pair,
-};
+pub(crate) use memory::{ShutdownIo, in_process_channel, managed_in_process_transport_pair};
 pub(crate) use single_io::channel_from_single_io;
 #[allow(unused_imports)]
 pub(crate) use ssh::{SshRelayIo, spawn_ssh_pair_recv, spawn_ssh_relay};

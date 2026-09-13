@@ -13,7 +13,7 @@ pub use client::ClientService;
 pub(crate) use pairing::{LocalPairingIdentity, PairingService};
 pub use reachability::ReachabilityLinkConnector;
 pub use startup::{
-    CloudLink, CloudLinkServer, CloudTransport, FREE_TIER_REFRESH_INTERVAL, StartedUserServices,
-    TestCloudTransport, UDP_BLOCKED_MEMORY, UdpBlockedMemory, establish_cloud_link,
+    CloudLink, CloudLinkServer, CloudTransport, DeviceRuntimeSecurity, FREE_TIER_REFRESH_INTERVAL,
+    StartedUserServices, TestCloudTransport, UDP_BLOCKED_MEMORY, UdpBlockedMemory,
+    establish_cloud_link, start_user_services,
 };
-pub(crate) use startup::{DeviceRuntimeSecurity, start_user_services};

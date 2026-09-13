@@ -158,25 +158,30 @@ impl std::fmt::Debug for PendingPeer {
 
 #[derive(Debug, Error)]
 pub enum PairingError {
+    /// Every secret failure is this one opaque code, spelled as the protocol
+    /// spells it on the wire so a reader meets one word, not two.
     #[error("INVALID_PIN")]
-    Refused,
+    InvalidPin,
     #[error("pairing target was not found")]
     NotFound,
-    #[error("pairing target is unreachable: {0}")]
-    Unreachable(String),
     #[error("a subscription is required for relay pairing")]
     PaymentRequired,
     #[error("SELF_PAIRING")]
     SelfPairing,
-    #[error("pairing attempt expired")]
+    #[error("Expired")]
     Expired,
-    #[error("internal pairing error: {0}")]
-    Internal(String),
+    #[error("Abandoned")]
+    Abandoned,
+    /// The attempt never reached a verdict: the relay or host was unreachable,
+    /// or the daemon failed internally. The message is the host's own words, so
+    /// a client can show it without translating a code.
+    #[error("{0}")]
+    Transport(String),
 }
 
 impl From<ClientError> for PairingError {
     fn from(error: ClientError) -> Self {
-        Self::Internal(error.to_string())
+        Self::Transport(error.to_string())
     }
 }
 
@@ -187,7 +192,9 @@ pub fn status_to_pairing_error(error: tonic::Status) -> PairingError {
     }
     match error.code() {
         tonic::Code::NotFound => PairingError::NotFound,
-        tonic::Code::Unavailable => PairingError::Unreachable(error.message().to_string()),
+        tonic::Code::Unavailable | tonic::Code::Internal => {
+            PairingError::Transport(error.message().to_string())
+        }
         tonic::Code::FailedPrecondition if error.message().contains("SUBSCRIPTION") => {
             PairingError::PaymentRequired
         }
@@ -195,11 +202,11 @@ pub fn status_to_pairing_error(error: tonic::Status) -> PairingError {
             PairingError::SelfPairing
         }
         tonic::Code::DeadlineExceeded => PairingError::Expired,
-        tonic::Code::Internal => PairingError::Internal(error.message().to_string()),
-        _ => PairingError::Refused,
+        _ => PairingError::InvalidPin,
     }
 }
 
+/// How a pairing attempt reached, or would reach, the other device.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PeerVia {
     Direct,
@@ -207,6 +214,8 @@ pub enum PeerVia {
     Ssh,
 }
 
+/// A host discovery found that this profile could pair with, and the route
+/// that would carry the attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PairingCandidate {
     pub host: HostEntry,
@@ -214,10 +223,12 @@ pub struct PairingCandidate {
     pub addrs: Vec<SocketAddr>,
 }
 
+/// This device's public identity, read without entering pairing mode.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeviceIdentity {
     pub host_id: HostId,
     pub name: String,
+    /// SHA256 of the device public key, encoded as lowercase hexadecimal.
     pub fingerprint: String,
 }
 
@@ -226,6 +237,7 @@ pub struct PeerEntry {
     pub host_id: uuid::Uuid,
     pub name: String,
     pub pubkey: Vec<u8>,
+    pub fingerprint: String,
     pub paired_at: DateTime<Utc>,
     pub reachabilities: Vec<PeerReachability>,
 }
@@ -752,6 +764,30 @@ impl Client {
         Ok((artifact, response.bytes))
     }
 
+    /// List recent projects and Git repositories declared by the selected host.
+    pub async fn list_repositories(
+        &self,
+        request: model::ListRepositoriesRequest,
+    ) -> Result<model::ListRepositoriesResponse, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .list_repositories(wire::ClientListRepositoriesRequest {
+                host_id: request.host.as_bytes().to_vec(),
+                query: request.query,
+                limit: request.limit,
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        response.try_into().map_err(|message| ClientError::Decode {
+            method: "/amux.v1.ClientService/ListRepositories",
+            message,
+        })
+    }
+
     pub async fn diff(
         &self,
         agent: AgentIdentifier,
@@ -1076,6 +1112,9 @@ fn wire_agent_to_agent(method: &'static str, agent: wire::Agent) -> Result<Agent
 }
 
 #[doc(hidden)]
+pub use model::public_key_fingerprint;
+
+#[doc(hidden)]
 pub fn peer_entry_from_wire(
     method: &'static str,
     peer: wire::PeerEntry,
@@ -1108,6 +1147,7 @@ pub fn peer_entry_from_wire(
     Ok(PeerEntry {
         host_id,
         name: peer.name,
+        fingerprint: public_key_fingerprint(&peer.pubkey),
         pubkey: peer.pubkey,
         paired_at,
         reachabilities,
@@ -1273,10 +1313,12 @@ pub fn host_entry_from_wire(
         last_dial_error: host.last_dial_error,
         via,
         signed_in: host.signed_in,
+        platform: host.platform,
     })
 }
 
-fn client_service_host_response_to_host_event(
+#[doc(hidden)]
+pub fn client_service_host_response_to_host_event(
     response: wire::SubscribeHostsResponse,
 ) -> Result<HostEvent, ClientError> {
     let event = response.event.ok_or_else(|| ClientError::Decode {
@@ -1336,6 +1378,26 @@ fn client_service_agent_response_to_agent_event(
                 down.agent_id,
             )?,
         }),
+        wire::subscribe_agents_response::Event::HostInventory(inventory) => {
+            Some(AgentEvent::HostInventory {
+                host_id: uuid_from_wire_bytes(
+                    method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                    "HostInventory.host_id",
+                    inventory.host_id,
+                )?,
+                agent_ids: inventory
+                    .agent_ids
+                    .into_iter()
+                    .map(|id| {
+                        uuid_from_wire_bytes(
+                            method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                            "HostInventory.agent_ids",
+                            id,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?,
+            })
+        }
         wire::subscribe_agents_response::Event::SnapshotComplete(_) => None,
     };
     Ok(event)
@@ -1388,15 +1450,6 @@ pub fn pairing_start_from_wire(
         cloud_url: response.cloud_url,
         secret,
     })
-}
-
-#[doc(hidden)]
-pub fn public_key_fingerprint(pubkey: &[u8]) -> String {
-    ring::digest::digest(&ring::digest::SHA256, pubkey)
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 #[doc(hidden)]

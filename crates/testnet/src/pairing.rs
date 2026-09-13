@@ -56,8 +56,24 @@ pub struct QrPayload {
     /// The one-shot 256-bit SPAKE2 secret consumed by the first successful
     /// pairing; it never crosses the wire.
     pub secret: Vec<u8>,
+    /// Where the responder said it can be reached directly.
     pub addrs: Vec<std::net::SocketAddr>,
+    /// The cloud the invitation names, from the responder's configuration.
+    /// Unset when the responder offers only direct reachability.
     pub cloud_url: Option<String>,
+}
+
+impl QrPayload {
+    /// The invitation as the responder's QR code carries it.
+    pub fn encoded(&self) -> String {
+        node::encode_qr_pairing_invitation(
+            self.host_id,
+            &self.addrs,
+            self.cloud_url.as_deref(),
+            &self.secret,
+        )
+        .expect("a started QR pairing encodes")
+    }
 }
 
 impl Daemon {
@@ -94,15 +110,24 @@ impl Daemon {
     /// Responder: `StartPairing` in QR mode, surfacing the operation error.
     pub async fn try_start_qr_pairing(&self) -> anyhow::Result<QrPayload> {
         let start = self.pairing_admin().await.start_qr_pairing().await?;
-        match start.secret {
+        match &start.secret {
             PairingSecret::QrSecret(secret) => Ok(QrPayload {
                 host_id: start.identity.host_id,
-                secret,
-                addrs: start.addrs,
-                cloud_url: start.cloud_url,
+                secret: secret.clone(),
+                addrs: start.addrs.clone(),
+                cloud_url: start.cloud_url.clone(),
             }),
             PairingSecret::Pin(_) => anyhow::bail!("StartPairing(QR) returned a PIN"),
         }
+    }
+
+    /// Responder: PIN pair-mode that ends after `ttl`. The `StartPairing`
+    /// operation always uses the production five-minute window, so this
+    /// starts pair-mode directly on the daemon with the shorter one;
+    /// everything else (the attempt, status, expiry purge) is production
+    /// code. Surfaces the error when pair-mode is already active.
+    pub async fn start_pin_pairing(&self, ttl: Duration) -> anyhow::Result<Pin> {
+        self.try_start_pairing_with_ttl(ttl).await
     }
 
     /// Test seam for pair-mode TTL expiry: the real `StartPairing` operation always
@@ -110,6 +135,14 @@ impl Daemon {
     /// directly on the daemon's `PairMode` with a short TTL. Everything else
     /// (the PIN attempt, status, expiry purge) runs the production code.
     pub async fn start_pairing_with_ttl(&self, ttl: Duration) -> Pin {
+        self.try_start_pairing_with_ttl(ttl)
+            .await
+            .unwrap_or_else(|error| panic!("'{}' failed to start pair-mode: {error}", self.name()))
+    }
+
+    /// Fallible TTL override for externally controlled test networks.
+    pub async fn try_start_pairing_with_ttl(&self, ttl: Duration) -> anyhow::Result<Pin> {
+        anyhow::ensure!(!ttl.is_zero(), "pairing TTL must be positive");
         let pin = format!("{:06}", uuid::Uuid::new_v4().as_u128() % 1_000_000);
         let guard = self.runtime().await;
         let runtime = guard
@@ -118,9 +151,8 @@ impl Daemon {
         runtime
             .services
             .pair_mode
-            .start_pin_for_duration(pin.clone(), ttl)
-            .unwrap_or_else(|error| panic!("'{}' failed to start pair-mode: {error}", self.name()));
-        Pin(pin)
+            .start_pin_for_duration(pin.clone(), ttl)?;
+        Ok(Pin(pin))
     }
 
     /// Responder: cancels pair-mode via the `CancelPairing` operation.

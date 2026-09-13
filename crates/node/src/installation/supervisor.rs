@@ -128,7 +128,17 @@ impl CredentialSource {
     }
 }
 
+/// Whether an embedder permits its complete storage container to move.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RelocationPolicy {
+    #[default]
+    Refuse,
+    /// Rebase only paths allocated in the recorded installation namespace.
+    Rebase,
+}
+
 pub struct InstallationOptions {
+    pub relocation: RelocationPolicy,
     pub root: InstallationRoot,
     pub settings: InstallationSettings,
     pub listeners: Listeners,
@@ -269,6 +279,18 @@ fn read_profile_config(
 }
 
 fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), InstallationError> {
+    persist_yaml(path, value, false)
+}
+
+fn replace_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), InstallationError> {
+    persist_yaml(path, value, true)
+}
+
+fn persist_yaml(
+    path: &std::path::Path,
+    value: &impl Serialize,
+    replace: bool,
+) -> Result<(), InstallationError> {
     use std::io::Write;
     let parent = path
         .parent()
@@ -279,12 +301,62 @@ fn write_yaml(path: &std::path::Path, value: &impl Serialize) -> Result<(), Inst
         .map_err(|error| InstallationError::Registry(error.to_string()))?;
     staged.write_all(yaml.as_bytes())?;
     staged.as_file().sync_all()?;
-    staged
-        .persist_noclobber(path)
-        .map_err(|error| error.error)?;
+    if replace {
+        staged.persist(path).map_err(|error| error.error)?;
+    } else {
+        staged
+            .persist_noclobber(path)
+            .map_err(|error| error.error)?;
+    }
     #[cfg(unix)]
     std::fs::File::open(parent)?.sync_all()?;
     Ok(())
+}
+
+// Validate the entire old namespace before replacing any file. The registry
+// lock remains held throughout; device keys, trust and account records stay put.
+fn rebase_installation(
+    registry: &Registry,
+    mut recorded: InstallationConfig,
+    root: &std::path::Path,
+) -> Result<(), InstallationError> {
+    check_path(
+        "front_door_socket",
+        &recorded.root.join("amux.sock"),
+        &recorded.front_door_socket,
+    )?;
+    let mut profiles = Vec::new();
+    for record in registry
+        .profiles()
+        .filter(|record| !registry.is_deleting(record.id))
+    {
+        let paths = ProfilePaths::for_id(root, record.id)?;
+        let path = paths.config_path.as_ref().unwrap();
+        if !path.exists() {
+            continue;
+        }
+        // Read literal paths: canonicalization must not make an alias or an
+        // escape look like one of the paths allocated in the old container.
+        let mut profile: ProfileConfig = serde_yaml::from_slice(&std::fs::read(path)?)
+            .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+        check_path(
+            "installation_config",
+            &recorded.root.join("config.yaml"),
+            &profile.installation_config,
+        )?;
+        crate::config::check_profile_paths(&profile, &recorded.root, record.id)?;
+        profile.installation_config = root.join("config.yaml");
+        profile.socket_path = paths.socket_path;
+        profile.data_dir = paths.data_dir;
+        profile.state_path = paths.state_path;
+        profiles.push((path.clone(), profile));
+    }
+    for (path, profile) in profiles {
+        replace_yaml(&path, &profile)?;
+    }
+    recorded.root = root.to_owned();
+    recorded.front_door_socket = root.join("amux.sock");
+    replace_yaml(&root.join("config.yaml"), &recorded)
 }
 
 impl Installation {
@@ -358,6 +430,7 @@ impl Installation {
     ) -> Result<Self, InstallationError> {
         config.validate()?;
         let options = InstallationOptions {
+            relocation: Default::default(),
             root: InstallationRoot::OnDisk(config.root.clone()),
             settings: crate::config::installation_settings(&config),
             listeners: Listeners::Sockets,
@@ -402,6 +475,14 @@ impl Installation {
         let config_path = config.file_path();
         if !config_path.exists() {
             write_yaml(&config_path, &config)?;
+        }
+        super::paths::reject_symlink(&config_path)?;
+        let recorded = InstallationConfig::from_file(&config_path)?;
+        if recorded.root != root {
+            if options.relocation == RelocationPolicy::Refuse {
+                check_path("root", &root, &recorded.root)?;
+            }
+            rebase_installation(&registry, recorded, &root)?;
         }
         config.path = Some(std::fs::canonicalize(config_path)?);
         // Refuse path disagreement before starting any profile. Other startup
@@ -510,6 +591,30 @@ impl Installation {
             .as_mut()
             .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))?
             .test_cloud_transport = Some(address);
+        Ok(())
+    }
+
+    /// Give one profile the relay its embedder resolved.
+    ///
+    /// An embedded installation has no configuration file naming a cloud: the
+    /// application signs in to the account service itself and hands each
+    /// account's relay down. So a profile is told which relay it is on rather
+    /// than discovering one, and the link belongs to the profile — stopping
+    /// the profile stops it, and the account a late token would refresh is the
+    /// one that asked for it.
+    pub async fn use_embedded_relay(
+        &self,
+        id: ProfileId,
+        relay: crate::EmbeddedRelay,
+    ) -> Result<(), InstallationError> {
+        let slot = self.inner.state.lock().unwrap().active(id)?.slot.clone();
+        let runtime = slot.runtime.lock().await;
+        self.inner.state.lock().unwrap().active(id)?;
+        runtime
+            .as_ref()
+            .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))?
+            .attach_relay(relay)
+            .await;
         Ok(())
     }
 
@@ -832,11 +937,10 @@ impl Inner {
                 .as_ref()
                 .map(|binding| binding.account.service.to_string())
                 .unwrap_or_else(|| crate::config::Config::default().cloud_url);
-            let fixtures = self
-                .fixtures
-                .as_ref()
-                .map(|factory| factory(id))
-                .unwrap_or_default();
+            let fixtures = match &self.fixtures {
+                Some(factory) => factory(id).await,
+                None => Default::default(),
+            };
             let discovery = match fixtures.discovery.clone() {
                 Some(discovery) => discovery,
                 None => runtime::platform_discovery()

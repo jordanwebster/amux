@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use client::PairingStart;
 pub use model::QrPairingPayload;
 use serde::{Deserialize, Serialize};
@@ -38,11 +40,29 @@ pub fn encode_qr_pairing_payload(
     pairing: &PairingStart,
     secret: &[u8],
 ) -> Result<String, QrPairingError> {
+    encode_qr_pairing_invitation(
+        pairing.identity.host_id,
+        &pairing.addrs,
+        pairing.cloud_url.as_deref(),
+        secret,
+    )
+}
+
+/// The invitation a responder's QR code carries, from its parts: the
+/// responder, the addresses it can be dialled at directly, the cloud it names
+/// if it has one, and the one-shot secret. A responder with no account still
+/// issues an invitation: the addresses alone are enough on a shared network.
+pub fn encode_qr_pairing_invitation(
+    host_id: HostId,
+    addrs: &[SocketAddr],
+    cloud_url: Option<&str>,
+    secret: &[u8],
+) -> Result<String, QrPairingError> {
     let payload = WireQrPairingPayload {
-        host_id: pairing.identity.host_id.to_string(),
+        host_id: host_id.to_string(),
         secret: secret.to_vec(),
-        addrs: pairing.addrs.iter().map(ToString::to_string).collect(),
-        cloud_url: pairing.cloud_url.clone(),
+        addrs: addrs.iter().map(ToString::to_string).collect(),
+        cloud_url: cloud_url.map(ToOwned::to_owned),
     };
     Ok(serde_json::to_string(&payload)?)
 }
@@ -136,10 +156,10 @@ mod tests {
     }
 
     #[test]
-    fn qr_pairing_payload_validates_shape() {
+    fn qr_pairing_payload_validates_secret_length() {
         let payload = serde_json::json!({
             "host_id": "00000000-0000-0000-0000-000000000001",
-            "cloud_url": "https://relay.example",
+            "cloud_url": "https://amux.sh",
             "secret": [9],
             "addrs": [],
         })

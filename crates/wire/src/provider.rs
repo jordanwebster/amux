@@ -144,6 +144,9 @@ pub fn decode_claude_sdk_input(payload: &[u8]) -> Result<model::ClaudeSdkInput, 
             model::ClaudeSdkInput::SetPermissionMode { mode: value.mode }
         }
         Input::SetModel(value) => model::ClaudeSdkInput::SetModel { model: value.model },
+        Input::SetEffort(value) => model::ClaudeSdkInput::SetEffort {
+            effort: value.effort,
+        },
         Input::RequestContextBreakdown(_) => model::ClaudeSdkInput::RequestContextBreakdown,
         Input::ElicitationDecision(value) => model::ClaudeSdkInput::ElicitationDecision {
             request_id: value.request_id,
@@ -196,7 +199,24 @@ pub fn decode_codex_sdk_input(payload: &[u8]) -> Result<model::CodexSdkInput, De
         .input
         .ok_or_else(|| DecodeError::Invalid("Codex SDK input is missing".into()))?;
     use wire::codex_sdk_v1_input::Input;
+    let invalid = |field: &str, error: serde_json::Error| {
+        DecodeError::Invalid(format!("invalid Codex preset {field}: {error}"))
+    };
     Ok(match input {
+        Input::Command(value) => model::CodexSdkInput::Command {
+            name: value.name,
+            args: value.args,
+        },
+        Input::SetModel(value) => model::CodexSdkInput::SetModel { model: value.model },
+        Input::SetEffort(value) => model::CodexSdkInput::SetEffort {
+            effort: value.effort,
+        },
+        Input::SetPreset(value) => model::CodexSdkInput::SetPreset {
+            approval: serde_json::from_value(Value::String(value.approval))
+                .map_err(|error| invalid("approval", error))?,
+            sandbox: serde_json::from_value(Value::String(value.sandbox))
+                .map_err(|error| invalid("sandbox", error))?,
+        },
         Input::UserTurn(value) => model::CodexSdkInput::UserTurn { input: value.input },
         Input::Steer(value) => model::CodexSdkInput::Steer {
             turn_id: value.turn_id,
@@ -518,6 +538,9 @@ pub fn encode_claude_sdk_input(input: model::ClaudeSdkInput) -> Result<Vec<u8>, 
             Input::SetPermissionMode(wire::ClaudeSdkSetPermissionMode { mode })
         }
         ClaudeSdkInput::SetModel { model } => Input::SetModel(wire::ClaudeSdkSetModel { model }),
+        ClaudeSdkInput::SetEffort { effort } => {
+            Input::SetEffort(wire::ClaudeSdkSetEffort { effort })
+        }
         ClaudeSdkInput::RequestContextBreakdown => {
             Input::RequestContextBreakdown(wire::ClaudeSdkRequestContextBreakdown {})
         }
@@ -631,8 +654,28 @@ pub fn encode_codex_sdk_args(args: model::CodexSdkV1Args) -> Option<Vec<u8>> {
 
 pub fn encode_codex_sdk_input(input: model::CodexSdkInput) -> Vec<u8> {
     use wire::codex_sdk_v1_input::Input;
+    // A preset choice's wire name is its serde name, so the two never drift.
+    let policy = |value: serde_json::Result<Value>| match value {
+        Ok(Value::String(name)) => name,
+        _ => unreachable!("Codex preset policies serialize as strings"),
+    };
     wire::CodexSdkV1Input {
         input: Some(match input {
+            model::CodexSdkInput::Command { name, args } => {
+                Input::Command(wire::CodexSdkV1Command { name, args })
+            }
+            model::CodexSdkInput::SetModel { model } => {
+                Input::SetModel(wire::CodexSdkV1SetModel { model })
+            }
+            model::CodexSdkInput::SetEffort { effort } => {
+                Input::SetEffort(wire::CodexSdkV1SetEffort { effort })
+            }
+            model::CodexSdkInput::SetPreset { approval, sandbox } => {
+                Input::SetPreset(wire::CodexSdkV1SetPreset {
+                    approval: policy(serde_json::to_value(&approval)),
+                    sandbox: policy(serde_json::to_value(&sandbox)),
+                })
+            }
             model::CodexSdkInput::UserTurn { input } => {
                 Input::UserTurn(wire::CodexSdkV1UserTurn { input })
             }

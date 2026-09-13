@@ -1,5 +1,7 @@
 //! In-process pairing and trust administration, available only to the installation owner.
 
+use chrono::DateTime;
+const PAIRING_PUBKEY_LEN: usize = 32;
 use client::{
     DeviceIdentity, PairingError, PeerVia, PendingPeer, pairing_identity_from_wire,
     pairing_start_from_wire, peer_entry_from_wire, peer_ref, public_key_fingerprint,
@@ -32,6 +34,7 @@ mod method {
 }
 
 impl ProfileAdmin {
+    /// Authenticate a PIN through the relay without writing either trust store.
     pub async fn begin_pair_pin(
         &self,
         host: crate::HostId,
@@ -45,6 +48,8 @@ impl ProfileAdmin {
         .await
     }
 
+    /// Authenticate a PIN against a host reached directly at `addr`, without
+    /// consulting the relay or either trust store.
     pub async fn begin_pair_pin_at(
         &self,
         addr: SocketAddr,
@@ -58,6 +63,7 @@ impl ProfileAdmin {
         .await
     }
 
+    /// Authenticate the scanned secret and return the sealed host identity for review.
     pub async fn begin_pair_qr(
         &self,
         payload: &crate::QrPairingPayload,
@@ -81,21 +87,23 @@ impl ProfileAdmin {
             .await
             .map_err(status_to_pairing_error)?
             .into_inner();
-        let peer = response.peer.ok_or(PairingError::Refused)?;
-        let expires_at = chrono::DateTime::from_timestamp_millis(peer.expires_at_unix_ms)
-            .ok_or(PairingError::Refused)?;
+        let peer = response.peer.ok_or(PairingError::InvalidPin)?;
+        let expires_at = DateTime::from_timestamp_millis(peer.expires_at_unix_ms)
+            .ok_or(PairingError::InvalidPin)?;
         let (host_id, pubkey, name) = pairing_identity_from_wire("BeginPair", peer)?;
+        let fingerprint = public_key_fingerprint(&pubkey);
         let via = peer_via_from_wire(response.via)?;
         Ok(PendingPeer {
             host_id,
             name,
-            fingerprint: public_key_fingerprint(&pubkey),
+            fingerprint,
             expires_at,
             via,
             token: response.token,
         })
     }
 
+    /// Grant mutual trust to the authenticated peer represented by this attempt.
     pub async fn confirm_pair(&self, pending: PendingPeer) -> Result<PeerEntry, PairingError> {
         let response = self
             .rpc_confirm_pair(tonic::Request::new(wire::PendingPairRequest {
@@ -106,10 +114,11 @@ impl ProfileAdmin {
             .into_inner();
         Ok(peer_entry_from_wire(
             "ConfirmPair",
-            response.peer.ok_or(PairingError::Refused)?,
+            response.peer.ok_or(PairingError::InvalidPin)?,
         )?)
     }
 
+    /// Cancel without trust writes, returning only after the responder acknowledges.
     pub async fn abandon_pair(&self, pending: PendingPeer) -> Result<(), PairingError> {
         self.rpc_abandon_pair(tonic::Request::new(wire::PendingPairRequest {
             token: pending.token,
@@ -119,6 +128,7 @@ impl ProfileAdmin {
         Ok(())
     }
 
+    /// Reads the identity of the local daemon or embedded client runtime.
     pub async fn device_identity(&self) -> Result<DeviceIdentity, ClientError> {
         let identity = self
             .rpc_get_device_identity(tonic::Request::new(wire::GetDeviceIdentityRequest {}))
@@ -127,7 +137,7 @@ impl ProfileAdmin {
             .into_inner();
         let method = "/amux.v1.ProfileService/GetDeviceIdentity";
         let host_id = uuid_from_wire_bytes(method, "DeviceIdentity.host_id", identity.host_id)?;
-        if identity.pubkey.len() != PUBKEY_LEN {
+        if identity.pubkey.len() != PAIRING_PUBKEY_LEN {
             return Err(ClientError::Decode {
                 method,
                 message: "DeviceIdentity.pubkey must be 32 bytes".to_string(),
@@ -156,6 +166,30 @@ impl ProfileAdmin {
             .map_err(|error| status_to_client_error(protocol_status(error)))?;
         self.service.reachability_links.requery();
         Ok(self.service.list_pairing_candidates().await)
+    }
+
+    /// Subscribe to this profile's trusted hosts and online cloud pairing candidates.
+    /// The initial inventory ends with `SnapshotComplete`; subsequent events include
+    /// departures and trust changes. Only the owner can discover unpaired hosts:
+    /// profile sockets and peer tunnels keep their trusted-only inventory.
+    pub async fn subscribe_hosts(
+        &self,
+    ) -> Result<impl Stream<Item = Result<HostEvent, ClientError>> + Send + 'static, ClientError>
+    {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(|error| status_to_client_error(protocol_status(error)))?;
+        Ok(self
+            .service
+            .host_inventory_stream(HostInventory::WithPairingCandidates)
+            .await
+            .map(|response| {
+                response
+                    .map_err(status_to_client_error)
+                    .and_then(client::client_service_host_response_to_host_event)
+            }))
     }
 
     #[doc(hidden)]
@@ -630,11 +664,16 @@ impl ProfileAdmin {
             .map_err(opaque_pairing_status)?;
             selected = Some((pending, Reachability::Cloud, wire::PeerVia::Relay, false));
         }
-        let (pending, reachability, via, from_discovery) = selected.ok_or_else(|| {
-            tonic::Status::unavailable(
-                last_unreachable.unwrap_or_else(|| "pairing target is not reachable".to_string()),
-            )
-        })?;
+        let (pending, reachability, via, from_discovery) =
+            selected.ok_or_else(|| {
+                // A direct attempt that failed says something specific; prefer it.
+                // With nothing direct to try and no cloud route, the reason is
+                // always the same one, and it is worth saying plainly rather than
+                // reporting an unreachable target the person cannot act on.
+                tonic::Status::unavailable(last_unreachable.unwrap_or_else(|| {
+                    crate::link::ChannelError::CloudPairingUnavailable.to_string()
+                }))
+            })?;
         let peer_host = uuid_from_bytes("PairingIdentity.host_id", &pending.peer.host_id)
             .map_err(|_| invalid())?;
         if peer_host == self.service.local_agents.host_id()
@@ -800,7 +839,7 @@ fn peer_via_from_wire(via: i32) -> Result<PeerVia, PairingError> {
         Ok(wire::PeerVia::Direct) => Ok(PeerVia::Direct),
         Ok(wire::PeerVia::Relay) => Ok(PeerVia::Relay),
         Ok(wire::PeerVia::Ssh) => Ok(PeerVia::Ssh),
-        _ => Err(PairingError::Internal("missing pairing route".to_string())),
+        _ => Err(PairingError::Transport("missing pairing route".to_string())),
     }
 }
 

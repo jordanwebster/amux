@@ -53,6 +53,13 @@ pub enum Msg {
     /// subscription policy widens to any agent the user interacts with, so
     /// its attention stays fresh after detach.
     UserAttached { agent: AgentId },
+    /// The user closed a conversation they had opened. The interaction that
+    /// widened the policy is over, so the agent leaves `attached` and its
+    /// stream is let go unless the inventory policy would have opened it
+    /// anyway. The TUI never sends this: leaving an attach there deliberately
+    /// leaves the stream up so attention stays fresh. The phone does, because
+    /// a conversation it has closed is one nobody is reading.
+    UserDetached { agent: AgentId },
     /// Observed time for time-dependent display. Data, not a timer: the shell
     /// schedules ticks only while something on screen needs them.
     Tick { now: DateTime<Utc> },
@@ -65,7 +72,8 @@ impl Msg {
             Msg::Command { .. }
             | Msg::Server(_)
             | Msg::OpResult { .. }
-            | Msg::UserAttached { .. } => FlowClass::Lossless,
+            | Msg::UserAttached { .. }
+            | Msg::UserDetached { .. } => FlowClass::Lossless,
             Msg::Stream { event, .. } => match event {
                 StreamMsg::Batch { .. } => FlowClass::Coalescable,
                 StreamMsg::Opened { .. } | StreamMsg::ReplayComplete | StreamMsg::Closed { .. } => {
@@ -82,6 +90,24 @@ impl Msg {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Command {
+    Send {
+        agent: AgentId,
+        draft: crate::Draft,
+    },
+    SetModel {
+        agent: AgentId,
+        model: crate::provider::ModelId,
+    },
+    SetEffort {
+        agent: AgentId,
+        effort: crate::provider::Effort,
+    },
+    SetPreset {
+        agent: AgentId,
+        approval: crate::provider::ApprovalPolicy,
+        sandbox: crate::provider::SandboxPolicy,
+    },
+    Queue(crate::QueueCommand),
     CreateAgent {
         /// Target host; `None` means the local daemon picks (its own host).
         host: Option<HostId>,
@@ -96,6 +122,16 @@ pub enum Command {
     },
     DeleteAgent {
         agent: AgentId,
+    },
+    /// Store one picked file's bytes so the composer can name it.
+    ///
+    /// A token names an artifact the host already holds, so the bytes travel
+    /// when they are picked rather than when the message is sent: what stands
+    /// at the caret is then something that exists, and a store that failed is
+    /// said so while there is still a message being written.
+    PutAttachment {
+        agent: AgentId,
+        attachment: crate::attachments::DraftAttachment,
     },
     /// One atomic chat send whose artifact puts complete before input delivery.
     SendPromptWithAttachments {
@@ -161,6 +197,11 @@ pub enum ServerMsg {
     },
     /// Agent snapshot complete for the current epoch.
     AgentsSynchronized,
+    /// Last complete membership from an authenticated remote inventory stream.
+    HostInventory {
+        host_id: HostId,
+        agent_ids: Vec<AgentId>,
+    },
 }
 
 /// Why the daemon connection went away.
@@ -187,6 +228,12 @@ pub enum DisconnectReason {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum OpOutcome {
+    /// A held draft was replaced or removed before delivery.
+    QueueRemoved,
+    /// Cancel returns the entire held draft to its caller.
+    QueueCancelled {
+        draft: crate::Draft,
+    },
     AgentCreated {
         agent: Agent,
     },
@@ -204,6 +251,11 @@ pub enum OpOutcome {
     },
     AttachmentOpened {
         id: ArtifactId,
+    },
+    /// Picked bytes are stored. What comes back is what a token names; the
+    /// bytes are not carried back, having done their travelling.
+    AttachmentStored {
+        attachment: crate::attachments::DraftAttachment,
     },
     DiffReady {
         response: DiffResponse,

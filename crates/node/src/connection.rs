@@ -172,6 +172,19 @@ impl ConnectionManager {
         self.remove_host_runtime_state(peer).await;
     }
 
+    /// Ends live access to `peer` — trusted streams, channels, links and our
+    /// own routes — without forgetting the relay's word that it is online.
+    /// Used when a peer is unpaired: the trust is gone and nothing of the old
+    /// connection survives, but the peer stays reachable for pairing, the way
+    /// any other machine on the account is before it is ever paired.
+    pub(crate) async fn close_host_access(&self, peer: HostId) {
+        self.routing.remove_direct_links(peer).await;
+        self.remove_host_runtime_state(peer).await;
+        self.trusted_connections.close_host(peer).await;
+        self.channels.link_registry().close_host(peer).await;
+        self.remove_host_runtime_state(peer).await;
+    }
+
     pub(crate) async fn finish_host_replacement(&self, peer: HostId) {
         self.routing.finish_replacement(peer).await;
         self.trusted_connections.finish_host_replacement(peer);
@@ -277,7 +290,7 @@ impl ConnectionManager {
                 return Ok(relay);
             }
         }
-        Err(ChannelError::NoRoute { host_id: peer })
+        Err(ChannelError::CloudPairingUnavailable)
     }
 
     pub(crate) fn routing(&self) -> &Arc<RoutingCore> {

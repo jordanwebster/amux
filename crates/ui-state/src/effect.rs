@@ -52,7 +52,7 @@ pub enum Effect {
     CloseStream { agent: AgentId },
     /// Send one layer-native input and MUST answer with a `Msg::OpResult`
     /// for `op`. Disconnected executions fail fast with an error outcome —
-    /// no offline queue.
+    /// explicitly held messages retain the failed delivery in queue state.
     SendInput {
         op: OpId,
         agent: AgentId,
@@ -68,6 +68,12 @@ pub enum Effect {
         puts: Vec<crate::attachments::DraftAttachment>,
         input: InputPayload,
         pin: Vec<ArtifactId>,
+    },
+    /// Store one draft's bytes and send nothing.
+    PutAttachment {
+        op: OpId,
+        agent: AgentId,
+        attachment: crate::attachments::DraftAttachment,
     },
     /// Fetch a review patch for the bounded layer index.
     FetchDiff {

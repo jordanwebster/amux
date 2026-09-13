@@ -11,6 +11,7 @@ mod naming;
 mod pty;
 mod record;
 mod session;
+mod sources;
 pub(crate) mod terminal_io;
 #[cfg(any(debug_assertions, test))]
 mod test_agent;
@@ -43,6 +44,7 @@ pub(crate) use session::{
     DeliveryLiveness, McpLaunchRoute, Plane, RawPtyTarget, StructuredInput, StructuredInputEvent,
     agent_from_suspended, bootstrap_external_hook, new_agent,
 };
+pub use sources::{ClaudeSdkSource, ProviderSources};
 #[cfg(any(debug_assertions, test))]
 pub(crate) use test_agent::TestAgentSession;
 #[cfg(test)]

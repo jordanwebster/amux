@@ -68,6 +68,7 @@ pub enum ClaudeSdkInput {
     Interrupt,
     SetPermissionMode { mode: String },
     SetModel { model: Option<String> },
+    SetEffort { effort: Option<String> },
     RequestContextBreakdown,
     PermissionDecision { request_id: String, decision: Value },
     ElicitationDecision { request_id: String, result: Value },
@@ -94,6 +95,20 @@ pub struct ClaudeSdkV1Output {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "codex_input", rename_all = "snake_case")]
 pub enum CodexSdkInput {
+    Command {
+        name: String,
+        args: String,
+    },
+    SetModel {
+        model: String,
+    },
+    SetEffort {
+        effort: String,
+    },
+    SetPreset {
+        approval: ApprovalPolicy,
+        sandbox: SandboxPolicy,
+    },
     UserTurn {
         input: Vec<u8>,
     },
@@ -235,3 +250,29 @@ pub struct ContextUsage {
 
 pub const AGENT_TOOL_SERVER_NAME: &str = "amux";
 pub const AGENT_TOOL_NAMES: &[&str] = &["agents", "send", "spawn", "stop", "status", "attach"];
+
+/// Model choices reported by SDK initialization, including provider-resolved aliases.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelFact {
+    pub value: String,
+    pub resolved_model: Option<String>,
+    pub display_name: String,
+    pub supported_effort_levels: Option<Vec<String>>,
+}
+
+/// The approval and sandbox choices exposed by the native Codex permission presets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApprovalPolicy {
+    Untrusted,
+    OnRequest,
+    Never,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SandboxPolicy {
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}

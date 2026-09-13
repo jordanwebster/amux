@@ -16,6 +16,8 @@ use crate::{
     status_to_client_error, status_to_pairing_error, uuid_from_wire_bytes,
 };
 
+const PAIRING_PUBKEY_LEN: usize = 32;
+
 /// A local administration connection pinned to one immutable profile UUID.
 /// It never connects to the profile's ClientService socket.
 #[derive(Clone)]
@@ -32,6 +34,7 @@ mod method {
 }
 
 impl ProfileAdminClient {
+    /// Authenticate a PIN through the relay without writing either trust store.
     pub async fn begin_pair_pin(
         &self,
         host: HostId,
@@ -45,6 +48,8 @@ impl ProfileAdminClient {
         .await
     }
 
+    /// Authenticate a PIN against a host reached directly at `addr`, without
+    /// consulting the relay or either trust store.
     pub async fn begin_pair_pin_at(
         &self,
         addr: std::net::SocketAddr,
@@ -58,6 +63,7 @@ impl ProfileAdminClient {
         .await
     }
 
+    /// Authenticate the scanned secret and return the sealed host identity for review.
     pub async fn begin_pair_qr(
         &self,
         payload: &QrPairingPayload,
@@ -87,20 +93,22 @@ impl ProfileAdminClient {
             .await
             .map_err(status_to_pairing_error)?
             .into_inner();
-        let peer = response.peer.ok_or(PairingError::Refused)?;
+        let peer = response.peer.ok_or(PairingError::InvalidPin)?;
         let expires_at = DateTime::from_timestamp_millis(peer.expires_at_unix_ms)
-            .ok_or(PairingError::Refused)?;
+            .ok_or(PairingError::InvalidPin)?;
         let (host_id, pubkey, name) = pairing_identity_from_wire("BeginPair", peer)?;
+        let fingerprint = public_key_fingerprint(&pubkey);
         Ok(PendingPeer {
             host_id,
             name,
-            fingerprint: public_key_fingerprint(&pubkey),
+            fingerprint,
             expires_at,
             via: peer_via_from_wire(response.via)?,
             token: response.token,
         })
     }
 
+    /// Grant mutual trust to the authenticated peer represented by this attempt.
     pub async fn confirm_pair(&self, pending: PendingPeer) -> Result<PeerEntry, PairingError> {
         let response = self
             .inner
@@ -117,10 +125,11 @@ impl ProfileAdminClient {
             .into_inner();
         Ok(peer_entry_from_wire(
             "ConfirmPair",
-            response.peer.ok_or(PairingError::Refused)?,
+            response.peer.ok_or(PairingError::InvalidPin)?,
         )?)
     }
 
+    /// Cancel without trust writes, returning only after the responder acknowledges.
     pub async fn abandon_pair(&self, pending: PendingPeer) -> Result<(), PairingError> {
         self.inner
             .clone()
@@ -136,6 +145,7 @@ impl ProfileAdminClient {
         Ok(())
     }
 
+    /// Reads the identity of the local daemon or embedded client runtime.
     pub async fn device_identity(&self) -> Result<DeviceIdentity, ClientError> {
         let identity = self
             .inner
@@ -148,7 +158,7 @@ impl ProfileAdminClient {
             .into_inner();
         let method = "/amux.v1.ProfileService/GetDeviceIdentity";
         let host_id = uuid_from_wire_bytes(method, "DeviceIdentity.host_id", identity.host_id)?;
-        if identity.pubkey.len() != 32 {
+        if identity.pubkey.len() != PAIRING_PUBKEY_LEN {
             return Err(ClientError::Decode {
                 method,
                 message: "DeviceIdentity.pubkey must be 32 bytes".to_string(),
@@ -429,6 +439,6 @@ fn peer_via_from_wire(via: i32) -> Result<PeerVia, PairingError> {
         Ok(wire::PeerVia::Direct) => Ok(PeerVia::Direct),
         Ok(wire::PeerVia::Relay) => Ok(PeerVia::Relay),
         Ok(wire::PeerVia::Ssh) => Ok(PeerVia::Ssh),
-        _ => Err(PairingError::Internal("missing pairing route".to_string())),
+        _ => Err(PairingError::Transport("missing pairing route".to_string())),
     }
 }

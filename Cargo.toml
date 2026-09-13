@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "crates/agent-runtime",
     "crates/amux",
+    "crates/app-embedded",
+    "crates/app-ffi",
+    "crates/app-runtime",
     "crates/node",
     "crates/shot",
     "crates/tui",
@@ -33,6 +36,9 @@ edition = "2024"
 [workspace.dependencies]
 # Internal
 agent-runtime = { path = "crates/agent-runtime" }
+app-embedded = { path = "crates/app-embedded" }
+app-ffi = { path = "crates/app-ffi" }
+app-runtime = { path = "crates/app-runtime" }
 node = { path = "crates/node" }
 testnet = { path = "crates/testnet" }
 client = { path = "crates/client" }
@@ -137,6 +143,14 @@ incremental = false
 [profile.full-debug]
 inherits = "dev"
 debug = 2
+
+# The native app's shipping library: only `just ios package` and release use it.
+[profile.mobile]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
 
 # Workspace crates keep full debuginfo; dependencies drop theirs.
 [profile.dev.package."*"]

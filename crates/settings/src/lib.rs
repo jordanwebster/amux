@@ -354,13 +354,14 @@ impl Default for UiSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct InstallationConfig {
+    pub repository_roots: Vec<PathBuf>,
+    pub claude: ClaudeSettings,
     pub root: PathBuf,
     pub front_door_socket: PathBuf,
     pub host_name: String,
     pub prevent_idle_sleep: Option<bool>,
     pub keybinds: Keybinds,
     pub ui: UiSettings,
-    pub claude: ClaudeSettings,
     pub reports_dir: Option<PathBuf>,
     pub keymaps_dir: PathBuf,
     pub update_manifest_url: String,
@@ -372,13 +373,14 @@ pub struct InstallationConfig {
 impl Default for InstallationConfig {
     fn default() -> Self {
         Self {
+            repository_roots: Vec::new(),
+            claude: ClaudeSettings::default(),
             root: default_data_dir(),
             front_door_socket: default_socket_path(),
             host_name: default_host_name(),
             prevent_idle_sleep: None,
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
-            claude: ClaudeSettings::default(),
             reports_dir: None,
             keymaps_dir: keymap_dir(&default_data_dir()),
             update_manifest_url: format!("{DEFAULT_CLOUD_URL}/manifest.json"),
@@ -560,6 +562,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub minimum_client_versions: HashMap<String, String>,
 
+    /// Directories searched for Git repositories when clients create agents. Empty by default.
+    #[serde(default)]
+    pub repository_roots: Vec<PathBuf>,
+
     /// Keybind configuration
     #[serde(default)]
     pub keybinds: Keybinds,
@@ -590,6 +596,7 @@ impl Default for Config {
             reports_dir: None,
             prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
+            repository_roots: Vec::new(),
             keybinds: Keybinds::default(),
             ui: UiSettings::default(),
             claude: ClaudeSettings::default(),

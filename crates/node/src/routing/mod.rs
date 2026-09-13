@@ -41,5 +41,6 @@ pub(crate) use crate::link::run::{
 };
 pub use crate::link::run::{
     AuthenticatedLinkUser, LinkConnectorAuth, LinkConnectorToken, LinkConnectorTokenRefresher,
-    LinkTokenAuthenticator, link_reauth_tier_probe, spawn_connector_with_establishment,
+    LinkTokenAuthenticator, bearer_token_auth, link_reauth_tier_probe,
+    spawn_connector_with_establishment,
 };

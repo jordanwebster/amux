@@ -51,8 +51,10 @@ type Providers = Arc<Mutex<HashMap<ProfileId, Arc<HostCredentials>>>>;
 
 fn options(name: &str, providers: Providers, root: InstallationRoot) -> InstallationOptions {
     InstallationOptions {
+        relocation: Default::default(),
         root,
         settings: InstallationSettings {
+            repository_roots: Vec::new(),
             host_name: name.into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
@@ -193,7 +195,7 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
                     email: Some(format!("{subject}@example.test")),
                     tier: node::Tier::Pro,
                 }],
-                Some(relay.addr),
+                Some(relay.relay_addr()),
             )
             .await,
         );

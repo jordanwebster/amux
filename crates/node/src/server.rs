@@ -83,6 +83,11 @@ pub struct ServerBuilder {
     as_cloud_relay: bool,
 }
 
+pub struct EmbeddedBuilder {
+    inner: ServerBuilder,
+    relay: Option<crate::EmbeddedRelay>,
+}
+
 pub struct DaemonBuilder {
     inner: ServerBuilder,
 }
@@ -318,6 +323,13 @@ impl ServerBuilder {
         self
     }
 
+    pub fn embedded(self) -> EmbeddedBuilder {
+        EmbeddedBuilder {
+            inner: self,
+            relay: None,
+        }
+    }
+
     pub fn daemon(self) -> DaemonBuilder {
         DaemonBuilder { inner: self }
     }
@@ -331,6 +343,104 @@ impl ServerBuilder {
             as_cloud_relay,
         )?;
         server.run().await
+    }
+}
+
+impl EmbeddedBuilder {
+    pub fn relay(mut self, relay: crate::EmbeddedRelay) -> Self {
+        self.relay = Some(relay);
+        self
+    }
+
+    pub async fn open(self) -> Result<EmbeddedRuntime> {
+        let (config, credentials, as_cloud_relay, update_reporter) = self.inner.into_parts()?;
+        if as_cloud_relay {
+            return Err(ServerError::State(
+                "embedded cloud relays are not supported".into(),
+            ));
+        }
+        // An attached relay carries the credentials this device authenticates
+        // to the cloud with. Holding them is what makes the device reachable
+        // through that cloud, and so what lets its invitation name it.
+        let credentials =
+            credentials.or_else(|| self.relay.as_ref().map(|relay| relay.credentials.clone()));
+        let options = ProfileRuntimeOptions::from_legacy_config(
+            config,
+            credentials,
+            update_reporter,
+            Listeners::InProcessOnly,
+            // An embedded client browses nothing itself: the application owns
+            // the platform's discovery and hands hosts in through this bus.
+            Arc::new(crate::discovery::ScriptedDiscovery::new()),
+            None,
+        );
+        let runtime = crate::profile::runtime::start(options)
+            .await
+            .map_err(|e| ServerError::State(e.to_string()))?;
+        // Relay attachment changes the route; the cloud remains the one in config.
+        let relay_task = self
+            .relay
+            .map(|relay| relay.spawn(runtime.services.link_connector_ctx()));
+        Ok(EmbeddedRuntime {
+            runtime: Some(runtime),
+            relay_task,
+        })
+    }
+}
+
+/// One embedded device runtime, owned by its embedding application.
+/// Its administration handle is local and is never served on a peer connection.
+pub struct EmbeddedRuntime {
+    runtime: Option<crate::profile::runtime::ProfileRuntime>,
+    relay_task: Option<JoinHandle<()>>,
+}
+
+impl EmbeddedRuntime {
+    pub fn client(&self) -> Client {
+        self.runtime
+            .as_ref()
+            .expect("embedded runtime is open")
+            .client()
+    }
+
+    /// The identity this device presents. What it is for is telling this
+    /// device apart from the machines it talks to: an embedded runtime is one
+    /// of the hosts in its own inventory, and a phone is not a machine
+    /// anything runs on.
+    pub fn host_id(&self) -> crate::HostId {
+        self.runtime
+            .as_ref()
+            .expect("embedded runtime is open")
+            .host_id
+    }
+
+    pub fn admin(&self) -> crate::ProfileAdmin {
+        let runtime = self.runtime.as_ref().expect("embedded runtime is open");
+        crate::ProfileAdmin::new(
+            runtime.services.client.clone(),
+            crate::ProfileId(runtime.host_id),
+        )
+    }
+
+    pub async fn shutdown(mut self) {
+        if let Some(task) = self.relay_task.take() {
+            task.abort();
+            let _ = task.await;
+        }
+        if let Some(runtime) = self.runtime.take() {
+            runtime.stop(ShutdownReason::UserRequested).await;
+        }
+    }
+}
+
+impl Drop for EmbeddedRuntime {
+    fn drop(&mut self) {
+        if let Some(task) = self.relay_task.take() {
+            task.abort();
+        }
+        if let Some(runtime) = self.runtime.take() {
+            tokio::spawn(runtime.stop(ShutdownReason::UserRequested));
+        }
     }
 }
 
@@ -466,6 +576,84 @@ mod tests {
         assert!(task.is_some());
         if let Some(task) = task {
             task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn embedded_relay_preserves_the_configured_cloud() {
+        struct UnusedCredentials;
+        #[async_trait::async_trait]
+        impl crate::CredentialProvider for UnusedCredentials {
+            async fn access_token(&self) -> Result<crate::AccessToken, crate::AuthError> {
+                std::future::pending().await
+            }
+            fn invalidate(&self, _: &crate::AccessToken) {}
+        }
+        let relay = || {
+            let (connection, _) = tokio::sync::watch::channel(crate::RelayConnection::Connecting);
+            crate::EmbeddedRelay {
+                endpoint: crate::RelayEndpoint::system("https://127.0.0.1:1").unwrap(),
+                credentials: std::sync::Arc::new(UnusedCredentials),
+                connection,
+                retry: Default::default(),
+            }
+        };
+        for cloud in [
+            Config::default().cloud_url,
+            "https://configured.example".into(),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let embedded = Server::builder()
+                .config(Config {
+                    path: None,
+                    data_dir: dir.path().join("data"),
+                    state_path: dir.path().join("state.yaml"),
+                    socket_path: dir.path().join("amux.sock"),
+                    cloud_url: cloud.clone(),
+                    prevent_idle_sleep: Some(false),
+                    ..Config::default()
+                })
+                .embedded()
+                .relay(relay())
+                .open()
+                .await
+                .unwrap();
+            let runtime = embedded.runtime.as_ref().unwrap();
+            assert_eq!(
+                embedded
+                    .admin()
+                    .start_qr_pairing()
+                    .await
+                    .unwrap()
+                    .cloud_url
+                    .as_deref(),
+                Some(cloud.as_str())
+            );
+            embedded.admin().cancel_pairing().await.unwrap();
+            runtime.attach_relay(relay()).await;
+            assert_eq!(
+                embedded
+                    .admin()
+                    .start_qr_pairing()
+                    .await
+                    .unwrap()
+                    .cloud_url
+                    .as_deref(),
+                Some(cloud.as_str())
+            );
+            embedded.admin().cancel_pairing().await.unwrap();
+            runtime.attach_relay(relay()).await;
+            assert_eq!(
+                embedded
+                    .admin()
+                    .start_qr_pairing()
+                    .await
+                    .unwrap()
+                    .cloud_url
+                    .as_deref(),
+                Some(cloud.as_str())
+            );
+            embedded.shutdown().await;
         }
     }
 

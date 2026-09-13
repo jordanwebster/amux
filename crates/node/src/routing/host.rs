@@ -54,6 +54,22 @@ pub(crate) fn local_host(
         version: env!("CARGO_PKG_VERSION").to_string(),
         capabilities,
         signed_in: Some(signed_in),
+        platform: Some(local_platform().to_string()),
+    }
+}
+
+/// The name this machine goes by on a screen listing machines.
+///
+/// The operating system the daemon was compiled for, and nothing more. A
+/// model name like "Mac Studio" is not something a process can read without a
+/// hardware lookup table, and a table of marketing names would be this
+/// program guessing what computer it is running on.
+pub(crate) fn local_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macOS",
+        "linux" => "Linux",
+        "windows" => "Windows",
+        other => other,
     }
 }
 

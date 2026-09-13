@@ -34,7 +34,14 @@ pub(super) struct ProfileSpec {
 struct ProfileFixture {
     direct_addr: Option<SocketAddr>,
     clock: Arc<TestArtifactClock>,
+    sources: Arc<super::sources::DaemonSources>,
 }
+
+/// What the installation asks for each profile runtime it starts: the same
+/// shape `Installation::open_for_test` accepts.
+type RuntimeFixtureFactory = Arc<
+    dyn Fn(ProfileId) -> futures_util::future::BoxFuture<'static, RuntimeFixtures> + Send + Sync,
+>;
 
 #[derive(Default)]
 struct FixturePlan {
@@ -87,7 +94,7 @@ struct InstallationInner {
     profiles: BTreeMap<String, (ProfileId, Arc<DaemonInner>)>,
     identity: Arc<IdentityServer>,
     fixtures: Fixtures,
-    cloud_addr: Option<SocketAddr>,
+    relay_addr: Option<SocketAddr>,
     discovery: ScriptedDiscovery,
     udp_proxy: UdpProxy,
     root: PathBuf,
@@ -184,7 +191,7 @@ impl InstallationHandle {
             ),
             fixture_factory(
                 self.inner.fixtures.clone(),
-                self.inner.cloud_addr,
+                self.inner.relay_addr,
                 self.inner.discovery.clone(),
                 self.inner.udp_proxy.clone(),
             ),
@@ -478,6 +485,7 @@ impl WatchProbe {
 
 fn options(name: &str, root: InstallationRoot, embedded: bool) -> InstallationOptions {
     InstallationOptions {
+        relocation: Default::default(),
         root,
         listeners: if embedded {
             Listeners::InProcessOnly
@@ -488,6 +496,7 @@ fn options(name: &str, root: InstallationRoot, embedded: bool) -> InstallationOp
         identity_http: reqwest::Client::new(),
         host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
         settings: InstallationSettings {
+            repository_roots: Vec::new(),
             host_name: name.into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
@@ -502,47 +511,54 @@ fn options(name: &str, root: InstallationRoot, embedded: bool) -> InstallationOp
 
 fn fixture_factory(
     fixtures: Fixtures,
-    cloud_addr: Option<SocketAddr>,
+    relay_addr: Option<SocketAddr>,
     discovery: ScriptedDiscovery,
     udp_proxy: UdpProxy,
-) -> Arc<dyn Fn(ProfileId) -> RuntimeFixtures + Send + Sync> {
+) -> RuntimeFixtureFactory {
     Arc::new(move |id| {
-        let mut fixtures = fixtures.lock().unwrap();
-        let cloud_only = if let Some(fixture) = fixtures.profiles.get(&id) {
-            fixture.direct_addr.is_none()
-        } else {
-            fixtures.cloud_only.pop_front().unwrap_or(false)
-        };
-        let existing = fixtures.profiles.contains_key(&id);
-        let binding = (!cloud_only && !existing).then(|| udp_proxy.register(id.0));
-        let listener = if cloud_only {
-            None
-        } else if existing {
-            Some(udp_proxy.rebind(id.0))
-        } else {
-            Some(binding.as_ref().unwrap().socket.try_clone().unwrap())
-        };
-        let fixture = fixtures
-            .profiles
-            .entry(id)
-            .or_insert_with(|| ProfileFixture {
-                direct_addr: binding.as_ref().map(|binding| binding.public_addr),
-                clock: Arc::new(TestArtifactClock::new()),
-            });
-        RuntimeFixtures {
-            listener,
-            quic_client_socket: None,
-            advertised_addr: fixture.direct_addr,
-            quic_transport: Some(super::udp_proxy::transport_config()),
-            discovery: Some(Arc::new(discovery.clone()) as Arc<dyn Discovery>),
-            host_factory: Some(Arc::new(agent_runtime::test_support::Factory::new(
-                fixture.clock.clone(),
-            ))),
-            cloud: None,
-            cloud_transport: cloud_addr,
-            cloud_refresh_interval: None,
-            udp_blocked_memory: None,
-        }
+        let fixtures = fixtures.clone();
+        let discovery = discovery.clone();
+        let udp_proxy = udp_proxy.clone();
+        Box::pin(async move {
+            let mut fixtures = fixtures.lock().unwrap();
+            let cloud_only = if let Some(fixture) = fixtures.profiles.get(&id) {
+                fixture.direct_addr.is_none()
+            } else {
+                fixtures.cloud_only.pop_front().unwrap_or(false)
+            };
+            let existing = fixtures.profiles.contains_key(&id);
+            let binding = (!cloud_only && !existing).then(|| udp_proxy.register(id.0));
+            let listener = if cloud_only {
+                None
+            } else if existing {
+                Some(udp_proxy.rebind(id.0))
+            } else {
+                Some(binding.as_ref().unwrap().socket.try_clone().unwrap())
+            };
+            let fixture = fixtures
+                .profiles
+                .entry(id)
+                .or_insert_with(|| ProfileFixture {
+                    direct_addr: binding.as_ref().map(|binding| binding.public_addr),
+                    clock: Arc::new(TestArtifactClock::new()),
+                    sources: Default::default(),
+                });
+            RuntimeFixtures {
+                listener,
+                quic_client_socket: None,
+                advertised_addr: fixture.direct_addr,
+                quic_transport: Some(super::udp_proxy::transport_config()),
+                discovery: Some(Arc::new(discovery) as Arc<dyn Discovery>),
+                host_factory: Some(Arc::new(
+                    agent_runtime::test_support::Factory::new(fixture.clock.clone())
+                        .with_sources(fixture.sources.clone()),
+                )),
+                cloud: None,
+                cloud_transport: relay_addr,
+                cloud_refresh_interval: None,
+                udp_blocked_memory: None,
+            }
+        })
     })
 }
 
@@ -567,7 +583,7 @@ pub(super) async fn start(
         options(&spec.name, root, spec.embedded),
         fixture_factory(
             fixtures.clone(),
-            cloud.map(|cloud| cloud.addr),
+            cloud.map(|cloud| cloud.relay_addr()),
             discovery.clone(),
             udp_proxy.clone(),
         ),
@@ -612,6 +628,7 @@ pub(super) async fn start(
                     name: format!("{}/{}", spec.name, profile.name),
                     host_id: record.host_id,
                     data_dir: paths.data_dir.clone(),
+                    repository_roots: Vec::new(),
                     artifact_clock: fixture.clock.clone(),
                     direct_addr: fixture.direct_addr,
                     proxy_id: id.0,
@@ -620,8 +637,8 @@ pub(super) async fn start(
                         let cloud = cloud.expect("cloud_user requires .cloud()");
                         let (user_id, token) = cloud.credentials_for_user(user);
                         CloudAttachment {
-                            addr: cloud.addr,
-                            quic_addr: cloud.addr,
+                            addr: cloud.relay_addr(),
+                            quic_addr: cloud.relay_addr(),
                             user_id,
                             token,
                             tier: node::Tier::Pro,
@@ -639,6 +656,7 @@ pub(super) async fn start(
                         id,
                         paths,
                     }),
+                    sources: fixture.sources.clone(),
                 });
                 (profile.name.clone(), (id, daemon))
             })
@@ -647,7 +665,7 @@ pub(super) async fn start(
         current: RwLock::new(Some(Arc::new(installation))),
         identity,
         fixtures,
-        cloud_addr: cloud.map(|cloud| cloud.addr),
+        relay_addr: cloud.map(|cloud| cloud.relay_addr()),
         discovery,
         udp_proxy,
         root,

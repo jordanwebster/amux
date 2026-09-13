@@ -85,7 +85,7 @@ and three-chat consistency table live in [`CLAUDE_SDK.md`](./CLAUDE_SDK.md).
 | Human requests | Permission, plan and question panels share Claude's tool facts; MCP elicitations render flat typed forms. Unsupported schemas offer explicit Decline and Cancel. |
 | Session details | Header model and mode, passive context meter, requested context breakdown, task lifecycle, MCP status and turn cost. |
 | Fleet and families | Both Claude drivers rank and group alike; SDK parents and children exchange messages and host each other's asks through native panels. |
-| Creation and entry | `claude.driver` chooses new agents, `--driver` overrides it, and `pty` remains the default. SDK agents offer chat only; remote terminal-capable agents default to chat with raw attach available through the other-mode key. |
+| Creation and entry | `claude.driver` chooses new agents, `--driver` overrides it, and `pty` remains the default. SDK agents offer chat only; remote agents with both modes default to chat with raw attach available through the other-mode key. |
 | Dialog | Kind-and-payload recognizer with a blocked fallback; no kind is recorded and no live dialog answer is validated. |
 
 At Claude Code 2.1.261 there are **37 registered dialog kinds**. The headless
@@ -101,8 +101,8 @@ the daemon must never auto-cancel a dialog it receives.
 
 ## Modes and entry (A)
 
-From the fleet, a local terminal-capable agent opens in one of two modes:
-**raw attach** (the existing byte passthrough) or **chat**. Enter opens the default
+From the fleet, a local agent with a terminal and a chat layer opens in one of
+two modes: **raw attach** (the existing byte passthrough) or **chat**. Enter opens the default
 mode; which mode is default is a client setting in the standard amux
 config (mobile clients are chat-only and carry no such setting), and
 the shipped default is raw attach — the battle-tested path stays the path of least
@@ -120,7 +120,12 @@ behind it: a Claude session driven over stream-JSON has no bytes to pass
 through, so every entry key opens its chat and neither its hint nor its
 `?` overlay names raw attach.
 
-An agent on another machine keeps both modes but defaults to the chat
+A terminal agent with no chat layer in this build (currently TestAgent) opens
+raw attach on every host. Enter, Ctrl+Enter and `o` all attach; its hint and
+`?` overlay name raw attach alone. The available chat layer comes from the
+agent's kind, never from inspecting its stream.
+
+An agent with both modes on another machine defaults to the chat
 whatever the setting says: the chat travels over the connection the fleet
 already holds, while raw attach pipes a terminal across the network, so
 the safe half of the pair leads and the other-mode key still reaches raw
@@ -130,11 +135,12 @@ Every affordance in the fleet — Enter, Ctrl+Enter and `o`, the status-line
 hint and the `?` overlay rows — derives from that one answer per agent, so a
 key, its hint and its help row can never disagree.
 
-`amux attach` opens chat for remote agents, agents without a terminal, and
-Codex agents on any host. A local Claude PTY agent opens raw attach through
+`amux attach` opens chat for remote agents with a chat layer, agents without
+a terminal, and Codex agents on any host. A local Claude PTY agent opens raw attach through
 that command. The command line has no other-mode key; the configured local
 open-mode preference applies to fleet entry and creation, not to this attach
-command. The fleet still offers both modes for local terminal-capable agents.
+command. An agent with a terminal and no chat layer attaches raw through this
+command on every host. The fleet offers both modes where the agent has both.
 
 There is no in-session mode
 switching in V1: the mode is chosen at open, with no toggle inside a
@@ -585,9 +591,14 @@ clears text and all tokens as one recoverable kill.
 
 The draft is always editable; send is gated on phase (D2): while the
 agent works, Enter is a no-op and the footer states the gate plainly
-("draft kept — send gated while working"). Queueing while working is
-deferred; Tab and the preview row above the composer are explicitly
-reserved for it so the Codex queue-preview pattern can land additively.
+("draft kept — send gated while working"). Tab holds one message while a turn runs, on Claude PTY and Codex. The strip
+above the composer shows the queued words while keeping Interrupt available.
+With a new draft, Tab replaces the held message; with an empty field, Tab
+cancels the hold and returns its text and tokens to the composer. Delivery
+starts at the first observed turn end after the hold, once the native send
+gate allows it. A disconnect keeps the queue; a failed delivery remains visible
+and retries after the stream reconnects. A message already being sent cannot
+be replaced or cancelled.
 
 Interrupt is a distinct, deliberate binding: **Ctrl+X**, allowed in
 every focus state including open ask panels, even while send is gated
@@ -734,8 +745,8 @@ text cursor.
     draft kept — send gated while working                                                                shift+tab mode
 ```
 
-The blank row above the working line is reserved for the queued-input
-preview when queueing lands (deferred, door open).
+A held message adds a queue row beside the working line. The row remains
+visible through disconnect and states any delivery failure.
 
 ### Permission ask
 
@@ -910,7 +921,7 @@ bytes must be drawn before its keys are handled.
 | From | Event / key | To | Notes |
 |---|---|---|---|
 | COMPOSER (idle) | Enter, non-empty draft | COMPOSER (working) | optimistic echo + `sending…` (B1) |
-| COMPOSER (working) | Enter | — | no-op; footer states the gate (D2); Tab reserved |
+| COMPOSER (working) | Enter | — | no-op; footer states the gate (D2); Tab holds or replaces a message |
 | any | Ctrl+X | same | interrupt sent (D3); interruption entry lands (B8) |
 | COMPOSER | ask head appears | ASK | panel takes the composer area; draft preserved (C1, D1) |
 | ASK | 1–9 / ↑↓ | ASK | select option |
@@ -1027,7 +1038,7 @@ excepted, as today.
 | f | ask menu, read-only ask fact | open document in the reader | plain |
 | Ctrl+T | chat, accepted plan exists | plan reader; ←/→ steps between plans | plain |
 | Shift+Tab | composer | cycle permission mode (D4) | plain (CSI Z) |
-| Tab | composer | reserved (future queueing) | — |
+| Tab | composer | hold/replace while working; empty field unqueues for editing | plain |
 | PgUp / PgDn | chat | scroll feed; reaching bottom resumes following | plain |
 | Ctrl+Home / Ctrl+End | chat | feed oldest / newest + follow | ext |
 | wheel | chat feed | scroll three feed rows per notch; reaching bottom resumes following | plain |
@@ -1354,6 +1365,93 @@ Recorded with their evidence so they are not helpfully reintroduced.
   never scroll horizontally; wrapped continuations with a blank
   gutter keep the number column honest — both subjects agree.
 
+## Shared provider controls and task lists
+
+`ProviderFacts` supplies the selected model and effort, offered models with
+their effort levels and defaults, provider commands, permission settings and
+the latest confirmed task list. These are session facts shared by terminal and
+mobile clients; a renderer does not discover choices or infer them from prose.
+
+Codex obtains model choices through paginated app-server discovery. Typed
+`SetModel`, `SetEffort` and `SetPreset` commands pass the session's settings
+gate before reaching the host. Changing the model selects its reported default
+effort. An unknown model or unsupported effort refuses without changing the
+selection. Host settings rows confirm the selection without adding feed entries;
+the configuration survives reconnect and applies to subsequent turns, including
+empty turns. Claude PTY reports its observed permission mode, but refuses these
+settings commands with `PtySettingsUnavailable`. Its existing semantic permission
+cycle remains separate.
+
+Claude SDK sessions accept `ClaudeSdkV1Input::SetEffort` on the same live
+control channel as model and permission changes. It sends
+`apply_flag_settings` with `settings.effortLevel`; there is no invented
+`set_effort` provider subtype. The upstream SDK documents this runtime control
+and nullable override clearing, including `max` support before the recorded
+0.3.247 revision (see the [SDK changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md),
+0.3.214 and 0.2.132). A failed control leaves the published selection unchanged.
+An acknowledgement publishes the selected effort for subsequent work. Clearing
+the override publishes unknown effort until the provider reports a concrete
+value; it does not guess the model's default. These controls do not restart the
+session or rewrite user settings. Shared `SetModel` and `SetEffort` actions
+use this SDK write path, and `ClaudeSdkCommand::SetPermissionMode` selects a
+specific provider mode. Settings remain available while working or answering
+an ask; replay, read-only sessions and an unresolved input refuse them. The
+client validates typed SDK values before creating pending state. Observed
+model, effort and permission reach `ProviderFacts`. The initialization reply's
+`Session::supported_models()` supplies the model value, resolved model, display
+name and advertised effort levels in every synthesized session-facts row.
+Shared model choices retain the selectable value; the current model matches
+that value or its resolved name to select the effort list. Missing catalogues,
+unknown current models and models without advertised effort levels produce no
+effort choices. No model default is inferred. Reopening from a retained facts
+snapshot restores the catalogue without another discovery request.
+
+The SDK initialization reply's `Session::supported_commands()` supplies command
+names in the first synthesized session-facts row, before a prompt is sent.
+The shared client retains them independently of transcript eviction and exposes
+them as `ProviderFacts.commands`, attributed to Claude because this reply does
+not identify a command's plugin source. The provider's system-init terminal-only
+list supplies command flags when reported. Every later synthesized facts row
+carries those flags, including when a client opens only the retained tail.
+A selected SDK command uses the existing
+`Prompt` input containing `/name` followed by its arguments. Claude's headless
+stream-JSON protocol dispatches slash prompts; the recorded compact and clear
+sessions exercise that route. It has no dedicated command control request.
+The SDK backend's duplex test observes `/compact keep the decisions` at the
+provider stdin boundary, alongside successful, rejected and cleared effort
+controls. This proves protocol dispatch, not a new authenticated provider run.
+
+Codex command discovery lists enabled, uniquely named skills in the session's
+working directory. Each `ProviderCommand` names its source (`Claude`, `Codex`
+or a plugin) and whether it is terminal-only. Claude PTY reports an empty list.
+A selected Codex command is a `DraftSegment::CommandToken` followed by text
+arguments. The token must be first and unique; the host
+resolves the skill path and sends a typed provider skill item with the exact
+arguments. Unknown, disabled, ambiguous, terminal-only or stale choices refuse
+delivery. Queue replacement, cancellation and delivery preserve that token;
+the terminal restores it atomically for editing. Command drafts with binary
+attachments currently refuse explicitly. A slash picker remains renderer work.
+
+Claude's `TodoWrite` fold publishes `ProviderFacts.todos` only after a successful
+matching tool result. It replaces the complete ordered list, counts completed
+items, and names the first in-progress item's `activeForm` (or its content when
+absent) as the current activity. A successful empty list clears the tasks. A
+pending or failed write keeps the previous confirmed list; failures remain in
+the feed, while successful bookkeeping adds no feed rows. Malformed blocks
+retain their ordinary tool representation. Bounded correlation and duplicate
+memory survive checkpoints and disconnects; a session reset clears them. The
+fold runs in both Claude drivers against the same native tool blocks. SDK
+provider-internal child lists stay in the child's feed and cannot replace the
+parent's task list. Task-list presentation consumes these facts without parsing
+the transcript again.
+
+The shared held-draft queue also accepts working SDK sessions. It waits for a
+new SDK turn result and the SDK send gate to become ready, then dispatches the
+same prompt or command-token path as an immediate draft. Replacement and
+cancellation preserve the draft, interruption leaves it held, and reconnect
+replays the session before retrying a failed delivery. A previous turn result
+cannot release a draft held later.
+
 ## Deferred decisions
 
 Doors left open on purpose; each stays additive under the constraints
@@ -1361,20 +1459,17 @@ above.
 
 - **Per-agent last-used-mode memory** (A2) — a client setting refinement
   over A1's default.
-- **Message queueing while working** (D2) and steering: Tab and the
-  preview row above the working line are reserved; the Codex `↳` queue
-  preview with pop-to-edit is the pattern to adopt. Steering is a
-  protocol question before it is a UX one.
+- **Claude steering** is a protocol question before it is a UX one.
 - **Fork-into-writable** from a read-only chat (F2).
 - **Attachment extensions** — terminal thumbnails, A2A attachment delivery,
   another diff base, model fetching, comment re-anchoring, a side pane, and
   rich clients are listed with the constraint that keeps each open in
   [`ATTACHMENTS.md`](./ATTACHMENTS.md#deferred-decisions).
-- **Slash commands and @-mentions** — `/` and `@` are unclaimed
-  composer grammar; the binding table already feeds a future palette.
+- **Slash picker and @-mentions** — typed provider command drafts are available;
+  the terminal picker and mention grammar remain renderer work.
 - **Shell-passthrough composer mode** (`!` prefix precedent).
 - **Thinking-text expansion** — V1 renders marker + duration only.
-- **Todo-list rendering.**
+- **Todo-list rendering** — the shared confirmed task-list facts are available.
 - **Cost accounting** — the activity line states context tokens (D5);
   what a turn cost in money is not in the transcript.
 - **Nested subagent timelines** — requires tailing child transcript

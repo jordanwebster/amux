@@ -183,6 +183,7 @@ impl WirePeer {
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: Capabilities::default(),
             signed_in: Some(false),
+            platform: None,
         };
         let acceptor_host = Host {
             id: acceptor_daemon.host_id(),
@@ -190,6 +191,7 @@ impl WirePeer {
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: Capabilities::default(),
             signed_in: Some(false),
+            platform: None,
         };
         let (connector_io, acceptor_io) = tokio::io::duplex(1024 * 1024);
         let connector_carrier = Arc::new(MuxCarrier::new(
@@ -248,6 +250,7 @@ impl WirePeer {
             version: env!("CARGO_PKG_VERSION").to_string(),
             capabilities: Capabilities::default(),
             signed_in: Some(false),
+            platform: None,
         };
         let (connector_io, acceptor_io) = tokio::io::duplex(1024 * 1024);
         let acceptor = Arc::new(MuxCarrier::new(
@@ -327,6 +330,7 @@ impl WirePeer {
             version: "0.0.0-wire".to_string(),
             capabilities: Capabilities::default(),
             signed_in: Some(false),
+            platform: None,
         };
         self.send_message(pb::Message {
             body: Some(pb::message::Body::Hello(pb::Hello {
@@ -341,6 +345,7 @@ impl WirePeer {
                             version: "test".to_string(),
                             capabilities: Capabilities::default(),
                             signed_in: Some(false),
+                            platform: None,
                         })
                     })
                     .collect(),
@@ -380,6 +385,7 @@ impl WirePeer {
             version: "test".to_string(),
             capabilities: Capabilities::default(),
             signed_in: Some(false),
+            platform: None,
         };
         self.send_message(pb::Message {
             body: Some(pb::message::Body::NeighborUp(pb::NeighborUp {

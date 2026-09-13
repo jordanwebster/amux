@@ -12,7 +12,7 @@ use model::{ArtifactId, ProtocolError, ShutdownReason};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::AgentRuntime;
+use super::{AgentRuntime, SharedAgentServiceState};
 #[cfg(unix)]
 use crate::agents::CodexRawPtyLease;
 use crate::agents::claude::io::{self as claude_io, ClaudePtyTranscriptV1ReplayQuery};
@@ -48,6 +48,7 @@ pub(super) async fn subscribe_session_stream(
         close_rx,
         shutdown_rx,
         replay_attachments,
+        host.state().clone(),
     ))
 }
 
@@ -469,7 +470,7 @@ pub(super) async fn send_session_input(
     }
 }
 
-fn claude_sdk_input(
+pub(crate) fn claude_sdk_input(
     input: model::ClaudeSdkInput,
 ) -> Result<claude_sdk_io::ClaudeSdkV1Input, ProtocolError> {
     use claude_sdk_io::ClaudeSdkV1Input;
@@ -487,6 +488,17 @@ fn claude_sdk_input(
             })?,
         },
         model::ClaudeSdkInput::SetModel { model } => ClaudeSdkV1Input::SetModel { model },
+        model::ClaudeSdkInput::SetEffort { effort } => ClaudeSdkV1Input::SetEffort {
+            effort: effort
+                .map(|value| {
+                    serde_json::from_value(serde_json::Value::String(value)).map_err(|error| {
+                        ProtocolError::InvalidArgument {
+                            message: format!("invalid effort: {error}"),
+                        }
+                    })
+                })
+                .transpose()?,
+        },
         model::ClaudeSdkInput::RequestContextBreakdown => ClaudeSdkV1Input::RequestContextBreakdown,
         model::ClaudeSdkInput::ElicitationDecision { request_id, result } => {
             ClaudeSdkV1Input::ElicitationDecision {
@@ -696,6 +708,7 @@ async fn send_claude_pty_to_target(
         .send(StructuredInputEvent::ClaudePty {
             client_seq: input.expected_seq,
             intent: input.intent.clone(),
+            pins: pins.to_vec(),
         })
         .await
 }
@@ -726,6 +739,7 @@ enum DirectSessionStreamState {
         close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
         shutdown_rx: mpsc::Receiver<ShutdownReason>,
         replay_attachments: Option<Vec<ArtifactRef>>,
+        agents: SharedAgentServiceState,
     },
     ReplayingAttachments {
         agent_id: Uuid,
@@ -733,14 +747,32 @@ enum DirectSessionStreamState {
         close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
         shutdown_rx: mpsc::Receiver<ShutdownReason>,
         refs: Vec<ArtifactRef>,
+        agents: SharedAgentServiceState,
     },
     Reading {
         agent_id: Uuid,
         reader: SessionOutputReader,
         close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
         shutdown_rx: mpsc::Receiver<ShutdownReason>,
+        /// The registry the exit code is read from when the output stream
+        /// ends. The stream itself carries no code, and the agent is still
+        /// registered at that moment, so this is where the code is.
+        agents: SharedAgentServiceState,
     },
     Done,
+}
+
+/// What the backend says this agent exited with, or `None` when it has no
+/// code for it — because the agent is gone from the registry already, or was
+/// signalled, or runs on a backend that never reports one. An absent code is
+/// carried as absent all the way to the phone rather than being softened into
+/// a zero.
+async fn exit_code_for_agent(agents: &SharedAgentServiceState, agent_id: Uuid) -> Option<i32> {
+    let state = agents.read().await;
+    state
+        .local_agents
+        .get(&agent_id)
+        .and_then(|context| context.session.exit_code())
 }
 
 fn direct_session_response_stream(
@@ -749,6 +781,7 @@ fn direct_session_response_stream(
     close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
     shutdown_rx: mpsc::Receiver<ShutdownReason>,
     replay_attachments: Option<Vec<ArtifactRef>>,
+    agents: SharedAgentServiceState,
 ) -> HostSessionStream {
     Box::pin(futures_util::stream::unfold(
         DirectSessionStreamState::Opening {
@@ -757,6 +790,7 @@ fn direct_session_response_stream(
             close_rx,
             shutdown_rx,
             replay_attachments,
+            agents,
         },
         |state| async move {
             match state {
@@ -766,6 +800,7 @@ fn direct_session_response_stream(
                     close_rx,
                     shutdown_rx,
                     replay_attachments,
+                    agents,
                 } => {
                     let next = match (replay_attachments, &reader) {
                         (Some(refs), SessionOutputReader::Structured { .. }) => {
@@ -775,6 +810,7 @@ fn direct_session_response_stream(
                                 close_rx,
                                 shutdown_rx,
                                 refs,
+                                agents,
                             }
                         }
                         _ => DirectSessionStreamState::Reading {
@@ -782,6 +818,7 @@ fn direct_session_response_stream(
                             reader,
                             close_rx,
                             shutdown_rx,
+                            agents,
                         },
                     };
                     Some((Ok(HostSessionEvent::Opened), next))
@@ -792,6 +829,7 @@ fn direct_session_response_stream(
                     close_rx,
                     shutdown_rx,
                     refs,
+                    agents,
                 } => {
                     let event = structured_output_event(StructuredOutput {
                         seq: 0,
@@ -804,6 +842,7 @@ fn direct_session_response_stream(
                             reader,
                             close_rx,
                             shutdown_rx,
+                            agents,
                         },
                     ))
                 }
@@ -812,6 +851,7 @@ fn direct_session_response_stream(
                     mut reader,
                     mut close_rx,
                     mut shutdown_rx,
+                    agents,
                 } => {
                     let event = tokio::select! {
                         biased;
@@ -852,9 +892,15 @@ fn direct_session_response_stream(
                                         detail: error.to_string(),
                                     },
                                 },
+                                // The output stream ending is how a subscriber
+                                // learns the agent has gone, but it carries no
+                                // code. The backend still holds one, so the
+                                // reason is completed from the registry rather
+                                // than sent out empty for every reader to
+                                // guess at.
                                 None => HostSessionEvent::Closed {
                                     reason: SessionCloseReason::AgentExited {
-                                        exit_code: None,
+                                        exit_code: exit_code_for_agent(&agents, agent_id).await,
                                     },
                                 },
                             }
@@ -867,6 +913,7 @@ fn direct_session_response_stream(
                             reader,
                             close_rx,
                             shutdown_rx,
+                            agents,
                         },
                     };
                     Some((Ok(event), next_state))
@@ -1185,6 +1232,7 @@ mod tests {
             close_rx,
             shutdown_rx,
             None,
+            AgentRuntime::new(Uuid::from_u128(1)).state().clone(),
         );
 
         for _ in 0..300 {
@@ -1241,6 +1289,7 @@ mod tests {
             close_rx,
             shutdown_rx,
             Some(vec![artifact.clone()]),
+            AgentRuntime::new(Uuid::from_u128(1)).state().clone(),
         );
 
         let opened = stream.next().await.unwrap().unwrap();
@@ -1279,6 +1328,7 @@ mod tests {
             close_rx,
             shutdown_rx,
             None,
+            AgentRuntime::new(Uuid::from_u128(1)).state().clone(),
         );
 
         let opened = stream.next().await.unwrap().unwrap();

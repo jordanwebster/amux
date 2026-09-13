@@ -22,6 +22,7 @@
   composer                                                                                                              
       enter                     send                                                                                    
       ctrl+j                    newline                                                                                 
+      tab                       queue / replace; empty: edit queued message                                             
       shift+enter               newline · kitty                                                                         
       shift+tab                 cycle permission mode                                                                   
       home/end · ctrl+b/f/p/n   motion                                                                                  
@@ -34,7 +35,6 @@
                                                                                                                         
   ask panels                                                                                                            
       1-9                       select (never submits)                                                                  
-      ↑/↓                       move selection                                                                          
   ⋮ more — a taller terminal shows the full list                                                                        
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
     any key to close                                                                                                    

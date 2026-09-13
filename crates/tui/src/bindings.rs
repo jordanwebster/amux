@@ -310,6 +310,11 @@ pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
     let mut composer = vec![
         row("enter", "send", Tier::Plain),
         row("ctrl+j", "newline", Tier::Plain),
+        row(
+            "tab",
+            "queue / replace; empty: edit queued message",
+            Tier::Plain,
+        ),
     ];
     if eff.kitty {
         composer.push(row("shift+enter", "newline", Tier::Kitty));
@@ -426,6 +431,11 @@ pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> 
     let mut composer = vec![
         row("enter", "send or steer", Tier::Plain),
         row("ctrl+j", "newline", Tier::Plain),
+        row(
+            "tab",
+            "queue / replace; empty: edit queued message",
+            Tier::Plain,
+        ),
     ];
     if eff.kitty {
         composer.push(row("shift+enter", "newline", Tier::Kitty));

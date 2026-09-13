@@ -645,6 +645,7 @@ mod attach_tests {
                     last_dial_error: None,
                     via: node::HostVia::Direct,
                     signed_in: Some(true),
+                    platform: None,
                 })
                 .collect();
             Self {

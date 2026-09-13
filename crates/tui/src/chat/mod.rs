@@ -12,6 +12,7 @@ mod codex;
 pub mod diff;
 pub(crate) mod frame;
 pub(crate) mod inline;
+mod queue;
 pub(crate) mod viewport;
 
 use std::cell::RefCell;
@@ -1003,6 +1004,7 @@ mod tests {
                 ui_state::HostVia::Offline
             },
             signed_in: Some(true),
+            platform: None,
         }
     }
 

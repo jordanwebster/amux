@@ -77,6 +77,7 @@ Profiles:
 @TpairA
 > amux pair
 @@capture pairing_pin Pairing PIN:
+PIN expires in 5 minutes.
 @@capture direct_addresses LAN direct addresses:
 Pairing mode active for 5 minutes.
 

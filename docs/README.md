@@ -12,6 +12,9 @@ subject; when two overlap, the owner named here wins.
   surfaces, isolation scope and internal layering.
 - `A2A.md` — agent-to-agent messaging and families: envelopes, provider
   carriers, model-facing tools, parent/child lifecycle, and client behavior.
+- [iPhone app](IOS.md) — packages, bridge, build pins, fixture driving, goldens,
+  journeys, replay and device qualification; [performance](IOS_PERFORMANCE.md)
+  owns measurement definitions, budgets and reviewed baselines.
 - `UI.md` — the client layer: the ui-state reducer core, the
   kernel/per-agent-layer split, edge contracts, and the TUI.
 - `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the
@@ -48,4 +51,21 @@ subject; when two overlap, the owner named here wins.
 - `../crates/testnet/tests/spec/` and `../crates/ui-state/tests/spec/` — the executable specs. The suites read as
   documentation and locks the protocol's guarantees; run it with
   `just spec`.
+- [App layer](NATIVE_INTEGRATION.md) — the three crates any rich client
+  reuses, their one dependency rule, the harness seams, the bridge build
+  recipes and what the tests hold.
+- [Native runtime bridge](../crates/app-ffi/README.md) — C lifecycle, routing
+  tokens, callback ownership and the debug loopback boundary.
+- `CI.md` — native iOS verification recipes, pinned runner and commit-specific
+  CI status.
+- [RELEASE.md](RELEASE.md) — shipping the iPhone app without Expo: the
+  marketing version and build number, the release tag, the signing
+  contract, archive, export and validation, and the one-time App Store
+  Connect setup only a person can do.
+- [TESTNET.md](TESTNET.md) — isolated relay and daemon topologies, readiness and the
+  served control door's loopback protocol, provider scripts and the offline smoke
+  recipe.
+- [CLOUD.md](CLOUD.md) — what the iPhone app asks of amux.sh: every endpoint it
+  uses, the entitlement read, how a signed purchase reaches the cloud, and
+  where each configuration value and secret lives.
 - `../DEVLOG.md` — recent work history and decisions.

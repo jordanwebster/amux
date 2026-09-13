@@ -1,10 +1,24 @@
 use std::path::Path;
 
+mod ci;
+mod door;
+mod golden;
+use xtask::ios_verify;
+mod replay;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match std::env::args().nth(1).as_deref() {
         Some("codegen") => codegen(),
+        Some("ci-status") => ci::main(),
+        Some("ci-observe") => ci::observe_main(),
+        Some("door") => door::main(),
+        Some("golden") => golden::main(),
+        Some("replay") => replay::main(),
+        Some("ios-verify") => ios_verify::run(),
         _ => {
-            eprintln!("usage: cargo run -p xtask -- codegen");
+            eprintln!(
+                "usage: xtask <codegen|ci-status [--wait SECS]|ci-observe [--settle SECS] [--wait SECS] [--record PATH]|golden <run|diff|reference|perturb> [ARGS]|replay [--simulator NAME] [--bundle-id ID] [--install APP] [--update] DIR|door [--simulator NAME] [--bundle-id ID] [--install APP] [--timeout SECS] [--requests FILE] [JSON...]|ios-verify>"
+            );
             std::process::exit(2);
         }
     }

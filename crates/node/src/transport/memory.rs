@@ -16,7 +16,8 @@ pub(crate) const IN_PROCESS_BUF_SIZE: usize = 64 * 1024;
 
 pub(crate) type InProcessTransport = GrpcIo<DuplexStream>;
 
-pub(crate) struct InProcessConnection {
+#[doc(hidden)]
+pub struct InProcessConnection {
     cancellation: CancellationToken,
 }
 

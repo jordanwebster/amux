@@ -1,0 +1,40 @@
+import AmuxApp
+import Foundation
+
+// The callback must never run: this build excludes plaintext relay support.
+private func unexpectedEvent(_ events: UnsafePointer<CChar>?, _ context: UnsafeMutableRawPointer?) {
+    fatalError("Shipping bridge accepted a debug relay")
+}
+
+private func ignoreEvent(_ events: UnsafePointer<CChar>?, _ context: UnsafeMutableRawPointer?) {}
+
+let version = String(cString: amux_app_version())
+precondition(!version.isEmpty, "Missing bridge version")
+print("amux_app_version=\(version)")
+
+let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+defer { try? FileManager.default.removeItem(at: root) }
+func configuration(url: String, tls: String) -> String {
+    """
+    {"data_dir":"\(root.path)/data","cache_dir":"\(root.path)/cache","log_path":"\(root.path)/amux.log",\
+    "device_name":"linkage-smoke","relay":{"url":"\(url)","tls":"\(tls)"},\
+    "accounts":[{"id":"personal","token":{"Static":"unused"}}],"active":"personal"}
+    """
+}
+
+// Accept the same account configuration over TLS first, so invalid JSON cannot
+// make the plaintext rejection pass.
+let system = configuration(url: "https://127.0.0.1:9", tls: "System")
+guard let valid = system.withCString({ amux_app_start($0, ignoreEvent, nil) }) else {
+    fatalError("Shipping bridge rejected the valid System configuration")
+}
+amux_app_stop(valid)
+print("System configuration accepted by the shipping mobile library")
+
+let config = configuration(url: "http://127.0.0.1:9", tls: "PlainLoopback")
+let handle = config.withCString { amux_app_start($0, unexpectedEvent, nil) }
+if let handle {
+    amux_app_stop(handle)
+    fatalError("Shipping bridge must reject PlainLoopback")
+}
+print("PlainLoopback rejected by the shipping mobile library")

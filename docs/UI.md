@@ -72,9 +72,14 @@ in, state folds, deltas out.
 - **`Command`** — client → reducer. The only write surface. Dispatch
   returns an `OpId`; outcomes return as state (`OpFinished` deltas),
   because a lost outcome must not leave a spinner lying. While
-  disconnected, Commands fail fast with an error outcome — there is no
-  offline queue. (A future mobile client may add one with idempotency
-  receipts; that is additive shell work, not a reducer change.)
+  disconnected, immediate writes fail fast. `Queue(Hold)` deliberately holds
+  one draft for a working agent; Replace and Cancel remain local operations,
+  including while disconnected. The hold stays pending until delivered,
+  replaced or cancelled. The shared reducer waits for a newer turn-end fact
+  and the native send gate before emitting input. Failed delivery keeps the
+  draft and retries after stream reconnect, preserving its correlation id.
+  Cancellation returns the draft; queued attachment bytes live in the runtime,
+  with only metadata in the reducer and its recordings.
 - **`Delta`** — reducer → clients. Entity-keyed, idempotent, upsert-shaped
   (`AgentUpserted`, `HostRemoved`, `Connection(..)`). A delta says "the
   state IS this", never "this happened"; applying one takes a keyed store
@@ -117,6 +122,28 @@ through the Effect seam.
 
 Renderer-local state — focus, scroll, drafts, navigation — stays in
 renderers. Deltas eliminate client *domain* state, not view state.
+
+## Shared session facts
+
+`provider::facts` projects `ProviderFacts`: selected `model` and `effort`,
+offered `models` (including per-model efforts and defaults), current `efforts`,
+`commands` with source and terminal-only status, provider-specific `permission`,
+and optional `todos` with done/total counts, current activity and ordered states.
+Absent facts stay absent. Codex settings/readiness rows supply its choices;
+Claude PTY supplies observed permission mode and successful TodoWrite results.
+Claude SDK supplies observed model, effort, permission, initialized commands
+and successful parent-session TodoWrite results. Its shared writing actions
+and queue use the SDK layer's native gates and inputs.
+
+`SettingsGate` separately names readiness or the reason a settings change
+refuses, including `PtySettingsUnavailable`. Typed model, effort and preset
+commands use that gate and host validation. `Draft` holds text and command-token
+segments, preserving a selected provider command through queueing and replay.
+`QueuedMessage` exposes its draft, hold time and `QueueDelivery` (`Held`,
+`Sending` with operation id, or `Failed` with error). The mobile session
+projection carries provider facts, settings gate and queue alongside native
+send gates and family facts. Clients render these projections rather than
+reconstructing them from feed text.
 
 ## Kernel and per-agent layers
 
@@ -427,8 +454,9 @@ constraint.
 - **Content windowing.** Transcript-scale entities are windowed when the
   chat milestone arrives — deltas apply within a window, an epoch guards
   snapshot/live reconciliation. Nothing in V1 touches content.
-- **Offline command queueing** (mobile): additive shell work with
-  idempotency receipts; the reducer's fail-fast contract is unchanged.
+- **General offline command queueing** remains separate from explicit held
+  drafts. Replaying arbitrary writes requires host-side idempotency receipts;
+  immediate commands still fail fast.
 - **New agent kinds and protocols.** Agent identity and session protocols are
   now closed wire types. Adding a provider means adding typed kind and protocol
   variants, then satisfying every exhaustive backend, client-layer, and

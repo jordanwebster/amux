@@ -26,6 +26,7 @@ mod discovery;
 // Chapter 1 — Profiles, identity and trust
 mod identity;
 mod profiles;
+mod revocation; // Device identity and immediate session revocation
 
 // Chapter 2 — Pairing
 mod pairing;
@@ -54,5 +55,8 @@ mod debug;
 
 // Chapter 9 — Artifact routing, persistence and lifetime
 mod attachments;
+
+// Host project discovery and recent directories
+mod repositories;
 
 mod smoke; // The canonical TestNet harness example

@@ -67,8 +67,10 @@ async fn create_test_agent(client: &node::Client, working_dir: &Path) -> node::A
 async fn installation_client() -> (node::Installation, node::Client, PathBuf, tempfile::TempDir) {
     let disk_root = testnet::identity::short_installation_root();
     let installation = node::Installation::open(node::InstallationOptions {
+        relocation: Default::default(),
         root: node::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: node::InstallationSettings {
+            repository_roots: Vec::new(),
             host_name: "ui-test".into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
@@ -119,6 +121,7 @@ fn blob_path(root: &Path, agent: node::AgentId, id: &node::ArtifactId) -> PathBu
 struct AttachmentStub {
     requests: Mutex<Vec<node::SendInputRequest>>,
     calls: Mutex<Vec<String>>,
+    stored: Mutex<Vec<(String, Vec<u8>)>>,
 }
 
 impl AttachmentClient for AttachmentStub {
@@ -132,6 +135,10 @@ impl AttachmentClient for AttachmentStub {
     ) -> AttachmentClientFuture<'a, node::ArtifactRef> {
         Box::pin(async move {
             self.calls.lock().unwrap().push(format!("put:{name}"));
+            self.stored
+                .lock()
+                .unwrap()
+                .push((name.to_string(), bytes.clone()));
             if name == "oversized.bin" {
                 return Err(node::ClientError::Protocol(
                     node::ProtocolError::AttachmentTooLarge {
@@ -228,6 +235,9 @@ async fn runtime_reflects_daemon_state_in_the_model() {
         .await;
 }
 
+// Drives two runtimes over the installation's Unix socket, so it has no
+// Windows form.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn independent_runtimes_keep_account_identity_and_node_ownership_separate() {
     let _guard = embedded_server_test_guard().await;
@@ -297,6 +307,53 @@ async fn independent_runtimes_keep_account_identity_and_node_ownership_separate(
     installation
         .shutdown(node::ShutdownReason::UserRequested)
         .await;
+}
+
+/// A picked photograph is stored on its own, before any message exists, and
+/// what comes back is what the composer can name.
+#[tokio::test(flavor = "multi_thread")]
+async fn attaching_stores_the_picked_bytes_and_answers_with_what_a_token_names() {
+    let client = AttachmentStub::default();
+    let agent = Uuid::new_v4();
+    let pixels = b"\x89PNG\r\n\x1a\n and then some pixels".to_vec();
+    let picked = DraftAttachment::from_bytes(
+        ArtifactKind::Image,
+        "reconnect-loop.png",
+        "image/png",
+        pixels.clone(),
+    );
+
+    let outcome = ui_runtime::execute_put(&client, agent, picked.clone()).await;
+    assert_eq!(
+        *client.stored.lock().unwrap(),
+        vec![("reconnect-loop.png".to_string(), pixels)],
+        "the host receives the bytes that were picked, unaltered"
+    );
+    let OpOutcome::AttachmentStored { attachment } = outcome else {
+        panic!("a picked photograph is stored: {outcome:?}")
+    };
+    assert_eq!(attachment.id, picked.id);
+    assert_eq!(attachment.name, "reconnect-loop.png");
+    assert_eq!(attachment.size, picked.size);
+    assert!(
+        attachment.bytes.is_none(),
+        "the bytes have done their travelling and do not come back"
+    );
+
+    // A store the host refused never becomes a token: there would be nothing
+    // behind it for whoever reads the message.
+    let too_large = DraftAttachment::from_bytes(
+        ArtifactKind::File,
+        "oversized.bin",
+        "application/octet-stream",
+        b"stub rejects by name".to_vec(),
+    );
+    assert!(matches!(
+        ui_runtime::execute_put(&client, agent, too_large).await,
+        OpOutcome::Error {
+            error: OpError::AttachmentTooLarge { ref name, .. }
+        } if name == "oversized.bin"
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -811,8 +868,10 @@ fn socket_connector(socket: &Path) -> ui_runtime::Connector {
 async fn socketed_installation() -> (node::Installation, tempfile::TempDir) {
     let disk_root = testnet::identity::short_installation_root();
     let installation = node::Installation::open(node::InstallationOptions {
+        relocation: Default::default(),
         root: node::InstallationRoot::OnDisk(disk_root.path().into()),
         settings: node::InstallationSettings {
+            repository_roots: Vec::new(),
             host_name: "ui-switcher-test".into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),

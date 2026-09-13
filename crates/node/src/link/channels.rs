@@ -42,6 +42,10 @@ pub(crate) struct ChannelKey {
 pub enum ChannelError {
     #[error("host {host_id} is not reachable")]
     NoRoute { host_id: HostId },
+    #[error(
+        "Pairing could not reach this host. Check that both devices are online and signed in to the same cloud account."
+    )]
+    CloudPairingUnavailable,
     #[error("stream refused: {0:?}")]
     Refused(pb::StreamRefusal),
     #[error("no live link to host {host_id}")]

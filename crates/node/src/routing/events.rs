@@ -26,7 +26,8 @@ pub enum RoutingEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum HostReachabilityEvent {
+#[doc(hidden)]
+pub enum HostReachabilityEvent {
     Added { host: Host },
     Removed { host_id: HostId },
 }

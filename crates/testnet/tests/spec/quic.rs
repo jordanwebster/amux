@@ -118,7 +118,7 @@ async fn a_session_survives_five_percent_loss_and_two_hundred_milliseconds_of_la
     let mut session = phone.attach_via_profile(&host, "worker").await;
 
     net.loss(5);
-    net.latency(200);
+    net.direct_latency(200);
     session.send("impaired-network").await;
     session.expect_output("impaired-network").await;
     phone.connects_to_via_direct_quic(&host).await;

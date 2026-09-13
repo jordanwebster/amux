@@ -1,0 +1,109 @@
+//! A client-only embedded runtime authenticated against the loopback relay.
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use client::Client;
+use node::ProfileAdmin;
+use node::harness::link::{CarrierKind, LinkCarrier, MuxCarrier, MuxRole};
+use node::harness::{
+    Config, DeviceRuntimeSecurity, InProcessConnection, StartedUserServices, TrustStore,
+    load_or_create_device_identity_in, start_user_services,
+};
+use node::user_state::ServerState;
+
+pub struct UserClient {
+    cloud_url: String,
+    client: Client,
+    admin: ProfileAdmin,
+    _connection: InProcessConnection,
+    _shutdown: tokio::sync::watch::Sender<bool>,
+    _services: StartedUserServices,
+    _root: tempfile::TempDir,
+    tasks: Vec<tokio::task::AbortHandle>,
+}
+
+impl std::ops::Deref for UserClient {
+    type Target = Client;
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+impl UserClient {
+    pub fn admin(&self) -> ProfileAdmin {
+        self.admin.clone()
+    }
+
+    /// The cloud read from this client's configuration.
+    pub fn cloud_url(&self) -> &str {
+        &self.cloud_url
+    }
+}
+
+impl Drop for UserClient {
+    fn drop(&mut self) {
+        // Aborting the link drops the carrier, and the carrier owns the socket
+        // it dialled, so closing it needs no separate handle on the connection.
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
+}
+
+/// Opens the production embedded client services without a local agent host,
+/// using a supplied test relay token instead of the production token exchange.
+pub async fn connect_user(
+    cloud_url: &str,
+    relay: SocketAddr,
+    token: String,
+) -> anyhow::Result<UserClient> {
+    anyhow::ensure!(relay.ip().is_loopback(), "testnet relay must be loopback");
+    let root = tempfile::tempdir()?;
+    let identity = load_or_create_device_identity_in(root.path())?;
+    let trust = TrustStore::load_or_create_in(root.path())?;
+    let config_path = root.path().join("config.yaml");
+    let config = Config {
+        host_name: "testnet-client".into(),
+        cloud_url: cloud_url.into(),
+        data_dir: root.path().to_owned(),
+        state_path: root.path().join("state.yaml"),
+        socket_path: root.path().join("amux.sock"),
+        ..Config::default()
+    };
+    std::fs::write(&config_path, serde_yaml::to_string(&config)?)?;
+    let config = Config::from_file(&config_path)?;
+    let cloud_url = config.cloud_url.clone();
+    let state = Arc::new(tokio::sync::RwLock::new(ServerState::new(
+        config,
+        identity.host_id,
+        None,
+        None,
+    )));
+    let services = start_user_services(
+        state,
+        None,
+        DeviceRuntimeSecurity::new(identity, trust, root.path().to_owned()),
+    )
+    .await?;
+    let stream = tokio::net::TcpStream::connect(relay).await?;
+    stream.set_nodelay(true)?;
+    let carrier: Arc<dyn LinkCarrier> = Arc::new(MuxCarrier::new(
+        stream,
+        MuxRole::Connector,
+        CarrierKind::RelayTcp,
+    ));
+    let (shutdown, shutdown_rx) = tokio::sync::watch::channel(false);
+    let link = services.spawn_relay_link_with_bearer_token(carrier, token, shutdown_rx);
+    let (channel, server, connection) = services.open_managed_in_process_client_channel();
+    let admin = ProfileAdmin::for_test(services.client.clone());
+    Ok(UserClient {
+        cloud_url,
+        client: Client::from_channel(channel),
+        admin,
+        _connection: connection,
+        _shutdown: shutdown,
+        _services: services,
+        _root: root,
+        tasks: vec![link, server.abort_handle()],
+    })
+}

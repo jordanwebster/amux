@@ -127,7 +127,11 @@ impl StructuredBackendAdapter {
         };
         let client_seq = backend.current_seq_for_derived_rows().await;
         self.input
-            .send(StructuredInputEvent::ClaudePty { client_seq, intent })
+            .send(StructuredInputEvent::ClaudePty {
+                client_seq,
+                intent,
+                pins: Vec::new(),
+            })
             .await
             .map_err(anyhow::Error::from)
     }

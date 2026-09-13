@@ -7,7 +7,7 @@
 //! This module is part of the pure reducer core: no IO, no clocks, no
 //! randomness may be imported here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use model::{
@@ -682,7 +682,20 @@ pub struct Model {
     pub(crate) invariant_warning: bool,
     pub(crate) hosts: BTreeMap<HostId, HostState>,
     pub(crate) agents: BTreeMap<AgentId, AgentCard>,
+    /// Last authoritative remote membership; disconnection does not mean deletion.
+    /// Defaulted like the other later arrivals so a report recorded before it
+    /// existed still replays: no membership recorded is no membership known.
+    #[serde(default)]
+    pub(crate) remote_inventories: BTreeMap<HostId, BTreeSet<AgentId>>,
     pub(crate) streams: BTreeMap<AgentId, StreamState>,
+    /// User-opened conversations outlive the temporary inventory removal of
+    /// an unreachable host. Its next inventory re-establishes these streams.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) attached: BTreeMap<AgentId, HostId>,
+    /// Defaulted for the same reason as `remote_inventories`: a recording made
+    /// before held drafts existed has none, which is what an empty map says.
+    #[serde(default)]
+    pub(crate) queues: BTreeMap<AgentId, crate::QueuedMessage>,
     pub(crate) pending_ops: BTreeMap<OpId, PendingOp>,
     pub(crate) finished_ops: Vec<FinishedOp>,
     pub(crate) op_seq: u64,
@@ -700,7 +713,10 @@ impl Default for Model {
             invariant_warning: false,
             hosts: BTreeMap::new(),
             agents: BTreeMap::new(),
+            remote_inventories: BTreeMap::new(),
             streams: BTreeMap::new(),
+            attached: BTreeMap::new(),
+            queues: BTreeMap::new(),
             pending_ops: BTreeMap::new(),
             finished_ops: Vec::new(),
             op_seq: 0,
@@ -710,6 +726,15 @@ impl Default for Model {
 }
 
 impl Model {
+    pub fn queued(&self, agent: AgentId) -> Option<&crate::QueuedMessage> {
+        self.queues.get(&agent)
+    }
+
+    /// Every held message, whichever agent holds it.
+    pub fn queued_messages(&self) -> impl Iterator<Item = (&AgentId, &crate::QueuedMessage)> {
+        self.queues.iter()
+    }
+
     pub fn connection(&self) -> &Connection {
         &self.connection
     }
@@ -728,6 +753,10 @@ impl Model {
                 agents_synchronized: true,
             }
         )
+    }
+
+    pub fn remote_inventories(&self) -> &BTreeMap<HostId, BTreeSet<AgentId>> {
+        &self.remote_inventories
     }
 
     pub fn epoch(&self) -> u64 {
@@ -873,6 +902,12 @@ impl Model {
 
     pub fn agent_count(&self) -> usize {
         self.agents.len()
+    }
+
+    /// Whether a conversation is open: the user asked for this agent and has
+    /// not closed it. The subscription policy widens for exactly these.
+    pub fn is_attached(&self, id: AgentId) -> bool {
+        self.attached.contains_key(&id)
     }
 
     pub fn stream(&self, id: AgentId) -> Option<&StreamState> {
@@ -1502,6 +1537,7 @@ mod tests {
             last_dial_error: None,
             via: model::HostVia::Direct,
             signed_in: Some(true),
+            platform: None,
         }
     }
 

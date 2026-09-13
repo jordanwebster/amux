@@ -139,6 +139,7 @@ message ClaudeSdkV1Input {
     ClaudeSdkSetPermissionMode set_permission_mode = 15;
     ClaudeSdkSetModel set_model = 16;
     ClaudeSdkRequestContextBreakdown request_context_breakdown = 17;
+    ClaudeSdkSetEffort set_effort = 18;
   }
 }
 
@@ -190,3 +191,8 @@ message ClaudeSdkSetModel {
 }
 
 message ClaudeSdkRequestContextBreakdown {}
+
+message ClaudeSdkSetEffort {
+  // Absent clears the session effort override.
+  optional string effort = 1;
+}

@@ -675,6 +675,7 @@ pub struct InFlightInput {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InFlightKind {
+    Settings,
     Prompt,
     /// The text is retained because the steer echo is rendered from it once
     /// the send succeeds; the turn id is not, because `op` already correlates
@@ -1011,6 +1012,7 @@ struct Accumulators {
 /// The Codex layer state for one agent.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CodexLayer {
+    provider: Box<crate::ProviderFacts>,
     attachments: AttachmentIndex,
     truncated_start: bool,
     evicted: u64,
@@ -1035,6 +1037,9 @@ pub struct CodexLayer {
 }
 
 impl CodexLayer {
+    pub fn provider_facts(&self) -> &crate::ProviderFacts {
+        &self.provider
+    }
     pub(crate) fn begin_window(&mut self, truncated: bool) {
         *self = Self {
             truncated_start: truncated,

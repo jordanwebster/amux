@@ -357,6 +357,20 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         Ok(tonic::Response::new(wire::SendInputResponse {}))
     }
 
+    async fn list_repositories(
+        &self,
+        request: tonic::Request<wire::ListRepositoriesRequest>,
+    ) -> TonicResult<wire::ListRepositoriesResponse> {
+        let request = request.into_inner();
+        let result = self
+            .require_host()
+            .map_err(protocol_status)?
+            .list_repositories(request.query, request.limit)
+            .await
+            .map_err(protocol_status)?;
+        Ok(tonic::Response::new(result.into()))
+    }
+
     async fn put_artifact(
         &self,
         request: tonic::Request<wire::PutArtifactRequest>,

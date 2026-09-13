@@ -598,7 +598,7 @@ async fn run_established(
                                 break;
                             }
                             ControlAction::ReplyAndClose(message, reason) => {
-                                let _ = out_tx.send(message).await;
+                                let _ = out_tx.send(*message).await;
                                 close_reason = reason;
                                 break;
                             }
@@ -732,7 +732,9 @@ fn spawn_inbound_dispatch(
 enum ControlAction {
     Continue,
     Close(wire::pb::LinkCloseReason, Option<tonic::Status>),
-    ReplyAndClose(wire::pb::Message, wire::pb::LinkCloseReason),
+    /// Boxed: the control message dwarfs every other variant, and this one
+    /// is the rare terminal path.
+    ReplyAndClose(Box<wire::pb::Message>, wire::pb::LinkCloseReason),
 }
 
 async fn handle_control_body(
@@ -750,7 +752,7 @@ async fn handle_control_body(
                 ControlAction::Continue
             }
             Err(error) => ControlAction::ReplyAndClose(
-                protocol_error_link_close(error.to_string()),
+                Box::new(protocol_error_link_close(error.to_string())),
                 wire::pb::LinkCloseReason::ProtocolError,
             ),
         },
@@ -760,14 +762,16 @@ async fn handle_control_body(
                 ControlAction::Continue
             }
             Err(error) => ControlAction::ReplyAndClose(
-                protocol_error_link_close(error.to_string()),
+                Box::new(protocol_error_link_close(error.to_string())),
                 wire::pb::LinkCloseReason::ProtocolError,
             ),
         },
         wire::pb::message::Body::Reauth(reauth) => {
             let Some(auth) = acceptor_auth else {
                 return ControlAction::ReplyAndClose(
-                    protocol_error_link_close("reauth received on unauthenticated link"),
+                    Box::new(protocol_error_link_close(
+                        "reauth received on unauthenticated link",
+                    )),
                     wire::pb::LinkCloseReason::ProtocolError,
                 );
             };
@@ -789,7 +793,7 @@ async fn handle_control_body(
                             "link reauth user mismatch"
                         );
                         ControlAction::ReplyAndClose(
-                            auth_expired_link_close(),
+                            Box::new(auth_expired_link_close()),
                             wire::pb::LinkCloseReason::AuthExpired,
                         )
                     }
@@ -797,7 +801,7 @@ async fn handle_control_body(
                 Err(status) => {
                     audit::auth_jwt_failure(&status);
                     ControlAction::ReplyAndClose(
-                        auth_expired_link_close(),
+                        Box::new(auth_expired_link_close()),
                         wire::pb::LinkCloseReason::AuthExpired,
                     )
                 }
@@ -1168,12 +1172,10 @@ fn link_error_status(error: LinkError) -> tonic::Status {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn spawn_connector_with_bearer_token(
-    ctx: LinkConnectorCtx,
-    carrier: Arc<dyn Carrier>,
-    token: String,
-) -> ConnectorTask {
+/// Authentication for a link whose token was minted outside the daemon and
+/// never changes: a fixture relay's own registry decides what the token is
+/// worth, so re-authenticating can only hand back the same string.
+pub fn bearer_token_auth(token: String) -> LinkConnectorAuth {
     #[derive(Clone)]
     struct StaticTokenRefresher(LinkConnectorToken);
 
@@ -1189,17 +1191,16 @@ pub(crate) fn spawn_connector_with_bearer_token(
         expires_at: SystemTime::now() + Duration::from_secs(3600),
         tier: crate::Tier::Pro,
     };
-    spawn_connector(
-        ctx,
-        carrier,
-        Some(LinkConnectorAuth::new(
-            token.clone(),
-            Arc::new(StaticTokenRefresher(token)),
-        )),
-        None,
-        None,
-    )
-    .0
+    LinkConnectorAuth::new(token.clone(), Arc::new(StaticTokenRefresher(token)))
+}
+
+#[cfg(test)]
+pub(crate) fn spawn_connector_with_bearer_token(
+    ctx: LinkConnectorCtx,
+    carrier: Arc<dyn Carrier>,
+    token: String,
+) -> ConnectorTask {
+    spawn_connector(ctx, carrier, Some(bearer_token_auth(token)), None, None).0
 }
 
 pub async fn link_reauth_tier_probe() -> (crate::Tier, crate::Tier) {
@@ -1313,6 +1314,7 @@ mod tests {
             version: "test".to_string(),
             capabilities: Capabilities::default(),
             signed_in: Some(false),
+            platform: None,
         }
     }
 

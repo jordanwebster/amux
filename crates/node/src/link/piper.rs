@@ -134,6 +134,7 @@ mod tests {
                 }],
             },
             signed_in: Some(false),
+            platform: None,
         }
     }
 
