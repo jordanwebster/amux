@@ -28,7 +28,13 @@ async fn journey(wrong_prompt: bool, wrong_answer: bool) {
         .await
         .unwrap();
     let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
-    let server = serve_net(net, listener, ["host".into()].into(), agents);
+    let server = serve_net(
+        net,
+        listener,
+        ["host".into()].into(),
+        ["default".into()].into(),
+        agents,
+    );
     let exercise = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
         let qr = control
@@ -240,7 +246,13 @@ async fn testnet_codex_offers_models_efforts_and_commands_to_a_connected_client(
         .await
         .unwrap();
     let mut runtime = Runtime::start_with_client(client.clone(), RuntimeOptions::default());
-    let server = serve_net(net, listener, ["studio".into()].into(), agents);
+    let server = serve_net(
+        net,
+        listener,
+        ["studio".into()].into(),
+        ["default".into()].into(),
+        agents,
+    );
     let exercise = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
         let qr = control

@@ -519,14 +519,20 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
         builder = builder
             .daemon(&daemon.name)
             .repository_roots(daemon.repository_roots.clone());
-        if let Some(user) = &daemon.user {
-            builder = builder.cloud_user(user);
-            // Declared before the machine starts as well as after, so its own
-            // link is admitted on the tier its account has rather than on the
-            // default and then corrected.
-            if let Some(tier) = topology.tiers.get(user) {
-                builder = builder.cloud_tier(*tier);
+        match &daemon.user {
+            Some(user) => {
+                builder = builder.cloud_user(user);
+                // Declared before the machine starts as well as after, so its
+                // own link is admitted on the tier its account has rather than
+                // on the default and then corrected.
+                if let Some(tier) = topology.tiers.get(user) {
+                    builder = builder.cloud_tier(*tier);
+                }
             }
+            // Nobody has signed in on this machine, so it has no account to
+            // reach the relay with: it is only ever found and reached on its
+            // own network.
+            None => builder = builder.no_cloud(),
         }
     }
     for (a, b, via) in &topology.paired {
@@ -667,6 +673,7 @@ struct Request {
 async fn apply(
     net: &TestNet,
     names: &HashSet<String>,
+    users: &HashSet<String>,
     agents: &mut Agents,
     control: Control,
 ) -> Result<Reply> {
@@ -730,7 +737,13 @@ async fn apply(
         }
         Control::Announce { daemon: name } => net.announce(&daemon(&name)?),
         Control::Withdraw { daemon: name } => net.withdraw(&daemon(&name)?),
-        Control::Tier { user, tier } => net.cloud_user_tier(&user, tier),
+        Control::Tier { user, tier } => {
+            // An account the topology never declared would otherwise be
+            // invented here and bought a tier no device ever asks about, so a
+            // misspelled label would look like it worked.
+            ensure!(users.contains(&user), "unknown user: {user}");
+            net.cloud_user_tier(&user, tier);
+        }
         Control::UdpBlocked {
             daemon: name,
             blocked,
@@ -934,6 +947,7 @@ async fn serve(topology: Topology) -> Result<()> {
         net,
         listener,
         topology.daemons.into_iter().map(|d| d.name).collect(),
+        topology.users.into_iter().collect(),
         agents,
     )
     .await
@@ -943,6 +957,7 @@ async fn serve_net(
     net: TestNet,
     listener: TcpListener,
     names: HashSet<String>,
+    users: HashSet<String>,
     mut agents: Agents,
 ) -> Result<()> {
     #[cfg(unix)]
@@ -972,7 +987,7 @@ async fn serve_net(
                 control => {
                     // TestNet's assertion verbs panic with topology diagnostics.
                     // Preserve those diagnostics as a control failure for the caller.
-                    let operation = AssertUnwindSafe(apply(&net, &names, &mut agents, control)).catch_unwind();
+                    let operation = AssertUnwindSafe(apply(&net, &names, &users, &mut agents, control)).catch_unwind();
                     let reply = match tokio::time::timeout(Duration::from_secs(30), operation).await {
                         Ok(Ok(Ok(reply))) => reply,
                         Ok(Ok(Err(error))) => Reply::Error { message: error.to_string() },
@@ -1087,6 +1102,7 @@ mod tests {
             net,
             listener,
             ["a", "b", "c"].map(String::from).into(),
+            ["default"].map(String::from).into(),
             HashMap::new(),
         );
         let exercise = async {
@@ -1289,12 +1305,16 @@ mod tests {
             control
                 .ack(json!({"UdpBlocked":{"daemon":"c","blocked":false}}))
                 .await;
+            control
+                .ack(json!({"Tier":{"user":"default","tier":"free"}}))
+                .await;
 
             for invalid in [
                 json!({"Connections":{"daemon":"missing"}}),
                 json!({"Announce":{"daemon":"missing"}}),
                 json!({"Withdraw":{"daemon":"missing"}}),
                 json!({"UdpBlocked":{"daemon":"missing","blocked":true}}),
+                json!({"Tier":{"user":"missing","tier":"pro"}}),
                 json!({"SeverDirect":{"a":"a","b":"a"}}),
                 json!({"EstablishDirect":{"a":"a","b":"b"}}),
                 json!({"StartPinPairing":{"daemon":"b","ttl_secs":0}}),
@@ -1330,6 +1350,11 @@ mod tests {
             .await
             .unwrap();
         assert!(ready.users.is_empty(), "nobody is signed in here");
+        assert_eq!(
+            net.daemon("workstation").connections().await,
+            0,
+            "a machine nobody signed in on has no relay link"
+        );
         let workstation = net.daemon("workstation");
         assert!(
             net.discovery_events().iter().any(|event| matches!(

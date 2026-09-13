@@ -62,7 +62,13 @@ async fn exercise() {
             ..Default::default()
         },
     );
-    let server = serve_net(net, listener, ["laptop".into()].into(), agents);
+    let server = serve_net(
+        net,
+        listener,
+        ["laptop".into()].into(),
+        ["default".into()].into(),
+        agents,
+    );
     let journey = async {
         let mut control = tests::ControlClient::connect(ready.control).await;
         let qr = control

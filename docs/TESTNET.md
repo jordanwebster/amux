@@ -155,7 +155,7 @@ sentence, and adding a verb means adding the method first.
 | `{"Latency":{"millis":100}}` | Delay each newly received TCP chunk entering the relay by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
 | `{"Announce":{"daemon":"workstation"}}` | Put the machine on this network, as an advertisement a browsing device resolves. Nothing is trusted by it: what a browser gets is a name, an identity claim and addresses to try. |
 | `{"Withdraw":{"daemon":"workstation"}}` | Take it off again, the way a machine going away says goodbye. |
-| `{"Tier":{"user":"personal","tier":"pro"}}` | Change what an account buys, from the next token it is issued. Links already up keep the tier they were admitted on until they re-authenticate, which is what makes the change observable rather than instantaneous. |
+| `{"Tier":{"user":"personal","tier":"pro"}}` | Change what a declared account buys, from the next token it is issued. Links already up keep the tier they were admitted on until they re-authenticate, which is what makes the change observable rather than instantaneous. |
 | `{"UdpBlocked":{"daemon":"phone","blocked":true}}` | Eat or restore every direct UDP datagram involving the machine — the network a phone on a hotel connection is on. |
 | `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. RPC tunnels are not additional links. |
 | `{"Inventory":{"daemon":"desktop"}}` | Return the daemon's agents with their UUID, kind and driver, plus the devices it trusts. |
