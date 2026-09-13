@@ -8,14 +8,24 @@
 # holding the camera as well as on the app. A change to the app should not
 # wait on either.
 #
-# Nightly, and on demand. A failure here is read, not merged around.
+# DISABLED ON PURPOSE: on demand only, no schedule.
+#
+# 117 of the 124 captures currently fail on a GitHub runner and pass on a
+# developer's Mac, and nobody has explained why. 107 of them differ only in
+# the bottom 64 pixels of the screen, and by the same thing: the home
+# indicator, the bar a Face ID iPhone draws for swiping up to the home screen.
+# The runner photographs it, a developer's Mac does not, on identical Xcode
+# and simulator runtime builds. Erasing the
+# device to factory state before capturing does not change it, and neither
+# does rebooting. Until that is understood, a nightly run would be red every
+# night for a reason nobody could act on, which teaches people to stop reading
+# it. Restore the schedule below when the captures agree.
 name: iOS captures
 
 on:
-  schedule:
-    # 03:00 UTC, after the day's pushes and before anyone reads the result.
-    - cron: "0 3 * * *"
   workflow_dispatch:
+  # schedule:
+  #   - cron: "0 3 * * *"
 
 env:
   CARGO_TERM_COLOR: always

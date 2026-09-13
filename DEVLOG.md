@@ -1,3 +1,31 @@
+2026-09-13 — **Split iPhone verification into a gate and a capture half.** The
+one iPhone job in continuous integration was the developer's whole
+one-command check, which begins by running the Rust workspace — formatting,
+lint, tests and the specification suites. Three other jobs already run all of
+that, on three operating systems, so it was paying fourteen minutes a push for
+a second opinion it already had. It also booted both pinned simulators when
+the suites it was about to run need one, and it never once finished: the job
+has never reached journeys, accessibility or the measured run on any branch.
+
+So `xtask ios-verify` now takes `--gate` or `--captures`, and `just ios verify`
+still means everything, in the same order, for whoever is running it before
+they push. The gate is what a build can settle — the device and simulator
+graphs, the bridge, the app, the packaged framework, the unit suites and the
+shipped-scope audit — and nothing in it compares a photograph, so it says the
+same thing on any machine. That is what gates a push now, on one simulator.
+
+The capture half drives a running app and judges what it drew. It has its own
+workflow, and that workflow is deliberately not scheduled. On a GitHub runner
+117 of the 124 captures fail and on a developer's Mac they pass, and after a
+day of it nobody can say why. A nightly that is red every night for a reason
+nobody can act on only teaches people to stop reading it.
+
+What the day did establish is written down where it will be found: the settle
+rule in `door.rs` claimed a margin it never had, the capture cadence belongs
+to the machine rather than to us, and neither rebooting a simulator nor
+erasing it to factory state changes the failure. Two mechanisms proposed and
+both refuted by a runner, which is cheaper than shipping either.
+
 2026-09-13 — **Made the simulator recipe's bound a backstop again.** Creating
 and booting the two pinned simulators from nothing takes a cold runner most of
 the twelve minutes the recipe allowed it: 687 seconds on the run that passed,

@@ -108,7 +108,9 @@ impl Phases {
             None => Ok(Self::Everything),
             Some("--gate") => Ok(Self::Gate),
             Some("--captures") => Ok(Self::Captures),
-            Some(other) => Err(format!("ios-verify takes --gate or --captures, not {other}").into()),
+            Some(other) => {
+                Err(format!("ios-verify takes --gate or --captures, not {other}").into())
+            }
         }
     }
 
@@ -135,11 +137,7 @@ impl Phases {
 /// renamed or removed recipe fails here, by name, before anything runs. Every
 /// stage is checked whichever subset was asked for, so a rename cannot hide
 /// behind the half nobody ran today.
-fn recipes(
-    phases: Phases,
-    root: &str,
-    ios: &str,
-) -> Result<Vec<&'static str>, Box<dyn Error>> {
+fn recipes(phases: Phases, root: &str, ios: &str) -> Result<Vec<&'static str>, Box<dyn Error>> {
     let root = declared(root);
     let ios = declared(ios);
     for recipe in WORKSPACE.iter().chain(GATE).chain(CAPTURES) {
@@ -361,7 +359,12 @@ mod tests {
 
     /// Every stage of every phase, in the order a whole run takes them.
     fn all_recipes() -> Vec<&'static str> {
-        WORKSPACE.iter().chain(GATE).chain(CAPTURES).copied().collect()
+        WORKSPACE
+            .iter()
+            .chain(GATE)
+            .chain(CAPTURES)
+            .copied()
+            .collect()
     }
 
     /// The recipe a stage names, without whatever arguments it carries.
