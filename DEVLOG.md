@@ -1,3 +1,18 @@
+2026-09-13 — **The network-verb test waits for the links a verb moves, and
+stops requiring one the verb never promised.** `testnet_control_every_network_verb`
+read a daemon's connection count immediately after each control verb's
+acknowledgement. The acknowledgement says the daemon was told; the link it takes
+or restores is seen a moment later, so on a loaded machine the read landed
+before the change and the test failed with no defect behind it. Each count is
+now waited for, and a count that settles anywhere else still fails.
+
+One of its claims was also wrong rather than racy. `EstablishDirect` dials a
+single direct link, and the test required the pair to be holding exactly as many
+links as before the path was severed — which happens only when the peer's own
+reachability loop has redialled the other direction in the meantime. That is
+that loop's business, not the verb's, so the verb is now held to what it
+promises: a direct link beside the relay.
+
 2026-09-13 — **A phone's relay link races QUIC against TCP, like every other
 device.** The relay link an embedded installation is handed — the one a phone
 uses, resolved by the application rather than by configuration — dialled TLS

@@ -1026,16 +1026,43 @@ mod tests {
                     .as_u64()
                     .unwrap()
             }
+            // What a verb does to links is eventual: its acknowledgement says
+            // the daemon was told, and the link it takes or restores is seen a
+            // moment later. So the count is waited for rather than read once,
+            // which on a loaded machine reads the moment before the change.
+            // The claim is unchanged — a count that settles anywhere else,
+            // including one link too many, still fails.
+            async fn settles(
+                client: &mut ControlClient,
+                name: &str,
+                want: impl Fn(u64) -> bool,
+                claim: &str,
+            ) {
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+                loop {
+                    let seen = count(client, name).await;
+                    if want(seen) {
+                        return;
+                    }
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "{claim}: '{name}' holds {seen} connections"
+                    );
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
             // Counted against what this pair actually holds rather than a
             // fixed number: each verb's claim is about which links it takes
             // or restores, not about how many a direct pair happens to open.
             let linked = count(&mut second, "b").await;
             control.ack(json!("CloudOffline")).await;
-            assert_eq!(
-                count(&mut second, "b").await,
-                linked - 1,
-                "going offline takes the relay link and leaves the direct ones"
-            );
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == linked - 1,
+                "going offline takes the relay link and leaves the direct ones",
+            )
+            .await;
             assert!(TcpStream::connect(relay).await.is_err());
             assert!(
                 b.admin_client()
@@ -1049,16 +1076,30 @@ mod tests {
             assert!(b.lists_agents_on(&a).await.is_ok());
 
             control.ack(json!("CloudOnline")).await;
-            assert_eq!(count(&mut second, "b").await, linked);
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == linked,
+                "coming back restores the relay link",
+            )
+            .await;
             // A repeated online command must not create a second relay connection.
             control.ack(json!("CloudOnline")).await;
-            assert_eq!(count(&mut second, "b").await, linked);
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == linked,
+                "coming back twice is still one relay link",
+            )
+            .await;
             control.ack(json!({"SeverDirect":{"a":"a","b":"b"}})).await;
-            assert_eq!(
-                count(&mut second, "b").await,
-                1,
-                "severing the direct path leaves only the relay link"
-            );
+            settles(
+                &mut second,
+                "b",
+                |seen| seen == 1,
+                "severing the direct path leaves only the relay link",
+            )
+            .await;
             assert!(b.lists_agents_on(&a).await.is_ok());
 
             // The delay is injected into the relay's TCP chunks, and a relay
@@ -1073,12 +1114,29 @@ mod tests {
             control
                 .ack(json!({"EstablishDirect":{"a":"a","b":"b"}}))
                 .await;
-            assert_eq!(count(&mut second, "b").await, linked);
+            // The verb dials one direct link. Whether the peer's own
+            // reachability loop has redialled the other direction by now is
+            // that loop's business and not this verb's claim, so what is
+            // required is a direct link beside the relay rather than every
+            // link the pair happened to hold before it was severed.
+            settles(
+                &mut second,
+                "b",
+                |seen| seen > 1,
+                "establishing the direct path links the pair directly again",
+            )
+            .await;
             let stream = b.open_event_stream_to(&a).await;
             control.ack(json!({"RestartDaemon":{"name":"a"}})).await;
             stream.expect_disconnect().await;
             assert_eq!(a.identity_on_disk(), identity);
-            assert_eq!(count(&mut second, "a").await, linked);
+            settles(
+                &mut second,
+                "a",
+                |seen| seen == linked,
+                "a restarted daemon comes back with the same links",
+            )
+            .await;
             assert!(b.lists_agents_on(&a).await.is_ok());
 
             control
