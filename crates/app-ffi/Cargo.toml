@@ -1,0 +1,36 @@
+[package]
+name = "app-ffi"
+version = "0.1.0"
+edition.workspace = true
+description = "C ABI over the shared app runtime and the embedded node owner"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+default = []
+debug-tools = ["app-embedded/debug-tools"]
+
+[dependencies]
+app-embedded = { workspace = true }
+app-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+app-ffi = { path = ".", features = ["debug-tools"] }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+client = { workspace = true }
+model = { workspace = true }
+node = { workspace = true }
+tempfile = { workspace = true }
+testnet = { workspace = true }
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
+
+[build-dependencies]
+cbindgen = { version = "0.29", default-features = false }

@@ -13,7 +13,7 @@ use crate::model::{
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
 
 /// Error message for commands dispatched while the daemon link is down.
-/// Commands fail fast — there is no offline queue.
+/// Immediate writes fail fast; explicitly held drafts remain local.
 pub const NOT_CONNECTED_ERROR: &str = "not connected — daemon unreachable";
 
 /// Structured-stream catch-up window (`Tail{count}`): the one place this
@@ -22,12 +22,15 @@ pub const NOT_CONNECTED_ERROR: &str = "not connected — daemon unreachable";
 pub const REPLAY_TAIL: u64 = 1000;
 
 pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
-    match msg {
+    let mut effects = match msg {
         Msg::Command { op, command } => update_command(model, op, command),
         Msg::Server(server) => update_server(model, server),
         Msg::OpResult { op, outcome } => update_op_result(model, op, outcome),
         Msg::Stream { agent, event } => update_stream(model, agent, event),
         Msg::UserAttached { agent } => {
+            if let Some(card) = model.agents.get(&agent) {
+                model.attached.insert(agent, card.agent.host_id);
+            }
             // Widen the subscription policy to agents the user interacts
             // with, wherever they run — readonly agents included: opening
             // a read-only chat (F1) IS the interaction, and the feed it
@@ -36,11 +39,17 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
                 .into_iter()
                 .collect()
         }
+        Msg::UserDetached { agent } => {
+            model.attached.remove(&agent);
+            release_stream(model, agent).into_iter().collect()
+        }
         Msg::Tick { now } => {
             model.now = Some(now);
             Vec::new()
         }
-    }
+    };
+    effects.extend(crate::queue::deliver_ready(model));
+    effects
 }
 
 /// Why a stream is being ensured: kernel inventory policy subscribes
@@ -50,6 +59,30 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
 enum StreamWanted {
     InventoryPolicy,
     UserRequested,
+}
+
+/// Let go of a stream this build was holding only because somebody asked for
+/// it.
+///
+/// The inventory policy opens a stream for every agent on this machine that is
+/// not readonly, so its badge stays current whether or not anyone is reading
+/// it; closing a conversation on one of those changes nothing but the
+/// attachment. Everything else — an agent on another machine, or a readonly
+/// one, which is not in the fleet at all — has a stream only because of the
+/// interaction that just ended, so the stream ends with it.
+fn release_stream(model: &mut Model, agent_id: crate::AgentId) -> Option<Effect> {
+    if let Some(card) = model.agents.get(&agent_id)
+        && model.local_host_id == Some(card.agent.host_id)
+        && !card.agent.readonly
+    {
+        return None;
+    }
+    let stream = model.streams.remove(&agent_id)?;
+    refresh_attention(model, agent_id);
+    if matches!(stream.phase, StreamPhase::Closed { .. }) {
+        return None;
+    }
+    Some(Effect::CloseStream { agent: agent_id })
 }
 
 /// Subscription policy: open the structured stream for an agent whose kind
@@ -103,12 +136,17 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
     model.op_seq += 1;
     let seq = model.op_seq;
 
+    if let Command::Queue(command) = command {
+        return crate::queue::update_command(model, op, seq, command);
+    }
+
     if !model.is_connected() {
         // Commands fail fast while disconnected — no offline queue.
         return refuse(model, op, seq, redact_command(command), NOT_CONNECTED_ERROR);
     }
 
     match command {
+        Command::Queue(_) => unreachable!("queue commands handled above"),
         Command::CreateAgent { .. } | Command::RenameAgent { .. } | Command::DeleteAgent { .. } => {
             model.pending_ops.insert(
                 op,
@@ -120,11 +158,29 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             );
             vec![Effect::Rpc { op, command }]
         }
+        Command::Send { agent, draft } => crate::queue::update_draft(model, op, seq, agent, draft),
         Command::SendPromptWithAttachments {
             agent,
             text,
             attachments,
         } => update_attachment_prompt(model, op, seq, agent, text, attachments),
+        Command::PutAttachment { agent, attachment } => dispatch_operation(
+            model,
+            op,
+            seq,
+            // The model keeps what the artifact is, never the bytes: pending
+            // operations are recorded, and a recording is not a place for
+            // somebody's photograph.
+            redact_command(Command::PutAttachment {
+                agent,
+                attachment: attachment.clone(),
+            }),
+            Effect::PutAttachment {
+                op,
+                agent,
+                attachment,
+            },
+        ),
         Command::FetchDiff { agent, id } => dispatch_operation(
             model,
             op,
@@ -160,11 +216,22 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             crate::claude_sdk::update::update_command(model, op, seq, command)
         }
         Command::Codex(command) => crate::codex::update::update_command(model, op, seq, command),
+        command @ (Command::SetModel { .. }
+        | Command::SetEffort { .. }
+        | Command::SetPreset { .. }) => crate::provider::update_settings(model, op, seq, command),
     }
 }
 
 fn redact_command(mut command: Command) -> Command {
-    if let Command::SendPromptWithAttachments { attachments, .. } = &mut command {
+    if let Command::PutAttachment { attachment, .. } = &mut command {
+        attachment.bytes = None;
+    }
+    if let Command::SendPromptWithAttachments { attachments, .. }
+    | Command::Send {
+        draft: crate::Draft { attachments, .. },
+        ..
+    } = &mut command
+    {
         for attachment in attachments {
             attachment.bytes = None;
         }
@@ -183,7 +250,7 @@ fn dispatch_operation(
     vec![effect]
 }
 
-fn update_attachment_prompt(
+pub(crate) fn update_attachment_prompt(
     model: &mut Model,
     op: OpId,
     seq: u64,
@@ -342,6 +409,17 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
     {
         crate::claude::update::update_failed_command(model, op, command, error)
     }
+    if matches!(&outcome, OpOutcome::Error { .. }) {
+        match &pending.command {
+            Command::Send { agent, .. }
+            | Command::SetModel { agent, .. }
+            | Command::SetEffort { agent, .. }
+            | Command::SetPreset { agent, .. } => {
+                crate::codex::update::note_send_failed(model, op, *agent)
+            }
+            _ => {}
+        }
+    }
     if let OpOutcome::Error { error } = &outcome
         && let Command::ClaudeSdk(command) = &pending.command
     {
@@ -411,6 +489,9 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
             }
         });
     }
+    if crate::queue::observe_result(model, &pending, &outcome) {
+        return Vec::new();
+    }
     // Entity payloads riding on the outcome resolve the op only —
     // subscriptions are the sole writer of entity state.
     push_finished(
@@ -429,6 +510,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
     match server {
         ServerMsg::Connected { local_host_id } => {
             model.epoch += 1;
+            model.remote_inventories.clear();
             model.connection = Connection::Connected {
                 hosts_synchronized: false,
                 agents_synchronized: false,
@@ -464,6 +546,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 return tripwire("host removal while not connected");
             }
             model.hosts.remove(&id);
+            model.attached.retain(|_, host| *host != id);
             Vec::new()
         }
         ServerMsg::HostsSynchronized => {
@@ -482,6 +565,9 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             }
             let epoch = model.epoch;
             let agent_id = agent.id;
+            if let Some(ids) = model.remote_inventories.get_mut(&agent.host_id) {
+                ids.insert(agent_id);
+            }
             let is_local = model.local_host_id == Some(agent.host_id);
             match model.agents.get_mut(&agent_id) {
                 Some(card) => {
@@ -503,9 +589,13 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                     model.agents.insert(agent_id, card);
                 }
             }
-            // Kernel policy: every local agent's structured stream is
-            // subscribed (in-process, cheap); remote agents join on attach.
-            if is_local {
+            // Remote conversations join on attach and rejoin after transport
+            // loss, including when the offline host lost its inventory.
+            if model.attached.contains_key(&agent_id) {
+                ensure_stream(model, agent_id, StreamWanted::UserRequested)
+                    .into_iter()
+                    .collect()
+            } else if is_local {
                 ensure_stream(model, agent_id, StreamWanted::InventoryPolicy)
                     .into_iter()
                     .collect()
@@ -517,12 +607,30 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if !model.is_connected() {
                 return tripwire("agent removal while not connected");
             }
+            crate::queue::remove(model, id);
+            // Remote removal can race the separate host-offline event. Its
+            // authoritative HostInventory, not reachability at this instant,
+            // decides whether a requested conversation is really gone.
+            if model.attached.get(&id).copied() == model.local_host_id {
+                model.attached.remove(&id);
+            }
             model.agents.remove(&id);
             if let Some(stream) = model.streams.remove(&id)
                 && !matches!(stream.phase, StreamPhase::Closed { .. })
             {
                 return vec![Effect::CloseStream { agent: id }];
             }
+            Vec::new()
+        }
+        ServerMsg::HostInventory { host_id, agent_ids } => {
+            if !model.is_connected() {
+                return tripwire("host inventory while not connected");
+            }
+            let agent_ids: std::collections::BTreeSet<_> = agent_ids.into_iter().collect();
+            model
+                .attached
+                .retain(|agent, host| *host != host_id || agent_ids.contains(agent));
+            model.remote_inventories.insert(host_id, agent_ids);
             Vec::new()
         }
         ServerMsg::AgentsSynchronized => {
@@ -550,6 +658,7 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
     }
     match event {
         StreamMsg::Opened { truncated } => {
+            crate::queue::reopened(model, agent);
             model.streams.insert(
                 agent,
                 StreamState {
@@ -665,6 +774,15 @@ fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
     }
     let epoch = model.epoch;
     model.hosts.retain(|_, host| host.epoch == epoch);
+    let removed: Vec<_> = model
+        .agents
+        .iter()
+        .filter(|(_, card)| card.epoch != epoch)
+        .map(|(id, _)| *id)
+        .collect();
+    for id in removed {
+        crate::queue::remove(model, id);
+    }
     model.agents.retain(|_, card| card.epoch == epoch);
     let stale: Vec<model::AgentId> = model
         .streams
@@ -683,7 +801,7 @@ fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
     effects
 }
 
-fn push_finished(model: &mut Model, finished: FinishedOp) {
+pub(crate) fn push_finished(model: &mut Model, finished: FinishedOp) {
     model.finished_ops.push(finished);
     if model.finished_ops.len() > FINISHED_OPS_RETAINED {
         let excess = model.finished_ops.len() - FINISHED_OPS_RETAINED;

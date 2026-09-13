@@ -12,7 +12,7 @@ pub use agent::AgentServiceCtx;
 pub use client::ClientService;
 pub(crate) use pairing::{LocalPairingIdentity, PairingService, pair_initiator};
 pub use reachability::ReachabilityLinkConnector;
-pub(crate) use startup::{
-    CloudConnector, DeviceRuntimeSecurity, establish_cloud_connection, start_user_services,
+pub(crate) use startup::{CloudConnector, establish_cloud_connection};
+pub use startup::{
+    CloudLinkService, DeviceRuntimeSecurity, StartedUserServices, start_user_services,
 };
-pub use startup::{CloudLinkService, StartedUserServices};

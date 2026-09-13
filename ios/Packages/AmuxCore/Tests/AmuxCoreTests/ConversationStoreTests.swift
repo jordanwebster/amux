@@ -1,0 +1,333 @@
+import Foundation
+import XCTest
+@testable import AmuxCore
+
+@MainActor
+final class ConversationStoreTests: XCTestCase {
+    private let agent = Made.agentId(1)
+
+    private func row(_ id: Int, seq: Int, text: String) -> FeedEntry {
+        FeedEntry(layer: .claudePty, row: .object([
+            "id": .int(id),
+            "seq": .int(seq),
+            "kind": .object(["entry": .string("message"), "text": .string(text)]),
+        ]))
+    }
+
+    private func prompt(_ id: Int, seq: Int, text: String) -> FeedEntry {
+        FeedEntry(layer: .claudePty, row: .object([
+            "id": .int(id),
+            "seq": .int(seq),
+            "kind": .object(["entry": .string("prompt"), "text": .string(text)]),
+        ]))
+    }
+
+    private func text(_ store: ConversationStore) -> [String] {
+        store.entries.compactMap { $0.row["kind"]?["text"]?.stringValue }
+    }
+
+    private func look(_ id: Int, path: String, grouped: Bool) -> FeedEntry {
+        FeedEntry(layer: .claudePty, row: .object([
+            "id": .int(id),
+            "seq": .int(id + 1),
+            "kind": .object([
+                "entry": .string("tool"),
+                "name": .string("Read"),
+                "invocation": .object([
+                    "tool": .string("read"),
+                    "file_path": .string(path),
+                ]),
+                "outcome": .object(["outcome": .string("success")]),
+                "group_with_previous": .bool(grouped),
+            ]),
+        ]))
+    }
+
+    func testRowsAppendInOrder() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0, append: [row(0, seq: 1, text: "one")], replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1,
+            append: [row(1, seq: 2, text: "two"), row(2, seq: 3, text: "three")],
+            replace: [], evicted: 0)))
+        XCTAssertEqual(text(store), ["one", "two", "three"])
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+    }
+
+    func testIncrementalProjectionRefoldsAGroupAcrossTheAppendBoundary() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: [look(0, path: "one.swift", grouped: false)],
+            replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1,
+            append: [
+                look(1, path: "two.swift", grouped: true),
+                look(2, path: "three.swift", grouped: true),
+            ],
+            replace: [], evicted: 0)))
+
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+        guard case .exploration(let reads, _, let anchor, _) = store.rows().first?.kind else {
+            return XCTFail("the appended reads did not remain one folded run")
+        }
+        XCTAssertEqual(reads, 3)
+        XCTAssertEqual(anchor, "one.swift")
+    }
+
+    func testARewrittenRowIsRewrittenRatherThanRepeated() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: [row(0, seq: 1, text: "Hello"), row(1, seq: 2, text: "two")],
+            replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 2, append: [],
+            replace: [FeedReplacement(position: 0, entry: row(0, seq: 1, text: "Hello\n\nUpdated"))],
+            evicted: 0)))
+        XCTAssertEqual(text(store), ["Hello\n\nUpdated", "two"])
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+    }
+
+    func testAReplaceOnlyUpdateRefreshesTheProjectedRow() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: [row(0, seq: 1, text: "draft")], replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 1, append: [],
+            replace: [FeedReplacement(
+                position: 0, entry: prompt(0, seq: 1, text: "finished"))],
+            evicted: 0)))
+
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+        XCTAssertEqual(store.rows().first?.kind, .prompt(text: "finished"))
+    }
+
+    func testAnEvictedPrefixLeavesWithoutRenumberingWhatSurvives() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: (0..<4).map { row($0, seq: $0 + 1, text: "row-\($0)") },
+            replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 4, append: [row(4, seq: 5, text: "row-4")],
+            replace: [], evicted: 2)))
+        XCTAssertEqual(text(store), ["row-2", "row-3", "row-4"])
+        XCTAssertEqual(store.firstPosition, 2)
+
+        // Positions stay absolute across an eviction: replacing position 3 is
+        // still the row that was folded third, not the third one left.
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 5, append: [],
+            replace: [FeedReplacement(position: 3, entry: row(3, seq: 4, text: "corrected"))],
+            evicted: 2)))
+        XCTAssertEqual(text(store), ["row-2", "corrected", "row-4"])
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+    }
+
+    func testAnEvictionOnlyUpdateRefreshesTheProjection() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: (0..<4).map { row($0, seq: $0 + 1, text: "row-\($0)") },
+            replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 4, append: [], replace: [], evicted: 2)))
+
+        XCTAssertEqual(text(store), ["row-2", "row-3"])
+        XCTAssertEqual(store.firstPosition, 2)
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+    }
+
+    func testAReplayFromBeforeWhatIsHeldBecomesTheWholeFeed() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: (0..<4).map { row($0, seq: $0 + 1, text: "row-\($0)") },
+            replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 4, append: [row(4, seq: 5, text: "row-4")],
+            replace: [], evicted: 3)))
+        XCTAssertEqual(store.firstPosition, 3)
+
+        // Reopening a conversation whose stream was released replays it from
+        // the start, which is further back than the prefix this had already
+        // dropped. The replay is the feed; nothing of the shorter tail
+        // survives it, and nothing about it is a hole.
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0,
+            append: (0..<5).map { row($0, seq: $0 + 1, text: "row-\($0)") },
+            replace: [], evicted: 0)))
+        XCTAssertEqual(text(store), ["row-0", "row-1", "row-2", "row-3", "row-4"])
+        XCTAssertEqual(store.rows(), store.entries.transcriptRows())
+        XCTAssertEqual(store.firstPosition, 0)
+        XCTAssertTrue(store.invariants.isEmpty, "\(store.invariants)")
+    }
+
+    func testAFeedForAnotherAgentIsIgnored() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: Made.agentId(2), base: 0, append: [row(0, seq: 1, text: "elsewhere")],
+            replace: [], evicted: 0)))
+        XCTAssertTrue(store.entries.isEmpty)
+    }
+
+    func testAGapInTheFeedIsRecordedRatherThanHidden() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 0, append: [row(0, seq: 1, text: "one")], replace: [], evicted: 0)))
+        store.apply(.feed(FeedUpdate(
+            agent: agent, base: 5, append: [row(5, seq: 6, text: "six")], replace: [], evicted: 0)))
+        XCTAssertEqual(store.invariants, ["feed gap between 1 and 5"])
+    }
+
+    func testTheSessionCarriesTheGateAsksAndProviderFacts() {
+        let store = ConversationStore(agent: agent)
+        store.apply(.session(SessionSnapshot(
+            agent: agent,
+            gate: .claudePty(.working),
+            phase: .claudePty(.object(["phase": .string("running")])),
+            stream: .live,
+            asks: [Ask(layer: .claudePty, body: .object(["id": .int(1)]))],
+            facts: .claudePty(.object(["layer": .string("claude_pty")])),
+            provider: ProviderFacts(model: "opus", effort: "high"),
+            settingsGate: .ptySettingsUnavailable,
+            queue: nil,
+            family: [FamilyMember(agent: Made.agentId(2), depth: 1, needs: .permission)])))
+
+        XCTAssertEqual(store.gate, .claudePty(.working))
+        XCTAssertFalse(store.gate.accepts)
+        XCTAssertEqual(store.phase.phase, "running")
+        XCTAssertEqual(store.asks.count, 1)
+        XCTAssertEqual(store.provider.model, "opus")
+        XCTAssertEqual(store.family.first?.needs, .permission)
+        XCTAssertEqual(store.settingsGate, .ptySettingsUnavailable)
+    }
+
+    /// A patch arrives already split into files, already numbered, and
+    /// already identified. Keeping the artifact beside it is what lets a
+    /// review sent later name the diff that was actually read.
+    func testChangesArriveAsAReviewDocument() {
+        let store = ConversationStore(agent: agent)
+        let artifact = ArtifactId("sha256:abc")
+        store.apply(.diff(DiffUpdate(agent: agent, diff: artifact, document: ReviewDocument(
+            files: [ReviewFile(
+                path: "one.rs", added: 1, removed: 1,
+                rows: [
+                    DiffRow(old: 1, new: nil, kind: .removed, text: "-old"),
+                    DiffRow(old: nil, new: 1, kind: .added, text: "+new"),
+                ],
+                hunkStarts: [0])],
+            identity: BaseIdentity(
+                base: .workingTree, head: "abc", mergeBase: nil, blobs: [])))))
+        XCTAssertEqual(store.changes?.files.first?.path, "one.rs")
+        XCTAssertEqual(store.changes?.files.first?.rows.map(\.text), ["-old", "+new"])
+        XCTAssertEqual(store.changes?.insertions, 1)
+        XCTAssertEqual(store.changes?.deletions, 1)
+        XCTAssertEqual(store.changesArtifact, artifact)
+    }
+
+    private func refusal(_ message: String, op: OpId) -> Event {
+        let json = Data("""
+            {"error":"general","message":"\(message)",\
+            "auth_required":false,"subscription_required":false}
+            """.utf8)
+        let failure = try! AmuxJSON.decoder.decode(OpFailure.self, from: json)
+        return .opResult(OpResult(op: op, outcome: .failed(failure)))
+    }
+
+    /// A result names its operation and no agent, so every open conversation
+    /// is offered it. Only the one that dispatched the operation keeps it —
+    /// otherwise one agent's refusal would be read as another's.
+    func testOnlyTheConversationThatDispatchedKeepsAResult() {
+        let bundle = StoreBundle(account: AccountId("test"))
+        let mine = bundle.conversation(agent)
+        let theirs = bundle.conversation(Made.agentId(2))
+        let op = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA11")!)
+        theirs.dispatched(op)
+
+        bundle.apply([refusal("the session is replaying history", op: op)])
+
+        XCTAssertEqual(theirs.results.count, 1)
+        XCTAssertTrue(mine.results.isEmpty, "a foreign result reached this conversation")
+    }
+
+    /// The same identifier answered twice is one operation, not two.
+    func testAResultIsClaimedOnce() {
+        let store = ConversationStore(agent: agent)
+        let op = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA12")!)
+        store.dispatched(op)
+        store.apply(refusal("no", op: op))
+        store.apply(refusal("no", op: op))
+        XCTAssertEqual(store.results.count, 1)
+    }
+
+    /// Sending again supersedes the last refusal.
+    ///
+    /// The sentence under the composer is about the message that is in flight.
+    /// A reader who is refused, changes the message and sends again is looking
+    /// at a second message going; the first message's reason has nothing to
+    /// say about it, and is remembered rather than drawn.
+    func testANewSendSupersedesTheLastRefusal() {
+        let store = ConversationStore(agent: agent)
+        let first = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA13")!)
+        let second = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA14")!)
+
+        store.dispatched(first)
+        store.apply(refusal("the session is replaying history", op: first))
+        XCTAssertEqual(store.refusal?.message, "the session is replaying history")
+
+        store.dispatched(second)
+        XCTAssertNil(store.refusal, "an in-flight message wears the last one's refusal")
+
+        store.apply(refusal("that layer is still replaying", op: second))
+        XCTAssertEqual(store.refusal?.message, "that layer is still replaying")
+        XCTAssertEqual(store.results.count, 2, "both answers are still remembered")
+    }
+
+    /// Two sends are out and the older one is answered first. What it says is
+    /// not about the message still in flight, so it is kept and not drawn.
+    func testAnAnswerToAnOlderSendIsNotDrawn() {
+        let store = ConversationStore(agent: agent)
+        let first = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA15")!)
+        let second = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA16")!)
+        store.dispatched(first)
+        store.dispatched(second)
+
+        store.apply(refusal("the first one was refused", op: first))
+
+        XCTAssertNil(store.refusal)
+        XCTAssertEqual(store.results.count, 1)
+    }
+
+    /// An operation that succeeded leaves nothing to say. The refusal that was
+    /// on screen belonged to a message the host has now taken.
+    func testASuccessfulAnswerClearsTheRefusal() {
+        let store = ConversationStore(agent: agent)
+        let op = OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA17")!)
+        store.dispatched(op)
+        store.apply(refusal("refused", op: op))
+        store.dispatched(op)
+        store.apply(.opResult(OpResult(op: op, outcome: .inputSent)))
+        XCTAssertNil(store.refusal)
+    }
+
+    /// A long-lived conversation sends many times. What it remembers is
+    /// bounded, and the newest answer — the only one ever drawn — is kept.
+    func testWhatAConversationRemembersIsBounded() {
+        let store = ConversationStore(agent: agent)
+        for number in 0..<200 {
+            let op = OpId(UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", number))!)
+            store.dispatched(op)
+            store.apply(refusal("refusal \(number)", op: op))
+        }
+        XCTAssertLessThanOrEqual(store.results.count, 32)
+        guard case .failed(let last) = store.results.last?.outcome else {
+            return XCTFail("expected the newest refusal to be kept")
+        }
+        XCTAssertEqual(last.message, "refusal 199")
+    }
+}

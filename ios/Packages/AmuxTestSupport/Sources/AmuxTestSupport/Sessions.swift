@@ -1,0 +1,317 @@
+import AmuxCore
+import Foundation
+
+/// Session states, in each layer's own vocabulary. The two providers ask for
+/// permission in different words and offer different choices, and the fixtures
+/// keep them apart rather than inventing a shared one.
+public enum Sessions {
+    public static func claude(
+        gate: ClaudePtySendGate = .ready,
+        phase: String = "idle",
+        stream: StreamPhase? = .live,
+        asks: [Ask] = [],
+        provider: ProviderFacts = claudeProvider,
+        settingsGate: SettingsGate = .ptySettingsUnavailable,
+        queue: QueuedMessage? = nil,
+        family: [FamilyMember] = [],
+        agent: AgentId = Scenario.focus
+    ) -> SessionSnapshot {
+        SessionSnapshot(
+            agent: agent,
+            gate: .claudePty(gate),
+            phase: .claudePty(.object(["phase": .string(phase), "tag": .string("inferred")])),
+            stream: stream,
+            asks: asks,
+            facts: .claudePty(.object([
+                "layer": .string("claude_pty"),
+                "session": .object(["permission_mode": .string("acceptEdits"), "ai_title": .null,
+                                    "agent_name": .null]),
+                "accepted_plans": .array([]),
+                "echoes": .array([]),
+            ])),
+            provider: provider,
+            settingsGate: settingsGate,
+            queue: queue,
+            family: family)
+    }
+
+    public static func codex(
+        gate: CodexSendGate = .ready,
+        phase: String = "idle",
+        asks: [Ask] = [],
+        provider: ProviderFacts = codexProvider,
+        settingsGate: SettingsGate = .ready,
+        agent: AgentId = Scenario.agentId("spec-suite")
+    ) -> SessionSnapshot {
+        SessionSnapshot(
+            agent: agent,
+            gate: .codex(gate),
+            phase: .codex(.object(["phase": .string(phase)])),
+            stream: .live,
+            asks: asks,
+            facts: .codex(.object(["layer": .string("codex"), "active_turn_id": .null])),
+            provider: provider,
+            settingsGate: settingsGate,
+            queue: nil,
+            family: [])
+    }
+
+    /// An agent this build cannot read. It states that outright rather than
+    /// presenting an empty conversation as an idle one.
+    public static func unreadable(agent: AgentId = Scenario.agentId("legacy-port")) -> SessionSnapshot {
+        SessionSnapshot(
+            agent: agent,
+            gate: .unavailable,
+            phase: .unavailable,
+            stream: nil,
+            asks: [],
+            facts: .unavailable,
+            provider: ProviderFacts(),
+            settingsGate: .unavailable,
+            queue: nil,
+            family: [])
+    }
+
+    // MARK: - Provider facts
+
+    public static let claudeProvider = ProviderFacts(
+        model: "opus-4.6",
+        models: [
+            ModelInfo(id: "opus-4.6", name: "opus 4.6", efforts: [], defaultEffort: nil),
+            ModelInfo(id: "sonnet-5", name: "sonnet 5", efforts: [], defaultEffort: nil),
+            ModelInfo(id: "haiku-4.5", name: "haiku 4.5", efforts: [], defaultEffort: nil),
+        ],
+        commands: [
+            ProviderCommand(name: "handoff", source: .string("claude"), terminalOnly: false),
+            ProviderCommand(name: "code-review", source: .string("claude"), terminalOnly: false),
+            ProviderCommand(name: "tasks", source: .string("claude"), terminalOnly: false),
+            ProviderCommand(name: "compact", source: .string("claude"), terminalOnly: false),
+            ProviderCommand(name: "doctor", source: .string("claude"), terminalOnly: true),
+        ],
+        permission: .object(["provider": .string("claude"), "mode": .string("acceptEdits")]))
+
+    public static let codexProvider = ProviderFacts(
+        model: "gpt-5.2",
+        effort: "medium",
+        models: [
+            ModelInfo(id: "gpt-5.2", name: "gpt-5.2", efforts: ["low", "medium", "high"],
+                      defaultEffort: "medium"),
+            ModelInfo(id: "gpt-5.2-mini", name: "gpt-5.2-mini", efforts: ["low", "medium", "high"],
+                      defaultEffort: "low"),
+        ],
+        efforts: ["low", "medium", "high"],
+        // A session's own list, in the order it reported it, with one command
+        // from an installed plugin and one that only means anything in a
+        // terminal. Both are here so that what the phone drops and what it
+        // names are visible rather than asserted.
+        commands: [
+            ProviderCommand(name: "code-review", source: .string("codex")),
+            ProviderCommand(
+                name: "stripe:connect-recommend",
+                source: .object(["plugin": .string("stripe")])),
+            ProviderCommand(name: "compact", source: .string("codex")),
+            ProviderCommand(name: "context", source: .string("codex")),
+            ProviderCommand(name: "copy-transcript", source: .string("codex"),
+                            terminalOnly: true),
+            ProviderCommand(name: "handoff", source: .string("codex")),
+        ],
+        permission: .object([
+            "provider": .string("codex"),
+            "approval": .string("on-request"),
+            "sandbox": .string("workspace-write"),
+        ]))
+
+    /// The task list the provider keeps, folded by the core rather than
+    /// counted on the phone.
+    public static let todos = TaskList(
+        done: 3, total: 7,
+        current: "Update the three spec tests that assert on the old strings",
+        items: [
+            TaskItem(text: "Find every call site that maps a status to a string", state: .completed),
+            TaskItem(text: "Collapse the match in pairing.rs onto one arm", state: .completed),
+            TaskItem(text: "Delete the three unused error constants", state: .completed),
+            TaskItem(text: "Update the three spec tests that assert on the old strings",
+                     state: .inProgress),
+            TaskItem(text: "Run the spec suite", state: .pending),
+            TaskItem(text: "Check nothing in docs asserts on the old copy", state: .pending),
+            TaskItem(text: "Write the changelog line", state: .pending),
+        ])
+
+    // MARK: - Asks
+
+    /// Claude asking to run a command.
+    public static let claudePermission = Ask(layer: .claudePty, body: .object([
+        "id": .int(1), "seq": .int(9),
+        "tool_use_id": .string("toolu_9"),
+        "session_ask_id": .string("ask-1"),
+        "kind": .object([
+            "ask": .string("permission"),
+            "tool_name": .string("Bash"),
+            "invocation": .object([
+                "tool": .string("bash"),
+                "command": .string("cargo test --workspace --test spec"),
+                "description": .string("Watch the three tests fail before calling it done"),
+            ]),
+            // The host's own standing grant, in the shape it actually sends:
+            // a directory to add for the session, not a rule about the
+            // command. What the panel offers is what this grants.
+            "suggestions": .array([.object([
+                "kind": .string("add_directories"),
+                "destination": .string("session"),
+                "directories": .array([.string("~/src/amux")]),
+            ])]),
+        ]),
+        "state": .object(["state": .string("pending")]),
+        "document": .null,
+    ]))
+
+    /// Claude asking a question with options.
+    public static let claudeQuestion = Ask(layer: .claudePty, body: .object([
+        "id": .int(2), "seq": .int(11),
+        "tool_use_id": .string("toolu_11"),
+        "session_ask_id": .string("ask-2"),
+        "kind": .object([
+            "ask": .string("question"),
+            "questions": .array([.object([
+                "header": .string("Ownership"),
+                "question": .string("Which crate should own the redaction table?"),
+                "multi_select": .bool(false),
+                "options": .array([
+                    .object(["label": .string("amux-core"), "description": .null]),
+                    .object(["label": .string("amux-ui"), "description": .null]),
+                    .object(["label": .string("a new crate"), "description": .null]),
+                ]),
+            ])]),
+        ]),
+        "state": .object(["state": .string("pending")]),
+        "document": .null,
+    ]))
+
+    /// A plan to approve. It is a permission whose payload carries the plan,
+    /// not a third kind of ask.
+    public static let claudePlan = Ask(layer: .claudePty, body: .object([
+        "id": .int(3), "seq": .int(13),
+        "tool_use_id": .string("toolu_13"),
+        "session_ask_id": .string("ask-3"),
+        "kind": .object([
+            "ask": .string("permission"),
+            "tool_name": .string("ExitPlanMode"),
+            "invocation": .object([
+                "tool": .string("plan"),
+                "plan_title": .string("Collapse the pairing failures onto one message"),
+                "plan": .string(planMarkdown),
+                "plan_file_path": .null,
+            ]),
+            "suggestions": .array([]),
+        ]),
+        "state": .object(["state": .string("pending")]),
+        "document": .null,
+    ]))
+
+    /// The same request in Codex's words, with Codex's own choices.
+    public static let codexPermission = Ask(layer: .codex, body: .object([
+        "seq": .int(9),
+        "request_id": .string("req-9"),
+        "context": .object([
+            "ask": .string("command"),
+            "item_id": .string("item-9"),
+            "command": .string("cargo test --workspace --test spec"),
+            "cwd": .string("~/src/amux"),
+            "reason": .string("Runs outside the workspace sandbox"),
+            "proposed_execpolicy_amendment": .null,
+            "proposed_network_policy_amendments": .array([]),
+        ]),
+        // Codex's four V1 decisions are accept, acceptForSession, decline and
+        // cancel; this request offers three of them and one object-valued
+        // choice the backend will not take, which is listed and cannot be
+        // pressed.
+        "actions": .array([
+            .object(["wire": .string("accept"),
+                     "meaning": .object(["meaning": .string("scalar"),
+                                         "decision": .string("accept")])]),
+            .object(["wire": .string("acceptForSession"),
+                     "meaning": .object(["meaning": .string("scalar"),
+                                         "decision": .string("acceptForSession")])]),
+            .object(["wire": .object(["acceptWithExecpolicyAmendment": .object([
+                        "execpolicy_amendment": .array([.string("/usr/bin/cargo")])])]),
+                     "meaning": .object([
+                        "meaning": .string("accept_with_execpolicy_amendment"),
+                        "matches_proposal": .bool(true)])]),
+            .object(["wire": .string("decline"),
+                     "meaning": .object(["meaning": .string("scalar"),
+                                         "decision": .string("decline")])]),
+        ]),
+    ]))
+
+    /// A message held until the turn ends.
+    ///
+    /// Spelled the way the core spells one — segments and attachments, with a
+    /// held delivery — because that is what arrives over the bridge. The shape
+    /// is pinned by the projection's own `queue.json`, which the schema suite
+    /// reads.
+    public static let heldMessage = QueuedMessage(
+        draft: HeldDraft(segments: [
+            .text("Once the suite is green, squash it into one commit and push."),
+        ]),
+        heldAt: Scenario.now.addingTimeInterval(-45),
+        delivery: .held)
+
+    /// The agents this one started, and the one that is stuck.
+    public static let family: [FamilyMember] = [
+        FamilyMember(agent: Scenario.agentId("spec-fixer"), depth: 1, needs: .permission),
+        FamilyMember(agent: Scenario.agentId("docs-sweep"), depth: 1, needs: nil),
+    ]
+
+    /// Three started agents, one of them stuck, for the screens whose subject
+    /// is the number in the strip rather than the chips in the chrome. Kept
+    /// apart from ``family`` so a count photographed on one screen cannot be
+    /// changed by work on the other.
+    public static let started: [FamilyMember] = family + [
+        FamilyMember(agent: Scenario.agentId("changelog-line"), depth: 1, needs: nil),
+    ]
+
+    /// Claude's own facts with the provider's task list folded into them.
+    ///
+    /// The list is the provider's and the arithmetic is the shared library's;
+    /// this only carries it, which is why it is a copy of the ordinary facts
+    /// with one field set rather than a second set of facts.
+    public static func claudeProvider(running todos: TaskList) -> ProviderFacts {
+        var facts = claudeProvider
+        facts.todos = todos
+        return facts
+    }
+
+    public static let planMarkdown = """
+        The client maps gRPC statuses onto distinct strings in three places. The protocol \
+        refuses to distinguish them, so the client must not either. This is a small change \
+        with a wide blast radius, because the strings are asserted on in specs.
+
+        ## Approach
+
+        Replace the match in `amux-ui/src/pairing.rs` with a single arm, then delete what \
+        becomes unreachable. The daemon-side mapping stays: it is allowed to know which \
+        failure happened.
+
+        1. Read every call site that maps a gRPC status to a string — 6 files
+        2. Replace the match in `amux-ui/src/pairing.rs` with one arm
+        3. Delete the three error constants nothing else reads
+        4. Update the two spec tests that assert on the old strings
+
+        ## Risk
+
+        The relay's own reconnect path reads `INVALID_PIN` by name. I will grep for it \
+        before deleting anything, and if it is load-bearing I will come back rather than guess.
+
+        ```text
+        crates/amux-ui/src/pairing.rs   -14 +9
+        crates/amux-ui/src/errors.rs     -8 +0
+        crates/amux-ui/tests/pairing.rs  -6 +4
+        ```
+
+        ## What I will not do
+
+        - Touch the daemon-side mapping
+        - Change the retry budget, which looks wrong but is a separate change
+        - Rename anything, so the diff stays about one thing
+        """
+}

@@ -1,0 +1,175 @@
+{
+  "reactions": [
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    },
+    {
+      "on": "AnyPrompt",
+      "play": [
+        {
+          "Working": {
+            "secs": 3.0
+          }
+        }
+      ]
+    },
+    {
+      "on": "Any",
+      "play": []
+    }
+  ],
+  "commands": [],
+  "models": [],
+  "efforts": []
+}

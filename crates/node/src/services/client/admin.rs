@@ -1,5 +1,11 @@
 //! In-process pairing and trust administration, available only to the installation owner.
 
+use chrono::DateTime;
+use client::{
+    DeviceIdentity, PairingError, PendingPeer, public_key_fingerprint, status_to_pairing_error,
+    uuid_from_wire_bytes,
+};
+const PAIRING_PUBKEY_LEN: usize = 32;
 use client::{
     pairing_identity_from_wire, pairing_start_from_wire, peer_entry_from_wire, peer_ref,
     status_to_client_error,
@@ -28,6 +34,103 @@ mod method {
 }
 
 impl ProfileAdmin {
+    /// Authenticate a PIN through the relay without writing either trust store.
+    pub async fn begin_pair_pin(
+        &self,
+        host: crate::HostId,
+        pin: &str,
+    ) -> Result<PendingPeer, PairingError> {
+        self.begin_pair(wire::BeginPairRequest {
+            host_id: host.as_bytes().to_vec(),
+            secret: Some(wire::begin_pair_request::Secret::Pin(pin.to_string())),
+        })
+        .await
+    }
+
+    /// Authenticate the scanned secret and return the sealed host identity for review.
+    pub async fn begin_pair_qr(
+        &self,
+        payload: &crate::QrPairingPayload,
+    ) -> Result<PendingPeer, PairingError> {
+        self.begin_pair(wire::BeginPairRequest {
+            host_id: payload.host_id.as_bytes().to_vec(),
+            secret: Some(wire::begin_pair_request::Secret::QrSecret(
+                payload.secret.clone(),
+            )),
+        })
+        .await
+    }
+
+    async fn begin_pair(
+        &self,
+        request: wire::BeginPairRequest,
+    ) -> Result<PendingPeer, PairingError> {
+        let response = self
+            .rpc_begin_pair(tonic::Request::new(request))
+            .await
+            .map_err(status_to_pairing_error)?
+            .into_inner();
+        let peer = response.peer.ok_or(PairingError::InvalidPin)?;
+        let expires_at = DateTime::from_timestamp_millis(peer.expires_at_unix_ms)
+            .ok_or(PairingError::InvalidPin)?;
+        let (host_id, pubkey, name) = pairing_identity_from_wire("BeginPair", peer)?;
+        let fingerprint = public_key_fingerprint(&pubkey);
+        Ok(PendingPeer {
+            host_id,
+            name,
+            fingerprint,
+            expires_at,
+            token: response.token,
+        })
+    }
+
+    /// Grant mutual trust to the authenticated peer represented by this attempt.
+    pub async fn confirm_pair(&self, pending: PendingPeer) -> Result<PeerEntry, PairingError> {
+        let response = self
+            .rpc_confirm_pair(tonic::Request::new(wire::PendingPairRequest {
+                token: pending.token,
+            }))
+            .await
+            .map_err(status_to_pairing_error)?
+            .into_inner();
+        Ok(peer_entry_from_wire(
+            "ConfirmPair",
+            response.peer.ok_or(PairingError::InvalidPin)?,
+        )?)
+    }
+
+    /// Cancel without trust writes, returning only after the responder acknowledges.
+    pub async fn abandon_pair(&self, pending: PendingPeer) -> Result<(), PairingError> {
+        self.rpc_abandon_pair(tonic::Request::new(wire::PendingPairRequest {
+            token: pending.token,
+        }))
+        .await
+        .map_err(status_to_pairing_error)?;
+        Ok(())
+    }
+
+    /// Reads the identity of the local daemon or embedded client runtime.
+    pub async fn device_identity(&self) -> Result<DeviceIdentity, ClientError> {
+        let identity = self
+            .rpc_get_device_identity(tonic::Request::new(wire::GetDeviceIdentityRequest {}))
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let method = "/amux.v1.ProfileService/GetDeviceIdentity";
+        let host_id = uuid_from_wire_bytes(method, "DeviceIdentity.host_id", identity.host_id)?;
+        if identity.pubkey.len() != PAIRING_PUBKEY_LEN {
+            return Err(ClientError::Decode {
+                method,
+                message: "DeviceIdentity.pubkey must be 32 bytes".to_string(),
+            });
+        }
+        Ok(DeviceIdentity {
+            host_id,
+            name: identity.name,
+            fingerprint: public_key_fingerprint(&identity.pubkey),
+        })
+    }
+
     pub(crate) fn new(service: ClientService, id: crate::installation::ProfileId) -> Self {
         Self { service, id }
     }
@@ -43,6 +146,30 @@ impl ProfileAdmin {
             .check()
             .map_err(|error| status_to_client_error(protocol_status(error)))?;
         Ok(self.service.list_pairing_candidates().await)
+    }
+
+    /// Subscribe to this profile's trusted hosts and online cloud pairing candidates.
+    /// The initial inventory ends with `SnapshotComplete`; subsequent events include
+    /// departures and trust changes. Only the owner can discover unpaired hosts:
+    /// profile sockets and peer tunnels keep their trusted-only inventory.
+    pub async fn subscribe_hosts(
+        &self,
+    ) -> Result<impl Stream<Item = Result<HostEvent, ClientError>> + Send + 'static, ClientError>
+    {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(|error| status_to_client_error(protocol_status(error)))?;
+        Ok(self
+            .service
+            .host_inventory_stream(HostInventory::WithPairingCandidates)
+            .await
+            .map(|response| {
+                response
+                    .map_err(status_to_client_error)
+                    .and_then(client::client_service_host_response_to_host_event)
+            }))
     }
 
     #[doc(hidden)]
@@ -254,6 +381,7 @@ impl ProfileAdmin {
     ) -> Result<(), ClientError> {
         self.rpc_pair_peer(tonic::Request::new(wire::PairPeerRequest {
             peer: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: peer.host_id.as_bytes().to_vec(),
                 pubkey: peer.pubkey,
                 name: peer.name,
@@ -343,6 +471,7 @@ impl ProfileAdmin {
         audit::pairing_start(method);
         Ok(tonic::Response::new(wire::StartPairingResponse {
             identity: Some(wire::PairingIdentity {
+                expires_at_unix_ms: 0,
                 host_id: self.service.local_agents.host_id().as_bytes().to_vec(),
                 pubkey: self.service.pairing_trust.local_pubkey.clone(),
                 name,
@@ -448,6 +577,174 @@ impl ProfileAdmin {
             .await?;
         Ok(tonic::Response::new(wire::PairQrCloudPeerResponse {
             peer: Some(peer),
+        }))
+    }
+
+    pub(crate) async fn rpc_begin_pair(
+        &self,
+        request: tonic::Request<wire::BeginPairRequest>,
+    ) -> TonicResult<wire::PendingPairResponse> {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(protocol_status)?;
+        let request = request.into_inner();
+        let invalid = || tonic::Status::permission_denied("INVALID_PIN");
+        let host_id =
+            uuid_from_bytes("BeginPairRequest.host_id", &request.host_id).map_err(|_| invalid())?;
+        if host_id == self.service.local_agents.host_id() {
+            return Err(invalid());
+        }
+        let secret = match request.secret {
+            Some(wire::begin_pair_request::Secret::Pin(pin))
+                if pin.len() == 6 && pin.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                pin.into_bytes()
+            }
+            Some(wire::begin_pair_request::Secret::QrSecret(secret))
+                if secret.len() == QR_SECRET_LEN =>
+            {
+                secret
+            }
+            _ => return Err(invalid()),
+        };
+        let local_name = {
+            let state = self.service.server_state.read().await;
+            state.host_name().to_string()
+        };
+        let identity = LocalPairingIdentity::new(
+            self.service.local_agents.host_id(),
+            self.service.pairing_trust.local_pubkey.clone(),
+        );
+        let channel = self
+            .service
+            .remote_agent_connections
+            .cloud_pairing_channel_to(host_id)
+            .await
+            .map_err(|error| tonic::Status::unavailable(error.to_string()))?;
+        let pending = begin_pair_initiator(
+            &mut wire::pairing_service_client::PairingServiceClient::new(channel),
+            &identity,
+            &local_name,
+            &secret,
+        )
+        .await
+        .map_err(opaque_pairing_status)?;
+        if pending.peer.host_id != request.host_id
+            || pending.peer.pubkey == self.service.pairing_trust.local_pubkey
+        {
+            return Err(invalid());
+        }
+        let remaining_ms = pending
+            .peer
+            .expires_at_unix_ms
+            .checked_sub(Utc::now().timestamp_millis())
+            .filter(|remaining| *remaining > 0)
+            .ok_or_else(invalid)?;
+        let token = Uuid::new_v4();
+        let response = wire::PendingPairResponse {
+            token: token.as_bytes().to_vec(),
+            peer: Some(pending.peer.clone()),
+        };
+        let mut state = self.service.state.write().await;
+        // Bound resources held by local clients that never resolve their confirmation.
+        if state.pending_pairs.len() >= 32 {
+            return Err(tonic::Status::resource_exhausted(
+                "too many pending pairings",
+            ));
+        }
+        state.pending_pairs.insert(token, pending);
+        drop(state);
+        let state = Arc::downgrade(&self.service.state);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(remaining_ms as u64).min(PAIR_MODE_TTL)).await;
+            if let Some(state) = state.upgrade() {
+                state.write().await.pending_pairs.remove(&token);
+            }
+        });
+        Ok(tonic::Response::new(response))
+    }
+
+    pub(crate) async fn rpc_confirm_pair(
+        &self,
+        request: tonic::Request<wire::PendingPairRequest>,
+    ) -> TonicResult<wire::GetPeerResponse> {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(protocol_status)?;
+        let pending = self.service.take_pending_pair(request.into_inner()).await?;
+        let peer = tokio::time::timeout(PAIR_INITIATOR_TIMEOUT, pending.confirm())
+            .await
+            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?
+            .map_err(opaque_pairing_status)?;
+        let trust = &self.service.pairing_trust;
+        commit_peer_trust(
+            PeerTrustCommitContext::new(
+                trust.trust_store.clone(),
+                trust.trust_commit_lock.clone(),
+                self.service.remote_agent_connections.clone(),
+                trust.data_dir.clone(),
+            ),
+            PeerTrustUpdate::new(
+                peer.host_id,
+                peer.pubkey,
+                peer.name,
+                Some(Reachability::Cloud),
+            ),
+        )
+        .await?;
+        self.service.publish_host_status_update(peer.host_id).await;
+        let entry = self
+            .service
+            .peer_entries()?
+            .into_iter()
+            .find(|(host, _)| *host == peer.host_id)
+            .ok_or_else(|| tonic::Status::internal("paired peer missing"))?;
+        Ok(tonic::Response::new(wire::GetPeerResponse {
+            peer: Some(peer_entry_to_wire(entry.0, &entry.1)),
+        }))
+    }
+
+    pub(crate) async fn rpc_abandon_pair(
+        &self,
+        request: tonic::Request<wire::PendingPairRequest>,
+    ) -> TonicResult<wire::PairingAbandoned> {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(protocol_status)?;
+        let pending = self.service.take_pending_pair(request.into_inner()).await?;
+        tokio::time::timeout(PAIR_INITIATOR_TIMEOUT, pending.abandon())
+            .await
+            .map_err(|_| tonic::Status::permission_denied("INVALID_PIN"))?
+            .map_err(opaque_pairing_status)?;
+        Ok(tonic::Response::new(wire::PairingAbandoned {}))
+    }
+
+    pub(crate) async fn rpc_get_device_identity(
+        &self,
+        _request: tonic::Request<wire::GetDeviceIdentityRequest>,
+    ) -> TonicResult<wire::DeviceIdentity> {
+        self.service
+            .pairing_trust
+            .trust_commit_lock
+            .check()
+            .map_err(protocol_status)?;
+        Ok(tonic::Response::new(wire::DeviceIdentity {
+            host_id: self.service.local_agents.host_id().as_bytes().to_vec(),
+            name: self
+                .service
+                .server_state
+                .read()
+                .await
+                .config
+                .host_name
+                .clone(),
+            pubkey: self.service.pairing_trust.local_pubkey.clone(),
         }))
     }
 

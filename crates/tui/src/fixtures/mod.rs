@@ -752,6 +752,7 @@ fn host() -> HostEntry {
         capabilities: Some(ui_state::Capabilities::default()),
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: None,
+        platform: None,
     }
 }
 

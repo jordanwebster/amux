@@ -5,6 +5,7 @@
 | Values and protocol | `model`, `wire`, `settings`, `artifacts`, `redaction`, `client` |
 | Daemon | `host-api`, `node`, `agent-runtime`, `claude`, `codex`, `pty-host` |
 | Clients | `ui-state`, `ui-runtime`, `tui` |
+| App layer | `app-runtime`, `app-embedded`, `app-ffi` |
 | Products and tools | `amux`, `shot`, `xtask` |
 | Test infrastructure | `testnet`, `replay-support`, `claude-specs`, `codex-specs`, `e2e-runner`, `test-agent` |
 
@@ -28,6 +29,14 @@ The client layer separates pure state from effects and presentation.
 subscriptions, effects and report resources, and `tui` owns terminal input
 and rendering. TUI fixtures live inside `tui` and compile only for its tests
 or explicit fixture consumers; they are not a separate package.
+
+The app layer is what a rich client reuses: `app-runtime` owns account
+sessions, the projection to presentation values, the fleet cache and the
+frame-coalesced event queue over `client`, `ui-state` and `ui-runtime`;
+`app-embedded` owns a provider-free `node::Installation` and its relay link;
+`app-ffi` is the C ABI over both. `app-runtime` never depends on `node`, so a
+desktop app attaching to a running daemon uses it without `app-embedded`.
+[Native integration](NATIVE_INTEGRATION.md) owns the layer's rules.
 
 The product and tools layer composes rather than re-exports the lower layers.
 `amux` owns desktop setup and the CLI, `shot` renders deterministic TUI

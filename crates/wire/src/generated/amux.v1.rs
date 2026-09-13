@@ -198,7 +198,7 @@ pub struct ClaudeSdkV1Output {
 pub struct ClaudeSdkV1Input {
     #[prost(
         oneof = "claude_sdk_v1_input::Input",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18"
     )]
     pub input: ::core::option::Option<claude_sdk_v1_input::Input>,
 }
@@ -222,6 +222,8 @@ pub mod claude_sdk_v1_input {
         SetModel(super::ClaudeSdkSetModel),
         #[prost(message, tag = "17")]
         RequestContextBreakdown(super::ClaudeSdkRequestContextBreakdown),
+        #[prost(message, tag = "18")]
+        SetEffort(super::ClaudeSdkSetEffort),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -295,6 +297,12 @@ pub struct ClaudeSdkSetModel {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkRequestContextBreakdown {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkSetEffort {
+    /// Absent clears the session effort override.
+    #[prost(string, optional, tag = "1")]
+    pub effort: ::core::option::Option<::prost::alloc::string::String>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum ClaudeDriver {
@@ -367,7 +375,7 @@ pub struct CodexSdkV1Output {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CodexSdkV1Input {
-    #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4")]
+    #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
     pub input: ::core::option::Option<codex_sdk_v1_input::Input>,
 }
 /// Nested message and enum types in `CodexSdkV1Input`.
@@ -382,6 +390,14 @@ pub mod codex_sdk_v1_input {
         Interrupt(super::CodexSdkV1Interrupt),
         #[prost(message, tag = "4")]
         ApprovalDecision(super::CodexSdkV1ApprovalDecision),
+        #[prost(message, tag = "5")]
+        SetModel(super::CodexSdkV1SetModel),
+        #[prost(message, tag = "6")]
+        SetEffort(super::CodexSdkV1SetEffort),
+        #[prost(message, tag = "7")]
+        SetPreset(super::CodexSdkV1SetPreset),
+        #[prost(message, tag = "8")]
+        Command(super::CodexSdkV1Command),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -410,6 +426,30 @@ pub struct CodexSdkV1ApprovalDecision {
     pub request_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "2")]
     pub decision: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetModel {
+    #[prost(string, tag = "1")]
+    pub model: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetEffort {
+    #[prost(string, tag = "1")]
+    pub effort: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1SetPreset {
+    #[prost(string, tag = "1")]
+    pub approval: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub sandbox: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1Command {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub args: ::prost::alloc::string::String,
 }
 /// Dev/test-only agent creation config and echo protocol payloads.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -812,10 +852,15 @@ pub struct Host {
     pub version: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "4")]
     pub capabilities: ::core::option::Option<Capabilities>,
+    /// What kind of machine this is, in the host's own words: the operating
+    /// system it runs, as it named itself when it was built. A host that
+    /// predates this field says nothing rather than guessing.
+    #[prost(string, optional, tag = "5")]
+    pub platform: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairMessage {
-    #[prost(oneof = "pair_message::Body", tags = "1, 2, 3, 4, 5")]
+    #[prost(oneof = "pair_message::Body", tags = "1, 2, 3, 4, 5, 6")]
     pub body: ::core::option::Option<pair_message::Body>,
 }
 /// Nested message and enum types in `PairMessage`.
@@ -832,10 +877,14 @@ pub mod pair_message {
         Error(super::PairingError),
         #[prost(message, tag = "5")]
         PairingComplete(super::PairingComplete),
+        #[prost(message, tag = "6")]
+        PairingAbandoned(super::PairingAbandoned),
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairingComplete {}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PairingAbandoned {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PairingError {
     #[prost(enumeration = "pairing_error::Reason", tag = "1")]
@@ -905,6 +954,9 @@ pub struct PairingIdentity {
     pub pubkey: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "3")]
     pub name: ::prost::alloc::string::String,
+    /// Authenticated along with the responder identity by SPAKE2 sealing.
+    #[prost(int64, tag = "4")]
+    pub expires_at_unix_ms: i64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListHostsRequest {}
@@ -935,6 +987,10 @@ pub struct HostEntry {
     /// `!online && last_dial_error` unset, derived client-side if needed.
     #[prost(string, optional, tag = "7")]
     pub last_dial_error: ::core::option::Option<::prost::alloc::string::String>,
+    /// The machine's kind, as it announced itself in the handshake. Unset for a
+    /// host that has never been adjacent, because nothing else knows it.
+    #[prost(string, optional, tag = "8")]
+    pub platform: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Agent {
@@ -1603,17 +1659,28 @@ pub struct HostRemoved {
     #[prost(bytes = "vec", tag = "1")]
     pub host_id: ::prost::alloc::vec::Vec<u8>,
 }
+/// Last complete inventory observed from one remote host. Subsequent snapshots
+/// and confirmed deletions replace this membership; reachability loss does not.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HostInventory {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", repeated, tag = "2")]
+    pub agent_ids: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeAgentsRequest {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeAgentsResponse {
-    #[prost(oneof = "subscribe_agents_response::Event", tags = "1, 2, 3, 100")]
+    #[prost(oneof = "subscribe_agents_response::Event", tags = "4, 1, 2, 3, 100")]
     pub event: ::core::option::Option<subscribe_agents_response::Event>,
 }
 /// Nested message and enum types in `SubscribeAgentsResponse`.
 pub mod subscribe_agents_response {
     #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
     pub enum Event {
+        #[prost(message, tag = "4")]
+        HostInventory(super::HostInventory),
         #[prost(message, tag = "1")]
         AgentUp(super::AgentUp),
         #[prost(message, tag = "2")]
@@ -1848,6 +1915,35 @@ pub struct PairQrCloudPeerResponse {
     pub peer: ::core::option::Option<PairingIdentity>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct BeginPairRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(oneof = "begin_pair_request::Secret", tags = "2, 3")]
+    pub secret: ::core::option::Option<begin_pair_request::Secret>,
+}
+/// Nested message and enum types in `BeginPairRequest`.
+pub mod begin_pair_request {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Secret {
+        #[prost(string, tag = "2")]
+        Pin(::prost::alloc::string::String),
+        #[prost(bytes, tag = "3")]
+        QrSecret(::prost::alloc::vec::Vec<u8>),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PendingPairResponse {
+    #[prost(bytes = "vec", tag = "1")]
+    pub token: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "2")]
+    pub peer: ::core::option::Option<PairingIdentity>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PendingPairRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub token: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PeerRef {
     #[prost(oneof = "peer_ref::Identifier", tags = "1, 2")]
     pub identifier: ::core::option::Option<peer_ref::Identifier>,
@@ -1891,6 +1987,17 @@ pub struct PeerEntry {
     pub paired_at_unix_ms: i64,
     #[prost(message, repeated, tag = "5")]
     pub reachabilities: ::prost::alloc::vec::Vec<PeerReachability>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetDeviceIdentityRequest {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeviceIdentity {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub pubkey: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ListPeersRequest {}
@@ -2030,6 +2137,59 @@ pub struct GetPairingStatusResponse {
 pub struct CancelPairingRequest {}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CancelPairingResponse {}
+/// Host-owned discovery; the client chooses a host, never a search root.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ListRepositoriesRequest {
+    #[prost(string, optional, tag = "1")]
+    pub query: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "2")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClientListRepositoriesRequest {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, optional, tag = "2")]
+    pub query: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint32, tag = "3")]
+    pub limit: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ListRepositoriesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub recent: ::prost::alloc::vec::Vec<ProjectEntry>,
+    #[prost(message, repeated, tag = "2")]
+    pub repositories: ::prost::alloc::vec::Vec<ProjectEntry>,
+    #[prost(string, repeated, tag = "3")]
+    pub roots: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProjectEntry {
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(int64, optional, tag = "3")]
+    pub last_used_unix_ms: ::core::option::Option<i64>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProfileBeginPairRequest {
+    #[prost(string, tag = "1")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub profile_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub pairing: ::core::option::Option<BeginPairRequest>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProfilePendingPairRequest {
+    #[prost(string, tag = "1")]
+    pub operation_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub profile_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "3")]
+    pub pairing: ::core::option::Option<PendingPairRequest>,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum AgentProtocol {
@@ -3388,6 +3548,30 @@ pub mod agent_service_client {
             req.extensions_mut().insert(GrpcMethod::new("amux.v1.AgentService", "Diff"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn list_repositories(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.AgentService/ListRepositories",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.AgentService", "ListRepositories"));
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -3501,6 +3685,13 @@ pub mod agent_service_server {
             &self,
             request: tonic::Request<super::DiffRequest>,
         ) -> std::result::Result<tonic::Response<super::DiffResponse>, tonic::Status>;
+        async fn list_repositories(
+            &self,
+            request: tonic::Request<super::ListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        >;
     }
     #[derive(Debug)]
     pub struct AgentServiceServer<T> {
@@ -4075,6 +4266,52 @@ pub mod agent_service_server {
                     };
                     Box::pin(fut)
                 }
+                "/amux.v1.AgentService/ListRepositories" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListRepositoriesSvc<T: AgentService>(pub Arc<T>);
+                    impl<
+                        T: AgentService,
+                    > tonic::server::UnaryService<super::ListRepositoriesRequest>
+                    for ListRepositoriesSvc<T> {
+                        type Response = super::ListRepositoriesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ListRepositoriesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as AgentService>::list_repositories(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListRepositoriesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 _ => {
                     Box::pin(async move {
                         let mut response = http::Response::new(
@@ -4538,6 +4775,99 @@ pub mod profile_service_client {
                 .insert(GrpcMethod::new("amux.v1.ProfileService", "PairQrCloudPeer"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn begin_pair(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ProfileBeginPairRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::PendingPairResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ProfileService/BeginPair",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ProfileService", "BeginPair"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn confirm_pair(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ProfilePendingPairRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetPeerResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ProfileService/ConfirmPair",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ProfileService", "ConfirmPair"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn abandon_pair(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ProfilePendingPairRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::PairingAbandoned>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ProfileService/AbandonPair",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ProfileService", "AbandonPair"));
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_device_identity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ProfileRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeviceIdentity>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ProfileService/GetDeviceIdentity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ProfileService", "GetDeviceIdentity"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn list_peers(
             &mut self,
             request: impl tonic::IntoRequest<super::ProfileRequest>,
@@ -4763,6 +5093,28 @@ pub mod profile_service_server {
             tonic::Response<super::PairQrCloudPeerResponse>,
             tonic::Status,
         >;
+        async fn begin_pair(
+            &self,
+            request: tonic::Request<super::ProfileBeginPairRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::PendingPairResponse>,
+            tonic::Status,
+        >;
+        async fn confirm_pair(
+            &self,
+            request: tonic::Request<super::ProfilePendingPairRequest>,
+        ) -> std::result::Result<tonic::Response<super::GetPeerResponse>, tonic::Status>;
+        async fn abandon_pair(
+            &self,
+            request: tonic::Request<super::ProfilePendingPairRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::PairingAbandoned>,
+            tonic::Status,
+        >;
+        async fn get_device_identity(
+            &self,
+            request: tonic::Request<super::ProfileRequest>,
+        ) -> std::result::Result<tonic::Response<super::DeviceIdentity>, tonic::Status>;
         async fn list_peers(
             &self,
             request: tonic::Request<super::ProfileRequest>,
@@ -5532,6 +5884,187 @@ pub mod profile_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = PairQrCloudPeerSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ProfileService/BeginPair" => {
+                    #[allow(non_camel_case_types)]
+                    struct BeginPairSvc<T: ProfileService>(pub Arc<T>);
+                    impl<
+                        T: ProfileService,
+                    > tonic::server::UnaryService<super::ProfileBeginPairRequest>
+                    for BeginPairSvc<T> {
+                        type Response = super::PendingPairResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ProfileBeginPairRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProfileService>::begin_pair(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = BeginPairSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ProfileService/ConfirmPair" => {
+                    #[allow(non_camel_case_types)]
+                    struct ConfirmPairSvc<T: ProfileService>(pub Arc<T>);
+                    impl<
+                        T: ProfileService,
+                    > tonic::server::UnaryService<super::ProfilePendingPairRequest>
+                    for ConfirmPairSvc<T> {
+                        type Response = super::GetPeerResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ProfilePendingPairRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProfileService>::confirm_pair(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ConfirmPairSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ProfileService/AbandonPair" => {
+                    #[allow(non_camel_case_types)]
+                    struct AbandonPairSvc<T: ProfileService>(pub Arc<T>);
+                    impl<
+                        T: ProfileService,
+                    > tonic::server::UnaryService<super::ProfilePendingPairRequest>
+                    for AbandonPairSvc<T> {
+                        type Response = super::PairingAbandoned;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ProfilePendingPairRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProfileService>::abandon_pair(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AbandonPairSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ProfileService/GetDeviceIdentity" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetDeviceIdentitySvc<T: ProfileService>(pub Arc<T>);
+                    impl<
+                        T: ProfileService,
+                    > tonic::server::UnaryService<super::ProfileRequest>
+                    for GetDeviceIdentitySvc<T> {
+                        type Response = super::DeviceIdentity;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ProfileRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProfileService>::get_device_identity(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetDeviceIdentitySvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
@@ -6824,6 +7357,30 @@ pub mod client_service_client {
                 .insert(GrpcMethod::new("amux.v1.ClientService", "Diff"));
             self.inner.unary(req, path, codec).await
         }
+        pub async fn list_repositories(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ClientListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/amux.v1.ClientService/ListRepositories",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("amux.v1.ClientService", "ListRepositories"));
+            self.inner.unary(req, path, codec).await
+        }
         pub async fn debug(
             &mut self,
             request: impl tonic::IntoRequest<super::DebugRequest>,
@@ -7000,6 +7557,13 @@ pub mod client_service_server {
             &self,
             request: tonic::Request<super::ClientDiffRequest>,
         ) -> std::result::Result<tonic::Response<super::DiffResponse>, tonic::Status>;
+        async fn list_repositories(
+            &self,
+            request: tonic::Request<super::ClientListRepositoriesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ListRepositoriesResponse>,
+            tonic::Status,
+        >;
         async fn debug(
             &self,
             request: tonic::Request<super::DebugRequest>,
@@ -7712,6 +8276,52 @@ pub mod client_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DiffSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/amux.v1.ClientService/ListRepositories" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListRepositoriesSvc<T: ClientService>(pub Arc<T>);
+                    impl<
+                        T: ClientService,
+                    > tonic::server::UnaryService<super::ClientListRepositoriesRequest>
+                    for ListRepositoriesSvc<T> {
+                        type Response = super::ListRepositoriesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ClientListRepositoriesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ClientService>::list_repositories(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListRepositoriesSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

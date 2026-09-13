@@ -60,6 +60,7 @@ pub fn load_profile_config(path: &Path) -> Result<ResolvedConfig, ConfigError> {
 
 pub(crate) fn installation_settings(config: &InstallationConfig) -> InstallationSettings {
     InstallationSettings {
+        repository_roots: config.repository_roots.clone(),
         host_name: config.host_name.clone(),
         prevent_idle_sleep: config.prevent_idle_sleep,
         keybinds: config.keybinds.clone(),

@@ -64,6 +64,25 @@ UUID, stored with the SSH destination so later connections run
 `amux relay --profile <UUID>` even after a profile rename. The PIN and QR
 exchanges are unchanged.)
 
+Clients can pause SPAKE2 before granting trust. `begin_pair_pin` and
+`begin_pair_qr` return a `PendingPeer` with the authenticated host id, name,
+SHA-256 public-key fingerprint and expiry. The expiry travels inside the sealed
+responder identity. Neither trust store changes during this phase. The local
+profile administration handle retains the open stream behind an opaque, single-use token;
+unresolved streams expire after at most five minutes and at most 32 are retained.
+The token is a local capability, not a serializable trust decision for a UI to
+recreate from the displayed identity fields.
+
+`confirm_pair` sends the initiator's sealed identity, waits for the responder's
+trust commit and stores the peer locally. `abandon_pair` sends a rejection and
+waits for `PairingAbandoned`, which the responder sends after releasing the
+attempt. Cancellation leaves existing trust entries unchanged and does not
+consume a guess. Dropping a pending value grants no trust. Wrong, malformed,
+expired and inactive secrets all return `InvalidPin` through the two-phase
+profile API. Begin, confirm, abandon and device identity inspection are served
+only by `ProfileService` on the installation front door, never by a profile
+socket or peer tunnel.
+
 ## Links: who is my neighbor
 
 A **link** is an authenticated connection to an adjacent node over some
@@ -128,11 +147,11 @@ layer** — a peer that could never dial (an SSH-pairing responder, a device
 behind NAT) can still call back over the link its peer established. What
 remains asymmetric is only dialing itself.
 
-## The cloud
+## The cloud relay
 
-The cloud is a well-connected, multi-tenant relay — and nothing else. It
-forwards frames between one user's devices, advertises their adjacency
-(scoped per user), and admits links by JWT. It is **adjacent but
+The configured cloud authenticates accounts and assigns relay credentials.
+Its multi-tenant relay forwards frames between one user's devices, advertises
+their adjacency (scoped per user), and admits links by JWT. It is **adjacent but
 untrusted**: it has no pinned key, so it can never terminate a tunnel into
 anyone's trusted services — it cannot create agents, read traffic, or
 impersonate a device. A self-hosted relay is just an ordinary always-on

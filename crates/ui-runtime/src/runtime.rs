@@ -18,7 +18,7 @@ use std::time::Duration;
 use artifacts::{ArtifactMeta, Cache, FetchError, StoreError, SystemClock};
 use chrono::{DateTime, Utc};
 use client::{Client, ClientError, FrontDoorClient, installation_rpc as rpc};
-use futures_util::FutureExt;
+use futures_util::{FutureExt, Stream, StreamExt};
 use model::{
     AgentId, AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, ClaudePtyIntent,
     CreateAgentRequest, HostId, ProfileId, ProtocolError, SendInputRequest, SessionCloseReason,
@@ -37,7 +37,7 @@ use uuid::Uuid;
 use crate::recorder::{DEFAULT_RECORDER_CAPACITY, Recorder};
 use crate::report::{
     FrameCapture, LOG_TAIL_BYTES, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
-    ReportWriter, log_tail,
+    ReportWriter, TraceKind, log_tail,
 };
 
 /// Reducer build identity, stamped into reports.
@@ -82,6 +82,10 @@ pub type SubscriptionStatusProvider = Arc<dyn Fn() -> bool + Send + Sync>;
 pub struct ReportExtras {
     pub frame: Option<FrameCapture>,
     pub trace: Option<Vec<u8>>,
+    /// Which recorder produced the trace. An embedding that draws a native
+    /// view says so, so the bundle's reader knows the trace replays on that
+    /// platform rather than in the terminal chrome.
+    pub trace_kind: TraceKind,
     pub viewport: Option<(u16, u16)>,
 }
 
@@ -306,7 +310,7 @@ impl LateResult {
             } => Some(Self::Attachment),
             Msg::OpResult { .. } | Msg::Command { .. } => Some(Self::Command),
             // Folded straight from the caller's thread, never through a task.
-            Msg::Tick { .. } | Msg::UserAttached { .. } => None,
+            Msg::Tick { .. } | Msg::UserAttached { .. } | Msg::UserDetached { .. } => None,
         }
     }
 }
@@ -327,10 +331,31 @@ impl MsgSink {
     }
 }
 
+/// The host events an inventory source yields, in the client's own vocabulary.
+pub type HostEventStream =
+    Pin<Box<dyn Stream<Item = Result<model::HostEvent, ClientError>> + Send>>;
+pub type HostEventStreamFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<HostEventStream, ClientError>> + Send + 'a>>;
+
+/// Where an embedded profile's host inventory comes from when the runtime is
+/// the profile's owner rather than one of its clients.
+///
+/// A client sees only the hosts its profile trusts. The owner also sees the
+/// online cloud pairing candidates, so a phone can offer to pair with a
+/// machine it has not paired with yet. The runtime never depends on how the
+/// owner reaches its profile; the embedding application supplies this.
+pub trait HostInventory: Send + Sync {
+    fn subscribe_hosts(&self) -> HostEventStreamFuture<'_>;
+}
+
 pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
     pub local_host_id: Option<HostId>,
+    /// Owner inventory for an embedded profile, including cloud pairing
+    /// candidates. Without it, host presence comes from the trusted-only
+    /// client subscription.
+    pub host_inventory: Option<Arc<dyn HostInventory>>,
     /// Where report bundles land. `None` disables reporting.
     pub report_dir: Option<PathBuf>,
     /// Log file whose bounded tail is included when it exists.
@@ -360,6 +385,7 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             local_host_id: None,
+            host_inventory: None,
             report_dir: None,
             log_path: None,
             git_sha: "unknown",
@@ -397,6 +423,7 @@ pub struct Runtime {
     msg_tap: Option<MsgTap>,
     artifact_cache: Option<Result<Arc<Cache>, String>>,
     attachment_opener: AttachmentOpener,
+    queued_bytes: HashMap<ArtifactId, Arc<[u8]>>,
     /// Results from a selection this runtime has left, dropped before the
     /// reducer. Kept as a tally rather than a log: the set is small and
     /// fixed, so it cannot grow with a profile that keeps talking.
@@ -436,6 +463,38 @@ impl Runtime {
     /// put an owned one. The retired selection is dropped — and its tasks
     /// aborted — as soon as the new one has taken the Msg channel over.
     pub fn switch_in_place(&mut self, entry: &ProfileEntry, options: RuntimeOptions) {
+        let socket = entry.socket.clone();
+        let connector: Connector = Box::new(move || {
+            let socket = socket.clone();
+            Box::pin(async move {
+                Client::connect_socket(&socket)
+                    .await
+                    .map_err(|error| ConnectFailure {
+                        message: format!("{error}"),
+                        auth_required: false,
+                        subscription_required: false,
+                    })
+            })
+        });
+        self.switch_connector(connector, options);
+    }
+
+    /// Rebind the shell to another profile it already holds a client for.
+    ///
+    /// For an embedder that owns every profile in its own process: there is no
+    /// socket to dial, and the installation hands out a client per profile.
+    /// The selection changes exactly as it does over a socket — a retired
+    /// generation, an empty Model, and every late result from the account
+    /// being left refused.
+    pub fn switch_in_place_with_client(&mut self, client: Client, options: RuntimeOptions) {
+        let connector: Connector = Box::new(move || {
+            let client = client.clone();
+            Box::pin(async move { Ok(client) })
+        });
+        self.switch_connector(connector, options);
+    }
+
+    fn switch_connector(&mut self, connector: Connector, options: RuntimeOptions) {
         // A panic after the switch must report the profile the user is
         // actually looking at, so the panic-report slot follows the selection
         // — but only when it was this runtime's to begin with. A process that
@@ -456,19 +515,6 @@ impl Runtime {
             task.abort();
         }
 
-        let socket = entry.socket.clone();
-        let connector: Connector = Box::new(move || {
-            let socket = socket.clone();
-            Box::pin(async move {
-                Client::connect_socket(&socket)
-                    .await
-                    .map_err(|error| ConnectFailure {
-                        message: format!("{error}"),
-                        auth_required: false,
-                        subscription_required: false,
-                    })
-            })
-        });
         let next = Self::start_on_channel(connector, options, msg_tx, msg_rx, generation);
         // Dropping the retired runtime releases its client and caches.
         drop(std::mem::replace(self, next));
@@ -543,6 +589,7 @@ impl Runtime {
             client.clone(),
             options.local_host_id,
             subscription_status_provider.clone(),
+            options.host_inventory,
         ));
 
         Self {
@@ -560,6 +607,7 @@ impl Runtime {
             msg_tap: options.msg_tap,
             artifact_cache,
             attachment_opener: options.attachment_opener,
+            queued_bytes: HashMap::new(),
             discarded_late: std::collections::BTreeSet::new(),
             discarded_late_count: 0,
             reported_violations: HashSet::new(),
@@ -575,6 +623,12 @@ impl Runtime {
         Self::start(connector, options)
     }
 
+    /// Live attachment resources for a caller restoring a cancelled queue draft.
+    /// Copy them into the local composer before its bounded outcome ages out.
+    pub fn queued_attachment_bytes(&self, id: &ArtifactId) -> Option<Arc<[u8]>> {
+        self.queued_bytes.get(id).cloned()
+    }
+
     pub fn model(&self) -> &Model {
         &self.model
     }
@@ -582,9 +636,14 @@ impl Runtime {
     /// Dispatch a command; the outcome returns as state (a finished op).
     pub fn dispatch(&mut self, command: Command) -> OpId {
         let op = OpId(Uuid::new_v4());
+        self.dispatch_with_id(op, command);
+        op
+    }
+
+    /// Dispatch with an ID already allocated by a foreign-language caller.
+    pub fn dispatch_with_id(&mut self, op: OpId, command: Command) {
         self.process(Msg::Tick { now: Utc::now() });
         self.process(Msg::Command { op, command });
-        op
     }
 
     /// Feed observed time for time-dependent display.
@@ -598,9 +657,25 @@ impl Runtime {
         self.process(Msg::UserAttached { agent });
     }
 
+    /// Reify a user detach: a conversation nobody has open no longer widens
+    /// the subscription policy, and the stream it asked for is let go.
+    pub fn note_detached(&mut self, agent: AgentId) {
+        self.process(Msg::UserDetached { agent });
+    }
+
     /// Await the next Msg, then fold everything already pending (up to a
     /// frame budget). Returns false when the shell has shut down.
     pub async fn next(&mut self) -> bool {
+        if !self.next_message().await {
+            return false;
+        }
+        self.drain();
+        true
+    }
+
+    /// Fold one input so embedders can observe every resolved operation before
+    /// bounded outcome retention evicts it. Callers own their batching cadence.
+    pub async fn next_message(&mut self) -> bool {
         loop {
             let Some((generation, msg)) = self.msg_rx.recv().await else {
                 return false;
@@ -610,7 +685,6 @@ impl Runtime {
                 continue;
             }
             self.process(msg);
-            self.drain();
             return true;
         }
     }
@@ -660,6 +734,7 @@ impl Runtime {
             ReportParts {
                 frame: extras.frame,
                 trace: extras.trace,
+                trace_kind: extras.trace_kind,
                 msgs: Some(self.recorder_snapshot()),
                 daemon: None,
                 log,
@@ -704,6 +779,23 @@ impl Runtime {
     }
 
     fn process(&mut self, msg: Msg) {
+        if let Msg::Command {
+            command:
+                Command::Queue(
+                    ui_state::QueueCommand::Hold { draft, .. }
+                    | ui_state::QueueCommand::Replace { draft, .. },
+                ),
+            ..
+        } = &msg
+        {
+            for attachment in &draft.attachments {
+                if let Some(bytes) = &attachment.bytes {
+                    self.queued_bytes
+                        .insert(attachment.id.clone(), bytes.clone());
+                }
+            }
+        }
+
         lock_recorder(&self.recorder).record(&msg);
         if let Some(tap) = self.msg_tap.as_mut() {
             tap(&msg);
@@ -731,6 +823,21 @@ impl Runtime {
             self.run_effect(effect);
         }
         self.enforce_invariants();
+        // Binary payloads are shell resources, absent from reducer state and reports.
+        // Cancellation keeps them through the bounded returned-draft outcome so a
+        // caller can resend metadata while restoring its own composer assets.
+        if !self.queued_bytes.is_empty() {
+            let mut retained = HashSet::new();
+            for (_, queue) in self.model.queued_messages() {
+                retained.extend(queue.draft.attachments.iter().map(|a| a.id.clone()));
+            }
+            for finished in self.model.finished_ops() {
+                if let OpOutcome::QueueCancelled { draft } = &finished.outcome {
+                    retained.extend(draft.attachments.iter().map(|a| a.id.clone()));
+                }
+            }
+            self.queued_bytes.retain(|id, _| retained.contains(id));
+        }
         // Shell companion invariant: every live stream task is known to the
         // Model (the inverse does not hold — a Closed stream keeps its Model
         // entry with no task behind it). Checked AFTER the effects loop
@@ -811,10 +918,15 @@ impl Runtime {
             Effect::PutThenSend {
                 op,
                 agent,
-                puts,
+                mut puts,
                 input,
                 pin,
             } => {
+                for attachment in &mut puts {
+                    if attachment.bytes.is_none() {
+                        attachment.bytes = self.queued_bytes.get(&attachment.id).cloned();
+                    }
+                }
                 let client = self.client.lock().expect("client mutex poisoned").clone();
                 let tx = self.msg_sink.clone();
                 tokio::spawn(async move {
@@ -822,6 +934,23 @@ impl Runtime {
                         Some(client) => {
                             execute_put_then_send(&client, op, agent, puts, input, pin).await
                         }
+                        None => OpOutcome::Error {
+                            error: OpError::general(NOT_CONNECTED_ERROR),
+                        },
+                    };
+                    let _ = tx.send(Msg::OpResult { op, outcome }).await;
+                });
+            }
+            Effect::PutAttachment {
+                op,
+                agent,
+                attachment,
+            } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
+                let tx = self.msg_sink.clone();
+                tokio::spawn(async move {
+                    let outcome = match client {
+                        Some(client) => execute_put(&client, agent, attachment).await,
                         None => OpOutcome::Error {
                             error: OpError::general(NOT_CONNECTED_ERROR),
                         },
@@ -1055,6 +1184,7 @@ pub fn write_panic_report(detail: &str) {
         ReportParts {
             frame: extras.frame,
             trace: extras.trace,
+            trace_kind: extras.trace_kind,
             msgs: Some(snapshot),
             daemon: None,
             log,
@@ -1099,10 +1229,16 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
         },
         // Input commands never ride Effect::Rpc — the reducer emits
         // Effect::SendInput for them (typed input + seq guard).
-        Command::ClaudeSdk(_)
+        Command::Send { .. }
+        | Command::Queue(_)
+        | Command::SetModel { .. }
+        | Command::SetEffort { .. }
+        | Command::SetPreset { .. }
+        | Command::ClaudeSdk(_)
         | Command::Claude(_)
         | Command::Codex(_)
         | Command::SendPromptWithAttachments { .. }
+        | Command::PutAttachment { .. }
         | Command::FetchDiff { .. }
         | Command::OpenAttachment { .. }
         | Command::RequestDiff { .. } => OpOutcome::Error {
@@ -1154,6 +1290,46 @@ async fn fetch_through_cache(
         (Ok(value), _) => Ok(value),
         (Err(_), Some(error)) => Err(error),
         (Err(error), None) => Err(map_store_error(error, None)),
+    }
+}
+
+/// Store one picked draft's bytes and answer with what a token can name.
+///
+/// The host computes the artifact's identity from the bytes it received; a
+/// disagreement with the identity computed here means the bytes did not
+/// arrive intact, so the draft is refused rather than named.
+pub async fn execute_put<C: AttachmentClient + ?Sized>(
+    client: &C,
+    agent: AgentId,
+    draft: ui_state::DraftAttachment,
+) -> OpOutcome {
+    let Some(bytes) = draft.bytes.clone() else {
+        return OpOutcome::Error {
+            error: OpError::general("an attachment can only be stored with its bytes"),
+        };
+    };
+    match client
+        .put_artifact(
+            AgentIdentifier::Id(agent),
+            draft.kind,
+            &draft.name,
+            &draft.mime,
+            bytes.to_vec(),
+        )
+        .await
+    {
+        Ok(artifact) if artifact.id == draft.id => OpOutcome::AttachmentStored {
+            attachment: ui_state::DraftAttachment {
+                bytes: None,
+                ..draft
+            },
+        },
+        Ok(_) => OpOutcome::Error {
+            error: OpError::ArtifactCorrupt { id: draft.id },
+        },
+        Err(error) => OpOutcome::Error {
+            error: map_client_error(&error, Some(&draft.name), std::slice::from_ref(&draft)),
+        },
     }
 }
 
@@ -1306,10 +1482,13 @@ fn open_with_platform_viewer(meta: &ArtifactMeta, path: &Path) -> io::Result<()>
     Ok(())
 }
 
-fn platform_open_command(meta: &ArtifactMeta, _path: &Path) -> io::Result<std::process::Command> {
+fn platform_open_command(meta: &ArtifactMeta, path: &Path) -> io::Result<std::process::Command> {
     // Only the macOS viewer chooses its application from the artifact kind.
     #[cfg(not(target_os = "macos"))]
     let _ = meta;
+    // A platform with no viewer never reaches the line that opens the file.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    let _ = path;
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = std::process::Command::new("open");
@@ -1337,7 +1516,7 @@ fn platform_open_command(meta: &ArtifactMeta, _path: &Path) -> io::Result<std::p
     ));
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     {
-        command.arg(_path);
+        command.arg(path);
         Ok(command)
     }
 }
@@ -1527,6 +1706,7 @@ async fn connection_task(
     shared_client: Arc<StdMutex<Option<Client>>>,
     local_host_id: Option<HostId>,
     subscription_status_provider: Option<SubscriptionStatusProvider>,
+    host_inventory: Option<Arc<dyn HostInventory>>,
 ) {
     let mut backoff = RECONNECT_BACKOFF_INITIAL;
     loop {
@@ -1561,6 +1741,7 @@ async fn connection_task(
             &tx,
             local_host_id,
             subscription_status_provider.as_ref(),
+            host_inventory.as_ref(),
         )
         .await;
         *shared_client.lock().expect("client mutex poisoned") = None;
@@ -1589,8 +1770,13 @@ async fn pump_inventory(
     tx: &MsgSink,
     local_host_id: Option<HostId>,
     subscription_status_provider: Option<&SubscriptionStatusProvider>,
+    host_inventory: Option<&Arc<dyn HostInventory>>,
 ) -> Option<DisconnectReason> {
-    let mut hosts_stream = match client.subscribe_hosts().await {
+    let hosts_stream = match host_inventory {
+        Some(inventory) => inventory.subscribe_hosts().await,
+        None => client.subscribe_hosts().await.map(|stream| stream.boxed()),
+    };
+    let mut hosts_stream = match hosts_stream {
         Ok(stream) => stream,
         Err(error) => return Some(disconnect_reason(&error)),
     };
@@ -1623,11 +1809,14 @@ async fn pump_inventory(
 
     loop {
         let event = tokio::select! {
-            event = hosts_stream.recv() => match event {
-                Ok(model::HostEvent::HostUpdated { host }) => ServerMsg::HostUpserted { host },
-                Ok(model::HostEvent::HostRemoved { id }) => ServerMsg::HostRemoved { id },
-                Ok(model::HostEvent::SnapshotComplete) => ServerMsg::HostsSynchronized,
-                Err(error) => return Some(disconnect_reason(&error)),
+            event = hosts_stream.next() => match event {
+                Some(Ok(model::HostEvent::HostUpdated { host })) => ServerMsg::HostUpserted { host },
+                Some(Ok(model::HostEvent::HostRemoved { id })) => ServerMsg::HostRemoved { id },
+                Some(Ok(model::HostEvent::SnapshotComplete)) => ServerMsg::HostsSynchronized,
+                Some(Err(error)) => return Some(disconnect_reason(&error)),
+                None => return Some(DisconnectReason::TransportError {
+                    message: "host inventory stream ended".into(),
+                }),
             },
             event = agents_stream.recv() => match event {
                 Ok(model::AgentEvent::AgentUp { agent })
@@ -1638,6 +1827,7 @@ async fn pump_inventory(
                     ServerMsg::AgentRemoved { id: agent_id }
                 }
                 Ok(model::AgentEvent::SnapshotComplete) => ServerMsg::AgentsSynchronized,
+                Ok(model::AgentEvent::HostInventory { host_id, agent_ids }) => ServerMsg::HostInventory { host_id, agent_ids },
                 Err(error) => return Some(disconnect_reason(&error)),
             },
             _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {
@@ -2028,10 +2218,103 @@ mod tests {
             msg_tap: None,
             artifact_cache: None,
             attachment_opener: Arc::new(open_with_platform_viewer),
+            queued_bytes: HashMap::new(),
             discarded_late: std::collections::BTreeSet::new(),
             discarded_late_count: 0,
             reported_violations: HashSet::new(),
         }
+    }
+
+    /// Binary queue resources survive holding and cancellation, while the Model
+    /// and its serialized replay agree. The caller takes ownership before the
+    /// bounded cancellation outcome ages out of runtime retention.
+    #[test]
+    fn queue_runtime_restores_attachment_bytes_without_recording_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        let agent = Uuid::from_u128(57);
+        let host = Uuid::from_u128(58);
+        let now = Utc::now();
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(host),
+            }),
+            Msg::Server(ServerMsg::AgentUpserted {
+                agent: claude_agent(agent, host),
+            }),
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Opened { truncated: false },
+            },
+            Msg::Stream {
+                agent,
+                event: StreamMsg::ReplayComplete,
+            },
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Batch {
+                    at: now,
+                    entries: vec![
+                        ui_state::StreamEntry {
+                            seq: 1,
+                            payload: serde_json::json!({"type":"amux.transcript_ready"}),
+                        },
+                        ui_state::StreamEntry {
+                            seq: 2,
+                            payload: serde_json::json!({"type":"user", "uuid":"00000000-0000-0000-0000-000000000001", "origin":{"kind":"human"}, "timestamp":now, "message":{"role":"user", "content":"work"}}),
+                        },
+                    ],
+                },
+            },
+        ] {
+            update(&mut runtime.model, msg);
+        }
+        let attachment = ui_state::DraftAttachment::from_bytes(
+            ArtifactKind::File,
+            "notes.txt",
+            "text/plain",
+            b"private queue bytes".to_vec(),
+        );
+        let id = attachment.id.clone();
+        runtime.dispatch(Command::Queue(ui_state::QueueCommand::Hold {
+            agent,
+            draft: ui_state::Draft {
+                segments: vec![ui_state::DraftSegment::Text {
+                    text: "read the attachment".into(),
+                }],
+                attachments: vec![attachment],
+            },
+        }));
+        assert!(
+            runtime.model().queued(agent).unwrap().draft.attachments[0]
+                .bytes
+                .is_none()
+        );
+        assert_eq!(
+            serde_json::from_value::<Model>(serde_json::to_value(runtime.model()).unwrap())
+                .unwrap(),
+            *runtime.model()
+        );
+        let cancel = runtime.dispatch(Command::Queue(ui_state::QueueCommand::Cancel { agent }));
+        assert!(matches!(
+            runtime.model().finished_op(cancel).unwrap().outcome,
+            OpOutcome::QueueCancelled { .. }
+        ));
+        let restored = runtime
+            .queued_attachment_bytes(&id)
+            .expect("caller restores the cancelled attachment");
+        assert_eq!(&*restored, b"private queue bytes");
+        for _ in 0..70 {
+            runtime.dispatch(Command::Queue(ui_state::QueueCommand::Cancel { agent }));
+        }
+        assert!(
+            runtime.queued_attachment_bytes(&id).is_none(),
+            "unreferenced runtime resources are released"
+        );
+        assert_eq!(
+            &*restored, b"private queue bytes",
+            "the restored composer still owns its bytes"
+        );
     }
 
     const INVARIANT_POLICY_CHILD: &str = "AMUX_INVARIANT_POLICY_CHILD";

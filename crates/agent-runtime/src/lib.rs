@@ -5,6 +5,7 @@ mod agents;
 mod debug;
 mod events;
 mod host;
+mod repositories;
 mod suspend;
 
 pub use host::{AgentRuntime, AgentRuntimeFactory};
@@ -27,6 +28,7 @@ pub mod test_support {
     use uuid::Uuid;
 
     use crate::AgentRuntime;
+    use crate::agents::claude::sdk_io::ClaudeSdkV1Input;
     use crate::agents::{
         AgentSession, McpLaunchRoute, Plane, RawPtyTarget, SessionEvent, new_agent,
     };
@@ -161,11 +163,22 @@ pub mod test_support {
     #[derive(Clone)]
     pub struct Factory {
         clock: Arc<dyn artifacts::Clock>,
+        sources: Option<Arc<dyn ProviderSources>>,
     }
 
     impl Factory {
         pub fn new(clock: Arc<dyn artifacts::Clock>) -> Self {
-            Self { clock }
+            Self {
+                clock,
+                sources: None,
+            }
+        }
+
+        /// Every runtime this factory creates draws its provider sessions
+        /// from `sources` instead of launching providers.
+        pub fn with_sources(mut self, sources: Arc<dyn ProviderSources>) -> Self {
+            self.sources = Some(sources);
+            self
         }
     }
 
@@ -177,14 +190,23 @@ pub mod test_support {
                 config.server_socket_path,
                 config.host_id,
             )?;
-            AgentRuntime::new_with_artifact_clock(
+            let host = AgentRuntime::new_with_artifact_clock(
                 route,
                 config.claude_user_keymap_dir,
                 config.data_dir,
                 Some(config.state_path),
                 self.clock.clone(),
-            )
-            .map(|host| host as Arc<dyn LocalAgentHost>)
+                config.repository_roots,
+            )?;
+            if let Some(sources) = &self.sources {
+                // Nothing has been created yet, so the write lock is free.
+                host.state()
+                    .try_write()
+                    .expect("fresh runtime state is unlocked")
+                    .deps
+                    .sources = Some(sources.clone());
+            }
+            Ok(host as Arc<dyn LocalAgentHost>)
         }
 
         fn restore_prepared(
@@ -220,6 +242,49 @@ pub mod test_support {
         request: CreateAgentRequest,
     ) -> Result<Agent, ProtocolError> {
         concrete(host).register_scripted_claude(request).await
+    }
+
+    pub use crate::agents::{ClaudeSdkSource, ProviderSources};
+
+    /// The runtime's own form of a Claude SDK input, from the shared value a
+    /// client encoded.
+    pub fn claude_sdk_input_from_model(
+        input: model::ClaudeSdkInput,
+    ) -> Result<ClaudeSdkV1Input, ProtocolError> {
+        crate::host::claude_sdk_input(input)
+    }
+
+    /// Install the supplier of sessions and input observation for every agent
+    /// this runtime creates from now on.
+    pub async fn set_provider_sources(
+        host: &dyn LocalAgentHost,
+        sources: Arc<dyn ProviderSources>,
+    ) {
+        concrete(host).state().write().await.deps.sources = Some(sources);
+    }
+
+    /// Register a Claude PTY agent over a session built from supplied sources.
+    pub async fn register_claude_pty_session(
+        host: &dyn LocalAgentHost,
+        request: CreateAgentRequest,
+        session: claude::pty::Session,
+    ) -> Result<Agent, ProtocolError> {
+        concrete(host)
+            .register_claude_pty_session(request, session)
+            .await
+    }
+
+    /// Register a Codex agent over a supplied session.
+    #[cfg(unix)]
+    pub async fn register_codex_session(
+        host: &dyn LocalAgentHost,
+        name: String,
+        working_dir: std::path::PathBuf,
+        session: codex::Session,
+    ) -> Result<Agent, ProtocolError> {
+        concrete(host)
+            .register_codex_session(name, working_dir, session)
+            .await
     }
 
     pub async fn deliver_scripted_hook(

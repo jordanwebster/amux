@@ -59,6 +59,7 @@ fn base() -> Vec<Msg> {
         capabilities: Some(ui_state::Capabilities::default()),
         trust_status: ui_state::HostTrustStatus::Trusted,
         last_dial_error: None,
+        platform: None,
     };
     vec![
         Msg::Server(ServerMsg::Connected {

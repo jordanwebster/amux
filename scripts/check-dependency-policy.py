@@ -21,10 +21,32 @@ ALLOWED_LOCAL = {
     "ui-runtime": {"artifacts", "client", "model", "ui-state"},
     "tui": {"ui-runtime", "ui-state"},
     "e2e-runner": {"wire"},
+    # The app layer any rich client reuses. app-runtime never reaches node, so
+    # a desktop app attached to a running daemon links it without app-embedded.
+    "app-runtime": {"artifacts", "client", "model", "ui-runtime", "ui-state"},
+    "app-embedded": {"app-runtime", "client", "node"},
+    "app-ffi": {"app-embedded", "app-runtime"},
 }
 TEST_SUPPORT = {"testnet", "claude-specs", "codex-specs", "test-agent", "shot"}
 SUPPORT_ALLOWED_LOCAL = {
-    "testnet": {"agent-runtime", "artifacts", "client", "host-api", "model", "node", "wire"},
+    # The harness drives scripted Claude and Codex sessions through the
+    # provider crates' own source seams, replays recordings, and folds the
+    # served door's report conversion through the client layer.
+    "testnet": {
+        "agent-runtime",
+        "artifacts",
+        "claude",
+        "client",
+        "codex",
+        "host-api",
+        "model",
+        "node",
+        "pty-host",
+        "replay-support",
+        "ui-runtime",
+        "ui-state",
+        "wire",
+    },
     "claude-specs": {"claude", "pty-host", "redaction", "replay-support"},
     "codex-specs": {"codex", "redaction", "replay-support"},
 }

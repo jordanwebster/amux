@@ -650,10 +650,16 @@ fn active_failure(model: &Model, view: &ViewState) -> Option<(String, String)> {
 
 fn command_verb(command: &Command) -> &'static str {
     match command {
+        Command::Queue(_) => "queue",
+        Command::Send { .. } => "send message",
+        Command::SetModel { .. } => "change model",
+        Command::SetEffort { .. } => "change effort",
+        Command::SetPreset { .. } => "change permissions",
         Command::CreateAgent { .. } => "create",
         Command::RenameAgent { .. } => "rename",
         Command::DeleteAgent { .. } => "delete",
         Command::SendPromptWithAttachments { .. } => "send",
+        Command::PutAttachment { .. } => "attach",
         Command::FetchDiff { .. } => "fetch review",
         Command::OpenAttachment { .. } => "open attachment",
         Command::RequestDiff { .. } => "request diff",
@@ -662,6 +668,10 @@ fn command_verb(command: &Command) -> &'static str {
         Command::ClaudeSdk(ui_state::ClaudeSdkCommand::Interrupt { .. }) => "interrupt",
         Command::ClaudeSdk(ui_state::ClaudeSdkCommand::CyclePermissionMode { .. }) => "mode cycle",
         Command::ClaudeSdk(ui_state::ClaudeSdkCommand::SetModel { .. }) => "set model",
+        Command::ClaudeSdk(ui_state::ClaudeSdkCommand::SetEffort { .. }) => "change effort",
+        Command::ClaudeSdk(ui_state::ClaudeSdkCommand::SetPermissionMode { .. }) => {
+            "change permissions"
+        }
         Command::ClaudeSdk(ui_state::ClaudeSdkCommand::RequestContextBreakdown { .. }) => {
             "request context"
         }

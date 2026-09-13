@@ -6,6 +6,11 @@ pub(crate) fn agent_event_to_wire(
     event: &AgentEvent,
 ) -> Result<protocol_wire::SubscribeAgentEventsResponse, protocol_wire::EncodeError> {
     let event = match event {
+        AgentEvent::HostInventory { .. } => {
+            return Err(protocol_wire::EncodeError::Invalid(
+                "host inventory authority belongs to ClientService".into(),
+            ));
+        }
         AgentEvent::SnapshotComplete => {
             protocol_wire::subscribe_agent_events_response::Event::SnapshotComplete(
                 protocol_wire::SnapshotComplete {},

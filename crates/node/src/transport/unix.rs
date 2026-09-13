@@ -99,9 +99,37 @@ mod tests {
 
     #[tokio::test]
     async fn live_listener_replaces_a_stale_socket() {
+        const FIXTURE_PATH: &str = "AMUX_TEST_STALE_SOCKET_PATH";
+        if let Some(path) = std::env::var_os(FIXTURE_PATH) {
+            drop(StdUnixListener::bind(path).unwrap());
+            return;
+        }
+
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("amux.sock");
-        drop(StdUnixListener::bind(&path).unwrap());
+        // A parent listener can survive its drop in a concurrent fork until
+        // exec. Create it in a single-test child instead: once that child has
+        // exited, no process can retain this fixture's listening descriptor.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "transport::unix::tests::live_listener_replaces_a_stale_socket",
+                "--nocapture",
+            ])
+            .env(FIXTURE_PATH, &path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(
+            std::fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_socket()
+        );
+        assert_eq!(
+            StdUnixStream::connect(&path).unwrap_err().kind(),
+            io::ErrorKind::ConnectionRefused
+        );
 
         let listener = bind_unix_listener(&path).unwrap();
 

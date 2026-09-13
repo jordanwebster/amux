@@ -30,19 +30,10 @@ use ui_state::review::Review;
 const SLOT_FIRST: char = '\u{e000}';
 const SLOT_LAST: char = '\u{f8ff}';
 
-/// A bracketed paste this many lines long, or this many chars long, is
-/// long enough to bury the sentence around it, so it becomes one atomic
-/// token instead of filling the draft.
-pub const PASTE_TOKEN_LINES: usize = 8;
-pub const PASTE_TOKEN_CHARS: usize = 1000;
-
-/// The `name` a pasted-text attachment carries into the feed. Pasted text
-/// has no source filename, and the mention format requires a name.
-const PASTED_NAME: &str = "pasted text";
-
-/// The `name` and mime a review attachment carries.
-const REVIEW_NAME: &str = "review";
-const DIFF_MIME: &str = "text/x-diff";
+/// The size at which a bracketed paste becomes one atomic token, and the name
+/// it carries. Both are the shared library's, so a paragraph that becomes a
+/// token here becomes one on every other client too.
+pub use ui_state::{PASTE_TOKEN_CHARS, PASTE_TOKEN_LINES, PASTED_NAME};
 
 fn is_slot(c: char) -> bool {
     (SLOT_FIRST..=SLOT_LAST).contains(&c)
@@ -61,9 +52,19 @@ pub struct Token {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "token", rename_all = "snake_case")]
 pub enum TokenAttachment {
+    Command {
+        name: String,
+    },
     Artifact(DraftAttachment),
-    Text { body: String, lines: u32 },
+    Text {
+        body: String,
+        lines: u32,
+    },
     Review,
+    FrozenReview {
+        mention: Box<Mention>,
+        diff: Option<DraftAttachment>,
+    },
 }
 
 /// The label a token of this kind carries at this per-kind ordinal.
@@ -77,6 +78,7 @@ pub fn token_label(
     detail: Option<&str>,
 ) -> String {
     match kind {
+        TokenAttachment::Command { name } => format!("[/{name}]"),
         TokenAttachment::Artifact(attachment) => match attachment.kind {
             ArtifactKind::Image => match detail {
                 Some(detail) => format!("[Image #{ordinal} \u{b7} {detail}]"),
@@ -91,6 +93,7 @@ pub fn token_label(
             });
             format!("[Pasted #{ordinal} \u{b7} {detail}]")
         }
+        TokenAttachment::FrozenReview { .. } => "[Review]".to_string(),
         TokenAttachment::Review => match detail {
             Some(detail) => format!("[Review \u{b7} {detail}]"),
             None => "[Review]".to_string(),
@@ -281,19 +284,15 @@ impl Composer {
     /// sentence around it becomes one atomic token, shorter text lands as
     /// characters. Returns the token's slot when one was made.
     pub fn paste_or_attach(&mut self, text: &str) -> Option<char> {
-        let body = sanitize_paste(text);
-        let lines = body.lines().count().max(1);
-        if lines < PASTE_TOKEN_LINES && body.chars().count() < PASTE_TOKEN_CHARS {
-            self.insert_str(&body);
-            return None;
+        match ui_state::paste(&sanitize_paste(text)) {
+            ui_state::Pasted::Prose(body) => {
+                self.insert_str(&body);
+                None
+            }
+            ui_state::Pasted::Text { body, lines } => {
+                Some(self.insert_token(String::new(), TokenAttachment::Text { body, lines }))
+            }
         }
-        Some(self.insert_token(
-            String::new(),
-            TokenAttachment::Text {
-                body,
-                lines: lines as u32,
-            },
-        ))
     }
 
     /// Inserts an artifact token at the cursor; `renumber` gives its label.
@@ -570,12 +569,90 @@ impl Composer {
         }
     }
 
+    /// Restore live binary resources after the pure draft restoration step.
+    /// Resource bytes do not affect rendering and never enter the UI trace.
+    pub(crate) fn hydrate_queued_attachments(
+        &mut self,
+        get: impl Fn(&ui_state::ArtifactId) -> Option<std::sync::Arc<[u8]>>,
+    ) {
+        for token in self.tokens.live.values_mut() {
+            let attachment = match &mut token.attachment {
+                TokenAttachment::Artifact(attachment) => Some(attachment),
+                TokenAttachment::FrozenReview { diff, .. } => diff.as_mut(),
+                _ => None,
+            };
+            if let Some(attachment) = attachment
+                && attachment.bytes.is_none()
+            {
+                attachment.bytes = get(&attachment.id);
+            }
+        }
+    }
+
+    pub fn restore_queued(&mut self, draft: &ui_state::Draft) {
+        for segment in &draft.segments {
+            match segment {
+                ui_state::DraftSegment::CommandToken { name } => {
+                    self.insert_token(
+                        format!("[/{name}]"),
+                        TokenAttachment::Command { name: name.clone() },
+                    );
+                }
+                ui_state::DraftSegment::Text { text } => {
+                    self.restore_queued_text(text, &draft.attachments)
+                }
+            }
+        }
+    }
+
+    fn restore_queued_text(&mut self, text: &str, attachments: &[DraftAttachment]) {
+        for segment in ui_state::split_mentions(text) {
+            match segment {
+                ui_state::Segment::Prose(text) => self.insert_str(&text),
+                ui_state::Segment::Mention(mention) => match &mention.kind {
+                    MentionKind::Image { id } | MentionKind::File { id } => {
+                        if let Some(attachment) = attachments.iter().find(|a| &a.id == id) {
+                            self.attach(attachment.clone());
+                        } else {
+                            self.insert_str(&format_mention(&mention));
+                        }
+                    }
+                    MentionKind::Text { body, lines } => {
+                        self.insert_token(
+                            String::new(),
+                            TokenAttachment::Text {
+                                body: body.clone(),
+                                lines: *lines,
+                            },
+                        );
+                    }
+                    MentionKind::Review { header, .. } => {
+                        let diff = attachments.iter().find(|a| a.id == header.diff).cloned();
+                        self.insert_token(
+                            "[Review]".into(),
+                            TokenAttachment::FrozenReview {
+                                mention: Box::new(mention),
+                                diff,
+                            },
+                        );
+                    }
+                },
+            }
+        }
+    }
+
     /// The sendable draft: canonical elements in place of the tokens, plus
     /// the artifacts to store and pin, in draft order.
     ///
     /// The review element is rendered from the live draft review, so a
     /// review token with no review behind it exports nothing.
     pub fn export(&self, review: Option<&Review>) -> (String, Vec<DraftAttachment>) {
+        let draft = self.export_draft(review);
+        (draft.text(), draft.attachments)
+    }
+
+    pub fn export_draft(&self, review: Option<&Review>) -> ui_state::Draft {
+        let mut segments = Vec::new();
         let mut text = String::new();
         let mut attachments = Vec::new();
         for c in &self.chars {
@@ -584,6 +661,14 @@ impl Composer {
                 continue;
             };
             match &token.attachment {
+                TokenAttachment::Command { name } => {
+                    if !text.is_empty() {
+                        segments.push(ui_state::DraftSegment::Text {
+                            text: std::mem::take(&mut text),
+                        });
+                    }
+                    segments.push(ui_state::DraftSegment::CommandToken { name: name.clone() });
+                }
                 TokenAttachment::Artifact(attachment) => {
                     let id = attachment.id.clone();
                     let kind = match attachment.kind {
@@ -599,45 +684,32 @@ impl Composer {
                     attachments.push(attachment.clone());
                 }
                 TokenAttachment::Text { body, lines } => {
-                    text.push_str(&format_mention(&Mention {
-                        kind: MentionKind::Text {
-                            body: body.clone(),
-                            lines: *lines,
-                        },
-                        name: PASTED_NAME.to_string(),
-                        size: None,
-                        path: None,
-                    }));
+                    text.push_str(&format_mention(&ui_state::text_mention(
+                        body.clone(),
+                        *lines,
+                    )));
+                }
+                TokenAttachment::FrozenReview { mention, diff } => {
+                    text.push_str(&format_mention(mention));
+                    attachments.extend(diff.clone());
                 }
                 TokenAttachment::Review => {
                     let Some(review) = review else {
                         continue;
                     };
-                    let header = review.header();
-                    let diff = header.diff.clone();
-                    text.push_str(&format_mention(&Mention {
-                        kind: MentionKind::Review {
-                            header,
-                            comments: review.comments().to_vec(),
-                        },
-                        name: REVIEW_NAME.to_string(),
-                        size: None,
-                        path: None,
-                    }));
-                    // Bytes-less: the diff is already stored, so this rides
-                    // the send only to be pinned for the reader's lifetime.
-                    attachments.push(DraftAttachment {
-                        id: diff,
-                        kind: ArtifactKind::Diff,
-                        name: REVIEW_NAME.to_string(),
-                        mime: DIFF_MIME.to_string(),
-                        size: 0,
-                        bytes: None,
-                    });
+                    let (mention, attachment) = ui_state::review_mention(review);
+                    text.push_str(&format_mention(&mention));
+                    attachments.push(attachment);
                 }
             }
         }
-        (text, attachments)
+        if !text.is_empty() {
+            segments.push(ui_state::DraftSegment::Text { text });
+        }
+        ui_state::Draft {
+            segments,
+            attachments,
+        }
     }
 
     /// The lowest slot not spoken for by the draft or the send stash.
@@ -699,7 +771,9 @@ impl Composer {
                     (pastes, PASTED_NAME.to_string())
                 }
                 // The review label counts comments, which only the chat knows.
-                TokenAttachment::Review => continue,
+                TokenAttachment::Command { .. }
+                | TokenAttachment::Review
+                | TokenAttachment::FrozenReview { .. } => continue,
             };
             let label = token_label(&token.attachment, ordinal, &name, None);
             if let Some(token) = self.tokens.live.get_mut(&slot) {
@@ -1328,4 +1402,34 @@ index 1111111..2222222 100644
         assert_eq!(rows, vec!["look [Ima", "ge #1]▌"]);
         assert_eq!(cursor_row, 1, "the cursor row follows the painted label");
     }
+}
+
+#[cfg(test)]
+#[test]
+fn provider_commands_composer_preserves_and_atomically_removes_restored_token() {
+    let draft = ui_state::Draft {
+        segments: vec![
+            ui_state::DraftSegment::CommandToken {
+                name: "review".into(),
+            },
+            ui_state::DraftSegment::Text {
+                text: " changes".into(),
+            },
+        ],
+        attachments: vec![],
+    };
+    let mut composer = Composer::default();
+    composer.restore_queued(&draft);
+    assert_eq!(composer.export_draft(None), draft);
+    let token = composer.tokens()[0];
+    assert_eq!(token.label, "[/review]");
+    for _ in 0.." changes".len() {
+        composer.left();
+    }
+    composer.backspace();
+    assert_eq!(
+        composer.export_draft(None),
+        ui_state::Draft::plain(" changes", vec![])
+    );
+    assert!(composer.tokens().is_empty());
 }

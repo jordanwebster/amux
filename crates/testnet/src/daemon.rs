@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex as StdMutex, Weak};
 use chrono::{DateTime, TimeDelta, Utc};
 use client::Client;
 use host_api::LocalAgentHost;
+use hyper_util::rt::TokioIo;
 use node::HostId;
 use node::harness::runtime::{
     self, CloudFixtureAuth, Listeners, ProfileRuntime, ProfileRuntimeOptions, RuntimeFixtures,
@@ -21,6 +22,7 @@ use node::harness::{
 };
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use tonic::codegen::http::Uri;
 use tonic::transport::{Channel, Endpoint};
 
 use super::NetInner;
@@ -40,6 +42,7 @@ pub(crate) struct DaemonInner {
     pub(crate) name: String,
     pub(crate) host_id: HostId,
     pub(crate) data_dir: PathBuf,
+    pub(crate) repository_roots: Vec<PathBuf>,
     pub(crate) artifact_clock: Arc<TestArtifactClock>,
     /// Direct-TCP listener address; stable across restarts so stored
     /// reachabilities keep working. `None` for cloud-only daemons.
@@ -51,6 +54,8 @@ pub(crate) struct DaemonInner {
     /// open to direct peers. Only explicit outage simulation severs these;
     /// normal stop and restart use the production runtime cleanup.
     pub(crate) tracked_tcp: TrackedTcpConnections,
+    /// Where this daemon's agent runtime gets scripted provider sessions.
+    pub(crate) sources: Arc<super::sources::DaemonSources>,
 }
 
 pub(crate) struct TestArtifactClock(StdMutex<DateTime<Utc>>);
@@ -126,9 +131,28 @@ impl DaemonRuntime {
 
 /// A lazy tonic channel to the testnet cloud relay. Connector lifecycle owns
 /// this link; the harness has no duplicate socket it can sever as a shortcut.
+pub(super) fn tracked_cloud_channel(addr: SocketAddr, tracked: TrackedTcpConnections) -> Channel {
+    Endpoint::from_shared(format!("http://{addr}"))
+        .expect("testnet relay endpoint URI")
+        .connect_with_connector_lazy(tower::service_fn(move |_uri: Uri| {
+            let tracked = tracked.clone();
+            async move {
+                let stream = tokio::net::TcpStream::connect(addr).await?;
+                stream.set_nodelay(true)?;
+                let std_stream = stream.into_std()?;
+                let duplicate = std_stream.try_clone()?;
+                tracked
+                    .lock()
+                    .expect("tracked TCP connection registry poisoned")
+                    .push(duplicate);
+                Ok::<_, std::io::Error>(TokioIo::new(tokio::net::TcpStream::from_std(std_stream)?))
+            }
+        }))
+}
+
 fn cloud_channel(addr: SocketAddr) -> Channel {
     Endpoint::from_shared(format!("http://{addr}"))
-        .expect("testnet cloud endpoint URI")
+        .expect("testnet relay endpoint URI")
         .connect_lazy()
 }
 
@@ -171,16 +195,8 @@ pub(crate) async fn start_daemon_runtime(
         (None, Some(addr)) => Some(bind_addr_with_retries(addr).await),
         (None, None) => None,
     };
-    let config = node::harness::Config {
-        host_name: inner.name.clone(),
-        socket_path: inner.data_dir.join("amux.sock"),
-        state_path: inner.data_dir.join("state.yaml"),
-        data_dir: inner.data_dir.clone(),
-        tcp_port: inner.tcp_addr.map(|addr| addr.port()),
-
-        prevent_idle_sleep: Some(false),
-        ..node::harness::Config::default()
-    };
+    let config_path = inner.data_dir.join("config.yaml");
+    let config = node::harness::Config::from_file(&config_path).expect("read daemon configuration");
     let mut options = ProfileRuntimeOptions::from_legacy_config(
         config,
         None,
@@ -192,9 +208,10 @@ pub(crate) async fn start_daemon_runtime(
     options.fixtures = RuntimeFixtures {
         listener,
         tracked_tcp: Some(inner.tracked_tcp.clone()),
-        host_factory: Some(Arc::new(agent_runtime::test_support::Factory::new(
-            inner.artifact_clock.clone(),
-        ))),
+        host_factory: Some(Arc::new(
+            agent_runtime::test_support::Factory::new(inner.artifact_clock.clone())
+                .with_sources(inner.sources.clone()),
+        )),
         cloud_transport: None,
         cloud: inner.cloud.as_ref().map(|cloud| {
             (
@@ -232,13 +249,16 @@ async fn wait_for_stored_direct_peers(runtime: &DaemonRuntime) {
         })
         .unwrap_or_default();
     let deadline = tokio::time::Instant::now() + RESTART_DIRECT_LINK_GRACE;
+    let mut changes = runtime.services.routing.subscribe_hosts().await;
     for peer in peers {
-        while tokio::time::Instant::now() < deadline {
-            if runtime.services.routing.host_entry(peer).await.is_some() {
-                break;
+        let _ = tokio::time::timeout_at(deadline, async {
+            while runtime.services.routing.host_entry(peer).await.is_none() {
+                if changes.recv().await.is_none() {
+                    return;
+                }
             }
-            tokio::time::sleep(super::assertions::POLL_INTERVAL).await;
-        }
+        })
+        .await;
     }
 }
 
@@ -306,7 +326,15 @@ impl Daemon {
     /// receive its frame; the foreign tenant must allocate no endpoint.
     pub async fn cloud_cannot_forward_to(&self, other: &Daemon, control: &Daemon) {
         use wire::pb;
-        let relay_id = self.net.upgrade().unwrap().cloud.as_ref().unwrap().host_id;
+        let relay_id = self
+            .net
+            .upgrade()
+            .unwrap()
+            .cloud
+            .as_ref()
+            .unwrap()
+            .relay
+            .host_id;
         let parts = self.try_parts().await.unwrap();
         let (_, tx) = parts
             .tunnels
@@ -484,16 +512,9 @@ impl Daemon {
     pub async fn sees(&self, other: &Daemon) {
         let assertion = format!("'{}' sees '{}' online", self.name(), other.name());
         let other_id = other.host_id();
-        eventually(
-            &assertion,
-            async || {
-                self.host_table()
-                    .await
-                    .iter()
-                    .any(|host| host.id == other_id && host.online)
-            },
-            self.failure_dump(),
-        )
+        self.expect_host_table(&assertion, |hosts| {
+            hosts.iter().any(|host| host.id == other_id && host.online)
+        })
         .await;
     }
 
@@ -502,17 +523,9 @@ impl Daemon {
     pub async fn cannot_see(&self, other: &Daemon) {
         let assertion = format!("'{}' cannot see '{}' online", self.name(), other.name());
         let other_id = other.host_id();
-        eventually(
-            &assertion,
-            async || {
-                !self
-                    .host_table()
-                    .await
-                    .iter()
-                    .any(|host| host.id == other_id && host.online)
-            },
-            self.failure_dump(),
-        )
+        self.expect_host_table(&assertion, |hosts| {
+            !hosts.iter().any(|host| host.id == other_id && host.online)
+        })
         .await;
     }
 
@@ -526,13 +539,37 @@ impl Daemon {
             other.name()
         );
         let other_id = other.host_id();
+        self.expect_host_table(&assertion, |hosts| {
+            hosts.iter().any(|host| host.id == other_id && !host.online)
+        })
+        .await;
+    }
+
+    async fn expect_host_table(&self, assertion: &str, check: impl Fn(&[HostEntry]) -> bool) {
         eventually(
-            &assertion,
+            assertion,
             async || {
-                self.host_table()
-                    .await
-                    .iter()
-                    .any(|host| host.id == other_id && !host.online)
+                // Register with the snapshot so a change between the first
+                // check and the receive cannot strand the assertion. Release
+                // the service handle before receiving so it does not keep a
+                // stopped runtime's event source alive.
+                let (hosts, mut changes) = {
+                    let Some(parts) = self.try_parts().await else {
+                        return check(&[]);
+                    };
+                    parts.client.subscribe_hosts_with_snapshot().await
+                };
+                if check(&hosts) {
+                    return true;
+                }
+                while changes.recv().await.is_some() {
+                    if check(&self.host_table().await) {
+                        return true;
+                    }
+                }
+                // A stopped runtime closes its subscription. Retry against
+                // the current runtime so assertions can span its replacement.
+                false
             },
             self.failure_dump(),
         )
@@ -918,6 +955,12 @@ impl Daemon {
         *self.inner.runtime.lock().await = Some(runtime);
     }
 
+    /// Exact persisted trust bytes for checking that an unconfirmed attempt
+    /// makes no write, including timestamps or reachability metadata.
+    pub fn trust_bytes_on_disk(&self) -> Vec<u8> {
+        std::fs::read(self.inner.data_dir.join("trust.json")).expect("read daemon trust store")
+    }
+
     /// The daemon's persisted identity, re-read from its data dir:
     /// `(host_id, pubkey)`.
     pub fn identity_on_disk(&self) -> (HostId, Vec<u8>) {
@@ -986,7 +1029,7 @@ impl Daemon {
     }
 
     /// Connects to this daemon's ordinary agent and host service.
-    pub(crate) async fn admin_client(&self) -> Client {
+    pub async fn admin_client(&self) -> Client {
         let guard = self.runtime().await;
         let runtime = guard
             .as_ref()
@@ -994,7 +1037,7 @@ impl Daemon {
         runtime.client()
     }
 
-    pub(crate) async fn pairing_admin(&self) -> node::installation::ProfileAdmin {
+    pub async fn pairing_admin(&self) -> node::installation::ProfileAdmin {
         if let Some(owner) = &self.inner.installation {
             return owner.installation_admin().await;
         }
@@ -1108,7 +1151,7 @@ impl Daemon {
             "the JWT ttl must fit within the assertion timeout"
         );
         let net = self.net.upgrade().expect("testnet already dropped");
-        let cloud_relay = net
+        let cloud = net
             .cloud
             .as_ref()
             .expect("this testnet was built without .cloud()");
@@ -1127,18 +1170,18 @@ impl Daemon {
         );
         eventually(
             &assertion,
-            async || !self.has_direct_route_to(cloud_relay.host_id).await,
+            async || !self.has_direct_route_to(cloud.relay.host_id).await,
             self.failure_dump(),
         )
         .await;
 
         let token = format!("jwt-initial-{}", uuid::Uuid::new_v4().simple());
         let expires_at = std::time::SystemTime::now() + ttl;
-        cloud_relay.register_token(&token, attachment.user_id, ttl);
+        cloud.register_token(&token, attachment.user_id, ttl);
         let auth = LinkConnectorAuth::new(
             LinkConnectorToken { token, expires_at },
             Arc::new(RegistryTokenRefresher {
-                tokens: cloud_relay.token_registry(),
+                tokens: cloud.token_registry(),
                 user_id: attachment.user_id,
             }),
         );
@@ -1155,7 +1198,7 @@ impl Daemon {
         );
         eventually(
             &assertion,
-            async || self.knows_host(cloud_relay.host_id).await,
+            async || self.knows_host(cloud.relay.host_id).await,
             self.failure_dump(),
         )
         .await;
@@ -1199,7 +1242,7 @@ impl Daemon {
         if let Some(net) = self.net.upgrade() {
             let _ = writeln!(out, "declared topology:\n{}", net.topology);
             if let Some(cloud) = &net.cloud {
-                let status = if cloud.is_online().await {
+                let status = if cloud.relay.is_online().await {
                     "online"
                 } else {
                     "offline"
@@ -1207,7 +1250,8 @@ impl Daemon {
                 let _ = writeln!(
                     out,
                     "cloud relay: {status} at {} (host_id {})",
-                    cloud.addr, cloud.host_id
+                    cloud.relay_addr(),
+                    cloud.relay.host_id
                 );
             }
             for daemon in &net.daemons {
@@ -1428,13 +1472,13 @@ impl RouteAssertion<'_> {
 
     /// The route goes through the testnet cloud relay.
     pub async fn via_cloud(self) {
-        let cloud_id = self
+        let relay_id = self
             .from
             .net
             .upgrade()
-            .and_then(|net| net.cloud.as_ref().map(|cloud| cloud.host_id))
+            .and_then(|net| net.cloud.as_ref().map(|cloud| cloud.relay.host_id))
             .expect("topology has no cloud relay");
-        self.via_host(cloud_id, "cloud").await;
+        self.via_host(relay_id, "cloud relay").await;
     }
 
     async fn via_host(self, relay_id: HostId, relay_name: &str) {
@@ -1451,4 +1495,35 @@ impl RouteAssertion<'_> {
         )
         .await;
     }
+}
+
+/// Writes the installation fixture before its runtime is started.
+pub(super) fn write_daemon_config(inner: &DaemonInner, cloud_url: &str) {
+    let config_path = inner.data_dir.join("config.yaml");
+    let config = node::harness::Config {
+        host_name: inner.name.clone(),
+        cloud_url: cloud_url.into(),
+        repository_roots: inner.repository_roots.clone(),
+        socket_path: inner.data_dir.join("amux.sock"),
+        state_path: inner.data_dir.join("state.yaml"),
+        data_dir: inner.data_dir.clone(),
+        tcp_port: inner.tcp_addr.map(|addr| addr.port()),
+        path: Some(config_path.clone()),
+
+        prevent_idle_sleep: Some(false),
+        ..node::harness::Config::default()
+    };
+    // A daemon's profile config exists on disk, and an agent it starts needs
+    // it there: every managed session launches this host's MCP server by
+    // pointing a fresh amux at this profile, so a runtime whose configuration
+    // only ever lived in memory can create no agent at all. Written where the
+    // rest of this profile's directory is.
+    std::fs::create_dir_all(&inner.data_dir)
+        .unwrap_or_else(|error| panic!("make daemon '{}' data directory: {error}", inner.name));
+    std::fs::write(
+        &config_path,
+        serde_yaml::to_string(&config)
+            .unwrap_or_else(|error| panic!("write daemon '{}' config: {error}", inner.name)),
+    )
+    .unwrap_or_else(|error| panic!("write daemon '{}' config: {error}", inner.name));
 }

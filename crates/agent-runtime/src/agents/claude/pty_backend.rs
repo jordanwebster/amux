@@ -24,9 +24,9 @@ use crate::agents::claude::ClaudeVersionCache;
 use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentDeps, AgentKind, AgentParent, AgentRecord, AgentType,
     BackendState, ClaudeDriver, CreateAgentRequest, HookEnvironment, HookError, HookOutcome,
-    LocalAgentNameSource, McpLaunchRoute, ObligationDebug, Plane, Protocol, PtyHandle,
-    RawPtyTarget, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy, StructuredInput,
-    StructuredInputEvent, StructuredLogSource, TerminalSize,
+    LocalAgentNameSource, McpLaunchRoute, ObligationDebug, Plane, Protocol, ProviderSources,
+    PtyHandle, RawPtyTarget, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy,
+    StructuredInput, StructuredInputEvent, StructuredLogSource, TerminalSize,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
@@ -70,6 +70,7 @@ pub(crate) struct ClaudePtyBackend {
     injected: Option<Session>,
     started: bool,
     ingest_abort: Option<AbortHandle>,
+    sources: Option<Arc<dyn ProviderSources>>,
 }
 
 impl ClaudePtyBackend {
@@ -115,6 +116,7 @@ impl ClaudePtyBackend {
             injected: None,
             started: false,
             ingest_abort: None,
+            sources: None,
         }
     }
 
@@ -180,6 +182,7 @@ impl ClaudePtyBackend {
             injected: Some(session),
             started: false,
             ingest_abort: None,
+            sources: None,
         }
     }
 
@@ -238,6 +241,29 @@ impl ClaudePtyBackend {
             launch_route,
             user_keymap_dir,
         )
+    }
+
+    /// A backend over a session somebody else built, active from the start.
+    /// Sources supplied through the runtime's deps still observe its input.
+    pub(crate) fn with_supplied_session(
+        req: &CreateAgentRequest,
+        deps: &AgentDeps,
+        session: Session,
+        event_tx: &mpsc::Sender<SessionEvent>,
+    ) -> Result<Self> {
+        let mut backend = Self::new(
+            req,
+            deps.runtime_dir.clone(),
+            deps.claude_version_cache.clone(),
+            deps.mcp_launch_route.clone(),
+            deps.claude_user_keymap_dir.clone(),
+        );
+        backend.sources = deps.sources.clone();
+        backend.artifact_root = deps.artifact_root(req.agent_id);
+        let handle = backend.activate(session, event_tx)?;
+        backend.ingest_abort = Some(handle.abort_handle());
+        backend.started = true;
+        Ok(backend)
     }
 
     pub(super) fn scripted(
@@ -518,11 +544,21 @@ impl ClaudePtyBackend {
             .session_id = Some(session_id);
     }
 
+    pub(in crate::agents) fn with_sources(
+        mut self,
+        sources: Option<Arc<dyn ProviderSources>>,
+    ) -> Self {
+        self.sources = sources;
+        self
+    }
+
     fn input_target(&self) -> ClaudeInputTarget {
         ClaudeInputTarget {
+            agent_id: self.agent_id,
             readonly: self.readonly,
             runtime: self.runtime.clone(),
             log: self.log.clone(),
+            sources: self.sources.clone(),
         }
     }
 
@@ -720,6 +756,14 @@ impl AgentBackend for ClaudePtyBackend {
         .into())
     }
 
+    fn exit_code(&self) -> Option<i32> {
+        let pty = {
+            let runtime = self.runtime.lock().expect("Claude runtime poisoned");
+            runtime.pty.clone()
+        };
+        pty?.exit_code()
+    }
+
     async fn debug_json(&self, verbose: bool) -> serde_json::Result<Value> {
         let (pty, control) = {
             let runtime = self.runtime.lock().expect("Claude runtime poisoned");
@@ -773,15 +817,22 @@ impl AgentBackend for ClaudePtyBackend {
 }
 
 struct ClaudeInputTarget {
+    agent_id: Uuid,
     readonly: bool,
     runtime: Arc<Mutex<Runtime>>,
     log: StructuredLogSource,
+    sources: Option<Arc<dyn ProviderSources>>,
 }
 
 #[async_trait]
 impl StructuredInput for ClaudeInputTarget {
     async fn send(&self, input: StructuredInputEvent) -> std::result::Result<(), ProtocolError> {
-        let StructuredInputEvent::ClaudePty { client_seq, intent } = input else {
+        let StructuredInputEvent::ClaudePty {
+            client_seq,
+            intent,
+            pins,
+        } = input
+        else {
             return Err(ProtocolError::InvalidArgument {
                 message: "Claude PTY input target received another protocol's input".to_string(),
             });
@@ -808,10 +859,15 @@ impl StructuredInput for ClaudeInputTarget {
                 message: "structured input requires an active PTY".to_string(),
             })?;
         control
-            .send(provider_intent(intent))
+            .send(provider_intent(intent.clone()))
             .await
-            .map(|_| ())
-            .map_err(input_protocol_error)
+            .map_err(input_protocol_error)?;
+        if let Some(sources) = &self.sources {
+            sources
+                .observe_claude_pty_input(self.agent_id, &intent, &pins)
+                .map_err(|message| ProtocolError::ServerError { message })?;
+        }
+        Ok(())
     }
 }
 
@@ -1296,6 +1352,7 @@ mod tests {
                 intent: pty_io::Intent::Prompt {
                     text: "hello".to_string(),
                 },
+                pins: Vec::new(),
             })
             .await
             .unwrap();

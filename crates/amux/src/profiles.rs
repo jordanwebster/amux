@@ -145,6 +145,8 @@ pub fn load(path: &Path) -> Result<Config> {
     let path = std::fs::canonicalize(path)?;
     let resolved = node::load_profile_config(&path)?;
     Ok(Config {
+        repository_roots: resolved.installation.repository_roots,
+        claude: resolved.installation.claude,
         host_name: resolved.installation.host_name,
         cloud_url: resolved.profile.cloud_url,
         socket_path: resolved.profile.socket_path,
@@ -156,7 +158,6 @@ pub fn load(path: &Path) -> Result<Config> {
         minimum_client_versions: resolved.installation.minimum_client_versions,
         keybinds: resolved.installation.keybinds,
         ui: resolved.installation.ui,
-        claude: resolved.installation.claude,
         path: Some(path),
     })
 }
@@ -507,6 +508,10 @@ mod tests {
         let installation = node::InstallationConfig {
             root: std::fs::canonicalize(&root).unwrap(),
             front_door_socket: root.join("amux.sock"),
+            repository_roots: vec![root.join("repositories")],
+            claude: settings::ClaudeSettings {
+                driver: model::ClaudeDriver::Sdk,
+            },
             ..Default::default()
         };
         std::fs::write(
@@ -530,6 +535,8 @@ mod tests {
         .unwrap();
 
         let config = load(&profile_path).unwrap();
+        assert_eq!(config.repository_roots, installation.repository_roots);
+        assert_eq!(config.claude.driver, model::ClaudeDriver::Sdk);
         // Nothing is listening on the front door or on the profile socket:
         // the selection has to be recorded without either answering.
         remember_selection(&config).unwrap();

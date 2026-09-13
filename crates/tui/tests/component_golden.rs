@@ -309,17 +309,17 @@ fn report_overlay_marks_the_frozen_screen_and_asks_about_it() {
 
     let marks = [
         Mark {
-            x: 4,
-            y: 3,
-            width: 30,
-            height: 4,
+            x: 4.0,
+            y: 3.0,
+            width: 30.0,
+            height: 4.0,
             note: "this block should be folded".into(),
         },
         Mark {
-            x: 60,
-            y: 20,
-            width: 24,
-            height: 2,
+            x: 60.0,
+            y: 20.0,
+            width: 24.0,
+            height: 2.0,
             note: "the age never updates".into(),
         },
     ];

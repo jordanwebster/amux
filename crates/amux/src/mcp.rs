@@ -643,6 +643,7 @@ mod attach_tests {
                     capabilities: Some(node::Capabilities::default()),
                     trust_status: node::HostTrustStatus::Trusted,
                     last_dial_error: None,
+                    platform: None,
                 })
                 .collect();
             Self {

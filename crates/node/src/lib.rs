@@ -53,10 +53,13 @@ pub mod harness {
     };
     pub use crate::server::ShutdownReason;
     pub use crate::services::{
-        AgentServiceCtx, ClientService, CloudLinkService, PeerTrustCommitContext, PeerTrustUpdate,
-        commit_peer_trust,
+        AgentServiceCtx, ClientService, CloudLinkService, DeviceRuntimeSecurity,
+        PeerTrustCommitContext, PeerTrustUpdate, StartedUserServices, commit_peer_trust,
+        start_user_services,
     };
-    pub use crate::transport::{TcpServerTransport, trusted_device_channel_tracked};
+    pub use crate::transport::{
+        InProcessConnection, TcpServerTransport, trusted_device_channel_tracked,
+    };
     pub use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
     pub use crate::tunnel::TunnelPool;
 
@@ -78,8 +81,9 @@ pub use agents::{
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
-    AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, HostEventStream,
-    PairingSecret, PairingStart, PeerEntry, PeerReachability, SessionStream,
+    AgentEventStream, Client, ClientError, ConnectError, DeleteAgentSummary, DeviceIdentity,
+    HostEventStream, PairingError, PairingSecret, PairingStart, PeerEntry, PeerReachability,
+    PendingPeer, SessionStream,
 };
 pub use config::{
     ColorSetting, Config, ConfigError, InstallationConfig, Keybinds, LeaderKey, OpenMode,
@@ -88,20 +92,22 @@ pub use config::{
 pub use debug::DebugFormat;
 pub use identity::{device_files_ready_in, ensure_device_files_in, stored_host_id_in};
 pub use installation::{
-    BindError, BindRequest, BindTarget, CredentialSource, Installation, InstallationError,
-    InstallationOptions, InstallationRoot, InstallationSettings, Listeners, OperationId,
-    ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch, ResumeReport,
-    SuspendReason, SuspendReport,
+    BindError, BindRequest, BindTarget, CloudServiceId, CredentialSource, Installation,
+    InstallationError, InstallationOptions, InstallationRoot, InstallationSettings, Listeners,
+    OperationId, ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch,
+    RelocationPolicy, ResumeReport, SuspendReason, SuspendReport,
 };
 pub use model::{
-    AgentId, AgentIdentifier, ArtifactId, ArtifactKind, HostId, PeerIdentifier, ProtocolError,
-    SendInputRequest, SendMessageRequest, SetAgentStatusRequest, SubscribeSessionRequest,
+    AgentId, AgentIdentifier, ArtifactId, ArtifactKind, DisconnectReason, HostId,
+    ListRepositoriesRequest, ListRepositoriesResponse, PeerIdentifier, ProjectEntry, ProtocolError,
+    RelayConnection, SendInputRequest, SendMessageRequest, SetAgentStatusRequest,
+    SubscribeSessionRequest,
 };
 pub use pairing::PairingAdmin;
 pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
 pub use pairing::qr::{
-    QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
-    parse_qr_pairing_payload_for_cloud, validate_qr_payload_cloud_url,
+    QrPairingError, QrPairingPayload, encode_qr_pairing_invitation, encode_qr_pairing_payload,
+    parse_qr_pairing_payload,
 };
 pub use pairing::ssh::{
     SshPairingError, SshPairingPeer, SshPairingProfile, SshTarget, pair_via_ssh_initiator,
@@ -111,8 +117,10 @@ pub use pairing::ssh::{
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
 pub use paths::{default_data_dir, default_log_path, keymap_dir};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
-pub use server::{DaemonBuilder, Server, ServerBuilder, ServerError, ShutdownReason};
+pub use server::{
+    DaemonBuilder, EmbeddedRuntime, Server, ServerBuilder, ServerError, ShutdownReason,
+};
 pub use subscription::SubscriptionReporter;
-pub use transport::TransportError;
+pub use transport::{EmbeddedRelay, RelayEndpoint, RelayRetry, TransportError};
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 pub use wire::PROTOCOL_VERSION;

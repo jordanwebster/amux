@@ -1,0 +1,287 @@
+import AmuxCore
+import AmuxDesign
+import AmuxFeatures
+import SwiftUI
+import XCTest
+
+@testable import AmuxTestSupport
+
+/// The door is a protocol between a Swift app and a Rust driver, so what it
+/// puts on the wire is pinned here rather than left to whatever Codable does
+/// with an enum this week.
+final class DoorTests: XCTestCase {
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    private func wire(_ request: DoorRequest) throws -> [String: Any] {
+        let data = try encoder.encode(request)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    func testEveryRequestSurvivesTheWire() throws {
+        let requests: [DoorRequest] = [
+            .open(screen: "home", fixture: nil),
+            .open(screen: "home", fixture: "home-quiet"),
+            .cloud(CloudScript()),
+            .store(StoreScript()),
+            .calls,
+            .accounts,
+            .late(account: "work"),
+            .connect(relay: "http://127.0.0.1:8080", token: "bearer", user: "ada"),
+            .addAccount(user: "work", token: "another-bearer"),
+            .restoreSession(
+                account: "9f1c1f8e-0000-4000-8000-000000000003", refresh: "a-refresh-token"),
+            .awaitReconciled(seconds: 90),
+            .awaitOffline(seconds: 30),
+            .bridge,
+            .conversation(agent: "00000000-0000-0000-0000-000000000001"),
+            .setModel(agent: "00000000-0000-0000-0000-000000000001", name: "haiku"),
+            .appearance(.dark),
+            .dynamicType("accessibility3"),
+            .assist(motion: true, transparency: true),
+            .states,
+            .perturb(token: "accent"),
+            .perturb(token: nil),
+            .designVariant("context-band"),
+            .designVariant(nil),
+            .settle,
+            .query,
+            .capture(path: "/tmp/home.png"),
+            .tap(identifier: "home.row.aurora"),
+            .type(identifier: "composer.field", text: "hello"),
+            .paste(identifier: "composer.field", text: "a paste worth naming"),
+            .attach(
+                agent: "6f1c1f8e-0000-4000-8000-000000000001", kind: "image",
+                name: "screenshot.png", mime: "image/png", base64: "iVBORw0KGgo="),
+            .pair(qr: #"{"host_id":"…","cloud_url":"http://127.0.0.1:9","secret":[1]}"#),
+            .pairByCode(host: "9f1c1f8e-0000-4000-8000-000000000002", pin: "419507"),
+            .revoke(host: "9f1c1f8e-0000-4000-8000-000000000002"),
+            .send(agent: "6f1c1f8e-0000-4000-8000-000000000001", text: "carry on"),
+            .awaitAgent(agent: "6f1c1f8e-0000-4000-8000-000000000001", seconds: 120),
+            .awaitSendable(agent: "6f1c1f8e-0000-4000-8000-000000000001", seconds: 30),
+            .awaitReply(
+                agent: "6f1c1f8e-0000-4000-8000-000000000001", saying: "Paris", seconds: 240),
+            .watch(agent: "6f1c1f8e-0000-4000-8000-000000000001"),
+            .requestChanges(agent: "6f1c1f8e-0000-4000-8000-000000000001", base: "HEAD~1"),
+            .requestChanges(agent: "6f1c1f8e-0000-4000-8000-000000000001", base: ""),
+            .report(
+                path: "/tmp/report", note: "the badge counted twice",
+                marks: [ReportMark(x: 12, y: 40.5, width: 96, height: 24, note: "here")]),
+            .screenshot,
+            .uploaded(path: "/tmp/uploaded"),
+            .replay(path: "/tmp/report"),
+            .shutdown,
+        ]
+        for request in requests {
+            let round = try decoder.decode(DoorRequest.self, from: encoder.encode(request))
+            XCTAssertEqual(round, request)
+        }
+    }
+
+    /// What the account service and the App Store will answer is written by
+    /// hand, by somebody driving the app from another language. So a request
+    /// says only what it is changing, everything else keeps the answer most
+    /// states want, and none of it is spelled in Swift's own encoding of a
+    /// nested enum.
+    func testAScriptSaysOnlyWhatItChanges() throws {
+        let refusing = Data(
+            #"{"kind":"cloud","cloud":{"signIn":"refused","reason":"no such account"}}"#.utf8)
+        guard case .cloud(let script) = try decoder.decode(DoorRequest.self, from: refusing) else {
+            return XCTFail("that was not a cloud request")
+        }
+        XCTAssertEqual(script.state.signIn, .refused("no such account"))
+        XCTAssertEqual(script.state.entitlement, .active(grant: .purchased(.web), renews: nil))
+        XCTAssertEqual(script.state.token, "scripted-connect-token")
+
+        // An account with nothing bought is refused a relay credential, which
+        // is said by naming the token as nothing rather than by leaving it out.
+        let gated = Data(
+            #"{"kind":"cloud","cloud":{"entitlement":"none","token":null}}"#.utf8)
+        guard case .cloud(let closed) = try decoder.decode(DoorRequest.self, from: gated) else {
+            return XCTFail("that was not a cloud request")
+        }
+        XCTAssertEqual(closed.state.entitlement, .none)
+        XCTAssertNil(closed.state.token)
+
+        let pending = Data(#"{"kind":"store","store":{"purchase":"pending"}}"#.utf8)
+        guard case .store(let store) = try decoder.decode(DoorRequest.self, from: pending) else {
+            return XCTFail("that was not a store request")
+        }
+        XCTAssertEqual(store.state.purchase, .pending)
+        XCTAssertEqual(store.state.plans, ScriptedStoreState.offered)
+    }
+
+    func testRequestsAreTaggedAndFlat() throws {
+        let opened = try wire(.open(screen: "home", fixture: "home-quiet"))
+        XCTAssertEqual(opened["kind"] as? String, "open")
+        XCTAssertEqual(opened["screen"] as? String, "home")
+        XCTAssertEqual(opened["fixture"] as? String, "home-quiet")
+
+        // A fixture the request does not name is left out rather than sent as
+        // null, so the driver's own requests read the same as the app's.
+        XCTAssertNil(try wire(.open(screen: "home", fixture: nil))["fixture"])
+
+        XCTAssertEqual(try wire(.appearance(.dark))["appearance"] as? String, "dark")
+        XCTAssertEqual(try wire(.dynamicType("accessibility3"))["size"] as? String, "accessibility3")
+        let assist = try wire(.assist(motion: true, transparency: false))
+        XCTAssertEqual(assist["motion"] as? Bool, true)
+        XCTAssertEqual(assist["transparency"] as? Bool, false)
+        XCTAssertEqual(try wire(.states)["kind"] as? String, "states")
+        XCTAssertEqual(try wire(.capture(path: "/tmp/x.png"))["path"] as? String, "/tmp/x.png")
+        XCTAssertEqual(try wire(.settle)["kind"] as? String, "settle")
+        XCTAssertEqual(try wire(.awaitReconciled(seconds: 90))["seconds"] as? Double, 90)
+        XCTAssertEqual(try wire(.awaitOffline(seconds: 30))["kind"] as? String, "awaitOffline")
+        XCTAssertEqual(try wire(.bridge)["kind"] as? String, "bridge")
+        XCTAssertEqual(try wire(.perturb(token: "accent"))["token"] as? String, "accent")
+        // Nothing named puts the design back, and is sent as an absent field
+        // rather than a null, like every other request the door takes.
+        XCTAssertNil(try wire(.perturb(token: nil))["token"])
+        let report = try wire(.report(
+            path: "/tmp/report", note: "the badge counted twice",
+            marks: [ReportMark(x: 12, y: 40.5, width: 96, height: 24, note: "here")]))
+        XCTAssertEqual(report["path"] as? String, "/tmp/report")
+        XCTAssertEqual(report["note"] as? String, "the badge counted twice")
+        // The rectangles travel in the frame's own points, fractions and all:
+        // a driver asks for the report a person would have written.
+        XCTAssertEqual((report["marks"] as? [[String: Any]])?.first?["y"] as? Double, 40.5)
+        XCTAssertEqual(try wire(.pair(qr: "payload"))["qr"] as? String, "payload")
+        let code = try wire(.pairByCode(host: "workstation", pin: "419507"))
+        XCTAssertEqual(code["host"] as? String, "workstation")
+        XCTAssertEqual(code["pin"] as? String, "419507")
+        XCTAssertEqual(try wire(.revoke(host: "workstation"))["host"] as? String, "workstation")
+        XCTAssertEqual(try wire(.requestChanges(agent: "aurora", base: "HEAD~1"))["base"] as? String, "HEAD~1")
+        let attempt = try wire(.send(agent: "aurora", text: "carry on"))
+        XCTAssertEqual(attempt["agent"] as? String, "aurora")
+        XCTAssertEqual(attempt["text"] as? String, "carry on")
+        XCTAssertEqual(try wire(.replay(path: "/tmp/report"))["path"] as? String, "/tmp/report")
+        let pasting = try wire(.paste(identifier: "composer.field", text: "a long paste"))
+        XCTAssertEqual(pasting["identifier"] as? String, "composer.field")
+        XCTAssertEqual(pasting["text"] as? String, "a long paste")
+        // The kind of attachment travels under its own name rather than under
+        // the request's: every request in this door already spells its own
+        // kind, and two "kind" fields in one flat object cannot both be read.
+        let attaching = try wire(.attach(
+            agent: "aurora", kind: "file", name: "parser.rs", mime: "text/x-rust",
+            base64: "cGFyc2Vy"))
+        XCTAssertEqual(attaching["kind"] as? String, "attach")
+        XCTAssertEqual(attaching["attachment"] as? String, "file")
+        XCTAssertEqual(attaching["name"] as? String, "parser.rs")
+        XCTAssertEqual(attaching["mime"] as? String, "text/x-rust")
+        XCTAssertEqual(attaching["base64"] as? String, "cGFyc2Vy")
+    }
+
+    func testAnUnknownRequestIsRefused() {
+        let unknown = Data(#"{"kind":"levitate"}"#.utf8)
+        XCTAssertThrowsError(try decoder.decode(DoorRequest.self, from: unknown))
+    }
+
+    @MainActor
+    func testEveryReplySurvivesTheWire() throws {
+        let state = VisibleState(
+            screen: "home",
+            typeSize: "large",
+            voiceOver: true,
+            elements: [VisibleElement(
+                identifier: "home.title", label: "Agents", value: nil,
+                frame: VisibleFrame(x: 16, y: 64, width: 200, height: 32), enabled: true)],
+            reconciled: true, unconfirmed: 3)
+        let bridge = BridgeState(
+            build: "0.1.0+debug-tools", started: true, connection: "connected",
+            reconciled: true, hosts: [], agents: ["helper"], relayAttempts: 3, relayRetries: 1,
+            discovered: ["desktop", "laptop"], watching: ["6f1c1f8e-0000-4000-8000-000000000001"],
+            failure: "installation profile path disagrees with its namespace")
+        let replies: [DoorReply] = [
+            .ack,
+            .state(state),
+            .bridge(bridge),
+            .conversation(ConversationReading(ConversationStore(agent: Scenario.focus))),
+            .captured(path: "/tmp/home.png", width: 1206, height: 2622, scale: 3),
+            .bundle(path: "/tmp/report", parts: ["msgs.jsonl", "trace.jsonl"]),
+            .replayed(ReplayedState(
+                events: 4, agents: ["aurora"], hosts: ["desktop"],
+                entries: ["6f1c1f8e-0000-4000-8000-000000000001": 12],
+                reconciled: true, trace: 3, screen: "home", ages: ["aurora": "8s"])),
+            .paired(host: "workstation"),
+            .states([
+                DrawnState(screen: "home", state: "home", typeSize: nil),
+                DrawnState(screen: "home", state: "home-accessibility",
+                           typeSize: "accessibility5"),
+            ]),
+            .sendAttempt(delivered: true, reason: nil),
+            .sendAttempt(delivered: false, reason: "This session is replaying what it missed."),
+            .error("unimplemented: home"),
+        ]
+        for reply in replies {
+            let round = try decoder.decode(DoorReply.self, from: encoder.encode(reply))
+            XCTAssertEqual(round, reply)
+        }
+    }
+
+    func testAScreenIsBuiltOneStateAtATime() {
+        // The conversation screen draws its ordinary state and the one whose
+        // host was lost, and the one at an accessibility type size, but not the
+        // one the design catalogue describes and nobody has drawn: each has
+        // its own baseline and is written on its own. Declared per screen, all
+        // four became openable together and a check of what is built so far
+        // started failing on work nobody had started.
+        XCTAssertTrue(Fixtures.isBuilt(.run, state: "run"))
+        XCTAssertTrue(Fixtures.isBuilt(.run, state: "host-lost"))
+        XCTAssertTrue(Fixtures.isBuilt(.run, state: "run-accessibility"))
+        XCTAssertFalse(Fixtures.isBuilt(.home, state: "home-empty"))
+        // A state with no fixture behind it is unbuilt rather than unknown, so
+        // asking for it names work still to come. The permission ask expects a
+        // picture of a Codex approval and nothing fills one yet.
+        XCTAssertFalse(Fixtures.isBuilt(.askPermission, state: "codex-approval"))
+        XCTAssertNil(Fixtures.named("codex-approval"))
+        // The home screen has two states built, so this is about the pair and
+        // not about a screen being all-or-nothing either way.
+        XCTAssertTrue(Fixtures.isBuilt(.home, state: "home"))
+        XCTAssertTrue(Fixtures.isBuilt(.home, state: "home-accessibility"))
+    }
+
+    func testEveryBuiltStateHasAFixtureBehindIt() {
+        // A state cannot be declared built with nothing to fill it: the door
+        // would answer "no state named" for a state the manifest expects a
+        // baseline for, which reads as a broken fixture rather than as work
+        // still to come.
+        for state in Fixtures.built {
+            let fixture = Fixtures.named(state.state)
+            XCTAssertNotNil(fixture, "\(state.state) is built with nothing to fill it")
+            XCTAssertEqual(
+                fixture?.screen, state.screen,
+                "\(state.state) is built for \(state.screen.rawValue) but fills another screen")
+        }
+    }
+
+    func testACaptureNamesItsSizeInPixels() throws {
+        let data = try encoder.encode(
+            DoorReply.captured(path: "/tmp/home.png", width: 1206, height: 2622, scale: 3))
+        let wire = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(wire["kind"] as? String, "captured")
+        XCTAssertEqual(wire["width"] as? Int, 1206)
+        XCTAssertEqual(wire["height"] as? Int, 2622)
+        XCTAssertEqual(wire["scale"] as? Int, 3)
+    }
+
+    func testTheReadinessFileNamesThePort() throws {
+        let ready = Door.Ready(port: 51201, pid: 4242)
+        let round = try decoder.decode(Door.Ready.self, from: encoder.encode(ready))
+        XCTAssertEqual(round, ready)
+        XCTAssertEqual(Door.readyArgument, "amux-door-ready")
+    }
+
+    /// Fixtures and door requests both name a type size in words; a name one
+    /// of them uses and the other cannot read would silently render the wrong
+    /// size in a capture.
+    func testFixtureTypeSizesAreDoorNames() throws {
+        for fixture in Fixtures.all {
+            guard let named = fixture.typeSize else { continue }
+            XCTAssertNotNil(
+                DynamicTypeSize(doorName: named),
+                "\(fixture.id) asks for a type size the door cannot name: \(named)")
+        }
+        XCTAssertEqual(DynamicTypeSize(doorName: "large"), .large)
+        XCTAssertEqual(DynamicTypeSize(doorName: "accessibility5"), .accessibility5)
+        XCTAssertNil(DynamicTypeSize(doorName: "enormous"))
+    }
+}

@@ -32,7 +32,14 @@ struct ProfileFixture {
     tcp_addr: Option<SocketAddr>,
     tracked_tcp: node::harness::TrackedTcpConnections,
     clock: Arc<TestArtifactClock>,
+    sources: Arc<super::sources::DaemonSources>,
 }
+
+/// What the installation asks for each profile runtime it starts: the same
+/// shape `Installation::open_for_test` accepts.
+type RuntimeFixtureFactory = Arc<
+    dyn Fn(ProfileId) -> futures_util::future::BoxFuture<'static, RuntimeFixtures> + Send + Sync,
+>;
 
 #[derive(Default)]
 struct FixturePlan {
@@ -40,6 +47,9 @@ struct FixturePlan {
     cloud_only: VecDeque<bool>,
 }
 type Fixtures = Arc<Mutex<FixturePlan>>;
+
+#[cfg(test)]
+mod tests;
 
 pub(crate) struct ProfileOwner {
     installation: Weak<InstallationInner>,
@@ -85,7 +95,7 @@ struct InstallationInner {
     profiles: BTreeMap<String, (ProfileId, Arc<DaemonInner>)>,
     identity: Arc<IdentityServer>,
     fixtures: Fixtures,
-    cloud_addr: Option<SocketAddr>,
+    relay_addr: Option<SocketAddr>,
     root: PathBuf,
     persistent: bool,
     // Keep the root alive until the last handle and all runtimes are gone.
@@ -176,7 +186,7 @@ impl InstallationHandle {
                 &self.inner.name,
                 InstallationRoot::OnDisk(self.inner.root.clone()),
             ),
-            fixture_factory(self.inner.fixtures.clone(), self.inner.cloud_addr),
+            fixture_factory(self.inner.fixtures.clone(), self.inner.relay_addr),
         )
         .await
         .expect("reopen installation");
@@ -466,12 +476,14 @@ impl WatchProbe {
 
 fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
     InstallationOptions {
+        relocation: Default::default(),
         root,
         listeners: Listeners::Sockets,
         credentials: CredentialSource::ProfileFiles,
         identity_http: reqwest::Client::new(),
         host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
         settings: InstallationSettings {
+            repository_roots: Vec::new(),
             host_name: name.into(),
             prevent_idle_sleep: Some(false),
             keybinds: Default::default(),
@@ -484,53 +496,55 @@ fn options(name: &str, root: InstallationRoot) -> InstallationOptions {
     }
 }
 
-fn fixture_factory(
-    fixtures: Fixtures,
-    cloud_addr: Option<SocketAddr>,
-) -> Arc<dyn Fn(ProfileId) -> RuntimeFixtures + Send + Sync> {
+fn fixture_factory(fixtures: Fixtures, relay_addr: Option<SocketAddr>) -> RuntimeFixtureFactory {
     Arc::new(move |id| {
-        let mut fixtures = fixtures.lock().unwrap();
-        let cloud_only = if let Some(fixture) = fixtures.profiles.get(&id) {
-            fixture.tcp_addr.is_none()
-        } else {
-            fixtures.cloud_only.pop_front().unwrap_or(false)
-        };
-        let listener = if cloud_only {
-            None
-        } else {
-            let addr = fixtures
+        let fixtures = fixtures.clone();
+        Box::pin(async move {
+            let addr = {
+                let mut fixtures = fixtures.lock().unwrap();
+                if let Some(fixture) = fixtures.profiles.get(&id) {
+                    fixture.tcp_addr
+                } else if fixtures.cloud_only.pop_front().unwrap_or(false) {
+                    None
+                } else {
+                    Some("127.0.0.1:0".parse().unwrap())
+                }
+            };
+            // A stopped runtime's port can remain occupied briefly. Use the
+            // daemon/relay restart bound, yielding without the fixture lock so
+            // socket teardown can finish on the same runtime.
+            let listener = if let Some(addr) = addr {
+                Some(super::relay::bind_addr_with_retries(addr).await)
+            } else {
+                None
+            };
+            let mut fixtures = fixtures.lock().unwrap();
+            let fixture = fixtures
                 .profiles
-                .get(&id)
-                .and_then(|fixture| fixture.tcp_addr)
-                .unwrap_or_else(|| "127.0.0.1:0".parse().unwrap());
-            let listener =
-                std::net::TcpListener::bind(addr).expect("bind profile fixture LAN listener");
-            listener.set_nonblocking(true).unwrap();
-            Some(listener)
-        };
-        let fixture = fixtures
-            .profiles
-            .entry(id)
-            .or_insert_with(|| ProfileFixture {
-                tcp_addr: listener
-                    .as_ref()
-                    .map(|listener| listener.local_addr().unwrap()),
-                tracked_tcp: Default::default(),
-                clock: Arc::new(TestArtifactClock::new()),
-            });
-        RuntimeFixtures {
-            listener: listener.map(|listener| tokio::net::TcpListener::from_std(listener).unwrap()),
-            tracked_tcp: Some(fixture.tracked_tcp.clone()),
-            host_factory: Some(Arc::new(agent_runtime::test_support::Factory::new(
-                fixture.clock.clone(),
-            ))),
-            cloud: None,
-            cloud_transport: cloud_addr.map(|addr| {
-                tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
-                    .unwrap()
-                    .connect_lazy()
-            }),
-        }
+                .entry(id)
+                .or_insert_with(|| ProfileFixture {
+                    tcp_addr: listener
+                        .as_ref()
+                        .map(|listener| listener.local_addr().unwrap()),
+                    tracked_tcp: Default::default(),
+                    clock: Arc::new(TestArtifactClock::new()),
+                    sources: Default::default(),
+                });
+            RuntimeFixtures {
+                listener,
+                tracked_tcp: Some(fixture.tracked_tcp.clone()),
+                host_factory: Some(Arc::new(
+                    agent_runtime::test_support::Factory::new(fixture.clock.clone())
+                        .with_sources(fixture.sources.clone()),
+                )),
+                cloud: None,
+                cloud_transport: relay_addr.map(|addr| {
+                    tonic::transport::Endpoint::from_shared(format!("http://{addr}"))
+                        .unwrap()
+                        .connect_lazy()
+                }),
+            }
+        })
     })
 }
 
@@ -551,7 +565,7 @@ pub(super) async fn start(
     }));
     let installation = Installation::open_for_test(
         options(&spec.name, root),
-        fixture_factory(fixtures.clone(), cloud.map(|cloud| cloud.addr)),
+        fixture_factory(fixtures.clone(), cloud.map(|cloud| cloud.relay_addr())),
     )
     .await
     .expect("start production installation");
@@ -593,13 +607,14 @@ pub(super) async fn start(
                     name: format!("{}/{}", spec.name, profile.name),
                     host_id: record.host_id,
                     data_dir: paths.data_dir.clone(),
+                    repository_roots: Vec::new(),
                     artifact_clock: fixture.clock.clone(),
                     tcp_addr: fixture.tcp_addr,
                     cloud: profile.cloud_user.as_ref().map(|user| {
                         let cloud = cloud.expect("cloud_user requires .cloud()");
                         let (user_id, token) = cloud.credentials_for_user(user);
                         CloudAttachment {
-                            addr: cloud.addr,
+                            addr: cloud.relay_addr(),
                             user_id,
                             token,
                         }
@@ -611,6 +626,7 @@ pub(super) async fn start(
                         paths,
                     }),
                     tracked_tcp: fixture.tracked_tcp.clone(),
+                    sources: fixture.sources.clone(),
                 });
                 (profile.name.clone(), (id, daemon))
             })
@@ -619,7 +635,7 @@ pub(super) async fn start(
         current: RwLock::new(Some(Arc::new(installation))),
         identity,
         fixtures,
-        cloud_addr: cloud.map(|cloud| cloud.addr),
+        relay_addr: cloud.map(|cloud| cloud.relay_addr()),
         root,
         persistent: spec.persistent,
         _disk_root: Some(disk_root),

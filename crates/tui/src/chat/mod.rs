@@ -12,6 +12,7 @@ mod codex;
 pub mod diff;
 pub(crate) mod frame;
 pub(crate) mod inline;
+mod queue;
 pub(crate) mod viewport;
 
 use std::cell::RefCell;
@@ -997,6 +998,7 @@ mod tests {
             capabilities: None,
             trust_status: HostTrustStatus::Trusted,
             last_dial_error: None,
+            platform: None,
         }
     }
 

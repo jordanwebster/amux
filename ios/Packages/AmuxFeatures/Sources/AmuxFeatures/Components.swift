@@ -1,0 +1,450 @@
+import AmuxCore
+import AmuxDesign
+import SwiftUI
+
+/// The status mark.
+///
+/// Three marks, and only three, because a glyph nobody can read is worse than
+/// no glyph: it occupies the place a reader looks for meaning and returns
+/// nothing. So the vocabulary is the states that are worth distinguishing and
+/// that the app can honestly know.
+///
+/// - **needs you** — the agent has stopped and cannot continue without you.
+///   The only thing on the screen allowed to be the accent colour.
+/// - **working** — achromatic and moving, because work in progress is
+///   information rather than a demand.
+/// - **unknown** — hollow, because a filled mark would claim knowledge the app
+///   does not have.
+///
+/// Idle draws nothing. A finished turn draws nothing either and says
+/// "Finished · 4 files · +118 −40" on the row instead, which is more precise
+/// than a tick and readable without having learnt a vocabulary first.
+public struct AttentionMark: View {
+    @Environment(\.design) private var design
+    private let attention: Attention
+    private let size: CGFloat
+
+    public init(attention: Attention, size: CGFloat = 19) {
+        self.attention = attention
+        self.size = size
+    }
+
+    public var body: some View {
+        switch attention {
+        case .idle:
+            Color.clear.frame(width: size, height: size)
+        case .working:
+            WorkingMark(size: size)
+        case .unknown:
+            Circle()
+                .strokeBorder(
+                    design.inkFaint.color,
+                    style: StrokeStyle(lineWidth: 1.5, dash: [2.2, 2.6]))
+                .frame(width: size, height: size)
+        case .needsYou(let why):
+            if why == .finished {
+                Color.clear.frame(width: size, height: size)
+            } else {
+                NeedsYouMark(glyph: why.glyph, size: size)
+            }
+        }
+    }
+}
+
+/// The accent disc with a glyph in it: the one thing on a screen allowed to be
+/// coloured, because it is the one thing that is waiting for you.
+///
+/// The list draws it small on a row and an ask panel draws it larger at the
+/// head of the thing being asked. It is one mark either way — a person who has
+/// learnt what it means on the home should not have to learn it again inside a
+/// conversation.
+public struct NeedsYouMark: View {
+    @Environment(\.design) private var design
+    private let glyph: String
+    private let size: CGFloat
+
+    public init(glyph: String, size: CGFloat = 19) {
+        self.glyph = glyph
+        self.size = size
+    }
+
+    public var body: some View {
+        ZStack {
+            Circle().fill(design.accent.color)
+            Image(systemName: glyph)
+                .font(.system(size: size * 0.5, weight: .bold))
+                .foregroundStyle(design.onAccent.color)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// A ring that sweeps. Achromatic on purpose: work in progress is information,
+/// not a demand.
+private struct WorkingMark: View {
+    @Environment(\.design) private var design
+    let size: CGFloat
+    /// A capture is a still frame, so the sweep is drawn at a fixed angle that
+    /// reads as motion rather than relying on an animation nobody will see.
+    private let sweep = 0.68
+
+    var body: some View {
+        ZStack {
+            Circle().strokeBorder(design.inkFaint.color.opacity(0.35), lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: sweep)
+                .stroke(design.inkMuted.color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+extension Why {
+    public var glyph: String {
+        switch self {
+        case .permission: "hand.raised.fill"
+        case .question: "questionmark"
+        case .finished: "checkmark"
+        }
+    }
+
+    /// What the mark means, said aloud. A mark that only exists as a shape is
+    /// unreadable to anyone using VoiceOver, so every row spells it.
+    public var spoken: String {
+        switch self {
+        case .permission: "Needs permission"
+        case .question: "Has a question"
+        case .finished: "Finished"
+        }
+    }
+}
+
+extension Attention {
+    /// The row's state in a word, for a reader who cannot see the mark.
+    public var spoken: String {
+        switch self {
+        case .idle: "Idle"
+        case .working: "Working"
+        case .unknown: "State unknown"
+        case .needsYou(let why): why.spoken
+        }
+    }
+}
+
+/// A group of rows on one surface, hairline-separated.
+public struct RowGroup<Item: Identifiable, Content: View>: View {
+    @Environment(\.design) private var design
+    private let items: [Item]
+    private let prominence: Design.Prominence
+    private let row: (Item) -> Content
+
+    public init(
+        items: [Item],
+        prominence: Design.Prominence = .plain,
+        @ViewBuilder row: @escaping (Item) -> Content
+    ) {
+        self.items = items
+        self.prominence = prominence
+        self.row = row
+    }
+
+    public var body: some View {
+        Surface(prominence: prominence) {
+            VStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    row(item)
+                    if index < items.count - 1 {
+                        Rectangle()
+                            .fill(design.hairline.color)
+                            .frame(height: design.metrics.hairline)
+                            .padding(
+                                .leading,
+                                prominence == .subject
+                                    ? 46 : design.surfaces.separation == .rule ? 0 : 46)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A settings-style row: a label, its current value, and somewhere to go.
+///
+/// Interaction stays outside this view so the same production presentation
+/// can be used for a button or for a fact that has nowhere deeper to open.
+public struct FieldRow: View {
+    @Environment(\.design) private var design
+    private let label: String
+    private let value: String?
+    private let mono: Bool
+    private let glyph: String?
+    private let chevron: Bool
+    private let tint: Color?
+
+    public init(
+        label: String,
+        value: String? = nil,
+        mono: Bool = false,
+        glyph: String? = nil,
+        chevron: Bool = true,
+        tint: Color? = nil
+    ) {
+        self.label = label
+        self.value = value
+        self.mono = mono
+        self.glyph = glyph
+        self.chevron = chevron
+        self.tint = tint
+    }
+
+    public var body: some View {
+        HStack(spacing: 10) {
+            if let glyph {
+                Image(systemName: glyph)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(design.inkMuted.color)
+                    .frame(width: 20)
+            }
+            Text(label)
+                .designFont(.body, design)
+                .foregroundStyle(tint ?? design.ink.color)
+            Spacer(minLength: 10)
+            if let value {
+                Text(value)
+                    .designFont(mono ? .mono : .body, design)
+                    .foregroundStyle(design.inkMuted.color)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            if chevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(design.inkFaint.color)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+    }
+}
+
+/// A section header. Quiet, uppercase, and never coloured — a heading is
+/// structure, not attention.
+public struct SectionHead: View {
+    @Environment(\.design) private var design
+    private let title: String
+    private let trailing: String?
+
+    public init(title: String, trailing: String? = nil) {
+        self.title = title
+        self.trailing = trailing
+    }
+
+    public var body: some View {
+        HStack {
+            Text(title.uppercased())
+                .designFont(.sectionTitle, design)
+                .foregroundStyle(design.inkFaint.color)
+            Spacer()
+            if let trailing {
+                Text(trailing)
+                    .designFont(.caption, design)
+                    .foregroundStyle(design.inkFaint.color)
+            }
+        }
+        .padding(.leading, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A button. Four weights, and the outline exists so a refusal can sit beside
+/// an approval at the same size without looking like the same offer.
+public struct ActionLabel: View {
+    @Environment(\.design) private var design
+    private let title: String
+    private let kind: Kind
+    private let fill: Bool
+
+    /// `primary` is ink, not accent. Three waiting agents on one screen means
+    /// three primary buttons, and filling those with the accent floods a
+    /// screen whose whole rule is that colour means attention.
+    public enum Kind: Sendable { case primary, quiet, outline, plain }
+
+    public init(_ title: String, kind: Kind = .primary, fill: Bool = false) {
+        self.title = title
+        self.kind = kind
+        self.fill = fill
+    }
+
+    public var body: some View {
+        Text(title)
+            .designFont(.bodyEmphasis, design)
+            .foregroundStyle(foreground)
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .frame(maxWidth: fill ? .infinity : nil, minHeight: 44)
+            .background {
+                let shape = RoundedRectangle(
+                    cornerRadius: design.metrics.controlRadius, style: .continuous)
+                switch kind {
+                case .primary: shape.fill(design.ink.color)
+                case .quiet: shape.fill(design.sunken.color)
+                case .outline: shape.strokeBorder(design.hairline.color, lineWidth: 1)
+                case .plain: shape.fill(.clear)
+                }
+            }
+    }
+
+    private var foreground: Color {
+        switch kind {
+        case .primary: design.ground.color
+        case .quiet, .outline: design.ink.color
+        case .plain: design.accent.color
+        }
+    }
+}
+
+/// A round glass button — the shape iOS uses for a bare action in a bar.
+public struct GlassIcon: View {
+    @Environment(\.design) private var design
+    private let glyph: String
+    private let prominent: Bool
+    private let size: CGFloat
+
+    public init(glyph: String, prominent: Bool = false, size: CGFloat = 34) {
+        self.glyph = glyph
+        self.prominent = prominent
+        self.size = size
+    }
+
+    public var body: some View {
+        Image(systemName: glyph)
+            .font(.system(size: size * 0.44, weight: .semibold))
+            .foregroundStyle(prominent ? design.onAccent.color : design.ink.color)
+            .frame(width: size, height: size)
+            .background {
+                if prominent {
+                    Circle().fill(design.accent.color)
+                } else {
+                    Color.clear.frosted(Circle())
+                }
+            }
+            .contentShape(Circle())
+    }
+}
+
+/// The way back from a pushed screen.
+///
+/// The selected presentation uses the same compact tinted label everywhere.
+/// The action and accessibility name remain explicit because production
+/// screens navigate real state rather than depicting a static destination.
+public struct BackLink: View {
+    @Environment(\.design) private var design
+    private let title: String
+    private let identifier: String
+    private let spokenLabel: String
+    private let action: @MainActor () -> Void
+
+    public init(
+        _ title: String,
+        identifier: String,
+        accessibilityLabel: String? = nil,
+        action: @escaping @MainActor () -> Void
+    ) {
+        self.title = title
+        self.identifier = identifier
+        spokenLabel = accessibilityLabel ?? "Back to \(title)"
+        self.action = action
+    }
+
+    public var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 15, weight: .semibold))
+                Text(title)
+                    .designFont(.body, design)
+            }
+            .foregroundStyle(design.accent.color)
+            .thumbTarget(x: 1, y: 13)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(spokenLabel)
+        .identified(identifier, label: spokenLabel)
+        .reclaimingThumbTarget(x: 1, y: 13)
+    }
+}
+
+/// A screen's primary action on glass above the home indicator.
+///
+/// Kept separate from the full-height screen so scrolling content can run
+/// behind it and every flow gets the same reachable geometry.
+public struct BottomAction<Content: View>: View {
+    @Environment(\.design) private var design
+    private let content: Content
+
+    public init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) { content }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frosted(RoundedRectangle(
+                cornerRadius: design.metrics.floatRadius,
+                style: .continuous))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+    }
+}
+
+/// Supporting prose, one step down from the thing it explains.
+public struct Explain: View {
+    @Environment(\.design) private var design
+    private let text: String
+
+    public init(_ text: String) {
+        self.text = text
+    }
+
+    public var body: some View {
+        Text(text)
+            .designFont(.detail, design)
+            .foregroundStyle(design.inkMuted.color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// How a key is written where a person has to read it.
+///
+/// A fingerprint is sixty-four hex characters and the only thing anybody does
+/// with one is compare it against the same key written somewhere else, so how
+/// it is set is the whole of whether that comparison is possible.
+public enum Fingerprint {
+    /// In fours.
+    ///
+    /// An unbroken run of sixty-four is where an eye loses its place; in fours
+    /// the comparison is short hops. The characters and their order are
+    /// untouched, so what is on screen is still the fingerprint.
+    public static func grouped(_ fingerprint: String) -> String {
+        stride(from: 0, to: fingerprint.count, by: 4).map { start in
+            String(Array(fingerprint)[start..<min(start + 4, fingerprint.count)])
+        }.joined(separator: " ")
+    }
+
+    /// The first four characters and the last four, with the middle said to be
+    /// missing rather than merely absent.
+    ///
+    /// For a row that names a key rather than asks about one. Four and four is
+    /// what somebody can hold in their head while glancing between two
+    /// screens, and it is not a comparison — anywhere a key is actually being
+    /// decided about, the whole of it is shown.
+    public static func short(_ fingerprint: String) -> String {
+        guard fingerprint.count > 11 else { return fingerprint }
+        return "\(fingerprint.prefix(4))…\(fingerprint.suffix(4))"
+    }
+}

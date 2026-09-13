@@ -1111,6 +1111,10 @@ fn print_pairing_start(pairing: &PairingStart, print_link: bool) -> Result<()> {
     match &pairing.secret {
         PairingSecret::Pin(pin) => {
             println!("Pairing PIN: {pin}");
+            println!(
+                "PIN expires in {}.",
+                format_pairing_ttl(pairing.ttl_seconds)
+            );
             if let Some(port) = pairing.tcp_port {
                 println!("LAN direct listener: tcp_port {port}");
             }
@@ -1980,7 +1984,7 @@ mod tests {
             },
             ttl_seconds: 300,
             tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            cloud_url: "https://amux.sh".to_string(),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
         let PairingSecret::QrSecret(secret) = &pairing.secret else {
@@ -2004,7 +2008,7 @@ mod tests {
         assert!(value.get("pubkey").is_none());
         assert!(value.get("name").is_none());
         assert_eq!(parsed.host_id, uuid::Uuid::from_u128(1));
-        assert_eq!(parsed.cloud_url, "https://relay.example");
+        assert_eq!(parsed.cloud_url, "https://amux.sh");
         assert_eq!(parsed.secret, vec![9; 32]);
         assert!(qr.lines().count() > 4);
     }
@@ -2028,6 +2032,7 @@ mod tests {
 
     fn test_host(id: u128, name: &str) -> node::HostEntry {
         let host = node::Host {
+            platform: None,
             id: uuid::Uuid::from_u128(id),
             name: name.to_string(),
             version: "test".to_string(),
@@ -2041,6 +2046,7 @@ mod tests {
             capabilities: Some(host.capabilities.clone()),
             trust_status: node::HostTrustStatus::UntrustedButOnline,
             last_dial_error: None,
+            platform: None,
         }
     }
 
@@ -2049,6 +2055,8 @@ mod tests {
             host_id: uuid::Uuid::from_u128(id),
             name: name.to_string(),
             pubkey: vec![7; 32],
+            fingerprint: "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0"
+                .to_string(),
             paired_at: chrono::DateTime::from_timestamp(200, 0).unwrap(),
             reachabilities: vec![node::PeerReachability::Cloud],
         }

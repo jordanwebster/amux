@@ -58,7 +58,8 @@ impl TrustStore {
         load_trust_store_from_path(&trust_path(data_dir))
     }
 
-    pub(crate) fn load_or_create_in(data_dir: &Path) -> Result<Self, IdentityError> {
+    #[doc(hidden)]
+    pub fn load_or_create_in(data_dir: &Path) -> Result<Self, IdentityError> {
         let path = trust_path(data_dir);
         match load_trust_store_from_path(&path) {
             Ok(store) => Ok(store),

@@ -97,6 +97,7 @@ fn a_host() -> HostEntry {
         capabilities: Some(ui_state::Capabilities::default()),
         trust_status: ui_state::HostTrustStatus::Trusted,
         last_dial_error: None,
+        platform: None,
     }
 }
 

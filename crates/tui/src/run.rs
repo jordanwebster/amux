@@ -105,7 +105,7 @@ enum ChromeExit {
 
 /// Run the fleet until the user quits. `attach` is the raw-passthrough
 /// handoff, provided by the embedding CLI — the TUI itself never touches
-/// `amux::Client`. The terminal is restored before `attach` runs and the
+/// `client::Client`. The terminal is restored before `attach` runs and the
 /// chrome resumes (repainting from the Model) when it returns; a returned
 /// notice ("session ended", …) surfaces in the status line.
 pub async fn run_fleet<F, Fut>(
@@ -383,6 +383,10 @@ async fn perform(
                 let event = TraceEvent::Dispatched { op, command };
                 record(config, &event);
                 chrome.step(runtime.model(), &event);
+                if let Some(chat) = chrome.view.chat.as_mut() {
+                    chat.composer_mut()
+                        .hydrate_queued_attachments(|id| runtime.queued_attachment_bytes(id));
+                }
             }
             ShellEffect::ListProfiles => {
                 let event = match list_profiles(config).await {

@@ -21,6 +21,7 @@ pub mod answer;
 pub mod facts;
 mod fold;
 pub mod runs;
+pub mod todos;
 pub(crate) mod update;
 
 use std::collections::{BTreeSet, VecDeque};
@@ -995,6 +996,7 @@ pub struct ClaudeLayer {
     /// `/clear` signal).
     session_id: Option<String>,
     session: SessionFacts,
+    todos: todos::ClaudeTodos,
     entries: VecDeque<FeedEntry>,
     next_entry_id: u64,
     turn: TurnState,
@@ -1034,6 +1036,10 @@ pub struct ClaudeLayer {
 }
 
 impl ClaudeLayer {
+    pub fn todos(&self) -> Option<&crate::provider::TaskList> {
+        self.todos.current()
+    }
+
     /// Start (or restart) an observation window: a fresh subscription
     /// replays the source tail from scratch, so the layer folds from
     /// scratch — non-uuid rows (hooks, markers) have no dedupe key and
@@ -1726,6 +1732,7 @@ mod tests {
             capabilities: None,
             trust_status: model::HostTrustStatus::Trusted,
             last_dial_error: None,
+            platform: None,
         };
         let mut model = Model::default();
         for msg in [

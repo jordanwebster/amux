@@ -133,6 +133,7 @@ pub(crate) enum StructuredInputEvent {
     ClaudePty {
         client_seq: u64,
         intent: super::claude::io::Intent,
+        pins: Vec<model::ArtifactId>,
     },
     ClaudeSdk {
         input_id: Vec<u8>,
@@ -272,6 +273,9 @@ pub(crate) fn mcp_launch_route_for_tests(host_id: Uuid) -> McpLaunchRoute {
 /// Host-owned resources shared by agent backends.
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
+    /// Supplied sessions and input observation for runtimes that must not
+    /// launch real providers; `None` for every product runtime.
+    pub(crate) sources: Option<Arc<dyn super::ProviderSources>>,
     pub(crate) data_dir: std::path::PathBuf,
     pub(crate) runtime_dir: std::path::PathBuf,
     pub(crate) claude_user_keymap_dir: std::path::PathBuf,
@@ -295,6 +299,7 @@ impl AgentDeps {
         // fresh machine, and canonicalizing a path requires it to exist.
         std::fs::create_dir_all(&data_dir)?;
         Ok(Self {
+            sources: None,
             data_dir: std::fs::canonicalize(data_dir)?,
             runtime_dir,
             claude_user_keymap_dir,
@@ -338,6 +343,17 @@ pub(crate) trait AgentBackend: Send + Sync {
     async fn stop(&self, policy: StopPolicy);
     fn kind(&self) -> AgentKind;
     fn plane(&self, protocol: Protocol) -> std::result::Result<Plane, ProtocolError>;
+
+    /// The code this agent's process exited with, once the backend knows one.
+    ///
+    /// The end of a session's output stream is how a subscriber finds out that
+    /// an agent has gone, but the stream carries no code, so the close reason
+    /// is filled in from here instead. `None` is "the backend has no code for
+    /// it" and is never to be read as a successful exit: a phone that drew a
+    /// missing code as zero would be reporting something no host ever said.
+    fn exit_code(&self) -> Option<i32> {
+        None
+    }
 
     /// The structured output log where daemon-authored attachment metadata is
     /// published before an agent includes the matching mention in its reply.
@@ -419,14 +435,17 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
                 deps.mcp_launch_route.clone(),
                 deps.claude_user_keymap_dir.clone(),
             )
-            .with_artifact_root(deps.artifact_root(req.agent_id)),
+            .with_artifact_root(deps.artifact_root(req.agent_id))
+            .with_sources(deps.sources.clone()),
         )),
         AgentType::Claude {
             driver: ClaudeDriver::Sdk,
-        } => Ok(Box::new(
-            ClaudeSdkBackend::new(req, deps.mcp_launch_route.clone())
-                .with_artifact_root(deps.artifact_root(req.agent_id)),
-        )),
+        } => {
+            let backend = ClaudeSdkBackend::new(req, deps.mcp_launch_route.clone())
+                .with_artifact_root(deps.artifact_root(req.agent_id))
+                .with_sources(deps.sources.clone());
+            Ok(Box::new(backend))
+        }
         #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexBackend::new(
             req,
@@ -583,6 +602,41 @@ mod tests {
     use crate::suspend::SuspendedLocalAgentNameSource;
 
     #[test]
+    fn agent_deps_create_missing_data_directory_before_canonicalizing() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("fresh/data");
+        let deps = AgentDeps::new(
+            data_dir.clone(),
+            dir.path().to_path_buf(),
+            dir.path().join("codex.sock"),
+            mcp_launch_route_for_tests(Uuid::new_v4()),
+            dir.path().join("keymaps"),
+        )
+        .unwrap();
+        assert!(data_dir.is_dir());
+        assert_eq!(deps.data_dir, data_dir.canonicalize().unwrap());
+        assert!(deps.artifact_root(Uuid::new_v4()).is_absolute());
+    }
+
+    #[test]
+    fn agent_deps_reject_a_file_at_the_data_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        std::fs::write(&data_dir, "keep this file").unwrap();
+        assert!(
+            AgentDeps::new(
+                data_dir.clone(),
+                dir.path().to_path_buf(),
+                dir.path().join("codex.sock"),
+                mcp_launch_route_for_tests(Uuid::new_v4()),
+                dir.path().join("keymaps"),
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(data_dir).unwrap(), "keep this file");
+    }
+
+    #[test]
     fn managed_mcp_route_requires_absolute_existing_launch_facts() {
         let dir = tempfile::tempdir().unwrap();
         let executable = dir.path().join("amux");
@@ -720,59 +774,59 @@ mod tests {
 
     #[test]
     fn suspended_claude_into_session_filters_resume_unsafe_args() {
-        let sa = SuspendedAgent::Claude {
-            driver: ClaudeDriver::Sdk,
-            agent_id: Uuid::new_v4(),
-            name: Some("claude".to_string()),
-            name_source: SuspendedLocalAgentNameSource::ProviderName,
-            working_dir: PathBuf::from("/tmp"),
-            terminal_size: None,
-            args: vec![
-                "--dangerously-skip-permissions".to_string(),
-                "--resume".to_string(),
-                Uuid::new_v4().to_string(),
-                "--fork-session".to_string(),
-                "--continue".to_string(),
-                "--from-pr=123".to_string(),
-                "--session-id".to_string(),
-                Uuid::new_v4().to_string(),
-                "--worktree".to_string(),
-                "feature-branch".to_string(),
-                "--tmux=classic".to_string(),
-                "--model".to_string(),
-                "sonnet".to_string(),
-            ],
-            session_id: Uuid::new_v4(),
-            created_at: Utc::now(),
-            parent: None,
-            working_on: None,
-        };
+        for driver in [ClaudeDriver::Pty, ClaudeDriver::Sdk] {
+            let sa = SuspendedAgent::Claude {
+                driver,
+                agent_id: Uuid::new_v4(),
+                name: Some("claude".to_string()),
+                name_source: SuspendedLocalAgentNameSource::ProviderName,
+                working_dir: PathBuf::from("/tmp"),
+                terminal_size: None,
+                args: vec![
+                    "--dangerously-skip-permissions".to_string(),
+                    "--resume".to_string(),
+                    Uuid::new_v4().to_string(),
+                    "--fork-session".to_string(),
+                    "--continue".to_string(),
+                    "--from-pr=123".to_string(),
+                    "--session-id".to_string(),
+                    Uuid::new_v4().to_string(),
+                    "--worktree".to_string(),
+                    "feature-branch".to_string(),
+                    "--tmux=classic".to_string(),
+                    "--model".to_string(),
+                    "sonnet".to_string(),
+                ],
+                session_id: Uuid::new_v4(),
+                created_at: Utc::now(),
+                parent: None,
+                working_on: None,
+            };
 
-        let deps = AgentDeps::new(
-            std::env::temp_dir(),
-            std::env::temp_dir(),
-            std::env::temp_dir().join("amux-test-codex.sock"),
-            mcp_launch_route_for_tests(Uuid::new_v4()),
-            std::env::temp_dir().join("amux-test-keymaps"),
-        )
-        .unwrap();
-        let session = agent_from_suspended(sa, &deps);
+            let deps = AgentDeps::new(
+                std::env::temp_dir(),
+                std::env::temp_dir(),
+                std::env::temp_dir().join("amux-test-codex.sock"),
+                mcp_launch_route_for_tests(Uuid::new_v4()),
+                std::env::temp_dir().join("amux-test-keymaps"),
+            )
+            .unwrap();
+            let session = agent_from_suspended(sa, &deps);
 
-        assert_eq!(
-            session.kind(),
-            AgentKind::Claude {
-                driver: ClaudeDriver::Sdk,
-            }
-        );
+            assert_eq!(session.kind(), AgentKind::Claude { driver });
 
-        assert_eq!(
-            session.to_agent(Uuid::new_v4()).args,
-            vec![
-                "--dangerously-skip-permissions".to_string(),
-                "--model".to_string(),
-                "sonnet".to_string(),
-            ]
-        );
+            assert_eq!(
+                session.to_agent(Uuid::new_v4()).args,
+                vec![
+                    "--dangerously-skip-permissions".to_string(),
+                    "--model".to_string(),
+                    "sonnet".to_string(),
+                ]
+            );
+            assert!(
+                matches!(session.suspended_state().unwrap(), SuspendedAgent::Claude { driver: reopened, .. } if reopened == driver)
+            );
+        }
     }
 
     #[cfg(unix)]

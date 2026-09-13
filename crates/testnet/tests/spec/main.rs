@@ -30,6 +30,8 @@ mod debug; // Chapter 8 — Live daemon diagnostics
 mod identity; // Chapter 1 — Identity & trust
 mod pairing; // Chapter 2 — Pairing
 mod presence; // Chapter 3 — Presence
+mod repositories; // Host project discovery and recent directories
+mod revocation; // Device identity and immediate session revocation
 mod routing; // Chapter 4 — Routing & failover
 mod sessions; // Chapter 5 — Remote sessions & authority
 mod wire; // Chapter 6 — Wire conformance (WirePeer)

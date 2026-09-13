@@ -174,7 +174,10 @@ pub(crate) fn handle_chat_key(
         KeyCode::Char('v') if ctrl => {
             attach_clipboard(chat, model, crate::clipboard::read_clipboard());
         }
-        KeyCode::Tab | KeyCode::BackTab => {}
+        KeyCode::Tab => {
+            return crate::chat::queue::key(model, chat.agent, &mut chat.composer, None);
+        }
+        KeyCode::BackTab => {}
         _ => {
             composer::readline_key(&mut chat.composer, &key);
         }
@@ -299,8 +302,22 @@ fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
     // a draft with a token pending mid-turn is refused and resurfaces
     // rather than being steered in without its files.
     let attached = !chat.composer.tokens().is_empty();
-    let (text, attachments) = chat.composer.export(None);
-    let command = if attached {
+    let draft = chat.composer.export_draft(None);
+    let selected = draft
+        .segments
+        .iter()
+        .any(|segment| matches!(segment, ui_state::DraftSegment::CommandToken { .. }));
+    let text = draft.text();
+    let command = if selected {
+        if !ui_state::codex::allows_prompt(model, chat.agent) {
+            return None;
+        }
+        Command::Send {
+            agent: chat.agent,
+            draft,
+        }
+    } else if attached {
+        let attachments = draft.attachments;
         if !ui_state::codex::allows_steer(model, chat.agent)
             && !ui_state::codex::allows_prompt(model, chat.agent)
         {

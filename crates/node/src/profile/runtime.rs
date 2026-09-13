@@ -41,6 +41,7 @@ pub(crate) struct RuntimeConfig {
 /// Installation-owned settings shared by every profile runtime.
 #[derive(Clone)]
 pub struct InstallationSettings {
+    pub repository_roots: Vec<PathBuf>,
     pub host_name: String,
     pub prevent_idle_sleep: Option<bool>,
     pub keybinds: Keybinds,
@@ -114,6 +115,7 @@ impl ProfileRuntimeOptions {
             tcp_port: config.tcp_port,
         };
         let shared = InstallationSettings {
+            repository_roots: config.repository_roots,
             host_name: config.host_name,
             prevent_idle_sleep: config.prevent_idle_sleep,
             keybinds: config.keybinds,
@@ -140,6 +142,7 @@ impl ProfileRuntimeOptions {
 
     pub(crate) fn service_config(&self) -> Config {
         Config {
+            repository_roots: self.shared.repository_roots.clone(),
             host_name: self.shared.host_name.clone(),
             cloud_url: self.config.cloud_url.clone(),
             socket_path: self.paths.socket_path.clone(),
@@ -189,6 +192,9 @@ pub struct ProfileRuntime {
     in_process_connection: InProcessConnection,
     background_tasks: Vec<JoinHandle<()>>,
     cloud_connector: Mutex<Option<CloudConnector>>,
+    /// The embedder obtains relay credentials from the configured cloud through
+    /// its own account API. Stopping the profile must also stop this link.
+    relay_task: Mutex<Option<JoinHandle<()>>>,
     status: RuntimeStatus,
     #[cfg(unix)]
     unix_accept_task: Option<JoinHandle<()>>,
@@ -303,6 +309,7 @@ async fn build(
                 executable: std::env::current_exe()?,
                 profile_config_path: options.paths.config_path.clone(),
                 claude_user_keymap_dir: options.shared.keymaps_dir.clone(),
+                repository_roots: options.shared.repository_roots.clone(),
             })
         })
         .transpose()?;
@@ -369,6 +376,7 @@ async fn build(
         in_process_connection,
         background_tasks,
         cloud_connector: Mutex::new(None),
+        relay_task: Mutex::new(None),
         status,
         #[cfg(unix)]
         unix_accept_task,
@@ -389,6 +397,23 @@ impl ProfileRuntime {
     #[allow(dead_code)]
     pub(crate) fn status(&self) -> watch::Receiver<Observed> {
         self.status.subscribe()
+    }
+
+    /// Attach an embedder's relay route without changing the configured cloud.
+    /// One profile holds one relay; attaching a second replaces the first.
+    pub(crate) async fn attach_relay(&self, relay: crate::EmbeddedRelay) {
+        let task = relay.spawn(self.services.link_connector_ctx());
+        if let Some(previous) = self.relay_task.lock().await.replace(task) {
+            previous.abort();
+            let _ = previous.await;
+        }
+    }
+
+    async fn stop_relay(&self) {
+        if let Some(task) = self.relay_task.lock().await.take() {
+            task.abort();
+            let _ = task.await;
+        }
     }
 
     pub(crate) async fn configure_credentials(
@@ -506,6 +531,7 @@ impl ProfileRuntime {
     pub(crate) async fn quiesce(&mut self, reason: ShutdownReason) {
         self.stop_accepting_local_clients().await;
         self.stop_cloud().await;
+        self.stop_relay().await;
 
         if let Some(host) = &self.agent_host {
             host.notify_shutdown(reason).await;
@@ -556,6 +582,11 @@ impl Drop for ProfileRuntime {
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Some(task) = &self.unix_accept_task {
+            task.abort();
+        }
+        if let Ok(task) = self.relay_task.try_lock()
+            && let Some(task) = task.as_ref()
+        {
             task.abort();
         }
     }
@@ -697,6 +728,7 @@ mod tests {
                 tcp_port: None,
             },
             shared: Arc::new(InstallationSettings {
+                repository_roots: Vec::new(),
                 host_name: "profile-runtime-test".to_string(),
                 prevent_idle_sleep: Some(false),
                 keybinds: Keybinds::default(),

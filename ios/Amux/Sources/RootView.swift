@@ -1,0 +1,89 @@
+import AmuxCore
+import AmuxDesign
+import AmuxShell
+import SwiftUI
+
+/// The app's root.
+///
+/// A debug build shows whatever a driver has opened and the launch the
+/// performance suite asked to time; anything else, and any build a person
+/// installs, is the app itself.
+struct RootView: View {
+    @StateObject private var lifetime = CompositionLifetime()
+    private var composition: Composition { lifetime.value }
+    @Environment(\.scenePhase) private var phase
+
+    var body: some View {
+        scene
+            // Whether anybody is looking at this phone is a fact about the app,
+            // so it is said to the runtime rather than to any one screen. Put
+            // away, the link is released at once: a socket left for the system
+            // to freeze leaves every machine this phone was watching holding a
+            // connection nobody is reading.
+            .onChange(of: phase) { _, now in
+                composition.runtime.setActive(now != .background)
+            }
+    }
+
+    @ViewBuilder private var scene: some View {
+        #if AMUX_DEBUG_TOOLS
+        if let probe = ColdStartProbe.requested {
+            ColdStartProbe.view(probe)
+        } else {
+            DrivenRoot { app }
+                // What a driver queries is what is on screen, and until it
+                // opens a screen by name that is the app itself.
+                .onAppear {
+                    DoorHost.shared.adopt(
+                        composition.stores, accounts: composition.accounts,
+                        runtime: composition.runtime)
+                    DoorHost.shared.connectAsLaunchAsks()
+                    // A link the launch carried goes through the same door the
+                    // system's own links go through, before anything else has
+                    // happened — which is what a cold start opened by a link
+                    // is, and the case where nobody has signed in yet.
+                    if let link = DoorHost.linkAsLaunchAsks { composition.router.open(link) }
+                }
+        }
+        #else
+        app
+        #endif
+    }
+
+    private var report: (@MainActor () -> Void)? {
+        #if AMUX_DEBUG_TOOLS
+        { composition.beginReport() }
+        #else
+        nil
+        #endif
+    }
+
+    private var app: some View {
+        Shell(
+            router: composition.router,
+            accounts: composition.accounts,
+            stores: composition.stores,
+            signIn: composition.signIn,
+            paywall: composition.paywall,
+            deletion: composition.deletion,
+            appearance: composition.appearance,
+            report: report,
+            recording: composition.conversations,
+            actions: { composition.handle($0) }
+        )
+        // What the app is wearing. Set here rather than inside a screen: it
+        // is the whole app's, and a screen that carried it could not be
+        // photographed in the other one.
+        .modifier(ReportTools(composition: composition))
+        .preferredColorScheme(composition.appearance?.colorScheme)
+        .onOpenURL { composition.router.open($0) }
+    }
+}
+
+/// StateObject defers construction until SwiftUI installs the root. A State
+/// initial value is evaluated again when the root is rebuilt, which would
+/// start another runtime and another purchase listener on every redraw.
+@MainActor
+private final class CompositionLifetime: ObservableObject {
+    let value = Composition()
+}

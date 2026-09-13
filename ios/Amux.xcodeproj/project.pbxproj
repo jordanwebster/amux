@@ -1,0 +1,1213 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		03A652855597531ADB49E8BC /* DoorRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */; };
+		05DFFA86753B995BB850DE4C /* ScriptedCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */; };
+		07F4FE52C75D22617CDE6BB9 /* Composition.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60FB9981D4C68D3915DA21A /* Composition.swift */; };
+		08A81513DFEF3EE1567A6A5E /* VisibleTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8CE78DF417F5614935595CA /* VisibleTree.swift */; };
+		0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31777DF351ACE50870B1C6A5 /* LaunchTests.swift */; };
+		0F3AC52183DBFF753C52B8CF /* States.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66609895E99B406673EEADA3 /* States.swift */; };
+		108379821A1408D28DB67B7C /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */; };
+		1599214176F52201938E5128 /* DesignVariant.swift in Sources */ = {isa = PBXBuildFile; fileRef = 068E67CC97AD687C742CD825 /* DesignVariant.swift */; };
+		1A2A6C51813425F3286B3CB6 /* DoorScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = 979C7C4DC969977B66A65802 /* DoorScreens.swift */; };
+		1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B661BE2402BC7D004818A5 /* Workloads.swift */; };
+		1F71DC755174214F60A5E1B2 /* AccessibilityAuditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */; };
+		25543F13A602DAF36EED1D80 /* ScenarioShellTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD21CD9D48E1CF568C0633C /* ScenarioShellTests.swift */; };
+		2F0347A6EA4A7731721003EE /* Budgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = F001566356B6645AB41CE39B /* Budgets.swift */; };
+		344D301838279573239BD80D /* Judge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7316CFA811C55B9CEEB041C5 /* Judge.swift */; };
+		37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */; };
+		3E12136749508940FA54BC5F /* Fixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE7599AB005A8225918A3EF /* Fixture.swift */; };
+		48C852D18B47B3DA431FDA05 /* Door.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DA38C20C8560FEE2BB88D9F /* Door.swift */; };
+		526D112B4DCB651C254E5F9F /* ReportsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */; };
+		53E854553FBEB2A633CAF420 /* AccessibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DE352A112572D9D86D0590 /* AccessibilityTests.swift */; };
+		546E08243B4B5BE2BDFDAB84 /* DoorServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 590B62F0B4C074AA2233FC70 /* DoorServer.swift */; };
+		60B54AE413844E002F4EBB19 /* AmuxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 848B7908370DBF226D9CCEF9 /* AmuxCore */; };
+		6342144C68A9F27FC0B5B275 /* ProductionStartupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 383300BBC8CEEE1F13228DF4 /* ProductionStartupTests.swift */; };
+		63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = D140E97565E0C456B57BB601 /* DebugTools.swift */; };
+		65046E7D6034907CF41BD1A7 /* Transcript.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E455E43044DD55EB8662D4 /* Transcript.swift */; };
+		67582381464B6DAA9FEB4458 /* Reporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C038F1CC378B4A9539628D19 /* Reporting.swift */; };
+		6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */ = {isa = PBXBuildFile; productRef = C0C0812086F76FDC86EC6F93 /* AmuxDesign */; };
+		6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BF809F88F54D264E26E1F0B /* DrawerTests.swift */; };
+		71EF8392260DD101E76C1D32 /* AskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCD0B049D76F4DAF62A8B46E /* AskTests.swift */; };
+		7D4CF562DADA4EB7723324CD /* ReviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC486A7A07178E55789AE94C /* ReviewTests.swift */; };
+		7DD03CB11455B60BDC9037F5 /* DoorClearTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F786377F0001A4D4CC64B7DE /* DoorClearTests.swift */; };
+		82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */; };
+		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
+		894FA032EAF19BFC5E92664F /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4FC885DCA537FD2ABD0FD /* Trace.swift */; };
+		8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */; };
+		8F140E2B8F22F4D06C725763 /* ReportFreeze.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */; };
+		9222A460D7D6704965F130AF /* VisualInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD55A5CE02759F024BF86B2D /* VisualInteractionTests.swift */; };
+		9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE1CD31C989C5DC52354A7AE /* WritingTests.swift */; };
+		9B72360D2DD856243C1AED49 /* ScenarioShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D6ABD3CC3348B9AB8762BA /* ScenarioShell.swift */; };
+		9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */; };
+		9EFF05E4F3B472A8E7481411 /* Report.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25AE3ED34EF70375D2BC299C /* Report.swift */; };
+		A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */; };
+		A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */; };
+		A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A10C4D43E54FEABB391277E /* PerfRun.swift */; };
+		AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CBBB924EED36840518D0268 /* DoorHost.swift */; };
+		B37C5282B90F7083711687FC /* ColdStartProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */; };
+		BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7841E9EA7855115C8262F599 /* Localizable.xcstrings */; };
+		C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5E1FE40B447768ED3E301C2 /* Instruments.swift */; };
+		C4D570FB983731D617D6CB08 /* ReportAssembly.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1186A0565AF5053EC2C320C /* ReportAssembly.swift */; };
+		C80961F296CEC5BE7BD77318 /* ClaudeSessionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */; };
+		CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */ = {isa = PBXBuildFile; fileRef = 6DC1FF3D962A7B46549AF24A /* frozen-frame.png */; };
+		CAD420C705F7B9D3741E4C03 /* ReportTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03CB11BE8186B9B3BB3A02C2 /* ReportTools.swift */; };
+		CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */; };
+		D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71AECE15627BD11A3278E26C /* HostsTests.swift */; };
+		D6110EDBF7C482ED12425744 /* Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11108752C34ADBDF5089E372 /* Fixtures.swift */; };
+		DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D67FA937AF3288820FA3464 /* Perturbation.swift */; };
+		DDFD9CD189F0B140F851F65D /* AccountsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AF7C50B96593352DB0BC307 /* AccountsTests.swift */; };
+		E2141E4F9E984ECACF441955 /* Sessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FF4DBFB3F554EC2761318D /* Sessions.swift */; };
+		E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */; };
+		EBAE1EC4295F9EBBA0AF2D66 /* CloudSessionStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */; };
+		EEEEF4C1DDA205961E7286E0 /* DebugCopy.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */; };
+		EF9507B8D384D5EAE754EFB4 /* AmuxShell in Frameworks */ = {isa = PBXBuildFile; productRef = 62675EA602BEE702494C2D3C /* AmuxShell */; };
+		F073F2C3564C00E3DE4850C2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 75B8EB7D0AC92E0E6CB50314 /* Assets.xcassets */; };
+		F58309647B1BADB6407F626C /* DebugReports.swift in Sources */ = {isa = PBXBuildFile; fileRef = F285BF2881D10503D4252DF7 /* DebugReports.swift */; };
+		F840D37348D0746EA906D110 /* Harness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E50ACE0C6E84D336B13332 /* Harness.swift */; };
+		F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BAD30E79F5FE66C97691B57 /* RootView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4A353F499577E7D8C9493874 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4B97051BF0BFB50D573975CE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8CE566509F5A43BE6BF3E256;
+			remoteInfo = Amux;
+		};
+		5951062B3B4AFD2F0DA405C5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4B97051BF0BFB50D573975CE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8CE566509F5A43BE6BF3E256;
+			remoteInfo = Amux;
+		};
+		7B170D055CFEF59AE814DAC2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4B97051BF0BFB50D573975CE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8CE566509F5A43BE6BF3E256;
+			remoteInfo = Amux;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportsTests.swift; sourceTree = "<group>"; };
+		03CB11BE8186B9B3BB3A02C2 /* ReportTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportTools.swift; sourceTree = "<group>"; };
+		068E67CC97AD687C742CD825 /* DesignVariant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignVariant.swift; sourceTree = "<group>"; };
+		0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JourneyCase.swift; sourceTree = "<group>"; };
+		11108752C34ADBDF5089E372 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
+		1E66BD0F085353353B013CB1 /* AmuxCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxCore; path = Packages/AmuxCore; sourceTree = SOURCE_ROOT; };
+		21A4FC885DCA537FD2ABD0FD /* Trace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trace.swift; sourceTree = "<group>"; };
+		25AE3ED34EF70375D2BC299C /* Report.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Report.swift; sourceTree = "<group>"; };
+		27DA3C92A79D8C1B57236EC2 /* Amux.storekit */ = {isa = PBXFileReference; path = Amux.storekit; sourceTree = "<group>"; };
+		2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
+		2D67FA937AF3288820FA3464 /* Perturbation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Perturbation.swift; sourceTree = "<group>"; };
+		2DA38C20C8560FEE2BB88D9F /* Door.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Door.swift; sourceTree = "<group>"; };
+		2DE7599AB005A8225918A3EF /* Fixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixture.swift; sourceTree = "<group>"; };
+		31777DF351ACE50870B1C6A5 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
+		33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorRecording.swift; sourceTree = "<group>"; };
+		35ED0CE4A533E8878FBD1675 /* AmuxFeatures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxFeatures; path = Packages/AmuxFeatures; sourceTree = SOURCE_ROOT; };
+		383300BBC8CEEE1F13228DF4 /* ProductionStartupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionStartupTests.swift; sourceTree = "<group>"; };
+		456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAuditTests.swift; sourceTree = "<group>"; };
+		51DE352A112572D9D86D0590 /* AccessibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityTests.swift; sourceTree = "<group>"; };
+		57E50ACE0C6E84D336B13332 /* Harness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Harness.swift; sourceTree = "<group>"; };
+		590B62F0B4C074AA2233FC70 /* DoorServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorServer.swift; sourceTree = "<group>"; };
+		5CBBB924EED36840518D0268 /* DoorHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorHost.swift; sourceTree = "<group>"; };
+		63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceSuite.swift; sourceTree = "<group>"; };
+		66609895E99B406673EEADA3 /* States.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = States.swift; sourceTree = "<group>"; };
+		6AF7C50B96593352DB0BC307 /* AccountsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsTests.swift; sourceTree = "<group>"; };
+		6B110703FCD2FD223978C97E /* AmuxAppTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6BAD30E79F5FE66C97691B57 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		6DC1FF3D962A7B46549AF24A /* frozen-frame.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "frozen-frame.png"; sourceTree = "<group>"; };
+		71AECE15627BD11A3278E26C /* HostsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsTests.swift; sourceTree = "<group>"; };
+		7316CFA811C55B9CEEB041C5 /* Judge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Judge.swift; sourceTree = "<group>"; };
+		75B8EB7D0AC92E0E6CB50314 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		7841E9EA7855115C8262F599 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportFreeze.swift; sourceTree = "<group>"; };
+		7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeSessionsTests.swift; sourceTree = "<group>"; };
+		7BF809F88F54D264E26E1F0B /* DrawerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerTests.swift; sourceTree = "<group>"; };
+		7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scenario.swift; sourceTree = "<group>"; };
+		88D6ABD3CC3348B9AB8762BA /* ScenarioShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenarioShell.swift; sourceTree = "<group>"; };
+		8959E3A72299B8152BE86967 /* AmuxUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8A10C4D43E54FEABB391277E /* PerfRun.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfRun.swift; sourceTree = "<group>"; };
+		8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsLifecycleTests.swift; sourceTree = "<group>"; };
+		8ED8247A9E0214AD28831928 /* Amux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Amux.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		979C7C4DC969977B66A65802 /* DoorScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorScreens.swift; sourceTree = "<group>"; };
+		A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColdStartProbe.swift; sourceTree = "<group>"; };
+		A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorWindow.swift; sourceTree = "<group>"; };
+		B1186A0565AF5053EC2C320C /* ReportAssembly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportAssembly.swift; sourceTree = "<group>"; };
+		B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxTestSupport; path = Packages/AmuxTestSupport; sourceTree = SOURCE_ROOT; };
+		B60FB9981D4C68D3915DA21A /* Composition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composition.swift; sourceTree = "<group>"; };
+		B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTests.swift; sourceTree = "<group>"; };
+		BC486A7A07178E55789AE94C /* ReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewTests.swift; sourceTree = "<group>"; };
+		BE1CD31C989C5DC52354A7AE /* WritingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingTests.swift; sourceTree = "<group>"; };
+		C038F1CC378B4A9539628D19 /* Reporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Reporting.swift; sourceTree = "<group>"; };
+		C0FF4DBFB3F554EC2761318D /* Sessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sessions.swift; sourceTree = "<group>"; };
+		C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedCloud.swift; sourceTree = "<group>"; };
+		C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSessionStoreTests.swift; sourceTree = "<group>"; };
+		CD55A5CE02759F024BF86B2D /* VisualInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualInteractionTests.swift; sourceTree = "<group>"; };
+		CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptedStore.swift; sourceTree = "<group>"; };
+		D0E455E43044DD55EB8662D4 /* Transcript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transcript.swift; sourceTree = "<group>"; };
+		D140E97565E0C456B57BB601 /* DebugTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugTools.swift; sourceTree = "<group>"; };
+		D5E1FE40B447768ED3E301C2 /* Instruments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Instruments.swift; sourceTree = "<group>"; };
+		D8269D1B95602732F33C12F2 /* AmuxDesign */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxDesign; path = Packages/AmuxDesign; sourceTree = SOURCE_ROOT; };
+		DCD0B049D76F4DAF62A8B46E /* AskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskTests.swift; sourceTree = "<group>"; };
+		DDD21CD9D48E1CF568C0633C /* ScenarioShellTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScenarioShellTests.swift; sourceTree = "<group>"; };
+		DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = DebugCopy.xcstrings; sourceTree = "<group>"; };
+		DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AmuxPerformanceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E2D4F1F96B2AE8306CD589E6 /* AmuxShell */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxShell; path = Packages/AmuxShell; sourceTree = SOURCE_ROOT; };
+		E8CE78DF417F5614935595CA /* VisibleTree.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisibleTree.swift; sourceTree = "<group>"; };
+		EBADB0CC914373F8BD52E715 /* AmuxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmuxApp.swift; sourceTree = "<group>"; };
+		F001566356B6645AB41CE39B /* Budgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Budgets.swift; sourceTree = "<group>"; };
+		F285BF2881D10503D4252DF7 /* DebugReports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugReports.swift; sourceTree = "<group>"; };
+		F5B661BE2402BC7D004818A5 /* Workloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workloads.swift; sourceTree = "<group>"; };
+		F786377F0001A4D4CC64B7DE /* DoorClearTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorClearTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		087ACC5288C152DE24BF20F1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				60B54AE413844E002F4EBB19 /* AmuxCore in Frameworks */,
+				6805234D9DC817A50B5F83BD /* AmuxDesign in Frameworks */,
+				E4DF9C7A152AFAF210FB4241 /* AmuxFeatures in Frameworks */,
+				EF9507B8D384D5EAE754EFB4 /* AmuxShell in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		079E0F65A5017818AF6B8C54 /* AmuxPerformanceTests */ = {
+			isa = PBXGroup;
+			children = (
+				57E50ACE0C6E84D336B13332 /* Harness.swift */,
+				63120450B545B5EC94CC0A5A /* PerformanceSuite.swift */,
+			);
+			path = AmuxPerformanceTests;
+			sourceTree = "<group>";
+		};
+		0F43E47BAFD6271888A5F0B5 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				EBADB0CC914373F8BD52E715 /* AmuxApp.swift */,
+				B60FB9981D4C68D3915DA21A /* Composition.swift */,
+				D140E97565E0C456B57BB601 /* DebugTools.swift */,
+				03CB11BE8186B9B3BB3A02C2 /* ReportTools.swift */,
+				6BAD30E79F5FE66C97691B57 /* RootView.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		211FF3D8B6D4DECA3AF7C730 /* AmuxTestSupport */ = {
+			isa = PBXGroup;
+			children = (
+				391F86AC1B6BF70CB0FC7682 /* Sources */,
+			);
+			path = AmuxTestSupport;
+			sourceTree = "<group>";
+		};
+		391F86AC1B6BF70CB0FC7682 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				E523E3C49D2BD2D762FB2042 /* AmuxTestSupport */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		4449D0A6A852D2E301F18DB9 /* AmuxCore */ = {
+			isa = PBXGroup;
+			children = (
+				A93C129C195D63A10C55EBFC /* Sources */,
+			);
+			path = AmuxCore;
+			sourceTree = "<group>";
+		};
+		5445FBC267DE6D42E3D857C1 /* AmuxUITests */ = {
+			isa = PBXGroup;
+			children = (
+				456A00ECD8EEBD4C0C5E19EA /* AccessibilityAuditTests.swift */,
+				51DE352A112572D9D86D0590 /* AccessibilityTests.swift */,
+				6AF7C50B96593352DB0BC307 /* AccountsTests.swift */,
+				DCD0B049D76F4DAF62A8B46E /* AskTests.swift */,
+				7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */,
+				B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */,
+				7BF809F88F54D264E26E1F0B /* DrawerTests.swift */,
+				8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */,
+				71AECE15627BD11A3278E26C /* HostsTests.swift */,
+				0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */,
+				31777DF351ACE50870B1C6A5 /* LaunchTests.swift */,
+				383300BBC8CEEE1F13228DF4 /* ProductionStartupTests.swift */,
+				00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */,
+				BC486A7A07178E55789AE94C /* ReviewTests.swift */,
+				CD55A5CE02759F024BF86B2D /* VisualInteractionTests.swift */,
+				BE1CD31C989C5DC52354A7AE /* WritingTests.swift */,
+			);
+			path = AmuxUITests;
+			sourceTree = "<group>";
+		};
+		5D6EA25B972CA82995FF10D2 /* Instrumentation */ = {
+			isa = PBXGroup;
+			children = (
+				F001566356B6645AB41CE39B /* Budgets.swift */,
+				D5E1FE40B447768ED3E301C2 /* Instruments.swift */,
+				7316CFA811C55B9CEEB041C5 /* Judge.swift */,
+				8A10C4D43E54FEABB391277E /* PerfRun.swift */,
+				F5B661BE2402BC7D004818A5 /* Workloads.swift */,
+			);
+			path = Instrumentation;
+			sourceTree = "<group>";
+		};
+		64DAC62299FAA0DD1E9445EA /* Amux */ = {
+			isa = PBXGroup;
+			children = (
+				27DA3C92A79D8C1B57236EC2 /* Amux.storekit */,
+				75B8EB7D0AC92E0E6CB50314 /* Assets.xcassets */,
+				6B58A624FCE2BFEB88AF23F9 /* Debug */,
+				7C9196A3EDC8707B2657D3CD /* Resources */,
+				0F43E47BAFD6271888A5F0B5 /* Sources */,
+			);
+			path = Amux;
+			sourceTree = "<group>";
+		};
+		6B58A624FCE2BFEB88AF23F9 /* Debug */ = {
+			isa = PBXGroup;
+			children = (
+				A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */,
+				F285BF2881D10503D4252DF7 /* DebugReports.swift */,
+				068E67CC97AD687C742CD825 /* DesignVariant.swift */,
+				5CBBB924EED36840518D0268 /* DoorHost.swift */,
+				33BD73AB3A31468E85BE38F7 /* DoorRecording.swift */,
+				979C7C4DC969977B66A65802 /* DoorScreens.swift */,
+				590B62F0B4C074AA2233FC70 /* DoorServer.swift */,
+				A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */,
+				2D67FA937AF3288820FA3464 /* Perturbation.swift */,
+				7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */,
+				88D6ABD3CC3348B9AB8762BA /* ScenarioShell.swift */,
+				E8CE78DF417F5614935595CA /* VisibleTree.swift */,
+			);
+			path = Debug;
+			sourceTree = "<group>";
+		};
+		7C9196A3EDC8707B2657D3CD /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				2BA304BF0D2207C48DE6459A /* InfoPlist.xcstrings */,
+				7841E9EA7855115C8262F599 /* Localizable.xcstrings */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		8D168EC7A03FA2A38159AE6D /* AmuxAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				C916FF76DCD829D84F4051A9 /* CloudSessionStoreTests.swift */,
+				F786377F0001A4D4CC64B7DE /* DoorClearTests.swift */,
+				DDD21CD9D48E1CF568C0633C /* ScenarioShellTests.swift */,
+			);
+			path = AmuxAppTests;
+			sourceTree = "<group>";
+		};
+		93E975D8BBA6A4EE577D8738 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				DED864CA0D0EB693E625CE90 /* DebugCopy.xcstrings */,
+				6DC1FF3D962A7B46549AF24A /* frozen-frame.png */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		A93C129C195D63A10C55EBFC /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				5D6EA25B972CA82995FF10D2 /* Instrumentation */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		AE5FEBD430E530D71BFD9832 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8ED8247A9E0214AD28831928 /* Amux.app */,
+				6B110703FCD2FD223978C97E /* AmuxAppTests.xctest */,
+				DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */,
+				8959E3A72299B8152BE86967 /* AmuxUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		D51D25E7E8B59A0F5D1EFB9F = {
+			isa = PBXGroup;
+			children = (
+				64DAC62299FAA0DD1E9445EA /* Amux */,
+				8D168EC7A03FA2A38159AE6D /* AmuxAppTests */,
+				079E0F65A5017818AF6B8C54 /* AmuxPerformanceTests */,
+				5445FBC267DE6D42E3D857C1 /* AmuxUITests */,
+				ECABC02511DE788415933245 /* Packages */,
+				AE5FEBD430E530D71BFD9832 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E523E3C49D2BD2D762FB2042 /* AmuxTestSupport */ = {
+			isa = PBXGroup;
+			children = (
+				2DA38C20C8560FEE2BB88D9F /* Door.swift */,
+				2DE7599AB005A8225918A3EF /* Fixture.swift */,
+				11108752C34ADBDF5089E372 /* Fixtures.swift */,
+				25AE3ED34EF70375D2BC299C /* Report.swift */,
+				B1186A0565AF5053EC2C320C /* ReportAssembly.swift */,
+				C038F1CC378B4A9539628D19 /* Reporting.swift */,
+				7C2FB814990F3E0FD8FCB4F7 /* Scenario.swift */,
+				C8F013D54F67D2DF0722A08B /* ScriptedCloud.swift */,
+				CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */,
+				C0FF4DBFB3F554EC2761318D /* Sessions.swift */,
+				66609895E99B406673EEADA3 /* States.swift */,
+				21A4FC885DCA537FD2ABD0FD /* Trace.swift */,
+				D0E455E43044DD55EB8662D4 /* Transcript.swift */,
+				93E975D8BBA6A4EE577D8738 /* Resources */,
+			);
+			path = AmuxTestSupport;
+			sourceTree = "<group>";
+		};
+		ECABC02511DE788415933245 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				1E66BD0F085353353B013CB1 /* AmuxCore */,
+				D8269D1B95602732F33C12F2 /* AmuxDesign */,
+				35ED0CE4A533E8878FBD1675 /* AmuxFeatures */,
+				E2D4F1F96B2AE8306CD589E6 /* AmuxShell */,
+				B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */,
+				4449D0A6A852D2E301F18DB9 /* AmuxCore */,
+				211FF3D8B6D4DECA3AF7C730 /* AmuxTestSupport */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0E3DEC796899800C70DE59A8 /* AmuxPerformanceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 72CE7FB944009A38D87A9371 /* Build configuration list for PBXNativeTarget "AmuxPerformanceTests" */;
+			buildPhases = (
+				114CCBA2C817D62D398FF5B0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A0D731EC13F9142BB2A92EBF /* PBXTargetDependency */,
+			);
+			name = AmuxPerformanceTests;
+			packageProductDependencies = (
+			);
+			productName = AmuxPerformanceTests;
+			productReference = DFA3FE58C994180C5E2D0A4A /* AmuxPerformanceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		39E34D09D12B6D7C614BBB7E /* AmuxAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5359A6802F93ECA967FB5952 /* Build configuration list for PBXNativeTarget "AmuxAppTests" */;
+			buildPhases = (
+				16428338F9A0A10824F76155 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				965AEF19A167D1DC379083CB /* PBXTargetDependency */,
+			);
+			name = AmuxAppTests;
+			packageProductDependencies = (
+			);
+			productName = AmuxAppTests;
+			productReference = 6B110703FCD2FD223978C97E /* AmuxAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		3DAE7AD018B70A791E1B19D2 /* AmuxUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E6C3D05D0A216189D1246CDF /* Build configuration list for PBXNativeTarget "AmuxUITests" */;
+			buildPhases = (
+				DC0C4BC62E0C8E248FD35028 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				483807172FF3F5C5E1FB6AF0 /* PBXTargetDependency */,
+			);
+			name = AmuxUITests;
+			packageProductDependencies = (
+			);
+			productName = AmuxUITests;
+			productReference = 8959E3A72299B8152BE86967 /* AmuxUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		8CE566509F5A43BE6BF3E256 /* Amux */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 190B54AA9652906BD3C934F6 /* Build configuration list for PBXNativeTarget "Amux" */;
+			buildPhases = (
+				5E9F944893B010C181A29691 /* Sources */,
+				5948808C37D5481CF54926FA /* Resources */,
+				087ACC5288C152DE24BF20F1 /* Frameworks */,
+				88F452263714DA127A8A5474 /* Stamp build revision */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Amux;
+			packageProductDependencies = (
+				848B7908370DBF226D9CCEF9 /* AmuxCore */,
+				C0C0812086F76FDC86EC6F93 /* AmuxDesign */,
+				ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */,
+				62675EA602BEE702494C2D3C /* AmuxShell */,
+			);
+			productName = Amux;
+			productReference = 8ED8247A9E0214AD28831928 /* Amux.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4B97051BF0BFB50D573975CE /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					3DAE7AD018B70A791E1B19D2 = {
+						TestTargetID = 8CE566509F5A43BE6BF3E256;
+					};
+				};
+			};
+			buildConfigurationList = EA57BA1454AB80E40B57D3E9 /* Build configuration list for PBXProject "Amux" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = D51D25E7E8B59A0F5D1EFB9F;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				6BCA3E1C4A766A300B0FD144 /* XCLocalSwiftPackageReference "Packages/AmuxCore" */,
+				87D93FCE7D2252AFAE7760EA /* XCLocalSwiftPackageReference "Packages/AmuxDesign" */,
+				0033DA7A4EFD7D0F13865D0B /* XCLocalSwiftPackageReference "Packages/AmuxFeatures" */,
+				8A8E38DF270BBB52E142EA5A /* XCLocalSwiftPackageReference "Packages/AmuxShell" */,
+				98FC981B2E43A26E778C7AC1 /* XCLocalSwiftPackageReference "Packages/AmuxTestSupport" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = AE5FEBD430E530D71BFD9832 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8CE566509F5A43BE6BF3E256 /* Amux */,
+				0E3DEC796899800C70DE59A8 /* AmuxPerformanceTests */,
+				39E34D09D12B6D7C614BBB7E /* AmuxAppTests */,
+				3DAE7AD018B70A791E1B19D2 /* AmuxUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5948808C37D5481CF54926FA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F073F2C3564C00E3DE4850C2 /* Assets.xcassets in Resources */,
+				EEEEF4C1DDA205961E7286E0 /* DebugCopy.xcstrings in Resources */,
+				108379821A1408D28DB67B7C /* InfoPlist.xcstrings in Resources */,
+				BAED77CD2151147F26ABA239 /* Localizable.xcstrings in Resources */,
+				CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		88F452263714DA127A8A5474 /* Stamp build revision */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Stamp build revision";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nrevision=$(git -C \"$SRCROOT/..\" rev-parse --verify HEAD)\n/usr/bin/plutil -replace AmuxGitSHA -string \"$revision\" \"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		114CCBA2C817D62D398FF5B0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F840D37348D0746EA906D110 /* Harness.swift in Sources */,
+				A3C2080DEA1ECDCA5A1BA441 /* PerformanceSuite.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		16428338F9A0A10824F76155 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EBAE1EC4295F9EBBA0AF2D66 /* CloudSessionStoreTests.swift in Sources */,
+				7DD03CB11455B60BDC9037F5 /* DoorClearTests.swift in Sources */,
+				25543F13A602DAF36EED1D80 /* ScenarioShellTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5E9F944893B010C181A29691 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */,
+				2F0347A6EA4A7731721003EE /* Budgets.swift in Sources */,
+				B37C5282B90F7083711687FC /* ColdStartProbe.swift in Sources */,
+				07F4FE52C75D22617CDE6BB9 /* Composition.swift in Sources */,
+				F58309647B1BADB6407F626C /* DebugReports.swift in Sources */,
+				63B326F073D9E4A7C5D91A90 /* DebugTools.swift in Sources */,
+				1599214176F52201938E5128 /* DesignVariant.swift in Sources */,
+				48C852D18B47B3DA431FDA05 /* Door.swift in Sources */,
+				AEE5ABB7E7D74D75A3DF45A5 /* DoorHost.swift in Sources */,
+				03A652855597531ADB49E8BC /* DoorRecording.swift in Sources */,
+				1A2A6C51813425F3286B3CB6 /* DoorScreens.swift in Sources */,
+				546E08243B4B5BE2BDFDAB84 /* DoorServer.swift in Sources */,
+				82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */,
+				3E12136749508940FA54BC5F /* Fixture.swift in Sources */,
+				D6110EDBF7C482ED12425744 /* Fixtures.swift in Sources */,
+				C09FEF55EDD6530C94D3E862 /* Instruments.swift in Sources */,
+				344D301838279573239BD80D /* Judge.swift in Sources */,
+				A92A10C6E039B88E5E0125C8 /* PerfRun.swift in Sources */,
+				DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */,
+				9EFF05E4F3B472A8E7481411 /* Report.swift in Sources */,
+				C4D570FB983731D617D6CB08 /* ReportAssembly.swift in Sources */,
+				8F140E2B8F22F4D06C725763 /* ReportFreeze.swift in Sources */,
+				CAD420C705F7B9D3741E4C03 /* ReportTools.swift in Sources */,
+				67582381464B6DAA9FEB4458 /* Reporting.swift in Sources */,
+				F99BD8E096C2973B6CC4F697 /* RootView.swift in Sources */,
+				9C3AAE5DB31CE53B73046F3D /* Scenario.swift in Sources */,
+				9B72360D2DD856243C1AED49 /* ScenarioShell.swift in Sources */,
+				05DFFA86753B995BB850DE4C /* ScriptedCloud.swift in Sources */,
+				CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */,
+				E2141E4F9E984ECACF441955 /* Sessions.swift in Sources */,
+				0F3AC52183DBFF753C52B8CF /* States.swift in Sources */,
+				894FA032EAF19BFC5E92664F /* Trace.swift in Sources */,
+				65046E7D6034907CF41BD1A7 /* Transcript.swift in Sources */,
+				08A81513DFEF3EE1567A6A5E /* VisibleTree.swift in Sources */,
+				1EB380BBF813E1A744D85210 /* Workloads.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DC0C4BC62E0C8E248FD35028 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1F71DC755174214F60A5E1B2 /* AccessibilityAuditTests.swift in Sources */,
+				53E854553FBEB2A633CAF420 /* AccessibilityTests.swift in Sources */,
+				DDFD9CD189F0B140F851F65D /* AccountsTests.swift in Sources */,
+				71EF8392260DD101E76C1D32 /* AskTests.swift in Sources */,
+				C80961F296CEC5BE7BD77318 /* ClaudeSessionsTests.swift in Sources */,
+				37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */,
+				6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */,
+				A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */,
+				D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */,
+				8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */,
+				0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */,
+				6342144C68A9F27FC0B5B275 /* ProductionStartupTests.swift in Sources */,
+				526D112B4DCB651C254E5F9F /* ReportsTests.swift in Sources */,
+				7D4CF562DADA4EB7723324CD /* ReviewTests.swift in Sources */,
+				9222A460D7D6704965F130AF /* VisualInteractionTests.swift in Sources */,
+				9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		483807172FF3F5C5E1FB6AF0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
+			targetProxy = 4A353F499577E7D8C9493874 /* PBXContainerItemProxy */;
+		};
+		965AEF19A167D1DC379083CB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
+			targetProxy = 5951062B3B4AFD2F0DA405C5 /* PBXContainerItemProxy */;
+		};
+		A0D731EC13F9142BB2A92EBF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8CE566509F5A43BE6BF3E256 /* Amux */;
+			targetProxy = 7B170D055CFEF59AE814DAC2 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		18AF2EFCFA6E6DA9D324BAEE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		1C6A74E2A949CE5DA9BC6C59 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = Amux/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.31;
+				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a";
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG AMUX_DEBUG_TOOLS";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		2244784CDFC88C6A4DEA3688 /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				INFOPLIST_FILE = Amux/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.31;
+				OTHER_LDFLAGS = "-Wl,-force_load,$(SRCROOT)/../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a";
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = AMUX_DEBUG_TOOLS;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Measured;
+		};
+		304A2DC4DD64B8229FE6D67C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxUITests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Amux;
+			};
+			name = Release;
+		};
+		43EAF82C28C6FB2A3DB797AE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Amux/Amux.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				EXCLUDED_SOURCE_FILE_NAMES = "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*";
+				INFOPLIST_FILE = Amux/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.31;
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.app;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		4B3647C5C587712138659643 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxPerformanceTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Debug;
+		};
+		553ECCECE82F6F452BAE186A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxAppTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Debug;
+		};
+		62CBA0674792A649E6E61464 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxUITests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Amux;
+			};
+			name = Debug;
+		};
+		7AC0602D3E224FBB05D7825E /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxPerformanceTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Measured;
+		};
+		7D44E6B517687482E46CF54B /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxUITests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Amux;
+			};
+			name = Measured;
+		};
+		7EA0143F3EF99114A4D5DB7E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxAppTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Release;
+		};
+		9E74B7CC23B1363A40BF1044 /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxAppTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Measured;
+		};
+		9EAFCF25DF8CB11DA1F9749F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = sh.amux.AmuxPerformanceTests;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Amux.app/Amux";
+			};
+			name = Release;
+		};
+		B49E27100A3872C1F96C1D05 /* Measured */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Measured;
+		};
+		B9B730C37BC23724695BE5B8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				"CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]" = YES;
+				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "-";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		190B54AA9652906BD3C934F6 /* Build configuration list for PBXNativeTarget "Amux" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C6A74E2A949CE5DA9BC6C59 /* Debug */,
+				2244784CDFC88C6A4DEA3688 /* Measured */,
+				43EAF82C28C6FB2A3DB797AE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		5359A6802F93ECA967FB5952 /* Build configuration list for PBXNativeTarget "AmuxAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				553ECCECE82F6F452BAE186A /* Debug */,
+				9E74B7CC23B1363A40BF1044 /* Measured */,
+				7EA0143F3EF99114A4D5DB7E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		72CE7FB944009A38D87A9371 /* Build configuration list for PBXNativeTarget "AmuxPerformanceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4B3647C5C587712138659643 /* Debug */,
+				7AC0602D3E224FBB05D7825E /* Measured */,
+				9EAFCF25DF8CB11DA1F9749F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E6C3D05D0A216189D1246CDF /* Build configuration list for PBXNativeTarget "AmuxUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				62CBA0674792A649E6E61464 /* Debug */,
+				7D44E6B517687482E46CF54B /* Measured */,
+				304A2DC4DD64B8229FE6D67C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EA57BA1454AB80E40B57D3E9 /* Build configuration list for PBXProject "Amux" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				18AF2EFCFA6E6DA9D324BAEE /* Debug */,
+				B49E27100A3872C1F96C1D05 /* Measured */,
+				B9B730C37BC23724695BE5B8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		0033DA7A4EFD7D0F13865D0B /* XCLocalSwiftPackageReference "Packages/AmuxFeatures" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxFeatures;
+		};
+		6BCA3E1C4A766A300B0FD144 /* XCLocalSwiftPackageReference "Packages/AmuxCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxCore;
+		};
+		87D93FCE7D2252AFAE7760EA /* XCLocalSwiftPackageReference "Packages/AmuxDesign" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxDesign;
+		};
+		8A8E38DF270BBB52E142EA5A /* XCLocalSwiftPackageReference "Packages/AmuxShell" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxShell;
+		};
+		98FC981B2E43A26E778C7AC1 /* XCLocalSwiftPackageReference "Packages/AmuxTestSupport" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/AmuxTestSupport;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		62675EA602BEE702494C2D3C /* AmuxShell */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AmuxShell;
+		};
+		848B7908370DBF226D9CCEF9 /* AmuxCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AmuxCore;
+		};
+		C0C0812086F76FDC86EC6F93 /* AmuxDesign */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AmuxDesign;
+		};
+		ED0B17C1ED307B6E87D386C9 /* AmuxFeatures */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AmuxFeatures;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4B97051BF0BFB50D573975CE /* Project object */;
+}

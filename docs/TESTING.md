@@ -73,6 +73,31 @@ just claude-pty-live -- SCENARIO
 just claude-sdk-live -- SCENARIO
 ```
 
+## Clocks, readiness and independent cases
+
+Tests do not sleep in real time. Backoff, cooldowns and keyboard delays use a
+clock the test drives. A simulated timeout is a duration the test advances,
+not a quiet interval it waits out. Keep the full duration and all boundary
+assertions when moving a scenario onto a controlled clock.
+
+Readiness waits on notifications, never polling. Register the subscription
+before inspecting the current state so a change between inspection and waiting
+cannot be lost. Keep a bounded failure deadline and report the observed state
+when it expires. Completing recorded output closes the stream before the
+simulated process exits; no live settling delay belongs in a replay.
+
+Real sockets and child processes still need to make progress. Run their IO on
+real time, and advance controlled time only for the simulated behavior under
+test. An assertion that a real peer sends nothing must observe its complete
+declared absence window; a scheduling yield does not prove absence.
+
+Each independent scenario is one test, so the harness can run it concurrently.
+Share immutable fixture construction once per harness when it is expensive;
+each test owns its mutable session, output and observation state. Partition
+large viewport or replay sweeps without dropping any size, frame, prefix or
+assertion. A serial loop over the whole corpus conceals the work from the
+harness and prevents it from scheduling the cases independently.
+
 ## 4. PTY end-to-end tests
 
 `e2e-runner` launches real CLI, daemon and test-agent processes and compares
@@ -90,12 +115,20 @@ than merely that a signal was sent.
 
 ## 5. Phone journeys
 
-The native app merge adds phone journeys driven against `testnet serve`: real
-daemon and relay processes, scripted providers, and the app's own UI. They are
-invoked through the native app's `just ios journey` recipe, not by reaching
-into the harness with an ad-hoc command. This branch prepares the harness and
-task boundary; the journey runner arrives with the native code described in
-[native integration](NATIVE_INTEGRATION.md).
+Phone journeys drive the iPhone app the way a person does, against a served
+test network: real daemon and relay processes started from a committed
+topology, scripted providers, and the app's own UI on a pinned simulator.
+
+```sh
+just ios journey
+just ios journey -- hosts
+```
+
+The served network is `target/debug/testnet serve`; every control verb it
+accepts is also a method of the in-process harness with the same name, so a
+journey and a Rust spec describe the same behaviour. [TESTNET.md](TESTNET.md)
+owns the topology format and the control protocol; [IOS.md](IOS.md) owns the
+journey manifest, goldens and simulator pins.
 
 ## Failure evidence
 

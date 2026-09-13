@@ -1,0 +1,53 @@
+{
+  "build" : "amux-ios\/1.0.31",
+  "created_at" : "2026-09-11T04:25:20.099Z",
+  "detail" : "agents",
+  "git_sha" : "233be2ba6e9de8f29e36f70564fcedffd4e0ba7e",
+  "image_frame" : {
+    "height_pt" : 874,
+    "scale" : 3,
+    "width_pt" : 402
+  },
+  "kind" : "bug",
+  "marks" : [
+    {
+      "height" : 87.510204081632637,
+      "note" : "the count in this badge is one too many",
+      "width" : 208.52040816326527,
+      "x" : 48.540816326530589,
+      "y" : 113.48979591836736
+    },
+    {
+      "height" : 87.510204081632693,
+      "note" : "this row says it is offline and it is not",
+      "width" : 233.1326530612244,
+      "x" : 112.80612244897959,
+      "y" : 358.24489795918362
+    },
+    {
+      "height" : 105.28571428571436,
+      "note" : "this line is cut off on the right",
+      "width" : 248.85714285714286,
+      "x" : 40.336734693877531,
+      "y" : 594.11224489795904
+    }
+  ],
+  "note" : "The home has been wrong since it reconnected.",
+  "parts" : {
+    "daemon" : "present",
+    "frame" : "present",
+    "log" : {
+      "absent" : {
+        "reason" : "this app logs through the system, which keeps no file it can read back"
+      }
+    },
+    "msgs" : "present",
+    "trace" : "present",
+    "trace_kind" : "native_view"
+  },
+  "replay" : "unchecked",
+  "schema_version" : 2,
+  "stamp" : "1789100720099-42191",
+  "status" : "open",
+  "viewport" : null
+}

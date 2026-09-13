@@ -166,6 +166,9 @@ pub struct HostConfig {
     pub executable: PathBuf,
     pub profile_config_path: Option<PathBuf>,
     pub claude_user_keymap_dir: PathBuf,
+    /// Directories searched for Git repositories when a client asks where an
+    /// agent could be started. Empty means nothing is enumerated.
+    pub repository_roots: Vec<PathBuf>,
 }
 
 #[async_trait]
@@ -174,6 +177,13 @@ pub trait LocalAgentHost: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn capabilities(&self) -> model::Capabilities;
     async fn agent(&self, agent_id: AgentId) -> Result<Agent, ProtocolError>;
+    /// Recent projects and repositories under the configured roots, filtered
+    /// by an optional substring and bounded by `limit`.
+    async fn list_repositories(
+        &self,
+        query: Option<String>,
+        limit: u32,
+    ) -> Result<model::ListRepositoriesResponse, ProtocolError>;
     async fn create(
         &self,
         request: CreateAgentRequest,

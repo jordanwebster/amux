@@ -502,6 +502,7 @@ impl Drop for CodexRawPtyLease {
 }
 
 pub(super) struct CodexRuntime {
+    settings: codex::session::SessionSettings,
     desired_name: Option<String>,
     desired_name_generation: u64,
     name_reconciler_running: bool,
@@ -572,6 +573,7 @@ impl CodexBackend {
                 desired_name: req.name.clone(),
                 desired_name_generation: 0,
                 name_reconciler_running: false,
+                settings: codex::session::SessionSettings::default(),
                 attached: None,
                 resume_daemon_mode: None,
                 startup_error: None,
@@ -632,6 +634,7 @@ impl CodexBackend {
                 desired_name: record.name,
                 desired_name_generation: 0,
                 name_reconciler_running: false,
+                settings: codex::session::SessionSettings::default(),
                 attached: None,
                 resume_daemon_mode: None,
                 startup_error: None,
@@ -928,6 +931,7 @@ async fn run_injected_session(
         control,
     } = session;
     let thread_id = control.thread_id().to_string();
+    let facts = control.session_facts();
     runtime
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
@@ -944,7 +948,9 @@ async fn run_injected_session(
         pending: HashMap::new(),
         applied_name_generation: Some(0),
     });
-    log_source.write(ready_row(false)).await;
+    let mut ready = ready_row(false);
+    ready["session"] = facts;
+    log_source.write(ready).await;
 
     let reason = loop {
         tokio::select! {
@@ -1060,7 +1066,15 @@ async fn run_ingest_supervisor(
         let ProviderSession {
             mut events,
             control,
-        } = match codex::open(thread).await {
+        } = match codex::session::open_with_settings(thread, {
+            runtime
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .settings
+                .clone()
+        })
+        .await
+        {
             Ok(session) => session,
             Err(error) => {
                 let message = error.to_string();
@@ -1075,6 +1089,27 @@ async fn run_ingest_supervisor(
             }
         };
 
+        tokio::select! {
+            _ = stop_rx.changed() => break,
+            result = tokio::time::timeout(Duration::from_secs(10), control.discover_models()) => {
+                match result {
+                    Ok(Ok(())) => {},
+                    Ok(Err(error)) => tracing::warn!(%error, "Codex model discovery unavailable"),
+                    Err(_) => tracing::warn!("Codex model discovery timed out"),
+                }
+            }
+        }
+        tokio::select! {
+            _ = stop_rx.changed() => break,
+            result = tokio::time::timeout(Duration::from_secs(10), control.discover_commands()) => {
+                match result {
+                    Ok(Ok(())) => {},
+                    Ok(Err(error)) => tracing::warn!(%error, "Codex command discovery unavailable"),
+                    Err(_) => tracing::warn!("Codex command discovery timed out"),
+                }
+            }
+        }
+        let facts = control.session_facts();
         {
             let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
             state.startup_error = None;
@@ -1095,7 +1130,9 @@ async fn run_ingest_supervisor(
         schedule_name_reconciliation(agent_id, &runtime, stop_rx.clone());
         let resumed =
             take_initial_resumed_marker(&mut initial_persisted_resume_pending, provenance);
-        log_source.write(ready_row(resumed)).await;
+        let mut ready = ready_row(resumed);
+        ready["session"] = facts;
+        log_source.write(ready).await;
         if capture_drop_connection {
             capture_drop_connection = false;
             connection.client.clone().close().await;
@@ -1593,8 +1630,50 @@ impl CodexInputTarget {
             .ok_or_else(|| anyhow!("Codex thread is read-only until reconnect succeeds"))
     }
 
+    async fn publish_settings(&self, live: &CodexLive) {
+        self.log_source
+            .write(json!({"type":"amux.codex_settings", "session":live.control.session_facts()}))
+            .await;
+    }
+
     async fn execute(&self, input: CodexSdkV1Input) -> Result<()> {
         match input {
+            CodexSdkV1Input::Command { name, args } => {
+                let live = self.live()?;
+                let turn_id = live.control.command(name, args).await?;
+                update_attached(&self.runtime, |attached| {
+                    attached.active_turn_id = Some(turn_id);
+                });
+                Ok(())
+            }
+            CodexSdkV1Input::SetModel { model } => {
+                let live = self.live()?;
+                live.control.set_model(model)?;
+                self.publish_settings(&live).await;
+                Ok(())
+            }
+            CodexSdkV1Input::SetEffort { effort } => {
+                let live = self.live()?;
+                live.control
+                    .set_effort(serde_json::from_value(json!(effort))?)?;
+                self.publish_settings(&live).await;
+                Ok(())
+            }
+            CodexSdkV1Input::SetPreset { approval, sandbox } => {
+                let live = self.live()?;
+                let approval = serde_json::from_value(serde_json::to_value(approval)?)?;
+                let sandbox = match sandbox {
+                    model::SandboxPolicy::ReadOnly => json!({"type":"readOnly"}),
+                    model::SandboxPolicy::WorkspaceWrite => json!({"type":"workspaceWrite"}),
+                    model::SandboxPolicy::DangerFullAccess => {
+                        json!({"type":"dangerFullAccess"})
+                    }
+                };
+                live.control
+                    .set_preset(approval, serde_json::from_value(sandbox)?);
+                self.publish_settings(&live).await;
+                Ok(())
+            }
             CodexSdkV1Input::UserTurn { input } => {
                 let items: Vec<InputItem> = serde_json::from_slice(&input)
                     .context("Codex user_turn input must be JSON input items")?;
@@ -2119,6 +2198,7 @@ mod tests {
         let (client, mut reader, mut writer) = mock_codex().await;
         let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
         let provider = codex::open(thread).await.unwrap();
+        let expected_session = provider.control.session_facts();
         let record = crate::agents::AgentRecord {
             id: Uuid::from_u128(91),
             host_id: Uuid::from_u128(92),
@@ -2142,7 +2222,10 @@ mod tests {
             .await
             .expect("injected session did not publish readiness")
             .expect("injected session log closed");
-        assert_eq!(row.payload, json!({"type": "amux.codex_ready"}));
+        assert_eq!(
+            row.payload,
+            json!({"type": "amux.codex_ready", "session": expected_session})
+        );
         assert!(matches!(
             backend.plane(Protocol::CodexSdkV1),
             Ok(Plane::Structured { .. })
@@ -2989,6 +3072,7 @@ mod tests {
             desired_name: Some("bootstrap-snapshot".into()),
             desired_name_generation: 0,
             name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
             attached: None,
             resume_daemon_mode: None,
             startup_error: None,
@@ -3088,6 +3172,7 @@ mod tests {
             desired_name: Some("older".into()),
             desired_name_generation: 1,
             name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
             attached: Some(CodexAttached {
                 thread_id,
                 daemon_mode: Some("test".into()),
@@ -3151,6 +3236,7 @@ mod tests {
             desired_name: None,
             desired_name_generation: 0,
             name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
             attached: None,
             resume_daemon_mode: None,
             startup_error: None,
@@ -3336,6 +3422,7 @@ mod tests {
             desired_name: None,
             desired_name_generation: 0,
             name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
             attached: None,
             resume_daemon_mode: None,
             startup_error: None,
@@ -3439,6 +3526,19 @@ mod tests {
             .await;
             "thread-replacement"
         };
+
+        let models = read_request(&mut fresh_reader).await;
+        assert_eq!(models["method"], "model/list");
+        write_response(
+            &mut fresh_writer,
+            &models,
+            json!({"data":[], "nextCursor":null}),
+        )
+        .await;
+
+        let commands = read_request(&mut fresh_reader).await;
+        assert_eq!(commands["method"], "skills/list");
+        write_response(&mut fresh_writer, &commands, json!({"data":[]})).await;
 
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
@@ -3638,6 +3738,7 @@ mod tests {
             desired_name: None,
             desired_name_generation: 0,
             name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
                 daemon_mode: Some("test".into()),
@@ -3685,6 +3786,7 @@ mod tests {
             desired_name: None,
             desired_name_generation: 0,
             name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
                 daemon_mode: Some("test".into()),
@@ -3822,6 +3924,7 @@ mod tests {
             desired_name: None,
             desired_name_generation: 0,
             name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
                 daemon_mode: Some("test".into()),

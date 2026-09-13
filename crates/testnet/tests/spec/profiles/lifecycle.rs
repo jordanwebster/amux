@@ -392,36 +392,48 @@ async fn delete_closes_every_transport_and_late_service_work_cannot_recreate_the
     );
 }
 
-#[tokio::test]
-async fn blocked_agent_input_leaves_other_input_diff_and_profile_lifecycle_available() {
-    use std::time::Duration;
+mod blocked_agent_input_leaves_other_input_diff_and_profile_lifecycle_available {
+    use super::*;
 
-    use tokio::time::timeout;
+    macro_rules! actions {
+        ($($action:ident),+ $(,)?) => {$(
+            #[tokio::test]
+            async fn $action() {
+                check(stringify!($action)).await;
+            }
+        )+};
+    }
 
-    let checkout = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(checkout.path())
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let output = std::process::Command::new("git")
-        .args([
-            "-c",
-            "user.name=amux test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-qm",
-            "base",
-        ])
-        .current_dir(checkout.path())
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    std::fs::write(checkout.path().join("note.txt"), "concurrent diff\n").unwrap();
-    for action in ["pause", "logout", "delete", "shutdown"] {
+    actions!(pause, logout, delete, shutdown);
+
+    async fn check(action: &str) {
+        use std::time::Duration;
+
+        use tokio::time::timeout;
+
+        let checkout = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(checkout.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let output = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=amux test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "base",
+            ])
+            .current_dir(checkout.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        std::fs::write(checkout.path().join("note.txt"), "concurrent diff\n").unwrap();
         let net = TestNet::builder()
             .cloud()
             .installation("laptop")

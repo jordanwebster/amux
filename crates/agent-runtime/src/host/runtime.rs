@@ -42,6 +42,7 @@ pub struct AgentRuntime {
     state: SharedAgentServiceState,
     event_tx: mpsc::Sender<SessionEvent>,
     host_id: Uuid,
+    repository_roots: Vec<PathBuf>,
     state_path: PathBuf,
     resume_lock: tokio::sync::Mutex<()>,
     artifact_owners: Arc<ArtifactOwners>,
@@ -57,11 +58,26 @@ impl AgentRuntime {
     /// Build a host against the default configured socket path.
     #[cfg(test)]
     pub(crate) fn new(host_id: Uuid) -> Arc<Self> {
-        let config = crate::config::Config::default();
+        // Test agent registrations must never update the operator's recent projects.
+        let data_dir = tempfile::tempdir()
+            .expect("test host data directory")
+            .keep();
+        let config = crate::config::Config {
+            data_dir: data_dir.clone(),
+            ..Default::default()
+        };
         let route = McpLaunchRoute::for_current_process(&config, host_id)
             .expect("default managed MCP route should be usable");
-        Self::new_with_mcp_launch_route(route, crate::keymap_dir(&config.data_dir), config.data_dir)
-            .expect("default Codex private socket path should be usable")
+        let mut host = Self::new_with_mcp_launch_route(
+            route,
+            crate::keymap_dir(&config.data_dir),
+            config.data_dir,
+        )
+        .expect("default agent host resources should be usable");
+        Arc::get_mut(&mut host)
+            .expect("new test host is unshared")
+            .test_cleanup = Some(data_dir);
+        host
     }
 
     /// Build the host and spawn its session-event loop. Cloud-vs-device is
@@ -80,6 +96,7 @@ impl AgentRuntime {
             data_dir,
             None,
             Arc::new(artifacts::SystemClock),
+            Vec::new(),
         )
     }
 
@@ -89,6 +106,7 @@ impl AgentRuntime {
         data_dir: PathBuf,
         state_path: Option<PathBuf>,
         artifact_clock: Arc<dyn artifacts::Clock>,
+        repository_roots: Vec<PathBuf>,
     ) -> io::Result<Arc<Self>> {
         let server_socket_path = route.socket_path().to_path_buf();
         let runtime_dir = server_socket_path
@@ -116,6 +134,7 @@ impl AgentRuntime {
             state,
             event_tx,
             host_id,
+            repository_roots,
             state_path,
             resume_lock: tokio::sync::Mutex::new(()),
             artifact_owners,
@@ -187,6 +206,67 @@ impl AgentRuntime {
         Ok(agent)
     }
 
+    /// Register a Claude PTY agent whose session was supplied rather than
+    /// launched: the same backend, hooks and folds as a real one.
+    pub(crate) async fn register_claude_pty_session(
+        &self,
+        request: CreateAgentRequest,
+        session: claude::pty::Session,
+    ) -> Result<Agent, ProtocolError> {
+        let error = |error: String| ProtocolError::ServerError { message: error };
+        let mut state = self.state.write().await;
+        let session: AgentSession = Box::new(
+            ClaudeSession::with_supplied_session(&request, &state.deps, session, &self.event_tx)
+                .map_err(|e| error(e.to_string()))?,
+        );
+        let agent = session.to_agent(self.host_id).into();
+        let announce = state
+            .register_local_agent_context(self.host_id, request.agent_id, session)
+            .map_err(error)?;
+        state.local_agent_events.emit(announce);
+        Ok(agent)
+    }
+
+    /// Register a Codex agent over a supplied session (a recording, usually).
+    #[cfg(unix)]
+    pub(crate) async fn register_codex_session(
+        &self,
+        name: String,
+        working_dir: PathBuf,
+        provider: codex::Session,
+    ) -> Result<Agent, ProtocolError> {
+        use crate::agents::codex::CodexBackend;
+        use crate::agents::{AgentBackend, AgentKind, AgentRecord};
+        let record = AgentRecord {
+            id: Uuid::new_v4(),
+            host_id: self.host_id,
+            name: Some(name),
+            command: "codex".into(),
+            working_dir,
+            kind: AgentKind::Codex,
+            readonly: false,
+            args: Vec::new(),
+            created_at: chrono::Utc::now(),
+            parent: None,
+            working_on: None,
+        };
+        let mut backend = CodexBackend::with_session(record, provider);
+        backend
+            .start(&self.event_tx)
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })?;
+        let agent_id = backend.agent_id();
+        let session: AgentSession = Box::new(backend);
+        let agent = session.to_agent(self.host_id).into();
+        let mut state = self.state.write().await;
+        let announce = state
+            .register_local_agent_context(self.host_id, agent_id, session)
+            .map_err(|message| ProtocolError::ServerError { message })?;
+        state.local_agent_events.emit(announce);
+        Ok(agent)
+    }
+
     pub(crate) async fn end_scripted_session(&self, agent_id: Uuid) {
         self.event_tx
             .send(SessionEvent::Ended { agent_id })
@@ -233,6 +313,7 @@ impl LocalAgentHostFactory for AgentRuntimeFactory {
             config.data_dir,
             Some(config.state_path),
             Arc::new(artifacts::SystemClock),
+            config.repository_roots,
         )
         .map(|host| host as Arc<dyn LocalAgentHost>)
     }
@@ -436,12 +517,39 @@ impl LocalAgentHost for AgentRuntime {
             .ok_or(ProtocolError::NoAgentFound)
     }
 
+    async fn list_repositories(
+        &self,
+        query: Option<String>,
+        limit: u32,
+    ) -> Result<model::ListRepositoriesResponse, ProtocolError> {
+        let roots = self.repository_roots.clone();
+        let recent = self.state.read().await.recent_projects.snapshot();
+        tokio::task::spawn_blocking(move || crate::repositories::list(roots, recent, query, limit))
+            .await
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })
+    }
+
     async fn create(
         &self,
         request: CreateAgentRequest,
         operations: &host_api::OperationGate,
     ) -> Result<Agent, ProtocolError> {
         let req = request;
+        // An agent runs in a directory, and one that is not here is a typo or
+        // a path from another machine. Refused now, in the words of the host
+        // that owns the path: started anyway, the session dies the moment its
+        // process cannot enter its own working directory, and whoever asked
+        // for it gets a conversation that vanishes instead of a reason.
+        if !req.working_dir.is_dir() {
+            return Err(ProtocolError::FailedPrecondition {
+                message: format!(
+                    "There is no directory at {} on this machine.",
+                    req.working_dir.display()
+                ),
+            });
+        }
         if matches!(req.agent_type, AgentType::Codex { .. }) {
             #[cfg(unix)]
             {
@@ -1114,7 +1222,7 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
             (agent.name.clone().unwrap_or_default(), agent.id.as_u128())
         }
         AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
-        AgentEvent::SnapshotComplete => (String::new(), 0),
+        AgentEvent::SnapshotComplete | AgentEvent::HostInventory { .. } => (String::new(), 0),
     }
 }
 

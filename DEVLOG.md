@@ -14,6 +14,3972 @@ before the app itself does, so no version of it is ever published under a
 licence that does not mean to cover it. The app moves to `apps/apple/` after
 the merge, taking its licence with it.
 
+# amux Development Log
+
+This file tracks significant development work, decisions made, and current state. Update this file after completing a chunk of work.
+
+---
+
+2026-09-13 — **A scripted provider's refusal reaches the phone again.** The
+full iOS verification after the merge ran clean through lint, the Rust
+suites, the graph check, the bridge, the simulator, the loopback and door
+smokes, the unit suites, 123 of 124 goldens, the accessibility audit, the
+shipping package and the scope audit, and stopped in three places. The one
+golden difference was a keypad key photographed mid-press; the capture
+matched on a rerun, and it is not among the three quarantined flakes. The
+journey recipe still read the projection schema from the bridge's old path;
+it reads it from `app-runtime` now. The performance recipe builds the app
+in the Release configuration, which links the shipping bridge, so it now
+depends on `ios package` and the verification order runs the package before
+it; its one red figure, a 2.70 ms reconciliation median against a 2.35 ms
+recorded baseline with a 1000 ms budget, was 2.3 ms on the next run, and no
+baseline or budget changed.
+
+The conversation journey then waited ninety seconds for a send that never
+settled. The idle script has no reaction for a prompt, so the script engine
+reports that it has no answer. Before the port the daemon returned that as
+the send's error, the phone dropped its optimistic echo and the composer
+came back; the new provider-source seam recorded the input and discarded
+the refusal, so the echo waited for a transcript row that would never come.
+The seam's input observation is fallible again: a supplier that did not
+expect an input says so, and the runtime reports it as the input's outcome.
+A script with no answer for a prompt is a test that went off its script, and
+failing the send there with the script's reason is what stops a driver
+waiting on a reply that will never arrive. The agent-runtime, testnet and app
+crate suites pass with the change.
+
+2026-09-13 — **The door smoke no longer inspects a release build.** A first
+full iOS verification after the merge stopped at the door smoke twice: once
+on a missing import of the shared bridge-name module, then on its release
+check, which rebuilt the app in the Release configuration and required it to
+link the shipping bridge. A development tree now stages the single
+development slice as a stand-in for the shipping framework until `just ios
+package` builds the real one, so a Release link from the door smoke read the
+driving marker out of the stand-in. That check was a duplicate of the scope
+audit, which owns what the release bundle contains, checks the same symbols,
+marker and resources, and depends on the package it inspects. The door smoke
+keeps its purpose: launch, drive, capture, report and reach a served relay
+through the debug build. `just ios door-smoke` and the script tests pass.
+
+2026-09-13 — **Merged main's crate split into the native app branch and shaped the app layer.**
+Main had replaced the `amux` library with `model`, `wire`, `settings`,
+`client`, `host-api`, `node`, `agent-runtime`, `ui-state`, `ui-runtime`,
+`tui` and a public `testnet` harness, moved every task to `just`, and
+removed feature- and profile-selected test code. This branch carried the
+iPhone app, its bridge and the daemon features written beside it on the old
+layout, with the whole-daemon harness compiled into the product through a
+build-script cfg at about a hundred sites in fifteen files. The merge was
+resolved once, in layers, following the rename table: eighty conflicts,
+nineteen of them files git moved into the renamed crates and eleven where
+main had moved the code elsewhere.
+
+The branch's daemon features now live where main's boundaries say: the
+embedded relay in `node`'s transport layer with `RelayConnection` and
+`DisconnectReason` as `model` values; repositories in `node` and
+`agent-runtime` with their request and response values in `model` and
+`wire`; the Claude and Codex proto additions in `wire`; queue, provider and
+todo state in `ui-state`; the runtime shell, report flow and the host
+inventory in `ui-runtime`. Host inventory for an embedded runtime is a
+`ui-runtime` trait rather than a node handle, so the client layer still has
+no daemon dependency.
+
+Every harness cfg is gone. Scripted Claude PTY and SDK providers and recorded
+Codex sessions reach the daemon through `agent-runtime`'s always-compiled
+provider-source seam and the host factory the topology installs; relay
+latency is a testnet relay fixture; the served control door is
+`target/debug/testnet serve`, whose readiness names the relay and the fake
+identity service separately, and every one of its verbs is a same-named
+harness method. `e2e-runner` runs PTY scripts again and nothing else.
+
+The bridge is three crates. `app-runtime` owns account sessions, the
+projection, the fleet cache and the frame-coalesced queue over the client
+layer and never imports `node`; `app-embedded` owns the provider-free
+installation, its relay link and the token callback; `app-ffi` is the C ABI
+with the `amux_app_` prefix, and the Swift bridge, project and tools were
+renamed with it. `debug-tools` exists only on `app-embedded` (forwarded by
+`app-ffi`), gates only the plaintext loopback relay, and is never a default;
+the served network is a development dependency of that crate's own suite.
+Three tests state the ownership rules: one terminal callback per handle
+however a start or stop goes, an attached daemon that outlives every view,
+and two accounts whose views neither cancel nor misroute each other.
+
+iOS tasks are a `just ios` module. `just ios rust` builds one simulator slice
+under the development profile and repackages only when the archive or header
+changed; `just ios package` builds the shipping slices under `mobile`. On this
+Mac a cold bridge slice took 25.4 s, a no-change `ios rust` 0.1 s with no
+cargo run, a no-change `ios build` 2.0 s, a Swift-only edit 3.1 s with no
+cargo run, and a Rust edit rebuilt the three app crates and relinked in
+7.0 s. `just ci` passes in full (check, lint, format, codegen, dependency
+policy, workspace tests, doctests, release policy, e2e, embedded and mobile
+checks), as do `just ios lint`, `graph-check`, `script-tests`, `rust`,
+`build` and `unit`. The integration document now describes the app layer as
+it is rather than the procedure that produced it.
+
+2026-09-13 — **The three known simulator golden flakes are explicitly quarantined.**
+The golden manifest now marks only `strip.light`, `strip.dark`, and
+`ax-composer.dark` as affected by the reproducible two-physical-pixel transcript
+settling variation. All three remain among the 124 captures run and compared in
+CI, their ordinary verdicts and diagnostic triplets remain visible, and the
+manifest records why they are flaky. Only a pixel-difference verdict for those
+exact captures is non-gating; a missing baseline, failed capture, or size change
+still fails. The comparator's tolerance and differing-pixel ceiling are
+unchanged. `wt test -- golden` and `wt lint` pass. A focused simulator run
+captured both affected states in both appearances: the two differences in that
+run printed `FLAKY`, the matching captures printed `ok`, and the command exited
+successfully with all three declared quarantines listed.
+
+2026-09-13 — **The direct iPhone presentation is visually approved and locked.**
+The complete 108-image production gallery and the 42-image narrow-screen
+gallery were approved. All 124 catalogue captures were written as the new
+native goldens without changing the comparator's per-channel value tolerance of two
+or 64-pixel ceiling. An ordinary comparison matched 121 captures exactly. The
+expanded task strip and the dark accessibility composer can settle their
+transcript text two physical pixels apart between otherwise identical simulator
+launches; UIKit reports identical scroll geometry in both positions. This is a
+known simulator capture flake, not a product layout difference, and the
+comparison remains strict rather than aligning or forgiving it.
+
+The corrected coherent performance workload was also approved as the new
+pinned-Mac baseline. A fresh whole recording run met every unchanged hard
+budget: 444.5ms median and 451.7ms worst cold frame, 2.7/4.0-frame optimistic
+echo, 0.0ms/s median streaming hitch time, 25.3% median main-thread CPU, zero
+idle commits, 75.38MB median footprint against the 250MB hard ceiling, 241.7ms
+foreground recovery, and one foreground connection per host with none in the
+background. The recorder correctly refused to overwrite an existing baseline
+that its relative gate rejected, so the explicitly approved coherent medians
+were applied directly; ordinary runs remain subject to both hard and relative
+limits. No budget or tolerance changed.
+
+2026-09-12 — **The complete selected iPhone presentation is now one production UI.**
+The remaining writing, decision, review, account, host, onboarding and report
+surfaces now use the selected source layouts and shared production components.
+Their development scenarios supply matched content to the same shell, stores,
+routes and native editor used with live services; no parallel port, migration
+theme or Release preview path remains. The consolidated candidate gallery pairs
+all 33 selected source screens with production in light and dark, and separately
+shows 21 production-only narrow, accessibility, keyboard and interaction states
+in both appearances. The smallest supported iPhone has its own 42-image
+adaptation gallery. These are review candidates only: no golden was established
+or updated.
+
+The final production-component iteration measurement still compiles alternatives
+together and uses one installation. Two ideas took 18.58 seconds and four took
+22.98 seconds, including a structural context-band alternative. The two-idea
+round remains faster than the isolated source app's measured 20–21 second round;
+the four-idea round is roughly 9–14% slower. The simple manifest gallery remains
+the review and future-golden extension point rather than a port of the source
+web harness.
+
+The complete real-service journey initially exposed an accessibility-only
+layout cycle at the largest text size. The conversation was sizing its bottom
+panel from the transcript viewport that panel itself reduced, while the debug
+driver attached a global-coordinate geometry reader to every named element.
+The panel is now capped from the stable outer page. During real VoiceOver runs,
+the driver keeps identifiers, spoken values and enabled state but takes live
+reachability frames from the accessibility client; the all-state audit remains
+the exact 44-point layout authority. Exact global frame probes are now confined
+to fixed capture/audit states and explicit placement- or field-targeted journeys,
+so an ordinary growing live transcript does not attach one to every row. The
+focused and complete VoiceOver journeys now run without
+geometry-cycle, same-frame preference, scroll-geometry, main-thread-busy or
+idle-timeout diagnostics. The complete journey covers the fleet, conversation
+selection, decisions, writing, hosts and unreachable-host presentation at the
+largest text size with VoiceOver actually enabled.
+
+The authoritative coherent optimized run passes every unchanged hard budget:
+445.7ms worst cold first frame, 4.4ms worst optimistic echo, zero measured
+streaming hitches, 25.5% worst main-thread CPU, zero idle commits and 75.3MB
+median footprint against the 250MB hard ceiling. It remains red against the
+unchanged historical 10% relative memory threshold by about 0.066MB. That
+68.4MB history was produced by the previously malformed near-empty workload,
+so it is not a valid baseline for the corrected 1,000-row screen, but it has not
+been refreshed or relaxed. Sequence-retention, driver-buffer and instrumentation
+experiments are preserved as before/after evidence rather than selected green
+runs. Physical ProMotion hitch behavior and physical-phone cold start remain
+unqualified.
+
+The final coherent real-service journey passes cold and warm home, conversation,
+permission and question decisions, review, writing, Claude sessions, host
+lifecycle and creation, accounts, reports, accessibility and production startup.
+Host creation uses real native text fields and XCUITest keyboard input; replacing
+an already rejected directory clears it through the native text-input delegate
+before typing the new value. The exhaustive static accessibility audit covers
+679 controls across 63 states, all named and at least 44 points. Visual
+interactions, Release scope, debug-door symbol stripping, loopback, the repository
+recipe suite, lint and the full iOS unit matrix pass.
+
+One final comprehensive verifier passed formatting, lint, the full Rust/Python
+and specification suites, both mobile targets, iOS library and simulator checks,
+Debug and Release builds, loopback, iOS units and debug-door/Release inspection.
+It then stopped at the expected old-baseline gate: 120 of 124 screenshots differ
+after the direct visual replacement. No golden was changed. An immediate direct
+build took 16.46 seconds and reused all three Rust mobile archives in 0.40 seconds
+or less, confirming nested verification no longer invalidates their cache. The
+frozen-code review gallery was recaptured with all 33 selected source screens in
+both appearances plus 21 production-only adaptation states in both appearances;
+the narrow-screen gallery contains the same 42 adaptation captures.
+
+2026-09-12 — **Accounts and hosts now use the selected production form language.**
+The source settings row is now one production component shared by account and
+host facts. Account rows directly use the selected 30-point monogram, caption
+hierarchy, capsule attention count, compact checkmark, twelve-point alignment
+and fourteen-point dividers; the You page uses the source's eighteen-point
+section rhythm and appearance control geometry. Its help group now also says
+what a report contains. The selected host scenario now carries all four source
+machines with their actual hardware labels, so the production screen reads
+three reachable and one offline and chooses the corresponding Mac Studio, Mac
+mini, laptop and Linux glyphs. Pairing scenarios retain homelab as an untrusted
+offer, keeping that service boundary truthful. A focused fixture suite passes
+all 25 cases after this split; no golden changed.
+
+2026-09-12 — **Pushed flows now share the selected back chrome and action tray.**
+New Agent, pairing, sign-in and subscription no longer carry slightly different
+copies of the same back label and bottom glass geometry. The production
+components now own the source-selected 15-point chevron, three-point label gap,
+44-point interaction target, 14-by-12 tray inset, 12-point outer gutter and
+10-point home-indicator clearance. Each screen still supplies its real routing,
+enabled state and accessibility identity. The iOS unit matrix passes: 142
+package tests plus the application tests, with no golden changed.
+
+2026-09-12 — **The candidate gallery now scales to the complete selected iPhone catalogue.**
+The existing native design benchmark can now retain matched source and
+production originals plus sRGB review derivatives for either the first slice
+or all 33 selected, non-excluded design screens. The complete path uses one
+installed Debug app and one driving-door session for 66 light/dark production
+captures; Notifications remains an explicit product exclusion rather than a
+missing mapping. Its manifest hashes the full visual source, production view,
+fixture and shell inputs instead of the first slice alone. A first diagnostic
+run took 16.76 seconds to build and 56.07 seconds to open, capture and normalize
+the complete catalogue. It deliberately establishes no golden.
+
+That diagnostic also exposed where visual comparison is not yet honest: several
+older fixtures carry semantically representative but different transcript,
+account or host content from the selected source. Those pairs are inventory
+evidence, not fidelity claims. The first matched-content home/conversation/plan
+gallery remains preserved while the remaining fixtures and production surfaces
+are ported directly.
+
+2026-09-12 — **Corrected performance workloads invalidate the earlier all-green claim.**
+Independent review found that generated transcript rows nested their payload at
+the wrong level and that the cached fleet used the confirmed value for
+`awaiting`. The generator and focused tests now assert the real prose, tool,
+output and edit distribution, grouping, and cached-to-confirmed transition. A
+replacement- and eviction-only projection regression is covered as well.
+
+The corrected workload exposed production invalidation costs. Confirmed rows,
+pending sends, chrome, session footer and editable composer now have separate
+observation boundaries; append-only row publication is bounded to 33ms while
+the store applies every event immediately. Plain attachment-free messages avoid
+the shared-parser crossing, and clipped command output shapes only its two
+visible lines. Accessibility identifiers remain in Release, while expensive
+geometry reporting is enabled only by the driver that consumes it. The
+1,000-row optimistic echo now passes at 2.3ms median and 4.3ms worst, and the
+complete iOS unit matrix passes.
+
+The corrected 50-row/second stream now passes every unchanged hard budget and
+drift gate: 0.0ms/s median and worst hitch time, 25.1% median main-thread CPU,
+72.5MB median footprint, and zero idle commits. The final coalesced draw remains
+inside the timed interval, but the harness waits for it without starting three
+auxiliary display links that previously perturbed missed-frame accounting. No
+budget, tolerance or baseline changed. The earlier devlog performance numbers
+from malformed workload data are superseded by this corrected evidence.
+
+That green result is the required isolated streaming group. A subsequent
+coherent full run passes every hard budget and all other drift gates, but shows
+an order-dependent simulator discrepancy after cold and real-relay lifecycle
+work: one missed frame gives a 0.83ms/s median, and 75.3MB median footprint is
+about 0.10MB over the unchanged memory drift ceiling. This remains a red full
+qualification and is not hidden by the isolated pass. The final conversation
+journey, 668-control accessibility matrix, unit suites, lint and Release-scope
+inspection pass. A fresh exact-build gallery retains matched source and
+production originals in both appearances; no golden changed.
+
+2026-09-12 — **The representative iPhone flow is now a direct production port.**
+Home, conversation and the plan card use the selected source layout and
+components through the real shell, stores, router and native editor. Shared tab
+chrome, home sections and folding, transcript rows and rail, floating subject
+chrome, composer and bottom panel were replaced together; end-of-turn remains
+semantic state but is not rendered as a separator because the selected design
+does not draw one. The source-style status strip now expands to a Started
+section, so child asks remain reachable; the fleet supplies human names while
+identities remain routing keys. Production code contains no `DesignPort`
+migration vocabulary. Debug-only alternatives and scenarios are absent from
+Release.
+
+An equivalent native batch builds alternatives together and uses one installed
+app session. Recompiling the changed shared UI and Debug alternatives, two ideas
+took 18.46s and four took 20.57s, versus 19.57–20.14s and 20.27–21.16s in the
+isolated source app. Native was 1.11–1.68s faster for two; four was 0.30s slower
+than the fastest source repeat and 0.59s faster than the slowest. The four-idea
+batch includes a structural alternative. A fresh
+gallery pairs matched home/run/plan source and production images in both
+appearances, retaining originals and displaying sRGB-normalized derivatives;
+no golden was changed. The production shell necessarily uses the real Dynamic
+Island and safe areas. Independent review found that the conversation had
+mistakenly added a second trailing feed gap. Removing it puts the prompt,
+activity and prose within roughly three points of the source while retaining
+the real editor and bottom safe-area inset. The unchanged comparator detected
+deliberate spacing, type and glass mistakes.
+
+Optimized performance passes all unchanged budgets and drift gates: 439ms
+median cold first frame, 42.5% median streaming main-thread CPU, 70.7MB median
+for a thousand-row conversation, zero idle commits and 240ms median foreground
+recovery. The worst cold launch was 451ms against the unchanged 460ms
+five-launch-median gate. Accessibility passes
+668 controls across 63 states with every app-drawn target at least 44 points.
+Home, writing, ask and conversation live journeys pass. The conversation check
+exercises every one of the 18 visible row families, drawer and tab navigation,
+changes review, reconnect/retry behavior, refusal delivery, long-history
+scrolling and preservation of draft, overlay and reading position. Reopening a
+120-row conversation exposed a main-thread stall; the transcript now keeps its
+lazy feed directly under the scroll view, draws rail connectors without an
+infinite layout proposal and keys scroll state to the selected agent. Release
+inspection passes after removing the explicitly excluded Mute and Notifications
+rows and their dormant production state rather than waiving the gate.
+
+Final qualification exposed strict reconciliation and hitch drift that the
+earlier run had not. Runtime bytes are decoded without a redundant
+string-to-data copy, and the UTC timestamp parser now uses Foundation's value
+format rather than serializing roughly 120 parses through `DateFormatter` for a
+40-agent confirmation. An authoritative fleet identical to the cached fleet
+advances reconciliation state and instrumentation without rebuilding or
+republishing every visible row. The zero-latency median fell from an unstable
+9ms to 1.9ms; the 100ms workload measured 106.6ms. The transcript retains its
+already-folded projection across ordinary appends and reopens only a grouped
+exploration run that crosses the append boundary, instead of folding 1,000–2,000
+historical entries for every streamed row. Streaming returned to a zero-hitch
+median without changing the zero baseline, 15% drift rule or 5ms/s budget.
+Focused tests cover row-observation suppression and projection equivalence
+through grouped appends, rewrites, eviction and replay. The harness now drives
+successive and paced callbacks from one persistent worker, matching the runtime
+instead of inserting main-actor test-driver round trips between callbacks.
+The production conversation journey then caught a missing invalidation for
+replace-only feed updates: four live row families are finalized through
+replacement rather than append. The cache now rebuilds for replacement- or
+eviction-only updates, with a row-kind regression test. The unchanged journey
+passes again with all 18 row families visible and its navigation, input,
+refusal, reconnect, streaming and 120-row restoration assertions intact.
+
+SwiftUI still emits same-frame `IdentifiedElements` and scroll-geometry
+diagnostics while synthetic transcript samples are first settling. They did
+not produce a failed hitch, lazy-row or idle gate in the final run, but remain
+an explicit implementation limitation rather than being waived.
+
+2026-09-11 — **The direct design port has started at the production shell.**
+Home, conversation and plan fixtures now enter the real shell instead of
+constructing isolated screens; fresh navigation state prevents preceding
+scenarios leaking their route. Three app-hosted scenario tests pass, including
+a rendered-home assertion for the shell and all three tabs. The tab chrome's
+presentation is ported from the design source, removing independent fixed
+symbol/text heights while keeping routing and accessibility semantics.
+This is the first foundation, not a visually accepted flow; no golden changed.
+The verifier now strips its outer Cargo package metadata before child commands,
+preserving build/toolchain configuration; its six focused library tests pass.
+Full direct/comprehensive/direct cache-reuse qualification remains outstanding.
+An isolated design-loop benchmark measured two ideas/four images in 19.6–20.1s
+and four ideas/eight images in 20.3–21.2s, including build and publication to the
+original harness. The warm 68-image catalogue took 35.4s. These gutter/title
+alternatives establish a batch reference, not a structural-edit or golden
+fidelity guarantee. The source worktree and its decisions remain untouched.
+Twelve first-slice display captures matched their later references; all six
+repeated-state comparisons matched with the existing tolerance. Runtime budgets
+are unchanged and have not been requalified by these Debug capture checks.
+The final recipe suite passes 117 tests; iOS source/copy lint, formatting and
+diff checks pass. Release inspection confirms the new scenario types are absent
+but fails overall on pre-existing Mute/Notifications rows in unchanged feature
+sources. That exclusion conflict remains visible, not waived or called a pass.
+
+2026-09-11 — **iOS iteration and capture have an opt-in measurement tool.**
+`wt run ios-explore` retains recipe timing and failures, compares existing
+window/display capture paths, and writes a local screenshot contact sheet.
+It can build before capture or measure an already-built app independently.
+The diagnostic changes no production views, goldens, performance budgets or
+verification policy. State queries and binary fingerprints accompany new
+captures; report scenarios explicitly reset omitted environment defaults.
+Repetition exposed text-size leakage from an accessibility fixture into replay,
+and a focus request that did not display a software keyboard. Neither is counted
+as capture-method qualification. `wt run test-recipes` passes (114 tests), and
+`wt fmt` passes. An unchanged-app comprehensive verification attempt reached
+the golden gate in 26 minutes and stopped on 104/124 stored-baseline differences;
+the remaining stages were not run. No baseline was reapproved to make it pass.
+An actual title-edit-to-gallery example took 26.5 seconds with the existing
+capture policy. A selected startup journey passed in 22.4 seconds with warm
+inputs. Cargo diagnostics identified leaked verifier package metadata as a
+dependency invalidation trigger; that boundary fix remains separate work.
+
+2026-09-11 — **Source icon checks read device PNG headers correctly.** The
+icon test walks PNG chunks to IHDR, matching the release scope audit instead
+of assuming a fixed offset. Tests cover plain and CgBI-prefixed headers,
+including RGB and RGBA colour types, plus non-PNG and missing-header refusals.
+`wt run test-recipes` passes (104 tests), and `wt fmt` passes.
+`wt run ios-scope-audit` passes in an isolated checkout: the release bundle
+has its named 120x120 icon and no excluded resources, APIs or dependencies.
+
+2026-09-11 — **Fixture-panel smoke checks stay within their own exchange block.**
+The check now reads the six states after the two text-size queries instead of
+counting every plus or settings screen in the exchange. Regression tests add
+later visits to both screens and still reject a wrong screen or leaked panel
+at each fixture position. `wt run test-recipes` passes (104 tests), as does
+`wt fmt`.
+
+2026-09-11 — **A timed-out release explains how to recover.** Archive, export
+and validation now catch TimeoutExpired alongside failed subprocess exits.
+The diagnostic names the step and says whether version numbers were written,
+with the recovery guide for a real release. Tests cover all three steps, both
+failure types and both release modes, and prove no commit or tag follows a
+failure. `wt run test-recipes` passes (99 tests).
+
+2026-09-11 — **Release recovery names only the files that change.** The guide
+now describes two modified files and restores only the project specification
+and generated Xcode project. Info.plist reads both numbers from build settings
+and is unchanged by versioning. Checked the guide against write_numbers and
+the committed Info.plist substitutions.
+
+2026-09-11 — **Keep iOS failure captures within the CI job budget.** The iOS
+job now allows 270 minutes around its 210-minute verification timeout. The
+extra hour covers setup, the 15-minute reference pairing step and artifact
+uploads, so verification can time out without job cancellation losing its
+captures. Checked both timeout values and the subsequent always-run steps.
+
+2026-09-11 — **Release steps can report their own timeouts.** The release
+recipe now allows 8100 seconds: the archive, export and validation budgets
+total 7200 seconds, with 900 seconds left for setup and recovery reporting.
+The former 5400-second wrapper could kill a slow run before its step timeout.
+Verified the configured budget against all three subprocess timeouts.
+
+2026-09-11 — **A report of a conversation replays as that conversation.**
+
+Four of the things on a conversation screen are in no message the shared
+runtime carries. The message somebody has half written and never sent, the card
+they have open over it, the entry they have scrolled back to, and a finished
+turn whose offer of its changes they have set aside all belong to the phone and
+to the person holding it. A report that left them out replayed an empty
+composer over a transcript resting at its tail with nothing open — often not
+the screen the report was about at all. The recording now carries all four, and
+a replay puts each of them back.
+
+A draft is written down whole: the sentence, the caret in it, and every token
+standing in it. Each token holds one private character of the sentence, so a
+sentence restored without them would leave an invisible character where an
+attachment used to be.
+
+Where a reader has got to is the harder one, and it changed how a transcript
+measures itself. A position used to be a distance down the feed, which answers
+the question for exactly one layout: the rows are laid out from markdown, and
+markdown measures differently at another type size, in another appearance or
+under an older build, so a distance carried between any two of those points at
+a different row. A position is now the entry the top of the readable page is
+inside and how far into that entry it has reached. Entries report where they
+are on the page rather than where they sit in the feed, because a feed settles
+its rows as the markdown below them finishes measuring — an entry's place
+within the feed is a number that quietly moves after it is read, and reading a
+stale one put a reader back eleven rows from where they had been left, twice,
+in the same direction.
+
+The journey now leaves a conversation the way somebody would — a message half
+written, the fleet borrowed and given back, the feed scrolled off its tail and
+a menu open over it — and freezes a report there against a real relay and a
+real machine. That bundle is kept, and replaying it draws the picture the phone
+took, pixel for pixel, with nothing rebaselined.
+
+Three defects fell out of doing it. A report frozen through the driving door
+was not told where in the app it was, so the same conversation produced
+different bundles depending on which path froze it; the ending place is now
+read off the trail, which is right either way. Marking the feed as a layout of
+scroll targets — one way to reach an entry by name — also moves where every
+conversation comes to rest, which eight captures said plainly; a transcript is
+dragged wherever you like, not settled onto the nearest row. And text typed
+into the composer keeps the layout the keyboard gave it while the same draft
+put back into a rebuilt composer is laid out from the attributed string, a few
+pixels apart on the second line: invisible to a reader, carried by no
+recording, and the reason the reported screen is one whose composer was rebuilt
+before the picture was taken.
+
+---
+
+2026-09-11 — **A report of the home replays as the home.**
+
+A bug report's view-state recording now says where in the app the person was,
+what the screen was reading time from and whose account it was drawn for, and
+a replay rebuilds all three before it folds a single message.
+
+Places replaced screen names. The recording used to hold only names out of the
+screen catalogue, which a capture run drives the app to, so a report taken by
+somebody using the app recorded at best the name of a picture and at worst
+nothing a replay could put back. A route now names a tab root, a conversation
+or an agent's changes by agent id, keeping the catalogue's own vocabulary for a
+report frozen while a capture run was driving. The navigation records them as
+the person walks: the router tells whoever is listening that it has arrived,
+and only a build with the reporting tools in it listens.
+
+Two facts go in beside them. The instant the frozen screen was reading — both
+when it was frozen and when the fleet on it was last put in order, which is
+what every "8s ago" on a row is measured from — and the account on screen with
+whether it was signed in and what it could reach, with no credential of any
+kind. A replay pins its stores to that instant and puts that account back, so
+the ages and the signed-in header come back as they were rather than as a fresh
+account under today's clock.
+
+The replay draws the real shell, with its tab bar and its stack, instead of the
+isolated surface a capture run photographs one screen on.
+
+Two defects fell out of doing it. Arriving at the home re-orders the fleet, and
+that re-ordering reached for the system clock rather than the clock its own
+bundle was built with, so a pinned bundle was un-pinned by the first frame that
+drew it. And the Mac-side replay compared its photograph with a second picture
+this repository had written beside the report, which could always be made to
+pass by writing it again; it now compares with the report's own frame, and
+`--update` writes only what the recording rebuilds and never the frame.
+
+`ios/Fixtures/reports/sample` is that bundle: a phone signed in as one account,
+paired with one machine, drawing the two agents it runs, written by the app
+during the reports journey. It replaces the probe screen that was there before.
+
+Green: `wt run ios-journey -- reports`, then `wt run ios-replay --
+ios/Fixtures/reports/sample` reproducing the phone's own `frame.png` at the
+goldens' tolerance with nothing rebaselined; `wt run ios-goldens` 124/124,
+`wt run ios-unit`, `wt run ios-lint`.
+
+---
+
+2026-09-11 — **Retain Xcode's reason when a quiet iOS run fails.**
+
+Every journey UI test now writes a fresh result bundle beside its journey log.
+Passing logs remain quiet; on failure the test tree is appended to the log,
+including XCTest's assertion and source location. CI already uploads the whole
+journeys directory, so both the readable summary and the complete result bundle
+survive a failed verification run.
+
+The two quiet performance builds receive the same treatment under the existing
+performance artifact. A deliberate short-journey assertion failure left its
+message and Swift file and line in both the retained bundle and the appended
+log; after reverting that scratch change, the journey passes with concise
+output.
+
+---
+
+2026-09-11 — **Keep Retry Now burst timing virtual until it is observed.**
+
+The Retry Now burst test now pauses Tokio's clock once before all ten presses
+and resumes it only after the failed dial and exact counters have been
+observed. Its earlier per-step pause and resume let wall-clock scheduling on a
+loaded runner consume the one-second cooldown, so a second press could be
+honoured even though the test advanced only half a second during the burst.
+
+The test still requires exactly one additional attempt and exactly one
+additional shortened wait. Temporary mutations that ignore the press and
+remove the cooldown make those exact assertions fail. The Windows failure that
+motivated this change cancelled the macOS matrix job before the separate
+profile-wait repair received a completed hosted-macOS observation.
+
+---
+
+2026-09-10 — **A release records nothing until Apple has accepted the build.**
+
+`wt run release` wrote the two numbers, committed them and cut the annotated
+tag before it archived anything, so a failure in the archive, the export or
+the validation left a release commit and a permanent tag naming a binary Apple
+never accepted. The run now writes the numbers, archives, exports and
+validates, and commits and tags only after Apple has answered; a failure
+before that leaves three modified tracked files and nothing else. The release
+guide gained a recovery section naming the command for each state a stopped
+run can leave.
+
+Three related rules came with it. The build number is no longer derived when
+no `ios-v*` tag exists: the App Store listing already holds build numbers from
+the app's earlier Expo builds that no tag here records, so the first number is
+read from App Store Connect and passed as `--build N`, and the run says so
+instead of offering 2. A rehearsal, which issues and spends nothing, still
+archives under the project's own number. The release recipe now depends on the
+scope audit, so no archive is produced from a bundle carrying a debug surface.
+And an installed provisioning profile's expiry, which `plistlib` decodes as
+naive UTC, is compared against UTC rather than local time — previously a
+profile read as usable for as many hours as this Mac sits behind UTC after it
+had actually expired.
+
+---
+
+2026-09-10 — **Document every captured golden state.**
+
+The golden baseline account now gives each of the 62 manifest states its own
+heading. The granted-access and unconfirmed-purchase captures are described
+beside their parent screens, and the four dictation states are documented
+separately instead of sharing one entry. No PNG baseline changed.
+
+The manifest unit suite reads the checked-out baseline account and fails when
+any state lacks an exact matching heading, so adding a capture cannot leave its
+documentation behind.
+
+---
+
+2026-09-10 — **A release may cut a second build of an unreleased version.**
+
+`wt run release --version` refused any version that was not strictly above the
+highest one in the tags or the project, so every attempt at a release spent a
+marketing version. That is not the App Store's rule: it rejects a version
+string that is not above the last version actually released, and rejects a
+reused build number, but accepts several builds under one unreleased version —
+which is what a build rejected in review needs. The recipe now refuses only a
+version below the highest it knows, and the release guide states the real
+constraint instead of "strictly forward".
+
+Writing the numbers is no longer able to fail silently: both substitutions into
+`ios/project.yml` must match, or the run refuses rather than tagging numbers
+the built app does not carry. A rehearsal's promise that it wrote nothing is
+now measured — `git status --porcelain` before and after, naming the changed
+paths and failing instead of printing the claim.
+
+The Release scope audit now opens the bundle's resources as well as its
+symbols, refusing a build carrying `frozen-frame.png` or any AmuxTestSupport
+resource; the code that reads those files was already excluded, but the files
+could still arrive through a copy phase. The 91 recipe tests, the scope audit
+and a full archive-export-validate rehearsal pass.
+
+---
+
+2026-09-10 — **Wait for profile fixture ports to become available on restart.**
+
+The installation test fixture now awaits the same bounded TCP rebind used by
+relay and standalone-daemon restarts. Its one-shot bind could fail with
+`AddrInUse` after shutdown. The test-only factory yields while the address is
+occupied, without holding the fixture registry lock, and preserves the stored
+address. A port that remains occupied still fails after five seconds.
+
+A controlled occupied-port regression fails on the previous binding path and
+passes with the repair. It checks same-address reconnection, exclusive listener
+ownership and an unlocked registry during the wait. A second regression proves
+that persistent contention exhausts the deadline instead of changing ports.
+Both regressions, all 31 profile specifications and the 81 recipe tests pass.
+The lifecycle assertions and production listener behavior are unchanged.
+
+---
+
+2026-09-10 — **Reset local view state when opening a screen fixture.**
+
+The debug driver now gives each fixture's view the identity of its fresh store
+bundle. Replacing the stores alone left SwiftUI's local conversation state
+alive: opening the attachment menu after a permissions fixture could keep the
+permissions panel on screen while the driver reported `plus`.
+
+The door smoke switches six times between permission, attachment and model
+fixtures without changing appearance, and checks the rendered panel identifiers.
+It fails on the previous app and passes with the fix. The complete smoke also
+passes its relay connection, report capture, teardown and release-exclusion
+checks. The iOS lints, 81 recipe tests and formatting check pass.
+All 124 golden captures pass with the existing baselines and tolerances.
+
+---
+
+2026-09-10 — **Wait for mobile events before checking their effects.**
+
+The Retry Now test waits for the failed dial's relay notification before
+reading attempt counters. Advancing Tokio time alone did not ensure the
+spawned socket task ran on a loaded runner. The single-press and ten-press
+assertions still require exactly one attempt and one shortened wait each,
+with the full subsequent observation windows intact.
+
+The inactive-account test remembers events from before selecting another
+account, so an attention update delivered before the selection acknowledgement
+is still available. Callback waits retain their event-driven receive loop and
+received-event failure diagnostic, with a 90-second ceiling to accommodate
+the hosted macOS runner that exhausted 20 seconds during discovery and folding.
+
+Temporary mutations verify that ignoring Retry Now, removing its cooldown,
+and suppressing inactive-account attention each fail the corresponding test.
+The restored code passes the focused tests, `wt test`, formatting and lint.
+
+---
+
+2026-09-10 — **Keep mobile snapshots identical on Windows.**
+
+The queue and ask JSON snapshots now require LF on checkout, like the schema
+snapshot beside them. Their tests still compare pretty-printed output byte
+for byte; Windows checkout conversion no longer changes the expected values.
+A sweep of embedded string files found no other unprotected byte comparison:
+the remaining configuration, journey and theme files are parsed, the Claude
+transcript guide is read by lines, and the iOS script is substring-matched.
+
+`git check-attr text eol` reports `set` and `lf` for both snapshots, and
+`wt test` passes locally.
+
+---
+
+2026-09-10 — **Give hosted workspace tests room to finish.**
+
+The workspace test deadline returns to 900 seconds. The 150-second limit
+was based on a 72-second local run, but the hosted macOS iOS job was still
+running healthy UI specs when it was killed. The script states the basis
+for its conservative 15-minute hang ceiling; compilation stays outside it.
+The testing guide now correctly includes the iOS verification job among
+the script's callers and distinguishes its budget from the standalone
+30-minute Test matrix jobs.
+
+Recipe checks capture the deadline for full and selected harnesses. Both
+`wt test` and `wt run test-recipes` pass locally. No test coverage changes.
+
+---
+
+2026-09-10 — **The documentation follows the current fixtures and recipes.**
+
+The drawer is documented as an added state with no preserved reference, and
+the live, queued and expanded-strip baselines explain their retakes after the
+composer's moving segment gained its own row. The live fixture's description
+now agrees with its working send gate. Subscription policy documents the
+function that opens streams, and the upload-failure fixture's comment follows
+its own indentation.
+
+The testing guide distinguishes the local 150-second workspace-test budget
+from GitHub's 30-minute workspace test job. The cloud guide spells out debug
+report multipart names, schema version, receipt and rejection statuses.
+`ios-perf` refuses the obsolete `--probe` option with the supported `--only`
+groups, covered by a command-line regression test.
+
+Recipe tests, Rust lint, iOS lint and the driving-door smoke check pass.
+
+---
+
+2026-09-10 — **The conversation is back behind the accessibility-size composer.**
+
+The capture that locks the composer at the largest text size used to have a
+long conversation showing through the glass above it. In September that
+conversation was taken out of the fixture, because the capture would not
+repeat: it opened at one of two scroll offsets about a hundred points apart,
+tossing independently in light and dark, and emptying the feed removed the
+variable.
+
+The cause was in the transcript's scrolling, not in the composer. The old
+container decided where the feed opened before the tall composer had reported
+its final height and bottom inset, and never looked again, so "the bottom" had
+two answers. The container now places the tail from the content, container and
+inset heights it has actually observed, and leaves the reader in charge once
+they scroll. Measured against the exact draft and conversation this capture
+uses: 17 of 20 openings landed wrong under the old container, and 20 of 20
+matched under the repaired one.
+
+So the fixture opens the conversation again, both baselines were retaken, and
+`wt run ios-goldens -- ax-composer` was run five times running against them,
+green in both appearances each time. One retaking hazard worth knowing: the
+first capture after a fresh install rendered the light transcript about a
+quarter of a point off from every subsequent run. Retake from a warm install,
+or retake twice and keep the second.
+
+---
+
+2026-09-10 — **A written file's path keeps the line its meta was taking.**
+
+A Wrote row draws the path the agent wrote and, on the trailing edge,
+whatever the tool printed about it. Claude prints a whole sentence — "File
+created successfully at: /work/notes.md" — and the row handed the width to
+that sentence first, so the path the row exists to name was squeezed to a
+single slash.
+
+The line is now laid out by its own layout rather than by a stack and a
+layout priority. The subject is served first and the meta gives up width
+until it is down to a third of the contested line; below that the two
+truncate together. That keeps both failure modes off the screen: a sentence
+can no longer take the path's width, and a command that fills the line still
+cannot push off the "exit 1" that says how it ended. A written path also
+truncates from its front now, because a path is identified by its last
+component and a directory prefix is not worth the file's own name.
+
+The arithmetic is a plain function over measured widths, so the rows are
+pinned by measuring the real strings in the real faces at the width the
+transcript has on a 393-point display, rather than only by eye in a capture.
+One locked capture moved with it: the `voices` screen's written row now reads
+`…i/src/pairing_copy.rs` where it read `crates/amu…ing_copy.rs`. Every other
+row on that screen, and all 122 other captures, are byte-identical — the new
+layout reproduces the old spacing exactly where nothing was contested.
+
+---
+
+2026-09-10 — **The release command ends by asking Apple, and Apple says yes.**
+
+`wt run release` now runs `xcrun altool --validate-app` on the exported
+`.ipa` as its last step, so a release is one command with no `altool`
+invocation to remember afterwards. `--rehearse` ends the same way, which is
+what makes a rehearsal a proof rather than a dry run: Apple answers on the
+actual signed binary, checking the signature, the entitlements, the icon, the
+identifiers and the deployment target exactly as an upload would.
+
+It still never uploads. Validation spends no build number, creates no
+TestFlight build and is visible to nobody, which is why it is safe as the
+last step of a rehearsal anybody can run a hundred times. The whole chain —
+derive the numbers, generate the project, archive, export, validate — runs
+with no person at the keyboard and no 2FA prompt anywhere: the App Store
+Connect key authenticates every step that reaches Apple.
+
+The listing's numeric Apple ID came out of the release guide. Nothing the
+recipe runs asks for it, and the one step that would is the step this
+recipe does not do; it reads back from `altool --list-apps` when wanted.
+
+---
+
+2026-09-10 — **The app carries the icon it already ships with.**
+
+There was no asset catalog anywhere under `ios/`. Every check this app has
+runs on the simulator, and the simulator shows an app with no icon quite
+happily, so the gap first appeared at Apple's validation servers: code 90022
+for no 120x120 image and 90713 for a missing `CFBundleIconName`.
+
+The icon is not new work. The 1024x1024 artwork already published on the App
+Store is copied into
+`ios/Amux/Assets.xcassets/AppIcon.appiconset/AppIcon.png` byte for byte, and
+that committed file is the only copy a build sees — nothing designs, draws,
+scales or regenerates it, and no script reads it from another checkout. One
+image is the whole set; the catalog compiler derives every size iOS and the
+App Store ask for.
+
+`CFBundleIconName` is declared in `ios/project.yml` rather than left to the
+catalog compiler, which writes its own copy nested inside `CFBundleIcons`
+where Apple does not look.
+
+Two checks stand on either side of the build. `scripts/tests/icon_test.py`
+reads the sources: the set exists, every image it names is present, the size
+is 1024x1024, there is no alpha channel (which the App Store also rejects),
+the catalog is in the app target and the Info.plist key is declared. The
+release scope audit reads the result, refusing a built bundle whose
+Info.plist has no top-level `CFBundleIconName` or that carries no 120x120
+`AppIcon60x60@2x.png` — the two things Apple actually complained about, now
+caught before an export rather than after one.
+
+`xcrun altool --validate-app` on the exported `.ipa` answers *VERIFY
+SUCCEEDED with no errors*. Nothing was uploaded and no build number was
+spent.
+
+---
+
+2026-09-10 — **The release export signs by hand, and the Team ID is the certificate's OU.**
+
+`wt run release -- --rehearse` now archives *and* exports a signed `.ipa` on
+this Mac. Two things had to change.
+
+The archive was failing with *No Account for Team*, which reads like a missing
+Apple Account and is not. `ios/Signing.local.xcconfig` held the ten characters
+from the parentheses of a Development certificate's common name — the
+individual's identifier, not the Team ID. The Team ID is the `OU` on every
+certificate in the account. Same shape, same plausibility, entirely different
+value; `docs/RELEASE.md` now says so where somebody about to make the same
+copy will read it.
+
+With that corrected the archive signed, and the *export* then failed:
+automatic signing answers *Cloud signing permission error* and then claims no
+profile exists for `sh.amux.app`, with an active matching profile installed.
+Xcode's cloud signing does not work from a script against this account, so
+`ios/ExportOptions.plist` is now `signingStyle: manual`, naming the
+certificate *type* `Apple Distribution` (a full identity name would carry the
+Team ID into a committed file — `teamID`, inserted at run time, picks which
+one) and the profile `amux App Store` for `sh.amux.app`.
+
+Signing by hand makes the certificate and the profile standing inputs rather
+than things a run can create, so `--preflight` now checks for both: an Apple
+Distribution identity whose name ends in this Team ID, and an unexpired
+installed profile under each name the export options ask for. An expired
+profile is reported as absent, because exporting with one fails the same way.
+Tests cover the identity match, the expiry rule and the shape of the committed
+export options.
+
+The chain has been run to Apple's validation servers by hand and rejected for
+one reason: the app has no icon (`CFBundleIconName` missing, no 120×120
+asset). That is a real gap in the product, not the pipeline, and is now
+scheduled separately.
+
+---
+
+2026-09-10 — **One command releases the iPhone app, and stops before Apple.**
+
+`wt run release` derives the next marketing version and build number, writes
+them into `ios/project.yml`, commits, cuts an annotated `ios-v<version>-b<build>`
+tag, archives the app against the Release configuration with
+`-allowProvisioningUpdates` and the App Store Connect key, and exports a signed
+`.ipa` with the committed export options. It never pushes and never uploads.
+
+Both numbers moved out of the Info.plist and into the app target's
+`MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` settings, which the committed
+plist now reads as variables. That is what makes `--rehearse` possible: it
+archives and exports with the numbers the next release *would* carry, passing
+them to `xcodebuild` instead of writing them, so nothing in the tree changes
+and no tag is cut. `--preflight` reports the Team ID, the key's identifiers,
+the private key, the export options and the derived numbers, and stops. The
+version now reads 1.0.31 — the version live on the App Store — so the next
+release is the next version of that listing.
+
+Build numbers only ever go up: the tag names carry them, so `git tag` alone is
+the ledger, and the recipe refuses to reuse or lower one. `ios/ExportOptions.plist`
+is committed without a Team ID and copied with one inserted at run time, and
+`manageAppVersionAndBuildNumber` is false so Xcode cannot rewrite the number
+that was tagged.
+
+Green: `wt run release -- --preflight` (every input present, 1.0.32 build 2);
+`python3 -m unittest discover -s scripts/tests` (57 tests).
+
+2026-09-10 — **How the iPhone app ships, and the one-time Apple setup behind it.**
+
+`docs/RELEASE.md` settles the shape of releasing this app without Expo: where
+the marketing version and the build number are written, why a build number is
+permanent and what a reused one costs, the `ios-v<version>-b<build>` tag that
+doubles as the ledger of every number issued, the archive and `-exportArchive`
+invocations with the export options they take, and where release notes come
+from. It states plainly that the recipe stops at validation and never uploads,
+and ends with a checklist an operator can follow from an App Store Connect
+account to a working App Store Connect API key, a private key on disk, three
+identifiers in the login keychain and a distribution certificate. No key, key
+id, issuer id or Team ID appears in it.
+
+Writing that contract exposed a stale one. `ios/Signing.local.xcconfig` used to
+carry the bundle identifier as well as the Team ID, from when the app had no
+committed identity of its own. It has one now — `sh.amux.app`, the listing
+already on the App Store, whose subscriptions the app sells — so a local file
+that could override it is a way to sign a different app and find no products.
+The sandbox-purchase recipe now requires only `DEVELOPMENT_TEAM`, builds the
+committed identifier, and a test keeps the identifier it names in step with
+`ios/project.yml`.
+
+Green: `python3 -m unittest discover -s scripts/tests -p qa_sandbox_purchase_test.py`
+(15 tests).
+
+2026-09-10 — **Bound workspace tests and document deterministic setup.**
+
+The workspace test recipe now allows 150 seconds instead of 900, for both
+the full suite and explicitly selected targets. The measured full command
+takes 72.00 seconds, including 68.62 seconds in Rust harnesses and 1.59 seconds
+of Cargo test preparation. The new deadline leaves about twice that command's
+time for runner and scheduling variation, while remaining below the original
+158.59-second harness runtime alone. The prerequisite workspace compilation
+stays outside the test deadline. This runner allowance is a budget decision,
+not a new GitHub performance measurement.
+
+The testing guide now requires driven clocks for simulated delays and
+timeouts, notifications for readiness, independent tests for independent
+scenarios, and explicit gates for live provider suites. Real IO and complete
+network absence windows retain their observation boundaries. Fixture sharing
+keeps mutable sessions and observation logs private to each test.
+
+Verification: all 34 recipe checks pass, the workspace passes 2,472 Rust tests
+within the new deadline with one existing ignored test, and `wt lint` passes.
+Command captures confirm the same deadline for full and selected-target runs.
+
+2026-09-10 — **Keep report source identity after measuring build overhead.**
+
+The first build after the runtime changes costs 6.00 seconds wall time and
+4.43 seconds in Cargo. Only amux-cli recompiles, and Cargo identifies the
+changed branch reference as the cause. Keep SHA embedding in debug builds:
+this bounded once-per-commit cost preserves the committed source identity in
+diagnostics and replay reports. Unchanged test iterations do not invalidate
+that input. The command time includes orchestration and sweeping; it is not
+a pure linker measurement.
+
+The next identical build takes 36.70 seconds, rebuilding dependencies whose
+fingerprints wt deleted after the first command. A separate identical pair
+takes 49.47 and 37.11 seconds; both rebuild. Fingerprint snapshots and Cargo
+diagnostics show the two getrandom/tempfile variants being deleted in turn.
+The variants alternate, not necessarily fast and slow command times. This is
+the external wt 0.3.0 sweeper defect; neither wt nor its configuration changes.
+The pairs start at 97.13% and 85.67% system idle, with no foreign build/test
+process observed. Build costs are compared within their pairs, separate from
+the earlier test-runtime measurements.
+
+The completed runtime comparison retains all 62 Rust harness rows: workspace
+harness time falls from 158.59 to 68.62 seconds, with every harness under the
+measured 12-second bound. The full test command falls from 191.27 to 72.00
+seconds, including separately reported preparation. No runtime is remeasured
+for the build-overhead decision.
+
+Verification after both build pairs: `wt test` passes 2,472 Rust and 34 Python
+tests, with one existing ignored test; `wt run spec` passes all 480 specs.
+
+2026-09-10 — **Run independent replay prefixes concurrently and wake host checks on events.**
+
+Both long UI differential sweeps now run as eight libtest cases, sharing each
+immutable sequence corpus once. Every prefix still deserializes the complete
+recorded prefix and folds from an empty model, comparing the live model, its
+JSON and every invariant. The recorded conversation's behavioral assertions
+remain in their original test. Testnet host-presence assertions and stored
+peer readiness wake on existing host subscriptions instead of 50 ms polling;
+registration precedes the first check, and assertion deadlines remain intact.
+
+A full run exposed a hook-replay isolation defect: concurrent setups overwrote
+a global observation log. The claim now reads its own session's existing log.
+A controlled regression opens another unfinished setup while the first replay
+is pending; it fails the original hook-ordering assertion with the old code
+and passes with the fix. All hook ordering and strict replay assertions remain.
+
+On the same idle M2 Max, UI specs fall from 6.19 to 1.95 seconds (1.98 in the
+separate spec invocation). Protocol remains about 9.45 seconds versus 9.58;
+that small variation is not evidence of a harness-level notification saving.
+The complete `wt test` passes 2,472 Rust and 34 Python tests in 72.00 seconds,
+with the existing one ignored test. Harness runtimes total 68.62 seconds versus
+73.03 before these changes and 158.59 before the throughput work. Preparation
+is separate: 0.31 seconds for the prerequisite build and 1.59 for test setup,
+including a rebuilt example harness. All 480 specs pass in 11.24 seconds;
+`wt lint` and `wt run fmt-check` pass.
+
+Every harness is below the chosen 12-second measurement bound. The largest
+remaining workload is GIF quantization at 10.95 seconds, followed by protocol
+at 9.45 and the amux library at 8.56. This retains all 50,400 viewport renders,
+all GIF frames and byte-equivalence checks, real persisted network operations,
+and full network absence windows. The live-only Claude interrupt and unused
+userinfo timeout fixture remain unchanged. External wt dependency sweeping
+and the CLI's commit-triggered relink are measured separately from test runtime.
+
+2026-09-10 — **Advance retry test time and terminate recorded SDK output.**
+
+The mobile retry test advances all 7.6 seconds of controlled backoff and
+cooldown time with Tokio's clock, running time normally during real socket
+IO and waiting for failed-dial notifications during setup. It retains every
+press, attempt-count assertion and real-relay recovery. SDK replay waits on
+write-progress notifications and closes exhausted output streams so simulated
+exits release both drains immediately. All twenty-five SDK registry cases now
+run as separate tests; registry equality checks coverage, and a paused-clock
+regression requires both drains to consume zero virtual time.
+
+Independent lifecycle, cache-inventory and relocation cases also run as
+separate tests. Every case retains its installation, IO and assertions. The
+six tenant absence windows and two forwarding windows overlap before pairing;
+each still observes its original full duration.
+
+On the same idle M2 Max, mobile retry falls from 8.14 to 0.51 seconds, its
+harness from 9.29 to 4.18, and SDK replay from 6.24 to 0.24. Compared with the
+preceding run, the lifecycle loop falls from 4.89 to at most 2.40 seconds per
+case, foreign-path relocation from 3.56 to at most 0.93, symlink relocation
+from 2.43 to at most 0.59, and tenant isolation from 4.57 to 2.84. Protocol and
+amux library harness totals remain about 9.58 and 8.74 seconds; these case
+splits do not establish a harness-level saving.
+
+The complete `wt test` passes 2,456 Rust and 34 Python tests in 75.16 seconds,
+with one existing ignored test. Rust harness wall times total 73.03 seconds,
+down from 83.89 after the GIF changes; build/test preparation is a separate
+0.21 + 0.61 seconds. All 465 specs, twenty retry/socket repetitions, `wt lint`
+and `wt run fmt-check` pass. No test, assertion, fixture, real network absence
+window, golden or compiler setting is removed or relaxed. Live-only Claude
+interrupt and unused userinfo timeout fixtures remain outside ordinary suite
+runtime. Further runtime assessment and final build-overhead measurements
+remain unfinished.
+
+2026-09-10 — **Isolate the closed Unix socket fixture from concurrent forks.**
+
+The stale-socket replacement test now creates its fixture in a child running
+only that test, waits for the child to exit, and verifies that the socket path
+refuses connections before testing replacement. A listener created and dropped
+in the parent can remain reachable through a concurrent subprocess fork until
+exec, even with close-on-exec set. A pipe-controlled fork reproduces that race
+without sleeps; child exit makes the same path refuse connections.
+
+All original replacement assertions remain. Twenty targeted repetitions and
+the complete `wt test` pass, including concurrent subprocess tests. `wt run
+spec`, `wt lint` and `wt run fmt-check` also pass. Production socket binding
+behavior is unchanged.
+
+2026-09-10 — **Reuse font parsing and identical GIF palettes across captures.**
+
+The rasterizer parses its five embedded font faces once per process. GIF
+recordings retain up to sixteen quantized frames and reuse one only when the
+dimensions and every RGB byte match. Every event still renders and rasterizes
+its frame, and every frame is written in order with its original delay. The
+bounded cache retains about 65 MiB of raster and index data at the capture
+viewport. A regression test compares its complete GIF bytes with fresh
+encoding across changed pixels, delays and cache eviction.
+
+On the same idle M2 Max, the GIF library harness falls from 24.10 to 10.94
+seconds; all eleven existing tests and the new encoding test pass. The PNG,
+both complete 25-frame scroll GIFs and their manifests remain byte-identical.
+No frame, assertion, fixture row or golden baseline is removed.
+
+The full `wt test` passes 2,417 Rust and 34 Python tests in 85.44 seconds.
+Its Rust harness runtime totals 83.89 seconds, down from 97.64 after the
+viewport change; build and test preparation account for another 0.40 seconds.
+All 462 specifications, `wt lint` and `wt run fmt-check` pass. An earlier
+library run exposed an intermittent stale-socket fixture failure; the full
+run passed, and fixture isolation remains a separate required repair.
+
+---
+
+2026-09-10 — **Run the complete viewport sweeps concurrently.**
+
+The fleet sweep now exposes twenty width ranges to the Rust test harness; the
+chat sweep exposes twenty-four. Every one of the 12,000 fleet renders and
+38,400 chat renders still runs, including text capture and every layout
+assertion. The model fixtures are folded once per harness. Each chat case
+clones its own view so mutable paint caches stay local to that test.
+
+On the same idle M2 Max, fleet goldens fall from 39.79 to 6.20 seconds and chat
+goldens from 32.89 to 4.86 seconds. All 178 tests in the two harnesses pass;
+the increase from 136 is the partitioned sweeps. No golden changes or live
+provider tests are involved. The reduction removes serial rendering work,
+without changing a timeout or reducing the viewport matrix.
+
+The complete `wt test` passes 2,416 Rust and 34 Python tests in 100.63 seconds;
+its Rust harnesses total 97.64 seconds, down from 158.59. The command also needs
+less compilation than the baseline, so the whole command reduction is not all
+test execution. All 462 specifications, `wt lint` and `wt run fmt-check` pass.
+
+---
+
+2026-09-10 — **Measure the Rust suite before optimizing its slowest tests.**
+
+On the M2 Max with both test simulators shut down, a ten-second CPU sample
+confirmed an idle machine and process monitoring found no competing build or
+test. The complete `wt test` passed 2,374 Rust tests and 34 Python tests in
+191.27 seconds; `wt run spec` passed 462 tests in 16.04 seconds. Per-test
+libtest timing was enabled at execution, without changing compiler settings.
+
+The fleet and chat viewport sweeps took 39.77 and 32.86 seconds; the two
+25-frame GIF tests took 24.10 and 23.04 seconds concurrently. These costs are
+rendering and encoding work. The mobile retry test spent 8.14 seconds on a
+real backoff timeline. The unused userinfo-timeout fault and opt-in live-Claude
+interrupt wait do not explain the measured suite. No test or product code
+changes accompany this baseline.
+
+---
+
+2026-09-10 — **Use portable working directories in startup service tests.**
+
+The startup tests now create echo agents in the platform's temporary directory,
+matching the neighboring service fixtures. Both the direct service request and
+the client RPC previously assumed `/tmp` exists, which the host correctly
+refuses on Windows. The other `/tmp` fixtures store metadata or exercise
+in-memory sessions; the short installation-root helper already selects the
+platform temporary directory outside Unix.
+
+Verified on macOS with `wt test -- services::startup` (35 tests), the complete
+`wt test` suite and `wt run fmt-check`. A Windows CI run of the repaired revision
+has not been observed.
+
+---
+
+2026-09-10 — **Check nightly Rust formatting during whole verification.**
+
+`wt run fmt-check` runs the same nightly rustfmt check as CI under a five-minute
+deadline. Whole iOS verification runs it before lint and tests, so local green
+verification cannot miss a formatting failure. The iOS runner installs nightly
+rustfmt alongside its stable build toolchain. An xtask test pins the command
+and its position before compilation.
+
+---
+
+2026-09-10 — **Match nightly Rust formatting for host revocation.**
+
+Wrap the remote connection close call as nightly rustfmt requires. This only
+changes whitespace; host revocation behavior stays the same. Verified with
+`cargo +nightly fmt --all -- --check`.
+
+---
+
+2026-09-10 — **Document restored app containers and the complete golden catalogue.**
+
+The iPhone guide now describes the mobile runtime's existing profile-path
+relocation and the production-startup journey that proves restoration after
+a simulator reinstall. Its previous warning predated that repair. The guide
+and baseline notes also count all 62 screens, including the four dictation
+states, for 124 light and dark captures. Checked against the runtime relocation
+policy, journey assertions and golden manifest; no behavior or baseline changes.
+
+---
+
+2026-09-10 — **Clear a composer through the driving door from any caret.**
+
+The debug clear command selects the native field's whole document before
+deleting. Backspacing from the existing caret left text after it untouched;
+the populated typing fixture starts at zero and could never empty. One native
+deletion now updates both the text view and its draft, including attachment
+tokens, without a character limit or string slicing.
+
+Validation: app-hosted tests pass with carets at the beginning, middle and end
+of both typing and attachment fixtures, plus a Unicode replacement and repeated
+clears. `wt run ios-door-smoke` opens the unchanged typing fixture, clears it,
+types the exact short replacement, queries its text and captures the window.
+The smoke also passes relay teardown and release exclusion checks. iOS feature
+and copy lint pass.
+
+---
+
+2026-09-10 — **Place the opening transcript tail after layout.**
+
+A conversation now follows its actual content size, viewport and safe-area
+insets as its opening layout changes, requesting the tail after the reporting
+layout pass. Reader interaction releases that control. Short feeds retain
+their top alignment and ordinary scrolling keeps the platform's anchors.
+
+The previous one-shot depended on every lazy markdown row reporting a finished
+measurement. That count could remain nonzero for an offscreen row, preventing
+the opening scroll even when the visible tail had rendered. Issuing a scroll
+inside the geometry callback also used unfinished layout; deferring it fixes
+the intermittent accessibility-size transcript displacement.
+
+Validation: ten consecutive isolated accessibility conversation golden recipes
+and the full 124-capture recipe pass against unchanged baselines. Feature and
+copy lint pass. A controlled unfocused short-draft comparison reproduces the
+historical anchor-only displacement; the repaired container matches across
+20 captures. No fixture, capture threshold or settling rule changes.
+
+---
+
+2026-09-10 — **Home journey follows reviewed copy and persisted accounts.**
+
+The relay-loss journey still expected the longer connection and timeout copy
+that the string review replaced, plus the former stopped-runtime instruction.
+Its exact sentence list now matches the app's catalogue and startup-recovery
+state. It continues to require a disconnected bridge and every remembered row
+in its original order; unknown or raw transport messages still fail.
+
+The unsigned empty-home act also clears the account seeded by earlier acts,
+alongside its cached fleet. Account persistence correctly retains that account
+between launches, so removing only the fleet no longer establishes an unsigned
+phone. The journey now explicitly requires the signed-out home and Sign In.
+
+Validation: `wt run ios-journey` passes all 13 journeys on the pinned simulator,
+including the complete home journey and production account restoration.
+
+---
+
+2026-09-09 — **Bridge smoke probes use the current account configuration.**
+
+The standalone simulator probes now supply an account list, selected account
+and account-owned token. Their old relay-owned token shape was rejected before
+the bridge started, breaking the real relay round trip and falsely satisfying
+the shipping library's plaintext-rejection check.
+
+The shipping probe first requires acceptance of the equivalent valid TLS
+configuration, then requires plaintext rejection. The loopback probe still
+requires both daemon identities, excludes unpaired hosts from the displayed
+fleet, verifies discovery grants no trust, and checks worker and runner cleanup.
+
+Validation: `wt run ios-rust` and `wt run ios-loopback-smoke` pass on the pinned
+simulator, including the shipping positive control and real relay inventory.
+
+---
+
+2026-09-09 — **Use the authenticated cloud route for both pairing methods.**
+
+QR and printed-code pairing now share the same route check. A host on another
+cloud cannot be reached through the authenticated relay, and both methods
+return the same sentence explaining that both devices must be online and
+signed in to the same cloud account. The QR-only URL guard, its normalization
+helpers and its extra request field are deleted. Invitations still carry the
+machine's configured cloud and cannot redirect the phone.
+
+The audit across `crates/`, `ios/` and `docs/` found no remaining relay-to-cloud
+identity writer after the earlier attachment fix. It removes the runtime
+comment claiming embedded devices have no configured cloud, corrects relay
+address names in testnet and wording that equated cloud and relay in the
+protocol and user docs, and replaces relay-address examples in Rust and Swift invitations.
+The superseded pairing explanation in this log and `docs/CLOUD.md` is rewritten:
+`attach_relay` overwrote `cloud_url`; configuration owns that value, and the
+phone defaults to `https://amux.sh` without an app override.
+
+Retained deliberately: installation `CloudServiceId` normalization validates
+configured origins and prevents duplicate `(service, subject)` bindings;
+account API/JWKS endpoint derivation and binding configuration writers never
+read relay addresses. Testnet's cloud owns its identity and credentials while
+its relay carries traffic; connector fixtures and routing link roles still
+name that transport. Test clients retain their loaded cloud for configuration
+assertions. Historical report fixtures retain the configuration captured at
+the time, rather than rewriting replay input.
+
+Validation: 98 targeted pairing tests pass; full `wt test` passes 2,373 tests
+with one existing ignored test. `wt run spec` passes 102 host and 360 reducer
+specifications. The cross-cloud capture shows identical failures and unchanged
+trust files. All 24 Swift shell tests and `wt run ios-lint` pass.
+
+2026-09-09 — **Test networks configure a cloud that assigns a separate relay.**
+
+The testnet cloud now owns its identity URL and token issuance separately from the relay that carries device traffic. Topologies and readiness publish `cloud_url` alongside the assigned relay address. Daemons and Rust clients write and load their cloud configuration before starting; daemon restart reads the existing file. Installation binding fixtures establish one cloud identity before any device starts. The runner returns host-produced invitations unchanged; its tests assert that they name the topology's configured cloud.
+
+Phone topologies explicitly name `https://amux.sh`, matching the default in the phone's installation profile files. The journey runner reports that cloud and its independent loopback relay and refuses a topology that does not match the phone configuration. No mobile override or runtime cloud writer is added. Custom-cloud Rust regressions pair by QR and printed code through the relay and drive the shared UI client from readiness configuration.
+
+Validation: all 20 targeted testnet tests pass; full `wt test` passes 2,372 tests with one existing ignored test; `wt run spec` passes 101 host and 360 reducer specs. The complete `hosts` and `accounts` simulator journeys pass all seven and eight acts respectively, without shortcuts. Ten fresh composited captures were inspected, and the two active phone profile files were read to confirm their configured cloud.
+
+---
+
+2026-09-09 — **The production cloud path re-proved end to end after the cloud-model change.**
+
+With the cloud fixed in configuration and pairing routed through the relay the account credential names, the whole live path was run once against `https://amux.sh` with a QA account: the phone signs in, reads its access back from the account service, pairs with this checkout's daemon by the invitation that machine actually shows, asks a real Claude session a question and reads the answer, relaunches on the session it saved for itself, then forgets the machine and pairs again by the printed code. Nothing tells the app where to go; the relay address comes from the credential the account service mints. The App Store purchase route is not claimed here — a sandbox purchase needs a phone in somebody's hand.
+
+Validation: `wt run qa-live-journey` passes in full, and the run removes the profile it made. Alongside it, `wt run ios-unit` (all six bundles), `wt run ios-lint` and the `accounts` journey pass on this revision.
+
+---
+
+2026-09-09 — **Configuration owns the cloud; a relay supplies only a route.**
+
+The cloud is the well-known account service configured by `cloud_url`, defaulting to `https://amux.sh`. Attaching or replacing an embedded relay no longer changes it, and the relay carries no cloud identity. The phone uses that default with no app override; its account JSON carries only an identifier and credentials. Installation binding still derives configuration from the bound account service, or the default for an unbound profile. Pairing reaches the host through the configured cloud's independently addressed relay. Core tests cover both default and custom configuration through attachment and replacement; mobile tests accept the daemon-issued `https://amux.sh` invitation over loopback and refuse another cloud; Swift tests pin the account JSON shape.
+
+Validation: full `wt test` and `wt run spec` pass, as do the focused embedded configuration and mobile pairing tests, all 315 AmuxCore simulator tests, `wt run ios-lint`, and the real relay-to-host `hosts` UI journey.
+
+---
+
+2026-09-09 — **Subscription access text is included in the string catalogue.**
+
+The existing switching-on subscription state, heading and retry explanation are now registered in the app's string catalogue. The non-copy exemption for the stable `unconfirmed` UI identifier follows its current source line. The displayed wording and behaviour are unchanged. Validation: `wt run ios-lint` passes.
+
+---
+
+2026-09-09 — **The cloud document's access read now matches the query the app sends.**
+
+`docs/CLOUD.md` printed a GraphQL query asking for a purchase's `status` and
+`trialEndsAt` and a grant's `reason`. The app asks for none of the three: it
+reads `pro`, `until`, and a grant narrowed to `provider`, `willRenew` and
+`entitledUntil` behind `__typename`. The printed query is now that query.
+
+The paragraph explaining `status` also described a screen by way of a
+subscription status the app never reads — access being switched on. That state
+is real and the app now draws it, but it reaches it a different way: the phone
+knows it has just handed over a purchase the account service accepted, so a
+read still answering `pro: false` is what puts the paywall on *Your
+subscription is still switching on* with a Retry that re-runs the read. The
+section says that instead, and the renewal-date paragraph now names the one
+place the app derives a date — the warning before deleting an account — rather
+than implying a screen that shows a billing report.
+
+Validation: `wt run ios-lint` green; every claim in the section checked
+against `AmuxCloud.entitlement`, `Access.entitlement`, `PaywallStore.entitled`
+and the delete-account copy.
+
+---
+
+2026-09-09 — **A purchase amux.sh has taken but not yet turned into access says so.**
+
+The paywall had a dead end. When the account service accepted a signed
+transaction and the entitlement read that followed still said the account had
+no access, the screen stayed on a disabled *Confirming with amux.sh…* for
+good: the phase only ever moved on an active entitlement, and while it did not
+move nothing on the screen could be pressed — not the button, not Restore, not
+the plans. Somebody who had just paid was left with nothing to do. The two
+services are genuinely minutes apart in production, because the App Store's
+receipt reaches amux.sh through its own webhook rather than through the phone,
+so this is an ordinary state and not an error.
+
+There is now a third unconfirmed state for it. A purchase the account service
+took, with the access not switched on yet, is headed *Your subscription is
+still switching on* rather than *not confirmed* — saying a purchase amux.sh
+accepted was not confirmed would tell somebody their money went nowhere — and
+keeps the Retry button, which reads the entitlement again. The transaction has
+already been finished with the store by then, so asking again posts nothing a
+second time and the plans stay off the screen: the subscription is never
+offered for sale twice.
+
+Validation: paywall unit tests drive an accepted post whose entitlement read
+answers none, from the first confirmation and from asking again, and check
+that an empty read on an untouched paywall still says nothing. The accounts
+journey drives the same state through the scripted cloud, reads the words off
+the running app, and asserts that asking again adds an entitlement read and no
+second recordPurchase.
+
+---
+
+2026-09-09 — **Forgetting a machine keeps it reachable for pairing again.**
+
+Revoking a machine used to leave the phone with no way back into it. Unpair
+tore the peer's whole routing entry out — its own links and the relay's word
+that the machine was online — and put the peer into the trust-replacement
+window that suppresses later route updates. A relay only announces a machine
+when that machine connects, so a machine that stayed connected was never
+announced again: the phone still offered it as a pairing target, but every
+attempt to pair by its printed code failed as unreachable, which reads on
+screen as a bad code.
+
+Unpair now ends access without forgetting reachability. Trusted streams,
+tunnels, links and our own routes to the peer are closed exactly as before;
+the relay's claim stands, and no replacement window is opened. A machine just
+forgotten is then in the same position as one never paired: untrusted, unable
+to call, and visible through the relay — which is the only route a fresh
+pairing has, and the same route the first pairing took.
+
+Validation: a new pairing spec pairs two cloud-only daemons, revokes, and
+pairs again by the printed code without either side reconnecting to the relay.
+The revocation specs are unchanged and still show the revoked peer's stream
+closing and its next call failing. Routing and connection unit tests cover the
+new teardown: the claim survives, and a host with nothing else holding it is
+still reported gone.
+
+2026-09-09 — **Resume the saved phone session instead of re-importing a token.**
+
+The production QA recipe now hands the phone a browser session once. Its
+second act closes the app and opens it again, and the app comes up on the
+session it saved for itself, refreshes it against the account service and
+dials the relay that service names. Previously the second act replayed the
+original refresh token; the account service rotates a refresh token on every
+use, so the replay was refused with `invalid_grant` and the printed-code
+pairing was never reached. It also asked the phone to do something no phone
+does: nobody re-imports a session into an app they signed in yesterday.
+
+The recipe builds each act's requests in a named function, and recipe tests
+check that the session is imported once, in the first act, and that no field
+of the second act carries a credential. The run now also asserts that the
+reopened app comes back signed in as the same account before it pairs again.
+
+The driving door's reconciliation wait no longer refuses a launch whose
+runtime has not started: an app restoring its own session starts one a moment
+after launch, and the driver's first request beats it. A wait that never sees
+a runtime still fails, saying so.
+
+Validation: recipe tests, iOS lint and one authorized production QA run. The
+run restored the sign-in, paired on the machine's QR invitation, received a
+real agent reply from a Claude session, and came back signed in after being
+closed and opened again — the replay is gone. It now stops one step further
+on, at the printed code: a client that revokes a machine drops its routes
+along with the trust, and reachability through the relay is only announced
+when a machine connects, so there is no route left to pair over and the
+machine is never asked. Two daemons on a test relay reproduce it without a
+phone.
+
+2026-09-09 — **Let simulator sign-ins persist in Keychain.**
+
+Simulator builds now sign ad-hoc and declare the app’s own Keychain group.
+Previously the linker-signed app had no grants, so Security refused refresh
+storage with `-34018` before the production cloud session could be restored.
+Signing overrides apply only to the simulator SDK. Test bundles generate the
+Info.plists signing requires; device signing remains unchanged.
+
+Keychain write and removal errors retain their Security status through the
+cloud adapter and driving reply. Screens still show the designed sentence,
+without the numeric diagnostic. The unit recipe now includes a test hosted by
+the signed app that inserts, reopens, rotates and deletes tokens, and checks
+account isolation. A package test runner cannot prove this access because it
+has a different signing identity and no Keychain group. Cloud tests also prove
+that sign-in and restore retain storage errors and keep the screen copy.
+
+Xcode embeds simulator grants in the executable’s `__TEXT,__entitlements`
+section while its separate code-signature entitlement dictionary stays empty.
+Both Debug and Release executables contain the expanded app group; the Release
+scope report declares only that group.
+
+Validation: simulator unit suites, recipe tests, iOS lint, Release scope
+audit and the accounts journey pass. The sign-in golden matches in light and
+dark. A production QA run now restores the sign-in, pairs on the host’s QR
+invitation, reconciles the fleet and receives a real agent reply. The complete
+recipe still fails later: its second session import reuses the original refresh
+token after rotation and receives `invalid_grant`; that recipe needs to resume
+the saved session instead.
+
+2026-09-09 — **Pair by a machine's QR invitation over the production cloud.**
+
+The phone refused valid invitations before sending an attempt because
+`attach_relay` overwrote its configured `cloud_url` with the relay address.
+The machine's invitation correctly named its configured cloud. The cloud is
+the account service, defaulting to `https://amux.sh`; it assigns the relay
+that carries traffic. Configuration is the only writer of cloud identity.
+The phone loads its profile configuration and uses that default without an
+app override. A relay attachment supplies only a route and credentials.
+
+The QR-only comparison exposed the overwrite while printed-code pairing
+escaped it. Both pairing methods now rely on the same authenticated cloud
+relay route, with a legible failure when that route is unavailable. The
+invitation still names the machine's configured cloud and never changes the
+phone's configuration. Installation binding retains cloud-origin
+normalization for account identity; pairing has no URL comparison to normalize.
+
+The driving door reads the machine's pairing link through the app's own
+reader, as a scan does. Testnet returns the invitation unchanged instead of
+rewriting its cloud to the relay address. The mobile regression uses a host
+on a second test cloud to prove refusal, then authenticates and confirms the
+original machine's invitation over a relay with a different address.
+
+Validation: the Rust pairing tests cover machine-issued invitations, distinct
+cloud and relay addresses, and QR and printed-code refusal across separate
+clouds without trust writes. The accounts journey pairs on the machine's
+invitation. The production QA recipe exercises both methods but remains a
+manual check against the live service.
+
+2026-09-09 — **Recover when the phone runtime fails during startup.**
+
+The coordinator releases a bridge whose worker reports a stopped connection or
+an invariant before initialization finishes. The driving door then reports that
+the runtime has not started, while retaining the diagnostic. Remembered agents
+stay readable and the home says “Offline · amux could not start”. Retry Now
+fetches the account's connect token and initializes a fresh runtime. Ordinary
+transport failures still retry through their live worker.
+
+Reports freeze the diagnostic with the frame and retain it in report.json even
+when no runtime recording can be obtained. The app and driving-door capture
+paths use the same diagnostic source. Rust installation checks are unchanged.
+
+Validation: the UIKit-free coordinator tests cover a combined fatal batch, a
+startup invariant alone, a stopped disconnect alone, preserved cached rows,
+fresh credentials on retry and ordinary transport retries. All iOS unit suites
+and the production startup journey pass, including restoration after container
+relocation. Focused report and door tests, iOS lint and the app build pass.
+Composited light and dark captures of a real installation failure show the
+designed sentence above the cached agent; its report retains the diagnostic
+with the runtime recording correctly declared absent. The simulator's original
+installation configuration was restored after capture.
+
+2026-09-09 — **Preserve phone accounts when the app container moves.**
+
+The mobile runtime opts into installation path rebasing when iOS moves its
+storage container. Startup validates every profile against the exact namespace
+recorded in the old installation before replacing the installation and profile
+YAML files. Profile IDs, keys, trust and cached fleets remain in place. Desktop
+callers refuse relocation by default, and symlinks or paths outside a profile's
+allocated namespace still fail startup.
+
+The two-account Rust test moves a paired installation and reopens both accounts,
+checking their original profile IDs, device keys, identities and isolated trust.
+Negative tests cover cross-account and external paths, foreign installation
+references, moved desktop roots and symlinks. The production-startup journey
+reinstalls the same simulator build between pairing and restored launch, checks
+that the container moved, reads the saved account and fleet before startup, and
+requires a fresh relay dial and successful reconciliation.
+
+Validation: all seven mobile-profile tests and the reinstall journey pass.
+The 14 installation-supervisor and seven split-configuration tests pass, as do
+workspace formatting, Rust lint and iOS lint. The four journey captures were
+inspected; the restored connection records two relay dial attempts.
+
+2026-09-09 — **Keep a report's identity across upload retries.**
+
+The first upload retains its complete bundle. A refusal and Retry now carry
+identical bytes, including the creation time and stamp, and annotations become
+read-only once submitted. Sent is terminal in the store and removes Send from
+the screen. Dismissal releases the bundle for a new capture; a late upload
+answer cannot replace that new report's state.
+
+Every app build stamps its checkout's full Git revision into the built
+Info.plist. Reporting passes it into report.json, and the journey reads the
+actual refused and accepted uploads to compare identity and verify the revision
+against the checkout used to build the app. The physical-phone checklist now
+includes real thumbnail and full-screen screenshot previews and prompt retention;
+simulator evidence explicitly labels its staged notification and app coverage.
+
+Validation: all 18 report unit tests pass, as does the complete reports journey.
+The uploaded bundles match byte for byte; the Rust report reader accepts the
+revision-bearing bundle and correctly leaves native UI replay unchecked.
+The four report/refusal light and dark composited goldens pass unchanged and
+were inspected. iOS lint and workspace formatting pass.
+
+2026-09-09 — **Verify the echo's own frame and gate accessibility.**
+
+The optimistic-echo measurement snapshots the drawn transcript synchronously
+inside the commit callback that emits its timing mark. Only a snapshot carrying
+the sent prompt can produce a timing sample; a row in a later frame cannot
+rescue the measurement. A performance-suite regression delays the row until
+the following commit and verifies that the original measurement still fails.
+
+Whole iOS verification now runs the full accessibility sweep after journeys,
+enforcing names and 44 pt targets. The command tests cover the order and prove
+that an audit failure stops verification before performance. Journey-level
+accessibility recordings retain their existing diagnostic role.
+
+The newly enforced sweep caught the dictation refusal's Open Settings button
+exposing only its 16 pt text height to accessibility. Its existing 44 pt layout
+now belongs to the label's hit area, so the whole reserved space is tappable.
+
+Validation: verifier unit and CLI tests pass, including the failing-audit case.
+Five echo samples pass at a 6.6 ms median and 13.7 ms worst against the 17 ms
+simulator budget, with the delayed-row regression passing. The accessibility
+sweep reports zero faults across 504 controls in 63 states. iOS lint and both
+dictation-denied composited goldens pass; the inspected images are unchanged.
+
+2026-09-09 — **Dictate into the iPhone composer.**
+
+Dictate now starts app-owned Speech recognition with microphone capture and
+requires recognition on the device. Partial results replace the previous
+hypothesis at the saved caret, preserving surrounding prose and attachment
+tokens. A second press stops and keeps the draft; sending, leaving the page or
+backgrounding releases the microphone. A changed draft is never overwritten
+by a later recognition result.
+
+The composer names permission preparation, listening, denied access and an
+unavailable recognizer. Denied access offers Settings. Both system permission
+explanations are generated from the project configuration and have string
+catalogue entries. The physical-phone checklist covers granting permission
+and speaking at the caret; simulator proof reaches the designed refusal only.
+
+Validation: four UIKit-free dictation unit tests, copy and feature lint, the
+writing journey, Release scope audit and driving-door smoke pass. Eight new
+composited light/dark baselines were inspected, and all twelve comparisons
+including the existing typing and working screens pass. Visual review also
+caught a late runtime startup callback replacing the first golden fixture;
+fixture and replay stores now stay isolated until an explicit real connection
+or session restoration. The writing journey regenerates its system-service
+evidence and proves denied microphone access leaves the two-line draft intact.
+
+2026-09-09 — **Start and restore the iPhone connection from the app.**
+
+The app now owns the runtime outside its debug tools. It asks the account
+service for the relay credential, dials the address that credential names with
+system TLS, wires the selected account’s stores, credits event batches across
+account switches, and releases the connection when backgrounded or signed out.
+Debug launch credentials and imported QA sessions use that same coordinator.
+One installation in Application Support holds the account profiles, and Caches
+holds each account’s last fleet. The phone uses its own device name.
+
+Account names, entitlement grants and selection survive launch. Refresh tokens
+remain inside the account service and persist in the device Keychain, including
+rotations. A restored home reads the selected account’s fleet before startup
+awaits the cloud. A lazy root lifetime prevents redraws from starting extra
+runtimes and purchase listeners; scripted testnet credentials carry no expiry
+instead of an already-expired fixture date.
+
+Validation: 466 Swift unit tests, the production-startup journey, source and
+string lint, the existing unpaired cold-cache and full accounts journeys, and
+the verifier’s required-journey and CLI tests pass. The new
+journey signs in without door connection credentials, reaches a real host and
+agent, and relaunches into cached rows with no runtime or dial attempts yet.
+It also bounds credential requests so a startup loop cannot pass unnoticed.
+Additional regression testing exposed absolute profile paths surviving an app
+container move; relocation support remains unfinished and is tracked separately.
+
+2026-09-09 — **Describe the limits of iPhone report screenshots.**
+
+The debugging guide now explains that the app freezes its frame after the
+system screenshot notification, so the pictures may differ with no guaranteed
+maximum delay. It describes the retained app-owned prompt without promising a
+position beside the system preview. Matching source comments reflect the same
+constraint. Report capture and prompt layout are unchanged; iOS lint passes.
+
+2026-09-09 — **Keep golden status bars in the requested appearance.**
+
+The debug fixture root declares the same appearance preference as its window,
+so the SwiftUI hosting controller updates system status text when switching
+from dark to light. Overriding only the window could leave white status text
+on a light permission sheet or facts strip. The production root is unchanged.
+
+The full golden gate passes all 116 captures across 33 reference screens and
+25 added states, including both appearances and the small-display states.
+No baseline PNG or comparison tolerance changes. All 66 design reference
+pairs regenerate; the nine golden-tool tests and iOS source/string lint pass.
+
+2026-09-09 — **Catalogue iPhone copy and enforce its review.**
+
+The English catalogue now contains 461 entries, with 30 debug-only entries in
+a separate catalogue excluded from Release. The string lint inventories every
+Swift app and package source, including model helpers and report views.
+Protocol keys, assets and verbatim fixtures require exact source-scoped
+exemptions with reasons and counts. Raw strings, multiline strings, nested
+interpolation fallbacks, reused exemptions and malformed catalogues have
+failure probes. The check runs through `wt run ios-lint`.
+
+Copy consistently names hosts, uses Title Case for controls, and gives shorter
+pairing, billing and report instructions. An unsigned sign-in page no longer
+claims sign-in has finished. Purchase retry copy promises another attempt,
+not successful confirmation. Reports name the available session and host
+records without promising an app log. The copy standard and catalogue workflow
+are documented beside the iPhone development and performance guides.
+
+Validation: all 458 Swift tests, the string lint and its 12 failure probes,
+the documentation link check, Release scope inspection and all 32 changed
+golden captures pass. The billing-source and report-retention assertions remain;
+wording assertions now check the reviewed sentences. All 66 reference pairs
+are regenerated. The full manifest also reproduced the existing status-bar
+appearance flake on the strip screen; its baseline remains unchanged and the
+failing triplet is retained for the capture repair.
+
+2026-09-09 — **Document native iPhone development and report contents accurately.**
+
+The iPhone guide now explains package ownership, the Rust bridge, build and
+simulator pins, fixture driving, baseline review, real journeys, replay and
+physical-phone qualification. Performance guidance covers periodic use,
+tracked baseline review and the drift a hard budget alone misses. It no longer
+claims verification automatically records missing baselines. The performance
+script accepts `--describe` for the same build-free machine check as `--machine`.
+
+The debug report caption now names the screen and available session and host
+records. It no longer promises an app log: system logs cannot be read back by
+this app, and the bundle already declares that part absent with a reason.
+Both report states have updated, visually inspected light/dark baselines and
+an explanation of the departure from the preserved reference.
+
+Validation: both report states pass ordinary golden comparison in both
+appearances; all 28 recipe tests pass; the documented machine preflight reports
+the pinned Mac and accurately reports that it has no recorded baseline.
+
+2026-09-09 — **Verify the complete iPhone golden catalogue.**
+
+The unfiltered golden run passes all 116 captures: 33 reference screens and
+25 additional states, each in light and dark, including the accessibility
+and small-display cases. No baseline image changes were needed. Every
+reference screen has a baseline explanation, and the reference recipe
+produces all 66 pairs from the committed design captures.
+
+The manifest test now requires the named reference and added screens,
+both appearances exactly once, every baseline, every preserved reference,
+and a baseline-note section for each reference screen. Baseline documentation
+points to the committed references and describes inactive-account attention
+as a fixture choice rather than a missing runtime integration. The verifier
+module now lives in an xtask library target, so the documented
+`--lib ios_verify` test selection executes its tests instead of selecting none.
+
+2026-09-09 — **Keep reporting out of the shipped iPhone app.**
+
+The Release audit found report views and capture models linked through the
+shared shell even though the app passed nil for its report store. Reporting
+models, views and bundle assembly now compile with the existing debug-only
+support sources. The debug app owns the screenshot listener and overlays;
+the shared shell accepts only an optional Help action. The report unit tests
+move with their implementation. The cloud upload data contract remains in Core.
+
+`wt run ios-scope-audit` builds Release and checks entitlements, destination
+settings, bundle metadata, executable symbols, compiled copy and Swift/Rust
+package dependencies. Mac and headset destinations are explicitly disabled.
+The audit requires attention copy and Contact Support, rejects excluded
+notification and discovery APIs, and compiles a deliberately contaminated
+test executable to prove that its debug-symbol detector fails closed.
+
+Validation: the Release audit passes, all 67 debug-support unit tests pass,
+and the relay-backed reporting journey still captures a frozen frame,
+annotates it, retains its draft after upload refusal, retries, and opens
+from Help. Recipe tests and Swift feature lint pass.
+
+2026-09-09 — **Run complete iOS verification on every push.**
+
+The iOS verifier requires every recipe, captures the full golden manifest,
+and refuses a journey run unless every required group reports a full pass,
+including Claude sessions and accounts. The pinned Mac always measures against
+its hard performance budgets. A runner without a committed relative baseline
+records “no baseline for this runner” in its performance artifacts; verification
+never creates its own baseline. Machine detection errors remain failures.
+
+The macos-26 job uploads captures, journeys and performance results on every
+run. The 66 preserved in-scope reference captures now live beside the golden
+assets so a clean CI checkout can produce the reference pairs. Linux jobs are
+unchanged. Remote CI is supplementary evidence; local verification is the gate.
+Focused Rust library and command-boundary tests cover missing recipes, missing
+or skipped journeys, bare golden invocation and performance baseline handling.
+
+2026-09-09 — **GraphQL answers the phone's credential, not only the browser's.**
+
+The live journey exposed a service defect nothing local could have caught.
+`https://amux.sh/api/graphql` was mapped without naming an authentication
+scheme, so it only ever saw the principal the default scheme put on the
+request — the web dashboard's Identity sign-in cookie. The phone has no
+cookie. It holds the access token `GET /api/connect` accepts and nothing else,
+and every one of its entitlement reads came back `me: null`. The two gates
+then disagreed about the same account: the relay issuing a credential while
+the read the app gates on said there was no access.
+
+Fixed in the account service (amuxcloud, revision 1791c93, deployed): the
+endpoint names a scheme that picks per request. A caller carrying the sign-in
+cookie is a browser and is read as one; anything else falls to the bearer.
+Choosing one scheme rather than merging both keeps a request that somehow
+carried two accounts' credentials from being answered as a mixture of them,
+and leaves the dashboard's path exactly what it was. The policy names the
+scheme without demanding a caller, because the dashboard queries GraphQL
+before anybody has signed in and an anonymous query must still get its answer.
+Nothing a bearer can now reach is anything that user's cookie could not: the
+admin gate is a user-id check either way, and reading `access` is still
+refused to anyone but the account itself.
+
+The QA recipes carried the same blind spot. `qa-cloud-signin` asked its API
+questions through the opener that holds the sign-in cookie jar, so amux.sh
+answered the cookie and the recipe reported green against an endpoint no phone
+could use. Every API ask now goes through a client with no jar at all; the jar
+is used for the sign-in and the device-code pages and nowhere else. The
+recipe's output says so, and the same blind spot in the server's own tests —
+an authenticated test client that sent a cookie and a bearer together — is
+closed by bearer-only and cookie-only clients, one of which issues a token
+carrying only the `sub` claim a real token carries.
+
+2026-09-09 — **The phone, the production relay and a real agent, once.**
+
+A new recipe, `wt run qa-live-journey`, runs the whole product against the
+real one. It signs a QA account into `https://amux.sh` with that account's own
+password, hands the simulator app the session it got, and then stands back.
+The app asks the account service who the account is and what it may do, asks
+it for a relay credential, and dials the relay that credential names — no
+relay address and no token comes from the harness. On the other side is this
+checkout's own daemon on a profile made for the run and destroyed after it,
+signed in as the same account by completing the CLI's device-code flow in the
+browser session the recipe already holds. The phone trusts that machine by the
+code it printed, opens a conversation with a real Claude session, asks one
+question and reads the answer back.
+
+Three things had to be built for it. A relay credential now carries the relay
+it was minted for: the account service already answered with a host and a
+port and the app threw them away, which left the app with no way to reach a
+relay it had not been told about. The driving door takes a session — an
+account and a refresh token, nothing else — and everything after that is the
+app's own production path, including the rotating credential the runtime asks
+for and the app answers out of the same account service every screen reads.
+And the door learned to wait for two moments a live run cannot skip: for the
+fleet to name an agent, because trust and the machine's account of what it is
+running arrive separately and a conversation opened in that gap subscribes to
+nothing; and for an agent to say something, because a driver that read the
+transcript straight after sending would read the message it had just sent.
+
+The run creates its agent on the SDK driver, which is the driver the app's own
+New Agent creates. A terminal-driven Claude is read through a keymap matched
+to the installed Claude version, and its send gate stayed unavailable for four
+minutes here — a second thing to be wrong about a run whose question is about
+the relay.
+
+What the run found, which is the point of running it:
+
+- The account service's GraphQL endpoint answered `me: null` to a request
+  carrying a bearer token and no cookie. The phone has no cookie, so the
+  entitlement read — the one gate the app was rewritten to use — came back as
+  no access on a phone whose account the same service was issuing relay
+  credentials for. That is fixed in the service and deployed, and the recipe
+  now reads the account as entitled and agrees with the credential it is
+  issued.
+- Pairing by the QR invitation is refused over the production relay, while
+  pairing by the code the machine prints goes through. The daemon never sees
+  the QR attempt at all, so it is refused before it arrives. The recipe pairs
+  by the code, as every journey here does, and says in its evidence that the
+  scanned invitation is a limitation of the run and not a result.
+
+The sentence holds end to end. The phone signs in from a session it was
+handed, reads what the account may do and agrees with the credential it is
+given, reaches the production relay at the address that credential names, is
+admitted by a machine here on the code that machine printed, is given a fleet
+of one machine and one agent, and asks a real Claude session a question and
+reads its answer back.
+
+2026-09-09 — **The app is the one already on the App Store.**
+
+The bundle identifier is now `sh.amux.app`, which is the identifier of the
+app already published. This build is that app's next version, not a second
+listing: a differently-identified app would reach none of the existing users,
+and — because App Store products belong to an app record — StoreKit would
+find no `amux_pro_monthly` or `amux_pro_yearly` to sell, so the paywall would
+have nothing on it. The product identifiers in the app already match the
+published app's, which is the evidence that one continuous app was always
+the intent.
+
+Renamed everywhere the app is launched, queried or signposted: the project
+and its URL type, the Info.plist, the signpost subsystem, the golden, perf,
+journey and door harnesses, and the xtask defaults. The two test targets keep
+their own identifiers, and the UI test runner is still addressed as
+`sh.amux.AmuxUITests.xctrunner`. No golden image moved, which is what one
+would expect: an identifier is not visible in a capture.
+
+2026-09-09 — **The phone gates on what an account may do.**
+
+The app now asks `me { access }` and gates on `pro` alone. Nothing infers
+access from whether a billing record exists, nothing consults the tier claim
+in the access token, and nothing recomputes a lapse by comparing a date with
+this phone's clock — when access ends is the account service's answer.
+
+Access that was given rather than bought is a case the type system makes the
+screens handle. `Entitlement` carries a `Grant`, which is either a purchase in
+a named store or a grant in no store at all, so every screen that used to
+assume a store had to say what it means without one. Settings heads the row
+*Pro* rather than *Subscription* and reads *Active · Included*; the page
+behind it says Pro is on for this account and that there is nothing to pay for
+or cancel, instead of offering to manage a subscription that does not exist;
+and deleting such an account no longer warns about money that is not moving.
+The home screen's gate was already the right one and now opens for these
+accounts, so nobody the relay would let in is shown a Subscribe button.
+
+The scripted cloud can be entitled that way, `you-granted` locks the Settings
+page in both appearances, and `docs/CLOUD.md` says which read answers which
+question and how the app got it wrong before.
+
+2026-09-09 — **One question about what an account may do.**
+
+The cloud read the phone treats as its single source of truth asked how an
+account *pays*, not what it *may do*. Those are different questions, and for
+any account entitled by a route other than a purchase — a gift, a beta, an
+employee, a referral, an administrator's grant — they had different answers:
+the entitlements table said yes, the provider-subscription cache said nothing,
+and the app read that nothing as "not subscribed". The relay let such an
+account straight in while the phone would have drawn it a paywall.
+
+`me { subscription }` is retired. `me { access }` answers the one question,
+with `pro` a non-null boolean nobody can mistake for an absence, and the
+billing record nested inside `grant` as the explanation of access rather than
+offered beside it as a second thing to gate on. `Granted` is a case a client
+must handle to compile, so the state that shipped broken now has a name. The
+fourth guarantee is not in the schema: `access` is served by the same account
+service call `GET /api/connect` gates on, so the two cannot drift apart again.
+
+Reviewed, merged and deployed as amuxcloud revision `4a58071`; three findings
+from that review were fixed before it shipped — a grant on top of a live
+subscription hid the way to stop paying, a slow entitlement projection left a
+new subscriber looking at "Subscription ended", and the same delay offered a
+subscription to somebody who had just bought one.
+
+`wt run qa-cloud-signin` now asks the new question and fails if the two gates
+disagree. Against the real service it reports the QA account as entitled with
+no end date, given as a gift, and the relay issuing it a credential — where
+the same recipe reported "entitled to nothing" beside an issued credential
+this morning. The phone still asks the old question; moving it over is the
+next piece of work.
+
+2026-09-09 — **The App Store route to an entitlement is a person's act.**
+
+`docs/CLOUD.md` now says plainly what `wt run qa-sandbox-purchase` is: a
+sequence a person performs on a phone before each release, not automation
+waiting on a credential. Installing a development-signed build, signing that
+phone into a sandbox Apple Account and tapping through a purchase has no
+unattended equivalent, so on a machine that has only run the simulator the App
+Store route to an entitlement — a purchase the store signed, recognised at
+amux.sh, turning `payment_required` into a credential — is unproven and stays
+unproven. Written down so nobody spends another afternoon looking for the
+automated road that does not exist. The web route to the same entitlement is a
+separate question, answered by `wt run qa-cloud-signin`.
+
+2026-09-09 — **A QA recipe for a sandbox purchase on a real phone.**
+
+`wt run qa-sandbox-purchase` carries an App Store sandbox purchase from a
+physical iPhone to the account service and reads back what the account may
+then do. It exists because a sandbox transaction exists in exactly one place:
+a phone signed into a sandbox Apple Account running a development-signed
+build. Apple's engineers state that sandbox sign-in is not supported on the
+Simulator, and the StoreKit configuration this repository commits is StoreKit
+Testing — its transactions are signed by the local test certificate and are
+not sandbox transactions. So the recipe never runs on a simulator and never
+invents a transaction; on a Mac without the phone it reports that and stops.
+
+`--preflight` names what is present and missing and exits 0 without touching
+StoreKit, the store or amux.sh. Four facts it can answer itself: the account's
+address, its keychain password, a phone reachable over `xcrun devicectl`, and
+a Team ID and bundle id from `ios/Signing.local.xcconfig`, an untracked file
+`.gitignore` now covers because this repository builds simulator-only and
+holds no signing identity. Two it cannot answer from a Mac at all — both
+subscription products present in App Store Connect and known to the billing
+provider, and the phone's sandbox Apple Account — are printed as facts for the
+person running it to confirm with `--confirmed`, rather than guessed at. On
+this Mac today every one of the six is outstanding, and that report is the
+recipe working.
+
+A full run builds and installs on the phone, names the purchase to make, then
+watches amux.sh as that account until a credential is issued or a bound
+elapses. The entitlement read and `GET /api/connect` are asked separately
+because they are answered from different places, and a purchase that moved one
+without the other is the failure worth catching. `--transaction-file` is the
+other road to the same two answers for a transaction captured earlier.
+
+The account is its own: `AMUX_QA_DEVICE_EMAIL`, refused when it names the
+end-to-end account the sign-in recipe uses, with no address built in. The
+authorization-code sign-in both recipes perform now lives in one module rather
+than two copies, and a test in the iOS verification list keeps both recipes
+out of it — they need a person, and verification has to be something a clean
+checkout can run.
+
+---
+
+2026-09-09 — **The account service records an App Store purchase, deployed.**
+
+`POST /api/purchases` is live on amux.sh at revision `2a7f636`. It takes the
+signed transaction the phone posts, hands it to the billing provider as a
+receipt against the caller's own account, and then runs the same subscription
+projection the provider's webhook runs — so the purchase becomes an
+entitlement in one place, and the webhook saying the same thing later changes
+nothing. The account credited is the caller's `sub` claim; the body names no
+user, and there is no second entitlement state machine and no table that
+exists only for this path.
+
+It answers `200` with the same subscription view the entitlement read exposes,
+`202` when the provider has taken the transaction but has nothing to report
+about the account yet, `401` unauthenticated, `422` when the body is not JSON
+or carries no transaction, and `502` when the provider could not be reached.
+The refusals carry a sentence, not a code, because the app puts what the cloud
+says on the paywall of somebody who has just paid. Nothing cheerful comes back
+for a purchase that was not recorded: a `202` for a failed write would let the
+app finish a transaction the App Store will never offer it again.
+
+Sandbox purchases are honoured only for the account service's QA allowlist,
+read from the receipt response's own sandbox flag — the same rule the webhook
+already applied to a sandbox event, so a TestFlight build cannot entitle an
+arbitrary account.
+
+The work was reviewed before merging, and the review found two ways to tell a
+buyer their purchase was taken when it was not: a `404` from the receipt post
+was being read as an answer rather than a failed write, and a body with a
+missing or wrong content type escaped as a server error instead of the
+malformed answer the contract promises. Both are fixed and covered.
+
+`docs/CLOUD.md` now states this contract. Both suites in the account service
+repository are green and it is deployed and healthy.
+
+---
+
+2026-09-09 — **The accounts journey proves a purchase reaches the account service.**
+
+The subscribe act now drives every state a purchase can rest in. A purchase
+amux.sh is never told about is kept, said in words, and offered again — with
+the transaction still the store's, which the act checks by reading that
+nothing was finished. One amux.sh refuses reads differently, because waiting
+will not change it. Sent again and taken, the entitlement is read back and
+only then is the transaction finished. Restoring on a phone with nothing
+bought takes the same road, and a purchase the store approves by itself
+reaches the account service with nobody pressing anything.
+
+The order is asserted from the doubles' own call lists rather than from the
+screen: a purchase read back from the account service and one taken on the
+store's word look identical on a paywall. Both lists are written beside the
+journey record as scripted-calls.json, where the order is the whole point.
+
+The scripted App Store can now approve a purchase it was holding, which is the
+only way to reach a state nobody presses a button for. A note on the paywall
+reports the words it says as well as the state it is in, so two readings of
+one state can be told apart.
+
+Validation: the accounts journey whole, and its subscribe act alone; all Swift
+package unit suites; the paywall goldens.
+
+---
+
+2026-09-09 — **A QA account signs into the real amux.sh from this Mac.**
+
+`wt run qa-cloud-signin` performs, with no app and no simulator, the same
+authorization-code sign-in with PKCE the phone performs — same client, same
+redirect, same scopes — against the production account service, and then asks
+the three questions the app asks: who the account is, what it is entitled to,
+and whether the relay will issue it a credential. A sign-in proved against a
+double proves nothing about the live service; this is what closes that gap.
+
+It is evidence a person runs, never a test: it is absent from the iOS
+verification list and nothing gates on it. The address comes from
+AMUX_QA_EMAIL, or from an operator's untracked file when the environment does
+not carry one, and there is no built-in address to fall back to; the password
+is read from the login keychain at the moment it is needed. Nothing that finds
+a person reaches the output — the address only masked, the account identifier
+not at all, and no token, code or password anywhere. Missing address, missing
+keychain entry and a login form that cannot be driven each say which they are
+and exit non-zero rather than passing quietly.
+
+docs/CLOUD.md gains a QA recipes section saying how to run it and what it
+proves. No address is written there or anywhere else in this repository.
+
+Validation: the recipe run against amux.sh, and its missing-address path with
+the file moved aside; the iOS verification lock test.
+
+---
+
+2026-09-09 — **A purchase is not a subscription until amux.sh has it.**
+
+The App Store's signed transaction now crosses out of StoreKit with the
+purchase, and the transaction is finished only after the account service has
+taken it. That order is the whole change: a transaction finished first is one
+the store will never offer again, and a subscription somebody paid for would
+exist nowhere but on their bank statement. Because it survives, an unconfirmed
+purchase is temporary — the paywall offers Retry, the next launch sends
+everything the store is still holding, and a purchase approved later (a parent
+answering Ask to Buy, a bank's second factor) takes the same road.
+
+The cloud gains one call: the signed transaction is posted to amux.sh as the
+authenticated caller and nothing else about it is read there. What the account
+may then do is read back from the same entitlement query a web subscription
+arrives through, never assumed from the store. The paywall draws three states
+around it: confirming, confirmed, and unconfirmed — paid for and kept, with a
+refusal reading differently from a phone that could not get through, and the
+plan rows withdrawn so the screen cannot be read as offering a second
+subscription.
+
+docs/CLOUD.md now records the contract: every endpoint the app uses, the
+entitlement read, the payment_required rule, and where each value lives —
+product identifiers and amux.sh URLs committed here, App Store and payment
+secrets only in the cloud service's encrypted settings, QA addresses nowhere in
+this repository.
+
+Validation: all Swift package unit suites, including new adapter coverage for
+the post accepted at 200 and 202, refused at 401, 403 payment_required and 422,
+and a network failure; new store coverage for the finish-after-acceptance
+order, the retry a launch makes on its own, and the two unconfirmed readings;
+the paywall and new paywall-unconfirmed goldens in both appearances; the
+accounts journey; ios-lint.
+
+---
+
+2026-09-09 — **Claude SDK conversations open and accept input on the iPhone.**
+
+The mobile bridge now projects the shared SDK layer's native rows, gates,
+phases, asks and session facts. Swift renders that layer, offers its composer
+and command list, routes permission/question/plan answers to SDK commands,
+and reconciles prompt echoes without changing their layer. Unknown providers
+retain the unreadable state; SDK sessions no longer use that placeholder.
+
+The Claude sessions journey creates an agent from New Agent and asks the daemon
+what was created. It proves exactly one Claude SDK agent and no new PTY agent;
+opens that agent and pre-existing SDK and PTY agents under their original
+identities; sends one prompt to each; changes the SDK model; and checks a named
+PTY model refusal with no extra input. A directory refused by the host stays on
+New Agent and leaves the inventory unchanged. Screenshots and host-observed
+inputs accompany the passing run. The debug door can read the conversation's
+actual projection and attempt the same typed model command as the settings
+sheet. Runner observations now accept a seeded PTY agent's UUID as well as its
+name, matching SDK observation. Hosts uses the same scripted SDK transport when
+it creates agents, and checks the readable SDK state. Verification requires the
+Claude sessions journey alongside the other phone journeys; its CLI fixture now
+includes the required manifest.
+
+Validation: the full Claude sessions and Hosts journeys, all Swift package unit
+suites, focused SDK question and echo regressions, Rust projection and SDK host
+tests, verification tests, workspace lint and iOS source lint pass.
+
+2026-09-09 — **The measured build gets its driving bridge back, and the relay says what the phone holds.**
+
+A `Measured` build could not reach a plaintext test relay, and nothing said so:
+it built, ran, measured and passed, and every measurement that needed a network
+simply was not in the verdict. The cause was in the project file. The
+performance bundle listed `AmuxCore`, `AmuxDesign` and `AmuxFeatures` as its own
+package dependencies while also being hosted in the app, and a test bundle that
+depends on a package product turns that package into a dynamic framework for
+every target in the configuration. Each of those frameworks carried its own copy
+of the shipping bridge out of AmuxCore's manifest, so the app's `-force_load` of
+the bridge built with its driving tools stopped answering. The bundle now takes
+those types from the host it is loaded into instead: the packages are static,
+there is one bridge in the app, and it is the driving one. `Debug` never had the
+problem because it has no such bundle and stays a single image.
+
+Because that is a defect nothing failed on, the recipe now asks the running app
+which bridge it has before it measures anything and refuses a build that answers
+with the shipping one.
+
+With the network back, a run takes the third record that was missing: what the
+relay holds for this phone. It starts a relay and two machines for real, pairs
+the app with one of them, and reads the relay's own inventory — with the app in
+front, after a minute of nobody touching it, and over five rounds of putting the
+phone behind another app for thirty seconds and picking it back up. Picking it
+up is checked to be the same process that was put away, because a phone switched
+on is not a phone picked up and the recovery that would time is a cold start.
+Two machines hold one link each, the phone holds one in front and none while it
+is away, nothing dials while it sits idle, and the link is back within about
+250 ms of picking it up. Those samples are judged against the same table as the
+app's own.
+
+Two things had to be fixed to make that audit true rather than merely green. It
+split the phone from the fleet by the names the topology gives its machines,
+while the relay keeps its inventory under host ids — so on the first run every
+machine landed on the phone's side and the phone appeared to hold two
+connections while it was put away. And a run now erases the app's container
+before installing: a machine this phone has already paired with is not offered
+for pairing again, so a second run on the same simulator sat waiting for an
+offer that never came.
+
+Collapsing the packages to a static link moved the cold first frame from 438 ms
+to 428 ms against its 460 ms gate. The whole run: cold 428, reconciliation 9 and
+117, echo 6.5 of 17, hitch 0.0 of 5, CPU 42% of 60, footprint 67 MB of 250, no
+idle commits, and the three lifecycle rows. Seven and a half minutes on the
+pinned Mac.
+
+2026-09-09 — **Write down what the app weighs and what it asks the display for.**
+
+A whole performance run now records two things that are not budgets. It builds
+the app for a phone in `Release`, unsigned, and weighs the bundle on disk —
+31.1 MB, almost all of it the executable — with the bridge's own static
+archives and the `profile.mobile` flags they were built under beside it, since
+the size requirement is a policy about where size comes from rather than a
+ceiling. And report.md now states what the app asks the display for: `capped`
+false, `disableMinimumFrameDurationOnPhone` true, a preferred range up to the
+display's own maximum, labelled for what it is — a simulator reporting 60 Hz,
+so it is the claim that the app caps nothing and never the claim that it
+reaches 120.
+
+The third record that belongs beside them, the relay's account of what this
+phone holds while it is used, put away and picked up, is not here yet, and the
+reason is worth writing down. The `Measured` configuration cannot reach a
+plaintext test relay. It builds each package as its own framework, and every
+one of those links the shipping bridge out of AmuxCore's package manifest, so
+the driving bridge the app target force-loads never answers: a Measured build
+reports `Bridge.build` as `0.1.0` and refuses `http://`. `Debug` links
+everything into one image, where the force-load wins, reports
+`0.1.0+debug-tools` and connects — which is why the journeys can make these
+claims today and the measured run cannot. Fixing that changes the shape of the
+binary the cold-start numbers were taken in, so it is not a change to make on
+the way past.
+
+---
+
+2026-09-09 — **Measure how long the phone takes to show you your own words.**
+
+The optimistic echo now has a number behind it. The performance suite sends a
+message from the shipped conversation page — a thousand rows in the transcript,
+a session in the store so the composer is really there — through the app's own
+send: the command is built, handed to the runtime and the row goes up. Five
+samples, a fresh runtime and a fresh window for each, and the page's own
+account of what it drew has to hold the sent row or the number is thrown out as
+being about a page the message never reached. On the pinned Mac the median is
+6.7 ms against a budget of 17, which is one frame of this simulator standing in
+for 8.3 ms on a ProMotion phone.
+
+Two things had to be settled first. `echoCommitted` used to be marked when the
+host's own copy of the row came back, which is a round trip over a network and
+can be anything at all; the budget is about the row the phone draws from what
+was typed, before anything has left the device, so the mark moved to there. And
+the mark for "the display is showing this" waited one display refresh past the
+render server committing the frame — slack worth having inside a
+four-hundred-millisecond launch, and half the whole answer inside a one-frame
+budget, where it reported two frames for work that took one. The launch keeps
+the conservative mark and its recorded numbers; the echo is marked at the
+commit, and docs/IOS_PERFORMANCE.md says which is which and why.
+
+`wt run ios-perf` passes whole with the new row, and `--only echo` runs it
+alone.
+
+---
+
+2026-09-08 — **Measure the app in a build shaped like a shipped one.**
+
+The performance suite used to measure a Debug build, which measures the Swift
+compiler as much as the app. It now builds a third configuration, `Measured`:
+optimised the way a shipped build is, with the driving door, the fixtures and
+the workload generator still compiled in and testability on, because the suite
+runs inside the app and reaches into it. Coverage and the sanitizers are off on
+the command line — either one would be measured as though it were the app — and
+the packages are told `ARCHS=arm64 ONLY_ACTIVE_ARCH=YES` there too, since a
+package target hears neither from the project and would go looking for an
+x86_64 slice of an arm64-only bridge.
+
+A verdict now says which configuration produced it and, separately, whether the
+code that took the numbers was compiled optimised — the second reported by that
+code about itself, so a run that named one configuration and built another says
+so. Beside the JSON the run writes report.md: the same rows in the form a
+person reads, with every proxy marked and what it stands in for written
+underneath, the cold launch split into loading, starting and drawing, and the
+run's own wall time.
+
+The whole suite passes on the pinned Mac: cold first frame 440 ms against 460,
+reconciliation 6 ms and 115 ms against 1,000, hitch time 0.0 ms/s, main-thread
+CPU 42% against 60, footprint 68 MB against 250, no idle commits. A run takes
+about three and a half minutes once the app is built and about sixteen from a
+cold tree, and that figure is now in docs/IOS_PERFORMANCE.md rather than being
+something a person finds out by starting one.
+
+No runner baseline is recorded. CI's ios job skips the measured run on the
+GitHub runner precisely because that machine has no baseline yet, so no
+completed run has ever produced perf numbers to download, and
+ios/Perf/baselines/macos-26.json stays absent. Baselines are tracked in git
+when they do arrive: an invisible baseline makes re-baselining the cheapest way
+to turn a red suite green, and tracked, that act is a reviewable diff. A run's
+own numbers are not tracked — they land under target/ with the rest of the
+build output.
+
+Validation: `wt run ios-perf` (passed, every budget), `wt run ios-unit`.
+
+2026-09-08 — **Tell the cold-start simulator apart from the phone.**
+
+The cached first frame drifted from about 310 ms in early September to about
+440 ms, and the cause is not a regression in the app. StoreKit and
+AuthenticationServices joined the launch image when the subscription screen and
+web sign-in landed, and they are loaded before any app code runs: measured on
+the pinned simulator, a hello-world SwiftUI app reaches its first line in
+206 ms, and 302 ms with those two frameworks linked. An empty app that merely
+links them draws its first frame at about 414 ms there. This app's own code
+accounts for roughly 25 ms of its 439 ms median, and the forty cached rows the
+first frame carries cost 3 ms of that. There is no 40 ms in the app to find.
+
+So the measurement document now states two numbers for two machines instead of
+one number standing for both. The simulator gate is 460 ms median and 600 ms
+worst, derived in the document from the framework floor plus about double the
+app code the launch actually contains, so it still fires if launch work grows.
+The 400 ms is the requirement on a phone and moved to the physical-phone
+checklist, which is now a table with a `Measured` column: a line is done when
+somebody records a number from hardware, never by ticking a box, and the first
+hardware run is what says whether 400 ms was ever the right figure to ask a
+phone for. The 15% tolerance against a recorded baseline is untouched, and it,
+not the budget, is what catches a regression — about 505 ms on today's numbers.
+The rule that a budget is never loosened to fit a machine stands: nothing was
+relaxed, two machines were told apart.
+
+A cold launch is also reported in three parts now — loading the app, starting
+it, drawing the first frame — split by an image initialiser written in C that
+the dynamic linker calls when it has finished, which is the earliest moment a
+program can observe itself.
+
+Validation: `wt run ios-unit`, `wt run ios-perf -- --probe`.
+
+2026-09-08 — **Script Claude SDK sessions through the real host.**
+
+Testnet hosts can supply a stream-JSON provider for every SDK session they
+create. The provider uses the SDK's existing `from_io` seam; normal creation
+still validates the directory, constructs the backend and registers the agent.
+The runner can seed SDK and PTY agents together and report raw SDK stdin by
+the original agent UUID, including agents created later through the relay.
+Initialization fixtures use the SDK's own decoder and unsupported controls
+receive a provider error.
+
+The relay regression creates an SDK agent, opens it and a pre-existing SDK
+agent through their shared client layer, observes one prompt and a model
+change on each, and separately observes a PTY prompt. PTY refuses the model
+change with its named gate reason and receives no extra input. A refused
+creation leaves the inventory unchanged. The PTY test waits for both replay
+and the live tailer's readiness marker, since replay can finish before that
+marker reaches the daemon's log. This establishes the host seam; the phone's
+SDK projection and rendered journey still need wiring.
+
+Validation: `wt build`, `wt test -- testnet_` (20 tests), `wt test -- claude_sdk`
+(96 tests), and `wt lint` pass. Pairing waits for the host announcement through
+the same owner-inventory capability the phone uses.
+
+2026-09-08 — **Every control the app draws now answers to a thumb and says
+its name out loud.**
+
+The audit that sweeps every button, switch and link across every state the app
+can be in was reporting 128 complaints. It now reports none, and not one
+capture moved.
+
+The choice that made that possible: grow the target, not the drawing. Almost
+every complaint was about a control the design means to be small — a close
+cross, a back chevron, a row of two-word choices, a segment of a picker. Drawing
+those at 44 pt would be a different design. But what has to be 44 pt is what
+answers to a thumb, and that is a different rectangle from the drawn one. So
+there is a pair of modifiers, `.thumbTarget(x:y:)` and
+`.reclaimingThumbTarget(x:y:)`, that pads a control's tap area outwards and
+hands the room straight back to the layout. It has to be a pair, and the halves
+have to sit in particular places: padding or a content shape applied to a
+`Button` from outside does not extend what the button answers to, so the growth
+goes on the button's label; and the app reports the rectangle it declared, so
+the reclaim has to sit outside that declaration or the growth is invisible to
+anything measuring it. Note that a control drawn "20 pt tall" measures 19.67, so
+every pair carries a point of slack rather than landing on exactly 44.
+
+Three rows turned out to be declaring their name on the container around the
+button rather than on the button, which made them unnamed controls to anything
+looking: the folded run of reads, an agent-to-agent message, and a file header
+on the diff page. Moving the name onto the button is both the fix and the truer
+statement of what is tappable. The model line on the new-agent screen stopped
+being a `Menu`: SwiftUI puts a second button inside a `Menu`'s own, and nothing
+reaches it to give it a name. It is a button and a confirmation dialog now.
+
+What the app reports as a control's size is now the size the layout gave it,
+with only the position taken from the screen. The drawer scales the screen
+behind it by 0.96, which made 44 pt controls report 42 — a fact about a
+presentation transform, not about the room the layout gave them.
+
+One kind of thing is judged on its name and not its size, stated in the audit's
+own words and listed in its record: a link the markdown parser made out of a run
+of an agent's prose. That is not a control the app draws. The app draws a
+paragraph; the parser turns a span of a sentence inside it into something
+tappable, laid out as part of a line and split across two when the line wraps.
+There is no rectangle to grow and its height is the height of the prose around
+it. WCAG's target-size rule carves out inline targets in a sentence for the same
+reason. The exception is kept narrow — only a link with no name of its own,
+inside a block of agent markdown, and only its size — and each one excused is
+written into the record with its state, label and URL and counted in the run's
+summary line, so a small tappable thing nobody expected is reported rather than
+lost.
+
+2026-09-08 — **The primary journeys, walked again with VoiceOver running and
+every screen at the largest text size.**
+
+There is a new journey, `wt run ios-journey -- accessibility`. It is the
+ordinary work — the fleet, a conversation, a patch, an ask, a message, the
+machines — done once more against two machines the runner is really running,
+with the two settings on that change every layout and every label: the largest
+text size a reader can ask for, and VoiceOver itself.
+
+VoiceOver is genuinely running rather than imitated. It is a system setting, so
+it is turned on from outside the app, on the device, and turned off again
+whatever happens — a simulator left reading itself out would change what every
+golden run after it photographs. That it took is not assumed: the app now
+reports whether it is in a VoiceOver session when it is asked what is on
+screen, so the claim is about the app and not about the preferences file the
+journey wrote. XCUITest can still drive a device under VoiceOver, which is what
+makes the journey a journey rather than a survey.
+
+Two things about the largest size had to be learned the hard way. A row of the
+fleet is taller than the phone at that size, so the tap XCUITest aims at the
+middle of one lands on whatever is drawn where that middle would have been —
+which quietly opened a different agent's conversation and made every assertion
+afterwards true of the wrong screen. Presses now go where the screen says it
+drew the control, on the part of it that is actually on screen, after scrolling
+it into a band clear of the floating chrome. And `isHittable` stops meaning
+what it means once a screen reader is attached, so nothing in this journey is
+found by it.
+
+What the run leaves behind, beside its photographs: for each screen, how many
+controls it drew, what is wrong with any of them, and how far the actions that
+screen is for sit from the bottom of the window. The reachability numbers are
+reported rather than judged — how far a thumb reaches is a fact about a hand.
+The four controls it found under 44 pt are the same ones the whole-build
+accessibility audit lists, and fixing them is that audit's piece of work.
+
+2026-09-08 — **An audit that measures the rectangle the screen laid out, and a
+capture of the app with the glass turned off.**
+
+The sweep that checks every control for a VoiceOver name and a 44 pt target was
+reading its rectangles from XCUITest, and most of what it complained about was
+not a defect. The frame an accessibility client hands back is the accessibility
+frame, and that is not the frame the screen laid out: a round button drawn at
+44×44 comes back 42×42, and a control whose name is declared on the button
+comes back as the line of text inside it, tens of points shorter than the
+button around it. The audit now takes the rectangle from the screen's own
+declaration, which is the laid-out one in window points, and keeps XCUITest for
+the two things only an attached client knows — whether something is a button at
+all, and what VoiceOver would read out. Size and not position decides which
+declaration belongs to which control, because a screen that slides sideways
+under a transform the layout never sees leaves the two disagreeing about where
+a control is while both are right about how big it is.
+
+That leaves the complaints that are real, and there are more of them than the
+noise was hiding: around twenty-five controls are genuinely drawn under 44 pt
+and nine buttons have no name at all. Fixing them is its own piece of work,
+because the honest fix — grow the touch target without moving what is drawn —
+has to happen inside each button's label, and growing the drawing instead would
+move nearly every screen.
+
+Reduce Transparency now has a capture proving it reaches the screen. The
+conversation drawn for a reader who has asked for less transparency and less
+motion fills every glass surface solid with a hairline rim, covers the
+transcript behind the chrome pill instead of showing it through, and holds
+still.
+
+The composer's capture at the largest text size could not be taken twice. With
+a message half-written in the box and a conversation long enough to scroll
+behind it, six runs went ok/fail, fail/fail, ok/fail, fail/fail, fail/ok — the
+whole image shifted by about a hundred points, and the two appearances tossed
+independently within a run. The box grows with the reader's size, the feed is
+held clear of whatever height it settles on, and which of the two heights the
+scroll view hears about first decides where the bottom is. The capture is of
+the box, so the feed behind it is now empty and there is nothing to scroll;
+three runs in a row are identical. The conversation at that size is still
+locked, by the capture that is about the conversation.
+
+2026-09-08 — **The app at the largest text size, and glass that gets out of the way.**
+
+Turned up to the largest accessibility text size, a conversation drew its own
+name straight through the glass capsule that was supposed to hold it, and every
+line of an unanswered permission ask collapsed to one truncated line. Neither
+the pill nor the card was at fault. The chrome at the top and whatever stands
+at the bottom are both safe-area insets on the same view, and when their
+demands together exceed the display SwiftUI does not overflow — it squeezes
+them. An ask set at that size is taller than a phone, so the pill was cut to a
+third of its height and drew its two lines through a capsule that had no room
+for them.
+
+What stands at the bottom is now given two thirds of the page and scrolls
+inside it, but only when the reader is at an accessibility size, so every
+screen at every ordinary size is drawn exactly as before — proved by
+re-photographing the conversation, the composer, the ask, the working strip and
+the narrow display and finding every one unchanged. The pill drops the machine
+and the directory at those sizes and keeps the agent's name, wrapped rather
+than shortened to four letters and an ellipsis; where it is running is still on
+the overflow and in the drawer. The home's exceptions line wraps rather than
+losing its leading words.
+
+Reduce Transparency was honoured nowhere. SwiftUI publishes it, and Reduce
+Motion, read-only — they are the device's settings and nothing in an app may
+write them — so the app now carries its own pair, planted from the device at
+the root and raisable from a state that wants to be photographed with them on.
+Glass fills solid with a hairline rim when transparency is reduced: the rim is
+what says "this floats" once the lensing is gone.
+
+The message being written scales with the reader too. The one UIKit view in the
+app scaled its type against the device's own setting, which SwiftUI's
+`dynamicTypeSize` never reaches, so the draft stayed small while every label
+around it grew; the size is now handed across the boundary with the design.
+
+The home, the conversation and the composer have baselines at that size in both
+appearances. `wt run ios-accessibility` sweeps every state the build draws and
+fails on any control without a name VoiceOver can read or under 44 pt; it is a
+UI test because it has to be, since SwiftUI builds an accessibility tree only
+for an attached client and an app asking itself sees traits for nothing. The
+door answers a new `states` request with every state the build draws, so the
+sweep covers whatever landed today without a second list to keep in step. Its
+first run names 147 complaints across 452 controls — round icons two points
+short of a thumb, rows whose label element is what the tree reports, one
+control with no name at all — and every one of them is still to be read and
+answered. The audit is red on purpose until they are.
+
+2026-09-08 — **A report says which screen it is of, and says why it cannot go.**
+
+A report captured by a person carried an empty view-state recording and
+declared it present. The recording was only ever written to by the driving
+door, so anybody using the app froze a file with nothing in it — which cannot
+be told apart from a recording of a session in which nothing happened, and
+which replays to no screen at all. The freeze now finishes the recording with
+the screen the app is on, in the vocabulary a replay puts screens back by: a
+report taken on the Agents home replays to `home`, one asked for under Help to
+`you`. A page the screen catalogue has no name for — a conversation, an agent's
+changes, one host — leaves the part declared absent naming that page, rather
+than carried empty. The reports journey now reads both bundles' `trace.jsonl`
+and holds them to that.
+
+Pressing Send with nobody signed in did nothing whatever: no request, no error,
+the screen still saying "ready". A phone before its first sign-in can take a
+screenshot and write three notes on it, so this was reachable on a first run.
+The report is filed under an account, and where there is none it now says so
+in the same panel the account service's own refusals appear in, keeping
+everything written so that signing in and pressing again sends the same report.
+
+2026-09-08 — **Two failing tests: a missing report, and what a revocation reaches.**
+
+Asking the CLI to replay a report that is not saved said "failed to read report
+<path>: failed to read report header: No such file or directory", which reads
+like a damaged report rather than a missing one — and it changed under the work
+that let a report carry a picture, because a replay now reads `report.json`
+before it looks for a frame. Replay, show and graduate now go through one read
+that says `no report at <path>` when nothing is saved under that name, and the
+test that pins a bare report name to the profile it was asked under asserts
+that whole sentence against the selected profile's own reports directory.
+
+The other was an assertion that contradicted how revocation works. The testnet
+control test unpaired 'b' at 'a' and then expected 'b' to be holding only the
+machine it had just let in by code. Revocation is local: 'a' removes 'b' from
+its own trust store and closes the link, which leaves 'b' unable to call 'a'
+and still holding the pin it granted 'a' itself. The inventory it reads is the
+far side's own account of what it holds, so it names both peers, and the test
+now says that and why.
+
+
+2026-09-08 — **The reports journey: a screenshot, three rectangles, and what left the phone.**
+
+`wt run ios-journey -- reports` drives the whole of reporting a problem against a
+real relay and a real machine, so the picture in every report is a screen that
+machine filled. A simulated system screenshot brings up the app's own Report a
+hundred points clear of the corner iOS draws its thumbnail preview in; anywhere
+else on the screen turns it down and lets the frozen frame go. Put away and
+brought back — which is what the full-screen preview does to an app and more —
+the same offer over the same frozen frame is still there. Taking it opens the
+report on that frame, three rectangles are dragged onto the picture and each
+takes a note, and the account service turns the report down in its own words
+before Retry hands over the same bundle and comes back with a receipt. Report a
+Problem under Help does it deliberately, with no offer in between.
+
+The journey opens what left the phone at the boundary it crossed. The scripted
+account service keeps every bundle it is handed, and a new door verb writes the
+last one out, so the run reads `report.json` against the files beside it: each
+part present with its file or absent with the reason — the log is absent
+because this app logs through the system, which keeps no file it can read back
+— the three rectangles and both notes carried, and the frame recorded as the
+whole screen in points with the scale it was drawn at.
+
+Three things were wrong underneath and are fixed.
+
+The screenshot path had never worked in the app. The shell listened for the
+system's notification behind `#if AMUX_DEBUG_TOOLS`, and a Swift package does
+not carry the app target's compilation flags — so the listener was compiled out
+of the build that has the tools. Whether to listen is now a fact about what the
+shell was handed: a build a person installs has nothing to freeze a screen
+with, is handed nothing, and registers for nothing.
+
+Nothing on the report screen could be reached by the name it declared. Every
+other screen pairs its identifier with `accessibilityElement(children: .contain)`;
+this one did not, so the screen's own name was what Cancel, Send and every
+rectangle's cross reported, and VoiceOver would have read the page as one
+undifferentiated thing. The screen and each note card are containers now, and
+the field a note is typed into has a name of its own.
+
+A report written by a person said nothing about where it was taken. The route
+in a bundle was only ever filled for a screen the driving door had opened, so
+`detail` was null for every real report. It is now the page on show, and the two
+bundles this journey collects prove it: the one from the screenshot says
+`agents` and the one from Help says `you`.
+
+The account service double now says what becomes of a report — accepted,
+refused or offline, with the receipt or the reason — which is what makes a
+failed upload and the retry after it states a finger can reach.
+
+Green: `wt run ios-journey -- reports`, `wt run ios-unit` (5 schemes),
+`wt run ios-lint`, `wt run ios-goldens -- dump upload-failed shake`.
+
+---
+
+2026-09-08 — **A report written on the phone, read and replayed on the Mac.**
+
+The driving door used to write two recordings into a directory and call it a
+bundle. It now writes the report the Send button would have sent: the frozen
+picture of the screen, the runtime's recording, the view-state trace, the
+embedded service's dump and `report.json` declaring each of them, with a note
+and rectangles the driver hands over. One assembly serves both, so what a
+driver collects cannot drift from what a person's report holds.
+
+`ios/Fixtures/reports/sample` is that bundle, captured by the app during the
+door smoke against the two-host topology. `amux debug report show` reads its
+header — schema 2, the frame's size in points and its scale, the log declared
+absent with the reason, the trace named a native one — and `amux debug report
+replay` records it Unchecked and points at the recipe that can redraw it.
+`wt run ios-replay` then does: it folds the recording into fresh stores, puts
+the trace back on top and photographs the result, and the picture that comes
+back is the phone's frozen frame byte for byte.
+
+Converting the same recording into a host-side script is refused, by name:
+`PartialSession`, because a phone's report holds the client's half of a
+conversation and a script plays the provider's. A recording that does carry a
+whole session still converts, and the two now sit in one test beside each
+other, so the refusal is a stated boundary rather than a gap.
+
+Two things the door smoke was quietly getting wrong are fixed with it. It
+expected an unbuilt screen to be refused and named `hosts`, which has since
+been built, so the assertion had stopped meaning anything; it now asks for a
+state that is still unbuilt. And it left the runtime's identity, trust and
+last relay in the app's container, so a second run in the same simulator
+started a phone that had already been somewhere and never reached the new
+relay — the connection simply never arrived. Each run now begins from a phone
+that has never connected.
+
+Green: `wt run ios-replay -- ios/Fixtures/reports/sample`, `amux debug report
+show` and `replay` over it, `wt test -- --bins script_from_report` (4 passed),
+`wt run ios-door-smoke`, `wt run ios-unit`, `wt run ios-lint`.
+
+2026-09-08 — **The report screen, and the bundle it sends.**
+
+The frozen frame now has a screen to sit on. The picture is drawn small enough
+that the writing fits under it: drag a box round anything wrong, each box takes
+a note of its own, one note covers the whole thing, and Send is the only
+control that leaves the phone. Nothing on the picture can be pressed — it is a
+photograph of a moment that is over.
+
+A rectangle is held in the frame's own points, not in the points the picture
+happens to be drawn at, so the same report describes the same place whether it
+is read on the phone that wrote it or on a Mac. The conversion is one scale
+factor and it happens in the one view that knows both sizes.
+
+Send assembles the layout `amux debug report` already writes and replays.
+`report.json` declares every part present or absent-with-a-reason and carries
+the note, the rectangles and the frame's geometry; `frame.png`, `trace.jsonl`,
+`msgs.jsonl`, `daemon.json` and `log.txt` sit beside it under those names. The
+runtime hands back one object holding a checkpoint, the messages it folded and
+the daemon's dump, and that is split into the two files a bundle carries. The
+log is declared absent, with the reason: this app logs through the system,
+which keeps no file an app may read back. The header is written by hand rather
+than through `Codable`, because the reader is a Rust type whose field names and
+enum spellings are the contract and a synthesised encoding would follow this
+app's property names instead.
+
+The upload is one multipart request with one section per file, each named after
+the file it carries, which is what the account service reads. It refuses a
+bundle whose declarations and whose files disagree, so a part declared absent
+is left out rather than sent empty.
+
+A refusal keeps everything. The draft, the rectangles and the frozen frame are
+all still there afterwards and Send reads Retry, because somebody who wrote
+three notes about a bug on a train must not lose them to a tunnel.
+
+Two fixture notes are written on two lines rather than left to wrap. A vertical
+text field settles a few points wider or narrower depending on how much of the
+page is scrollable, and the report state is almost exactly one screen tall, so
+a note left to find its own wrap point broke on a different word about one run
+in two.
+
+Green: `wt run ios-goldens -- dump` and `-- upload-failed` (stable over three
+runs), `wt run ios-goldens -- --built` (106 captures; only the known
+status-bar flake on `devices.light`, which passes on its own),
+`wt run ios-unit` (5 schemes, including 8 new report-bundle tests),
+`wt run ios-lint`.
+
+---
+
+2026-09-08 — **A screenshot on the phone freezes what was on screen.**
+
+The report flow on the phone now starts where the design said it should: you
+press the buttons you already press when something looks wrong. iOS will not
+let an app intercept that gesture — the app is told once the system has taken
+and saved its own picture — which costs nothing, because nothing on screen
+changed in between.
+
+What matters is the order, and it is the terminal's `C-g` order copied rather
+than approximated. The app photographs its own composited window, freezes the
+shared runtime's recording and writes out the view-state trace, all in one pass
+with no suspension point in it, and only then floats a Report pill over the
+screen. A capture taken after the report UI was up would be a picture of the
+report instead of a picture of the problem, and a freeze that yielded halfway
+would produce a bundle whose picture and whose messages were of different
+moments.
+
+The offer is the app's own control, not the system's, and it sits beside the
+system's screenshot preview rather than under it — inset far enough to clear
+the widest preview, since an app is never told where that preview is. Taking it
+opens the report on the frozen frame; a tap anywhere else puts the offer away
+and lets the picture go, so an accidental screenshot costs nothing. The preview
+covering the app cancels nothing: the capture belongs to a store rather than to
+a screen, so being put away and coming back finds the same offer over the same
+frame. A second screenshot while one report is already in hand is ignored,
+because swapping the picture under somebody mid-report would lose what they had
+already said about it.
+
+Report a Problem, under Help on the You tab, is the same freeze without the
+offer in between: somebody who went looking for the row has already said yes.
+Both paths are behind the debug-tools flag — a build a person installs does not
+observe the notification, does not draw the row, and is handed neither the
+store nor the thing that freezes a screen.
+
+The screen the report opens on shows the frozen frame and a way out of it. The
+rectangles, their notes and Send are the next piece of it.
+
+The picture is the app's window, which means the status bar and everything else
+the system draws outside that window are not in it. A frozen frame therefore
+carries its own point size and scale, so a rectangle drawn on it later means
+the same place whatever read it back.
+
+Green: `wt run ios-goldens -- shake` (2 captures, 0 failed),
+`wt run ios-goldens -- --built` (106 captures, 0 failed), `wt run ios-unit`,
+`wt run ios-lint`.
+
+---
+
+2026-09-08 — **The cloud takes a report bundle.**
+
+A phone can capture a bug report but had nowhere to send one. `POST
+/api/reports` on amux.sh now accepts a whole bundle as multipart form data,
+one section per file, each section named after the file it carries:
+`report.json`, and any of `frame.png`, `trace.jsonl`, `msgs.jsonl`,
+`daemon.json` and `log.txt`. The caller is whoever the bearer token says they
+are; no entitlement is required, because a person who cannot connect is
+exactly the person with a bug to report.
+
+The header is read before anything is stored, and it has to be true: the
+layout version must be the one this server reads, every part must be declared
+present or absent, and the declaration must match the files that actually
+arrived. A trace has to name the recorder that made it. A bundle that fails
+any of these gets 422 and a sentence saying which part is wrong — a header a
+reader trusts but cannot rely on is worse than no bundle. An oversized bundle
+gets 413, refused from its declared length before any of it is buffered, and
+an unauthenticated one gets 401. A stored bundle answers 201 with its
+identifier, the time it arrived and the parts the server understood it to
+carry.
+
+Bundles hold prompts, paths, screenshots and daemon state, so they do not
+live forever and they do not outlive their owner. The files go to storage
+under a key beginning with the user who sent them, one row records what was
+written, and that row carries an expiry ninety days out; a daily maintenance
+job deletes expired rows with their files, and the reports side of the server
+does the same the moment it hears an account was deleted. That last one is
+why the row deliberately has no cascading foreign key to the user: the row is
+the only record of which files belong to a bundle, so letting the database
+drop it first would leave the files behind with nothing able to find them.
+
+Deployed to amux.sh as revision `370fa7d`; `ssh nova svc amuxcloud status`
+reports it active and healthy, and an unauthenticated post to the live
+endpoint answers 401 rather than 404.
+
+---
+
+2026-09-08 — **A report can be a picture of a phone screen.**
+
+A report bundle assumed the screen it froze was made of terminal cells: two
+text files, and rectangles measured in rows and columns. A phone draws
+something no text file describes, so the bundle now holds either kind of
+frame. A terminal capture is still `frame.txt` and `frame.styles`; a phone
+capture is `frame.png`, and the size it was drawn at — points, and the scale
+the pixels came out at — is recorded in `report.json`, because the picture
+itself says nothing about the space its marks were measured in. Marks are
+fractional now for the same reason: a rectangle drawn with a finger rarely
+lands on a whole point.
+
+The bundle also says which recorder made its trace. The terminal chrome's
+trace folds back into a frame here; a native view's does not, and a reader
+that cannot tell them apart would have to open the file to find out.
+`amux debug report replay` reads that declaration first: given a phone bundle
+it writes `unchecked` — the honest verdict for a comparison it never made —
+and names the recipe that does redraw those screens, instead of failing as
+though the recording were broken. `show` reads a phone bundle like any other,
+and graduation copies its picture across untouched; there is no text in a
+screenshot to redact.
+
+The `report_image_frame_*` tests hold all of it: in the bundle writer, that an
+image bundle round-trips with its geometry and its native trace kind, that a
+picture with no recorded size reads as no frame at all, and that a terminal
+bundle is untouched by any of it; in the CLI, that `show` reads a phone bundle
+and `replay` leaves `unchecked` behind with the pointer, and that graduation
+keeps the picture byte for byte; in the report fixture suite, that the terminal
+chrome refuses a picture rather than comparing one. The CLI pair is observed
+passing. `docs/DEBUGGING.md` now says what happens to a report captured on the
+phone: nothing, until the person who captured it presses Send.
+
+---
+2026-09-08 — **The fleet a phone remembers belongs to an account.**
+
+The remembered fleet — the rows drawn before any machine has answered — was
+kept in one file per phone. On a phone signed in to two accounts that was one
+account's machines and agents shown under the other's name: switching folded
+the rows the previous account left behind into the fleet projected for the new
+one, and whichever account was on screen last overwrote the file for both.
+
+Each account now keeps its own file, the way each account already keeps its own
+artifacts, named after the account with everything outside a lowercase,
+unambiguous set escaped so two addresses can never be one file on a filesystem
+that ignores case. Switching opens the account moved to, so its own rows are
+what the frames before its machines answer are filled from. The cold-launch
+read takes the account as part of the question, and the app asks it for the
+account on screen — nobody signed in has nothing to remember.
+
+Proved by `mobile_profiles_the_remembered_fleet_belongs_to_the_account_that_saw_it`:
+two accounts, each paired with a machine holding an agent, switched between and
+back; no fleet drawn after either switch carries the account left behind, in any
+frame, and the two files on disk are one account each. Without the reopen the
+test fails. `wt test -- --lib mobile_` is 38 passed, and `wt lint` and
+`wt run ios-unit` are green.
+
+---
+
+2026-09-08 — **The phone runs against a scripted account service, and the
+switcher re-points the runtime.**
+
+Signing in, buying a subscription and deleting an account are now things a test
+can drive on the real screens. A launch carrying `-amux-scripted-cloud` hands
+the app the scripted account service, the scripted App Store and a sign-in
+presenter that answers with the callback instead of opening a browser; without
+it the app is itself and holds the real three. That is the whole seam — no
+screen and no store knows which side of it it is on — and it is what makes a
+refused purchase, a purchase the store has taken and cannot finish, and a
+deletion the billing refuses states a finger can reach rather than states only
+a fixture can draw.
+
+What the two doubles will answer is now said to the door in plain words rather
+than in Swift's own encoding of a nested enum: `{"kind":"cloud","cloud":
+{"signIn":"refused","reason":"…"}}` changes one outcome and leaves the rest,
+and the same for the store. A driver in another language can write one by hand,
+and a transcript of a failing run can be read.
+
+Three holes the accounts screens had are closed. Add Account opens the sign-in
+page, which is the only place an account can come from; it was doing nothing at
+all. Switching account empties every navigation stack, because a page pushed
+under the account just left is about that account's machines and would
+otherwise still be standing when you came back to that tab. And the switcher's
+waiting badge is named in its own right, so what an account off screen has
+waiting can be read by anybody driving the app — the row's own name carries
+what the row says, and the number is a fact about somewhere else.
+
+The journey those changes exist for now runs: `wt run ios-journey -- accounts`
+drives one phone through one sitting in eight acts — the unsigned launch, the
+hand-off refused and cancelled and finished, both subscriptions pressed at the
+App Store with every answer it can give, a second account added and honoured
+with the subscription it bought on the web, two accounts pairing with their own
+machines on a real relay with the one off screen still reporting what it has
+waiting, an account signed out of and come back to with a subscription that has
+ended, the deletion refused by billing and then done, and the three appearances
+applied live. It declares its acts, so a failure is reproduced with
+`--act <name>` instead of by paying for the whole story again.
+
+The door grew what an accounts journey needs and nothing more: a second account
+with a credential of its own (the runtime takes its accounts when it starts, so
+this restarts it with both), the accounts the registry holds, what the two
+doubles were asked, and one more delivery of the last batch an account produced
+— tagged for that account — which is the only way a result arriving after
+somebody switched away can be played on purpose. The switch itself now reaches
+the runtime: pressing an account in the switcher dispatches `select`, and every
+batch is credited to the account the runtime is actually reading rather than to
+the one on screen, so what the previous profile was still producing is refused
+by the registry as the late answer it is.
+
+---
+
+2026-09-08 — **Deleting an account, and where the two Help rows lead.**
+
+Delete Account now asks its question over the page it was asked from, dimmed as
+one thing, and states what deleting does instead of asking whether you are
+sure: your agents keep running and nothing on your hosts changes, this phone
+can no longer reach them, and — the line the design's own drawing gets wrong —
+what happens to what you pay. Deleting an amux account cannot cancel an App
+Store or a web subscription, because the money is billed by a system this app
+does not own; the account service refuses the deletion outright while a renewal
+is still set. So the card names when the subscription renews and where, says
+plainly that deleting does not cancel it, and when the refusal comes back it
+grows a block above the field: only the place it was bought can stop it, here
+is the way there, come back and press Delete again. The address stays typed
+across that trip, so returning from the App Store is one press from finished.
+
+The address is typed to confirm, and the button that cannot be undone is greyed
+until what is typed is that account's own address. The account service checks
+it too, against what it says the account is rather than against anything this
+phone remembers.
+
+Help's two rows now lead somewhere. Contact Support opens the account service's
+support page — a form in here would have to be carried by the same service
+somebody may be writing about because they cannot reach it. Report a Problem is
+still only offered in a build that can write a report, and the screen that
+freezes the frame it reports on is not built yet. The two routes that named
+pages neither row needs are gone: appearance is a control on its own row, and
+help is a section of You.
+
+---
+
+2026-09-08 — **The accounts this phone knows, the switcher over the list they
+are a lens on, and You.**
+
+An account is a lens over the agent list, so the control that changes it hangs
+off the title of the list it changes. That control used to be a system menu; it
+is now the app's own panel, because the rows are not menu items — each carries
+what this phone actually knows about that account, and one of them offers to
+sign back in rather than to switch. Retaking `first-run` and `first-run-paid`
+was the whole visible cost: the word and the chevron are the same size in the
+same place, and what moved is a fraction of a point of layout the system menu
+was adding around its label.
+
+What a row says is only what this phone knows. The account on screen has a
+connection behind it and counts its machines from what that connection
+answered; the others say their address, because writing "0 hosts" would claim
+they have none when the truth is that nobody has asked. A signed-out account
+stays listed with Sign In beside it — the address is the one thing a person
+recognises, and forgetting it would make signing back in look like adding a
+stranger — and signing out takes its stores down without touching the account
+next to it.
+
+The needs-you badge for an account that is not on screen renders from a store
+fact and nothing else, and nothing in this build populates it yet. That is
+deliberate: a phone with one connection cannot see another account's agents,
+and an invented count would send somebody to look at nothing. It appears the
+moment a background subscription to the other account's fleet reports what it
+found.
+
+You is one page. The accounts and Add Account, then the selected account's own
+actions continuing that list — what it has bought and where that came from,
+Sign Out, Delete Account — then what belongs to the phone: appearance as a
+control on its own row rather than a value behind a screen, and this device's
+key. Support sits with reporting because "something is wrong" is one intent
+with two exits, and Report a Problem is only there in a build that can write
+one. There is no Notifications row, because this app has no push at all and a
+row leading nowhere would be worse than its absence.
+
+---
+
+2026-09-08 — **The paywall sells through StoreKit, and a subscription bought
+anywhere else is honoured.**
+
+One sentence about what the subscription is, the two plans with their prices,
+and what is true of both. No list of perks, because a list implies a version
+without them and there is not one: without a subscription nothing is reachable
+at all. The prices are the store's own strings in the person's own currency —
+an app that formatted a number itself would eventually print a price the App
+Store does not charge — and what the year saves is worked out from the two
+prices rather than written down, so it cannot go on claiming two months after
+a price change made it one.
+
+`AppStoreFront` is the only place StoreKit appears. A purchase is verified,
+finished so it is not offered again on the next launch, and an unverified
+transaction is refused rather than trusted. Restore asks the store to look
+again and then reads this Apple Account's entitlements; finding nothing is an
+answer and is said as one. Every branch a person can reach is designed and
+reachable in a test through a scripted store: closing the sheet leaves the
+screen exactly where it was with the same plan chosen, a purchase the store
+has taken but cannot finish stops offering to buy so nobody is charged twice,
+and a refusal says what the store said.
+
+A subscription bought on the web through the CLI is honoured. The paywall
+opened by somebody who already pays says where the subscription came from and
+how to manage it instead of selling a second one, and after a purchase the
+entitlement is read back from the account service rather than assumed from the
+receipt — which is the same read a web subscription arrives through. The You
+tab's subscription row states the same thing, so which store this device's
+entitlement came from is on screen wherever it matters.
+
+The two subscriptions are declared in a StoreKit configuration the scheme
+names, on both the run and the test action, so a purchase can be driven on the
+simulator without a sandbox account. XcodeGen writes the reference into the
+launch action only and Xcode reads the two separately, so the build recipe
+copies it across after generating the project.
+
+---
+
+2026-09-08 — **Signing in happens on amux.sh, and the app talks to the real
+account service.**
+
+The sign-in screen is the app's whole part in signing in: a sentence saying
+what an account buys, two facts, and a button that hands off. There is no
+field on it — no address, no password, no "forgot" link — because none of
+that is this app's to hold. What it does own is naming where it is sending
+you, so the host appears in the first row, on the button and in the caption
+under it. The hand-off opens `ASWebAuthenticationSession`, which draws the
+address it opened above the page and which this app cannot read; a plain web
+view inside the app would look the same and be neither.
+
+Behind it, `AmuxCloudService` is the production cloud boundary. Sign-in is an
+authorization code with PKCE against `connect/authorize` and `connect/token`
+as the registered mobile client, redirecting to `amux://callback`; a callback
+that names an error, carries no code, or answers a request this phone did not
+make is refused rather than redeemed. `connect/userinfo` says who signed in,
+`api/connect` mints the relay credential, and an expired access token is
+refreshed from the rotating refresh token rather than sending somebody back
+to a browser every hour. Entitlement is read from the subscription itself —
+provider, whether it renews and when the paid-for period ends — because the
+screen has to say which store a subscription came from, which the tier claim
+in the token cannot. An entitlement past its period is lapsed whatever the
+billing system still calls it, and one riding out a cancelled period is
+active with no renewal date.
+
+Deletion checks the typed address against what the cloud says the account is,
+before anything leaves the phone: the account service authenticates deletion
+by token alone and takes no address, so typing it is the person proving which
+account they are about to lose. A deletion the billing system blocks names
+where to go and stop it — the App Store's own subscriptions page for a
+subscription bought there, a billing-portal session for one bought on the web.
+
+Three sign-in outcomes are designed and each is reachable in a test. Success
+adds the account with what it is entitled to, and an entitlement the cloud
+will not answer for leaves the account signed in with the gate closed rather
+than calling the sign-in a failure. A refusal is said in the cloud's own
+words, at the foot beside the button that tries again. Coming back from the
+browser without finishing is not a failure at all and leaves nothing on the
+screen to dismiss.
+
+The adapter's whole suite runs offline against a transport seam, so no test
+reaches a network, and the two states have baselines in both appearances. The
+one departure from the drawing is written down: the rule between the two
+facts starts past the glyph, the way every other list in the app draws one.
+
+---
+
+2026-09-08 — **Four journeys pair by code again, and a replayed feed no longer
+crashes the phone.**
+
+The conversation, asks, review and writing journeys had stopped running at
+all. Each opened a pairing invitation on its machine and then handed the test
+a code and a host id it had never worked out, so the driver raised a
+NameError before the simulator was touched. Behind that, the phone no longer
+accepts an invitation at launch: a machine admits a device, and the app now
+takes the two steps the pairing screen takes, so a launch told to trust
+somebody refuses. All four now ask their machine for a code and pass it with
+that machine's identity, and each test trusts the machine through the app's
+own door before it asserts anything — the same path the hosts journeys use.
+Nothing anywhere still passes a pairing payload into a test, so the launch
+argument for one is gone from the journey harness.
+
+Two things the conversation journey had drifted past while it was dead. It
+looked for a changes page under a name no screen has ever declared; the page
+is the review, and it has its own way back rather than a navigation bar. And
+it read the panel that says a machine has gone away without first putting
+away the offer of the changes the finished turn left — that offer sits in the
+composer's place and outranks it, so the claim about losing a machine was
+being made against a screen showing something else.
+
+It also crashed the app, which was a real defect and not a test's. A
+conversation whose stream was released while nobody was reading it is
+replayed from its start when it is reopened, and a phone that had already
+dropped an evicted prefix would try to rewind further than it held any rows
+and trap. A replay from before the first row still held now replaces
+everything held, which is what such a replay is.
+
+2026-09-07 — **A journey can be re-entered at one of its acts.**
+
+Diagnosing a failure in the hosts journey cost a whole run of it, because the
+only way to reach the fourth thing a person does was to do the first three.
+The journey now names its acts in `ios/Journeys/manifest.json`, and
+`wt run ios-journey -- hosts --act agents-started` drives that act through the
+screen and replaces everything before it with a shortcut: trust is written
+through the app's own door — the two steps the pairing screen takes, against
+the same machine over the same relay — instead of typed on a keypad or opened
+from a link. The door grew the other half of pairing to make that possible: a
+machine's key can now be withdrawn through it by the same call the paired
+devices sheet makes.
+
+A shortcut run is a diagnosis and never a pass. It writes into a directory of
+its own so it cannot overwrite the journey's evidence, the phone's record
+names every act that was shortcut and every act a finger drove, the driver
+refuses a record whose acts disagree with what was asked for, and the last
+line says the journey has not passed. The inventory baseline the journey takes
+before anything — what the machines were already running — is taken in the
+moment before the first act a finger drives, so an agent found afterwards is
+still told apart from one that was always there.
+
+The mechanism belongs to journeys rather than to this one: the act filter is
+in the script and the acts are declared in the manifest, so the next journey
+gets it by declaring its own acts and writing a shortcut for each.
+
+---
+
+2026-09-07 — **`wt test` compiles under the build task, not under its own
+timeout.**
+
+The recipe caps the workspace run at fifteen minutes so a hung suite is caught
+rather than waited on. It did not depend on `build`, so a cold checkout spent
+that budget compiling and then ran as many suites as the remainder allowed:
+the last run reached fifty-eight of fifty-nine green and was killed part-way
+into the last one, which reads as a slow test suite and is nothing of the
+kind. `test` now names `build` among its needs, the way the comment above
+those tasks always said it did, so the compile happens under the build task
+and the timeout measures the tests.
+
+---
+
+2026-09-07 — **What the phone's link does over time is now a journey.**
+
+`wt run ios-journey -- hosts-lifecycle` drives one phone against two machines
+the runner is running and claims things about the connection rather than about
+a screen. The relay is taken away and put back and the phone recovers with
+nobody pressing anything; the relay's own inventory shows one connection per
+host — the two machines and the phone — with two conversations open, the same
+as with none, and unchanged by sitting idle with no dial in between; pressing
+Retry Now while the relay is still down is seen as a dial the connection made
+early because it was asked, so the recovery after it cannot be credited to the
+backoff coming round; putting the phone away makes it disappear from the
+relay's inventory and bringing it back restores it and confirms the fleet
+again; and the conversation left at the start holds no stream after all of it,
+while the one nobody left still does.
+
+Two things had to exist for it. A phone can only have one conversation on
+screen, so a second stream is opened through the driving door — which is what
+that door is for — and the door now also reports which streams the runtime
+holds and which ones the app has released, so a stream still open can be told
+apart from one nobody let go of.
+
+---
+
+2026-09-07 — **Leaving a conversation stops the machine streaming it, and the
+relay can be asked what it is holding.**
+
+A phone asked its machine for a stream when somebody opened a conversation and
+never let go of it: every conversation opened in a launch was still being
+streamed at the end of it, for nobody, across every outage in between. Leaving
+now releases the stream and keeps the transcript, so coming back finds the
+conversation where it was left and asks for it again.
+
+Leaving is noticed on the navigation stacks themselves rather than at any one
+call that changes them. The system drives those stacks as well as the app —
+the back gesture, and reaching for the tab already on show, which is the way
+out of a conversation — so a page that holds something open while it is being
+read has to be told to let go wherever it was left from.
+
+Proving any of this needs a view of the connections from outside the phone.
+The runner's Connections verb now also answers about a cloud account: one entry
+per host connected to the relay and how many links each holds. That is where a
+client multiplexing everything over one connection is told apart from one
+opening a connection per thing it watches, and where a phone that has been put
+away stops appearing at all.
+
+---
+
+2026-09-07 — **A phone put away holds no connection.**
+
+Backgrounding used to leave the link to the relay exactly where it was, for
+the system to freeze whenever it got round to it. Every machine the phone was
+watching went on believing in a connection nobody was reading, and what
+happened on the way back depended on how a frozen socket died.
+
+The scene now tells the runtime whether anybody is looking. Going away closes
+the link politely and stops dialling — a phone in a pocket is not a client
+with a network problem, so there is nothing for a backoff to retry — and the
+machines it was watching see it leave immediately. Coming back dials at once,
+without waiting out a backoff nothing was serving, and the ordinary
+reconciliation follows: the same rows, in the same order, going solid where
+they stand.
+
+---
+
+2026-09-07 — **The offline line is written, not printed.**
+
+The one line the home shows above its rows when the relay cannot be reached
+was the transport's own error: `Offline · code: "The service is currently
+unavailable", message: "tcp connect error", source: tonic::transport::Error(…)`.
+That is a sentence for a log. Above somebody's agents it says nothing they can
+act on, and it says it in a shape that reads like a crash.
+
+What crosses the boundary now is which kind of failure it was — the dial found
+nothing, the relay refused this device, the handshake ran out of time, a live
+connection ended, or the client itself stopped — and the app writes the words.
+The relay loop classifies by status code rather than by message, because the
+message is written somewhere below us and changes with the dependency; the
+detail it used to hand the screen goes to the log instead.
+
+A refused dial is pinned in the core, each kind's wording is pinned on the
+phone, and the home journey now requires the line above its rows to be one of
+the sentences the app writes.
+
+---
+
+2026-09-07 — **Retry Now asks the connection to dial now.**
+
+The offer on an unreachable machine's conversation reached nothing. It drew a
+button, the button did nothing, and the reconnection that eventually happened
+was the one the backoff was already coming round to — so a person pressing it
+was being told a lie about what pressing it did.
+
+It now goes to this phone's own link to the relay, which is the only thing
+that can be shortened when the connection is down: nothing on the far side of
+a connection that is not there can be asked anything. A press interrupts the
+wait the connection is in and nothing more. It never resets the backoff and
+never starts a second dial, so pressing it ten times in a second is one
+attempt — a control that reset the schedule would turn an unreachable relay
+into a tight reconnect loop, which is what the backoff exists to prevent.
+
+Proving it needed something new, because a dial at a relay that is not there
+arrives nowhere and can be counted nowhere except in the runtime that made it.
+The connection now counts its own attempts, and the driving door reports the
+count. The conversation journey reads it before pressing and again after,
+before the relay is allowed back — so the recovery below it can no longer be
+credited to a press that did nothing.
+
+---
+
+2026-09-07 — **Pairing a phone with a machine, in the two phases it has.**
+
+The phone can now add a machine. Typing the six-digit code the machine
+printed authenticates it and nothing else: what comes back is that machine's
+own account of itself — its name and the fingerprint of the key it would be
+trusted by — and trust is written only when the person looking at the
+fingerprint says so. An `amux://pair` link lands on the same confirmation and
+pairs with nobody on arrival, which is the whole point of the second phase:
+a link is a thing anybody can send a phone.
+
+Machines this phone has not paired with now reach it as a discovery of their
+own rather than as members of the fleet. They were already in the shared
+model and deliberately kept out of the fleet event, so there was no way for a
+screen to name one — and a six-digit code is authenticated against exactly one
+machine, so the screen that takes the digits has to know which. They arrive as
+`Discovered`, sit in their own section on the Hosts tab, and each carries the
+one thing there is to do with an offer.
+
+Four pairing commands cross the bridge: begin from a code, begin from a link,
+confirm, abandon. The capability the machine issues never crosses it — the
+runtime holds the authenticated attempt and hands the app a handle — so
+nothing that reads or logs an event can pair with anybody. Confirming and
+abandoning both consume the attempt before the round trip, so a second tap on
+either has nothing to spend.
+
+Every way a secret can fail is one answer with nothing else in it. Mistyped,
+expired, already used, never issued and the machine not answering all reach
+the same sentence and clear the digits, because telling them apart is exactly
+what somebody guessing codes would want. The screen states the offer's real
+five-minute window rather than the reference's two, so a code that has quietly
+gone stale does not look like a code that was mistyped.
+
+A link that arrives before this phone has signed in is not spent by that. It
+is put to whichever account is on show, once each, so a cold start followed by
+a sign-in still reaches a confirmation that can name who it is confirming, and
+a second account is asked separately because trust is per account.
+
+Proof: a bridge test drives all three endings against a real relay and a real
+machine — abandoned, refused and confirmed — and checks the trust store after
+each, `pin` and `pair-confirm` baselines in both appearances, and Swift tests
+over the code entry, the failures, the wire spelling and the link's survival.
+
+---
+
+2026-09-07 — **A conversation opens at its newest row.**
+
+The transcript rested at the top: opening a conversation put you at the
+oldest thing in it and a row arriving during a live turn appeared below the
+fold, where nothing drew attention to it. It now behaves like a chat — the
+feed opens at the latest row and travels with the tail while a turn streams.
+
+Only the starting offset and the reaction to growth are anchored, never the
+alignment, so a transcript shorter than the screen still starts at the top:
+there is no band of empty ground above the first row of a two-row
+conversation. The ground under the last row came down from 120pt to one feed
+gap at the same time, because the composer's own inset already holds the feed
+clear of the box and the surplus was only invisible while the list rested
+somewhere you could not see it.
+
+The scroll view is now one view, `TranscriptContainer`, and the performance
+bench uses it instead of a copy that anchored itself. A stream is only a
+stream if the list is following its tail, and the bench used to be the only
+place that was true. Re-taken over the shipped container the streaming
+numbers still pass with room: no dropped frames, 34.3% of one core, 62 MB at
+two thousand rows, nothing committed over five idle seconds.
+
+Eleven conversation baselines were re-recorded: the ones whose transcripts
+overflow now show their tails. The ones that fit on a screen are unchanged,
+which is the short-content rule holding.
+
+2026-09-07 — **A conversation the phone closes gives its stream back.**
+
+Opening a conversation widens the subscription policy: the agent is recorded
+as attached and a session stream opens for it. There was no counterpart.
+Closing a conversation dropped the phone's projection of it and left both the
+attachment and the stream, so every reconnection for the rest of the session
+re-opened a conversation nobody was reading — and nothing about the phone's
+state ever said it had been closed.
+
+The reducer now takes a detach: the agent leaves `attached`, and its stream is
+let go unless the eager inventory policy would have opened it anyway. On a
+desktop that policy keeps a stream up for every agent on this machine that is
+not readonly, because its badge is worth one whether or not anybody is
+reading; on a phone nothing runs on this device, so a closed conversation
+always gives its stream back. The TUI is untouched: it never sends a detach,
+and leaving an attach behind there is deliberate — attention stays fresh after
+you leave a chat.
+
+Proven against a running relay: two conversations opened over the cloud, one
+closed, the relay taken away and brought back. The one still open comes back;
+the closed one is gone from the attachments, gone from the streams, absent
+from the recorder's checkpoint, and stays gone while the inventory keeps
+arriving — and opening it again is ordinary.
+
+---
+
+2026-09-07 — **A markdown block no longer claims an identity it does not
+have.** Its `Identifiable` conformance said identity was position in the
+document and that the parser stamped it, while the code hashed the block's own
+text — so two identical paragraphs were one block by that measure. Nothing
+read it: the transcript walks the blocks by offset. The conformance is gone
+rather than replaced, because building a positional identity for something
+with no consumer is inventing a second way to be wrong. List items keep theirs,
+which the parser really does stamp in order and which `ForEach` really does use.
+
+---
+
+2026-09-07 — **The Hosts tab, and a machine that says what it is.**
+
+The Hosts tab draws the paired machines, grouped by whether the phone can
+reach them: what each one is, how the phone is reaching it, and — under the
+group rather than on every row — that agents on an unreachable machine are in
+a state nobody can report.
+
+Saying what a machine *is* needed something nothing carried. A host announced
+its name, its version and its capabilities in the link handshake and nothing
+about the computer it runs on, so the tab had no honest way to tell a Linux
+box from a Mac. Hosts now announce a platform: the operating system the daemon
+was built for, and nothing more. Reading a model name like "Mac Studio" would
+take a table of hardware identifiers, which is a program guessing what
+computer it is on; a machine nothing has ever been adjacent to says nothing at
+all, and its row carries no kind rather than a guess. The field is optional on
+the wire, so a peer that predates it is not misread as claiming to be nothing
+in particular.
+
+How a machine is reached is not guessed either. A phone holds one connection —
+to the relay — and every machine is on the far side of it, so a reachable
+machine reads "via relay" because there is no other way for a phone to reach
+one.
+
+When a machine went away is observed rather than reported. Presence is a
+boolean derived from routing and nothing in it says when it changed, so the
+hosts store records the moment it watched a machine stop answering, against a
+clock it is handed rather than the system's. A machine that was already gone
+the first time the phone heard of it has no answer and its row says only that
+it is offline. The elapsed time is written as an age — "offline for 8m" — in
+the same one-unit vocabulary as every other age in the app, which also stays
+true for a machine that went three days ago.
+
+The bundle of stores now takes a clock rather than a fixed moment, so a
+fixture can wind it back, play the snapshot where a machine stopped answering,
+and put it forward again: that is the only way a phone ever learns a machine
+went away eight minutes ago rather than just now, and it is what makes the
+capture the same picture twice.
+
+Baselines: `hosts`, and `offline` — the conversation whose machine went away
+mid-turn, which is the design's own name for the state already photographed as
+`stale`; both now come from one fixture. Departures from the references are in
+ios/Goldens/BASELINE.md.
+
+---
+
+2026-09-07 — **A command sent twice on the screen, and a radio spending a
+colour the sheet had already spent.** Three repairs found by reading the
+writing journey's own evidence back.
+
+A message is drawn the instant Send is pressed, before anything has left the
+phone, and it goes again when the host's own row for it arrives — matched on
+the text, because that is all the two rows share. A draft whose first token is
+a command was recording that optimistic row as its arguments alone: the
+command travels as its own segment of the draft and spells nothing into the
+text, so `/plan the parser…` was drawn as ` the parser…` and the host's echo
+never matched it. Both rows stayed, and the feed showed the same message
+twice. There is now one place a draft is folded into a sentence — the shape a
+held message is written in — and the wire and the optimistic row are both read
+from it, so the two cannot disagree again. The journey counts the prompt rows
+after the command turn and fails at two.
+
+The permissions sheet is achromatic except for the mode that stops asking,
+because colour in this app means something needs you and there is exactly one
+thing on that sheet worth spending it on. The selection mark was drawn in the
+accent regardless, so every mode in turn carried a colour competing with the
+warning. The mark is ink there now; the model card, whose only mark is the
+accent's own, is unchanged.
+
+And the journey's narration said four kinds of token stood in the sentence it
+photographs, where three do: the photograph is attached and then taken back
+out by the one backspace that proves a token is one character to the caret,
+before the file and the review arrive. It now says what stands there and
+records the photograph's part separately.
+
+---
+
+2026-09-07 — **A keyboard that outlives its screen.** Writing a message,
+opening the patch from the chip and attaching the review came back to a
+conversation with the composer nowhere on it: the box was drawn where it would
+sit with no keyboard at all, which is behind the keys. Neither a finger nor the
+UI journey could reach the cross, the plus or Send, and a tap aimed at the
+cross landed on a letter key and typed into the message it was meant to empty.
+
+The composer's placement was never wrong. Driving the same conversation
+directly and raising the keyboard on it puts the whole box above the keys, and
+it stays there through every layer the app wraps it in — the tab bar, the
+navigation stack, a pushed page and the drawer. What breaks it is arriving at a
+screen that a keyboard is already standing over: the patch's remark sheet takes
+the keyboard when it opens and nothing hands it back, so the conversation is
+rebuilt underneath one, and a screen built that way is laid out as though the
+bottom of the display were free.
+
+So leaving a screen puts the keyboard down — at the press, not in a lifecycle
+callback afterwards, which is the only moment that is certain. A conversation
+reaching for the patch, a child or the fleet puts it down; the remark sheet
+puts it down when either of its buttons closes it; and attaching a review puts
+it down on the way back. Written in the text field's own file because UIKit is
+the only place that knows what holds the keyboard: SwiftUI can say which of the
+fields it drew is focused, and the one that has to let go is usually on a
+screen that has already gone.
+
+Two things in the driving tools were repaired alongside it. Typing into a field
+by name could not reach the composer at all — SwiftUI draws a screen into a
+handful of views and hit-tests inside them itself, so what UIKit reports under
+a control's stated middle is a plain container with no field in it — and the
+door now falls back to the screen's sole text input. And writing a draft
+through the door set the whole body, which drops every token whose stand-in is
+not in the new text: a review attached and then written about was sent as
+prose with no review in it, which is what the review journey had been failing
+on.
+
+2026-09-07 — **The plus attaches something.** Photo and File were tiles that
+did nothing: there was no route from a picked file to the machine at all, since
+a draft's bytes are deliberately dropped when a command is serialized and every
+dispatched command is written into the local replay recording. A photograph
+does not belong in a recording, and a photograph spelled as a JSON array of
+numbers is four times its own size.
+
+So the bytes take their own entry into the shared library, beside the JSON
+commands rather than inside one. What crosses is the description of the file —
+whose agent, what kind, its name and type — and a pointer to the bytes; the
+library computes the artifact's identity from the contents, so a client can
+never name an artifact it made up. What the recording keeps is the artifact and
+never its contents.
+
+Storing is its own operation, finished before the message that will name the
+file exists. The token stands at the caret on the host's own word that the
+bytes are stored: one written when the picker closed would name nothing if the
+store then failed, and would be sitting in a sentence somebody had gone on
+writing. The caret stays after it, so the sentence continues where it was left.
+
+The pickers are the system's own and are raised from the shell rather than from
+the conversation, which keeps every conversation screen photographable away
+from a device. A photo carries no filename — a picker that never asked for the
+whole library cannot know one — so it is named for the type that came back. A
+file chosen outside this app's container is read inside a security scope that
+is given back whether or not the read worked.
+
+2026-09-07 — **A test agent that offers models, efforts and commands.** The
+settings card and the slash menu draw rows from what a session reports, and a
+session running against the recorded Codex corpus reports none of it: nothing
+in that corpus ever asked the app-server for its model catalogue or its skills,
+so there was nothing to press and nothing to raise.
+
+Those two exchanges now exist as their own recording, written by hand rather
+than captured — no provider was contacted and no credentials were used — and a
+manifest can now say so. `SourceKind::Scripted` carries a note explaining what
+a recording stands in for and why, and the live corpora assert against it, so a
+scripted file can never drift into a place that claims to hold captures.
+
+The runner asks a recorded session for its catalogue only when the recording
+carries the exchange, in the order a live host asks. What an agent offers still
+comes off a wire; it is never handed to the session behind the protocol's back.
+A topology declaring such an agent now reports two models with their own effort
+levels and two commands to a connected client, and the client's own settings
+gate says the card is pressable.
+
+2026-09-07 — **What the conversation says about the agent now reaches the
+host.** Picking a model, moving the effort axis, choosing what the agent may do
+without asking, renaming it, copying its address and deleting it were all
+controls on the screen with nothing behind them. Each one is now a write.
+
+The two providers do not agree about what a permission is, and the phone keeps
+that rather than inventing a common word: Claude runs under one named mode and
+is told about it as a mode; Codex runs under an approval policy and a sandbox
+at once, so pressing a preset sends both axes together — half a preset would
+leave an agent in a pair nobody chose. The preset table that the sheet draws
+its rows from is now the same table the write reads, so "Full Access" cannot
+mean one thing on screen and another on the wire. A configuration the presets
+do not name is drawn as Custom and cannot be picked: it is the sheet reporting
+where the agent is, not somewhere it can be sent.
+
+A change is refused where the layer says it would refuse it — the same sentence
+the sheet is already printing under the rows. Renaming and deleting are not
+settings and are not gated by it: they are about the agent as a thing that
+exists rather than about how it runs.
+
+Deleting asks and does not assume. The card confirms, the write goes out and
+the screen stays; the conversation is left only when the host's own answer says
+the agent is gone, so a deletion the host refused leaves the person where they
+were. Copying is the one thing here that goes to the system rather than to a
+machine, and the address travels out with the choice, so what lands on the
+clipboard is exactly the string the row showed.
+
+Every one of these six commands is spelled by hand on the phone, which has no
+Rust in front of it when it dispatches. So the exact JSON documents it writes
+are now decoded by the real decoder in `amux-mobile`'s own test: a renamed
+field or a changed tag fails there instead of turning into a control that
+silently stopped working.
+
+Baseline: `rename` is new — the design names the row but never drew the card it
+opens.
+
+
+2026-09-07 — **The strip above the composer, and one message held per agent.**
+Between the feed and the box a message is written in there is now one surface
+carrying whatever is true about the running turn: the count and the task the
+provider says it is on, how many agents this one started, and the message
+waiting for the turn to end. A row appears only while its fact is true, so an
+ordinary quiet conversation has no strip at all and nothing down there is
+permanent chrome.
+
+Two facts were kept apart on purpose. What the agent is doing *this second* is
+the line at the top of the composer, one plate below, and what task it is on
+comes from the provider's own list — the transcript's open row and the
+provider's fold are different things from different places, and drawing either
+of them twice would truncate the second copy, which is the one a person would
+try to read. Started agents keep their names in the chrome, one chip each, and
+the strip adds only their number; the number is the one coloured thing on the
+strip, and only when one of those agents has stopped and cannot go on without
+somebody.
+
+Opened, the strip grows in place: the list appears above the summary line,
+which does not move, and the panel is exactly as tall as the list up to a cap
+past which it scrolls. The alternative — a panel that always took the cap —
+left a band of empty glass under the last task, which reads as tasks that
+failed to load.
+
+The queue is the core's, not the phone's. A phone that goes to sleep, loses its
+network or is put away must not take a held message with it, and only the
+machine the agent runs on can be sure a turn ended exactly once, so the core
+holds one message per agent and delivers it at the first turn end. The phone
+learnt the other two halves of that: writing a second message while one waits
+replaces the first, because a second hold is refused outright, and tapping the
+queued row unqueues it — the text lands in the field as an ordinary unsent
+message and the host is told to stop holding it. There is no edit mode, no
+banner naming what is being changed and no discard; abandoning a queued message
+is clearing the field, the way every other unsent message is abandoned. The
+held draft's shape is pinned by the projection's own `queue.json`, read by the
+Rust snapshot test that writes it and by the Swift suite that has to decode it,
+so the two cannot drift.
+
+Baselines: `queued` and `strip` are new and `working` grew its one true row.
+`ios/Goldens/BASELINE.md` says what each picture is and where it departs from
+the design's own capture.
+
+---
+
+2026-09-07 — **Attachments are tokens inside the message, and the phone can
+change how an agent runs.** A message can carry a photo, a file, a long paste
+and a written review, and each of them lives *in* the text rather than in a
+tray beside it — which is what the format already said and what the terminal
+already does, and it is the only arrangement in which one can be referred to in
+place: "compare this with this".
+
+The cost of inline is ergonomic, so the draft is one string with a private-use
+character standing in for each token, the way the terminal's composer works.
+Every gesture then falls out of ordinary text editing: the picker inserts a
+character where the caret is, one backspace deletes a character and takes the
+whole token with it, and moving a token is moving a character. Nothing has to
+know that a token is several words wide, because in the draft it is not.
+
+That decided the one question this app had left open about UIKit. SwiftUI's
+text editing binds a string, and nothing in a string — or in an
+`AttributedString`, which was the real candidate — makes a run of it one object
+to the caret, or draws a chip between two words. `UITextView` has exactly that
+object already: an attachment is one character wide to the caret and any width
+on the screen. So the composer's field is the app's one UIKit leaf, behind a
+representable that binds the shared draft and keeps no state of its own, and
+`docs/IOS.md` records what was tried and what would reopen it. The chip inside
+the field is the same SwiftUI view the feed draws, rendered to a picture, so an
+attachment you wrote and an attachment an agent sent through its `attach` tool
+are one description used twice.
+
+Where a paste stops being words and becomes a token moved into `amux-ui`, so
+the terminal and the phone read one spelling of it rather than two that could
+drift; the phone asks the shared library to spell every element and to route
+every paste.
+
+Beside that, the three surfaces that say how an agent runs. The footer chip
+names the model and its effort and opens their sheet; permissions open alone
+from the row in the plus, in the provider's own vocabulary — Claude's five
+modes as Claude names them, Codex's three presets with the approval policy and
+the sandbox named under each rather than hidden behind it — achromatic except
+the one mode that stops asking, because being in that one is not a state
+anybody should be in without seeing it. The overflow offers rename, the agent's
+address and deletion, and deleting says what it does: the edits stay, the
+session ends, the conversation goes from every device.
+
+All five of those cards take the conversation behind them back a quarter of the
+way and leave the pill and the composer bright in front, which the design drew
+and nothing had implemented. It earns more than the resemblance: it is the way
+out. Each of these opens from a control that closes it again, and a card
+floating over an undimmed screen with no other dismissal is a trap for anyone
+who does not think to press the same button a second time. The one place the
+composer is not left in front is the deletion, where it is not drawn at all —
+nothing is worth writing to an agent while the question on screen is whether
+that agent is about to stop existing.
+
+An agent's own attachment is drawn as the chip a person's attachment draws,
+which is now in the picture rather than only in the code: the capture of a
+message being written carries the agent's file above the box and the person's
+inside it, read back through the same shared parser rather than remembered
+beside the text that names them.
+
+---
+
+2026-09-07 — **A command is what the message is, so it is one token at the
+front of it.** Typing a slash at the start of a draft raises the session's own
+commands over the box — at most five, filtered by what follows, each naming
+where it came from, because two sessions can both offer `/compact` and mean
+different things by it and one of them can be a plugin somebody installed.
+Picking one takes what was typed away and stands the command in its place, as
+one object the caret steps over and one backspace removes, exactly like an
+attachment; everything written after it is its arguments.
+
+That shape is the core's, not an invention: the core takes a command as its own
+segment of the draft, first and unique, with the rest of the message following
+as text. So a draft that holds a command now sends two segments instead of one,
+and a draft that does not is unchanged.
+
+Nothing is offered on a Claude session driven over a PTY. The core refuses a
+command token on one outright, and a menu of things that will be refused is
+worse than no menu. A command that only means something in a terminal is
+dropped the same way rather than shown and then refused.
+
+---
+
+2026-09-07 — **The photographed clock now reads the region it is pinned to.**
+Every capture keeps the simulator's status bar, pinned to 9:41 so two runs a
+minute apart do not differ over the time. Thirty-six baselines nonetheless read
+`09:41`: the language and region are written into a device that is already
+running, and the system draws its status bar once when it starts, so a
+simulator created and photographed in the same pass still formats the time the
+way the Mac does — here, a twenty-four-hour clock. Every later run on that
+device, after any restart, wrote `9:41`, and the whole catalogue went red on a
+leading zero nobody had changed.
+
+Pinning a device now writes the region and the twelve-hour clock, and restarts
+it when any of those values actually moved, before the status bar is overridden
+— so a device is never photographed in the one state where it disagrees with
+itself, and a device already pinned is not restarted for nothing. The
+thirty-six affected baselines were re-photographed. Each one differs from the
+baseline it replaces only inside the clock's own rectangle: 2903 pixels on the
+iPhone 17 Pro captures and 1042 on the small one, plus two dithered pixels of
+glass on one dark ask panel, far under the count a difference has to reach to
+fail. What the clock reads and why the older captures read otherwise is written
+down in ios/Goldens/BASELINE.md.
+
+---
+
+2026-09-07 — **A message can be written to an agent from the phone.** The
+bottom of a conversation was a place where refusals were reported and nothing
+else; it is now the composer the whole app was shaped around. A box with a
+field that grows to hold a paragraph, a footer under it with the attachment
+control at one end and dictation and send at the other, and an empty field that
+names the agent it is about to interrupt. Return inserts a newline and sending
+is the button, because a keyboard whose return key sends cannot write a second
+paragraph and a phone has no modifier to escape that with.
+
+While a turn is running the same box says what the agent is doing and how long
+it has been doing it, with a segment travelling under the words. Both facts are
+the machine's rather than the phone's: the activity is named by the transcript
+row that is still open, and the elapsed time counts from when the agent said
+the work began, so a host that stops answering stops the number rather than
+letting it run on. There is no track behind the segment — a trough is the shape
+of a thing with a known end, and nothing here knows when a turn will finish.
+
+Interrupting and clearing share no gesture. The round button stops the turn
+when there is nothing to say and sends when there is; throwing away what was
+written is its own control inside the field. A message written while a turn
+runs is held by the machine that owns the agent rather than by the phone, which
+is the only place that can be sure the turn ended exactly once.
+
+A sent message is in the feed in the frame the finger lifts in, drawn as the
+prompt it will become, and the host's own row replaces it when it arrives —
+matched on the text, because that is all the two rows share before the host has
+given the prompt a position.
+
+Every conversation screen gains the box, so `run`, `run-live`, `voices`,
+`review-cta` and `drawer` were re-photographed; `typing` and `working` are new.
+An ended run and a session this build cannot read still offer nothing, and an
+unanswered ask, a finished turn's offer and a refusal still take the box's
+place rather than sitting beside it.
+
+---
+
+2026-09-07 — **An answer pressed on a phone reaches the machine.** Answering
+an agent that is waiting was the one thing a conversation screen could do that
+went nowhere: the panel carried the decision out to the shell and the shell had
+no runtime to send it with. The bundle of stores now carries the seam — set by
+whoever owns the connection, left alone by a fixture or a replay — and the
+panel spells the command, because only it knows which ask this is and which
+layer raised it. The operation comes back to the conversation that answered, so
+the host's reply belongs to that conversation and not to whichever one is on
+screen.
+
+A conversation also lists what its agent started, in the chrome above the feed
+so scrolling back through a long turn cannot take a waiting child off screen.
+An agent amux started is a chip that leads to its own conversation; work the
+provider runs inside this session is a chip that says why there is nowhere to
+go, because a control that looks alive and ignores a finger reads as a broken
+app.
+
+Two journeys drive all of it against a machine the runner is really running.
+`asks` refuses one permission and allows another, takes the standing grant by
+the name the host gave it, answers the agent's own question, approves one plan
+and sends another back with what should change, reopens a plan judged earlier
+onto the document that was judged, answers a child's ask in the child's own
+conversation, presses a subagent that has none, and defers and then reads a
+finished turn — and the host is asked afterwards what it received, answer by
+answer. `review` holds lines and drags to take ranges out of a patch the host
+froze, writes three remarks, cancels a fourth before it is said, and sends the
+review with a remark about the change as a whole; the host's copy carries that
+patch's identity, those ranges and the patch pinned to the message.
+
+Both journeys work in a repository they leave under `target/` rather than in
+this checkout, so the patch on screen says the same thing every run. A child
+spawned through the test runner now inherits its parent's script: a child
+raised by the same control channel is answered by the same test, and one given
+an empty script refuses every answer. What a screen declares about itself — a
+label, a value — reaches the accessibility tree only where the screen also
+spells it for VoiceOver, so a UI test reads those through the app's own door
+and keeps the pressing to itself.
+
+An answer that never left is asked again. A tap can be refused — it raced the
+session it was answering, which had moved on between the question being drawn
+and the finger landing — and the layer puts the ask back rather than leaving it
+looking answered. The phone was drawing nothing for that state, so a refused
+answer took the agent's request off the screen and left the agent waiting for
+it with nothing to press. It comes back, with the answer still to make, and a
+driver that presses again gets through.
+
+That refusal is also why anything answering an agent has to wait for the ask
+and the row announcing the tool it is about to be paired up before it answers:
+an ask reaches a reader the moment it is raised and its transcript row follows,
+and an answer sent in that window is racing. The end-to-end test that answers
+two asks in one session waits for the pairing, and the script it drives has a
+reaction for the second answer — a session that can be asked exactly one
+question is not a session.
+
+2026-09-06 — **A written review leaves the diff page as one token.** Attaching
+a review hands the conversation it came from the element the review is sent as
+and the reference that keeps its patch fetchable, and goes back there. The
+element is formatted by the shared library rather than on the phone: the review
+body frames each remark by its length in bytes and escapes what would close the
+element early, and a second spelling of those rules would be a second thing to
+keep right. The phone reads its own draft back through the same parser every
+other client reads messages with, so a token can only be drawn if what it will
+send is something the whole system accepts. A review carries no verdict — what
+somebody wants to say about the change as a whole is ordinary prose beside the
+token in the same message. The name and mime a review attachment carries now
+live in the shared crate, so the terminal and the phone cannot drift apart over
+what a review is called.
+
+2026-09-06 — **A screen being photographed stops blinking.** The comment
+sheet's baseline came back with a bar of accent in it about half the time: the
+text caret blinks about once a second on a schedule of its own, and the
+capture, which photographs the simulator's display until a run of photographs
+agree, can never outlast a clock. A screen the door is showing now knows it is
+being photographed rather than used, and anything that runs on a timer of its
+own draws its resting state while it is — today that is the caret in the
+comment field and in the sheet the layer asks for free text in, and nothing
+else. Somebody writing in the app still sees a caret.
+
+2026-09-06 — **The changes a turn made read as one scroll.** The review page
+is the whole patch top to bottom rather than a list of files you drill into:
+twelve short changes should not cost twelve taps to read. Files are
+alphabetical — by the ordering a person alphabetises with, not by byte value —
+because git's own order is not stable between two walks of the same tree, and
+every address into a review is an index into that order. Each file folds away
+from its heading, the heading opens the list of all of them, and a wheel down
+the trailing edge scrubs by file and names what it lands on. There are no hunk
+headers: the coordinates they state are already beside every line, so a break
+between hunks is a hairline and a gap. Lines wrap; nothing scrolls sideways.
+
+Holding a line and dragging takes hold of a range, which opens a sheet drawn in
+the page rather than over it — what is being written about stays on screen,
+scrolled up and highlighted, and the sheet names the range twice: in rows of
+the patch, which is what a finger selected, and in the file's own numbering,
+which is what the comment is finally addressed by. A range that ends on a hunk
+break is refused rather than anchored somewhere nobody chose. Comments
+accumulate in document order and an unfinished one can be cancelled, which
+takes the words with it.
+
+No UIKit view was needed for the selection. Rows report their own frames as
+they lay out and the drag looks a point up among them, so `diffSelection` stays
+a reserved name rather than becoming a leaf; `docs/IOS.md` records the argument
+and what would reopen it. Baselines for both states are established in light
+and dark, and `ios/Goldens/BASELINE.md` says where they part from the drawings.
+
+2026-09-06 — **A child's ask is answered where the child lives, and a plan
+verdict keeps the plan it judged.** A conversation now lists what this agent
+started as two plainly different things. An agent amux started has a
+conversation of its own, so the row carries its identity and reaching it pushes
+that conversation on top of this one — answering there addresses the child, not
+whichever conversation the person happened to be reading, and coming back finds
+the parent page exactly as it was left because it was never torn down. Work a
+provider runs inside the session has no address at all: it is listed, it cannot
+be opened, and it says why in a sentence instead of offering a control that
+would do nothing. A subagent that started and then finished is one child rather
+than two.
+
+A judged plan used to arrive in the feed as a nameless tool with no output. It
+is now a recorded verdict — approved, or sent back with the layer's own reason
+— carrying the plan exactly as it was written when it was judged, so reopening
+an old decision shows the document that was in front of the person rather than
+the file as it has since been rewritten. A plan nobody has answered yet is
+still an ask and is not claimed as a decision.
+
+2026-09-06 — **The phone is sent a reviewable diff rather than a run of
+hunks.** A frozen patch arrived with its file headers stripped: enough to count
+a change, not enough to read one. Nothing said which file a hunk belonged to,
+what its rows were numbered, or what the patch had been taken against, so a
+page that lists files, collapses one, scrubs between them or anchors a comment
+to a line could not be built on it. The bridge now projects the review document
+the rest of the workspace already reads — files under their own paths, rows
+numbered on both sides, hunk starts, and the repository identity — parsed once
+in the shared core by the same code the terminal client uses, with the artifact
+identifier beside it so a review sent later names the diff that was read.
+
+A patch fetched back from a stored review is deliberately no longer projected:
+its identity lives in the review mention that referenced it, and a document
+assembled with an invented identity would claim the phone knew what it had been
+diffed against. Reading somebody else's review is its own path, still to build.
+The shared fixture is now a real two-file patch whose arithmetic is unchanged,
+so every locked capture is unchanged.
+
+2026-09-06 — **An agent that is waiting on you now asks in its own words.**
+An unanswered ask replaces the composer with a panel. A Claude permission shows
+the command verbatim with Allow filled, Deny outlined, and — where the host
+offered one — the standing grant it actually offered. A question shows its own
+answers; one question that takes one answer is finished by tapping it, and
+anything else collects and sends together, because the layer refuses a response
+with a question missing. A plan is the agent's own markdown, folded with a
+grabber, with Approve and Send Back; Approve is the arm that keeps asking about
+edits one at a time, since an app whose whole permission story is being asked
+first must not turn that off from a button. A finished turn nobody has read
+offers Review Changes and Later in the same place. Codex is not flattened into
+any of that: it lists the decisions Codex itself named, in Codex's order, and a
+decision this build cannot carry is listed and cannot be pressed.
+
+The panels are read off asks projected by the bridge, and those projections are
+now pinned from recorded sessions rather than written by hand. Four are folded
+out of real recordings — a permission carrying a real directory suggestion, a
+multi-select question, a plan, and a Codex command approval — into
+`crates/amux-mobile/src/projection/asks.json`, read by the phone's own suite.
+Doing that immediately found two hand-written fixtures that were wrong: the
+Codex approval offered "approve", "approve_for_session" and "deny", which are
+not any layer's words — the frozen backend takes accept, acceptForSession,
+decline and cancel — so a panel built on the old fixture would have offered
+decisions no host would take. The permission fixture carried no suggestion at
+all, which is the one shape the core refuses to answer. Both are corrected, and
+the test that asserted the wrong decisions now asserts the real ones.
+
+Five states are captured and locked in both appearances: ask-permission,
+ask-question, plan, codex-approval and a finished turn. The plain conversation
+capture lost the pending ask it used to carry, since a state whose composer is
+replaced by a panel is a picture of the panel rather than of the chrome and the
+feed. Every previously locked capture is unchanged.
+
+2026-09-06 — **The home now has a locked capture of an agent it cannot read.**
+A machine on an account can run a newer amux than the phone, and then a real
+agent arrives under a provider name this build has never heard of. The app
+already listed it under that name, wrote "Cannot be read" where the state word
+goes and left it as the one row that is not a button, but nothing locked how
+that reads: the state existed only in unit tests. It is now a fixture and a
+baseline in both appearances, described in the goldens' baseline notes. The
+conversation journey's closing account no longer points at a baseline that did
+not exist; it names the tests and the capture that actually prove the rule.
+
+2026-09-06 — **Every kind of transcript row is now told apart on screen.** The
+shared row shape named every one of them `transcript.activity`, so one denied
+row satisfied a check meant to cover refusals, failures, interruptions,
+provider errors, subagents, written files, exits and rows this build cannot
+read; the rule that closes a turn and the rule that marks compaction shared one
+name too. Each kind now carries its own name, which VoiceOver and the journey
+both read. The scripted provider gained the steps needed to play the missing
+ones — a prompt that opens a turn so it can end, a tool that ran and failed, an
+interruption, and an envelope kind on an agent message — and the conversation
+journey plays all of them, fails if any single kind stops being drawn, and
+photographs the end of the turn with them on screen.
+
+A message from another agent stating that its sender exited was drawn as an
+ordinary message: the envelope kind arrives as a tagged object and the phone
+read it as a bare string, so the line saying a session ended could never
+appear. The reader now reads the shape the core sends, and an unknown kind
+keeps the label the carrier wrote. Fixtures that encoded the string shape were
+wrong and now encode what a host actually sends.
+
+2026-09-06 — **A refusal now belongs to the agent it was said about.** An
+operation result names its operation and no agent, so the connection offers
+every result to every open conversation. Each conversation kept all of them,
+and the panel where the composer goes reads the newest one: with two
+conversations open, a send that failed on one agent was drawn as the other
+agent's refusal, quoting a host that never said it about that agent. A
+conversation is now told the identifier when it dispatches, keeps only results
+answering its own operations, and remembers a bounded number of them instead of
+growing for the life of the process. Store tests cover the foreign result, a
+repeated identifier and the bound; a panel test fails if another agent's
+failure reaches it.
+
+2026-09-06 — **Reconnect conversations left open on the phone.** Losing a
+remote host removed its agent cards and structured streams from the shared
+reducer. When the host returned, its cards came back but nothing reopened the
+transcript stream, leaving the conversation empty until it was opened again.
+The reducer now remembers user attachments independently of temporary inventory
+removal and resubscribes when those agents return. A host's confirmed inventory
+releases attachments to deleted agents; separate reachability and agent events
+can arrive in either order without forgetting an open conversation.
+
+The conversation journey now requires recovery. While the relay is down, the
+scripted host starts a fresh transcript. Without navigating away, the phone must
+replace its retained rows with that replay, then show another row written after
+reconnection. Screenshots and the accessibility tree capture both results.
+Reducer specs cover all three structured protocols, read-only agents, duplicate
+upserts, both outage event orders, recorder checkpoints and confirmed deletion.
+The regression fails against the previous reducer because it emits no stream
+subscription when the remote agent returns.
+
+The journey rejects runner errors and saves the runtime recording beside its
+captures. Its synthetic streaming rows omit session identity, so a
+provider-written row establishes the previous identity before the scripted
+transcript change; the exact one-row replay and two-row live assertions verify
+replacement without relying on cached content.
+
+2026-09-06 — **Film the transcript being read while it is still arriving.** The
+conversation journey proves every kind of row, every refusal and what a machine
+going away does to the screen, but the one thing about this screen a photograph
+cannot show is the thing a person actually does with it: scroll a transcript
+while the agent is still writing into it. The journey now records that stretch
+and leaves a playable film beside the photographs.
+
+Two things had to be arranged. A Mac that starts a UI test cannot see inside it,
+so the test writes `begin` and `end` into its own container — an ordinary
+directory on the Mac's disk — and the runner reads that word off disk and
+records the simulator for exactly as long as it says, rather than filming
+several minutes of a test nobody will watch. And the turn has to arrive while
+the scrolling is happening: asked for in one go it is taken by the host in one
+go and the whole thing lands before a thumb has moved, which is what the first
+attempt measured — the play was answered a tenth of a millisecond after the
+scrolling stopped. It is now played in ten batches of twelve numbered rows, each
+acknowledged before the next is asked for.
+
+That the rows arrived while the feed was being read is measured rather than left
+to the film: three times during the scrolling the test reads what is on screen
+and records the furthest row in view, and both the test and the journey fail
+unless that number rises. It went 0, then 71, then 119 across twenty swipes.
+xcodebuild's output now goes straight to its log file rather than through a
+pipe, because the camera runs alongside it and a pipe nobody is draining would
+stall the build.
+
+2026-09-06 — **Keep the tab bar off the bottom of a conversation.** A machine
+that has gone away says so where the composer will go, along the bottom edge,
+and offers Retry Now — which on a phone is exactly where the floating tab bar
+sits. The offer was drawn underneath it: the word was half legible and the part
+of it a thumb would reach was the Hosts tab.
+
+The panel was not at fault. The drawer that wraps every conversation ignored the
+bottom safe area for the whole stack it draws, so the page inside it lost the
+clearance the system reserves for that bar and put its own panel into it.
+Nothing needed the stack to ignore it: every ground drawn in there already runs
+to the physical edge on its own, which is why taking it off changed no
+background. The panel now sits above the bar and the feed still travels under
+it.
+
+The drawer's locked photograph moved with the fix — its foot, and the lower
+corner of the conversation behind it, lift by that clearance, which with no tab
+bar over them is the home indicator's — and was retaken with the reason written
+into the baseline notes. Proof: the conversation journey passes against a real
+host and the photograph it takes of an unreachable machine reads Retry Now in
+full.
+
+2026-09-06 — **Refresh the phone branch from main.** Merged main at 713d5476
+into this branch as a merge commit, keeping both parents; both dependency
+branches this work already carries were ancestors, so what landed is the 22
+commits main gained beyond them: the stream-JSON chat's one-entry-per-subagent
+folding and parentless spawn, Codex resuming a thread with its history before
+it says it is ready, the profile sharp-edge fixes, the subprocess setup and
+replay cleanup work, and the Windows portability fixes.
+
+Eight files conflicted. The chat frame took both sides: this branch made the
+activity slot a list of lines so a queued message can sit beside the working
+row, and main gave that row air above it, so the geometry now counts the whole
+block and the painter writes the gap before the slot. The replay controller
+took main's drive and its new close_reads, and the recorded-Codex driver in the
+e2e runner now calls drive, which is the same loop this branch had named run.
+The workspace recipes gained main's opt-in real-Codex suite and kept this
+branch's mobile check, which checks both phone targets rather than one. The
+attachment viewer, the daemon's data directory comment and the SDK
+configuration doc took main's wording. The protobuf descriptor was not resolved
+by hand: the .proto files merged cleanly, so it was regenerated from them.
+
+Git also merged a conflict it could not see: both sides had added a Claude
+settings field to the installation config and to the settings a runtime is
+started with, at different places in the same struct, so every definition and
+every literal carried it twice and nothing compiled. Deduplicated across the
+workspace; where the two copies differed, the surviving one passes the config's
+Claude settings through instead of a default, so the driver preference reaches
+the installations those tests open.
+
+Proof, all local: fmt, lint, the workspace suite, the specs, the testnet smoke,
+the mobile check and the end-to-end runner at 22 of 22 pass. The first
+workspace run stopped at the recipe's own fifteen-minute limit while linking
+cold test binaries; the suite it stopped in passes in six seconds on its own and
+the warm rerun passes whole. On the phone: the loopback smoke passes and still
+reports unpaired hosts kept out of the fleet and discovery confirmed through the
+snapshot, the home and conversation journeys pass against a real host, and every
+locked photograph is unchanged — main's subagent folding adds fields to a feed
+row but moves nothing the phone draws in a locked state, so no baseline was
+retaken.
 2026-09-13 — **Protect renamed golden fixtures from line-ending translation.**
 The fifth CI run compiled and ran everywhere; the one Windows failure was a
 golden comparison whose fixture had been checked out with CRLF because
@@ -284,12 +4250,1240 @@ Preserve the profile documentation and workspace test guide together. The merged
 workspace suite passes 2,033 tests with zero failures and one ignored test;
 all-target lint also passes.
 
-# amux Development Log
+2026-09-06 — **A transcript survives the machine that owns it going away.**
+Against a real host, losing the machine emptied the conversation: the chrome
+said "unreachable", the panel offered Retry Now, and every row vanished from
+underneath them. Nothing on the phone threw them away — the shared projection
+did. It rebuilds each subscribed agent's feed from the folded layer the model
+holds, and a machine that stops answering takes that layer with it, so the
+projection reported a feed with nothing in it and the phone dutifully emptied
+the screen.
 
-This file tracks significant development work, decisions made, and current state. Update this file after completing a chunk of work.
+A transcript is the only account of a conversation there is, and losing the
+fold it was projected from is not evidence that the account was wrong. So the
+projection now keeps the rows until something replaces them: while the machine
+that owns an agent is not answering, and through the seconds after it comes
+back when it has an open stream but has not replayed anything yet. Two things
+still end a transcript — an agent removed from a machine that is still
+answering, and an agent whose provider this build cannot read.
 
----
+The conversation journey now asserts the feed is still readable while the
+machine is unreachable, instead of writing down that it was empty, and it
+collects the accessibility trees from during and after the outage. Those trees
+show the other half: a conversation left open while the machine returns stays
+empty, which the journey records rather than claims, and which is its own
+piece of work.
 
+2026-09-06 — **The drawer is photographed over the conversation now.**
+The panel's baseline was taken over the app's bare ground, because the
+conversation behind it did not exist yet, and the file beside it said so. It is
+now taken over the real conversation, filled from the same state the `run`
+capture is. What the panel dims, what its edge uncovers and how far its shadow
+reaches are facts about the screen underneath; over bare ground the capture
+showed none of them. The panel itself did not move.
+
+2026-09-06 — **What a conversation says when it will not take a message.**
+Three ways a conversation stops accepting messages, and they were being drawn
+as one thing or as nothing. They are now distinct, and each is read off a fact
+the core reports rather than one the phone infers.
+
+A layer that refuses a send says so where the composer will be, in the core's
+own sentence when the core has refused an actual send and in the phone's words
+for that gate when nothing has been attempted. A machine that has gone away
+mid-turn leaves the feed exactly as it was — the last thing that was true, and
+still readable — and says so twice: the place line under the agent's name
+reads "unreachable" instead of the directory, and the panel along the bottom
+names the machine, says reconnecting is what is happening and offers Retry Now.
+A run that has ended offers nothing at all, on purpose, and states its exit
+code in a card at the end of the feed where the last thing that happened
+belongs.
+
+That exit code was being thrown away at the daemon. A subscriber learns an
+agent has gone from its output stream ending, and the stream carries no code,
+so the close reason went out with `exit_code: None` for every agent on every
+host — while the backend that had just reaped the process knew the answer. The
+close reason is now completed from the backend, and the runner test that exits
+an agent with code 7 asserts the 7 arrives instead of matching on any exit at
+all. An absent code stays absent all the way to the phone: nothing may read
+"the host never said" as a successful exit.
+
+An agent run by a provider this build has no case for used to fail to decode,
+which took the whole fleet down with it — one unreadable agent turning into a
+phone that shows nothing. It now arrives under whatever name the host used for
+it, is listed with the rest, says it cannot be read, and is not offered to open
+from either the home or the drawer.
+
+2026-09-06 — **A screen is built one state at a time.**
+The catalogue's unit is a state — a screen and what fills it — but the debug
+door declared built-ness per screen. So the moment the conversation landed,
+every state of that screen became openable: the conversation whose host was
+lost mid-turn, the one stripped back to its rows and the one at an
+accessibility type size all answered as if they were drawn and locked, and the
+check of "everything built so far still draws what it was locked as" started
+failing on three pieces of work nobody had started.
+
+Built-ness now belongs to the pair. The door asks before it looks the state up,
+so a state nobody has written yet is answered "unimplemented" — which is what
+it is — rather than "no state named", which reads as a broken fixture.
+Establishing a state's baseline includes naming it built, in the same commit;
+the baselines file and the CI notes say so. A state that opens and has no
+baseline still fails, because that is what catches one built and never locked.
+
+2026-09-06 — **The transcript stays SwiftUI, and the measurement says why.**
+The streaming budget was being measured over a stand-in: a plain list of
+one-line texts, not the transcript people will actually scroll. It is now the
+shipped rows — the same projection, the same row views, the same lazy stack —
+reading the same conversation store the runtime's events land in, so a row's
+journey from the bridge to a drawn view is the app's whole journey. Only the
+scroll view around them belongs to the bench, and the one thing it decides is
+that the list rests at its tail, because a row appended below the fold of a
+lazy stack is never built and a stream measured in a list nobody is looking at
+measures nothing. Where a conversation should rest when a person opens it is
+still an open product question, so the shipped screen was left alone.
+
+The numbers, five samples each on the pinned Mac's simulator: no hitch at all
+against a budget of 5 ms per second, 29% of one core against 60%, 56 MB at two
+thousand rows against 250 MB, and nothing committed over five seconds of idle.
+A settled screen of a thousand rows draws 28 of them, with the folded runs
+among them still folded, and that is now asserted from the list's own account
+of what it drew rather than inferred from the memory it held. So the UIKit
+transcript leaf is not bought: `transcriptList` stays a candidate with no file
+behind it, and `docs/IOS.md` carries the numbers and what would reopen the
+question.
+
+Two things were wrong underneath. The streamed rows reused the identities the
+transcript already held, which makes a list's diffing undefined — a feed never
+does that, and now neither does the workload. And a measured run can now be
+asked for one group of measurements, `wt run ios-perf -- --only streaming`,
+which judges only what it took: a partial run cannot report a pass on a metric
+it never measured, and recording a baseline still needs a whole run.
+
+2026-09-06 — **A golden capture waits out the home indicator.**
+The home indicator is drawn for the first moment of an app launch and then
+takes itself away. A capture waited only for two photographs of the display to
+be the same file, and the indicator holds still long enough for a pair half a
+second apart to both catch it, so whichever screen a run happened to photograph
+first kept a bar that none of the others had. Running one screen on its own made
+that screen the first one, which is why a run of the whole set passed and a run
+of a single screen from it failed on the same baseline.
+
+Rest now means a run of eight identical photographs rather than a pair, which is
+about two seconds and outlasts the indicator. The one baseline that had been
+locked with a bar in it — the probe in its light appearance — was retaken; every
+other baseline was already taken later in its run and is unchanged. Twelve
+screens in both appearances passed ten consecutive runs with no baseline
+touched, and the perturbation check still fails on purpose.
+
+2026-09-06 — **Leaving a conversation through the tab bar is proven again.**
+The home journey's drawer test could not find the Agents tab. An accessibility
+identifier put on a `Tab` names the page behind it, not the button in the tab
+bar, so the three names the shell declared for its tabs reached nothing and read
+as a contract nothing could keep. They are gone, and the test reaches the tab
+the way the system publishes it and a person sees it: by the word under the
+glyph. The whole home journey passes end to end against the test relay again.
+
+2026-09-06 — **Golden captures are photographs of the simulator's display.**
+The app used to draw its own window into an image for every baseline. That is
+where glass resolved, and it did not resolve the same way twice: the lensing
+along a card's top edge appeared on some passes and not others, so a screen with
+glass on it failed about one run in three whichever pass its baseline came from.
+The picture is now taken from the Mac with `simctl io screenshot`, so the render
+server that draws the material is the thing that produces the capture.
+
+Waiting had to move with it. The app can only watch its own view tree, and a
+glass surface that has just been built keeps animating in the render server
+after the tree has stopped changing, so the display is photographed repeatedly
+until two photographs are the same file. Every capture is checked against the
+size the simulator says its built-in display is, so a picture of the wrong
+device fails loudly instead of being compared.
+
+Every baseline was re-established once. The frame now includes the system status
+bar, pinned to 9:41 with a full battery, and the home indicator, both of which
+the design references draw; ios/Goldens/BASELINE.md says why. The pixel
+tolerance is unchanged, the deliberate perturbation run still fails on purpose,
+and the built manifest passed ten consecutive runs with no baseline changed
+between them. The app's own frame capture stays, because a report from a real
+phone has to freeze the screen from inside the process.
+
+2026-09-06 — **The conversation transcript renders every row kind.**
+A shared projection turns each layer's own feed rows into what the transcript
+draws: prompts, agent prose, folded runs of reads and searches with their counts,
+edits as a path and its arithmetic, commands with their output kept to a head and
+the rest counted, refusals, failures, interruptions, provider errors, subagents,
+messages between agents, session ends, and turn-end and compaction rules. The
+three layers keep their own vocabularies — a Claude SDK row is never re-read as a
+terminal one — and a row shape this build does not know is kept and shown as
+itself rather than dropped.
+
+Everything an agent does hangs off one rail; what a person reads (their prompt,
+the agent's prose, the rules that close a turn) breaks it and takes the full
+width. Only a refusal, a failure, an interruption and a provider error carry the
+accent, and only on the glyph.
+
+Agent prose is markdown, parsed away from the main thread into finished blocks:
+headings, lists, tables, quotes, links and fenced code that keeps its language
+and scrolls sideways rather than wrapping. Links are underlined rather than
+coloured, because the one accent means "something is waiting for you".
+
+Baselines for run, run-live, voices and review-cta are taken with the transcript
+behind the chrome, and ios/Goldens/BASELINE.md records how each departs from the
+design reference.
+
+2026-09-06 — **Restore unpaired cloud host discovery on the phone.**
+The embedded phone runtime now subscribes to its profile owner's host inventory,
+so a signed-in device can see its account's online daemons before pairing. Moving
+pairing discovery out of the profile client service had left the phone reading
+only trusted hosts. An owner-only administration stream restores initial presence,
+live arrivals and departures through the shared Rust reducer, while profile
+sockets and peer tunnels retain their trusted-only inventory. Unpaired candidates
+remain outside Fleet callbacks and the fleet cache.
+
+A new Rust test starts the mobile C ABI against two users on a real test relay,
+without pairing, and checks discovery, account isolation, disconnect and reconnect,
+and Fleet/cache exclusion. It reproduced the missing-host failure before the fix.
+Service coverage also checks the owner's initial snapshot and live events, hiding
+direct-only candidates and retaining the existing remote-inventory boundary.
+The full Rust suite, all 450 prose specifications, testnet smoke, the unchanged
+iOS simulator loopback smoke, formatting and workspace lint pass.
+
+2026-09-06 — **A conversation's chrome on the phone, and the way in to its changes.**
+A conversation now has no navigation bar. A floating glass pill names the
+agent with the machine and directory it runs in underneath, carries the drawer
+control on its leading edge and the overflow beside it, and the platform's
+scroll edge effect frosts whatever passes under it. Once a turn has changed
+something, a chip appears between the two in the diff's green and red and opens
+the changes; it counts the patch it opens rather than repeating the fleet's
+totals for the last turn, so the numbers can never disagree with the page
+behind them. Green and red join the design as tokens of their own — the only
+colours that are neither the accent nor a step on the neutral ramp — because
+they are a convention about what changed, while the accent is the app's one
+word for "something is waiting for you".
+
+Taking the bar away removed the only way back to the list, so reaching for the
+tab already on show now returns it to its root, which is what the platform
+means by tapping the tab you are on. The drawer test goes back that way instead
+of through a bar button that no longer exists.
+
+Two things about the capture harness had to be true before either appearance
+could be photographed. The appearance is now the window's interface style and
+nothing else: the design's colours are dynamic system colours and the glass is
+a system material, and both read the trait collection rather than SwiftUI's
+colour scheme, so overriding both gave them a frame to disagree in and a light
+screen came back wearing the dark screen's plates. And the screen is rebuilt a
+frame after the trait changes rather than moved into the new appearance, because
+a material already on show cross-fades over a length of time nobody publishes.
+A capture is now also drawn until two passes agree. Baselines for `run` and
+`review-cta` in both appearances hold after seven consecutive runs.
+
+One thing is not fixed and is filed: a screen with a glass card over content
+draws the band along the card's top edge on some passes and not on others, so
+`probe`, `home`, `home-quiet` and `ax-home` fail roughly one run in three
+whichever of the two renders their baseline holds. That predates this work —
+the same band was in the first run of the day — and it is the in-process
+capture, not the screens.
+
+2026-09-06 — **Enable the message queue in Claude SDK chat.**
+Tab now holds or replaces a message while the SDK agent works; Tab with an
+empty composer returns the queued draft for editing. The SDK view tracks queue
+operations and reconciles their outcomes through the shared reducer, just as
+Claude PTY and Codex do. The queued message appears directly below the SDK
+context usage and interrupt control. Its existing help binding now works.
+
+The shared terminal round-trip regression now drives all three chat layers,
+checks hold and replace commands and restored text, and renders the queue beside
+the activity row. The SDK case failed at its first Tab before the fix. Formatting,
+lint, all 26 queue-filtered tests and all 450 prose specifications pass, including
+SDK queue delivery, disconnect recovery and the runtime/provider round trip.
+
+2026-09-06 — **Attach directly to agents without a chat view.**
+Fleet entry and `amux attach` now choose raw attach on every host for an agent
+with a terminal and no chat layer. Every fleet entry key reaches that one
+mode, and its status hint and help overlay name raw attach alone. The mode
+comes from the same agent-kind lookup used to open chat. Claude and Codex
+retain their existing local and remote entry rules, as do read-only viewers.
+
+The remote-entry rule introduced with the SDK opened chat for TestAgent even
+though that kind has no chat view, leaving the user in the fleet. The CLI
+policy test now separates that raw-only case from remote chat-capable agents,
+and covers both hosts; fleet tests exercise all three entry keys, both
+configured defaults, and both keyboard tiers with their hints and help rows.
+
+Formatting, lint, all 2,277 workspace tests, all 14 entry-policy tests, all 450
+prose specifications and all 22 CLI journeys pass. The CLI runner and journey
+expectations are unchanged; remote replay, bidirectional input, alias attachment
+and session exit now pass
+through both direct links and the relay. The saved TestAgent report's old
+footer offered chat, freezing the same bug in its expected frame. Regenerating
+that footer through the current renderer changes only row 38 of frame.txt and
+frame.styles; the trace, messages and all other report files stay identical.
+The four CLI saved-report replay tests and the TUI report-fixture suite now
+pass without relaxing replay comparison. Fleet PNG goldens are unchanged.
+
+2026-09-06 — **Integrate per-account profiles with the native runtime.**
+Merge the independently reviewed profiles revision
+`16b6f5123cfbd452c1d5c2cc9f9549f9dcf58011`. Installations own profile creation,
+binding, watches, separate identities and trust stores, switching, and removal.
+The existing SDK writing controls, model catalogues, repository enumeration,
+scripted testnet providers, and mobile callback/projection hooks remain in place.
+Repository roots and Claude creation defaults belong to the installation's
+preferences; every profile inherits them, with its own recent-project history.
+
+Two-phase pairing and device identity inspection now use the local profile
+administration handle and the installation front door. Ordinary profile sockets
+and peer tunnels serve no administration RPCs. The removed ClientService
+permission-denial tests are replaced by the profile revision's real socket and
+peer-tunnel absence probes, extended to begin, confirm, abandon and identity
+inspection; rejection is now UNIMPLEMENTED because the service is absent.
+The CLI expiry test now starts a real installation and selected profile while
+retaining its exact PIN and expiry assertions. Both sets of E2E transcripts and
+terminal fixtures are retained.
+
+The phone still opens its existing embedded entry point. Its explicit owner
+uses the shared profile runtime for startup and shutdown and exposes a separate
+local administration handle; it does not yet map phone accounts to Installation
+profiles or switch the mobile runtime between accounts.
+
+The mixed-fleet help fixtures now include the profile-switch key, retaining the
+SDK entry-mode assertions. The CLI output comparator reports a Unicode mismatch
+instead of panicking when an expected byte count ends inside a divider character;
+a regression test keeps that mismatch strict and checks the remaining raw input.
+Formatting, lint, all 2,275 workspace tests, all 450 prose specifications,
+17 testnet smoke tests and both iOS target checks pass locally. The CLI suite
+passes 18 of 22 journeys. `cloud_relay_connection`, `remote_agent_ended`,
+`remote_attach_by_alias` and `remote_connection` fail at remote `amux attach`:
+the entry policy introduced by SDK commit `3b03d279` opens remote agents in
+chat, but TestAgent has only a terminal, so it lands in the fleet. That policy
+predates this merge and is unchanged here. `bare_help` and every imported
+profile journey pass. No E2E expectation or entry policy changes to obtain
+this count; agents with only a terminal still need a raw-only entry path.
+
+2026-09-06 — **Provider subprocess fixtures pass after SDK integration.**
+The default parallel workspace suite passes with the integrated SDK, including
+launch-setting capture, closing a session with a full subprocess-output channel,
+semantic-version probing and the one-probe cache. No test, timeout or production
+code changed for this verification. The imported SDK changes already wait for
+atomically published launch captures and use bounded initialization and shutdown
+deadlines that accommodate subprocess scheduling. The version fixtures retain
+their original names; no filename-based workaround is needed in this run.
+This is one successful full-suite run, not a claim that intermittent scheduling
+failures are impossible.
+
+2026-09-06 — **Claude SDK model choices come from session initialization.**
+The daemon now publishes each initialized model's selectable value, resolved
+name, display name and advertised effort levels in every session-facts snapshot.
+Shared provider facts expose those choices and select efforts by the current
+model's value or resolved name. Unknown models, absent catalogues and models
+without advertised efforts leave the choice list empty; no default is guessed.
+Reopening from retained facts restores the catalogue, and a new SDK session
+clears it. The existing Swift model-choice decoder consumes the shared projection.
+
+The runtime integration exercises the actual SDK initialization and daemon input
+path with distinct per-model effort lists, an alias, a model without effort
+choices and an empty catalogue. It still observes prompt, queued-message,
+model, effort, permission and command delivery at provider stdin. The reducer
+spec also checks the original recorded catalogue, replay equality and clearing.
+Fourteen daemon-row fixtures regenerate from their original SDK recordings:
+only the new catalogue on 100 facts rows changes, preserving provider messages.
+The mobile schema now includes the recorded SDK choices, with a Swift assertion
+for their values, labels, effort levels and unknown defaults.
+Formatting, lint, all 14 SDK integration tests, the full workspace suite,
+all 420 prose specifications and both mobile feature checks pass. The full
+suite's initial frozen-JSON failure was corrected by adding the new empty
+catalogue field to the expected facts shape; no assertion was removed.
+Both iOS Rust builds and nine simulator schema tests also pass.
+
+2026-09-06 — **Shared writing controls reach Claude SDK sessions.**
+Plain drafts, queued messages and selected command tokens now use the existing
+SDK reducer and runtime encoder. The queue recognizes SDK turn completion,
+retains drafts across disconnects and failed delivery, and keeps interruption
+separate from cancellation. Shared model and effort actions delegate to SDK
+inputs; explicit permission selection and nullable effort clearing use the
+provider's native types. Permission modes retain the SDK's open string enum;
+a reducer assertion that treated unknown modes as invalid was corrected to
+check provider dispatch and refusal recovery. Observed model, effort, commands and permission populate
+shared provider facts without optimistic settings or invented choice catalogues.
+Both Claude drivers reuse the confirmed TodoWrite fold. SDK child lists cannot
+replace the parent's tasks, successful bookkeeping leaves no final feed rows,
+and failed writes remain named tool failures.
+
+The SDK integration proofs cover an unchanged recorded prompt/reply, replacement
+and cancellation, single delivery at turn end, interrupt and reconnect, stale
+turn results, multiline command arguments, setting refusals and authoritative
+facts, command filtering, task-list replay and streamed-tool reconciliation.
+A runtime proof sends actual client protobuf through the daemon decoder and real
+SDK session over scripted provider IO, observing prompts, the queued message,
+model, effort, permission and slash command at provider stdin. Native task rows
+pass through that same SDK session before reaching shared facts. The suspended
+session regression reopens both original Claude drivers without migration.
+The mobile schema and Swift decoder also carry the SDK settings refusal reason
+and observed Claude permission facts.
+Formatting, lint, all 12 targeted SDK integration tests, the full workspace
+suite, all 419 prose specifications, both suspended-Claude tests, mobile feature
+checks, both iOS Rust builds and eight simulator schema tests pass locally.
+The SDK exposes model and effort catalogues internally, but the daemon does not
+yet publish them; phone choice lists still require that extension.
+
+2026-09-06 — **Claude SDK sessions expose effort changes and initialized commands.**
+The existing SDK layer now accepts a typed effort input and dispatches the
+provider's `apply_flag_settings` control with `effortLevel`. Successful controls
+publish session facts; rejection preserves the previous selection, and clearing
+the override leaves the default unknown until Claude reports it. Provider init
+messages preserve the distinction between omitted effort and explicit null.
+The initialization command list reaches shared provider facts before the first
+turn, and later snapshots retain provider-reported terminal-only flags even when
+a client opens only the retained tail. Selected slash commands use the existing SDK prompt route. Wire tests,
+duplex provider tests and client replay tests cover the controls and facts;
+the recorded session outputs include the new fields without changing existing
+provider messages. Protocol bindings are regenerated. Formatting, lint, the SDK
+tests and all 408 host/client prose specifications pass locally. Shared mobile SDK actions
+and queue integration remain separate work.
+
+2026-09-06 — **The Claude SDK chat joins the native app’s shared core.**
+The reviewed SDK implementation now lives beside the phone’s queue, typed
+Codex settings and commands, confirmed Claude task lists, repository discovery,
+and two-phase pairing and revocation. The terminal retains its queued-message
+row alongside the incoming context meter; the obsolete unsupported SDK screen
+is replaced by the real streaming chat. SDK fixtures retain the host’s explicit
+repository-root configuration, and protocol bindings are regenerated from the
+combined schema. Expanded session facts are boxed in mobile events to keep the
+event enum compact without changing its JSON representation. The mobile schema
+fixture now includes the newly observed PTY model and context-token facts.
+Active-session SDK effort and initialization command publication still require
+implementation. Formatting, lint, the SDK tests, all 407 host/client prose
+specifications, both iOS Rust targets and the full workspace suite pass locally.
+
+2026-09-06 — **A journey says only what its run showed.** The cold-start
+journey claimed a real connection confirmed the remembered fleet "without
+moving what is on screen". It does not: pairing from the phone is not built, so
+both machines disown everything the phone remembered and the confirmation
+leaves an empty list — which made the assertions after it true about nothing.
+The claim now states that, and the run asserts the empty list on purpose, so
+the day a row survives its machine's answer the journey fails and says the
+claim is out of date rather than passing over a list that has changed meaning.
+
+2026-09-06 — **The screens' own rules are a check now.** `ios/Tools/feature-lint.sh`
+has refused UIKit outside a registered leaf, a platform conditional and a
+spinner since the screens package was written, but nothing ran it, so all three
+were rules only as long as somebody remembered them. It is now `wt run
+ios-lint`, and iOS verification runs it before anything is compiled: a spinner
+added anywhere under the screens package fails a check, naming the file and the
+line. It costs a second, because it is text.
+
+2026-09-05 — **The home at a text size somebody actually uses.** The Agents
+home now has baselines at an accessibility text size and on the narrowest
+supported display. Taking the first one showed the state line under each row
+giving up: "Finished · 1 file · +21 −6" and the machine's name were three
+things sharing one line, and at that size each got a few characters and an
+ellipsis — "Fini… · 1 fi… mini", which says less than nothing. At accessibility
+sizes those words now wrap and the machine's name drops to its own line.
+
+Taking it also showed the capture harness leaking. A screen opened at an
+accessibility size left the app at that size, so every screen captured after it
+was drawn at the wrong size — a run that happened to put the accessibility home
+first failed eleven captures that were fine. A fixture that names no text size
+now means the default one rather than whatever the last fixture left behind.
+
+Captures from a failed verification also leave the CI run as an artifact now.
+A golden that differs on one machine and nowhere else can only be read by
+looking at what that machine drew.
+
+2026-09-05 — **Asking CoreSimulator twice.** The iOS checks find the pinned
+simulator by asking `simctl` what devices the machine has. On a shared runner
+that query queues behind whatever else is talking to CoreSimulator — a device
+booting, a device shutting down — and it stopped answering inside a minute,
+which read as "the pinned simulator is not there" and failed the run. An
+expired read says nothing about the machine's devices, so both places that ask
+now wait longer and ask again before believing the answer.
+
+2026-09-05 — **Three tests that lied about the code they cover.** Pairing now
+tells you when the PIN expires, and the five scripted end-to-end sessions that
+pair two daemons still expected the older three-line block, so every remote
+journey failed on a line that was correct. Their transcripts now carry the
+expiry line where the command prints it.
+
+The relay agents test typed a prompt as soon as the transcript marker arrived,
+but the kernel stream can still be replaying then and the send is refused —
+which it was, on a loaded machine. It now waits for the same send gate a person
+sees on the composer before typing, so the test asks for what the product
+actually promises.
+
+The scripted-session runner gave a step 200ms to produce its expected output. A
+shared CI runner can stall a freshly spawned agent longer than that, and the
+strict comparison then reported a real echo as missing. Waiting up to five
+seconds costs nothing on a passing step and only lengthens a step that is going
+to fail anyway.
+
+2026-09-05 — **The home journey, against the machines that are really
+running.** `wt run ios-journey -- home` starts a relay and two daemons from a
+committed topology with six agents on them — one waiting on permission, one
+finished, one mid-turn, one gone quiet, one nobody can account for and one that
+has not moved in a day — and puts the phone in front of them. What the phone
+remembers is written in the shared library's own cache format and carries those
+machines' and agents' real identities, so the file on disk is what a previous
+run would have left rather than something invented beside it.
+
+Five launches, because there are five situations: remembering with the relay
+down, reaching the machines, reaching them again after one of them has been
+made to emit a turn, remembering nothing at all, and opening a conversation and
+the drawer over it. The list is read by the names the screens declare — the
+ones VoiceOver reads — and asserted whole: six remembered rows, the two that
+need an answer at the top with the longer wait first, everything else by
+recency, the day-old row reading `1d`, every row saying it is remembered and
+unread, and nothing spinning.
+
+The last of the five is a UI test rather than a door conversation. The door
+reads what a screen declared, which is enough to say what is on it, but it
+cannot press a SwiftUI control: SwiftUI builds an accessibility tree only for
+an attached accessibility client and an app is not one from inside its own
+process. XCUITest is that client, so the taps — open a row, open the drawer,
+close it, and the navigation bar's own back button — are real taps, and the
+journey collects what the test photographed out of its container.
+
+Driving the drawer for the first time found two things wrong with it. Tapping
+the sliver of the page beside the panel did nothing, because the page was
+disabled while the panel was out and the scrim is drawn over that page; the
+drawer could only be dragged shut. And the panel's own name was being handed
+down to everything inside it that the system did not already treat as its own,
+so its title, New Agent and its whole foot answered to `drawer` — for anything
+driving the app and for VoiceOver alike. Both are fixed.
+
+Two claims the journey states plainly rather than asserting: confirming a
+remembered row against the machine that owns it, and the one line that says a
+phone is offline. Opening a connection at all — to a dead relay as much as to a
+live one — makes this phone's own runtime answer for no agents, and the shared
+cache reads a card whose machine is absent from a settled model as one this
+device is no longer paired with, so every remembered row is dropped. Pairing
+from the phone is not built yet. Until it is, the machines disown what the
+phone remembered, and the offline line, which lives above the rows, has no rows
+to live above.
+
+2026-09-05 — **The drawer.** A conversation can reach the whole fleet without
+going back to a list: a panel comes in from the left with two groups — what
+needs you and everything else — a name and one line each, the conversation you
+are in marked, and Hosts, You and how many machines are reachable along its
+foot. It is not the home in miniature. The home is where you decide what to
+open, with ages, arithmetic and a day-old fold; this is where you switch while
+you are already reading one, so the folded work is simply the tail of everything
+else and there is nothing to open twice.
+
+It follows the thumb rather than playing an animation at it: the drag and the
+animation drive the same number, so a drag can catch a panel that is still
+opening and take it back, and a flick decides the rest. The screen behind it is
+never torn down — it slides, shrinks and comes back — so closing the drawer
+returns to the conversation exactly as it was left. Baselines are captured in
+both appearances; `ios/Goldens/BASELINE.md` says what is behind the panel today
+and why.
+
+2026-09-05 — **A launch shows what the phone remembers.** The app draws the
+fleet it saw last time before it has reached anything. The shared library reads
+its own cache file straight off disk — no runtime, no network, no wait — and
+every row arrives marked as remembered: dimmed, with a slow highlight passing
+over it. Nothing spins. A spinner would cover rows a person can already read
+and act on with a symbol that says only "wait", so the screens refuse one
+outright and `ios/Tools/feature-lint.sh` refuses one.
+
+A row stops shimmering when the machine that owns it answers, not when the
+whole fleet does. The card the bridge projects carries that fact — a card the
+cache is still waiting on says so, a card the connection filled does not — so
+hosts confirm their own agents on their own schedule and nothing waits for the
+slowest machine on the account. Nothing moves while it happens: the list is
+placed once and reconciled in place.
+
+A phone that is signed out but still remembers agents now shows them. An
+account problem is only the whole screen when there is nothing else on it;
+otherwise it is one line above the list saying nothing here is live, and the
+rows below it are still worth reading.
+
+`wt run ios-journey` is new: it launches the real build on the pinned simulator
+against a real relay and real daemons started from a committed topology, and
+asserts on what the screen says it is showing. Its first journey seeds a
+remembered fleet, launches, reads four shimmering rows and the mark for the
+frame that carried them, then connects for real and watches the fleet be
+confirmed. Confirming a remembered row against its own machine is not in that
+journey yet, because pairing from the phone is not built and the daemons it
+reaches disown what it remembered; that claim is proven where it happens, in
+the shared library's cache tests and the fleet store's own.
+
+2026-09-05 — **The Agents home draws the fleet.** The phone opens onto a list
+of agents rather than a placeholder. A row is a name, what the agent says it is
+doing, where it runs and how long ago it last did anything, with three marks
+and no more: the accent only on an agent that has stopped and cannot continue,
+an achromatic ring on one that is working, a hollow dashed ring where the host
+is unreachable and the state genuinely is not known. Idle draws nothing and a
+finished turn draws nothing either — it says "Finished · 4 files · +118 −40" on
+the row, which is more precise than a tick and readable without having learnt a
+vocabulary first. Ordering, the day-old fold and the subtitle come from the
+shared store: everything that needs you pinned longest-waiting first, the rest
+by recency, anything quiet for a day folded into a line that names what is in
+it, and one line above the list only when a machine is actually unreachable.
+The list regroups when the screen appears or is pulled, never when data
+arrives, so a sync cannot move a row out from under a thumb.
+
+An empty home is the same screen with the reason said out loud and one thing to
+do: Sign In when nobody is signed in, Subscribe when somebody is but the relay
+will not carry them. It is not a splash — an empty list teaches that this is a
+client for machines you own, where a splash would teach that it is a service
+you subscribe to.
+
+The fleet card now carries what a finished turn changed, because "Finished" on
+its own is a word without a fact behind it. Nothing populates it yet: the only
+provider that counts files and lines is the Claude SDK driver, whose result
+rows this checkout does not fold into the shared model. Absent means the counts
+are unknown rather than zero, so a row states the outcome and stops. Baselines
+for the home, the quiet home and both gated states are captured in light and
+dark; `ios/Goldens/BASELINE.md` records every way they depart from the design's
+own captures and why.
+
+2026-09-05 — **The app has a shell.** The phone app is now three tabs — Agents,
+Hosts and You — each with its own navigation stack, an account menu hanging off
+the Agents title, and routing for the `amux://` links the CLI prints and the
+web sign-in returns to. Navigation lives in one place: screens are functions of
+their stores and say what happened, and the shell decides where that leads, so
+a screen can be captured or replayed without dragging a route along. Pushing a
+page is synchronous and never waits on a fetch — the page goes up on the frame
+the tap happened and what belongs on it loads into place — which the unit suite
+checks by watching what a loader sees when it is called. A pairing link lands on
+a confirmation naming the machine and pairs with nobody. `ios/Tools/feature-lint.sh`
+refuses UIKit anywhere in the screens package but a registered leaf, refuses a
+platform conditional anywhere in it, and checks that it can still fail before it
+says anything passed. Each tab and each page is the plainest thing that reads
+the right store until the designed screen for it lands.
+
+2026-09-05 — **A pinned baseline does not move on its own.** The design's token
+table — every colour in both appearances, every metric, every type role — is
+compared against a committed file, and a mismatch used to rewrite that file on
+its way out. The first run failed, the second passed, and a nudge to a colour
+could reach a commit as a table nobody looked at. The rewrite now happens only
+when someone asks for it by name, with `AMUX_UPDATE_TOKEN_TABLE=1` in front of
+the unit run; otherwise the failure carries the whole new table and the one
+line explaining how to accept it, and the committed file is left alone however
+many times the suite runs. Because a simulator test process inherits none of
+the Mac's environment, the unit runner forwards anything named `AMUX_UPDATE_*`
+through the device and takes it away again afterwards.
+
+2026-09-05 — **A measured run reports only its own numbers.** The performance
+run now throws away the previous run's verdict, samples and cadence — both the
+copy inside the app and the copy on the Mac — before it launches anything, and
+refuses to print or record a result when the app wrote no verdict this time.
+Before, a suite that died halfway left the last good file on disk and the run
+printed it as today's numbers: nothing about them looked wrong. The run checks
+both guards against files nobody measured before it measures anything, so a
+regression in them is a red run rather than a plausible-looking table; the
+check is also available on its own as `wt run ios-perf -- --self-test`. A
+measurement waiting on a moment that never arrives now fails the test instead
+of skipping it, because a skip leaves the suite green and the verdict one
+metric short.
+
+2026-09-05 — **Clearer probe copy.** The capture probe now says “This screen
+uses the same design tokens as the app.” Its light and dark screenshot
+baselines and the sample report's replay image reflect the new subtitle.
+Both probe goldens and the sample replay pass; the recorded projected state
+is unchanged.
+
+2026-09-05 — **Verification asks what exists.** Between milestones the branch's
+own check now runs the goldens over the screens the app can open
+(`wt run ios-goldens -- --built`): each is captured in both appearances and
+must still draw what it was locked as, a screen that opened with nothing to
+compare against or drawing something else still fails, and a screen nobody has
+built yet is reported and counted rather than failed. A bare
+`wt run ios-goldens` is unchanged and still asks the whole catalogue, which is
+the closing gate. Rewriting baselines under a run that forgives unbuilt screens
+is refused outright: locking a baseline is a deliberate act about a screen
+somebody just looked at.
+
+The measured run now happens only where a number from it would mean something —
+a machine whose budgets are written down, or one judged against its own
+recorded run once that recording exists. Otherwise it is skipped with one line
+naming the machine and the missing file, so recording that baseline is the
+whole of what enrols the machine. Which machine this is stays a question only
+the measurement script answers, so nothing parses the measurement document
+twice and drifts from it.
+
+Both allowances are temporary and named as such: the closing work makes the
+whole catalogue, every journey and a measured run against the recorded runner
+baseline required.
+
+2026-09-05 — **A recorded moment replays into a screen.** A report bundle now
+holds two recordings side by side: `msgs.jsonl`, the shared runtime's own —
+the reducer model it had checkpointed and every message it folded after that —
+and `trace.jsonl` beside it, what was being looked at while those messages
+arrived. The app writes both, and `wt run ios-replay -- DIR` hands them back to
+a debug build on the pinned simulator: the runtime folds the messages into a
+model and projects it as the events a live connection would have delivered, the
+app applies the trace on top, and the screen that comes back is photographed.
+Nothing connects, and none of the work the recording once asked for is carried
+out — it was carried out on the phone that wrote it. The committed sample under
+`ios/Fixtures/reports/sample` was written by the app itself against the test
+topology, so what a replay is checked against is what a phone produces rather
+than something composed by hand.
+
+It is checked twice, because the screen this bundle was recorded on does not
+draw the fleet yet: the photograph is compared with the picture the bundle was
+written with, and what came out of the recording — its machines, its
+conversations, whether a host had confirmed them — is compared with the state
+pinned beside it. A picture alone would look identical whether the recording
+rebuilt anything or nothing.
+
+A trace event for a surface the app does not draw yet is a typed refusal rather
+than a silent skip, for the same reason opening an unbuilt screen is: a replay
+that quietly dropped a scroll position would come back looking right and be
+showing the wrong thing. The composer's draft is deliberately not in the trace
+vocabulary — the type it would carry belongs to a screen that is not built, and
+a stand-in would freeze the wrong shape into bundles people have already
+recorded.
+
+2026-09-05 — **Showing the golden check fail.** `wt run ios-goldens-perturb`
+asks the app to draw the probe screen with one colour token replaced by a
+magenta the design never uses, captures and compares it exactly as an ordinary
+golden run does, and fails unless every capture came back different with a
+difference image beside it. A suite nobody has ever seen fail proves nothing:
+the captures could be of the wrong window, the comparison could be reading the
+baseline twice, the tolerance could be swallowing everything. Moving the accent
+changes about sixteen hundred pixels of the probe, in both appearances, and the
+check now says so out loud. The perturbed captures are written to their own
+directory so a screen that is wrong on purpose never sits where somebody is
+looking for the last real failure.
+
+2026-09-05 — **Reconciliation is judged at each latency.** The measurement
+definitions hold the fleet's arrival to one second whether there is no network
+in front of it or a hundred milliseconds of one, and the suite measures both.
+It was then pooling the two into a single median: five samples at five
+milliseconds and five at a hundred and fifteen gave one number around sixty,
+and a slow hundred-millisecond run could have gone well past a second before
+anything complained. The verdict now carries one row per metric and workload,
+each judged against the same pinned budget on its own, and a failing row names
+the workload it is about. Baselines are recorded and looked up the same way,
+written as `reconciliationMs.latency100`, so a machine judged against its own
+recorded numbers is not comparing a slow reconciliation with a fast one's
+record. The budget tables in `docs/IOS_PERFORMANCE.md` are untouched; what
+changed is which samples are pooled before they are read.
+
+2026-09-05 — **The debug app talks to a real host.** The shared Rust bridge is
+now built twice for the simulator: the shipping library, which refuses a
+plaintext relay, and a second one with its driving tools compiled in, which
+accepts one on this machine. The app's debug configuration links the second
+and its release configuration keeps linking the first. Until now the debug app
+could be handed a relay address and would answer that it had started, and then
+nothing would happen — the library it linked would not speak to a test relay
+in the clear, and every journey that wants a real host would have failed at
+the same place for the same unexplained reason.
+
+Which library an app linked is now a thing you can ask it. `amux_mobile_build`
+answers the version alone, or the version with `+debug-tools` — a string only
+the driving library contains at all. The door reports it, and the release
+check reads the release binary's own bytes for it alongside the symbol that
+only the driving library defines, so the two configurations cannot silently
+swap.
+
+`wt run ios-door-smoke` now starts the two-host test relay from its committed
+topology, connects the app's runtime to it with a user token, waits for the
+connection to arrive and asks what it found. Waiting matters: an acknowledged
+connect only means a runtime started. What the door must come back with is the
+connection established, the fleet confirmed by the other side rather than
+remembered, and the runner's own two machines named. This phone is not paired
+with either of them, so the projected fleet is deliberately empty of them; the
+machines are read from the shared model, where discovery puts every online
+host it saw. Then the relay is shut down and its listeners checked released,
+as the linkage smoke already did.
+
+2026-09-05 — **What the app draws, locked.** `ios/Goldens/manifest.json` now
+names every screen this work owes a golden: the thirty-three the design
+pictured, seventeen states it did not — the drawer, both permission
+vocabularies, a stale host, a refused send, a pairing confirmation, the
+accessibility and small-display screens — each with the milestone that builds
+it, the state it is filled from and the device it belongs on. A run over the
+whole manifest fails and names every screen nobody has built yet, because a
+manifest that quietly skipped them would be a list of promises with no way to
+tell which had been kept.
+
+`xtask golden` is the tool underneath. It drives the app through its door,
+captures the composited window in both appearances, and writes the baseline,
+the capture and their difference side by side for every comparison, with the
+changed pixels marked in red over a dimmed copy so what moved is legible
+without a pixel inspector. Two values a channel are allowed, because the same
+screen captured twice can differ where a gradient is dithered, and failing on
+that trains everybody to update baselines without looking; anything a person
+could see differs by far more, in far more places. A screen that has never
+been locked says so, and a screen the app refuses to show says why rather than
+leaving a missing file to be interpreted.
+
+The probe screen — the design's ground, glass, ink and bundled type, and
+nothing else — is locked in both appearances at 1206×2622. It is the proof
+that a capture, a comparison and a token change all work before there is a
+real screen to point them at. Reference comparison is a separate report:
+each screen's baseline paired with the design's preserved capture, produced
+only for screens that have been built, and never a gate — a difference from
+the design is a conversation, not a failure.
+
+2026-09-05 — **Measuring the phone against numbers that are written down.**
+`docs/IOS_PERFORMANCE.md` now states every performance claim the iPhone app is
+held to — the pinned Mac and simulator, the workloads and their seed, the
+budgets, the tolerances, which figures are proxies for a real phone, and the
+physical-phone checklist nobody has ticked — and the suite reads that document
+rather than a copy of it, so the numbers a person reads and the numbers a run
+enforces cannot drift apart. A machine the document has no row for is refused:
+an unrecognised Mac has neither a budget nor a baseline, and a number from it
+would mean nothing.
+
+The app marks nine named moments in every build, debug and release alike, from
+the kernel's own process start to each transcript commit and each display
+refresh it asks for, so a timing is never a property of the build it came
+from. Workloads — forty cached agents over three hosts, a thousand transcript
+rows in a pinned mixture, twenty seconds of rows at fifty a second — are
+generated from seed 1 and handed to the runtime's own callback, so a measured
+run decodes, orders and applies exactly what a relay-fed run would.
+
+`wt run ios-perf` launches the app five times to time its own first frame,
+then runs the suite in the app's own process for reconciliation at no latency
+and at a hundred milliseconds, the streaming scroll, the idle budget and frame
+cadence, and writes a verdict with every median, worst case, budget and proxy
+label. On the pinned Mac today: first frame 334 ms against 400, reconciliation
+6 ms and 114 ms against 1,000, no hitch time and no idle work at all.
+
+Two things the harness learned about itself are now part of it. Work the test
+does — generating and encoding a workload — is done before the clock starts,
+because the runtime does that on its own thread and counting it would blame
+the app for the harness. And a stream arrives the way the bridge delivers one,
+coalesced per frame rather than in a lump a second: delivering fifty rows at
+once cost eighty-five milliseconds of hitch per second where delivering them
+across the second costs none.
+
+2026-09-05 — **A door to drive the phone through.** A debug build of the
+iPhone app now listens on loopback and answers one JSON request per line: show
+this screen filled from this named state, answer the cloud like this, connect
+to this relay with this credential, draw light or dark, draw at this type
+size, wait until you have stopped moving, tell me what is on screen, take a
+photograph, tap this, type that, and stop. Every answer is an acknowledgement,
+a reading, a photograph or one sentence saying why not — there is no half
+answer to diagnose. The port is chosen by the kernel and written to the
+readiness path the launch arguments name, so a driver waits for a fact rather
+than for a guess about how long a launch takes. `cargo run -p xtask -- door`
+is the Mac side: it launches the app on the pinned simulator, speaks the
+requests and hands back the replies, and because a sandboxed app cannot write
+to an arbitrary path it asks for captures inside the app's own container and
+moves them out afterwards.
+
+What a query reports is what the screen declared. SwiftUI builds its
+accessibility tree only for an attached accessibility client, so an app asking
+itself what is on screen sees nothing; instead one modifier sets the
+accessibility identifier a journey and VoiceOver use and reports the same
+name, label, value and frame up the view tree for the door to read. One
+declaration, two readers, and no way for them to disagree. Views the app
+builds in UIKit are real views and are still read from the accessibility tree,
+so both kinds of screen are visible to a driver.
+
+The door is compiled only under AMUX_DEBUG_TOOLS and its sources are excluded
+from the release configuration outright, so no stray reference can carry it
+into a shipped binary. `wt run ios-door-smoke` proves the whole path — launch,
+open a state, read the screen back, photograph the composited window at 3x —
+and then builds Release and checks the binary contains none of it.
+
+2026-09-05 — **Every state the app can be in, named.** AmuxTestSupport now
+carries the design's scenario in the core's own vocabulary — the same ten
+agents on the same four machines, one conversation open — and 47 named states
+built on it: one for every screen the design catalogue describes, plus the
+drawer, plus the states a screenshot of a good morning never shows. Both
+providers ask for permission in their own words with their own choices, a
+machine on the network that has not been paired is an offer rather than a
+host, a host lost mid-turn leaves the feed readable and says so, an agent this
+build cannot read says that outright instead of looking idle, a refused send
+carries the core's own sentence, an upload fails without losing the draft, and
+the home and a conversation are both named at an accessibility type size. A
+fixture only ever fills stores by applying events, so it cannot put the app
+into a state the bridge could never produce, and a test loads every one of
+them into fresh stores.
+
+The scripted cloud answers exactly what a test declares, including the
+waiting: latency is a state, because a screen that only exists while a request
+is in flight cannot be captured unless the test can hold the request open. It
+records what it was asked, so a screen that asks for a connect token on every
+frame is a test failure rather than a bill.
+
+2026-09-05 — **The phone's state, read from the shared core.** AmuxCore now
+holds the Swift side of the bridge: BridgeClient starts the Rust runtime,
+copies each callback batch out of the worker's borrowed buffer, decodes it as
+the pinned projection schema and hands it on for the main actor to apply
+whole, in the order the batches arrived — a batch describes one consistent
+moment, and applying half of it would put a fleet and a conversation into
+different ones. The DTOs are read from the schema file the bridge itself pins,
+so a change to the Rust projection fails the Swift suite instead of drifting
+past a stale copy. Layer vocabularies stay apart: a Claude PTY send gate and a
+Codex one are different types, and row bodies no screen reads yet are carried
+verbatim rather than dropped.
+
+Four stores sit on top. FleetStore places the home once and then reconciles in
+place: a sync that confirms what is already on screen never moves it, arrivals
+land where the ordering says they belong, departures leave, and regrouping
+happens only when the screen asks. The ordering itself is one pure function —
+agents that need you pinned longest-waiting first, because time will never
+float them up on its own; everything else one recency list, because running is
+not a rank; anything quiet for a day folded away by name rather than deleted
+from the screen. Unread is the phone's own knowledge, not the core's, and an
+unread agent never folds however old it is: a turn that ended two days ago
+that nobody has read is the one thing on that list actually waiting for a
+person. ConversationStore applies feed updates by absolute position, so a row
+rewritten upstream is rewritten here rather than repeated and an evicted
+prefix leaves without renumbering what survives. HostsStore lists what can be
+reached. AccountRegistry names which account is on screen and drops any result
+that answers for another one — an answer about someone else's fleet must never
+appear under this account's name. CloudService states everything the app asks
+of the cloud as one protocol, so no screen ever sees HTTP.
+
+2026-09-05 — **The design as values.** AmuxDesign now carries the app's whole
+visual language: one perceptually even neutral ramp with every surface role
+stated as a distance along it rather than as its own colour, so light and dark
+separate by the same apparent amount instead of drifting apart whenever a
+value is nudged; a single petrol accent, because colour in this app means
+attention and nothing else; the metrics; and the glass treatment, which washes
+the ground in under the material so a transcript behind a floating surface
+cannot resolve back into readable words. Instrument Sans and Geist Mono are
+bundled and registered with Core Text at first use — they travel in the
+package's own resource bundle, where an app-level font list could not reach
+them. Every type role names the text style it scales with, so nothing is set
+at a fixed point size and the reader's chosen type size is honoured
+throughout. The whole resolved table — colours in both appearances, metrics
+and type roles — is pinned by a test, so a change to the design arrives as a
+reviewable diff rather than as a pixel difference in a screenshot.
+
+2026-09-05 — **An Xcode project for the iPhone app.** `ios/project.yml`
+generates Amux.xcodeproj: an iPhone-only app targeting iOS 26.0, a UI test
+bundle, and four local Swift packages — AmuxCore over the Rust bridge
+XCFramework, AmuxDesign, AmuxFeatures and AmuxTestSupport. The generated
+project is committed so a regeneration shows up in the diff like any other
+change. Debug builds define AMUX_DEBUG_TOOLS and Release does not, which is
+what keeps the driving door and the fixture screens out of a shipping build.
+User-facing text goes through a string catalogue from the start. Three recipes
+carry it: ios-simulator creates or reuses amux-golden (iPhone 17 Pro) and
+amux-small (iPhone SE) on iOS 26.5 and pins language, region, the 9:41 status
+bar and the light appearance so a capture cannot drift; ios-build regenerates
+the project and builds the app; ios-unit runs the package suites, routing a
+`-only-testing:` selector to whichever package owns that target, because Xcode
+exposes a local package's tests through the package's own scheme rather than
+the app's.
+
+2026-09-05 — **Observe intermediate CI runs and wait for repairs to turn green.**
+The ci-observe recipe checks the branch and clean tree before pushing, then
+records the exact commit's CI state as JSON. Pending runs allow intermediate
+work to continue unless the previous push failed; then observation waits for
+the current commit to succeed or reports its failure or deadline with both run
+records. Missing runs fail after a bounded settle window. Optional JSONL output
+retains observations for later inspection. The blocking ci-gate script is
+unchanged; shared run/job evaluation and CLI tests with stubbed Git and GitHub
+retain its strict final-commit checks without any test contacting a remote.
+
+2026-09-05 — **Document shared session controls and trust APIs.**
+Chat and UI documentation now describe provider model and effort choices,
+typed command drafts, confirmed Claude task lists and queue projections, with
+the current PTY and SDK limits stated explicitly. The protocol names pending
+pairing bounds and the local confirmation capability; architecture lists the
+two-phase admin RPCs and names ListRepositories while retaining its routing,
+root confinement and durable recent-project semantics.
+
+2026-09-05 — **Expose device identities and verify live session revocation.**
+The shared client reads its own device name, host ID and SHA256 fingerprint
+without entering pair-mode. Paired-device listings expose the same fingerprint
+format as pairing confirmation. Identity inspection stays local-admin only.
+Revocation specs exercise the existing synchronous trust and transport teardown
+through both relay-only and direct-with-relay routes: the revoked phone loses
+its open agent session and its first subsequent send fails. The owner retains
+access, and identity fingerprints remain stable across restart. Testnet's
+retained socket duplicates no longer keep dropped direct connections alive:
+tracked streams shut down the socket on drop, so revocation delivers EOF just
+as it does without the harness's duplicate handles.
+
+2026-09-05 — **Review a pairing identity before granting trust.**
+PIN and QR clients can authenticate through the relay and inspect the sealed
+host name, public-key fingerprint and expiry while both trust stores remain
+unchanged. Explicit confirmation commits mutual trust; cancellation waits for
+the responder to release the attempt and acknowledge abandonment. Pending
+streams expire, their capabilities are single-use, and the admin RPCs reject
+remote callers. Inactive and invalid secrets share the same opaque failure.
+`amux pair` states the generated PIN's expiry. Relay specs check untouched
+persisted bytes before trust and after cancellation, repeat cancellation beyond
+the guess limit, exercise wrong and expired secrets, and prove confirmed trust
+survives restart. A command-boundary test checks the real CLI output.
+
+2026-09-05 — **List host repositories and recent project directories.**
+Clients can query a selected host through the existing authenticated direct or
+relay agent RPC route. Hosts search only configured repository_roots, recognize
+Git checkouts and worktrees, and do not follow directory symlinks or descend
+inside repositories. Successful agent registrations retain up to 200 recent
+project directories in an atomic private file across deletion and restart.
+Case-insensitive search and a combined recent-first limit apply on the host.
+Testnet topologies pass their declared roots to the host; relay and direct specs
+cover confinement, search, limits, untrusted callers and durable recent entries.
+
+2026-09-05 — **Fold Claude task lists into shared session facts.**
+Successful TodoWrite results now replace ProviderFacts.todos with the done and
+total counts, current activity and ordered items. Pending writes leave the last
+confirmed list intact; failures remain visible in the feed. Successful updates
+add no transcript rows. The fold consumes native Claude tool blocks, with bounded
+correlation and duplicate memory reusable by both Claude transports. Replay and
+checkpoint specs cover replacement, clearing, malformed inputs, failure,
+disconnect and session reset; mobile callback tests expose the same lists.
+
+2026-09-05 — **Discover provider commands and preserve typed command drafts.**
+Codex discovers enabled, uniquely named skills in the thread's working directory
+through the app-server. Shared session facts carry their names, source and
+terminal-only flag; Claude PTY exposes an empty list. Typed command inputs
+resolve the skill path on the host and start a turn with the provider's skill
+item and exact argument text. Unknown, disabled, ambiguous and stale choices
+refuse delivery. The shared draft uses text and command-token segments, retained
+through queue cancellation and delivery at turn end. The terminal restores the
+same token and removes it atomically. Strict scripted wire replay, reducer
+replay and mobile callback tests cover discovery and delivery. Command drafts
+with binary attachments currently refuse explicitly.
+
+2026-09-05 — **Expose Codex model, effort and permission selections as session facts.**
+Typed settings inputs now reach the host's provider control. Model choices and
+per-model effort levels come from paginated app-server discovery; model changes
+select the reported default effort, and invalid choices leave settings intact.
+The selected configuration survives transport reconnects and applies to
+subsequent prompt and empty turns. Host
+readiness and settings rows feed one shared ProviderFacts projection without
+adding transcript entries. Mobile callbacks include those facts and the settings
+gate; Claude PTY explicitly refuses settings changes. A scripted strict wire
+recording verifies the exact turn overrides, and reducer replay and mobile
+projection tests verify the same derived host rows.
+
+2026-09-05 — **Hold one message for the next turn across Claude PTY and Codex.**
+The shared UI reducer now owns a queue per agent. Hold waits for a newer
+turn-end fact, Replace swaps the draft, Cancel returns it, and Interrupt leaves
+it in place. Native send gates protect delivery and failed sends retry after a
+fresh stream window. The terminal exposes Tab to hold, replace or return a
+queued draft, with a separate strip row beside the interrupt action; mobile
+session callbacks expose the same queue. Runtime-owned attachment bytes survive
+holding and cancellation without entering recorded state. Reducer, replay,
+attachment-resource, terminal-render and mobile-callback tests cover the paths.
+
+2026-09-05 — **Prune unpaired cached hosts when local synchronization completes offline.**
+The mobile projection now emits a Fleet callback when local synchronization
+changes, even if the live rows and relay-qualified reconciliation flag stay the
+same. This lets the cache apply the completed trusted-host list while the relay
+is disconnected. A deterministic regression separates each synchronization
+message into its own projection frame and checks callback delivery, persisted
+pruning, unchanged reconciliation and suppression of redundant callbacks.
+
+2026-09-05 — **Make mobile projection checks independent of Windows checkout and timers.**
+Pin the byte-compared JSON schema snapshot to LF so Windows checkout preserves
+the serialized contract. The C callback regression now holds the initial
+callback while queuing a command burst, then requires all 150 distinct error
+results in one batch and preserves the requested minimum callback interval.
+Its previous batch-count bound depended on one-millisecond sleeps completing
+quickly, which Windows timer resolution does not guarantee.
+
+2026-09-05 — **Keep the simulator relay smoke valid before pairing.**
+The Swift smoke now reads relay-discovered daemon identities through the public
+snapshot API and verifies that those unpaired peers stay outside Fleet callbacks.
+Its previous expectation that discovery populated Fleet became invalid when
+Fleet was restricted to trusted hosts. The smoke still requires real online
+daemon names, a connected relay, reconciled Fleet callbacks and complete teardown;
+timeout failures now include the last connection state. Snapshot reads happen
+outside the callback lock to avoid blocking the worker that answers them.
+
+2026-09-05 — **Prune cached mobile agents from authoritative host inventories.**
+The client service now carries each remote host's completed inventory through
+its ordered agent stream and replays that membership to late subscribers.
+Reconnect snapshots remove stale service rows, and confirmed remote deletions
+update membership without confusing reachability loss with deletion. The mobile
+cache uses those facts and the paired-host list to remove offline deletions and
+unpaired hosts, retaining surviving order and keeping cached cards outside the
+reducer. Empty remote inventories still trigger a Fleet callback. Regression
+tests exercise cold restarts, empty inventories, live deletion, unpairing,
+independent offline hosts and the existing reversed-order report replay.
+Stored report fixtures include the shared model's new inventory field.
+
+2026-09-05 — **Exercise relay inventory from Swift on the iOS simulator.**
+A swiftc-built harness links the debug-tools mobile bridge, connects to a real
+Mac testnet relay and prints daemon names from Fleet callbacks. Its recipe
+checks identities against runner readiness, rejects empty inventory, and
+requires worker stop, graceful runner exit, released sockets and removed
+temporary state. Failure guards reject a live listener and incomplete harness
+output. The dedicated simulator's prior boot state is restored, and debug
+archives are staged separately from the shipping XCFramework.
+
+2026-09-05 — **Restore the native fleet before connecting and export replayable reports.**
+The bridge emits its private, atomically replaced fleet cache before opening
+the embedded runtime. Cached cards stay outside send-gate state and retain
+their displayed order while live inventory confirms them. Offline restarts
+preserve the last display, including renames. Owned snapshot APIs expose the
+shared Model and, in debug-tools builds, a frozen recorder plus a bounded
+embedded-daemon dump with an explicit absence reason on failure. A relay test
+restarts offline, checks every callback through reconciliation, and replays
+the exported message window through the shared reducer.
+
+2026-09-05 — **Stream typed native projections in display-paced batches.**
+The mobile callback separates fleet metadata, session state and feed deltas,
+keeping Claude PTY and Codex row vocabularies intact and the unimplemented
+shared SDK layer explicitly unsupported. Subscribers apply absolute append
+positions, indexed replacements and prefix eviction. Source identity, row
+provenance and retained bounds prevent reused native IDs from leaving stale rows. The app can supply and
+change its display interval, including 120 Hz, with no idle frame timer or
+catch-up bursts. Shared commands cross the C ABI with owned operation IDs;
+malformed input returns an operation error, and every folded result is observed
+before reducer retention can discard it. Tests pin JSON, reconstruct feed
+state through eviction and replay, exercise C callbacks and measure the
+1,000-row/50-per-second delta contract under virtual time.
+
+2026-09-05 — **Package the Rust bridge as a Swift-importable XCFramework.**
+`wt run ios-rust` assembles the exact mobile-profile device and simulator
+archives with their generated headers and Clang module maps. A Swift consumer
+imports the packaged simulator slice, prints the Rust version and checks that
+the shipping library rejects plaintext relay configuration. It runs on the
+pinned iPhone 17 Pro with iOS 26.5, creating the dedicated simulator when
+needed and restoring its previous boot state. Rust and native dependency
+builds explicitly target iOS 26.0 with the matching SDK; archive assembly
+bypasses compiler wrappers that can retain stale native objects, and linker
+warnings fail the smoke. The recipe records simulator stdout and archive sizes
+only after successful assembly and execution.
+
+2026-09-05 — **Connect the native bridge to an authenticated relay.**
+The C lifecycle now starts one embedded runtime on a dedicated Rust worker,
+feeds the shared UI reducer, and emits ordered connection and fleet events.
+The embedded builder accepts a resolved relay and routing-token provider so
+native account code can own the cloud API while Rust retains transport,
+refresh and reconnection. Token requests round-trip through the C callback;
+stop cancels pending requests, joins the worker and closes its relay link.
+Cleartext endpoints require explicit debug tools and a literal loopback
+address. The host test pairs through testnet, reopens saved trust through the
+C ABI, observes the real host's agent before and after a relay outage, and
+checks remote offline state and callback quiescence after stop. It also checks
+invalid configuration and cancellation of unanswered or malformed token replies.
+
+2026-09-05 — **Build a native Rust bridge for iOS.**
+The new `amux-mobile` crate produces a static library and a C header generated
+from its exported Rust API. UI dependencies disable local-agent hosting;
+the CLI and test-network runner opt into it explicitly. The mobile check now
+covers all three shared client crates on ARM devices and simulators and
+rejects host-only provider dependencies. `wt run ios-rust` builds both slices
+with the workspace's size-focused mobile profile, stages each archive and
+header from Cargo's exact build outputs, and records archive sizes separately
+from application size. The initial ABI exposes the bridge version.
+
+2026-09-05 — **Settle scripted turns at their final transcript row.**
+The scripted Claude provider now emits its Stop hook before the authoritative
+turn-duration row. A client that observes that completed turn can send its
+next prompt without racing a trailing hook that advances the host's cursor.
+A parser-level regression checks the event order; positional inputs retain
+their existing stale-sequence rejection.
+
+2026-09-05 — **Retain attachment pins in host-side input observations.**
+Accepted Claude PTY inputs now carry their validated artifact IDs through to
+the scripted provider. Observations retain each input's pin order, including
+deferred prompts, without inheriting pins from earlier messages or stored
+drafts. The relay journey sends single- and multiple-attachment prompts through
+the UI runtime and verifies the exact control-socket observations, followed by
+a plain prompt with no pins.
+
+2026-09-05 — **Keep recorded Codex hosting within its supported platforms.**
+The replay registration APIs now share the Unix boundary of the daemon's
+Codex backend. Windows builds no longer reference that unavailable backend;
+the testnet runner rejects Codex topologies before network startup there.
+The Unix relay replay journeys remain enabled, and a Windows subprocess
+regression checks the unsupported-topology error and absence of readiness.
+
+2026-09-05 — **Exercise the local test network with one smoke recipe.**
+`wt run testnet-smoke` runs the bounded workspace testnet suite serially,
+capturing actual subprocess readiness, every control verb, scripted Claude
+prompt and permission observations, and strict Codex replay verdicts. The
+network and Claude journeys now also check that relay and control sockets
+refuse connections after shutdown. Subprocess lifecycle checks print their
+successful exit, socket rebind and temporary-state cleanup results. The
+testnet guide documents the recipe, topology declarations and readiness
+fields alongside the control and provider script formats.
+
+2026-09-05 — **Run Codex recordings through the relay and real daemon backend.**
+Topologies now accept verified Codex recordings. Recorded initialization and
+thread creation use the existing SDK transport; attached clients supply all
+later prompts and answers through the production backend and UI reducer.
+The control socket verifies strict replay completeness and names mismatched
+writes. A failed SDK transport write now cancels its connection, resolving
+pending requests that otherwise could wait forever. Relay tests exercise the
+recorded approval and response plus unrecorded prompts and approval answers.
+
+2026-09-05 — **Convert complete report transcripts into host playback scripts.**
+The testnet runner converts a report's retained Claude PTY rows into one raw-row
+reaction. It refuses folded checkpoint history with EvictedHistory and
+mid-session, gapped, reopened or mixed streams with PartialSession. Unsupported
+protocols and semantic hook rows fail explicitly instead of inventing provider
+history. Synthetic committed recorder fixtures cover complete and incomplete
+windows; a real provider session reproduces the converted transcript exactly.
+
+2026-09-05 — **Drive scripted agents through the relay and runner controls.**
+Topologies now load Claude reaction scripts and register their live providers
+in the daemon. The control socket emits rows, raises asks, ends turns, exits,
+creates child sessions with real parent relationships and returns exact
+host-side input observations. A client-only testnet connection uses normal
+embedded routing and device pairing with a supplied relay token. The UI runtime
+journey pairs over the relay, reconciles a prompt, renders scripted rows,
+answers permission and sees exactly those two inputs; a stale-sequence write
+never reaches the provider. Child asks, account isolation, invalid controls,
+exit and restart cleanup are covered. Shutdown explicitly stops live sessions,
+with a regression proving provider ownership ends while the executor stays
+alive. Scripted prompt rows now declare human
+origin so the unchanged UI reducer can reconcile optimistic sends.
+
+2026-09-05 — **Play scripted Claude sessions through real provider sources.**
+The testnet script format now covers prompt, command, answer and interrupt
+reactions, every transcript step, semantic asks and controlled process exit.
+A process-free PTY session tails actual temporary JSONL files and parses
+normal hooks. Playback waits for source ingestion before turn end and exit;
+the public stream closes even while its control handle remains held. Inputs
+are observed before validation, queued prompts retain arrival order, unknown
+asks fail explicitly, and repeated EndTurn steps emit one Stop per prompt.
+Six focused tests cover the format, every step and trigger, real ask facts,
+queued turns, exit ordering and temporary-resource cleanup. The session API
+is ready for daemon and runner integration.
+
+2026-09-05 — **Control network outages, restart and pairing from the runner.**
+The loopback JSON protocol now drives relay outages, direct-link changes,
+daemon restart, revocation, PIN pairing with expiry and QR pairing. Replies
+follow settled operations; invalid requests return errors. Relay latency
+delays actual TCP bytes on existing and future sockets, and connection counts
+come from live daemon diagnostics. Repeated CloudOnline requests preserve
+existing links. A TCP control test observes every verb through independent
+clients, including real pairing, revoked access and delayed routed calls;
+a clock-controlled transport test checks byte preservation and EOF.
+
+2026-09-05 — **Serve an isolated test network from the command line.**
+`wt run testnet -- serve --topology FILE` starts the declared relay users,
+paired hosts and idle Claude PTY sessions, then prints one readiness JSON line
+with loopback addresses, credentials and identities. A JSON control socket
+accepts Shutdown; SIGTERM follows the same cleanup path. Validation rejects
+unknown users, invalid pairings and unsafe host names before starting resources.
+Script reaction and Codex recording playback currently return explicit errors.
+Four tests cover actual host calls and agent inventory, topology validation,
+and subprocess shutdown with sockets and temporary directories released.
+
+2026-09-05 — **Verify documented attachments on Windows checkouts.** The
+executable guide example normalizes checkout line endings before locating its
+Markdown fence. Its comparison against the complete formatter output is
+unchanged; Windows CI previously failed to find the example in a CRLF file.
+
+2026-09-05 — **Initialize agent storage on a fresh installation.** Agent
+dependencies create the data directory before canonicalizing its path. A clean
+Linux runner exposed that construction previously depended on a directory left
+by an earlier daemon launch. Tests cover missing parent directories, absolute
+artifact paths, and refusal to replace an existing file. Startup diagnostics
+now identify host resources instead of attributing every failure to a socket.
+
+2026-09-05 — **Keep attachment opening warning-free on Linux and Windows.**
+The metadata parameter is only needed by macOS to select Preview. Mark it
+as intentionally unused on the other platforms so warnings-as-errors builds
+retain the same platform opener behavior. The first branch CI run exposed
+this existing platform-specific warning.
+
+2026-09-05 — **Gate native iOS work on the pushed commit.** The macOS iOS job
+pins Xcode 26.6 and checks the iOS 26.5 runtime and iPhone 17 Pro device type.
+It installs a verified wt release and XcodeGen, then runs the bounded iOS
+verification recipe on pushes to nativeapp. Verification includes the Rust
+checks immediately and adds available native recipes in build order. The CI
+gate pushes only a clean nativeapp checkout; its status command reports typed
+failures and requires the exact remote commit, a successful workflow and an
+executed iOS verification step. Unit tests cover stale heads, missing/running/
+failed/skipped jobs and verification lists with no Rust checks. Command-level
+tests check JSON output and stop-on-failure behavior. Existing formatting drift
+is corrected so the unchanged format job can pass on this branch.
 2026-09-06 — **Keep remote test-agent attachments on their terminal.**
 The remote-chat default had sent the development test agent into a UI with no
 chat layer, breaking direct and cloud-relayed terminal scenarios. CLI attach
@@ -9044,6 +14238,852 @@ directory. CLI regressions compare the replayed frame with the saved frame,
 cover absent configuration and stopped installations, and verify that a
 listening installation socket receives no connection during explicit replay.
 
+2026-09-06 — **A phone can be paired for a test, and a script can play
+anything.** The mobile bridge built with the debug tools gains
+`amux_mobile_pair_qr`, which takes the payload a host's QR code carries and
+trusts that host over the relay the runtime is already talking to. Until then a
+phone could see a machine on the other side but never its agents: an unpaired
+device is discovered and disowned, so its fleet confirms empty and there is no
+conversation to stream. Pairing on the phone is a screen with its own
+confirmation step and does not exist yet; a driver proving what a paired phone
+shows needs the trust before the screen. Release builds contain neither the
+call nor the plaintext relay beside it. The test relay's control channel gains
+`AgentPlay`, which plays any sequence of provider steps at a scripted agent
+rather than the five kinds the named verbs cover, so a claim about rendering
+every kind of row there is fails when the vocabulary grows.
+
+2026-09-06 — **A conversation, driven against a machine that is really
+running.** `wt run ios-journey -- conversation` pairs a phone with a host over
+a real relay, opens one of its agents and reads what the screen says: every
+kind of step the scripted provider can play arrives and is drawn, a folded run
+of reads lists what it did when it is pressed, a diff the host computed puts
+the changes chip on screen and it leads to the changes, and an agent that ends
+while somebody is reading it states its code and offers nowhere to write.
+Three messages tried where the conversation will not take one — in the moment
+it opens and the layer is still catching up, while the machine is unreachable,
+and while the last one is unanswered — are refused on the phone, and the host
+is then asked what it received: the one message that was allowed through, and
+nothing else.
+
+Four things this needed. A conversation store opened now becomes a
+subscription: the shared library only projects a feed for an agent this client
+asked to watch, and nothing was asking. A debug launch can be told what to
+connect to and which machine to trust, so a UI test — the only thing that can
+press a SwiftUI control — drives an app that is really connected; the same
+launch can be told which port to open its door on, because a test on the
+device cannot read the readiness file in the app's container. The door itself
+grew the four things a driver needs that a finger cannot yet do, since the
+composer is not built: trust a host, watch an agent, ask its host for the
+changes, and try to send. A scripted tool step can now carry the sidecar
+Claude writes beside a result, which is the only thing that says how many
+lines of a file moved — without it an edit can never be drawn as one.
+
+Two things the journey found and states rather than asserts. A conversation
+whose machine has gone away keeps its chrome and its designed panel but loses
+its rows, because the shared projection has no feed for an agent no host is
+answering for. And a relay that comes back brings the connection back before
+it brings the agent's session back; the phone's reconnection is its own later
+work, so the journey ends with the machine away rather than depending on it
+returning.
+
+2026-09-07 — **Writing to an agent, driven end to end.** The composer had every
+part built and nothing proving they worked together against a real machine, so
+this is the journey that writes a message: a paragraph over two lines, four
+kinds of token standing in it, one sent and reconciled, one held while a turn
+ran, and the agent renamed, addressed and deleted.
+
+Two things were missing before it could be driven. A paste was never wired at
+all: `MessageDraft` knew how to turn a long one into a named token and nothing
+ever called it, because the field is a `UITextView` and UIKit's own paste puts
+the clipboard in as characters. The field now takes the paste command itself
+and hands the text to the draft, so a paste past about eight lines becomes one
+token wherever it happens. And a token put into the sentence from outside — a
+picker's, a paste's, a review coming back from the page it was written on —
+left the visible caret where it had been, in front of the thing that had just
+been inserted; the field now follows the draft's own caret whenever the words
+changed underneath it, and only keeps the selection when nothing did but the
+appearance.
+
+Two kinds of thing a journey cannot press reach the app through its driving
+door instead. The photo library and the file browser are the system's own
+screens running outside this app; what they hand back is a kind, a name, a
+type and some bytes, and the door hands exactly that to the code a real pick
+calls — so the token still appears only when the machine says the bytes are
+stored. A paste goes on the system clipboard and the field is sent the same
+message the system's Paste menu item sends.
+
+The recorded Codex session now answers one turn as well as offering its
+catalogue, so a command raised by a slash can actually be sent rather than
+only picked. Model and effort are changed after that turn and not before: they
+are kept for the session's next turn, so changing one first would put a model
+into turn parameters the recording never saw. Neither reaches the app-server
+at all, which is what the strict replay proves.
+
+2026-09-07 — **Two things driving the composer turned up.** The cross that
+empties the field reports itself as untouchable while the keyboard is up, so a
+press aimed at where the accessibility tree says it is lands on a letter key
+and types into the message it was meant to clear; a driver reaches it through
+the app's own door instead, which activates it the way VoiceOver does. And a
+scripted agent that answers a message with nothing leaves that message
+unacknowledged, so the composer says so rather than reporting a turn — the
+script behind this journey now answers any prompt by working.
+
+Moving a token is not claimed by that journey. A token is one character and
+UITextView's own drag moves it on a device, but no accessibility client can
+synthesise that drag: the one tried here crossed the keyboard and typed four
+letters into the message. What the model does when a token moves is covered
+where it is decided, in the draft's own tests.
+
+---
+
+2026-09-07 — **Writing to an agent from the phone, end to end.** The UI
+journey that exercises everything the composer is for now passes: a paragraph
+typed over two lines, a long paste, a stored photograph, a stored file and a
+patch each standing in that sentence as one token, one backspace taking a whole
+token, one token moved whole from between two others to the front of both, a
+message sent and reconciled to a single row, one held while a turn ran and
+replaced and taken back, one that survived the turn being stopped and was
+delivered when it ended, the address copied, a rename and a deletion each
+cancelled and then made, and — on the session that offers them — a command
+raised by a slash and sent as a token, and a model and an effort changed and
+read back off the chip the session's own facts relabel.
+
+Two real faults were behind the last of the failures. The drawer *pushed* the
+conversation it switched to rather than showing it in place, so going back from
+the second agent led to the first and the stack grew with every agent somebody
+looked at; both conversations were also in the window at once, and a driver
+reading a screen by name got the one being left. The router now has a word for
+a sideways move and the drawer uses it. And a control request is acknowledged
+rather than answered flatly, so the journey's reading of what a machine says it
+was given had been looking one level too high and quietly reporting an
+unreadable answer as "the machine was given nothing" — it now unwraps the
+acknowledgement and fails loudly when the answer is not the shape it expects.
+
+Moving a token is driven through the field's own draft rather than by a finger.
+The gesture is a long press on the chip and a drag, which is the text view's
+own text drag: the system begins that session itself from drawn text, and
+nothing outside the process can start one. A press-and-drag was tried and left
+the sentence untouched. What the journey claims is therefore the draft's
+behaviour — the token travels whole, as the one character it is in the
+sentence — and the claim says so plainly rather than implying a driven gesture.
+
+2026-09-07 — **This phone, the keys it holds, and revoking one.** The Hosts
+screen now ends where the design says it does: what this phone calls itself,
+how many machines hold a key to it, and the sentence that revoking one ends its
+access immediately. Tapping the count opens the keys themselves — this phone's
+own first, whole and in fours, then one row per machine with its whole
+fingerprint and the one thing there is to do about it.
+
+The list is the trust store rather than the fleet, which is the load-bearing
+choice. A machine that is away still holds a good key and will be let straight
+back in the moment it answers, so a list drawn from what is reachable would
+hide exactly the machines worth revoking. The runtime reads its own identity
+and peers off the profile and re-reads them whenever the set of trusted
+machines changes, and a read that fails leaves the last answer standing rather
+than blanking a section, which would invite pairing again with everything still
+paired.
+
+Revoking goes to the runtime, not to the machine: this device drops the key and
+closes every link it holds before the answer comes back. A host-target test
+against a real testnet proves the "immediately" — it opens a conversation on
+the paired machine, revokes, and finds the stream that conversation held gone
+rather than left to expire, with the trust store empty behind it and a second
+revoke of the same machine withdrawing nothing and saying so.
+
+Two repairs came with it. A door reply gained the relay's attempt counters last
+commit and the test that round-trips every reply was never rebuilt, so it had
+been failing to compile since; and the test that asserts a state can be
+declared unbuilt was using `devices` as its example, which is now built.
+
+2026-09-07 — **The phone can ask a machine what it has, and start an agent
+there under a named layer.** Two bridge commands: one asks a machine for the
+projects it was used in recently, the repositories under its roots and the
+roots themselves; the other starts an agent in a directory.
+
+The driver is a required field with no default anywhere on the way in. This
+device drives Claude through the SDK, and the failure a default would allow is
+silent — a request that left the driver unsaid would start a PTY session that
+looks like every other agent until somebody asks it to do something only the
+SDK can do. So a Claude create names its driver or is refused where the JSON is
+read, and nothing downstream ever has to decide. Two tests hold that: one reads
+the shared command the runtime would hand the client and finds `Claude { driver:
+Sdk }` in it, the other tries four ways of not saying and is refused each time,
+including a driver the runtime does not have.
+
+Starting an agent is otherwise an ordinary shared command, so its answer
+arrives as the same `AgentCreated` every other client already gets. What the
+bridge arm adds is only that the layer was named.
+
+2026-09-07 — **New Agent, on the phone.** One screen: which machine, which
+directory, which layer, and a button naming the machine at the foot. The
+machines are the paired ones, in the Hosts tab's order; an offline one is on
+the list and disabled, saying why on its own row, because a machine you cannot
+start on is still a machine you have.
+
+The directory comes from what the machine answered — the projects an agent last
+ran in, then the repositories under its roots — or from a path somebody types
+for a directory the machine did not list. The chooser is a state of this screen
+rather than a page of its own, so the machine, the layer and the start button
+never leave the display while a directory is being found. Searching filters the
+list the machine already sent; only a machine whose answer stopped at the cap
+is asked again, because below the cap the local list is everything it has.
+
+Claude is always asked for through the SDK. The store's create carries the
+driver as a value, never a default, and there is no fallback of any kind: a
+machine that will not start an SDK session starts nothing and says so in its
+own sentence, which is the only honest way to report a path it rejected.
+
+Only Codex's card offers a model, and the models it offers are the ones this
+account's own Codex sessions reported — nothing can ask a machine what a layer
+would offer before that layer is running, so a made-up list would be a lie. A
+card with no list has no chevron.
+
+When the machine says the agent exists, it goes into the fleet directly rather
+than waiting for the next inventory, and the conversation that opens can name
+where it runs from the first frame.
+
+2026-09-07 — **The home journey runs on a phone that really paired.** It used
+to say, in its own transcript, that it could not show the thing it was for: an
+unpaired phone is disowned by every machine on the relay, so connecting dropped
+every remembered row and the screen went empty. Now the journey pairs first,
+with both machines, by the six-digit codes they print — the code is
+authenticated against the machine that printed it, and trust is written only
+against the attempt that machine answered with. Nothing is copied into the
+simulator.
+
+What that makes assertable is what the home is for. Six rows drawn from memory
+before anything has been reached; each one goes solid where it stands as its
+own machine answers for it, with the order unmoved and nothing left shimmering;
+a turn one machine emits changes neither list; and taking the relay away leaves
+all six on screen under the one line a home is allowed above its rows.
+
+Two things the harness had wrong came out of it. The door could only pair in
+one step, through a debug entry point that wrote trust without ever showing
+anybody a fingerprint — it now takes both of the steps the pairing screen
+takes, through the same store, and can also pair by a code against a machine
+the relay is offering. And a phone the driver had handed a relay credential
+still drew itself as signed out, so the line above the rows reported a sign-in
+that never failed instead of the connection that did; a connection through the
+door now signs its account in, which is where every screen reads that from.
+
+The trust a pairing writes outlives the run that wrote it, so a simulator that
+had been through many journeys was a phone paired with every machine any of
+them ever started. The journey now begins by giving the phone a new identity,
+trusting nobody.
+
+2026-09-07 — **A journey for giving a phone machines to work on, and keeping
+two accounts apart.** Three machines the runner really runs across two cloud
+accounts on one relay, and a finger on every act: a pairing link the launch
+itself carries, landing on a phone nobody has signed in on and claiming
+nothing until signing in puts it to the machine; the machine's name and the
+whole of its key read and turned down, and the same invitation — still on
+offer — opened again and agreed to. On the keypad a code nobody issued and a
+code that has run out are refused in the same sentence with the digits gone,
+and the code the machine printed leads to that machine's own name and key
+before any trust is written. Three agents started on one machine, from a
+directory it had been used in, from a repository it listed and from a path
+typed by hand; the machine itself reports every one as Claude on the SDK
+driver and no terminal Claude session appears anywhere. A key revoked while
+one of that machine's agents is open lets go of the stream that conversation
+was reading. The relay is taken away and put back with a machine restarted
+underneath, and the phone recovers with nobody pressing anything. And the
+second account reaches only its own machine and sees none of the first's.
+
+What it found.
+
+A machine took a create for a working directory that was not there, answered
+with an agent, and then lost it the moment the session could not enter its own
+directory — so a typo on the phone opened a conversation that quietly
+vanished. The host now refuses that create in its own words, with the path in
+them, and starts nothing.
+
+A daemon in the runner's testnet had no profile config file on disk, and the
+managed MCP server every session launches is started by pointing a fresh amux
+at that file, so no agent could be created on one at all. Testnet daemons now
+write their profile config where the rest of the profile lives.
+
+Two identifiers named containers rather than the things inside them. The
+confirmation's "paired" and "did not work" were on stacks the system never
+surfaced, so a driver could not see either state; and New Agent's Start named
+the bar it sits in, which is pinned to the foot of a full-height stack — a
+finger aimed at the middle of what that name covered landed nowhere near the
+button. Both now name what they are about.
+
+New Agent's floating foot bar rides up with the keyboard the directory
+chooser raises, which puts it over the two layer cards; when the chooser
+closes and the bar slides back down, a press aimed at Start lands on Codex's
+card instead. The agent that started was then Codex with nothing on screen
+afterwards looking wrong. The journey waits for the button to be still before
+pressing it and reads the layer cards the moment before, so the screen and the
+machine have to agree on what was started.
+
+An embedded runtime is one of the hosts in its own inventory, because it
+trusts itself, and it was being listed on the phone as a machine to work on
+and offered for pairing. Nothing runs on a phone: the runtime is now told
+which host it is and the projection leaves it out of both lists.
+
+An embedded runtime also had no idea which cloud it was on — there is no
+configuration file behind one — and a device refuses to authenticate a pairing
+link issued for a different cloud, so every link was refused. The cloud is now
+the relay the runtime was opened with, which is the only thing that could have
+told it.
+
+Revoking is one-sided as this build stands: the phone stops trusting the key
+and closes the link with the reason on it, and the machine's own record of the
+phone stays until it is removed there. The journey says so rather than
+asserting it away.
+
+## Accounts are profiles: the bridge over the installation
+
+The phone's runtime seam now opens an `Installation` and gives every signed-in
+account a profile of its own, rather than one embedded device per launch. A
+profile is a whole device where it matters — its own key, its own trust store,
+its own relay link — so two accounts on one phone are two devices, and neither
+can see what the other has paired with. The start configuration says so
+directly: `accounts` is a list of `{id, token}` and `active` names the one on
+screen; the relay carries only its URL and TLS, because a token belongs to an
+account and not to a relay. Every token request names the account it wants, so
+a reply cannot be credited to the wrong one.
+
+Two small extensions to the layer this rests on. `Installation::use_embedded_relay`
+gives one profile the relay its embedder resolved, forwarding to a new
+`ProfileRuntime::attach_relay` whose task stops with the profile — the phone
+signs in to the account service itself and hands each account's relay down,
+where a desktop profile discovers one from its configuration. And
+`Runtime::switch_in_place_with_client` switches the reducer to a profile the
+process already holds a client for; the existing socket switch is the same code
+behind a different connector, so a switch retires the previous generation and
+refuses its late results exactly as before.
+
+The switcher's "waiting" count for an account nobody is looking at comes from
+that account's own fold, running on a task of its own and subscribed to all of
+its agents. Nothing runs on a phone, so the policy that keeps a machine's own
+agents streamed never fires here and an unsubscribed agent reports its
+attention as unknown; a badge derived from unknown would be a guess. The fold
+has to be a task rather than a branch of the screen's loop, because an account
+with machines answering produces messages continuously and would otherwise take
+every turn from the screen.
+
+Proved against an in-process testnet with two cloud users:
+`mobile_profiles_give_each_account_its_own_device_identity_and_trust` pairs one
+account with one machine and the other with another, and finds two distinct
+device identities, two disjoint trust rosters and no fleet that ever carried
+both accounts' agents; `mobile_profiles_switching_drops_every_late_result_from_the_previous_account`
+reports an inventory result on the shell edge of the account just left and
+finds it refused rather than folded, and never on any screen;
+`mobile_profiles_report_what_is_waiting_on_the_account_that_is_not_on_screen`
+leaves an agent waiting on one account, switches away, and reads the same count
+back for the account now off screen.
+
+Green: `wt run mobile-check`, `wt lint`, `wt test -- --lib mobile_profiles`,
+`wt test -- --lib mobile_` (one pre-existing failure,
+`mobile_cache_local_sync_prunes_unpaired_host_across_disconnected_frames`,
+which fails identically with every change here reverted and is tracked
+separately).
+
+## The phone is not one of the machines, in the cache tests too
+
+The fleet cache's local-synchronization proof went red: with the relay away and
+the account locally synchronized, the callback listed no machines at all, so
+the assertion that the one trusted machine survives the prune had nothing to
+hold on to.
+
+The product moved, not the reader. An embedded runtime trusts itself and so
+arrives in its own host inventory; when the phone learned to leave itself out
+of the machines it lists — nothing runs on a phone, and offering to pair with
+yourself is nonsense — the projection began filtering the host it was told is
+local. This test had handed the phone and the machine it expects to see the
+same identity, so the filter took the machine away with it.
+
+The fixture now gives the phone a host id of its own, distinct from every
+machine on the account, which is what a real launch looks like. The proof is
+unchanged and still holds: the remembered agent whose machine is no longer
+paired is pruned once local synchronization says the paired list is complete,
+across frames where the relay never reconnects, and the machine that is still
+paired stays on the callback.
+
+Green: `wt test -- --lib mobile_cache` (6 passed).
+
+## The pinned projection snapshot keeps its machine
+
+The schema file the phone's Swift side reads — pinned so a change to a Rust DTO
+fails at a test rather than at a screen that quietly stops showing something —
+came back from a regeneration with an empty host list, and the Swift test that
+reads it failed.
+
+The same fixture mistake as the fleet cache's: the snapshot named "studio", the
+machine the pinned agent runs on, as the phone's own local host, and the
+machines list leaves the local host out. Regenerating therefore took the only
+machine out of the pinned fleet. The phone now has an id of its own in that
+fixture — the one the snapshot already gives its device identity — and the
+pinned fleet carries "studio" again.
+
+Green: `wt run ios-unit`, `wt test -- --lib mobile_`.
+
+## The streaming numbers are taken on the page people read
+
+The streaming and idle measurements used to be taken over a bench that drew the
+transcript alone inside the conversation's scroll container. That was enough to
+say the list is lazy and follows its tail, and not enough to say anything about
+the product: the facts strip, the foot and the composer are laid out on every
+frame an arriving row causes, and a number taken without them is a number about
+a screen nobody uses.
+
+The bench is now the page the app pushes when somebody opens an agent — the
+fleet's drawer over the conversation, with the same chrome, transcript, strip
+and composer — and the measured run delivers a session with the rows so the
+composer is really on screen rather than absent behind an unavailable gate.
+
+Two things fell out of running it. The perf recipe regenerated the Xcode project
+without the repair that gives the test action its StoreKit configuration, so
+every measured run left the committed scheme changed on disk; generating the
+project now lives in one place that both recipes call. And `ReportFreeze`
+imported `AmuxTestSupport`, whose sources are compiled into the app rather than
+linked — the import only ever resolved because another scheme had left that
+module in the shared products directory.
+
+Green: `wt run ios-perf` for every budget except the cold first frame, which is
+over at 437 ms against 400 and is being triaged on its own.
+
+## A capture at an accessibility text size cannot leak into the next one
+
+Opening a state that names no text size puts the size back to the default, so
+a screen photographed at an accessibility size does not silently resize every
+screen photographed after it. Nothing about a picture says which size it was
+taken at, so a leak would produce baselines nobody could tell from correct
+ones — which is why it now has a test rather than a comment.
+
+The door answers with the size it is drawing at, in the same spelling a request
+and a fixture use, and the door smoke opens the accessibility home, then the
+ordinary one, and reads the size back after each.
+
+Running it turned up a red nobody had named: the smoke still demanded the
+report's view-state trace end with the appearance the door left the view in,
+and that trace now ends with the screen the report was taken on — which is the
+point of it. The expectation follows the product: the trailing route names the
+screen, and the appearance is the change before it.
+
+Green: `wt run ios-unit` (5 schemes), `wt run ios-door-smoke`.
+
+## A conversation on the narrowest display
+
+The narrow-width check had the home and nothing else, so the screen with the
+most competing for a line — the chrome pill's name over its machine and
+directory, a transcript of prose, diffs and command output, and the composer —
+was never photographed at that width. It is now, from the same fixture the
+ordinary capture uses, so every difference between the two images is the layout
+answering a narrower display.
+
+Nothing is dropped there: the pill keeps both its lines, prose wraps sooner and
+a diff row shortens its path from the left, which is what the leading ellipsis
+on that row is for.
+
+Green: `wt run ios-goldens -- small-home small-conversation`.
+
+## The Rust tree is rustfmt-clean again
+
+Fourteen files across amux-mobile, amux-tui, amux-ui, claude, e2e-runner and
+replay-support had drifted from what the current toolchain's rustfmt produces,
+so every `wt fmt` reformatted files the person running it had never touched and
+either dragged that churn into their commit or cost them a revert. This is that
+reformatting on its own, with nothing else in it: whitespace and line breaking,
+no behaviour.
+
+Green: `wt fmt`, `wt build`.
+
+## Where a cold launch's time actually goes
+
+The launch measurement said "before this app ran" and "from there to the first
+frame", but the first of those two was not what its name suggested: the mark
+that started it is the SwiftUI `App`'s initialiser, which runs after the
+dynamic linker has finished *and* after UIKit has started, so loading the app
+and starting it were charged to the same number.
+
+A C image initialiser splits them. It runs at the end of the linker's work and
+before `main()`, which is the earliest moment a program can observe and one
+that no Swift declaration can reach — the earliest a Swift `let` can be
+evaluated is the first time something reads it, and by then the launch is
+mostly over. `wt run ios-perf` now reports three numbers instead of two.
+
+On the pinned simulator the answer turns out to be nearly all loading: 287 ms
+to load the app, 2 ms for UIKit to reach the app's first line, and 151 ms to
+draw the first frame. Measured against a hello-world SwiftUI app built and
+launched the same way, which reaches its own first line in 206 ms, almost all
+of the difference is two frameworks: linking StoreKit costs 85 ms and
+AuthenticationServices 90 ms before any app code runs.
+
+Green: `wt run ios-unit`, `wt run ios-build`.
+
+## A thumb target the size of a thumb, around a control the size it is drawn
+
+Plenty of controls are meant to be small: the cross that clears the composer,
+the chevron that walks back off a screen, a row of two-word appearance choices.
+Drawing them at the 44 pt a finger needs would be a different design. What has
+to be 44 pt is what answers to a thumb, and that is a different rectangle from
+the drawn one.
+
+`thumbTarget` and `reclaimingThumbTarget` are that rectangle. It has to be a
+pair, because padding or a content shape applied to a `Button` from outside
+does not extend what the button answers to: the first goes inside the button's
+label and grows it, the second goes outside and gives the layout back exactly
+the room the first took. What is measured — by VoiceOver, by the screen's own
+declaration — is the grown rectangle; what is drawn does not move.
+
+Fifteen controls now carry it: the composer's clear and model chip, the four
+back rows, the file list and task fold chevrons, restore purchases, the
+report's cancel, send and box-removal, the home title and the three appearance
+choices. Every one of them was between 17 and 35 pt in one direction.
+
+Green: `wt run ios-goldens -- --built` (112 captures, none moved). The
+accessibility audit is down from 118 complaints to 62; the rest are the
+transcript's own rows and the new-agent screen, still to do.
+
+## The rest of the app's controls, named and given room
+
+The remaining sixty-two complaints from the audit came in four shapes, and
+three of them were the same mistake made in different places.
+
+A row whose name was declared on the container around its button, rather than
+on the button. The folded run of reads in a transcript, an agent-to-agent
+message and a file header on the review page each read out as an unnamed
+control twenty points tall, because the name and the identifier sat on the
+stack holding the button and its fold-out contents. Naming the button itself
+is both the fix and the more honest declaration: the thing that answers to a
+press is the thing with the name on it, and the rectangle it declares is now
+the one a thumb gets.
+
+Controls simply drawn small: the child-agent chips under a conversation, the
+recent-directory chips and the model line on the new-agent screen, the plan's
+fold handle, the link out to the App Store on the delete page. Each got the
+thumb-target pair, so the target grew and the drawing did not move.
+
+A screen underneath the drawer was being judged on the size the drawer's own
+shrink drew it at. `identified` now reports the size the layout gave a thing
+and the position it ended up at, from different places on purpose: a
+presentation can put a whole screen through a transform without the layout
+hearing about it, and where a thing is is then a fact about the transform,
+while how much room it was given is not.
+
+The model line on the new-agent screen is a button and a list of choices
+rather than a `Menu`. A `Menu` draws the same line but puts two controls in
+the accessibility tree — its own, and a second one inside it that takes
+neither a name nor an identifier from outside, so VoiceOver meets a control
+with nothing to read out. Hiding it, naming it from inside and combining the
+pair all fail to reach it.
+
+457 of 458 controls across 57 states now pass. The one left is a link inside
+a paragraph of agent prose: a run of text the markdown parser made actionable,
+laid out as part of a line and split across lines when it wraps, so there is
+no rectangle to grow.
+
+Green: `wt run ios-goldens -- --built` (112 captures, none moved),
+`wt run ios-unit`.
+
+## The travelling segment gets a row of its own
+
+In the composer, the segment that says a turn is running sat on the same line
+as the activity and the elapsed time, starting wherever the words happened to
+end. It read as a rule somebody had left in the header rather than as movement.
+It now sits on a row below them, the full width of the box, which is both how
+the approved drawing has it and the line the eye follows from the activity down
+into the field underneath.
+
+It also rests at the middle of its travel rather than a third of the way along.
+In front of a camera and under Reduce Motion the segment holds still so a
+baseline is reproducible, and across a row the full width of the box a third of
+the way along is nowhere in particular.
+
+Re-photographed: working, run-live, queued and strip, in both appearances —
+every capture that draws a running turn. Nothing without an active composer
+moved. BASELINE.md says what changed.
+
+Green: `wt run ios-goldens -- working reduced-glass`.
+
+## A conversation opens at its own tail, not at the height it first guessed
+
+A conversation sometimes opened a screen and a half short of the last thing
+said, showing the first prompt of the session instead. It was a race, not a
+rule: about one open in six.
+
+A scroll view decides where to start from the height its content has at the
+moment it is asked, and a transcript does not know its own height then. The
+markdown in a prose row is parsed away from the main thread, so a row of prose
+stands at nothing until the parse lands — and a conversation whose rows are
+mostly prose is briefly a fraction of its finished height. Ask it where the
+bottom is in that window and the answer is the top.
+
+The rows that arrive at their size late now say so, and the feed puts its last
+row back under the eye once nothing is still being measured. Once, and never
+again: a reader who has gone looking for something further up is not asking to
+be brought back.
+
+Green: `wt run ios-goldens -- --built` (112 captures, none moved), ten
+consecutive `wt run ios-goldens -- queued`, `wt run ios-unit`.
+
+## The first run on a machine is the one that records what it is judged against
+
+The CI runner is not a Mac anybody wrote budgets for, so it is judged against
+its own recorded numbers. It had none, and could never get any: the judge
+refused every measurement on such a machine before it wrote a verdict, so the
+run that was supposed to record the baseline failed instead of recording it,
+and the branch's verification skipped the measured run for want of the file
+that run writes. Performance was never measured on a push.
+
+A run can now say it is recording. A measurement with no recorded number yet is
+held to the absolute budget the definitions pin for it — and to nothing where
+they pin none, because inventing a limit for a first run is a budget nobody
+agreed to — and its medians become the baseline the next run is held to. The
+run says which machine it enrolled, in its output and in the report. A machine
+that already has a recorded row is judged against it exactly as before.
+
+The verification now takes that recording run itself the first time it meets a
+machine with no row, and CI uploads the verdict, the report and the medians
+whether the run passed or failed, so the runner's row can be read and
+committed.
+
+Green: `wt run ios-unit` (432 tests), `wt test -- ios_verify`,
+`AMUX_PERF_MACHINE=macos-26 wt run ios-perf -- --baseline`.
+
+## A phone that never heard from a host again still said it was reconciled
+
+Half the pinned lifecycle requirement — the fleet confirmed again within a
+second of the phone being picked up — was never timed. The audit read the app's
+`reconciled` flag once after the pickup, and that flag is sticky: it was
+already true when the phone was put down, and it describes rows that are still
+confirmed rows. A build that reconnected and then heard nothing from any host
+would have recorded a pass.
+
+The app now counts confirmed fleets rather than only remembering that one
+arrived, and reports the count through the driving door. The audit reads it
+before the phone is put away and waits for it to move after the pickup, timing
+that from the pickup as it already times the connection. The interval is
+recorded per cycle, printed in the report, and judged against the same 1,000 ms
+the definitions pin for reconciliation.
+
+Green: `wt run ios-perf -- --only lifecycle` — five cycles, the count moving
+once per pickup, a fresh confirmation within 267 ms at worst; `wt run ios-unit`.
+
+## The sentence under the composer follows the message in flight
+
+A refused send left the host's reason under the box, and it stayed there. Send
+again and the panel still captioned the message on its way with the previous
+message's reason — narrower than the cross-agent version of this bug, since the
+sentence was at least about this agent, but the same untrue claim about what is
+happening now.
+
+A conversation now exposes the one refusal it is entitled to draw: the answer
+to the operation it dispatched last. Dispatching supersedes whatever was there,
+so a second message in flight falls back to this build's own wording for the
+gate, and only an answer to the newest dispatch replaces it. The whole ledger
+of answers is still remembered, because a report has to be able to say what a
+run was told.
+
+Green: `wt run ios-unit`, `wt run ios-lint`, `wt run ios-goldens -- send-refused`
+(both captures unchanged: that state has no later dispatch, so the host's own
+sentence is still what is drawn).
+
+## A capture named for the head, taken at the head
+
+conversation-head.png was photographed straight after the walk to the bottom of
+the turn, so it held the same frame as conversation-row-kinds.png — byte for
+byte, in every copy of the evidence. The journey now scrolls back to the
+beginning first and photographs there, and says in its report which rows were on
+screen at each end, so a run where the two pictures hold the same feed fails
+instead of shipping one under the other's name.
+
+The report's changes line read the tally three times: the chip draws its two
+numbers as separate texts and the system publishes the element that combines
+them as well, and the record gathered all of them. It now keeps the combined
+one, which is the chip as it is read out, and the journey fails if the chip is
+on screen with no tally readable on it.
+
+Two sentences in the debug build's own code: a dead `default` arm in the screen
+switch that warned on every build, and a doc comment written twice.
+
+Green: `wt run ios-journey -- conversation` — passed, with the head and the end
+of the turn photographed at their own ends and the chip reading '+154 −23' once.
+
+## Answering an agent keeps the sentence you were writing and the place you were reading
+
+An unanswered ask takes the composer's place while it is up, and the feed is
+relaid out underneath it. Nothing proved the reader got either back: the asks
+journey opened an empty conversation, typed nothing and stayed at the tail, so
+a build that cleared the box or snapped the feed to the newest row would have
+passed every assertion in it.
+
+The journey now begins with a dozen messages from the agent, a sentence started
+in the box and never sent, and the feed scrolled back until the newest row is
+off the screen. After the permission is denied, and again after the excursion
+into the child's own conversation and the finished turn deferred, the same
+sentence is read back out of the box through the app's own door and the row
+that was being read is found at the same coordinate, with the newest row still
+off the screen. Both readings are photographed beside the panels themselves.
+
+The keyboard is put down between writing and reading by opening the fleet over
+the conversation and closing it again — the app's own way out of the box, and
+the one that does not tear the conversation down — because a keyboard standing
+over the feed in one reading and gone in the next would move every row between
+them for a reason that has nothing to do with any answer.
+
+Green: `wt run ios-journey -- asks` — passed; the row being read was drawn at
+the same point before and after each answer, and the host's account of the six
+answers is unchanged.
+
+## The three ways around a patch, driven on a patch that needs them
+
+The review page offers three ways to move around a set of changes: folding a
+file away by its heading, the list of every file that the stack of chevrons
+beside the path opens, and the wheel down the right edge. None of them was ever
+driven. The repository the journey left for the host had two small files in it,
+so the whole patch fitted on one screen — there was nowhere for any of the three
+to take a reader, and nothing to see if they failed.
+
+The repository now carries a third, longer file, so the patch the host freezes
+is taller than the phone. The journey picks that file out of the list and lands
+on it, folds it away and watches its lines go, opens it again and watches them
+come back, then drags a thumb down the wheel to the last file and back to the
+first. Each step is judged by a line that belongs to one file and to no other:
+the one the page should have reached is on screen, and the one it came from is
+not. The list, the folded file and the page the wheel reached are photographed.
+
+Which files the patch covers is now gathered as the reader passes their
+headings rather than read once when the page opens: a patch taller than the
+phone never has all of its headings on screen at once, and the old reading
+silently named only the two that did.
+
+Green: `wt run ios-journey -- review` — passed, over three files and +27 −6,
+with the same three remarks, the cancelled one absent, and the patch pinned to
+the one message the host received.
+
+## Every kind of row, photographed where a reader can read it
+
+The conversation journey claimed its two pictures held the rows it named, and
+counted them out of the accessibility tree. The tree is a weaker claim than a
+photograph: it holds rows that have scrolled under the floating pill, rows
+behind the strip of children the agent started, and rows behind the facts strip
+and the composer at the foot. A picture named for a row nobody can see says
+nothing, and the end-of-turn picture was naming one — the row saying a file was
+written sat half under the facts strip.
+
+The journey now walks the feed from its beginning to its end and photographs it
+wherever a kind of row first becomes readable, where readable means the whole
+row inside the band between the chrome floating over the top and whatever
+stands at the foot — or, for a row taller than that band, the band entirely
+inside the row. Each picture is named for the row it was taken for and carries,
+in an index beside it, the full list of what it holds; the run fails if any of
+the nineteen kinds is never readable anywhere. The end of the turn is
+photographed first, where the feed already is, so no two pictures are taken from
+the same place.
+
+Whether a scroll moved anything is now a question about position rather than
+about names: a long stretch of prose shows the same one row kind for several
+screenfuls running, and the walk used to conclude it had reached the end after
+one step.
+
+Green: `wt run ios-journey -- conversation` — passed; five pictures between them
+hold all nineteen row kinds, each one checked against the band it was read in.
+
+## The pinned Mac now has a baseline to drift from
+
+Every performance run on this Mac was judged against its budgets alone. The
+drift check the measurement document describes — a median may exceed the
+recorded figure by 15% for timing, hitches and CPU, or 10% for memory — had
+nothing to compare with, because no baseline had ever been recorded here, and a
+run whose budgets all pass says nothing about a slow bleed towards them.
+
+A deliberate `wt run ios-perf -- --baseline` records this machine's medians,
+reviewed against the budgets before being committed: cold first frame 429.5 ms
+against a 460 ms simulator gate, echo 7.2 ms against 17, main-thread CPU 43.8%
+against 60, footprint 68.4 MB against 250. The simulator gate and the 400 ms a
+phone is held to are unchanged, and every workload is the same one. The next
+ordinary run passed with all twelve measurements judged against both.
+
+The pinned Mac's row in the measurement document now says its baseline is
+required rather than optional, so a run that cannot find the file stops and
+says so instead of quietly falling back to the budgets alone — losing the file
+is exactly how a drift check stops existing without anybody deciding to end it.
+
+A refused measurement also reports itself now. The measured suite fails its own
+test when a median is over budget or over the recorded figure, and the recipe
+turned that into a stack trace about xcodebuild; it now reads the numbers the
+app wrote either way, so the line says which measurement was refused and by how
+much. A run that failed for any other reason wrote no verdict and is still
+reported as that.
+
+Green: `wt run ios-perf` — passed, every Baseline cell filled. Proven refusing a
+regression too: with the recorded echo figure deliberately set to 5.00, a median
+of 7.59 — comfortably inside its budget of 17 — failed the run.
+
+## The empty home offers the one thing that leads somewhere
+
+The Agents home drew its New Agent button on every launch, including the two
+launches where nothing is reachable: nobody signed in, and signed in with
+nothing bought. Pressing it opened the new-agent screen over an account that
+cannot reach a host, which is a door onto an empty room — starting an agent
+needs a host, a host needs pairing, and pairing needs an account the relay
+accepts.
+
+The header now draws that button only once the account gate is open, so the
+signed-out home offers Sign In and nothing else, and the subscribed-nowhere
+home offers Subscribe and nothing else. Everything else on those screens is
+unchanged: the tabs, the account disc and the account switcher are where they
+were, and an account with access gets its New Agent back.
+
+The accounts journey now reads the header in all three states rather than only
+the one action, and the `first-run` and `first-run-paid` baselines were retaken
+for the button that is no longer drawn.
+
+Green: `wt run ios-journey -- accounts` — passed, with the home offering
+Sign In and no New Agent at launch, Subscribe and no New Agent once signed in,
+and New Agent again under an account that has access.
+
+## The iPhone implementation now follows the approved visual system
+
+The app had accumulated a second visual language around the approved screens: a stock, heavier tab bar; child-agent chips over conversations; a finished-state takeover; larger composer and keypad controls; boxed management lists; heavier transcript and review rows; and several missing actions and account cues. Those differences are removed. The shipping screens now use the design's custom floating tab bar, compact chrome and composer, continuous transcript rail, document typography, review geometry and colours, plain host/setup lists, account context, notification entry point, filter control, Mute action, and reference proportions across sheets and controls. Pushed screens hide the tab bar and keep the edge-to-go-back gesture, and finished conversations retain the normal composer with changes available from the header.
+
+The Agents shimmer was removed rather than restyled. The debug state now reports unconfirmed rows by what they are instead of naming a visual effect that no longer exists. The custom tab buttons occupy equal outer widths, and each root navigation stack stays mounted behind the selected tab; this preserves tab state without rendering a second system bar or shifting the bar when Agents is selected. Per-agent Mute is stored as a durable device preference instead of resetting with the overflow view.
+
+Large accessibility text now keeps conversation identity and location in a bounded header, clears transcript text from behind the status bar, and gives the ask panel enough of the first view to expose Allow and Deny. The peer-exchange fixture also opens both message directions and uses a compact transcript so its golden demonstrates the interaction shown by the design.
+
+All 124 light, dark, regular-size, accessibility-size and small-phone golden baselines were recaptured after direct comparison with the preserved designs. Verification used the focused iOS unit suite and golden runner; the hour-long aggregate mobile verification task was deliberately not run.
+
+## 2026-09-11 — Resume visual parity audit
+
+The previous completion assessment relied on representative comparisons and refreshed app goldens rather than a complete visual comparison of every approved reference. The audit is reopened: each light and dark reference must be inspected beside the corresponding app capture, and every visible difference must be fixed or explained. The conversation overflow was the first concrete miss found in that review; its whole-screen offset placed the menu about 52 points below the approved attachment point, so it now begins eight points under the conversation chrome.
+
+The same visual pass found that New Agent still carried pre-design proportions even though its broad structure looked correct at a glance. Its directory row now follows the reference's plain configuration treatment, recent directories use the compact outlined chips, and host/provider rows use the reference spacing, icon scale, and selected border.
+
+Slash-command suggestions now follow the final reference rather than the earlier intermediate iteration: compact 9-point row insets and the command name alone. The provider/source label was removed because the approved design deliberately relies on namespaced command names where provenance matters.
+
+The screenshot-report prompt now uses the reference's muted bug mark and 88% glass wash. Its size and bottom clearance already matched; the system-owned screenshot thumbnail remains outside the app's control.
+
+Source comparison after the visual pass also removed residual intermediate measurements from floating controls. Agent/account menus, model settings, attachments, slash suggestions, and the expanded task strip now use the explicit washes, corner radii, row insets, radio sizes, and card spacing in their final reference implementations rather than a nearby shared default.
+
+The resumed pass also corrected the composition rather than only the photographed menu. Conversation content and its scrim now extend through the physical top safe area while the chrome and composer remain foreground insets; this removes both the undimmed status/home-indicator bands under overlays and the hard band where the transcript fade used to begin. The same edge-covering rule was checked against the review, account, directory, device, deletion, and drawer overlays.
+
+Floating glass icons no longer carry an invisible square layout frame. Their button wrappers now provide the 44-point hit region consistently on Home, Hosts, the drawer, and conversations, which removes the filter menu's post-dismiss square while preserving touch size. Fixed symbol and label slots in the custom tab bar remove the selected-weight baseline wobble. A focused simulator interaction probe checks both behaviors and saves the post-interaction frames for direct inspection.
+
+The final reference pass covered every app-owned light and dark capture plus the large-text, compact-phone, error, permission, pairing, and reduced-transparency states. Review file headings and its weighted edge wheel now follow the reference structure, including comment marks and a one-line active-file pill. Pairing code cells, sign-in copy, rename geometry, and shared destructive-card spacing were brought to the same measurements. No golden baseline was updated during this pass; the rendered actuals remain review evidence until the design is accepted.
+
+## The drawer no longer clips the conversation to its safe-area rectangle
+
+The drawer transformed a conversation whose background deliberately paints through the
+status and home areas, then clipped the result to the smaller rectangle SwiftUI lays out
+between those areas. Even closed, that mask exposed two differently sampled strips of the
+outer gradient. Open, its rounded top edge sat directly behind the real conversation pill,
+so the pill appeared to overlap a second bubble.
+
+The mask is removed. The drawer covers the page's leading edge and the rest moves beyond the
+display, so the mask contributed no useful visible edge; it only cut off the full-bleed
+background. The page also keeps its original size and translates by one complete panel width.
+There is no approved open-drawer capture, and shrinking the prior screen made its ordinary
+header look like an extra surface. A direct slide keeps the relationship unambiguous while
+preserving the conversation and its scroll position.
+
+Focused light and dark captures of the open drawer show the chat at its original vertical
+position behind one continuous physical-edge background. The unreachable conversation was
+also checked in both appearances: its Retry Now card remains clear of the home area and the
+closed page has no bands. Golden baselines were not updated.
 2026-09-11 — **Clients, UI state and UI resources now have separate build
 boundaries.** RPC access lives in `client` and accepts an explicit channel or
 socket; it neither discovers configuration nor starts a node. The pure reducer

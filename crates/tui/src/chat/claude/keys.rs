@@ -327,9 +327,14 @@ fn composer_key(
                 )));
             }
         }
-        // Tab is reserved for the future queueing door (D2) — a no-op
-        // until that lands deliberately.
-        KeyCode::Tab => {}
+        KeyCode::Tab => {
+            return crate::chat::queue::key(
+                model,
+                chat.agent,
+                &mut chat.composer,
+                chat.review.as_ref().map(|draft| draft.view.review()),
+            );
+        }
         KeyCode::PageUp => page_up(chat, model, viewport),
         KeyCode::PageDown => page_down(chat, model, viewport),
         // Ctrl+Home / Ctrl+End: feed oldest / newest (ext tier —
@@ -590,11 +595,22 @@ fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
     // A draft with no tokens sends exactly as it always did: the
     // attachment command exists for drafts that actually carry one.
     let attached = !chat.composer.tokens().is_empty();
-    let (text, attachments) = chat
+    let draft = chat
         .composer
-        .export(chat.review.as_ref().map(|draft| draft.view.review()));
+        .export_draft(chat.review.as_ref().map(|draft| draft.view.review()));
+    let selected = draft
+        .segments
+        .iter()
+        .any(|segment| matches!(segment, ui_state::DraftSegment::CommandToken { .. }));
+    let text = draft.text();
     chat.composer.clear_for_send();
-    Some(UiAction::Dispatch(if attached {
+    Some(UiAction::Dispatch(if selected {
+        Command::Send {
+            agent: chat.agent,
+            draft,
+        }
+    } else if attached {
+        let attachments = draft.attachments;
         Command::SendPromptWithAttachments {
             agent: chat.agent,
             text,
@@ -933,6 +949,7 @@ mod tests {
             capabilities: None,
             trust_status: ui_state::HostTrustStatus::Trusted,
             last_dial_error: None,
+            platform: None,
         };
         vec![
             Msg::Server(ServerMsg::Connected {

@@ -227,6 +227,24 @@ impl CloudLinkService {
         }
     }
 
+    /// Which hosts this account is connected to the relay by, and how many
+    /// links each of them holds. One per host is what a client multiplexing
+    /// its work over a single connection looks like from here.
+    #[doc(hidden)]
+    pub async fn user_links(&self, user_id: Uuid) -> Vec<(HostId, usize)> {
+        let tunnels = self
+            .inner
+            .users
+            .read()
+            .await
+            .get(&user_id)
+            .map(|services| services.tunnels.clone());
+        match tunnels {
+            Some(tunnels) => tunnels.link_registry().links_per_peer().await,
+            None => Vec::new(),
+        }
+    }
+
     pub(crate) async fn send_link_close_to_all(&self, reason: wire::pb::LinkCloseReason) {
         let tunnels = {
             let users = self.inner.users.read().await;
@@ -512,11 +530,8 @@ pub struct DeviceRuntimeSecurity {
 }
 
 impl DeviceRuntimeSecurity {
-    pub(crate) fn new(
-        identity: DeviceIdentity,
-        trust_store: TrustStore,
-        data_dir: PathBuf,
-    ) -> Self {
+    #[doc(hidden)]
+    pub fn new(identity: DeviceIdentity, trust_store: TrustStore, data_dir: PathBuf) -> Self {
         Self {
             identity,
             trust_store: Arc::new(std::sync::RwLock::new(trust_store)),
@@ -542,7 +557,8 @@ impl DeviceRuntimeSecurity {
     }
 }
 
-pub(crate) async fn start_user_services(
+#[doc(hidden)]
+pub async fn start_user_services(
     state: Arc<RwLock<ServerState>>,
     agent_host: Option<Arc<dyn LocalAgentHost>>,
     device_security: DeviceRuntimeSecurity,
@@ -697,7 +713,29 @@ impl StartedUserServices {
         (in_process_channel(client_transport), task)
     }
 
-    pub(crate) fn open_managed_in_process_client_channel(
+    /// Dials `channel` as this device's relay link, authenticating with a
+    /// bearer token the caller minted, until `shutdown_rx` turns true. Test
+    /// harnesses use it to stand up a client-only device against a fixture
+    /// relay; the production path exchanges tokens through the installation.
+    #[doc(hidden)]
+    pub fn spawn_relay_link_with_bearer_token(
+        &self,
+        channel: Channel,
+        token: String,
+        shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> tokio::task::AbortHandle {
+        let (link, _established) =
+            crate::routing::spawn_connector_to_channel_with_bearer_token_and_shutdown(
+                self.runtime.link_connector_ctx(),
+                channel,
+                token,
+                shutdown_rx,
+            );
+        link.abort_handle()
+    }
+
+    #[doc(hidden)]
+    pub fn open_managed_in_process_client_channel(
         &self,
     ) -> (Channel, JoinHandle<()>, InProcessConnection) {
         let (client_transport, server_transport, connection) = managed_in_process_transport_pair();
@@ -993,6 +1031,7 @@ mod tests {
 
     fn remote_host(id: u128) -> Host {
         Host {
+            platform: None,
             id: Uuid::from_u128(id),
             name: format!("host-{id}"),
             version: "test".to_string(),
@@ -1061,7 +1100,7 @@ mod tests {
                 initial_prompt: None,
                 agent: CreateAgentConfig::TestAgent {
                     command: TEST_ECHO_COMMAND.to_string(),
-                    working_dir: PathBuf::from("/tmp"),
+                    working_dir: std::env::temp_dir(),
                     terminal_size: None,
                 },
             })
@@ -1177,7 +1216,7 @@ mod tests {
             agent: Some(wire::client_create_agent_request::Agent::TestAgent(
                 wire::TestAgentCreateConfig {
                     command: TEST_ECHO_COMMAND.to_string(),
-                    working_dir: "/tmp".to_string(),
+                    working_dir: std::env::temp_dir().to_string_lossy().into_owned(),
                     initial_terminal_size: None,
                 },
             )),
@@ -1334,7 +1373,8 @@ mod tests {
             .pair(futures_util::stream::empty::<wire::pb::PairMessage>())
             .await
             .unwrap_err();
-        assert_eq!(pairing_error.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(pairing_error.code(), tonic::Code::PermissionDenied);
+        assert_eq!(pairing_error.message(), "INVALID_PIN");
 
         services
             .pair_mode

@@ -30,12 +30,14 @@ async fn front(listeners: Listeners) -> (FrontDoor, tempfile::TempDir) {
     let root = crate::test_fixtures::short_installation_root();
     let installation = Arc::new(
         Installation::open(InstallationOptions {
+            relocation: Default::default(),
             root: InstallationRoot::OnDisk(root.path().into()),
             listeners,
             credentials: CredentialSource::HostProvided(Arc::new(|_| Arc::new(NoCredentials))),
             identity_http: reqwest::Client::new(),
             host_factory: Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
             settings: InstallationSettings {
+                repository_roots: Vec::new(),
                 host_name: "front-door-test".into(),
                 prevent_idle_sleep: Some(false),
                 keybinds: Default::default(),
@@ -953,4 +955,60 @@ async fn front_door_admin_client_ssh_exchange_keeps_trust_and_windows_independen
     assert!(work_admin.list_peers().await.unwrap().is_empty());
     assert!(personal_admin.pairing_is_active().await.unwrap());
     personal_admin.cancel_pairing().await.unwrap();
+}
+
+#[tokio::test]
+async fn profile_pairing_identity_and_pending_requests_stay_on_the_selected_profile() {
+    let (front, _root) = front(Listeners::InProcessOnly).await;
+    let mut directory = client(&front);
+    let first = create(&mut directory, "Personal").await;
+    let second = create(&mut directory, "Work").await;
+    let first_id = crate::ProfileId(first.id.parse().unwrap());
+    let second_id = crate::ProfileId(second.id.parse().unwrap());
+    let front_client = client::FrontDoorClient::from_channel(front.channel());
+    let first = front_client.admin(first_id);
+    let second = front_client.admin(second_id);
+    let identity = first.device_identity().await.unwrap();
+    assert_eq!(
+        identity,
+        front
+            .installation
+            .admin(first_id)
+            .await
+            .unwrap()
+            .device_identity()
+            .await
+            .unwrap()
+    );
+    let other = second.device_identity().await.unwrap();
+    assert_ne!(identity.host_id, other.host_id);
+    assert_ne!(identity.fingerprint, other.fingerprint);
+    assert!(matches!(
+        first.begin_pair_pin(other.host_id, "123").await,
+        Err(crate::PairingError::InvalidPin)
+    ));
+    let pending = || crate::PendingPeer {
+        host_id: other.host_id,
+        name: other.name.clone(),
+        fingerprint: other.fingerprint.clone(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(1),
+        token: uuid::Uuid::new_v4().as_bytes().to_vec(),
+    };
+    assert!(matches!(
+        first.confirm_pair(pending()).await,
+        Err(crate::PairingError::InvalidPin)
+    ));
+    assert!(matches!(
+        second.abandon_pair(pending()).await,
+        Err(crate::PairingError::InvalidPin)
+    ));
+    assert!(first.list_peers().await.unwrap().is_empty());
+    assert!(second.list_peers().await.unwrap().is_empty());
+    println!(
+        "Front-door identities are distinct per profile; invalid begin, confirm and abandon requests grant no trust."
+    );
+    front
+        .installation
+        .stop(crate::ShutdownReason::UserRequested)
+        .await;
 }

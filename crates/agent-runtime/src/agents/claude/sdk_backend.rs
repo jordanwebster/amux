@@ -27,9 +27,9 @@ use super::sdk_io::{ClaudeSdkSynthesized, ClaudeSdkV1Input, ClaudeSdkV1Row};
 use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
 use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, AgentRecord, AgentType,
-    BackendState, ClaudeDriver, CreateAgentRequest, LocalAgentNameSource, McpLaunchRoute,
-    ObligationDebug, Plane, Protocol, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy,
-    StructuredInput, StructuredInputEvent, StructuredLogSource,
+    BackendState, ClaudeDriver, ClaudeSdkSource, CreateAgentRequest, LocalAgentNameSource,
+    McpLaunchRoute, ObligationDebug, Plane, Protocol, ProviderSources, SessionDebug, SessionEvent,
+    SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
@@ -146,6 +146,7 @@ pub(crate) struct ClaudeSdkBackend {
     input_done: Arc<Notify>,
     log: StructuredLogSource,
     injected: Option<Session>,
+    sources: Option<Arc<dyn ProviderSources>>,
     resumed: bool,
     started: bool,
     ingest_abort: Option<AbortHandle>,
@@ -182,6 +183,7 @@ impl ClaudeSdkBackend {
             input_done: Arc::new(Notify::new()),
             log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
             injected: None,
+            sources: None,
             resumed: false,
             started: false,
             ingest_abort: None,
@@ -242,6 +244,7 @@ impl ClaudeSdkBackend {
             input_done: Arc::new(Notify::new()),
             log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
             injected: Some(session),
+            sources: None,
             resumed: false,
             started: false,
             ingest_abort: None,
@@ -366,6 +369,14 @@ impl ClaudeSdkBackend {
         Ok(options)
     }
 
+    pub(in crate::agents) fn with_sources(
+        mut self,
+        sources: Option<Arc<dyn ProviderSources>>,
+    ) -> Self {
+        self.sources = sources;
+        self
+    }
+
     fn start_session_task(
         &mut self,
         event_tx: &mpsc::Sender<SessionEvent>,
@@ -383,8 +394,17 @@ impl ClaudeSdkBackend {
             ))
         } else {
             let options = self.query_options()?;
+            let sources = self.sources.clone();
             tokio::spawn(async move {
-                match claude::sdk::spawn(options).await {
+                let supplied = match &sources {
+                    Some(sources) => sources.claude_sdk(agent_id, options).await,
+                    None => ClaudeSdkSource::Launch(Box::new(options)),
+                };
+                let session = match supplied {
+                    ClaudeSdkSource::Supplied(session) => session,
+                    ClaudeSdkSource::Launch(options) => claude::sdk::spawn(*options).await,
+                };
+                match session {
                     Ok(session) => {
                         ingest_session(
                             agent_id, resumed, session, runtime, input_done, log, event_tx,
@@ -461,6 +481,12 @@ async fn ingest_session(
     {
         let mut state = runtime.lock().expect("Claude SDK runtime poisoned");
         state.session_id = session_id.parse().ok();
+        state
+            .facts
+            .initialize_commands(control.supported_commands().unwrap_or_default());
+        state
+            .facts
+            .initialize_models(control.supported_models().unwrap_or_default());
         state.control = Some(control.clone());
     }
     if resumed {
@@ -758,6 +784,15 @@ impl ClaudeSdkInputTarget {
                     let mut state = self.runtime.lock().expect("Claude SDK runtime poisoned");
                     state.facts.model = model.or_else(|| state.facts.launch_model.clone());
                 }
+                write_session_facts(&self.runtime, &self.log).await;
+            }
+            ClaudeSdkV1Input::SetEffort { effort } => {
+                control.set_effort(effort.clone()).await?;
+                self.runtime
+                    .lock()
+                    .expect("Claude SDK runtime poisoned")
+                    .facts
+                    .effort = effort.map(|effort| effort.as_str().to_owned());
                 write_session_facts(&self.runtime, &self.log).await;
             }
             ClaudeSdkV1Input::RequestContextBreakdown => {

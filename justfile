@@ -11,6 +11,9 @@ bounded := "scripts/bounded"
 default:
     @just --list
 
+# The iPhone app's recipes: `just ios build`, `just ios verify`, ... (`just --list ios`).
+mod ios
+
 # Build the desktop product binaries.
 build:
     {{bounded}} 900 cargo build --locked -p amux --bins

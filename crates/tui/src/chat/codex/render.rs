@@ -86,7 +86,14 @@ pub(crate) fn codex_frame_parts(
                 .is_some_and(|layer| layer.history_truncated()),
             loading,
         },
-        activity: activity_row(model, chat, &phase, ctx, working),
+        activity: crate::chat::queue::strip(
+            model,
+            chat.agent,
+            activity_row(model, chat, &phase, ctx, working),
+            theme,
+            width,
+            chat.inline_ask.is_none(),
+        ),
         bottom: bottom_block(model, chat, theme, width, height, paused),
         overlay: if chat.help {
             Some(help_overlay(model, chat, theme, width, height))

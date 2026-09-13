@@ -156,6 +156,8 @@ impl OpenMode {
 pub enum EntryModes {
     /// The chat is the only way in; every entry key opens it.
     ChatOnly,
+    /// The agent has a terminal and no chat; every entry key attaches.
+    RawOnly,
     /// Both ways in exist; `default` is what Enter opens and the other
     /// is a Ctrl+Enter or `o` away.
     Both { default: OpenMode },
@@ -166,6 +168,7 @@ impl EntryModes {
     pub fn primary(self) -> OpenMode {
         match self {
             EntryModes::ChatOnly => OpenMode::Chat,
+            EntryModes::RawOnly => OpenMode::RawAttach,
             EntryModes::Both { default } => default,
         }
     }
@@ -173,7 +176,7 @@ impl EntryModes {
     /// What Ctrl+Enter and `o` open, when a second mode exists at all.
     pub fn secondary(self) -> Option<OpenMode> {
         match self {
-            EntryModes::ChatOnly => None,
+            EntryModes::ChatOnly | EntryModes::RawOnly => None,
             EntryModes::Both { default } => Some(default.other()),
         }
     }

@@ -18,13 +18,6 @@ pub enum QrPairingError {
         expected: usize,
         actual: usize,
     },
-    #[error(
-        "QR payload cloud_url {payload_cloud_url:?} does not match configured cloud_url {configured_cloud_url:?}"
-    )]
-    CloudUrlMismatch {
-        payload_cloud_url: String,
-        configured_cloud_url: String,
-    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -38,9 +31,19 @@ pub fn encode_qr_pairing_payload(
     pairing: &PairingStart,
     secret: &[u8],
 ) -> Result<String, QrPairingError> {
+    encode_qr_pairing_invitation(pairing.identity.host_id, &pairing.cloud_url, secret)
+}
+
+/// The invitation a responder's QR code carries, from its parts: the
+/// responder, the cloud it names, and the one-shot secret.
+pub fn encode_qr_pairing_invitation(
+    host_id: HostId,
+    cloud_url: &str,
+    secret: &[u8],
+) -> Result<String, QrPairingError> {
     let payload = WireQrPairingPayload {
-        host_id: pairing.identity.host_id.to_string(),
-        cloud_url: pairing.cloud_url.clone(),
+        host_id: host_id.to_string(),
+        cloud_url: cloud_url.to_owned(),
         secret: secret.to_vec(),
     };
     Ok(serde_json::to_string(&payload)?)
@@ -59,29 +62,6 @@ pub fn parse_qr_pairing_payload(payload: &str) -> Result<QrPairingPayload, QrPai
         cloud_url: payload.cloud_url,
         secret: payload.secret,
     })
-}
-
-pub fn parse_qr_pairing_payload_for_cloud(
-    payload: &str,
-    configured_cloud_url: &str,
-) -> Result<QrPairingPayload, QrPairingError> {
-    let payload = parse_qr_pairing_payload(payload)?;
-    validate_qr_payload_cloud_url(&payload.cloud_url, configured_cloud_url)?;
-    Ok(payload)
-}
-
-pub fn validate_qr_payload_cloud_url(
-    payload_cloud_url: &str,
-    configured_cloud_url: &str,
-) -> Result<(), QrPairingError> {
-    if payload_cloud_url == configured_cloud_url {
-        Ok(())
-    } else {
-        Err(QrPairingError::CloudUrlMismatch {
-            payload_cloud_url: payload_cloud_url.to_string(),
-            configured_cloud_url: configured_cloud_url.to_string(),
-        })
-    }
 }
 
 fn validate_qr_payload_bytes(field: &'static str, bytes: &[u8]) -> Result<(), QrPairingError> {
@@ -113,15 +93,15 @@ mod tests {
             },
             ttl_seconds: 300,
             tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            cloud_url: "https://amux.sh".to_string(),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
 
         let payload = encode_qr_pairing_payload(&pairing, &[9; 32]).unwrap();
-        let parsed = parse_qr_pairing_payload_for_cloud(&payload, "https://relay.example").unwrap();
+        let parsed = parse_qr_pairing_payload(&payload).unwrap();
 
         assert_eq!(parsed.host_id, HostId::from_u128(1));
-        assert_eq!(parsed.cloud_url, "https://relay.example");
+        assert_eq!(parsed.cloud_url, "https://amux.sh");
         assert_eq!(parsed.secret, vec![9; 32]);
     }
 
@@ -135,7 +115,7 @@ mod tests {
             },
             ttl_seconds: 300,
             tcp_port: None,
-            cloud_url: "https://relay.example".to_string(),
+            cloud_url: "https://amux.sh".to_string(),
             secret: PairingSecret::QrSecret(vec![9; 32]),
         };
 
@@ -147,10 +127,10 @@ mod tests {
     }
 
     #[test]
-    fn qr_pairing_payload_validates_shape_and_cloud_url() {
+    fn qr_pairing_payload_validates_secret_length() {
         let payload = serde_json::json!({
             "host_id": "00000000-0000-0000-0000-000000000001",
-            "cloud_url": "https://relay.example",
+            "cloud_url": "https://amux.sh",
             "secret": [9],
         })
         .to_string();
@@ -161,10 +141,6 @@ mod tests {
                 field: "secret",
                 ..
             })
-        ));
-        assert!(matches!(
-            validate_qr_payload_cloud_url("https://a", "https://b"),
-            Err(QrPairingError::CloudUrlMismatch { .. })
         ));
     }
 }

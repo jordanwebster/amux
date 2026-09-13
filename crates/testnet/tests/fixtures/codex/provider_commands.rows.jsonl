@@ -1,0 +1,1 @@
+{"session":{"approvalPolicy":"on-request","commands":[{"name":"review","source":"codex","terminal_only":false}],"effort":"low","model":"model-a","models":[],"sandbox":{"excludeSlashTmp":false,"excludeTmpdirEnvVar":false,"networkAccess":false,"type":"workspaceWrite","writableRoots":[]}},"type":"amux.codex_ready"}

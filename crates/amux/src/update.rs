@@ -274,8 +274,10 @@ mod tests {
 
             let root = testnet::identity::short_installation_root();
             let installation = node::Installation::open(node::InstallationOptions {
+                relocation: Default::default(),
                 root: node::InstallationRoot::OnDisk(root.path().into()),
                 settings: node::InstallationSettings {
+                    repository_roots: Vec::new(),
                     host_name: config.host_name,
                     prevent_idle_sleep: Some(false),
                     keybinds: config.keybinds,

@@ -131,11 +131,72 @@ pub enum PairingSecret {
     QrSecret(Vec<u8>),
 }
 
+/// Authenticated display identity awaiting an explicit trust decision.
+/// Dropping this value never grants trust; the host expires the attempt.
+pub struct PendingPeer {
+    pub host_id: model::HostId,
+    pub name: String,
+    pub fingerprint: String,
+    pub expires_at: DateTime<Utc>,
+    #[doc(hidden)]
+    pub token: Vec<u8>,
+}
+
+impl std::fmt::Debug for PendingPeer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingPeer")
+            .field("host_id", &self.host_id)
+            .field("name", &self.name)
+            .field("fingerprint", &self.fingerprint)
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum PairingError {
+    #[error("InvalidPin")]
+    InvalidPin,
+    #[error("Expired")]
+    Expired,
+    #[error("Abandoned")]
+    Abandoned,
+    /// The attempt never reached a verdict: the relay or host was unreachable.
+    #[error("{0}")]
+    Transport(String),
+}
+
+impl From<ClientError> for PairingError {
+    fn from(error: ClientError) -> Self {
+        Self::Transport(error.to_string())
+    }
+}
+
+#[doc(hidden)]
+pub fn status_to_pairing_error(error: tonic::Status) -> PairingError {
+    match error.code() {
+        tonic::Code::Unavailable | tonic::Code::Internal => {
+            PairingError::Transport(error.to_string())
+        }
+        _ => PairingError::InvalidPin,
+    }
+}
+
+/// This device's public identity, read without entering pairing mode.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceIdentity {
+    pub host_id: model::HostId,
+    pub name: String,
+    /// SHA256 of the device public key, encoded as lowercase hexadecimal.
+    pub fingerprint: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PeerEntry {
     pub host_id: uuid::Uuid,
     pub name: String,
     pub pubkey: Vec<u8>,
+    pub fingerprint: String,
     pub paired_at: DateTime<Utc>,
     pub reachabilities: Vec<PeerReachability>,
 }
@@ -662,6 +723,30 @@ impl Client {
         Ok((artifact, response.bytes))
     }
 
+    /// List recent projects and Git repositories declared by the selected host.
+    pub async fn list_repositories(
+        &self,
+        request: model::ListRepositoriesRequest,
+    ) -> Result<model::ListRepositoriesResponse, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .list_repositories(wire::ClientListRepositoriesRequest {
+                host_id: request.host.as_bytes().to_vec(),
+                query: request.query,
+                limit: request.limit,
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        response.try_into().map_err(|message| ClientError::Decode {
+            method: "/amux.v1.ClientService/ListRepositories",
+            message,
+        })
+    }
+
     pub async fn diff(
         &self,
         agent: AgentIdentifier,
@@ -986,6 +1071,9 @@ fn wire_agent_to_agent(method: &'static str, agent: wire::Agent) -> Result<Agent
 }
 
 #[doc(hidden)]
+pub use model::public_key_fingerprint;
+
+#[doc(hidden)]
 pub fn peer_entry_from_wire(
     method: &'static str,
     peer: wire::PeerEntry,
@@ -1018,6 +1106,7 @@ pub fn peer_entry_from_wire(
     Ok(PeerEntry {
         host_id,
         name: peer.name,
+        fingerprint: public_key_fingerprint(&peer.pubkey),
         pubkey: peer.pubkey,
         paired_at,
         reachabilities,
@@ -1163,10 +1252,12 @@ pub fn host_entry_from_wire(
         capabilities,
         trust_status,
         last_dial_error: host.last_dial_error,
+        platform: host.platform,
     })
 }
 
-fn client_service_host_response_to_host_event(
+#[doc(hidden)]
+pub fn client_service_host_response_to_host_event(
     response: wire::SubscribeHostsResponse,
 ) -> Result<HostEvent, ClientError> {
     let event = response.event.ok_or_else(|| ClientError::Decode {
@@ -1226,6 +1317,26 @@ fn client_service_agent_response_to_agent_event(
                 down.agent_id,
             )?,
         }),
+        wire::subscribe_agents_response::Event::HostInventory(inventory) => {
+            Some(AgentEvent::HostInventory {
+                host_id: uuid_from_wire_bytes(
+                    method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                    "HostInventory.host_id",
+                    inventory.host_id,
+                )?,
+                agent_ids: inventory
+                    .agent_ids
+                    .into_iter()
+                    .map(|id| {
+                        uuid_from_wire_bytes(
+                            method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                            "HostInventory.agent_ids",
+                            id,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?,
+            })
+        }
         wire::subscribe_agents_response::Event::SnapshotComplete(_) => None,
     };
     Ok(event)
@@ -1313,7 +1424,8 @@ fn pairing_identity_to_peer(
     })
 }
 
-fn uuid_from_wire_bytes(
+#[doc(hidden)]
+pub fn uuid_from_wire_bytes(
     method: &'static str,
     field: &'static str,
     bytes: Vec<u8>,
@@ -1538,6 +1650,7 @@ mod tests {
             method::PROFILE_START_PAIRING_NAME,
             wire::StartPairingResponse {
                 identity: Some(wire::PairingIdentity {
+                    expires_at_unix_ms: 0,
                     host_id: host_id.as_bytes().to_vec(),
                     pubkey: vec![7; 32],
                     name: "laptop".to_string(),
@@ -1567,6 +1680,7 @@ mod tests {
             method::PROFILE_START_PAIRING_NAME,
             wire::StartPairingResponse {
                 identity: Some(wire::PairingIdentity {
+                    expires_at_unix_ms: 0,
                     host_id: Uuid::from_u128(42).as_bytes().to_vec(),
                     pubkey: vec![7; 32],
                     name: "laptop".to_string(),

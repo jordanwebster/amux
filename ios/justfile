@@ -1,0 +1,248 @@
+# The iPhone app's recipes. `just ios <recipe>` from anywhere in the checkout;
+# every recipe runs from the repository root so paths mean the same thing in
+# the scripts, the Xcode project and the Rust workspace.
+
+set shell := ["sh", "-cu"]
+set positional-arguments
+set working-directory := ".."
+
+# Wall-clock bound for every recipe; portable where GNU timeout is absent.
+bounded := "scripts/bounded"
+
+# List the iPhone app's recipes.
+default:
+    @just --list ios
+
+# The Rust tools the phone recipes drive: the screenshot comparator and door
+# client, and the served test network the journeys connect a simulator to.
+# Build the Rust tools the phone recipes drive.
+tools:
+    {{bounded}} 900 cargo build --locked -p xtask -p testnet --bins
+
+# The rules the screens package is written to: SwiftUI only outside a
+# registered leaf, no platform conditionals, no spinners. Pure text, so it runs
+# before anything is compiled and says which line is wrong.
+# Check the Swift sources against the screens package's writing rules.
+lint:
+    {{bounded}} 300 sh -c 'sh ios/Tools/feature-lint.sh && ios/Tools/strings-lint.sh'
+
+# The one bridge slice a development build links: the simulator, with the
+# driving tools, under the ordinary development profile. Repackages only when
+# the library or its generated header changed; runs no cargo at all when no
+# Rust input changed, so a Swift-only edit pays nothing here.
+# Build the one bridge slice a development build links.
+rust:
+    {{bounded}} 1800 python3 -B scripts/ios-rust.py
+
+# Every shipping slice under the size-optimised `mobile` profile, assembled
+# into the XCFramework the app packages ship with, then linked from Swift and
+# run on the pinned simulator to prove it loads. What the release recipes use.
+# Build every shipping bridge slice into the XCFramework and prove it links.
+package:
+    {{bounded}} 2400 python3 -B scripts/ios-package.py
+
+# Prove the bridge graph carries no provider, agent host or test
+# infrastructure onto the phone. The driving tools are the one deliberate
+# exception and are checked separately with them enabled.
+# Prove the bridge graph carries no provider, host or test crate.
+graph-check:
+    mkdir -p target/ios
+    {{bounded}} 300 cargo tree --locked -p app-ffi --no-default-features --target aarch64-apple-ios-sim -e normal --prefix none --format "{p}" > target/ios/graph-shipping.txt
+    ! grep -E "^(pty-host|codex|agent-runtime|testnet|claude-specs|codex-specs|replay-support) v" target/ios/graph-shipping.txt
+    {{bounded}} 300 cargo tree --locked -p app-ffi --no-default-features --features debug-tools --target aarch64-apple-ios-sim -e normal --prefix none --format "{p}" > target/ios/graph-driving.txt
+    ! grep -E "^(pty-host|codex|agent-runtime) v" target/ios/graph-driving.txt
+
+# The pinned devices every capture and measurement runs on. Creating them is
+# idempotent; they are left booted because every later recipe needs them up.
+# Create and boot the pinned simulators.
+simulator:
+    {{bounded}} 900 python3 -B scripts/ios_simulators.py
+
+# Generates ios/Amux.xcodeproj from ios/project.yml, then builds the app for
+# the golden simulator. The bridge is an input, so `rust` runs first.
+# Generate the Xcode project and build the debug app.
+build: rust
+    {{bounded}} 1800 python3 -B scripts/ios-build.py
+
+# The package unit suites. Arguments are xcodebuild's; a `-only-testing:`
+# selector picks the package that owns the named target.
+# Run the package and app-hosted unit suites on the golden simulator.
+unit *ARGS: rust
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1800 python3 -B scripts/ios-unit.py "$@"
+
+# Launch the debug build, open a named state through the driving door, read
+# the screen back, photograph it, and connect its shared runtime to a test
+# relay. The tools that serve that relay are an input alongside the app.
+# Drive a launched debug app through its door and a served relay.
+door-smoke: build tools
+    {{bounded}} 1800 python3 -B scripts/ios-door-smoke.py
+
+# Capture the manifest's screens in both appearances and compare each one
+# with its baseline. No arguments means the whole manifest, which fails on any
+# screen nobody has built yet rather than skipping it.
+# Capture every catalogued screen and compare it with its baseline.
+goldens *ARGS: build
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2400 python3 -B scripts/ios-goldens.py "$@"
+
+# Move one design token and require the golden run to fail with a difference
+# image. What proves the golden check would notice a change.
+# Prove the golden comparison notices a moved design token.
+goldens-perturb *ARGS: build
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 python3 -B scripts/ios-goldens-perturb.py "$@"
+
+# Pair every reference screen's baseline with the design's preserved capture.
+# A report and never a gate: a difference from the design is a conversation.
+# Report each reference screen beside the design's capture.
+goldens-reference:
+    {{bounded}} 900 cargo run --locked -q -p xtask -- golden reference
+
+# Rebuild the screen a recorded report bundle was written with: fold its
+# runtime recording into fresh stores, apply the view-state trace beside it and
+# photograph the result. Nothing is connected and no recorded effect is run.
+# Redraw the screen a recorded phone report bundle was written with.
+replay *ARGS: build
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1800 python3 -B scripts/ios-replay.py "$@"
+
+# The app driven the way a person drives it, against a real relay and real
+# daemons started from a committed topology. No arguments runs every journey
+# ios/Journeys/manifest.json declares.
+# Drive the app like a person against real daemons and a real relay.
+journey *ARGS: build tools
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2400 python3 -B scripts/ios-journey.py "$@"
+
+# Sweep every state this build draws and require each control on it to have a
+# name VoiceOver can read and at least 44 pt to hit. A UI test, because that is
+# the only accessibility client an app cannot be for itself.
+# Audit every drawn state for VoiceOver names and 44 pt targets.
+accessibility: build
+    {{bounded}} 2400 python3 -B scripts/ios-accessibility.py
+
+# Exercise small visual states that exist only after interaction, without
+# paying for the full verification suite.
+# Capture the small visual states that exist only after interaction.
+visual-interactions: build
+    {{bounded}} 600 python3 -B scripts/ios-visual-interactions.py
+
+# The measured run: the pinned workloads against the budgets in
+# docs/IOS_PERFORMANCE.md, on a machine that document has a row for. The
+# measured build links the driving slice; the release size it also records
+# links the shipping package, so both are inputs.
+# Measure the pinned workloads against the performance budgets.
+perf *ARGS: rust package tools
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2700 python3 -B scripts/ios-perf.py "$@"
+
+# Link the driving bridge from a bare Swift executable, run it on the
+# simulator against a served test network and read the relay inventory back.
+# Link the driving bridge from bare Swift and read a served relay back.
+loopback-smoke: tools
+    {{bounded}} 1800 python3 -B ios/Tools/loopback_smoke.py
+
+# Inspect the release bundle for excluded platforms and debug-only surfaces.
+# Release links the shipping library, so the package is its input.
+# Inspect the release bundle for debug surfaces and excluded platforms.
+scope-audit: package
+    {{bounded}} 1200 python3 -B scripts/ios-scope-audit.py
+
+# Everything a change to the app is held to, in dependency order, stopping at
+# the first failure: formatting, lint and tests of the Rust workspace, then
+# the phone's lint, bridge, build, smokes, units, goldens, journeys,
+# accessibility, measured run and shipped-scope audit.
+# Run everything a change to the app is held to, in order.
+verify:
+    {{bounded}} 12600 cargo run --locked -q -p xtask -- ios-verify
+
+# The unit tests of the recipe scripts themselves. Pure Python; nothing is
+# built or booted.
+# Run the recipe scripts' own unit tests.
+script-tests:
+    {{bounded}} 120 python3 -m unittest discover -s scripts/tests -p '*_test.py' -t scripts/tests
+
+# Opt-in timing and capture experiments. Build explicitly before capture so
+# build preparation and screenshot latency can be measured independently.
+# Run opt-in timing and capture experiments.
+explore *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 12600 python3 -B scripts/ios-explore.py "$@"
+
+# Read-only toward the supplied design checkout; all experimental variants and
+# captures are generated in a fresh ignored output directory.
+# Measure iteration against a design checkout, read-only.
+design-benchmark *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 python3 -B scripts/ios-design-benchmark.py "$@"
+
+# One Debug app contains every layout idea. A run installs and launches once,
+# then either captures a two/four-idea batch or matched source/production views.
+# Measure layout-idea iteration inside one debug app.
+native-design-benchmark *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3600 python3 -B scripts/ios-native-design-benchmark.py "$@"
+
+# Version, tag, archive and export the iPhone app, and stop there: nothing in
+# this recipe uploads, submits or pushes. --preflight reports its inputs and
+# stops; --rehearse archives and exports the would-be release without writing
+# the tree or cutting a tag. The scope audit runs first, so no archive is ever
+# produced from a bundle carrying a debug surface or an excluded platform.
+# docs/RELEASE.md holds the contract, including the one-time App Store Connect
+# setup behind it.
+# Version, tag, archive and export the app; upload nothing.
+release *ARGS: package scope-audit
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 8100 python3 -B scripts/release.py "$@"
+
+# Signs a QA account into the real amux.sh from this Mac, with no app, the
+# same way the phone does, and reports what that account is entitled to and
+# whether the relay will issue it a credential. Evidence a person runs by
+# hand, never a test and never in CI: it reaches the production account
+# service and needs a password out of this Mac's login keychain. Deliberately
+# absent from the verification list in crates/xtask/src/ios_verify.rs.
+# Sign a QA account into the real amux.sh from this Mac (by hand only).
+qa-cloud-signin:
+    {{bounded}} 300 python3 -B scripts/qa-cloud-signin.py
+
+# Carries a real App Store sandbox purchase from a physical phone to the
+# account service and reads back what the account may then do. A sandbox
+# transaction exists only on a phone signed into a sandbox Apple Account
+# running a development-signed build, so this never runs on a simulator and
+# never invents one; `--preflight` reports what is present and missing on this
+# Mac without touching StoreKit, the store or amux.sh. Evidence a person runs
+# by hand, never a test and never in CI, and deliberately absent from the
+# verification list in crates/xtask/src/ios_verify.rs.
+# Carry a real sandbox purchase from a phone to the account service (by hand only).
+qa-sandbox-purchase *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3600 python3 -B scripts/qa-sandbox-purchase.py "$@"
+
+# The one run that reaches everything at once: an entitled QA account signed
+# into the real amux.sh, the simulator app connected to the production relay on
+# the credential that service minted, this checkout's own daemon on the other
+# side, and a real Claude session answering a question asked from the phone.
+# Every other journey runs against a relay started beside it with credentials a
+# harness minted, so this is the only place the production handshake — the
+# audience, port and client the relay compares with its own configuration, and
+# the signature it validates — is exercised at all. It spends real money on a
+# real agent and reaches a real account, so it is evidence a person runs by
+# hand, never a test and never in CI, and it is deliberately absent from the
+# verification list in crates/xtask/src/ios_verify.rs. The checkout's daemon
+# is a worktree resource (`wt run daemon`); the script refuses to start
+# without it.
+# Run the whole product once against the real cloud (by hand only).
+qa-live-journey: build desktop
+    {{bounded}} 2100 python3 -B scripts/qa-live-journey.py
+
+# The desktop product, built through the root recipe so the phone recipes that
+# need a daemon beside them share its configuration.
+# Build the desktop product through the root recipe.
+desktop:
+    just build
+
+# Read this commit's GitHub run: exits zero only when the whole workflow and
+# the iOS verification step succeeded.
+# Read this commit's GitHub run.
+ci-status *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3300 cargo run --locked -q -p xtask -- ci-status "$@"
+
+# Push HEAD to the branch's remote and wait for its CI run to pass.
+# Push HEAD and wait for its CI run to pass.
+ci-gate:
+    scripts/ci-gate.sh
+
+# An intermediate CI check that tolerates a run still in progress.
+# Check CI, tolerating a run still in progress.
+ci-observe *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; scripts/ci-observe.sh "$@"

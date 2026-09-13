@@ -370,6 +370,97 @@ impl wire::profile_service_server::ProfileService for FrontDoor {
             .rpc_get_pairing_status(local(wire::GetPairingStatusRequest {}))
             .await
     }
+    async fn begin_pair(
+        &self,
+        request: Request<wire::ProfileBeginPairRequest>,
+    ) -> Rpc<wire::PendingPairResponse> {
+        let request = request.into_inner();
+        let op = operation_id(&request.operation_id)?;
+        let encoded = request.encode_to_vec();
+        let installation = self.installation.clone();
+        self.operations
+            .run(op, "begin_pair", encoded, async move {
+                let admin = installation
+                    .admin(profile_id(&request.profile_id)?)
+                    .await
+                    .map_err(installation_error)?;
+                admin
+                    .rpc_begin_pair(local(
+                        request
+                            .pairing
+                            .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
+                    ))
+                    .await
+                    .map(Response::into_inner)
+            })
+            .await
+            .map(Response::new)
+    }
+    async fn confirm_pair(
+        &self,
+        request: Request<wire::ProfilePendingPairRequest>,
+    ) -> Rpc<wire::GetPeerResponse> {
+        let request = request.into_inner();
+        let op = operation_id(&request.operation_id)?;
+        let encoded = request.encode_to_vec();
+        let installation = self.installation.clone();
+        self.operations
+            .run(op, "confirm_pair", encoded, async move {
+                let admin = installation
+                    .admin(profile_id(&request.profile_id)?)
+                    .await
+                    .map_err(installation_error)?;
+                admin
+                    .rpc_confirm_pair(local(
+                        request
+                            .pairing
+                            .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
+                    ))
+                    .await
+                    .map(Response::into_inner)
+            })
+            .await
+            .map(Response::new)
+    }
+    async fn abandon_pair(
+        &self,
+        request: Request<wire::ProfilePendingPairRequest>,
+    ) -> Rpc<wire::PairingAbandoned> {
+        let request = request.into_inner();
+        let op = operation_id(&request.operation_id)?;
+        let encoded = request.encode_to_vec();
+        let installation = self.installation.clone();
+        self.operations
+            .run(op, "abandon_pair", encoded, async move {
+                let admin = installation
+                    .admin(profile_id(&request.profile_id)?)
+                    .await
+                    .map_err(installation_error)?;
+                admin
+                    .rpc_abandon_pair(local(
+                        request
+                            .pairing
+                            .ok_or_else(|| Status::invalid_argument("pairing is required"))?,
+                    ))
+                    .await
+                    .map(Response::into_inner)
+            })
+            .await
+            .map(Response::new)
+    }
+    async fn get_device_identity(
+        &self,
+        request: Request<wire::ProfileRequest>,
+    ) -> Rpc<wire::DeviceIdentity> {
+        let admin = self
+            .installation
+            .admin(profile_id(&request.into_inner().profile_id)?)
+            .await
+            .map_err(installation_error)?;
+        admin
+            .rpc_get_device_identity(local(wire::GetDeviceIdentityRequest {}))
+            .await
+    }
     async fn list_peers(
         &self,
         request: Request<wire::ProfileRequest>,

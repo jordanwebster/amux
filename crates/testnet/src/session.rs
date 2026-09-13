@@ -15,7 +15,8 @@ use bytes::Bytes;
 use client::{Client, ClientError};
 use node::{
     Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
-    DiffBase, DiffResponse, SendInputRequest, SendMessageRequest, SubscribeSessionEvent,
+    DiffBase, DiffResponse, ProtocolError, SendInputRequest, SendMessageRequest,
+    SubscribeSessionEvent,
 };
 use uuid::Uuid;
 
@@ -23,6 +24,43 @@ use super::Daemon;
 use super::assertions::{DEFAULT_TIMEOUT, eventually};
 
 impl Daemon {
+    /// Replace only the provider transport for SDK sessions created on this host.
+    /// Creation still uses the service's validation, backend and live registry.
+    pub async fn script_sdk_sessions(&self, script: super::sdk::Script) {
+        self.inner
+            .sources
+            .script_sdk(super::sdk::Provider::new(script));
+    }
+
+    /// Provider-side observations for an SDK agent created on this daemon.
+    pub async fn observed_sdk_inputs(&self, agent: Uuid) -> Option<Vec<serde_json::Value>> {
+        self.inner.sources.sdk()?.observed(agent)
+    }
+
+    /// Register a recorded Codex thread through the normal backend ingest and
+    /// input paths. The caller keeps the recording transport alive.
+    #[cfg(unix)]
+    pub async fn spawn_recorded_codex(
+        &self,
+        name: &str,
+        working_dir: impl AsRef<Path>,
+        session: codex::Session,
+    ) -> Result<Agent, ProtocolError> {
+        let parts = self
+            .try_parts()
+            .await
+            .ok_or_else(|| ProtocolError::ServerError {
+                message: format!("daemon '{}' is not running", self.name()),
+            })?;
+        agent_runtime::test_support::register_codex_session(
+            parts.agent_host.as_ref(),
+            name.into(),
+            working_dir.as_ref().to_owned(),
+            session,
+        )
+        .await
+    }
+
     /// Hold every queue slot of an echo PTY until the returned permits drop.
     pub async fn hold_echo_input(
         &self,
@@ -100,6 +138,89 @@ impl Daemon {
         )
         .await
         .unwrap_or_else(|error| panic!("register scripted Claude agent '{name}': {error}"))
+    }
+
+    /// A scripted child of `parent`, answering with the same script, raised
+    /// on the daemon that runs the parent.
+    pub async fn spawn_child(
+        &self,
+        parent: &Agent,
+        name: &str,
+        script: super::script::Script,
+    ) -> Result<(Agent, super::script::Provider), ProtocolError> {
+        self.spawn_scripted_agent(
+            name,
+            &parent.working_dir,
+            script,
+            Some(AgentParent {
+                agent_id: parent.id,
+                host_id: parent.host_id,
+            }),
+        )
+        .await
+    }
+
+    /// How many live links this daemon holds, its relay link included. RPC
+    /// tunnels ride on links and are not counted.
+    pub async fn connections(&self) -> usize {
+        self.debug_dump(false).await["links"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or_default()
+    }
+
+    /// What this daemon says it is holding: every agent on it, as it
+    /// recorded them, and every device it trusts.
+    pub async fn inventory(&self) -> Result<(Vec<Agent>, Vec<client::PeerEntry>), anyhow::Error> {
+        let agents = self.admin_client().await.list_agents().await?;
+        let devices = self.pairing_admin().await.list_peers().await?;
+        Ok((agents, devices))
+    }
+
+    /// Registers a live scripted provider in the daemon's normal session inventory.
+    pub async fn spawn_scripted_agent(
+        &self,
+        name: &str,
+        working_dir: impl AsRef<Path>,
+        script: super::script::Script,
+        parent: Option<AgentParent>,
+    ) -> Result<(Agent, super::script::Provider), ProtocolError> {
+        let parts = self
+            .try_parts()
+            .await
+            .ok_or_else(|| ProtocolError::ServerError {
+                message: format!("daemon '{}' is not running", self.name()),
+            })?;
+        // The session is built from scripted sources before the runtime
+        // sees it; the runtime then runs its ordinary Claude backend over it
+        // and reports the semantic input it accepts back to the script.
+        let (session, provider) =
+            super::script::session(script)
+                .await
+                .map_err(|error| ProtocolError::ServerError {
+                    message: format!("scripted Claude session: {error}"),
+                })?;
+        let agent_id = Uuid::new_v4();
+        self.inner.sources.attach_claude(agent_id, provider.clone());
+        let agent = agent_runtime::test_support::register_claude_pty_session(
+            parts.agent_host.as_ref(),
+            CreateAgentRequest {
+                agent_id,
+                host_id: None,
+                name: Some(name.into()),
+                agent_type: AgentType::Claude {
+                    driver: model::ClaudeDriver::Pty,
+                },
+                working_dir: working_dir.as_ref().to_owned(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent,
+                initial_prompt: None,
+            },
+            session,
+        )
+        .await?;
+        Ok((agent, provider))
     }
 
     /// Stores bytes on `owner` for `agent`, routing through this daemon.
@@ -1305,6 +1426,10 @@ async fn assert_admin_absent(channel: tonic::transport::Channel, boundary: &str)
             "PairPeer",
             "PairPinCloudPeer",
             "PairQrCloudPeer",
+            "GetDeviceIdentity",
+            "BeginPair",
+            "ConfirmPair",
+            "AbandonPair",
             "ListPeers",
             "GetPeer",
             "Unpair",

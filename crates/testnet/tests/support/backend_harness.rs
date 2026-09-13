@@ -1,3 +1,6 @@
+// Shared by several test binaries, each of which uses a subset of it.
+#![allow(dead_code)]
+
 use std::time::Duration;
 
 use agent_runtime::test_support::{
@@ -97,6 +100,18 @@ impl ClaudeSdkBackendHarness {
 
     pub async fn send(&self, input_id: &[u8], input: ClaudeSdkFixtureInput) -> Result<()> {
         self.backend.send_claude_sdk(input_id, input).await
+    }
+
+    /// Exercise the daemon decoder with bytes emitted by a client runtime.
+    pub async fn send_encoded(&self, input_id: &[u8], payload: &[u8]) -> Result<()> {
+        let input = wire::decode_claude_sdk_input(payload)?;
+        let input = agent_runtime::test_support::claude_sdk_input_from_model(input)?;
+        self.send(input_id, input).await
+    }
+
+    /// Rows observed at the daemon log boundary, including synthesized facts.
+    pub fn rows(&self) -> &[Value] {
+        &self.rows
     }
 
     pub async fn wait_for_type(&mut self, expected: &str) -> Result<Value> {

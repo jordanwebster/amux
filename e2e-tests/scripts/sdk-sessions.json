@@ -1,0 +1,14 @@
+{
+  "initialization": {
+    "commands": [],
+    "agents": [],
+    "models": [
+      {"value": "sonnet", "displayName": "Sonnet", "description": "Balanced", "supportedEffortLevels": ["low", "high"]},
+      {"value": "haiku", "displayName": "Haiku", "description": "Fast", "supportedEffortLevels": ["medium"]}
+    ],
+    "account": {},
+    "output_style": "default",
+    "available_output_styles": []
+  },
+  "reply": "The SDK session received your prompt."
+}

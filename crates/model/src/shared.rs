@@ -183,14 +183,28 @@ pub struct SubscribeSessionRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
     SnapshotComplete,
-    AgentUp { agent: Agent },
-    AgentUpdated { agent: Agent },
-    AgentDown { agent_id: Uuid },
+    /// The complete inventory of one remote host as the daemon last saw it,
+    /// attributed to the authenticated source host. Only the client service
+    /// carries this; a host never asserts another host's inventory.
+    HostInventory {
+        host_id: Uuid,
+        agent_ids: Vec<Uuid>,
+    },
+    AgentUp {
+        agent: Agent,
+    },
+    AgentUpdated {
+        agent: Agent,
+    },
+    AgentDown {
+        agent_id: Uuid,
+    },
 }
 
 impl AgentEvent {
     pub fn type_label(&self) -> &'static str {
         match self {
+            Self::HostInventory { .. } => "Agent::HostInventory",
             Self::SnapshotComplete => "Agent::SnapshotComplete",
             Self::AgentUp { .. } => "Agent::AgentUp",
             Self::AgentUpdated { .. } => "Agent::AgentUpdated",
@@ -218,6 +232,12 @@ pub struct Host {
     pub name: String,
     pub version: String,
     pub capabilities: Capabilities,
+    /// What kind of machine this is, in its own words: the operating system
+    /// the daemon was built for. A peer built before this field existed says
+    /// nothing, which is why it is optional — a machine whose kind is unknown
+    /// is not the same as one that claims to be nothing in particular.
+    #[serde(default)]
+    pub platform: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -236,6 +256,11 @@ pub struct HostEntry {
     pub capabilities: Option<Capabilities>,
     pub trust_status: HostTrustStatus,
     pub last_dial_error: Option<String>,
+    /// The peer's operating system as it reported it. Older hosts report
+    /// nothing, which is why it is optional: a machine whose kind is unknown
+    /// is not the same as one that claims to be nothing in particular.
+    #[serde(default)]
+    pub platform: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -348,4 +373,14 @@ pub enum ProtocolError {
     ArtifactCorrupt { id: String },
     #[error("{message}")]
     DiffUnavailable { message: String },
+}
+
+/// SHA-256 of a device public key as lowercase hexadecimal: the form a person
+/// compares across two screens when confirming a pairing.
+pub fn public_key_fingerprint(pubkey: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(pubkey)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

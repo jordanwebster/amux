@@ -1,0 +1,653 @@
+import AmuxCore
+import Foundation
+
+/// The conversation every talking screen opens, written in the Claude PTY
+/// layer's own row vocabulary rather than a shape invented for the phone.
+public enum Transcript {
+    public static func prompt(_ id: Int, seq: Int, text: String) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("prompt"),
+            "text": .string(text),
+            "content": .array([.object(["segment": .string("prose"), "value": .string(text)])]),
+            "source": .object(["source": .string("typed")]),
+            "prompt_id": .string("prompt-\(id)"),
+        ]))
+    }
+
+    public static func message(
+        _ id: Int, seq: Int, text: String, final: Bool = true, interrupted: Bool = false
+    ) -> FeedEntry {
+        let finality: JSONValue = if interrupted {
+            .object(["finality": .string("interrupted")])
+        } else if final {
+            .object(["finality": .string("final"), "stop_reason": .string("end_turn")])
+        } else {
+            .object(["finality": .string("open")])
+        }
+        return row(id, seq, .object([
+            "entry": .string("message"),
+            "message_id": .string("msg_\(id)"),
+            "segments": .array([.string(text)]),
+            "content": .array([.object(["segment": .string("prose"), "value": .string(text)])]),
+            "finality": finality,
+        ]))
+    }
+
+    public static func thinking(_ id: Int, seq: Int, seconds: Int) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("thinking"),
+            "duration_ms": .int(seconds * 1000),
+            "redacted": .bool(false),
+        ]))
+    }
+
+    public static func read(_ id: Int, seq: Int, path: String, grouped: Bool = false) -> FeedEntry {
+        tool(id, seq, name: "Read",
+             invocation: .object(["tool": .string("read"), "file_path": .string(path)]),
+             outcome: .object([
+                "outcome": .string("success"),
+                "facts": .object(["facts": .string("output"), "head": .string("140 lines"),
+                                  "truncated": .bool(false)]),
+             ]),
+             grouped: grouped)
+    }
+
+    public static func search(_ id: Int, seq: Int, query: String, grouped: Bool = false) -> FeedEntry {
+        tool(id, seq, name: "Grep",
+             invocation: .object(["tool": .string("query"), "text": .string(query)]),
+             outcome: .object([
+                "outcome": .string("success"),
+                "facts": .object(["facts": .string("output"), "head": .string("12 matches"),
+                                  "truncated": .bool(false)]),
+             ]),
+             grouped: grouped)
+    }
+
+    public static func ran(
+        _ id: Int, seq: Int, command: String, output: String, truncated: Bool = false,
+        meta: String? = nil, hidden: Int? = nil
+    ) -> FeedEntry {
+        tool(id, seq, name: "Bash",
+             invocation: .object(["tool": .string("bash"), "command": .string(command),
+                                  "description": meta.map(JSONValue.string) ?? .null]),
+             outcome: .object([
+                "outcome": .string("success"),
+                "facts": .object(["facts": .string("output"), "head": .string(output),
+                                  "hidden": hidden.map(JSONValue.int) ?? .null,
+                                  "truncated": .bool(truncated)]),
+             ]))
+    }
+
+    public static func edit(
+        _ id: Int, seq: Int, path: String, added: Int, removed: Int, lines: [String]
+    ) -> FeedEntry {
+        tool(id, seq, name: "Edit",
+             invocation: .object(["tool": .string("edit"), "file_path": .string(path),
+                                  "replace_all": .bool(false)]),
+             outcome: .object([
+                "outcome": .string("success"),
+                "facts": .object([
+                    "facts": .string("edit"),
+                    "file_path": .string(path),
+                    "added": .int(added),
+                    "removed": .int(removed),
+                    "document": .object([
+                        "numbering": .string("absolute"),
+                        "hunks": .array([.object([
+                            "old_start": .int(118),
+                            "new_start": .int(118),
+                            "header": .string("@@ -118,14 +118,9 @@"),
+                            "lines": .array(lines.map { .string($0) }),
+                        ])]),
+                        "truncated": .bool(false),
+                    ]),
+                ]),
+             ]))
+    }
+
+    /// A command the agent asked to run and was refused. The denial is a typed
+    /// fact from the transcript, never a guess made from an error string.
+    public static func denied(
+        _ id: Int, seq: Int, command: String, kind: String = "user_reject"
+    ) -> FeedEntry {
+        tool(id, seq, name: "Bash",
+             invocation: .object(["tool": .string("bash"), "command": .string(command),
+                                  "description": .null]),
+             outcome: .object(["outcome": .string("denied"), "kind": .string(kind)]))
+    }
+
+    public static func failed(_ id: Int, seq: Int, command: String, message: String) -> FeedEntry {
+        tool(id, seq, name: "Bash",
+             invocation: .object(["tool": .string("bash"), "command": .string(command),
+                                  "description": .null]),
+             outcome: .object(["outcome": .string("failed"), "message": .string(message)]))
+    }
+
+    /// A file written whole rather than edited.
+    public static func wrote(_ id: Int, seq: Int, path: String, lines: Int) -> FeedEntry {
+        tool(id, seq, name: "Write",
+             invocation: .object(["tool": .string("write"), "file_path": .string(path)]),
+             outcome: .object([
+                "outcome": .string("success"),
+                "facts": .object(["facts": .string("output"),
+                                  "head": .string("\(lines) lines"),
+                                  "truncated": .bool(false)]),
+             ]))
+    }
+
+    /// A subagent this one started.
+    public static func subagent(
+        _ id: Int, seq: Int, description: String, kind: String
+    ) -> FeedEntry {
+        tool(id, seq, name: "Task",
+             invocation: .object(["tool": .string("task"),
+                                  "description": .string(description),
+                                  "subagent_type": .string(kind),
+                                  "background": .bool(false)]),
+             outcome: .object(["outcome": .string("pending")]))
+    }
+
+    /// A message this agent sent to another one.
+    public static func toAgent(_ id: Int, seq: Int, to: String, text: String) -> FeedEntry {
+        tool(id, seq, name: "mcp__amux__send",
+             invocation: .object(["tool": .string("amux_send"), "to": .string(to),
+                                  "text": .string(text)]),
+             outcome: .object(["outcome": .string("success"),
+                               "facts": .object(["facts": .string("none")])]))
+    }
+
+    /// The provider itself failed, which is not the agent failing.
+    public static func providerError(_ id: Int, seq: Int, message: String) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("api_error"),
+            "error": .string("server_error"),
+            "text": .string(message),
+        ]))
+    }
+
+    /// History being compacted away, with what it cost.
+    public static func compaction(_ id: Int, seq: Int, before: Int, after: Int) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("compaction"),
+            "trigger": .string("auto"),
+            "pre_tokens": .int(before),
+            "post_tokens": .int(after),
+        ]))
+    }
+
+    /// A subagent that finished on its own and said so.
+    public static func subagentFinished(_ id: Int, seq: Int, text: String) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("task_notification"),
+            "text": .string(text),
+        ]))
+    }
+
+    /// A command still running: the tool has no result yet.
+    public static func running(_ id: Int, seq: Int, command: String) -> FeedEntry {
+        tool(id, seq, name: "Bash",
+             invocation: .object(["tool": .string("bash"), "command": .string(command),
+                                  "description": .null]),
+             outcome: .object(["outcome": .string("pending")]))
+    }
+
+    /// Another agent's session ending, as this agent's transcript recorded it.
+    public static func exited(_ id: Int, seq: Int, agent: String) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("agent_message"),
+            "id": .string("envelope-\(id)"),
+            "context": .null,
+            "from": .string(agent),
+            "kind": .object(["message_kind": .string("exited")]),
+            "text": .string(""),
+        ]))
+    }
+
+    /// A message another amux agent wrote into this one's transcript.
+    public static func fromAgent(_ id: Int, seq: Int, from: String, text: String) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("agent_message"),
+            "id": .string("envelope-\(id)"),
+            "context": .null,
+            "from": .string(from),
+            "kind": .object(["message_kind": .string("message")]),
+            "text": .string(text),
+        ]))
+    }
+
+    public static func turnEnd(_ id: Int, seq: Int, milliseconds: Int) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("turn"),
+            "duration": .object(["duration": .string("measured"), "ms": .int(milliseconds)]),
+            "message_count": .int(14),
+            "pending_background_agents": .null,
+        ]))
+    }
+
+    public static func interrupted(_ id: Int, seq: Int) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("interruption"),
+            "kind": .string("user"),
+            "interrupted_message_id": .null,
+        ]))
+    }
+
+    /// A row shape this build does not know. It is kept and shown as itself
+    /// rather than dropped, because a transcript that quietly loses rows is
+    /// worse than one that admits it saw something it cannot read.
+    public static func unrecognized(_ id: Int, seq: Int, label: String) -> FeedEntry {
+        row(id, seq, .object(["entry": .string("unrecognized"), "label": .string(label)]))
+    }
+
+    private static func tool(
+        _ id: Int, _ seq: Int, name: String, invocation: JSONValue, outcome: JSONValue,
+        grouped: Bool = false
+    ) -> FeedEntry {
+        row(id, seq, .object([
+            "entry": .string("tool"),
+            "tool_use_id": .string("toolu_\(id)"),
+            "name": .string(name),
+            "invocation": invocation,
+            "outcome": outcome,
+            "message_final": .bool(true),
+            "group_with_previous": .bool(grouped),
+            "message_id": .string("msg_\(id)"),
+        ]))
+    }
+
+    private static func row(_ id: Int, _ seq: Int, _ kind: JSONValue) -> FeedEntry {
+        FeedEntry(layer: .claudePty, row: .object([
+            "id": .int(id), "seq": .int(seq), "kind": kind,
+        ]))
+    }
+
+    /// The conversation used behind composer sheets and decisions. It mirrors
+    /// the selected design's shared context rather than borrowing the longer
+    /// run screen, so every overlay has the same visible transcript.
+    public static let conversation: [FeedEntry] = [
+        prompt(
+            0, seq: 1,
+            text: "Collapse the pairing errors onto one string, and make sure nothing reads INVALID_PIN by name."),
+        read(1, seq: 2, path: "crates/amux-ui/src/pairing.rs"),
+        search(2, seq: 3, query: "\"INVALID_PIN\"", grouped: true),
+        read(3, seq: 4, path: "crates/amux/src/pairing/mod.rs", grouped: true),
+        edit(
+            4, seq: 5, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14,
+            lines: [
+                "  let message = match status {",
+                "-   Code::NotFound => \"no such host\",",
+                "+   _ => \"Pairing failed. Check the code\",",
+                "  };",
+            ]),
+        ran(5, seq: 6, command: "cargo check -p amux-ui", output: "", meta: "4.2s"),
+        edit(
+            6, seq: 7, path: "crates/amux-ui/src/effect.rs", added: 2, removed: 2,
+            lines: [
+                "- case .invalidPin: return oldMessage",
+                "+ case .pairingFailed: return message",
+            ]),
+        wrote(7, seq: 8, path: "crates/amux-ui/tests/spec/pairing_copy.rs", lines: 38),
+        message(8, seq: 9, text: """
+            Found it. The client maps three distinct gRPC statuses onto three different \
+            strings, so the copy leaks exactly what the protocol deliberately hides. I have \
+            collapsed them onto one message and deleted the branch.
+            """),
+        ran(9, seq: 10, command: "cargo test -p amux-ui", output: "", meta: "22s"),
+        message(10, seq: 11, text: """
+            `cargo check` is clean. Before I call it done I would like to run the spec suite — \
+            three tests assert on the old error strings and I want to see them fail loudly \
+            rather than guess.
+            """),
+    ]
+
+    /// The longer selected run. Every source row is represented as a real
+    /// runtime feed entry rather than as capture-only presentation data.
+    public static let run: [FeedEntry] = [
+        prompt(
+            20, seq: 1,
+            text: "Collapse the pairing errors onto one string, and make sure nothing reads INVALID_PIN by name."),
+        read(21, seq: 2, path: "crates/amux-ui/src/pairing.rs"),
+        read(22, seq: 3, path: "crates/amux-ui/src/model.rs", grouped: true),
+        search(23, seq: 4, query: "\"INVALID_PIN\"", grouped: true),
+        read(24, seq: 5, path: "crates/amux/src/pairing/mod.rs", grouped: true),
+        search(25, seq: 6, query: "\"Code::Unauthenticated\"", grouped: true),
+        read(26, seq: 7, path: "crates/amux-ui/tests/spec/pairing.rs", grouped: true),
+        edit(
+            27, seq: 8, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14,
+            lines: [
+                "  let message = match status {",
+                "-   Code::NotFound => \"no such host\",",
+                "+   _ => \"Pairing failed. Check the code\",",
+                "  };",
+            ]),
+        ran(
+            28, seq: 9, command: "cargo check -p amux-ui",
+            output: "error[E0308]: mismatched types", truncated: true,
+            meta: "4.2s", hidden: 214),
+        read(29, seq: 10, path: "crates/amux-ui/src/effect.rs"),
+        edit(
+            30, seq: 11, path: "crates/amux-ui/src/effect.rs", added: 2, removed: 2,
+            lines: [
+                "- case .invalidPin: return oldMessage",
+                "+ case .pairingFailed: return message",
+            ]),
+        ran(31, seq: 12, command: "cargo check -p amux-ui", output: "", meta: "3.8s"),
+        wrote(32, seq: 13, path: "crates/amux-ui/tests/spec/pairing_copy.rs", lines: 38),
+        denied(33, seq: 14, command: "rm -rf target", kind: "permission_denied"),
+        message(34, seq: 15, text: """
+            Done. The three status arms are one arm now, and the new test asserts on the \
+            single string rather than on which one it was.
+            """),
+    ]
+
+    /// Existing behavior fixtures use this spelling. Visual states choose the
+    /// shorter shared conversation or the longer run explicitly.
+    public static let pairingCopy = conversation
+
+    /// The same conversation with the agent's closing message carrying an
+    /// attachment, the way an agent's `attach` tool leaves one: as an element
+    /// in the message text, indistinguishable from one a person wrote.
+    ///
+    /// A fixture that cannot make the element asks the shared library and gets
+    /// nothing back, and then this is the ordinary transcript — a token drawn
+    /// from a string the parser would reject would photograph a lie.
+    public static func pairingCopy(attaching attachment: DraftAttachment) -> [FeedEntry] {
+        guard let token = Bridge.token(for: attachment) else { return pairingCopy }
+        return pairingCopy.dropLast() + [
+            message(10, seq: 11, text: """
+                `cargo check` is clean; the whole of its output is here.
+
+                \(token.element)
+
+                Before I call it done I'd like to run the spec suite — three tests assert on \
+                the old error strings and I want to see them fail loudly rather than guess.
+                """),
+        ]
+    }
+
+    /// The same conversation with the turn still open: the person has asked
+    /// for the suite and the command is still running.
+    public static var live: [FeedEntry] {
+        run + [
+            prompt(35, seq: 16, text: "Good. Now run the whole suite and tell me what breaks."),
+            running(36, seq: 17, command: "cargo test --workspace"),
+        ]
+    }
+
+    /// A compact exchange with another agent, with enough work around both
+    /// directions to show that their voices remain part of the same rail.
+    public static var peerExchange: [FeedEntry] {
+        [
+            compaction(0, seq: 1, before: 148_000, after: 22_000),
+            prompt(1, seq: 2, text: """
+                Check with relay-cleanup before you collapse the errors \u{2014} it's in \
+                that file too.
+                """),
+            read(2, seq: 3, path: "crates/amux-ui/src/pairing.rs"),
+            search(3, seq: 4, query: "\"INVALID_PIN\"", grouped: true),
+            toAgent(4, seq: 5, to: "relay-cleanup/mini", text: """
+                I am about to collapse the three pairing error arms onto one string in \
+                amux-ui. Are you holding anything that matches on the error name?
+                """),
+            read(5, seq: 6, path: "crates/amux-ui/tests/spec/pairing.rs"),
+            message(6, seq: 7, text: """
+                Asked relay-cleanup and started reading the tests while we wait. Nothing in \
+                amux-ui matches on the name itself, so if it is holding nothing this is a \
+                one-file change.
+                """),
+            fromAgent(7, seq: 8, from: "relay-cleanup/mini", text: """
+                Nothing here matches on it \u{2014} I only construct them. Go ahead, and I \
+                will rebase onto whatever you land.
+                """),
+            message(8, seq: 9, text: "Clear. Collapsing them now."),
+            edit(9, seq: 10, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14, lines: [
+                "  let message = match status {",
+                "-   Code::NotFound => \"no such host\",",
+                "+   _ => \"Pairing failed. Check the code\",",
+                "  };",
+            ]),
+            ran(10, seq: 11, command: "cargo check -p amux-ui", output: "Finished in 3.8s"),
+            subagentFinished(11, seq: 12, text: "spec-suite updated three assertions"),
+            fromAgent(12, seq: 13, from: "relay-cleanup/mini", text: """
+                Moved it. The shared crate no longer exports the three constants.
+                """),
+            exited(13, seq: 14, agent: "relay-cleanup/mini"),
+        ]
+    }
+
+    /// Everything an agent can write, including the shapes this build cannot
+    /// read and the voices that are not the agent's own.
+    ///
+    /// It opens on a compaction rule because a long conversation does, and it
+    /// ends with the other agent's session closing: between those two the
+    /// transcript has to carry a second agent's voice in both directions, a
+    /// subagent, a refusal, a failure, an interruption, a provider error and a
+    /// row shape nobody has taught it yet, without any of them reading as the
+    /// agent's own prose. Ordered so that a single screenful holds every one of
+    /// them; the markdown the agent writes is proved by the same screen's prose.
+    public static var everyKind: [FeedEntry] {
+        [
+            compaction(0, seq: 1, before: 148_000, after: 22_000),
+            prompt(1, seq: 2, text: """
+                Check with relay-cleanup before you collapse the errors \u{2014} it's in \
+                that file too.
+                """),
+            read(2, seq: 3, path: "crates/amux-ui/src/pairing.rs"),
+            search(3, seq: 4, query: "\"INVALID_PIN\"", grouped: true),
+            toAgent(4, seq: 5, to: "relay-cleanup/mini", text: """
+                I am about to collapse the three pairing error arms onto one string in \
+                amux-ui. Are you holding anything that matches on the error name?
+                """),
+            read(5, seq: 6, path: "crates/amux-ui/tests/spec/pairing.rs"),
+            message(6, seq: 7, text: markdown),
+            fromAgent(7, seq: 8, from: "relay-cleanup/mini", text: """
+                Nothing here matches on it \u{2014} I only construct them. Go ahead, and I \
+                will rebase onto whatever you land.
+                """),
+            edit(8, seq: 9, path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14, lines: [
+                "  let message = match status {",
+                "-   Code::NotFound => \"no such host\",",
+                "+   _ => \"Pairing failed. Check the code\",",
+                "  };",
+            ]),
+            ran(9, seq: 10, command: "cargo check -p amux-ui", output: """
+                Checking amux-ui v0.1.0
+                Finished in 3.8s
+                warning: unused import
+                """),
+            wrote(10, seq: 11, path: "crates/amux-ui/src/pairing_copy.rs", lines: 38),
+            denied(11, seq: 12, command: "rm -rf target"),
+            failed(12, seq: 13, command: "cargo test --workspace", message: "3 tests failed"),
+            interrupted(13, seq: 14),
+            providerError(14, seq: 15, message: "The provider was overloaded; it retried."),
+            subagent(15, seq: 16, description: "spec-suite", kind: "general-purpose"),
+            subagentFinished(16, seq: 17, text: "spec-suite updated three assertions"),
+            unrecognized(17, seq: 18, label: "checkpoint"),
+            fromAgent(18, seq: 19, from: "relay-cleanup/mini", text: """
+                Moved it. The shared crate no longer exports the three constants, so \
+                nothing downstream can name them.
+                """),
+            exited(19, seq: 20, agent: "relay-cleanup/mini"),
+            turnEnd(20, seq: 21, milliseconds: 184_000),
+        ]
+    }
+
+    /// One agent message written in every markdown construct the transcript
+    /// promises to render, kept short because a screen is the only place that
+    /// promise can be checked and the rest of the screen has rows to prove too.
+    private static let markdown = """
+        Asked **relay-cleanup** and started reading the tests. Nothing in `amux-ui` \
+        matches on the name itself.
+
+        ## What the arms become
+
+        | Status | Copy |
+        | --- | --- |
+        | NotFound | Pairing failed |
+
+        1. Collapse the match to one arm
+        2. Fix the [spec tests](https://example.com/spec) that assert on it
+
+        ```rust
+        _ => "Pairing failed. Check the code and try again.",
+        ```
+
+        > The protocol refuses to tell them apart, and so must we.
+        """
+
+    /// A short Codex turn, in Codex's own row vocabulary.
+    ///
+    /// A Codex conversation is not a Claude conversation with the names
+    /// changed: its rows arrive under different keys and its work is one kind
+    /// of entry with a state on it. So the state a Codex approval is read in
+    /// is built from Codex's rows rather than borrowing the other layer's.
+    public static let codexTurn: [FeedEntry] = [
+        codexRow(0, seq: 1, kind: .object([
+            "entry": .string("prompt"),
+            "content": .array([.object([
+                "kind": .string("text"),
+                "value": .string("Run the spec suite and tell me what breaks."),
+            ])]),
+        ])),
+        codexRow(1, seq: 2, kind: .object([
+            "entry": .string("reasoning"),
+            "summary": .array([.string("Reading the suite's own runner first.")]),
+            "finality": .string("final"),
+        ])),
+        codexRow(2, seq: 3, kind: .object([
+            "entry": .string("work"),
+            "kind": .object(["work": .string("command"), "command": .string("cargo check")]),
+            "state": .object(["state": .string("completed")]),
+            "exit_code": .int(0),
+        ])),
+        codexRow(3, seq: 4, kind: .object([
+            "entry": .string("message"),
+            "text": .string(
+                "The workspace checks clean. Running the suite needs to leave the sandbox."),
+            "finality": .string("final"),
+        ])),
+    ]
+
+    private static func codexRow(_ id: Int, seq: Int, kind: JSONValue) -> FeedEntry {
+        FeedEntry(layer: .codex, row: .object([
+            "id": .int(id), "seq": .int(seq), "kind": kind,
+        ]))
+    }
+
+    /// The selected review: four files in the producer's narrative order, two
+    /// of them only headings, with the same visible hunks the design uses.
+    ///
+    /// Separate from ``changes`` on purpose. The chip's arithmetic is locked
+    /// to that two-file patch, and growing it to give the review page
+    /// something to scroll would change a screenshot that is about the chip.
+    public static let review = ReviewDocument(
+        files: [
+            ReviewFile(
+                path: "crates/amux-ui/src/lib.rs", added: 0, removed: 2,
+                rows: [], hunkStarts: []),
+            ReviewFile(
+                path: "crates/amux-ui/src/pairing.rs", added: 9, removed: 14,
+                rows: [
+                    DiffRow(old: 118, new: 118, kind: .context,
+                            text: "  let message = match status {"),
+                    DiffRow(old: 119, new: nil, kind: .removed,
+                            text: "-   Code::NotFound => \"no such host\","),
+                    DiffRow(old: 120, new: nil, kind: .removed,
+                            text: "-   Code::Unauthenticated => \"wrong PIN\","),
+                    DiffRow(old: 121, new: nil, kind: .removed,
+                            text: "-   Code::DeadlineExceeded => \"expired\","),
+                    DiffRow(old: nil, new: 122, kind: .added,
+                            text: "+   // One string for every failure: the protocol"),
+                    DiffRow(old: nil, new: 123, kind: .added,
+                            text: "+   // refuses to tell them apart, and so must we."),
+                    DiffRow(old: nil, new: 124, kind: .added,
+                            text: "+   _ => \"Pairing failed. Check the code\","),
+                    DiffRow(old: 122, new: 125, kind: .context, text: "  };"),
+                    DiffRow(old: nil, new: nil, kind: .boundary, text: ""),
+                    DiffRow(old: 118, new: nil, kind: .removed,
+                            text: "- pub const INVALID_PIN: &str = \"wrong PIN\";"),
+                    DiffRow(old: 119, new: nil, kind: .removed,
+                            text: "- pub const NO_SUCH_HOST: &str = \"no such host\";"),
+                    DiffRow(old: 120, new: nil, kind: .removed,
+                            text: "- pub const EXPIRED: &str = \"expired\";"),
+                    DiffRow(old: 121, new: 121, kind: .context,
+                            text: "  pub const PAIRING_FAILED: &str ="),
+                ],
+                hunkStarts: [0, 9]),
+            ReviewFile(
+                path: "crates/amux-ui/tests/spec/pairing.rs", added: 6, removed: 12,
+                rows: [
+                    DiffRow(old: 118, new: nil, kind: .removed,
+                            text: "-   assert_eq!(msg, \"wrong PIN\");"),
+                    DiffRow(old: nil, new: 119, kind: .added,
+                            text: "+   assert_eq!(msg, PAIRING_FAILED);"),
+                    DiffRow(old: 119, new: 120, kind: .context, text: "  }"),
+                ],
+                hunkStarts: [0]),
+            ReviewFile(
+                path: "docs/PROTOCOL.md", added: 3, removed: 0,
+                rows: [], hunkStarts: []),
+        ],
+        identity: BaseIdentity(
+            base: .branch("main"),
+            head: "9f2c1b40a7e3d58f6b0c2a94d13e7f85c6b2a0d9",
+            mergeBase: "4a7d3e91c2b508f6a1d94e73b0c528f6d1a934e7",
+            blobs: [
+                ["crates/amux-ui/src/lib.rs", "2d8e46b1"],
+                ["crates/amux-ui/src/pairing.rs", "b71c3f0a"],
+                ["crates/amux-ui/tests/spec/pairing.rs", "5c0a91de"],
+                ["docs/PROTOCOL.md", "8f13c7a2"],
+            ]))
+
+    /// The artifact the frozen patch is. A digest rather than a UUID, because
+    /// that is what names a stored artifact.
+    public static let changesArtifact = ArtifactId(
+        "sha256:11ee9c1a0f3d4b8a72c6e5d0918f3a4b6c7d8e9f0a1b2c3d4e5f60718293a4b5")
+
+    /// The changes a finished turn offers to show: two files, already split,
+    /// numbered and identified, exactly as the core hands them over.
+    public static let changes = ReviewDocument(
+        files: [
+            ReviewFile(
+                path: "crates/amux-ui/src/pairing.rs", added: 3, removed: 3,
+                rows: [
+                    DiffRow(old: 118, new: 118, kind: .context,
+                            text: "  let message = match status {"),
+                    DiffRow(old: 119, new: nil, kind: .removed,
+                            text: "-   Code::NotFound => \"no such host\","),
+                    DiffRow(old: 120, new: nil, kind: .removed,
+                            text: "-   Code::Unauthenticated => \"wrong PIN\","),
+                    DiffRow(old: 121, new: nil, kind: .removed,
+                            text: "-   Code::DeadlineExceeded => \"expired\","),
+                    DiffRow(old: nil, new: 119, kind: .added,
+                            text: "+   // One string for every failure: the protocol"),
+                    DiffRow(old: nil, new: 120, kind: .added,
+                            text: "+   // refuses to tell them apart, and so must we."),
+                    DiffRow(old: nil, new: 121, kind: .added,
+                            text: "+   _ => \"Pairing failed. Check the code\","),
+                    DiffRow(old: 122, new: 122, kind: .context, text: "  };"),
+                ],
+                hunkStarts: [0]),
+            ReviewFile(
+                path: "crates/amux-ui/src/pairing/errors.rs", added: 0, removed: 3,
+                rows: [
+                    DiffRow(old: 4, new: nil, kind: .removed,
+                            text: "- pub const INVALID_PIN: &str = \"wrong PIN\";"),
+                    DiffRow(old: 5, new: nil, kind: .removed,
+                            text: "- pub const NO_SUCH_HOST: &str = \"no such host\";"),
+                    DiffRow(old: 6, new: nil, kind: .removed,
+                            text: "- pub const EXPIRED: &str = \"expired\";"),
+                    DiffRow(old: 7, new: 4, kind: .context,
+                            text: "  pub const PAIRING_FAILED: &str ="),
+                ],
+                hunkStarts: [0]),
+        ],
+        identity: BaseIdentity(
+            base: .branch("main"),
+            head: "9f2c1b40a7e3d58f6b0c2a94d13e7f85c6b2a0d9",
+            mergeBase: "4a7d3e91c2b508f6a1d94e73b0c528f6d1a934e7",
+            blobs: [
+                ["crates/amux-ui/src/pairing.rs", "b71c3f0a"],
+                ["crates/amux-ui/src/pairing/errors.rs", "2d8e46b1"],
+            ]))
+}

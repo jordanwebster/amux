@@ -56,6 +56,7 @@ pub fn a_host(name: &str) -> HostEntry {
         capabilities: Some(Capabilities::default()),
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: None,
+        platform: None,
     }
 }
 
@@ -69,6 +70,7 @@ pub fn an_offline_host(name: &str) -> HostEntry {
         capabilities: None,
         trust_status: HostTrustStatus::Trusted,
         last_dial_error: Some("dial tcp: connection refused".to_string()),
+        platform: None,
     }
 }
 
@@ -563,6 +565,8 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     let mut sequences = Vec::new();
     sequences.extend(crate::attachments::sequences());
     sequences.extend(crate::draft::sequences());
+    sequences.extend(crate::queue::sequences());
+    sequences.extend(crate::sdk_integration::sequences());
     sequences.extend(crate::connection::sequences());
     sequences.extend(crate::inventory::sequences());
     sequences.extend(crate::ops::sequences());
@@ -585,6 +589,9 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::claude_sdk_converse::sequences());
     sequences.extend(crate::codex_asks::sequences());
     sequences.extend(crate::codex_write::sequences());
+    sequences.extend(crate::model_effort::sequences());
+    sequences.extend(crate::provider_commands::sequences());
+    sequences.extend(crate::todos::sequences());
     sequences.extend(crate::codex_agreement::sequences());
     sequences.extend(crate::claude_agreement::sequences());
     sequences.extend(crate::a2a_fleet::sequences());
