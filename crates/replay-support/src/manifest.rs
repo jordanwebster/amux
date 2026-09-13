@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
 use chrono::{DateTime, Utc};
+use redaction::RedactionSummary;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -80,17 +81,6 @@ pub struct Observed {
     pub fields: BTreeSet<String>,
     #[serde(default)]
     pub discriminants: BTreeSet<String>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RedactionSummary {
-    #[serde(default)]
-    pub secrets: u64,
-    #[serde(default)]
-    pub machine_paths: u64,
-    #[serde(default)]
-    pub personal_identifiers: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]

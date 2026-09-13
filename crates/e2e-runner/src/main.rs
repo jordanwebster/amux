@@ -2,8 +2,6 @@ mod client;
 mod executor;
 mod parser;
 mod terminal;
-#[cfg(testnet)]
-mod testnet;
 
 use std::path::{Path, PathBuf};
 
@@ -64,12 +62,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Serve an isolated relay and declared host topology (debug builds only).
-    #[cfg(testnet)]
-    Testnet {
-        #[command(subcommand)]
-        command: testnet::Command,
-    },
     /// Exercise the public API as an independent gRPC client
     Client {
         #[command(subcommand)]
@@ -132,17 +124,17 @@ fn build_default_binaries(build_amux: bool, build_test_agent: bool) {
     if !build_amux && !build_test_agent {
         return;
     }
-    eprintln!("Building default e2e binaries through wt...");
-    let status = std::process::Command::new("timeout")
-        .args(["900", "wt", "build"])
+    eprintln!("Building default e2e binaries through just...");
+    let status = std::process::Command::new("just")
+        .arg("e2e-build")
         .current_dir(workspace_root())
         .status()
         .unwrap_or_else(|error| {
-            eprintln!("failed to run wt build for e2e binaries: {error}");
+            eprintln!("failed to run just e2e-build: {error}");
             std::process::exit(1);
         });
     if !status.success() {
-        eprintln!("wt build for e2e binaries failed");
+        eprintln!("just e2e-build failed");
         std::process::exit(status.code().unwrap_or(1));
     }
 }
@@ -185,7 +177,7 @@ fn run_tests(
     // Check binaries exist
     if !amux_binary.exists() && amux_binary != Path::new("amux") {
         eprintln!(
-            "amux binary not found at {}. Did you run 'wt build'?",
+            "amux binary not found at {}. Did you run 'just e2e-build'?",
             amux_binary.display()
         );
         std::process::exit(1);
@@ -193,7 +185,7 @@ fn run_tests(
 
     if !test_agent_binary.exists() && test_agent_binary != Path::new("test-agent") {
         eprintln!(
-            "test-agent binary not found at {}. Did you run 'wt build'?",
+            "test-agent binary not found at {}. Did you run 'just e2e-build'?",
             test_agent_binary.display()
         );
         std::process::exit(1);
@@ -280,13 +272,6 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        #[cfg(testnet)]
-        Commands::Testnet { command } => {
-            if let Err(error) = testnet::run(command) {
-                eprintln!("testnet: {error:#}");
-                std::process::exit(1);
-            }
-        }
         Commands::Client { command } => {
             let runtime = tokio::runtime::Runtime::new().expect("create client runtime");
             if let Err(error) = runtime.block_on(client::run(command)) {

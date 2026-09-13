@@ -1,7 +1,7 @@
 import AmuxCore
 import AmuxDesign
 import AmuxFeatures
-import AmuxMobile
+import AmuxApp
 import AmuxShell
 import Foundation
 import Observation
@@ -953,8 +953,8 @@ final class DoorHost {
     private func relay() -> (attempts: UInt64, shortened: UInt64) {
         guard let bridge else { return (0, 0) }
         let json = bridge.withRuntime { handle -> String? in
-            guard let owned = amux_mobile_relay_attempts(handle) else { return nil }
-            defer { amux_mobile_free(owned) }
+            guard let owned = amux_app_relay_attempts(handle) else { return nil }
+            defer { amux_app_free(owned) }
             return String(cString: owned)
         } ?? nil
         guard let json, let data = json.data(using: .utf8),

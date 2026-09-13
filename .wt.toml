@@ -1,6 +1,4 @@
-# wt coordination. Each checkout — the main one included — runs its own amux instance:
-# socket, state, identity and log under `.wt/amux/`, found through
-# AMUX_CONFIG, with the checkout's own build first on PATH.
+# wt owns the tree, its environment and its daemon; `just --list` is the task list.
 
 bin = ["target/debug"]
 commands = ["amux"]
@@ -20,255 +18,31 @@ keymaps_dir: {{root()}}/.wt/amux/keymaps
 prevent_idle_sleep: false
 """
 
-# One dependency graph for everything below: `build` compiles tests and
-# examples too (without running them), so `test`, `lint` and `spec` reuse
-# its artifacts instead of producing variants of their own.
 [task.profile-config]
 run = ["python3", "scripts/worktree-profile.py", "{{root()}}/.wt/amux", "{{name()}}"]
 exists = 'test -f "$AMUX_CONFIG"'
 
 [task.build]
-run = "cargo build --workspace --all-targets"
+run = "just build"
 needs = ["profile-config"]
 
-# What the canonical is kept warm with: the configurations every tree
-# inherits through wt's snapshot of it. `wt anchor` runs this in place of
-# `build`, in the background, after every tree creation and removal.
-[task.warm]
-needs = ["build", "test-build"]
-
-[task.test-build]
-run = "timeout 1200 cargo test --workspace --lib --tests --no-run"
-
 [task.test]
-run = 'scripts/workspace-test.sh "$@"'
-# `build` is a dependency so the workspace compile happens under the build
-# task's own budget: the recipe's timeout is there to catch a hung suite, and
-# a cold compile inside it turns that into a race between the compiler and the
-# tests rather than a statement about the tests.
-needs = ["test-recipes", "build"]
-
-[task.test-recipes]
-run = "timeout 60 python3 -m unittest discover -s scripts/tests -p '*_test.py' -t scripts/tests"
+run = 'just test "$@"'
 
 [task.lint]
-run = "cargo clippy --workspace --all-targets -- -D warnings"
+run = "just lint"
 
-[task.fmt-check]
-run = "timeout 300 cargo +nightly fmt --all -- --check"
+[task.fmt]
+run = "just fmt"
 
-# Selected by target name across the workspace rather than by package:
-# a `-p` selection unifies dependency features differently from the
-# workspace build and would compile a second copy of every shared crate.
-[task.spec]
-run = 'scripts/spec-test.sh "$@"'
-
-# Opt-in real-Codex scenarios. The CLI must match the current sources.
-[task.codex-live]
-run = 'timeout 900 cargo test --workspace --test codex_live -- "$@"'
-needs = ["build"]
-
-# The iOS library builds without `local-agents`. The check always names the
-# target so it never produces a host variant of the workspace.
-[task.mobile-check]
-run = "timeout 900 sh scripts/mobile-check.sh"
-
-# Match CI's embedded library suite without unifying desktop features.
-[task.client-test]
-run = 'CARGO_TARGET_DIR=target/embed timeout 900 cargo test -p amux --no-default-features --lib "$@"'
-
-[task.embed-test]
-run = "AMUX_EMBED_TEST=1 CARGO_TARGET_DIR=target/embed cargo test -p amux --no-default-features --test embedding -- --nocapture"
-
-# The rules the screens package is written to: SwiftUI only outside a
-# registered leaf, no platform conditionals, no spinners. Pure text, so it runs
-# before anything is compiled and says which line is wrong.
-[task.ios-lint]
-run = "timeout 300 sh -c 'sh ios/Tools/feature-lint.sh && ios/Tools/strings-lint.sh'"
-
-[task.ios-rust]
-run = "timeout 1800 python3 scripts/ios-rust.py"
-
-# The pinned devices every capture and measurement runs on. Creating them is
-# idempotent; they are left booted because every later recipe needs them up.
-[task.ios-simulator]
-run = "timeout 900 python3 -B scripts/ios_simulators.py"
-
-# Generates ios/Amux.xcodeproj from ios/project.yml, then builds the app. The
-# bridge XCFramework is an input, so ios-rust runs first.
-[task.ios-build]
-run = "timeout 1800 python3 -B scripts/ios-build.py"
-needs = ["ios-rust"]
-
-# The package unit suites. Arguments are xcodebuild's; a `-only-testing:`
-# selector picks the package that owns the named target.
-[task.ios-unit]
-run = 'timeout 1800 python3 -B scripts/ios-unit.py "$@"'
-needs = ["ios-rust"]
-
-# Launch the debug build, open a named state through the driving door, read
-# the screen back, photograph it, and connect its shared runtime to a test
-# relay. The workspace build that produces the runner is an input alongside
-# the app.
-[task.ios-door-smoke]
-run = "timeout 1800 python3 -B scripts/ios-door-smoke.py"
-needs = ["ios-build", "build"]
-
-# Capture the manifest's screens in both appearances and compare each one
-# with its baseline. No arguments means the whole manifest, which fails on any
-# screen nobody has built yet rather than skipping it.
-[task.ios-goldens]
-run = 'timeout 2400 python3 -B scripts/ios-goldens.py "$@"'
-needs = ["ios-build"]
-
-# Move one design token and require the golden run to fail with a difference
-# image. What proves the golden check would notice a change.
-[task.ios-goldens-perturb]
-run = 'timeout 1200 python3 -B scripts/ios-goldens-perturb.py "$@"'
-needs = ["ios-build"]
-
-# Rebuild the screen a recorded report bundle was written with: fold its
-# runtime recording into fresh stores, apply the view-state trace beside it and
-# photograph the result. Nothing is connected and no recorded effect is run.
-[task.ios-replay]
-run = 'timeout 1800 python3 -B scripts/ios-replay.py "$@"'
-needs = ["ios-build"]
-
-# The app driven the way a person drives it, against a real relay and real
-# daemons started from a committed topology. No arguments runs every journey
-# ios/Journeys/manifest.json declares.
-[task.ios-journey]
-run = 'timeout 2400 python3 -B scripts/ios-journey.py "$@"'
-needs = ["ios-build", "build"]
-
-# Sweep every state this build draws and require each control on it to have a
-# name VoiceOver can read and at least 44 pt to hit. A UI test, because that is
-# the only accessibility client an app cannot be for itself.
-[task.ios-accessibility]
-run = "timeout 2400 python3 -B scripts/ios-accessibility.py"
-needs = ["ios-build"]
-
-# Exercise small visual states that exist only after interaction, without
-# paying for the full mobile verification suite.
-[task.ios-visual-interactions]
-run = "timeout 600 python3 -B scripts/ios-visual-interactions.py"
-needs = ["ios-build"]
-
-# Pair every reference screen's baseline with the design's preserved capture.
-# A report and never a gate: a difference from the design is a conversation.
-[task.ios-goldens-reference]
-run = 'timeout 900 cargo run -q -p xtask -- golden reference'
-
-# The measured run: the pinned workloads against the budgets in
-# docs/IOS_PERFORMANCE.md, on a machine that document has a row for.
-[task.ios-perf]
-run = 'timeout 2700 python3 -B scripts/ios-perf.py "$@"'
-needs = ["ios-rust", "build"]
-
-[task.ios-loopback-smoke]
-run = "timeout 1800 python3 -B ios/Tools/loopback_smoke.py"
-needs = ["build"]
-
-# Inspect the release bundle for excluded platforms and debug-only surfaces.
-[task.ios-scope-audit]
-run = "timeout 1200 python3 -B scripts/ios-scope-audit.py"
-needs = ["ios-rust"]
-
-[task.ios-verify]
-run = "scripts/ios-verify.sh"
-
-# Opt-in timing and capture experiments. Build explicitly before capture so
-# build preparation and screenshot latency can be measured independently.
-[task.ios-explore]
-run = 'timeout 12600 python3 -B scripts/ios-explore.py "$@"'
-
-# Read-only toward the supplied design checkout; all experimental variants and
-# captures are generated in a fresh ignored output directory.
-[task.ios-design-benchmark]
-run = 'timeout 900 python3 -B scripts/ios-design-benchmark.py "$@"'
-
-# One Debug app contains every layout idea. A run installs and launches once,
-# then either captures a two/four-idea batch or matched source/production views.
-[task.ios-native-design-benchmark]
-run = 'timeout 3600 python3 -B scripts/ios-native-design-benchmark.py "$@"'
-
-# Version, tag, archive and export the iPhone app, and stop there: nothing in
-# this recipe uploads, submits or pushes. --preflight reports its inputs and
-# stops; --rehearse archives and exports the would-be release without writing
-# the tree or cutting a tag. The scope audit runs first, so no archive is ever
-# produced from a bundle carrying a debug surface or an excluded platform.
-# docs/RELEASE.md holds the contract, including the one-time App Store Connect
-# setup behind it.
-[task.release]
-run = 'timeout 8100 python3 -B scripts/release.py "$@"'
-needs = ["ios-rust", "ios-scope-audit"]
-
-# Signs a QA account into the real amux.sh from this Mac, with no app, the
-# same way the phone does, and reports what that account is entitled to and
-# whether the relay will issue it a credential. Evidence a person runs by
-# hand, never a test and never in CI: it reaches the production account
-# service and needs a password out of this Mac's login keychain. Deliberately
-# absent from the iOS verification list in crates/xtask/src/ios_verify.rs.
-[task.qa-cloud-signin]
-run = "timeout 300 python3 -B scripts/qa-cloud-signin.py"
-
-# Carries a real App Store sandbox purchase from a physical phone to the
-# account service and reads back what the account may then do. A sandbox
-# transaction exists only on a phone signed into a sandbox Apple Account
-# running a development-signed build, so this never runs on a simulator and
-# never invents one; `--preflight` reports what is present and missing on this
-# Mac without touching StoreKit, the store or amux.sh. Evidence a person runs
-# by hand, never a test and never in CI, and deliberately absent from the iOS
-# verification list in crates/xtask/src/ios_verify.rs.
-[task.qa-sandbox-purchase]
-run = 'timeout 3600 python3 -B scripts/qa-sandbox-purchase.py "$@"'
-
-# The one run that reaches everything at once: an entitled QA account signed
-# into the real amux.sh, the simulator app connected to the production relay on
-# the credential that service minted, this checkout's own daemon on the other
-# side, and a real Claude session answering a question asked from the phone.
-# Every other journey runs against a relay started beside it with credentials a
-# harness minted, so this is the only place the production handshake — the
-# audience, port and client the relay compares with its own configuration, and
-# the signature it validates — is exercised at all. It spends real money on a
-# real agent and reaches a real account, so it is evidence a person runs by
-# hand, never a test and never in CI, and it is deliberately absent from the
-# iOS verification list in crates/xtask/src/ios_verify.rs.
-[task.qa-live-journey]
-run = "timeout 2100 python3 -B scripts/qa-live-journey.py"
-needs = ["ios-build", "build", "daemon"]
-
-[task.ci-status]
-run = 'timeout 3300 cargo run -q -p xtask -- ci-status "$@"'
-
-[task.ci-gate]
-run = "scripts/ci-gate.sh"
-
-[task.ci-observe]
-run = 'scripts/ci-observe.sh "$@"'
-
-# Regenerates the committed protobuf code (crates/amux/src/protocol/generated)
-# after a proto change. Not a build step: the output is committed, and CI
-# fails when it goes stale.
-[task.protobuf]
-run = "cargo run -p xtask -- codegen"
-
-[task.e2e]
-run = 'timeout 900 target/debug/e2e-runner run --amux-binary target/debug/amux --test-agent-binary target/debug/test-agent "$@"'
-needs = ["build"]
-
-[task.testnet]
-run = 'timeout 3600 e2e-runner testnet "$@"'
-needs = ["build"]
-
-[task.testnet-smoke]
-run = 'scripts/workspace-test.sh testnet_ -- --nocapture --test-threads=1'
+[task.warm]
+run = "just warm"
 
 # This checkout's daemon. A resource: `wt remove` stops it.
 [task.daemon]
 tied_to = "tree"
 name = "{{name_short()}}"
 needs = ["build"]
-exists = "amux profiles >/dev/null 2>&1"
+exists = 'test -S "{{root()}}/.wt/amux/amux.sock" && amux profiles >/dev/null 2>&1'
 run = "amux server start"
 destroy = "amux server stop"

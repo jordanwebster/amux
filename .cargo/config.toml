@@ -1,0 +1,2 @@
+[target.'cfg(target_vendor = "apple")']
+rustflags = ["-C", "split-debuginfo=packed"]

@@ -219,7 +219,7 @@ def normalize(source, destination):
 def compare(expected, actual, output):
     comparator = ROOT / "target/debug/xtask"
     if not comparator.is_file():
-        raise FileNotFoundError("golden comparator is absent; run `wt build` first")
+        raise FileNotFoundError("golden comparator is absent; run `just ios tools` first")
     result = subprocess.run([
         comparator, "golden", "diff", "--expected", expected,
         "--actual", actual, "--out", output,
@@ -466,7 +466,7 @@ def main():
 
     build_seconds = None
     if not args.skip_build:
-        build_seconds = timed_command(["wt", "run", "ios-build"], output / "build.log")
+        build_seconds = timed_command(["just", "ios", "build"], output / "build.log")
     if not APP.is_dir():
         raise FileNotFoundError(f"Debug app does not exist: {APP}")
 

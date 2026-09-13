@@ -1,60 +1,77 @@
 # Running and designing tests
 
-Use the checkout's `wt` recipes so builds share one workspace dependency
-graph and tests have an outer timeout:
+`just --list` is the test command catalogue. The recipes below share the
+workspace lockfile and carry outer timeouts; a timeout is a hang to diagnose,
+not a reason to silently lengthen a deadline.
+
+## 1. Crate unit tests
+
+Unit tests live beside the code whose value or state transition they exercise.
+Run one crate, optionally with Cargo and harness arguments:
 
 ```sh
-wt build
-wt test
-wt lint
-wt run spec
+just test-crate model
+just test-crate claude -- sdk::query::tests
+just test-crate model -- envelope::tests -- --exact
 ```
 
-`wt test` runs every workspace target by default. To select test functions
-inside every library, or one named integration-test target:
+Use values and explicit signals for parsing, reducer and concurrency tests.
+When an assertion concerns command arguments, environment or working
+directory, inspect the prepared command rather than launching a provider.
+
+## 2. Prose specifications
+
+Executable specs state whole behaviors in domain language. The daemon specs
+under `crates/testnet/tests/spec` use the public `TestNet` harness; the reducer
+specs under `crates/ui-state/tests/spec` use the same messages clients see.
 
 ```sh
-wt test -- --lib sdk::query::tests
-wt test -- --test spec
-wt test -- --test spec some_test_name -- --exact
+just spec
+just spec -- a2a_cross_device
 ```
 
-Arguments after the first `--` go to Cargo. A second `--` separates Cargo's
-arguments from the test harness's arguments. A name alone filters functions
-inside every selected harness; it does not prevent unrelated harnesses from
-starting. Select a target when investigating one component. Target selection
-keeps `--workspace`; selecting a package with `-p` can change feature
-unification and compile a second dependency graph.
+The two spec targets are part of `just test`; `just spec` is the focused
+way to read or diagnose them.
 
-Run `wt run test-recipes` to check argument forwarding without compiling.
-These checks also run automatically before `wt test`.
+## 3. Cross-crate integration tests
 
-Local `wt test`, `wt run testnet-smoke`, and the `test` stage of GitHub's
-`ios` job (through `wt run ios-verify`) use `scripts/workspace-test.sh`.
-It allows 900 seconds for Cargo's test preparation and the selected harnesses;
-the prerequisite workspace build runs before this overall deadline. The
-72-second local measurement did not cover the hosted macOS runner, which
-was still progressing when the former 150-second deadline killed it. The
-script documents the restored allowance and still fails a hung suite.
-The `ios` job also has a 210-minute overall timeout. GitHub's separate
-`Test` matrix jobs on Linux, macOS and Windows run `cargo test` directly,
-with compilation and tests sharing each job's 30-minute timeout.
-
-## Recorded PTY tests
-
-Each recorded Claude PTY scenario is a separate test. The standard Rust test
-harness runs them concurrently; each owns its replay streams and session state.
-Run the corpus or one scenario with:
+Integration tests live under `crates/testnet/tests`,
+`crates/ui-runtime/tests`, and `crates/amux/tests`. Run the full workspace or
+select a Cargo target:
 
 ```sh
-wt test -- --test spec_replay pty_replays
-wt test -- --test spec_replay pty_replays::plan_approve -- --exact
+just test
+just test-build
+just test -- --test embedding
+just test-crate testnet -- --test embedding
+just doctest
+just offline-test
 ```
 
-Recorded readiness waits for output notifications, and keyboard delays advance
-the replay clock. Completing a replay closes its recorded output streams before waiting
-for the simulated process to exit. Live terminal settling waits do not apply
-to recorded sessions; shutdown timeouts are failures.
+A name alone filters functions inside every selected harness; it does not stop
+unrelated harnesses from starting. Select `--lib` or `--test NAME` when the
+target matters. One `--` separates Cargo arguments from harness arguments.
+For example:
+
+```sh
+just test -- --test spec_replay pty_replays::plan_approve -- --exact
+just test -- --test spec_replay pty_replays::plan_approve -- --exact --nocapture
+```
+
+Recorded PTY scenarios own their streams and virtual clocks, so the Rust
+harness may run them concurrently. Add `--test-threads=1` after the second
+`--` only when ordered diagnostic output matters.
+
+The live-provider entry points also live in `testnet`. Ordinary workspace
+tests invoke each custom main with no scenario; it prints usage and exits
+before opening an account or provider process. Real provider access is always
+explicit:
+
+```sh
+just codex-live -- SCENARIO
+just claude-pty-live -- SCENARIO
+just claude-sdk-live -- SCENARIO
+```
 
 ## Clocks, readiness and independent cases
 
@@ -81,57 +98,43 @@ large viewport or replay sweeps without dropping any size, frame, prefix or
 assertion. A serial loop over the whole corpus conceals the work from the
 harness and prevents it from scheduling the cases independently.
 
-## Live suites are opt-in
+## 4. PTY end-to-end tests
 
-Live provider suites have explicit names: `claude_pty_live`, `claude_sdk_live`
-and `codex_live`. Their Cargo targets use `test = false` and `harness = false`;
-they run only when selected explicitly, and print usage without contacting a
-provider when no scenario is supplied. Keep those gates when adding live
-coverage. Ordinary workspace tests use recorded or scripted sessions and need
-no provider credentials. A live suite runs under its own bounded recipe;
-its network settling time does not belong in an offline replay.
-
-## Output when diagnosing failures
-
-Rust normally captures test output and reports it for failed tests. If an outer
-timeout kills the harness, it may never report that captured output. Stream
-output during a focused hang investigation with:
+`e2e-runner` launches real CLI, daemon and test-agent processes and compares
+their terminal conversations with `e2e-tests/*.test`.
 
 ```sh
-wt test -- --test spec_replay pty_replays::plan_approve -- --exact --nocapture
+just e2e
+just e2e -- profile
 ```
 
-Parallel tests can interleave streamed output; add `--test-threads=1` after the
-second `--` when ordering matters. A binary stalled before its first instruction
-has no test output to display, even with capture disabled.
+Use this tier for OS behavior such as pipe backpressure, exit status, signals
+and process shutdown. A fixture must report readiness before a behavior
+deadline starts, and shutdown tests must prove that the child exited rather
+than merely that a signal was sent.
 
-## Choose the boundary the assertion needs
+## 5. Phone journeys
 
-Test parsing and state transitions with values, and concurrency with explicit
-signals. Inspect the prepared command when asserting CLI arguments,
-environment, or working directory. Use the provider's in-memory stream
-transport when asserting protocol messages, session identity, or row order.
+Phone journeys drive the iPhone app the way a person does, against a served
+test network: real daemon and relay processes started from a committed
+topology, scripted providers, and the app's own UI on a pinned simulator.
 
-Use real child processes for OS behavior: pipe backpressure, exit status,
-stderr, signals, and waiting for a child to exit. On Unix, simple fixtures can
-run script text through an existing `/bin/sh -c` invocation. Keep scenario
-state local to that child; do not change the test process's global environment
-or create a fresh executable script for each scenario.
+```sh
+just ios journey
+just ios journey -- hosts
+```
 
-An executable's launch is subject to host security assessment. On macOS, a
-tiny new script can queue behind another worktree's large test executable for
-seconds before running its first instruction. That is not a protocol or
-shutdown failure. Process fixtures should report readiness before measuring
-the behavior under test, with a separate bounded startup check. A test of
-startup itself must retain the startup deadline.
+The served network is `target/debug/testnet serve`; every control verb it
+accepts is also a method of the in-process harness with the same name, so a
+journey and a Rust spec describe the same behaviour. [TESTNET.md](TESTNET.md)
+owns the topology format and the control protocol; [IOS.md](IOS.md) owns the
+journey manifest, goldens and simulator pins.
 
-Shutdown tests should prove that completion waits for exit, not merely that a
-signal was sent. For example, hold the child inside its signal handler until
-the test releases it, assert that shutdown remains pending, then release and
-await completion. Arrange cleanup even if setup or an assertion fails.
+## Failure evidence
 
-A timeout is a failure to investigate. A passing rerun alone does not identify
-the cause, and increasing deadlines or rerunning until green is not a fix.
-Capture the executable, process state, and whether it reached readiness. If
-macOS shows a verification dialog, correlate its exact executable with
-`syspolicyd` logs before attributing a test failure to it.
+Rust reports captured output for a failed test, but an outer timeout may kill a
+harness before it can do so. Rerun the narrow target with `--nocapture` and
+record whether its executable reached readiness. On macOS, a new executable
+can pause under host security assessment before its first instruction; match
+the exact process with system logs before calling that a protocol or shutdown
+failure. A passing rerun alone does not explain the original failure.

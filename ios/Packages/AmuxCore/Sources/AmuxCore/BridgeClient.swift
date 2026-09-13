@@ -1,4 +1,4 @@
-import AmuxMobile
+import AmuxApp
 import Darwin
 import Foundation
 
@@ -202,7 +202,7 @@ public final class BridgeClient: Sendable {
         let json = try AmuxJSON.encoder.encode(configuration)
         let context = Unmanaged.passRetained(delivery).toOpaque()
         let handle: OpaquePointer? = String(decoding: json, as: UTF8.self).withCString { config in
-            amux_mobile_start(config, { bytes, context in
+            amux_app_start(config, { bytes, context in
                 guard let bytes, let context else { return }
                 Unmanaged<Delivery>.fromOpaque(context).takeUnretainedValue().receive(bytes)
             }, context)
@@ -226,9 +226,9 @@ public final class BridgeClient: Sendable {
         return state.withLock { state -> OpId? in
             guard let handle = state.handle else { return nil }
             guard let reply = String(decoding: json, as: UTF8.self).withCString({
-                amux_mobile_dispatch(handle, $0)
+                amux_app_dispatch(handle, $0)
             }) else { return nil }
-            defer { amux_mobile_free(reply) }
+            defer { amux_app_free(reply) }
             return OpId(String(cString: reply))
         }
     }
@@ -247,13 +247,13 @@ public final class BridgeClient: Sendable {
             guard let handle = state.handle else { return nil }
             let reply = String(decoding: json, as: UTF8.self).withCString { request in
                 bytes.withUnsafeBytes { raw in
-                    amux_mobile_attach(
+                    amux_app_attach(
                         handle, request,
                         raw.bindMemory(to: UInt8.self).baseAddress, bytes.count)
                 }
             }
             guard let reply else { return nil }
-            defer { amux_mobile_free(reply) }
+            defer { amux_app_free(reply) }
             return OpId(String(cString: reply))
         }
     }
@@ -266,7 +266,7 @@ public final class BridgeClient: Sendable {
     public func setActive(_ active: Bool) {
         state.withLock { state in
             guard let handle = state.handle else { return }
-            amux_mobile_set_active(handle, active)
+            amux_app_set_active(handle, active)
         }
     }
 
@@ -274,7 +274,7 @@ public final class BridgeClient: Sendable {
     public func setFrameInterval(nanoseconds: UInt64) {
         state.withLock { state in
             guard let handle = state.handle else { return }
-            amux_mobile_set_frame_interval(handle, nanoseconds)
+            amux_app_set_frame_interval(handle, nanoseconds)
         }
     }
 
@@ -282,8 +282,8 @@ public final class BridgeClient: Sendable {
     /// callback: it waits for the worker that delivers them.
     public func snapshot() -> String? {
         state.withLock { state in
-            guard let handle = state.handle, let json = amux_mobile_snapshot(handle) else { return nil }
-            defer { amux_mobile_free(json) }
+            guard let handle = state.handle, let json = amux_app_snapshot(handle) else { return nil }
+            defer { amux_app_free(json) }
             return String(cString: json)
         }
     }
@@ -315,7 +315,7 @@ public final class BridgeClient: Sendable {
             return state.handle
         }
         guard let handle else { return }
-        amux_mobile_stop(handle)
+        amux_app_stop(handle)
         delivery.batches.finish()
         delivery.client = nil
         // Balances the reference handed to the callback context at start.
@@ -350,7 +350,7 @@ public final class BridgeClient: Sendable {
             self.state.withLock { state in
                 guard let handle = state.handle else { return }
                 String(decoding: json, as: UTF8.self).withCString {
-                    amux_mobile_token_reply(handle, request, $0)
+                    amux_app_token_reply(handle, request, $0)
                 }
             }
         }

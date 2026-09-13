@@ -1,19 +1,58 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = [
+    "crates/agent-runtime",
+    "crates/amux",
+    "crates/app-embedded",
+    "crates/app-ffi",
+    "crates/app-runtime",
+    "crates/node",
+    "crates/shot",
+    "crates/tui",
+    "crates/ui-runtime",
+    "crates/ui-state",
+    "crates/artifacts",
+    "crates/claude",
+    "crates/claude-specs",
+    "crates/codex",
+    "crates/codex-specs",
+    "crates/client",
+    "crates/e2e-runner",
+    "crates/host-api",
+    "crates/model",
+    "crates/pty-host",
+    "crates/redaction",
+    "crates/replay-support",
+    "crates/settings",
+    "crates/test-agent",
+    "crates/testnet",
+    "crates/wire",
+    "crates/xtask",
+]
 
 [workspace.package]
 edition = "2024"
 
 [workspace.dependencies]
 # Internal
-# Clients inherit the protocol core; host executables opt into local agents.
-amux = { path = "crates/amux", default-features = false }
-amux-artifacts = { path = "crates/amux-artifacts" }
-amux-ui = { path = "crates/amux-ui" }
-amux-tui = { path = "crates/amux-tui" }
+agent-runtime = { path = "crates/agent-runtime" }
+app-embedded = { path = "crates/app-embedded" }
+app-ffi = { path = "crates/app-ffi" }
+app-runtime = { path = "crates/app-runtime" }
+node = { path = "crates/node" }
+testnet = { path = "crates/testnet" }
+client = { path = "crates/client" }
+host-api = { path = "crates/host-api" }
+model = { path = "crates/model" }
+wire = { path = "crates/wire" }
+settings = { path = "crates/settings" }
+artifacts = { path = "crates/artifacts" }
+ui-runtime = { path = "crates/ui-runtime" }
+ui-state = { path = "crates/ui-state" }
+tui = { path = "crates/tui" }
 pty-host = { path = "crates/pty-host" }
 claude = { path = "crates/claude" }
+redaction = { path = "crates/redaction" }
 
 # Shared
 portable-pty = "0.9"
@@ -80,25 +119,29 @@ similar = "3"
 qrcode = { version = "0.14", default-features = false }
 nix = { version = "0.31", features = ["process", "signal"] }
 
-# Tests must unwind, so an abort dev profile makes cargo compile every
-# dependency a second time for `cargo test`. Release keeps abort.
 # Cargo defaults macOS debug profiles to split-debuginfo = "unpacked", which
 # keeps every codegen unit's object file under target/<profile>/deps for the
 # debugger and never removes it; with incremental compilation each rebuild
 # leaves the previous session's objects behind. Measured at 26 GiB of the
 # canonical's 45 GiB target and 158 GiB in one worktree. "packed" keeps one
-# dSYM per product binary instead (dsymutil runs at link, for a few
-# binaries); test harnesses keep no debug map, and a panic still names its
-# file and line.
+# dSYM per product binary instead (dsymutil runs at link, for a few binaries).
+# The Apple-only rustflag lives in .cargo/config.toml so Windows never receives
+# a split-debuginfo value it does not support. Development and tests share this
+# profile so each workspace crate has one reusable configuration.
 [profile.dev]
-split-debuginfo = "packed"
-
-[profile.test]
-split-debuginfo = "off"
+debug = "line-tables-only"
+incremental = true
+panic = "unwind"
 
 [profile.release]
 panic = "abort"
+incremental = false
 
+[profile.full-debug]
+inherits = "dev"
+debug = 2
+
+# The native app's shipping library: only `just ios package` and release use it.
 [profile.mobile]
 inherits = "release"
 lto = "fat"

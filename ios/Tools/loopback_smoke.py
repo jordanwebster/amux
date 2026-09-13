@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Observe real relay inventory from a Swift executable on the iOS simulator."""
 
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,6 +13,9 @@ import tempfile
 import threading
 
 from linkage_smoke import compile_swift, run, simulator
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import ios_bridge as bridge
 
 
 def control(address: str, request: object) -> None:
@@ -64,7 +66,7 @@ def round_trip(executable: Path, device: str) -> str:
         root = Path(temporary)
         environment = os.environ | {key: str(root) for key in ("TMPDIR", "TMP", "TEMP")}
         runner = subprocess.Popen([
-            "e2e-runner", "testnet", "serve", "--topology", "e2e-tests/topologies/two-hosts.json",
+            *bridge.TESTNET_SERVE, "--topology", "e2e-tests/topologies/two-hosts.json",
         ], env=environment, stdout=subprocess.PIPE, text=True)
         try:
             ready = read_ready(runner)
@@ -99,12 +101,14 @@ def main() -> None:
     report = output.parent / "loopback-smoke.txt"
     report.unlink(missing_ok=True)
     subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("test_loopback_smoke.py"))], check=True, timeout=15)
-    spec = importlib.util.spec_from_file_location("ios_rust", "scripts/ios-rust.py")
-    builder = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(builder)
-    builder.build("aarch64-apple-ios-sim", output, debug_tools=True)
-    directory = output / "aarch64-apple-ios-sim"
-    executable = output / "amux-mobile-loopback"
+    # The same slice a development build links, staged on its own so this
+    # smoke never depends on which framework the app last packaged.
+    built = bridge.cargo_build(
+        bridge.SIMULATOR_TRIPLE, profile="dev", features=(bridge.DEBUG_TOOLS_FEATURE,),
+        log=output / f"{bridge.SIMULATOR_TRIPLE}-build.jsonl")
+    directory = output / bridge.SIMULATOR_TRIPLE
+    bridge.stage(built, directory)
+    executable = output / "app-ffi-loopback"
     compile_swift(directory, directory / "include", Path(__file__).with_name("LoopbackSmoke.swift"), executable)
     device, already_booted = simulator()
     try:

@@ -1,5 +1,5 @@
 import AmuxCore
-import AmuxMobile
+import AmuxApp
 import Foundation
 import UIKit
 
@@ -176,8 +176,8 @@ final class ReportFreeze: ReportFreezing {
             return .failure(PartAbsent("nothing was connected, so there was no recording to freeze"))
         }
         let json = running.withRuntime { handle -> String? in
-            guard let owned = amux_mobile_report_snapshot(handle) else { return nil }
-            defer { amux_mobile_free(owned) }
+            guard let owned = amux_app_report_snapshot(handle) else { return nil }
+            defer { amux_app_free(owned) }
             return String(cString: owned)
         }
         guard let json = json ?? nil else {

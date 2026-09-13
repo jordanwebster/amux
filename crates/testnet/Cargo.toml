@@ -1,0 +1,74 @@
+[package]
+name = "testnet"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "testnet"
+path = "src/bin/testnet.rs"
+
+[dependencies]
+agent-runtime = { workspace = true }
+anyhow = { workspace = true }
+artifacts = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+claude = { workspace = true }
+clap = { workspace = true }
+client = { workspace = true }
+codex = { path = "../codex" }
+futures-util = { workspace = true }
+host-api = { workspace = true }
+hyper-util = { workspace = true }
+node = { workspace = true }
+model = { workspace = true }
+pty-host = { workspace = true }
+replay-support = { path = "../replay-support" }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
+uuid = { workspace = true }
+wire = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+claude-specs = { path = "../claude-specs" }
+codex-specs = { path = "../codex-specs" }
+gethostname = { workspace = true }
+redaction = { workspace = true }
+
+[[test]]
+name = "codex_live"
+path = "tests/codex_live.rs"
+harness = false
+
+[[test]]
+name = "claude_pty_live"
+path = "tests/claude_pty_live.rs"
+harness = false
+
+[[test]]
+name = "claude_sdk_live"
+path = "tests/claude_sdk_live.rs"
+harness = false
+
+[target.'cfg(unix)'.dev-dependencies]
+nix = { workspace = true }

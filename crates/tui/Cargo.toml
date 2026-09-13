@@ -1,0 +1,68 @@
+[package]
+name = "tui"
+version = "0.4.0"
+edition.workspace = true
+description = "amux chrome TUI: the fleet around raw attach"
+publish = false
+
+[features]
+fixtures = []
+
+# Rendering consumes pure UI state; the event loop uses ui-runtime for effects.
+[dependencies]
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true, features = ["event-stream"] }
+tokio = { workspace = true }
+futures-util = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+base64 = "0.22"
+arboard = { workspace = true }
+png = { workspace = true }
+# Display-cell measurement for wrapping and border math — the same
+# versions ratatui itself renders with, so the two never disagree.
+unicode-width = "0.2"
+unicode-segmentation = "1"
+uuid = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+signal-hook = { workspace = true }
+
+[dev-dependencies]
+gethostname = { workspace = true }
+tempfile = { workspace = true }
+unicode-width = "0.2"
+vt100 = "0.15"
+
+[[test]]
+name = "backend_vocabulary"
+path = "tests/backend_vocabulary.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "component_golden"
+path = "tests/component_golden.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "perf"
+path = "tests/perf.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "sdk_chat_golden"
+path = "tests/sdk_chat_golden.rs"
+required-features = ["fixtures"]
+
+[[test]]
+name = "switcher_frames"
+path = "tests/switcher_frames.rs"
+required-features = ["fixtures"]

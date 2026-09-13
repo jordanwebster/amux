@@ -547,7 +547,7 @@ def sizes(output: Path) -> None:
         "",
         "```",
         BRIDGE_SIZES.read_text().rstrip("\n") if BRIDGE_SIZES.is_file()
-        else f"{BRIDGE_SIZES} is missing; run wt run ios-rust",
+        else f"{BRIDGE_SIZES} is missing; run `just ios rust`",
         "```",
         "",
     ]
@@ -850,7 +850,7 @@ def selection(arguments: list[str]) -> tuple[str | None, list[str]]:
 def main() -> None:
     # The whole recipe's clock, so what is reported is what a person waits
     # for: building the app, launching it five times and running the suite.
-    # The Rust bridge is not in it — `wt run ios-rust` builds that before this
+    # The Rust bridge is not in it — `just ios rust` builds that before this
     # script is reached, and on a cold tree it is the longer half.
     started = time.monotonic()
     only, arguments = selection(sys.argv[1:])

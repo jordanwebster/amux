@@ -1,149 +1,67 @@
 #!/usr/bin/env python3
-"""Build the native bridge and collect archives, generated headers and sizes."""
+"""Build the one bridge slice a development build of the app links.
 
-import json
-import os
+The simulator slice, with the driving tools compiled in, under the ordinary
+development profile: what `ios build`, `ios unit` and every recipe that drives
+a debug app need. Nothing here builds for a phone or optimises for size; that
+is `ios-package.py`, and only the shipping recipes pay for it.
+
+When no Rust input has changed since the last run, cargo is not invoked and the
+framework is left untouched, so a Swift-only edit costs no Rust work at all.
+"""
+
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 import tomllib
 
+sys.path.insert(0, str(Path(__file__).parent))
+import ios_bridge as bridge
 
-# The library with the driving tools compiled in, and the slice inside it the
-# app's debug configuration links by path.
-DRIVING_FRAMEWORK = "AmuxMobileDebugTools.xcframework"
-DRIVING_SLICE = "ios-arm64-simulator"
-RUST_TARGETS = Path("target/ios/rust-cargo")
+STAMP = bridge.OUTPUT / "rust-stamp.json"
 
-
-def build_environment(triple: str, *, debug_tools: bool = False) -> dict[str, str]:
-    environment = os.environ.copy()
-    # Static archives embed native objects whose contents can change without
-    # changing Rust metadata. Cargo tracks those inputs; wrapper caches may not.
-    environment["RUSTC_WRAPPER"] = ""
-    # Cargo fingerprints build scripts with SDKROOT, including host-side
-    # dependencies shared by cross targets. Alternating simulator and device
-    # SDKs in one target directory therefore recompiles the graph on every
-    # invocation. The driving bridge also changes features throughout that
-    # graph. Give all three variants stable caches; their archives are still
-    # staged into the XCFramework paths consumed by Xcode.
-    variant = f"{triple}-debug-tools" if debug_tools else triple
-    environment["CARGO_TARGET_DIR"] = str((RUST_TARGETS / variant).resolve())
-    environment["IPHONEOS_DEPLOYMENT_TARGET"] = "26.0"
-    sdk = "iphonesimulator" if triple.endswith("-sim") else "iphoneos"
-    environment["SDKROOT"] = subprocess.check_output(
-        ["xcrun", "--sdk", sdk, "--show-sdk-path"], text=True, timeout=30,
-    ).strip()
-    return environment
-
-
-def build(triple: str, output: Path, *, debug_tools: bool = False) -> str:
-    messages_path = output / f"{triple}-build.jsonl"
-    command = [
-        "cargo", "build", "--locked", "-p", "amux-mobile",
-        "--no-default-features", "--lib", "--profile", "mobile",
-        "--target", triple, "--message-format=json-render-diagnostics",
-    ]
-    if debug_tools:
-        command.extend(["--features", "debug-tools"])
-    print(f"Building {triple} with the workspace mobile profile", flush=True)
-    environment = build_environment(triple, debug_tools=debug_tools)
-    with messages_path.open("w") as messages:
-        subprocess.run(command, stdout=messages, check=True, timeout=900, env=environment)
-
-    # Cargo reports the actual artifact and build-script directories even on a
-    # cached build. Never select a header by globbing potentially stale outputs.
-    messages = [json.loads(line) for line in messages_path.read_text().splitlines()]
-    artifact, = [
-        message for message in messages
-        if message.get("reason") == "compiler-artifact"
-        and message["target"]["name"] == "amux_mobile"
-        and "staticlib" in message["target"]["crate_types"]
-    ]
-    library, = [Path(name) for name in artifact["filenames"] if name.endswith(".a")]
-    build_script, = [
-        message for message in messages
-        if message.get("reason") == "build-script-executed"
-        and message["package_id"] == artifact["package_id"]
-    ]
-    header = Path(build_script["out_dir"]) / "amux_mobile.h"
-    destination = output / triple
-    includes = destination / "include"
-    includes.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(header, includes / header.name)
-    (includes / "module.modulemap").write_text(
-        'module AmuxMobile {\n  header "amux_mobile.h"\n  export *\n}\n'
-    )
-    staged_library = destination / library.name
-    shutil.copy2(library, staged_library)
-    return f"{triple}: {staged_library.stat().st_size} bytes ({staged_library})"
-
-
-def package(framework: Path, slices: list[Path]) -> None:
-    if framework.exists():
-        shutil.rmtree(framework)
-    command = ["xcodebuild", "-create-xcframework"]
-    for directory in slices:
-        command.extend([
-            "-library", str((directory / "libamux_mobile.a").resolve()),
-            "-headers", str((directory / "include").resolve()),
-        ])
-    command.extend(["-output", str(framework.resolve())])
-    subprocess.run(command, check=True, timeout=180)
 
 def main() -> None:
-    profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"]["mobile"]
-    output = Path("target/ios")
-    output.mkdir(parents=True, exist_ok=True)
-    report = output / "size.txt"
-    # An interrupted build must not leave a previous success report behind.
-    report.unlink(missing_ok=True)
-    framework = output / "AmuxMobile.xcframework"
-    driving = output / DRIVING_FRAMEWORK
-    for stale in (framework, driving):
-        if stale.exists():
-            shutil.rmtree(stale)
-    (output / "simulator-linkage.txt").unlink(missing_ok=True)
+    bridge.OUTPUT.mkdir(parents=True, exist_ok=True)
+    driving = bridge.OUTPUT / bridge.DRIVING_FRAMEWORK
+    shipping = bridge.OUTPUT / bridge.FRAMEWORK
+    linked = driving / bridge.DRIVING_SLICE / bridge.LIBRARY
+    fingerprint = bridge.source_fingerprint()
+    if (STAMP.is_file() and STAMP.read_text().strip() == fingerprint
+            and linked.is_file() and shipping.is_dir()):
+        print("Rust sources unchanged; the bridge is current and cargo was not run", flush=True)
+        return
+    STAMP.unlink(missing_ok=True)
 
-    sizes = [build(triple, output) for triple in (
-        "aarch64-apple-ios-sim", "aarch64-apple-ios",
-    )]
-    simulator = output / "aarch64-apple-ios-sim"
-    device = output / "aarch64-apple-ios"
-    if (simulator / "include/amux_mobile.h").read_bytes() != (device / "include/amux_mobile.h").read_bytes():
-        raise RuntimeError("Device and simulator C headers differ")
-    package(framework, [simulator, device])
-    subprocess.run([
-        sys.executable, "ios/Tools/linkage_smoke.py", str(framework),
-    ], check=True, timeout=600)
-
-    # The second library: the same sources with the driving tools compiled in,
-    # for the simulator alone. Only the debug configuration of the app links
-    # it, and only a simulator runs that configuration, so a phone slice would
-    # be one nothing installs. The shipping library above stays what it was —
-    # the smoke it just passed is what proves it still refuses a plaintext
-    # relay.
-    tools = output / "debug-tools"
-    tools.mkdir(parents=True, exist_ok=True)
-    sizes.append(build("aarch64-apple-ios-sim", tools, debug_tools=True) + " (debug tools)")
-    package(driving, [tools / "aarch64-apple-ios-sim"])
-    linked = driving / DRIVING_SLICE / "libamux_mobile.a"
+    staging = bridge.OUTPUT / "debug-tools"
+    built = bridge.cargo_build(
+        bridge.SIMULATOR_TRIPLE, profile="dev", features=(bridge.DEBUG_TOOLS_FEATURE,),
+        log=staging / f"{bridge.SIMULATOR_TRIPLE}-build.jsonl")
+    staged = bridge.stage(built, staging / bridge.SIMULATOR_TRIPLE)
+    bridge.package_if_changed(driving, [staging / bridge.SIMULATOR_TRIPLE],
+                              staging / "framework.sha256")
     if not linked.is_file():
         raise RuntimeError(
             f"{linked} is missing. The debug configuration of the app links this "
             "exact path (ios/project.yml), so a change in how xcodebuild names "
             "the slice has to fail here rather than at link time.")
+    # The Swift package names the shipping framework as a binary target, so
+    # the project cannot resolve until something is there. A development tree
+    # that has never packaged for shipping gets this same slice as a stand-in;
+    # the debug configurations force-load the driving library first, so which
+    # archive sits here does not change what they link. `ios package` replaces
+    # it with the real one, and the shipping recipes depend on that.
+    if not shipping.is_dir():
+        bridge.package(shipping, [staging / bridge.SIMULATOR_TRIPLE])
+        (bridge.OUTPUT / "framework.sha256").unlink(missing_ok=True)
+        print(f"{shipping.name} did not exist; staged the development slice as a stand-in "
+              "until `just ios package` builds the shipping library", flush=True)
 
-    text = "\n".join([
-        "amux-mobile static archives (not the linked application size)",
-        "iOS deployment target: 26.0",
-        "profile.mobile: " + ", ".join(f"{key}={value}" for key, value in profile.items()),
-        *sizes,
-        "",
-    ])
-    report.write_text(text)
+    profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"].get("dev", {})
+    text = bridge.write_size_report(
+        [bridge.size_line(bridge.SIMULATOR_TRIPLE, staged, " (dev, debug tools)")],
+        {"name": "dev", **profile})
     print(text, end="", flush=True)
+    STAMP.write_text(fingerprint + "\n")
 
 
 if __name__ == "__main__":

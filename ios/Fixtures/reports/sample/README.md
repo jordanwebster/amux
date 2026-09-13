@@ -15,7 +15,7 @@ that the phone did not write.
 | `daemon.json` | The embedded phone service's own dump: its hosts, routes and sessions |
 | `replayed.json` | What the recording rebuilds: its fleet, its conversations, how old each agent's row says it is, and whether a host had confirmed them |
 
-`timeout 1800 wt run ios-replay -- ios/Fixtures/reports/sample` hands the two
+`just ios replay ios/Fixtures/reports/sample` hands the two
 recordings to a debug build on the pinned simulator. The runtime folds the
 messages back into a model and projects it as the events a live connection
 would have delivered; the app builds its stores from the clock and the account
@@ -51,12 +51,12 @@ recipe instead of trying to put a phone screen back into a terminal.
 
 A failure in the replay means the projection or a view changed under a bundle
 that used to replay. That is worth reading rather than papering over: either
-the change is intended, in which case `wt run ios-journey -- reports` records a
+the change is intended, in which case `just ios journey reports` records a
 fresh report through the app and this directory is refreshed from
 `target/ios/journeys/reports/bundle`, or a screen has quietly stopped drawing
 what a recording says it drew.
 
-This bundle was written by the app itself during `wt run ios-journey --
+This bundle was written by the app itself during `just ios journey
 reports`, against a real relay and a real machine, by the same code the Send
 button runs — so what is in it is what a phone produces rather than something
 composed by hand.

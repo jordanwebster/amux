@@ -115,7 +115,7 @@ fn observation_environment(command: &mut Command, dir: &Path, scenario: &str) {
         _ => vec![run_fixture(41, "previous", Some("success"))],
     };
     let jobs = serde_json::json!({"jobs": [{
-        "name": "ios", "status": "completed", "conclusion": "success",
+        "name": "iOS verification", "status": "completed", "conclusion": "success",
         "started_at": "2026-09-05T00:00:00Z", "completed_at": "2026-09-05T00:02:00Z",
         "steps": [{"name": "Run iOS verification", "conclusion": "success"}]
     }]});
@@ -259,8 +259,8 @@ fn ci_observe_script_forwards_options_and_reports_record_or_argument_errors() {
     executable(
         &dir.path().join("cargo"),
         r#"#!/bin/sh
-[ "$1 $2 $3 $4 $5" = 'run -q -p xtask --' ] || exit 94
-shift 5
+[ "$1 $2 $3 $4 $5 $6" = 'run --locked -q -p xtask --' ] || exit 94
+shift 6
 exec "$XTASK" "$@"
 "#,
     );
@@ -316,10 +316,10 @@ exec "$XTASK" "$@"
 fn ci_status_and_ci_gate_still_reject_unpushed_missing_pending_and_failed() {
     let dir = observation_commands();
     executable(
-        &dir.path().join("wt"),
+        &dir.path().join("just"),
         r#"#!/bin/sh
-echo "wt $*" >> "$CALLS"
-[ "$*" = 'run ci-status -- --wait 3000' ] || exit 93
+echo "just $*" >> "$CALLS"
+[ "$*" = 'ios ci-status --wait 3000' ] || exit 93
 exec "$XTASK" ci-status --wait 0
 "#,
     );
@@ -357,36 +357,39 @@ fn ios_verify_fixture() -> tempfile::TempDir {
         include_str!("../../../ios/Journeys/manifest.json"),
     )
     .unwrap();
-    let recipes = [
-        "fmt-check",
+    // The two justfiles the runner validates its stages against, declaring
+    // exactly the recipes verification runs.
+    let root = ["fmt-check", "lint", "test", "spec", "mobile-check"];
+    let ios = [
         "lint",
-        "test",
-        "spec",
-        "mobile-check",
-        "ios-lint",
-        "ios-rust",
-        "ios-simulator",
-        "ios-build",
-        "ios-loopback-smoke",
-        "ios-unit",
-        "ios-door-smoke",
-        "ios-goldens",
-        "ios-journey",
-        "ios-accessibility",
-        "ios-perf",
-        "ios-scope-audit",
+        "graph-check",
+        "rust",
+        "simulator",
+        "build",
+        "loopback-smoke",
+        "unit",
+        "door-smoke",
+        "goldens",
+        "journey",
+        "accessibility",
+        "perf",
+        "package",
+        "scope-audit",
     ];
-    let config: String = recipes
-        .iter()
-        .map(|name| format!("[task.{name}]\nrun='true'\n"))
-        .collect();
-    std::fs::write(dir.path().join(".wt.toml"), config).unwrap();
+    let declare = |names: &[&str]| -> String {
+        names
+            .iter()
+            .map(|name| format!("{name}:\n    true\n"))
+            .collect()
+    };
+    std::fs::write(dir.path().join("justfile"), declare(&root)).unwrap();
+    std::fs::write(dir.path().join("ios/justfile"), declare(&ios)).unwrap();
     executable(
-        &dir.path().join("wt"),
+        &dir.path().join("just"),
         r#"#!/bin/sh
 echo "$*" >> calls
-[ "$2" != "$FAIL_RECIPE" ] || exit 1
-if [ "$2" = ios-journey ]; then
+[ "$*" != "$FAIL_RECIPE" ] || exit 1
+if [ "$*" = "ios journey" ]; then
     for id in home-coldstart home conversation asks review writing claude-sessions hosts-lifecycle hosts accounts production-startup reports accessibility; do
         [ "$id" = "$SKIP_JOURNEY" ] || echo "$id: passed"
     done
@@ -424,13 +427,13 @@ fn ios_verify_command(dir: &Path) -> Command {
 fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey() {
     let dir = ios_verify_fixture();
     for (fail, skip, success, last) in [
-        ("", "", true, "ios-scope-audit"),
+        ("", "", true, "ios scope-audit"),
         ("fmt-check", "", false, "fmt-check"),
         ("mobile-check", "", false, "mobile-check"),
-        ("ios-accessibility", "", false, "ios-accessibility"),
-        ("", "claude-sessions", false, "ios-journey"),
-        ("", "accounts", false, "ios-journey"),
-        ("", "production-startup", false, "ios-journey"),
+        ("ios accessibility", "", false, "ios accessibility"),
+        ("", "claude-sessions", false, "ios journey"),
+        ("", "accounts", false, "ios journey"),
+        ("", "production-startup", false, "ios journey"),
     ] {
         std::fs::write(dir.path().join("calls"), "").unwrap();
         let output = ios_verify_command(dir.path())
@@ -445,7 +448,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
             String::from_utf8_lossy(&output.stderr)
         );
         let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
-        assert!(calls.ends_with(&format!("run {last}\n")), "{calls}");
+        assert!(calls.ends_with(&format!("{last}\n")), "{calls}");
         assert!(
             !calls.contains("--"),
             "verification must not filter, update or record: {calls}"
@@ -453,7 +456,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
         if success {
             assert_eq!(
                 calls,
-                "run fmt-check\nrun lint\nrun test\nrun spec\nrun mobile-check\nrun ios-lint\nrun ios-rust\nrun ios-simulator\nrun ios-build\nrun ios-loopback-smoke\nrun ios-unit\nrun ios-door-smoke\nrun ios-goldens\nrun ios-journey\nrun ios-accessibility\nrun ios-perf\nrun ios-scope-audit\n"
+                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios graph-check\nios rust\nios simulator\nios build\nios loopback-smoke\nios unit\nios door-smoke\nios goldens\nios journey\nios accessibility\nios perf\nios package\nios scope-audit\n"
             );
         }
         if !skip.is_empty() {
@@ -482,7 +485,7 @@ fn ios_verify_cli_reports_missing_runner_baseline_and_fails_machine_errors() {
             String::from_utf8_lossy(&output.stderr)
         );
         let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
-        assert_eq!(calls.contains("run ios-perf\n"), present);
+        assert_eq!(calls.contains("ios perf\n"), present);
         assert!(!calls.contains("--baseline"));
         if !present {
             assert!(

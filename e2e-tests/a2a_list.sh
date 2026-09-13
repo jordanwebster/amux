@@ -5,5 +5,4 @@ set -eu
 # same renderer after fetching the daemon inventory.
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo"
-timeout 900 cargo test -p amux-cli -- a2a_list
-
+just test -- a2a_list

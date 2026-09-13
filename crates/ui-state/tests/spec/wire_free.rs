@@ -1,0 +1,425 @@
+//! Chapter 10 — Determinism: the properties everything else stands on.
+//!
+//! The determinism guarantee is scoped and enforced here: the same reducer
+//! build, folding the same checkpoint and ordered Msgs, produces identical
+//! Models. Replay folds but never executes Effects.
+
+use ui_state::claude::answer::{
+    AskAnswer, PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse,
+};
+use ui_state::{
+    ArtifactKind, ArtifactRef, DisconnectReason, DumpReason, Effect, Model, Msg, OpError,
+    OpOutcome, StreamCloseReason, StreamEntry, StreamMsg, update,
+};
+
+use crate::harness::*;
+
+/// THE load-bearing test: after every Msg of every registered chapter
+/// sequence, folding the serialized recording from scratch equals the live
+/// incrementally-updated Model. A property, not a snapshot — it proves
+/// purity, serde fidelity, and absence of hidden state in one sweep.
+///
+/// It is ALSO the suite's invariant sweep: it calls `check_invariants` after
+/// every Msg, so every registered sequence — present and future, across both
+/// agent layers — is a probe of every structural invariant, including the
+/// Codex projection-agreement one. Registering a sequence with the harness is
+/// therefore the cheapest way to put a new state under that control; nothing
+/// else in the suite needs to opt in.
+macro_rules! differential_partitions {
+    ($name:ident, $sequences:expr) => {
+        mod $name {
+            use super::*;
+
+            fn check(part: usize) {
+                static SEQUENCES: std::sync::OnceLock<Vec<(&'static str, Vec<Msg>)>> =
+                    std::sync::OnceLock::new();
+                let sequences = SEQUENCES.get_or_init(|| $sequences);
+                assert!(!sequences.is_empty(), "chapters must register sequences");
+                for (name, msgs) in sequences {
+                    crate::wire_free::assert_differential_partition(name, msgs, part, 8);
+                }
+            }
+
+            #[test]
+            fn prefixes_0() {
+                check(0);
+            }
+            #[test]
+            fn prefixes_1() {
+                check(1);
+            }
+            #[test]
+            fn prefixes_2() {
+                check(2);
+            }
+            #[test]
+            fn prefixes_3() {
+                check(3);
+            }
+            #[test]
+            fn prefixes_4() {
+                check(4);
+            }
+            #[test]
+            fn prefixes_5() {
+                check(5);
+            }
+            #[test]
+            fn prefixes_6() {
+                check(6);
+            }
+            #[test]
+            fn prefixes_7() {
+                check(7);
+            }
+        }
+    };
+}
+
+pub(crate) use differential_partitions;
+
+differential_partitions!(
+    differential_fold_matches_live_state_after_every_msg,
+    all_sequences()
+);
+
+pub(crate) fn assert_differential_sequence(name: &str, msgs: Vec<Msg>) {
+    assert_differential_partition(name, &msgs, 0, 1);
+}
+
+pub(crate) fn assert_differential_partition(name: &str, msgs: &[Msg], part: usize, parts: usize) {
+    let mut live = Model::default();
+    let mut recording: Vec<String> = Vec::new();
+    for (index, msg) in msgs.iter().enumerate() {
+        recording.push(
+            serde_json::to_string(&msg)
+                .unwrap_or_else(|error| panic!("{name}[{index}] failed to serialize: {error}")),
+        );
+        update(&mut live, msg.clone());
+
+        // Interleave short and long prefixes across harness workers. Each
+        // worker still builds the live model incrementally; the selected
+        // prefix always deserializes and folds from an empty model.
+        if index % parts != part {
+            continue;
+        }
+
+        let mut folded = Model::default();
+        for (line_index, line) in recording.iter().enumerate() {
+            let recorded: Msg = serde_json::from_str(line).unwrap_or_else(|error| {
+                panic!("{name}[{line_index}] failed to deserialize: {error}")
+            });
+            update(&mut folded, recorded);
+        }
+        assert_eq!(folded, live, "{name}: fold != live after Msg {index}");
+        assert_eq!(
+            serde_json::to_value(&folded).unwrap(),
+            serde_json::to_value(&live).unwrap(),
+            "{name}: serialized fold != live after Msg {index}"
+        );
+
+        // No public fold sequence may ever leave the Model structurally
+        // incoherent — the same check the shell enforces at the fold
+        // seam (panic in debug, report-once-per-kind in release).
+        let violations = live.check_invariants();
+        assert!(
+            violations.is_empty(),
+            "{name}: invariants violated after Msg {index}: {violations:?}"
+        );
+    }
+}
+
+/// Every Msg variant (and every nested enum arm the kernel emits) survives a
+/// serde round trip unchanged — the recording IS the input stream.
+#[test]
+fn every_msg_variant_round_trips_through_serde() {
+    let mut variants: Vec<Msg> = vec![
+        command(op(1), create_cmd("claude-4", Some("nova"))),
+        command(op(2), rename_cmd("claude-4", "renamed")),
+        command(op(3), delete_cmd("claude-4")),
+        command(
+            op(6),
+            ui_state::Command::Claude(ui_state::ClaudeCommand::SendPrompt {
+                agent: agent_id("fix-auth-bug"),
+                text: "fix the sync bug\nthen test".to_string(),
+            }),
+        ),
+        command(
+            op(7),
+            ui_state::Command::Claude(ui_state::ClaudeCommand::AnswerAsk {
+                agent: agent_id("fix-auth-bug"),
+                ask: 0,
+                answer: AskAnswer::Permission(PermissionAnswer::Deny {
+                    feedback: Some("not that file".to_string()),
+                }),
+            }),
+        ),
+        command(
+            op(8),
+            ui_state::Command::Claude(ui_state::ClaudeCommand::AnswerAsk {
+                agent: agent_id("fix-auth-bug"),
+                ask: 1,
+                answer: AskAnswer::Question(QuestionResponse {
+                    answers: vec![QuestionAnswer {
+                        selected: vec![0, 2],
+                        other: Some("a torque wrench".to_string()),
+                    }],
+                }),
+            }),
+        ),
+        command(
+            op(9),
+            ui_state::Command::Claude(ui_state::ClaudeCommand::AnswerAsk {
+                agent: agent_id("fix-auth-bug"),
+                ask: 2,
+                answer: AskAnswer::Plan(PlanAnswer::RequestChanges {
+                    feedback: "document VALUE too".to_string(),
+                }),
+            }),
+        ),
+        command(
+            op(10),
+            ui_state::Command::Claude(ui_state::ClaudeCommand::Interrupt {
+                agent: agent_id("fix-auth-bug"),
+            }),
+        ),
+        command(
+            op(11),
+            ui_state::Command::Claude(ui_state::ClaudeCommand::CyclePermissionMode {
+                agent: agent_id("fix-auth-bug"),
+            }),
+        ),
+        command(
+            op(12),
+            ui_state::Command::Codex(ui_state::CodexCommand::Prompt {
+                agent: agent_id("fix-auth-bug"),
+                text: "inspect the failure".to_string(),
+            }),
+        ),
+        command(
+            op(13),
+            ui_state::Command::Codex(ui_state::CodexCommand::Steer {
+                agent: agent_id("fix-auth-bug"),
+                text: "also run tests".to_string(),
+            }),
+        ),
+        command(
+            op(14),
+            ui_state::Command::Codex(ui_state::CodexCommand::Answer {
+                agent: agent_id("fix-auth-bug"),
+                request_id: serde_json::json!("req-1"),
+                decision: ui_state::CodexDecision::Decline,
+            }),
+        ),
+        command(
+            op(15),
+            ui_state::Command::Codex(ui_state::CodexCommand::Interrupt {
+                agent: agent_id("fix-auth-bug"),
+            }),
+        ),
+        command(
+            op(17),
+            ui_state::Command::SendPromptWithAttachments {
+                agent: agent_id("fix-auth-bug"),
+                text: "inspect the attachment".to_string(),
+                attachments: vec![ui_state::DraftAttachment {
+                    id: model::id_of(b"wire attachment"),
+                    kind: ArtifactKind::Image,
+                    name: "wire.png".to_string(),
+                    mime: "image/png".to_string(),
+                    size: 15,
+                    bytes: None,
+                }],
+            },
+        ),
+        command(
+            op(18),
+            ui_state::Command::FetchDiff {
+                agent: agent_id("fix-auth-bug"),
+                id: model::id_of(b"wire diff"),
+            },
+        ),
+        command(
+            op(19),
+            ui_state::Command::OpenAttachment {
+                agent: agent_id("fix-auth-bug"),
+                id: model::id_of(b"wire open"),
+            },
+        ),
+        command(
+            op(20),
+            ui_state::Command::RequestDiff {
+                agent: agent_id("fix-auth-bug"),
+                base: model::DiffBase::Branch {
+                    base: "main".to_string(),
+                },
+            },
+        ),
+        op_result(op(6), OpOutcome::InputSent),
+        op_result(
+            op(18),
+            OpOutcome::DiffFetched {
+                id: model::id_of(b"wire diff"),
+                patch: "diff --git a/a b/a".to_string(),
+            },
+        ),
+        op_result(
+            op(19),
+            OpOutcome::AttachmentOpened {
+                id: model::id_of(b"wire open"),
+            },
+        ),
+        op_result(
+            op(20),
+            OpOutcome::DiffReady {
+                response: model::DiffResponse {
+                    artifact: ArtifactRef {
+                        id: model::id_of(b"wire response"),
+                        kind: ArtifactKind::Diff,
+                        name: "main.diff".to_string(),
+                        mime: "text/x-diff".to_string(),
+                        size: 21,
+                    },
+                    patch: "diff --git a/a b/a".to_string(),
+                    identity: model::BaseIdentity {
+                        base: model::DiffBase::WorkingTree,
+                        head: "abc123".to_string(),
+                        merge_base: None,
+                        blobs: vec![("a".to_string(), "blob123".to_string())],
+                    },
+                    files: vec![model::DiffFile {
+                        path: "a".to_string(),
+                        added: 1,
+                        removed: 0,
+                    }],
+                },
+            },
+        ),
+        op_result(
+            op(21),
+            OpOutcome::Error {
+                error: OpError::AttachmentMissing {
+                    id: model::id_of(b"wire missing"),
+                    name: "missing.png".to_string(),
+                },
+            },
+        ),
+        op_result(
+            op(22),
+            OpOutcome::Error {
+                error: OpError::AttachmentTooLarge {
+                    name: "large.zip".to_string(),
+                    size: 11,
+                    max: 10,
+                },
+            },
+        ),
+        op_result(
+            op(23),
+            OpOutcome::Error {
+                error: OpError::ArtifactCorrupt {
+                    id: model::id_of(b"wire corrupt"),
+                },
+            },
+        ),
+        op_result(
+            op(24),
+            OpOutcome::Error {
+                error: OpError::DiffUnavailable {
+                    message: "not a repository".to_string(),
+                },
+            },
+        ),
+        connected("nova"),
+        disconnected(DisconnectReason::ServerShutdown {
+            detail: "updating".to_string(),
+        }),
+        disconnected(DisconnectReason::TransportError {
+            message: "connection reset".to_string(),
+        }),
+        disconnected(DisconnectReason::AuthenticationRequired),
+        disconnected(DisconnectReason::SubscriptionRequired),
+        disconnected(DisconnectReason::ApplicationShutdown),
+        host_up(&a_host("nova")),
+        host_up(&an_offline_host("hetzner")),
+        Msg::Server(ui_state::ServerMsg::HostRemoved {
+            id: host_id("hetzner"),
+        }),
+        hosts_synced(),
+        agent_up(&an_agent("fix-auth-bug", "nova")),
+        agent_gone("fix-auth-bug"),
+        agents_synced(),
+        op_result(
+            op(1),
+            OpOutcome::AgentCreated {
+                agent: an_agent("claude-4", "nova"),
+            },
+        ),
+        op_result(
+            op(2),
+            OpOutcome::AgentRenamed {
+                agent: an_agent("claude-4", "nova"),
+            },
+        ),
+        op_result(op(3), OpOutcome::AgentDeleted),
+        op_failed(op(4), "boom"),
+        op_failed_auth(op(5)),
+        op_failed_subscription(op(16)),
+        stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
+        stream(
+            "fix-auth-bug",
+            StreamMsg::Batch {
+                at: t0_plus(1),
+                entries: vec![StreamEntry {
+                    seq: 1,
+                    payload: serde_json::json!({"type": "hook.stop", "session_id": "s"}),
+                }],
+            },
+        ),
+        stream("fix-auth-bug", StreamMsg::ReplayComplete),
+        Msg::UserAttached {
+            agent: agent_id("fix-auth-bug"),
+        },
+        tick(60),
+    ];
+    for reason in [
+        StreamCloseReason::AgentDeleted,
+        StreamCloseReason::AgentExited { exit_code: Some(1) },
+        StreamCloseReason::HostUnreachable,
+        StreamCloseReason::InternalError {
+            detail: "boom".to_string(),
+        },
+        StreamCloseReason::TransportError {
+            message: "reset".to_string(),
+        },
+        StreamCloseReason::AuthenticationRequired,
+        StreamCloseReason::SubscriptionRequired,
+        StreamCloseReason::ClientClosed,
+    ] {
+        variants.push(stream("fix-auth-bug", StreamMsg::Closed { reason }));
+    }
+
+    for msg in variants {
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let back: Msg = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, msg, "round trip changed {json}");
+    }
+}
+
+/// A reducer tripwire: entity events cannot arrive while disconnected (the
+/// subscription that would carry them is down). The reducer requests a report
+/// and refuses the write instead of corrupting the Model.
+#[test]
+fn impossible_input_requests_a_report() {
+    let (model, effects) = fold_with_effects(vec![agent_up(&an_agent("ghost", "nova"))]);
+    assert_eq!(model.agent_count(), 0, "the impossible write is refused");
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::RequestDump {
+                reason: DumpReason::Tripwire { .. }
+            }]
+        ),
+        "expected a tripwire report request: {effects:?}"
+    );
+}

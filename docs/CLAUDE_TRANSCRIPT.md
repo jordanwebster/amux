@@ -12,9 +12,9 @@ Claude rows those carriers produce.
 Evidence base:
 
 - The canonical 18-recording Claude PTY corpus under
-  `crates/claude/fixtures/pty/`, recorded at Claude Code **2.1.251** and
-  replayed by `claude::specs::pty`. The 18 committed row fixtures under
-  `crates/amux/tests/fixtures/rows/claude-pty/` are derived from those
+  `crates/claude-specs/fixtures/pty/`, recorded at Claude Code **2.1.251** and
+  replayed by `claude_specs::specs::pty`. The 18 committed row fixtures under
+  `crates/claude-specs/fixtures/claude-pty/` are derived from those
   recordings through the real provider session and amux adapter; their
   sidecars name the source recording and version.
 - 13 main session files + 30+ subagent files under `~/.claude/projects/`
@@ -49,7 +49,7 @@ Confidence vocabulary used throughout:
 
 The chat layer never reads the file. `claude::pty::Session` owns the PTY, hook,
 and transcript sources; the thin adapter in
-`crates/amux/src/agents/claude/pty_backend.rs` publishes their ordered events
+`crates/agent-runtime/src/agents/claude/pty_backend.rs` publishes their ordered events
 through `StructuredLogSource`. The client receives:
 
 1. **Transcript rows** — each non-empty line of the linked JSONL file,
@@ -633,7 +633,7 @@ recording name and version; every quoted row remains redacted structure.
 
 ### 18b. Phase 1 fixture-read corrections (claude 2.1.228, 2026-08-12)
 
-Found while building the amux-ui Claude layer against the original Phase 0
+Found while building the ui-state Claude layer against the original Phase 0
 captures. Each named Claude PTY row fixture now points through its sidecar to
 a 2.1.251 provider recording reproducing the same boundary claim.
 

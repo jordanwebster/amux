@@ -1,5 +1,5 @@
 import AmuxCore
-import AmuxMobile
+import AmuxApp
 import Foundation
 
 /// Writing what this app has been through into a bundle, and rebuilding a
@@ -82,8 +82,8 @@ enum DoorRecording {
     static func replay(_ directory: URL, into stores: StoreBundle) throws -> [Event] {
         let messages = directory.appendingPathComponent(Trace.messagesFile)
         let json = messages.path.withCString { path -> String? in
-            guard let owned = amux_mobile_replay_report(path) else { return nil }
-            defer { amux_mobile_free(owned) }
+            guard let owned = amux_app_replay_report(path) else { return nil }
+            defer { amux_app_free(owned) }
             return String(cString: owned)
         }
         guard let json else { throw Failure.unreadable(Trace.messagesFile) }

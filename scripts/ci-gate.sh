@@ -9,5 +9,5 @@ if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
     echo '{"error":"DirtyTree"}' >&2
     exit 1
 fi
-timeout 120 git push origin HEAD:nativeapp
-exec timeout 3300 wt run ci-status -- --wait 3000
+"$(dirname "$0")/bounded" 120 git push origin HEAD:nativeapp
+exec just ios ci-status --wait 3000

@@ -8,8 +8,6 @@ pub mod init;
 pub mod notification;
 pub mod server;
 pub mod session;
-#[cfg(specs)]
-pub mod specs;
 pub mod thread;
 pub mod thread_event_stream;
 pub mod transport;

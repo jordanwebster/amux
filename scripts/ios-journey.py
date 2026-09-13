@@ -58,7 +58,7 @@ BUNDLE_ID = "sh.amux.app"
 # One Fleet event the bridge itself produced, kept beside the projection it
 # came from. A remembered fleet is written by copying its card, so the shape a
 # journey seeds cannot drift away from the shape the library writes.
-PROJECTION_SCHEMA = Path("crates/amux-mobile/src/projection/schema.json")
+PROJECTION_SCHEMA = Path("crates/app-ffi/src/projection/schema.json")
 
 
 class Journey:

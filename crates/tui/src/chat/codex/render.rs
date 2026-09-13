@@ -1,0 +1,1717 @@
+//! The Codex chat's adapter onto the shared frame: it walks Codex's own
+//! typed entries, formats their words, and hands the shell finished
+//! blocks.
+//!
+//! Nothing here draws. Every row comes from the painter kit in
+//! `chat::blocks`, the same one the Claude adapter uses, so the two
+//! screens cannot drift apart. Phase and attention-like presentation come
+//! only from `ui_state::codex::phase`; feed blocks format the layer's typed
+//! entries without reconstructing a second semantic model.
+
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use serde_json::Value;
+use ui_state::codex::{
+    ApprovalResolution, Ask, AskActionMeaning, AskContext, BoundaryEntry, CodexPhase,
+    ErrorSeverity, FeedEntry, FeedEntryKind, ItemFinality, McpStartupEntry, McpStartupStatus,
+    MessagePhase, NetworkPolicyAction, PromptEntry, PromptPart, PromptSource, TokenUsage,
+    TurnStatus, WorkEntry, WorkKind, WorkOutcome, WorkState,
+};
+use ui_state::{AgentId, Model};
+
+use super::View;
+use crate::chat::attachments::{attachment_key, described, prose, words};
+use crate::chat::blocks::{
+    self, Carrier, fmt_thousands, fmt_tokens, paint_agent_message, paint_ask_fact, paint_ask_panel,
+    paint_assistant, paint_attachment, paint_compaction_rule, paint_composer_block, paint_error,
+    paint_header, paint_mcp_startup, paint_thinking, paint_tool_line, paint_turn_rule,
+    paint_unrecognized, paint_user_prompt,
+};
+use crate::chat::claude_shared::reader;
+use crate::chat::frame::{
+    BlockKey, ChatFrameParts, FeedBlocks, PaintCache, PaintInputs, PaintedBlock,
+};
+use crate::chat::viewport::FeedViewport;
+use crate::chat::{FeedScroll, MessageView, diff as diff_painter, family_banner, message_glyph};
+use crate::markdown;
+use crate::render::{FrameContext, Theme, clip_to_width, pad_to, push_span, str_width};
+use crate::view::QuitGuard;
+
+const GLYPH_COL: usize = blocks::GLYPH_COL;
+const TEXT_COL: usize = blocks::TEXT_COL;
+const DECISION_LABEL_MAX: usize = 52;
+const DECISION_KIND_MAX: usize = 22;
+const DECISION_DETAIL_MAX: usize = DECISION_LABEL_MAX - DECISION_KIND_MAX - 3;
+const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
+
+/// Screen rows of a file change's patch retained in the feed block.
+const PATCH_PREVIEW_BUDGET: usize = 12;
+
+// --- the frame --------------------------------------------------------------
+
+/// Everything the shared shell needs to draw this chat.
+pub(crate) fn codex_frame_parts(
+    model: &Model,
+    chat: &View,
+    viewport: &FeedViewport,
+    cache: &mut PaintCache,
+    ctx: &FrameContext,
+) -> ChatFrameParts {
+    let width = ctx.viewport.0 as usize;
+    let height = ctx.viewport.1 as usize;
+    let theme = ctx.theme;
+    let phase = ui_state::codex::phase(model, chat.agent);
+    let working = active_phase(&phase);
+    let loading = matches!(phase, CodexPhase::Replaying);
+
+    let banner = family_banner(model, chat.agent).map(|banner| {
+        family_banner_line(
+            &banner.row(banner_answerable(model, chat, &banner), chat.leader),
+            theme,
+        )
+    });
+
+    let paused = matches!(viewport.scroll, FeedScroll::Paused { .. });
+    ChatFrameParts {
+        header: header_row(model, chat, &phase, theme, width),
+        banner,
+        feed: FeedBlocks {
+            blocks: if loading {
+                Vec::new()
+            } else {
+                feed_blocks(model, chat, cache, theme, width)
+            },
+            history_truncated: model
+                .codex(chat.agent)
+                .is_some_and(|layer| layer.history_truncated()),
+            loading,
+        },
+        activity: crate::chat::queue::strip(
+            model,
+            chat.agent,
+            activity_row(model, chat, &phase, ctx, working),
+            theme,
+            width,
+            chat.inline_ask.is_none(),
+        ),
+        bottom: bottom_block(model, chat, theme, width, height, paused),
+        overlay: if chat.help {
+            Some(help_overlay(model, chat, theme, width, height))
+        } else if chat.context_open {
+            Some(context_overlay(model, chat, theme, width, height))
+        } else if chat.reader.is_some() {
+            super::reader_context(model, chat)
+                .and_then(|ctx| reader::reader_frame(&ctx, theme, width, height))
+        } else {
+            None
+        },
+    }
+}
+
+// --- the header and the rows around the feed --------------------------------
+
+fn header_row(
+    model: &Model,
+    chat: &View,
+    phase: &CodexPhase,
+    theme: Theme,
+    width: usize,
+) -> Line<'static> {
+    let name = match model.agent(chat.agent) {
+        Some(card) => format!(
+            "{} · {} @ {}{}",
+            card.display_name(),
+            card.agent.kind.provider(),
+            model.host_name(card.agent.host_id).unwrap_or("?"),
+            crate::chat::subagent_marker(model, chat.agent),
+        ),
+        None => String::new(),
+    };
+    let (mut word, style) = phase_word(phase, theme);
+    let readonly = chat.read_only(model);
+    if readonly && matches!(phase, CodexPhase::AwaitingApproval { .. }) {
+        word = "needs owner".to_string();
+    }
+    // The session facts: what the turn runs on, whether it asks before
+    // acting, and what it may touch. They are settled when the session is
+    // created and the launcher hands them over, so a chat opened another
+    // way states none — the same "has not said yet" honesty the other two
+    // chats use for a fact that has not arrived.
+    let mut facts = chat.configuration.clone();
+    if readonly {
+        facts.push("read-only".to_string());
+    }
+    // Facts are context and the phase word is not, so a line too narrow
+    // to hold both drops facts from the least important end — the model
+    // first, then how it asks; what it may touch survives longest.
+    let mut right = blocks::fit_header_facts(&name, facts, &word, width);
+    if right.is_empty() {
+        right.push_str("chat · ");
+    }
+    paint_header(&name, (&word, style), &right, theme, width)
+}
+
+/// Whether this banner's chord would do anything from here: the child
+/// has a panel to dock, and it is not already docked.
+fn banner_answerable(model: &Model, chat: &View, banner: &crate::chat::FamilyBanner) -> bool {
+    chat.inline_ask.is_none() && crate::chat::inline::can_open(model, chat.agent, banner.child)
+}
+
+/// The child-ask banner (U1): one warning row naming who is waiting and
+/// for what, derived per frame so it leaves when the ask is answered
+/// anywhere.
+fn family_banner_line(text: &str, theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(&mut line, GLYPH_COL, "⚠", theme.warn());
+    push_span(&mut line, TEXT_COL, text.to_string(), theme.warn());
+    line
+}
+
+/// The row between the feed and the composer: what the session is doing,
+/// how much of its context the thread has spent, and the keys that reach
+/// into a live turn.
+///
+/// The meter is a passive fact — whatever the session last reported the
+/// thread costing — so it is stated whenever this session has a layer at
+/// all, working or not, and says `unknown` before any report has arrived.
+fn activity_row(
+    model: &Model,
+    chat: &View,
+    phase: &CodexPhase,
+    ctx: &FrameContext,
+    working: bool,
+) -> Option<Line<'static>> {
+    let layer = model.codex(chat.agent)?;
+    let mut line = Line::default();
+    if working {
+        let label = match phase {
+            CodexPhase::Responding { .. } => "responding",
+            CodexPhase::Executing { .. } => "executing",
+            _ => "thinking",
+        };
+        let spinner = SPINNER[ctx.now.timestamp().unsigned_abs() as usize % SPINNER.len()];
+        push_span(
+            &mut line,
+            GLYPH_COL,
+            format!("{spinner} {label}"),
+            ctx.theme.text(),
+        );
+    } else {
+        push_span(&mut line, TEXT_COL, "", ctx.theme.muted());
+    }
+
+    let mut facts = vec![meter_text(layer.token_usage())];
+    // A docked child ask owns Enter and Ctrl+X while it is on screen, so
+    // the activity line stops naming them: a hint that would do
+    // something else than it says is worse than no hint (P10). The
+    // panel's own rows say what those keys do instead.
+    if working && chat.inline_ask.is_none() {
+        if ui_state::codex::allows_steer(model, chat.agent) {
+            facts.push("enter steer".to_string());
+        }
+        if ui_state::codex::allows_interrupt(model, chat.agent) {
+            facts.push("ctrl+x interrupt".to_string());
+        }
+    }
+    let joined = facts.join(" · ");
+    if working {
+        line.spans
+            .push(Span::styled(format!(" · {joined}"), ctx.theme.muted()));
+    } else {
+        line.spans.push(Span::styled(joined, ctx.theme.muted()));
+    }
+    Some(line)
+}
+
+/// `ctx 30.0k/272.0k`, `ctx 30.0k` when no report has stated the window,
+/// and `ctx unknown` before the session has reported at all.
+fn meter_text(usage: Option<&TokenUsage>) -> String {
+    let Some(used) = usage.and_then(|usage| usage.total_tokens) else {
+        return "ctx unknown".to_string();
+    };
+    match usage.and_then(|usage| usage.model_context_window) {
+        Some(window) if window > 0 => {
+            format!("ctx {}/{}", fmt_tokens(used), fmt_tokens(window))
+        }
+        _ => format!("ctx {}", fmt_tokens(used)),
+    }
+}
+
+/// Where the thread's context went, over the whole frame.
+///
+/// Codex reports thread-wide totals, not a per-tool accounting, so this
+/// states input and output and says so — a coarse answer named as coarse
+/// is more useful than a fine one nobody can produce. Cached input, cache
+/// writes and reasoning are shares of those two, shown underneath them,
+/// so the column never sums past the title. Nothing is fetched: the numbers
+/// arrived with the last turn.
+fn context_overlay(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let usage = model
+        .codex(chat.agent)
+        .and_then(|layer| layer.token_usage().cloned());
+
+    let title = match usage.as_ref().and_then(|usage| usage.total_tokens) {
+        Some(total) => match usage.as_ref().and_then(|usage| usage.model_context_window) {
+            Some(window) if window > 0 => format!(
+                "context · {} of {} tokens",
+                fmt_thousands(total),
+                fmt_thousands(window)
+            ),
+            _ => format!("context · {} tokens", fmt_thousands(total)),
+        },
+        None => "context".to_string(),
+    };
+
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    match &usage {
+        None => {
+            let mut line = Line::default();
+            push_span(
+                &mut line,
+                TEXT_COL,
+                "waiting for the session to report what its thread costs".to_string(),
+                theme.muted(),
+            );
+            rows.push(line);
+        }
+        Some(usage) => {
+            // Cached input is part of the input count and reasoning is
+            // part of the output count, so they are indented under the
+            // total they belong to. Four flat rows would invite the
+            // reader to add them up and get more than the title's total.
+            let categories: [(usize, &str, Option<u64>); 5] = [
+                (0, "input", usage.input_tokens),
+                (1, "of it cached", usage.cached_input_tokens),
+                (1, "of it written to cache", usage.cache_write_input_tokens),
+                (0, "output", usage.output_tokens),
+                (1, "of it reasoning", usage.reasoning_output_tokens),
+            ];
+            let widest = categories
+                .iter()
+                .map(|(depth, name, _)| depth * 2 + str_width(name))
+                .max()
+                .unwrap_or(0);
+            for (depth, name, tokens) in categories {
+                let indent = depth * 2;
+                let mut line = Line::default();
+                push_span(
+                    &mut line,
+                    TEXT_COL + indent,
+                    name.to_string(),
+                    if depth == 0 {
+                        theme.text()
+                    } else {
+                        theme.muted()
+                    },
+                );
+                push_span(
+                    &mut line,
+                    TEXT_COL + widest + 3,
+                    match tokens {
+                        Some(tokens) => fmt_thousands(tokens),
+                        None => "not reported".to_string(),
+                    },
+                    theme.muted(),
+                );
+                rows.push(line);
+            }
+        }
+    }
+
+    let footer = if chat.quit_guard.is_armed() {
+        crate::chat::claude_shared::armed_quit_line(theme)
+    } else {
+        let mut line = Line::default();
+        push_span(
+            &mut line,
+            TEXT_COL,
+            "input and output for the whole thread, not a per-tool accounting".to_string(),
+            theme.muted(),
+        );
+        line
+    };
+    reader::overlay_frame(title, rows, footer, width, height, theme)
+}
+
+fn active_phase(phase: &CodexPhase) -> bool {
+    matches!(
+        phase,
+        CodexPhase::Thinking | CodexPhase::Responding { .. } | CodexPhase::Executing { .. }
+    )
+}
+
+fn phase_word(phase: &CodexPhase, theme: Theme) -> (String, Style) {
+    match phase {
+        CodexPhase::Replaying => ("replaying".into(), theme.muted()),
+        CodexPhase::Idle => ("idle".into(), theme.muted()),
+        CodexPhase::Thinking => ("thinking".into(), theme.text()),
+        CodexPhase::Responding { .. } => ("responding".into(), theme.text()),
+        CodexPhase::Executing { .. } => ("executing".into(), theme.text()),
+        CodexPhase::AwaitingApproval { .. } => ("needs you".into(), theme.warn()),
+        CodexPhase::BlockedUnsupported { .. } => ("blocked".into(), theme.warn()),
+        CodexPhase::ReadOnly => ("read-only".into(), theme.warn()),
+        CodexPhase::Unknown => ("unknown".into(), theme.muted()),
+    }
+}
+
+// --- the bottom block -------------------------------------------------------
+
+/// Everything below the feed: the read-only statement, a docked
+/// approval — this chat's own or a child's — the blocked-input panel, or
+/// the composer the person types in.
+fn bottom_block(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
+    paused: bool,
+) -> Vec<Line<'static>> {
+    let mut lines = if chat.read_only(model) {
+        readonly_bottom(theme)
+    } else if let Some(inline) = &chat.inline_ask {
+        // U2: a child's ask docks where the composer is, exactly as this
+        // chat's own ask would. The parent's own ask is checked first,
+        // below, and reconcile drops a guest the moment one arrives —
+        // one panel, one cursor, one place to look.
+        crate::chat::inline::panel_lines(model, inline, width, theme, chat.quit_guard.is_armed())
+    } else if let Some(ask) = model.codex(chat.agent).and_then(|layer| layer.ask_head()) {
+        approval_panel(
+            model,
+            ApprovalView {
+                agent: chat.agent,
+                cursor: chat.approval_cursor,
+                failure: chat.answer_failure.as_deref(),
+            },
+            ask,
+            width,
+            theme,
+            chat.quit_guard.is_armed(),
+        )
+    } else if matches!(
+        ui_state::codex::phase(model, chat.agent),
+        CodexPhase::BlockedUnsupported { .. }
+    ) {
+        unsupported_panel(chat, width, theme)
+    } else {
+        return composer_bottom(model, chat, theme, width, height, paused);
+    };
+
+    // Keep the tail: the hint and action rows survive, body rows give way
+    // (mirrors the feed giving way to the composer).
+    let max_rows = height.saturating_sub(4).max(1);
+    if lines.len() > max_rows {
+        lines.drain(..lines.len() - max_rows);
+    }
+    lines
+}
+
+/// Whose approval this is and how the reader is holding it — the whole
+/// of what the panel needed from a `View`. Named separately so the same
+/// rows can be drawn for an agent whose chat is not the one on screen
+/// (U2: a child's ask, docked in its parent's chat).
+#[derive(Clone, Copy)]
+pub(crate) struct ApprovalView<'a> {
+    pub(crate) agent: AgentId,
+    pub(crate) cursor: usize,
+    pub(crate) failure: Option<&'a str>,
+}
+
+pub(crate) fn approval_panel(
+    model: &Model,
+    view: ApprovalView<'_>,
+    ask: &Ask,
+    width: usize,
+    theme: Theme,
+    quit_guard_armed: bool,
+) -> Vec<Line<'static>> {
+    paint_ask_panel(
+        BlockKey(ask.seq),
+        &approval_title_for(model, view.agent, &ask.context),
+        approval_body(model, view, ask, theme, blocks::panel_body_width(width)),
+        approval_actions(model, view, ask, theme, quit_guard_armed),
+        &approval_hints(model, view, ask, quit_guard_armed),
+        theme,
+        width,
+    )
+    .lines
+}
+
+/// The panel title, with the honest queue position: the panel has one
+/// title row and no right margin of its own, so an approval that is one
+/// of several says so where its name is.
+fn approval_title_for(model: &Model, agent: AgentId, context: &AskContext) -> String {
+    let count = model
+        .codex(agent)
+        .map(|layer| layer.ask_count())
+        .unwrap_or(1);
+    let title = approval_title(context);
+    match count {
+        0 | 1 => title,
+        count => format!("{title} · 1 of {count}"),
+    }
+}
+
+/// What is being asked about: the command, the files, the permissions or
+/// the tool call, plus any failure the last answer reported.
+fn approval_body(
+    model: &Model,
+    view: ApprovalView<'_>,
+    ask: &Ask,
+    theme: Theme,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let _ = model;
+    let mut lines = context_lines(&ask.context, width, theme);
+    if let Some(message) = view.failure {
+        lines.extend(panel_glyph_text(
+            "✗",
+            message,
+            width,
+            theme.error(),
+            theme.text(),
+        ));
+    }
+    lines
+}
+
+/// The decisions on offer, or the one row that says an answer is already
+/// on its way.
+fn approval_actions(
+    model: &Model,
+    view: ApprovalView<'_>,
+    ask: &Ask,
+    theme: Theme,
+    quit_guard_armed: bool,
+) -> Vec<Line<'static>> {
+    let answer_in_flight = model.codex(view.agent).is_some_and(|layer| {
+        layer.in_flight_inputs().any(|input| {
+            matches!(&input.kind, ui_state::codex::InFlightKind::Answer { request_id, .. }
+                if *request_id == ask.request_id)
+        })
+    });
+    if answer_in_flight {
+        let mut line = Line::default();
+        push_span(&mut line, 0, "◌", theme.muted());
+        push_span(&mut line, 2, "sending decision…", theme.muted());
+        return vec![line];
+    }
+
+    let allows_answer = ui_state::codex::allows_answer(model, view.agent);
+    let mut lines = Vec::new();
+    for (index, action) in ask.actions.iter().enumerate() {
+        let mut line = Line::default();
+        let supported = action.decision().is_some();
+        let selectable = allows_answer && supported;
+        if selectable && index == view.cursor {
+            push_span(&mut line, 0, "›", theme.text());
+        }
+        let style = if selectable {
+            theme.text()
+        } else {
+            theme.muted()
+        };
+        push_span(&mut line, 2, format!("{}.", index + 1), style);
+        push_span(&mut line, 5, decision_label(&action.meaning), style);
+        if !supported {
+            line.spans
+                .push(Span::styled(" · unavailable in V1", theme.muted()));
+        }
+        lines.push(line);
+    }
+    // The armed guard replaces the hints entirely, in warning colour, so
+    // it lands as the last action row rather than as hint text.
+    if quit_guard_armed {
+        lines.push(Line::default());
+        lines.push(armed_quit_line(theme));
+    }
+    lines
+}
+
+fn approval_hints(
+    model: &Model,
+    view: ApprovalView<'_>,
+    ask: &Ask,
+    quit_guard_armed: bool,
+) -> String {
+    let answer_in_flight = model.codex(view.agent).is_some_and(|layer| {
+        layer.in_flight_inputs().any(|input| {
+            matches!(&input.kind, ui_state::codex::InFlightKind::Answer { request_id, .. }
+                if *request_id == ask.request_id)
+        })
+    });
+    if quit_guard_armed || answer_in_flight || !ui_state::codex::allows_answer(model, view.agent) {
+        return String::new();
+    }
+    "↑↓/1-9 select · enter confirm · ctrl+x interrupt".to_string()
+}
+
+fn approval_title(context: &AskContext) -> String {
+    match context {
+        AskContext::Command { .. } => "approval — command".to_string(),
+        AskContext::FileChange { changes, .. } => {
+            format!("approval — {} file change(s)", changes.len())
+        }
+        AskContext::Permissions { .. } => "approval — permissions".to_string(),
+        AskContext::DynamicTool { tool, .. } => format!("approval — {tool}"),
+    }
+}
+
+/// A panel body's own columns: the painter supplies the indent, so a
+/// row's glyph sits at its left edge and its text two cells in.
+const PANEL_GLYPH_COL: usize = 0;
+const PANEL_TEXT_COL: usize = 2;
+const PANEL_CONT_COL: usize = 4;
+
+/// `glyph text` inside a panel body.
+fn panel_glyph_text(
+    glyph: &str,
+    text: &str,
+    width: usize,
+    glyph_style: Style,
+    text_style: Style,
+) -> Vec<Line<'static>> {
+    markdown::plain_rows(
+        text,
+        width.saturating_sub(PANEL_TEXT_COL).max(1),
+        text_style,
+    )
+    .into_iter()
+    .enumerate()
+    .map(|(index, spans)| {
+        let mut line = Line::default();
+        if index == 0 {
+            push_span(&mut line, PANEL_GLYPH_COL, glyph.to_string(), glyph_style);
+        }
+        pad_to(&mut line, PANEL_TEXT_COL);
+        line.spans.extend(spans);
+        line
+    })
+    .collect()
+}
+
+/// A dim `└ …` continuation inside a panel body.
+fn panel_continuation(text: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    markdown::plain_rows(
+        text,
+        width.saturating_sub(PANEL_CONT_COL).max(1),
+        theme.muted(),
+    )
+    .into_iter()
+    .enumerate()
+    .map(|(index, spans)| {
+        let mut line = Line::default();
+        if index == 0 {
+            push_span(&mut line, PANEL_TEXT_COL, "└", theme.muted());
+        }
+        pad_to(&mut line, PANEL_CONT_COL);
+        line.spans.extend(spans);
+        line
+    })
+    .collect()
+}
+
+fn context_lines(context: &AskContext, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    match context {
+        AskContext::Command {
+            command,
+            cwd,
+            reason,
+            ..
+        } => {
+            lines.extend(panel_glyph_text(
+                "$",
+                command,
+                width,
+                theme.muted(),
+                theme.code(),
+            ));
+            if let Some(cwd) = cwd {
+                lines.extend(panel_continuation(&format!("cwd {cwd}"), width, theme));
+            }
+            if let Some(reason) = reason {
+                lines.extend(panel_continuation(reason, width, theme));
+            }
+        }
+        AskContext::FileChange {
+            reason, changes, ..
+        } => {
+            for change in changes {
+                lines.extend(panel_glyph_text(
+                    "▸",
+                    &format!(
+                        "{}{}",
+                        change.path,
+                        change
+                            .status
+                            .as_deref()
+                            .map(|status| format!(" · {status}"))
+                            .unwrap_or_default()
+                    ),
+                    width,
+                    theme.text(),
+                    theme.text(),
+                ));
+            }
+            if let Some(reason) = reason {
+                lines.extend(panel_continuation(reason, width, theme));
+            }
+        }
+        AskContext::Permissions {
+            reason,
+            permissions,
+            ..
+        } => {
+            lines.extend(panel_glyph_text(
+                "▸",
+                &json_text(permissions),
+                width,
+                theme.text(),
+                theme.code(),
+            ));
+            if let Some(reason) = reason {
+                lines.extend(panel_continuation(reason, width, theme));
+            }
+        }
+        AskContext::DynamicTool {
+            tool,
+            namespace,
+            arguments,
+            ..
+        } => lines.extend(panel_glyph_text(
+            "▸",
+            &format!(
+                "{}{} {}",
+                namespace
+                    .as_deref()
+                    .map(|namespace| format!("{namespace}::"))
+                    .unwrap_or_default(),
+                tool,
+                json_text(arguments)
+            ),
+            width,
+            theme.text(),
+            theme.code(),
+        )),
+    }
+    lines
+}
+
+/// Codex asked for something structured chat V1 cannot answer. It goes
+/// on the panel surface, like an approval, because it is the same kind
+/// of fact: the turn is waiting on a person and this screen cannot be
+/// the person.
+fn unsupported_panel(chat: &View, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let body_width = blocks::panel_body_width(width);
+    let mut body = markdown::plain_rows(
+        "Codex requested user input that structured chat V1 cannot answer.",
+        body_width,
+        theme.text(),
+    )
+    .into_iter()
+    .map(Line::from)
+    .collect::<Vec<_>>();
+    body.push(Line::from(Span::styled(
+        "This turn is blocked — it is not idle.",
+        theme.muted(),
+    )));
+    let mut actions = Vec::new();
+    if chat.quit_guard.is_armed() {
+        actions.push(armed_quit_line(theme));
+    }
+    paint_ask_panel(
+        BlockKey(u64::MAX),
+        "user input requested",
+        body,
+        actions,
+        &if chat.quit_guard.is_armed() {
+            String::new()
+        } else {
+            format!("ctrl+x interrupt · C-{} s then open raw mode", chat.leader)
+        },
+        theme,
+        width,
+    )
+    .lines
+}
+
+fn readonly_bottom(theme: Theme) -> Vec<Line<'static>> {
+    let mut marker = Line::default();
+    push_span(
+        &mut marker,
+        GLYPH_COL,
+        "⊘ read-only — you are observing this Codex session",
+        theme.muted(),
+    );
+    let mut hint = Line::default();
+    push_span(
+        &mut hint,
+        TEXT_COL,
+        "pgup/pgdn scroll · q back to fleet",
+        theme.muted(),
+    );
+    vec![marker, Line::default(), hint]
+}
+
+/// The composer as the person's own surface, with one hint row under it.
+fn composer_bottom(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
+    paused: bool,
+) -> Vec<Line<'static>> {
+    // The composer grows from one row to six, never past what the frame
+    // can spare: the hint row and a feed row survive every height.
+    let budget = height.saturating_sub(6).clamp(1, 6);
+    let (rows, cursor_row) = chat.composer.display_rows(text_width(width));
+    let mut lines = if chat.composer.is_empty() {
+        paint_composer_block(
+            vec![String::new()],
+            Some((0, 0)),
+            Some("Type a message"),
+            theme,
+            width,
+        )
+    } else {
+        let visible = rows.len().min(budget);
+        // Past the visible rows, the window follows the cursor.
+        let start = if rows.len() <= visible {
+            0
+        } else {
+            (cursor_row + 1)
+                .saturating_sub(visible)
+                .min(rows.len() - visible)
+        };
+        paint_composer_block(
+            rows[start..start + visible].to_vec(),
+            None,
+            None,
+            theme,
+            width,
+        )
+    };
+    lines.push(Line::default());
+    lines.push(footer_line(model, chat, theme, paused));
+    lines
+}
+
+fn footer_line(model: &Model, chat: &View, theme: Theme, paused: bool) -> Line<'static> {
+    let mut line = if chat.quit_guard.is_armed() {
+        armed_quit_line(theme)
+    } else {
+        Line::default()
+    };
+    if !chat.quit_guard.is_armed() {
+        if let Some(message) = &chat.send_failure {
+            push_span(&mut line, GLYPH_COL, "✗", theme.error());
+            push_span(
+                &mut line,
+                TEXT_COL,
+                format!("send failed: {message}"),
+                theme.text(),
+            );
+        } else if paused {
+            // The rule above the footer already says how to catch up, so
+            // the footer spends its width on what a stopped reader came
+            // for: putting the focus on a block and taking it out.
+            push_span(
+                &mut line,
+                TEXT_COL,
+                crate::bindings::Effective::new(chat.kitty, chat.leader).feed_hint(),
+                theme.muted(),
+            );
+        } else if ui_state::codex::allows_steer(model, chat.agent) {
+            let suffix = "enter steer · ctrl+j newline";
+            push_span(&mut line, TEXT_COL, suffix, theme.muted());
+        } else if let Some(refusal) = ui_state::codex::send_gate(model, chat.agent).refusal() {
+            let text = if chat.composer.is_empty() {
+                refusal.to_string()
+            } else {
+                format!("draft kept — {refusal}")
+            };
+            push_span(&mut line, TEXT_COL, text, theme.muted());
+        } else {
+            push_span(
+                &mut line,
+                TEXT_COL,
+                "enter send · ctrl+j newline · ? help",
+                theme.muted(),
+            );
+        }
+    }
+    line
+}
+
+fn armed_quit_line(theme: Theme) -> Line<'static> {
+    let mut line = Line::default();
+    push_span(&mut line, 2, QuitGuard::HINT, theme.warn());
+    line
+}
+
+/// Every feed block, in file order. Codex has no read-only exploration
+/// kind to fold: every command and every file change is consequential,
+/// so each one keeps a block of its own.
+fn feed_blocks(
+    model: &Model,
+    chat: &View,
+    cache: &mut PaintCache,
+    theme: Theme,
+    width: usize,
+) -> Vec<PaintedBlock> {
+    let Some(layer) = model.codex(chat.agent) else {
+        return Vec::new();
+    };
+    let reports = MessageView::new(model, chat.agent, chat.reports_open, chat.leader);
+    let mut blocks: Vec<PaintedBlock> = Vec::new();
+    for entry in layer.entries() {
+        blocks.push(
+            cache
+                .get_or_paint(
+                    BlockKey(entry.id),
+                    entry,
+                    PaintInputs {
+                        width,
+                        theme,
+                        expanded: chat.reports_open,
+                    },
+                    || entry_block(entry, layer.attachments(), theme, width, reports),
+                )
+                .clone(),
+        );
+        // One focusable row per attachment, under the message that
+        // carries it, so the feed can open exactly one of them.
+        for (index, attachment) in entry_attachments(layer, entry).iter().enumerate() {
+            let key = attachment_key(entry.id, index);
+            blocks.push(
+                cache
+                    .get_or_paint(
+                        key,
+                        attachment,
+                        PaintInputs {
+                            width,
+                            theme,
+                            expanded: false,
+                        },
+                        || {
+                            let carrier = match &entry.kind {
+                                FeedEntryKind::Prompt(_) => Carrier::Person,
+                                _ => Carrier::Agent,
+                            };
+                            paint_attachment(key, attachment, carrier, theme, width)
+                        },
+                    )
+                    .clone(),
+            );
+        }
+    }
+    cache.retain(&blocks.iter().map(|block| block.key).collect::<Vec<_>>());
+    blocks
+}
+
+/// The attachments one entry carries, described from the layer's index.
+fn entry_attachments(
+    layer: &ui_state::codex::CodexLayer,
+    entry: &FeedEntry,
+) -> Vec<ui_state::attachments::AttachmentLine> {
+    match &entry.kind {
+        FeedEntryKind::Prompt(prompt) => described(layer.attachments(), &prompt.content),
+        FeedEntryKind::Message(message) => described(layer.attachments(), &message.content),
+        _ => Vec::new(),
+    }
+}
+
+/// Join a second painted block onto the first: some entries say one
+/// thing in two shapes — a patch under its file list, a streaming marker
+/// under a message — and they are still one block to focus and copy.
+fn merged(mut block: PaintedBlock, tail: PaintedBlock) -> PaintedBlock {
+    block.lines.extend(tail.lines);
+    if !tail.copy_text.is_empty() {
+        block.copy_text.push('\n');
+        block.copy_text.push_str(&tail.copy_text);
+    }
+    block
+}
+
+fn entry_block(
+    entry: &FeedEntry,
+    index: &ui_state::attachments::AttachmentIndex,
+    theme: Theme,
+    width: usize,
+    reports: MessageView<'_>,
+) -> PaintedBlock {
+    let key = BlockKey(entry.id);
+    match &entry.kind {
+        FeedEntryKind::Prompt(prompt) => {
+            let mut text = match prompt.source {
+                PromptSource::Protocol => String::new(),
+                PromptSource::SteerEcho => "steer · ".to_string(),
+            };
+            text.push_str(&prompt_body(prompt, index));
+            paint_user_prompt(
+                key,
+                &text,
+                prompt.finality == ItemFinality::Open,
+                theme,
+                width,
+            )
+        }
+        FeedEntryKind::Message(message) => {
+            // A block still arriving carries the caret a person reads as
+            // "more is coming", in the same place the other chats put it.
+            let text = match message.finality {
+                ItemFinality::Open => format!("{}▌", prose(&message.content)),
+                _ => prose(&message.content),
+            };
+            let mut block = paint_assistant(key, &text, theme, width);
+            if message.phase == MessagePhase::Commentary {
+                block = merged(
+                    paint_thinking(key, "· commentary", None, theme, width),
+                    block,
+                );
+            }
+            block
+        }
+        FeedEntryKind::Reasoning(reasoning) => {
+            let mut detail = reasoning
+                .summary
+                .iter()
+                .map(|summary| format!("summary: {summary}"))
+                .collect::<Vec<_>>();
+            if !reasoning.text.is_empty() {
+                detail.push(reasoning.text.clone());
+            }
+            paint_thinking(
+                key,
+                if reasoning.finality == ItemFinality::Open {
+                    "~ reasoning…"
+                } else {
+                    "~ reasoning"
+                },
+                (!detail.is_empty()).then(|| detail.join("\n")).as_deref(),
+                theme,
+                width,
+            )
+        }
+        FeedEntryKind::Work(work) => work_block(key, work, theme, width),
+        FeedEntryKind::McpStartup(startup) => {
+            paint_mcp_startup(key, mcp_startup_rows(startup, theme, width), theme, width)
+        }
+        // One directional glyph, the sender, then the body — in the shape
+        // the kernel gives the message's kind, so this chat and every
+        // other draw a completion the same way.
+        FeedEntryKind::AgentMessage(message) => {
+            let glyph = message_glyph(message.kind.presentation(), theme);
+            let body = reports.body(message.kind.presentation(), &message.text);
+            paint_agent_message(
+                key,
+                glyph,
+                &reports.sender(&message.from),
+                &body.text,
+                body.affordance.as_deref(),
+                theme,
+                width,
+            )
+        }
+        FeedEntryKind::Turn(turn) => {
+            let status = match &turn.status {
+                TurnStatus::Completed => "completed".to_string(),
+                TurnStatus::Interrupted => "interrupted".to_string(),
+                TurnStatus::Failed { message } => format!("failed · {message}"),
+            };
+            let mut label = format!("turn {status}");
+            if let Some(usage) = &turn.token_usage {
+                label.push_str(&format!(" · {}", usage_text(usage)));
+            }
+            paint_turn_rule(key, &label, theme, width)
+        }
+        FeedEntryKind::Boundary(boundary) => match boundary {
+            BoundaryEntry::Compacted { turn_id } => paint_compaction_rule(
+                key,
+                &turn_id
+                    .as_deref()
+                    .map(|id| format!("context compacted · {id}"))
+                    .unwrap_or_else(|| "context compacted".to_string()),
+                theme,
+                width,
+            ),
+            BoundaryEntry::Resumed => paint_turn_rule(
+                key,
+                "resumed · earlier history not re-rendered · context intact",
+                theme,
+                width,
+            ),
+            BoundaryEntry::Ready => paint_turn_rule(key, "Codex re-synchronized", theme, width),
+            BoundaryEntry::Gap { reason } => {
+                paint_turn_rule(key, &format!("stream gap · {reason}"), theme, width)
+            }
+        },
+        FeedEntryKind::Error(error) => match error.severity {
+            ErrorSeverity::Error => {
+                paint_error(key, &error.message, error.will_retry, theme, width)
+            }
+            severity => {
+                let (glyph, style, label) = match severity {
+                    ErrorSeverity::Warning => ("⚠", theme.warn(), "warning"),
+                    _ => ("·", theme.muted(), "notice"),
+                };
+                paint_tool_line(
+                    key,
+                    (glyph, style),
+                    &format!("{label} · {}", error.message),
+                    error.will_retry.then_some("retrying"),
+                    theme,
+                    width,
+                )
+            }
+        },
+        FeedEntryKind::Unrecognized(row) => paint_unrecognized(
+            key,
+            "unrecognized Codex row",
+            Some(&format!(
+                "{}{}",
+                row.method,
+                row.detail
+                    .as_deref()
+                    .map(|detail| format!(" · {detail}"))
+                    .unwrap_or_default()
+            )),
+            theme,
+            width,
+        ),
+    }
+}
+
+fn mcp_startup_rows(startup: &McpStartupEntry, theme: Theme, width: usize) -> Vec<Line<'static>> {
+    let count = |status| {
+        startup
+            .servers
+            .values()
+            .filter(|server| server.status == status)
+            .count()
+    };
+    let starting = count(McpStartupStatus::Starting);
+    let ready = count(McpStartupStatus::Ready);
+    let failed = count(McpStartupStatus::Failed);
+    let cancelled = count(McpStartupStatus::Cancelled);
+    let mut text = format!("MCP servers · {starting} starting · {ready} ready · {failed} failed");
+    if cancelled > 0 {
+        text.push_str(&format!(" · {cancelled} cancelled"));
+    }
+    let (glyph, style) = if failed > 0 {
+        ("✗", theme.error())
+    } else if starting > 0 {
+        ("◌", theme.muted())
+    } else if cancelled > 0 {
+        ("⚠", theme.warn())
+    } else {
+        ("✓", theme.ok())
+    };
+    glyph_text(glyph, &text, width, style, theme.text())
+}
+
+/// One unit of Codex work: what it is, how it went, and — for a file
+/// change — the patch itself, through the shared diff rows.
+fn work_block(key: BlockKey, work: &WorkEntry, theme: Theme, width: usize) -> PaintedBlock {
+    let (glyph, glyph_style, state) = work_state(&work.state, theme);
+
+    // A decision already made is history, not a question: a denied or
+    // abandoned unit states what was settled instead of wearing a work
+    // glyph as though it were still on its way.
+    if let WorkState::Denied | WorkState::Abandoned { .. } = &work.state {
+        return paint_ask_fact(
+            key,
+            (glyph, glyph_style),
+            &format!("{state} — {}", work_subject(&work.kind)),
+            theme,
+            width,
+        );
+    }
+
+    let mut detail: Vec<String> = Vec::new();
+    let mut patch: Option<(String, &str, bool)> = None;
+    let label = match &work.kind {
+        WorkKind::Command {
+            command,
+            cwd,
+            exit_code,
+        } => {
+            let mut label = format!("$ {command} · {state}");
+            if let Some(code) = exit_code {
+                label.push_str(&format!(" · exit {code}"));
+            }
+            if let Some(cwd) = cwd {
+                detail.push(format!("cwd {cwd}"));
+            }
+            label
+        }
+        WorkKind::FileChange {
+            changes,
+            patch_head,
+            patch_truncated,
+        } => {
+            let label = format!("file changes · {} · {state}", changes.len());
+            for change in changes {
+                detail.push(format!(
+                    "{}{}",
+                    change.path,
+                    change
+                        .status
+                        .as_deref()
+                        .map(|status| format!(" · {status}"))
+                        .unwrap_or_default()
+                ));
+            }
+            if !patch_head.is_empty() {
+                let title = match changes.as_slice() {
+                    [change] => change.path.clone(),
+                    changes => format!("{} files", changes.len()),
+                };
+                patch = Some((title, patch_head.as_str(), *patch_truncated));
+            }
+            label
+        }
+        WorkKind::Plan {
+            text,
+            explanation,
+            steps,
+        } => {
+            if let Some(explanation) = explanation {
+                detail.push(explanation.clone());
+            }
+            if !text.is_empty() {
+                detail.push(text.clone());
+            }
+            for step in steps {
+                detail.push(format!("[{}] {}", step.status, step.step));
+            }
+            format!("plan update · {state}")
+        }
+        WorkKind::McpTool {
+            server,
+            tool,
+            arguments,
+            result,
+            error,
+        } => {
+            detail.push(json_text(arguments));
+            if let Some(result) = result {
+                detail.push(format!("result {}", json_text(result)));
+            }
+            if let Some(error) = error {
+                detail.push(format!("error {}", json_text(error)));
+            }
+            format!("MCP {server}::{tool} · {state}")
+        }
+        WorkKind::AmuxTool {
+            tool,
+            arguments,
+            success,
+        } => {
+            detail.push(json_text(arguments));
+            if let Some(success) = success {
+                detail.push(format!("success {success}"));
+            }
+            format!("amux {tool} · {state}")
+        }
+        // A send is the outbound half of a conversation — one directional
+        // glyph, who it went to, and a summary of what left.
+        WorkKind::AmuxSend { to, text, success } => {
+            if let Some(success) = success {
+                detail.push(format!("success {success}"));
+            }
+            crate::chat::format_amux_send(Some(to), Some(text))
+        }
+        WorkKind::DynamicTool {
+            tool,
+            namespace,
+            arguments,
+            success,
+        } => {
+            let name = namespace
+                .as_deref()
+                .map(|namespace| format!("{namespace}::{tool}"))
+                .unwrap_or_else(|| tool.clone());
+            detail.push(json_text(arguments));
+            if let Some(success) = success {
+                detail.push(format!("success {success}"));
+            }
+            format!("tool {name} · {state}")
+        }
+        WorkKind::WebSearch { query, action } => {
+            if let Some(action) = action {
+                detail.push(json_text(action));
+            }
+            format!("web search “{query}” · {state}")
+        }
+        WorkKind::UnsupportedUserInput { questions } => {
+            return paint_unrecognized(
+                key,
+                "user input requested · blocked in structured chat V1",
+                Some(&json_text(questions)),
+                theme,
+                width,
+            );
+        }
+        WorkKind::Other { item_type, raw } => {
+            detail.push(json_text(raw));
+            format!("Codex item {item_type} · {state}")
+        }
+    };
+
+    if !work.stdout_head.is_empty() {
+        detail.push(format!("stdout: {}", work.stdout_head));
+    }
+    if !work.stderr_head.is_empty() {
+        detail.push(format!("stderr: {}", work.stderr_head));
+    }
+    if work.output_truncated {
+        detail.push("output preview truncated".to_string());
+    }
+
+    let mut block = paint_tool_line(
+        key,
+        (glyph, glyph_style),
+        &label,
+        (!detail.is_empty()).then(|| detail.join("\n")).as_deref(),
+        theme,
+        width,
+    );
+    if let Some((title, patch_head, truncated)) = patch {
+        let document = ui_state::diff::parse_unified_patch(patch_head, truncated);
+        let rows = document.rows();
+        if !rows.is_empty() {
+            let painted =
+                diff_painter::paint_rows(&rows, theme, blocks::panel_body_width(width), 0, true);
+            let (body, screen_cut) = painted.into_screen_head(PATCH_PREVIEW_BUDGET);
+            let title = if document.truncated || screen_cut {
+                format!("{title} · patch preview")
+            } else {
+                title
+            };
+            block = merged(
+                block,
+                blocks::paint_unified_diff(key, &title, body, theme, width),
+            );
+        }
+    }
+    block
+}
+
+/// What a settled decision was about, in as few words as the row can
+/// carry: the command, the files, the tool.
+fn work_subject(kind: &WorkKind) -> String {
+    match kind {
+        WorkKind::Command { command, .. } => format!("$ {command}"),
+        WorkKind::FileChange { changes, .. } => match changes.as_slice() {
+            [change] => change.path.clone(),
+            changes => format!("{} file changes", changes.len()),
+        },
+        WorkKind::Plan { .. } => "plan update".to_string(),
+        WorkKind::McpTool { server, tool, .. } => format!("MCP {server}::{tool}"),
+        WorkKind::AmuxTool { tool, .. } => format!("amux {tool}"),
+        WorkKind::AmuxSend { to, .. } => format!("send to {to}"),
+        WorkKind::DynamicTool {
+            tool, namespace, ..
+        } => namespace
+            .as_deref()
+            .map(|namespace| format!("{namespace}::{tool}"))
+            .unwrap_or_else(|| tool.clone()),
+        WorkKind::WebSearch { query, .. } => format!("web search “{query}”"),
+        WorkKind::UnsupportedUserInput { .. } => "user input request".to_string(),
+        WorkKind::Other { item_type, .. } => format!("Codex item {item_type}"),
+    }
+}
+
+fn work_state(state: &WorkState, theme: Theme) -> (&'static str, Style, String) {
+    match state {
+        WorkState::Proposed => ("▸", theme.muted(), "proposed".into()),
+        WorkState::AwaitingApproval { .. } => ("⚠", theme.warn(), "awaiting approval".into()),
+        WorkState::Running => ("▸", theme.text(), "running".into()),
+        WorkState::Done { outcome } => match outcome {
+            WorkOutcome::Succeeded => ("✔", theme.ok(), "done".into()),
+            WorkOutcome::Failed => ("✗", theme.error(), "failed".into()),
+            WorkOutcome::Declined => ("✗", theme.error(), "declined".into()),
+            WorkOutcome::Unknown => ("·", theme.muted(), "done · unknown outcome".into()),
+        },
+        WorkState::Denied => ("✗", theme.error(), "denied".into()),
+        WorkState::Abandoned { reason } => (
+            "✗",
+            theme.error(),
+            format!("abandoned · {}", resolution_label(*reason)),
+        ),
+        WorkState::BlockedUnsupported => ("?", theme.warn(), "blocked".into()),
+    }
+}
+
+fn resolution_label(reason: ApprovalResolution) -> &'static str {
+    match reason {
+        ApprovalResolution::Answered => "answered",
+        ApprovalResolution::AnsweredElsewhere => "answered elsewhere",
+        ApprovalResolution::ResponseFailed => "response failed",
+        ApprovalResolution::ConnectionLost => "connection lost",
+        ApprovalResolution::QueueOverflow => "queue overflow",
+        ApprovalResolution::EventStreamError => "event stream error",
+        ApprovalResolution::SessionStopped => "session stopped",
+        ApprovalResolution::Unknown => "unknown reason",
+    }
+}
+
+/// The prompt's words: its text parts with each attachment element shown
+/// as the token it was typed as, then whatever the protocol sent that was
+/// not text.
+fn prompt_body(prompt: &PromptEntry, index: &ui_state::attachments::AttachmentIndex) -> String {
+    let mut pieces = vec![words(index, &prompt.content)];
+    pieces.extend(prompt.parts.iter().filter_map(non_text_part));
+    pieces.retain(|piece| !piece.is_empty());
+    pieces.join(" ")
+}
+
+fn non_text_part(part: &PromptPart) -> Option<String> {
+    Some(match part {
+        PromptPart::Text { .. } => return None,
+        PromptPart::Image { url } => format!(
+            "[image{}]",
+            url.as_deref()
+                .map(|url| format!(": {url}"))
+                .unwrap_or_default()
+        ),
+        PromptPart::LocalImage { path } => format!(
+            "[local image{}]",
+            path.as_deref()
+                .map(|path| format!(": {path}"))
+                .unwrap_or_default()
+        ),
+        PromptPart::Other { item_type, raw } => format!(
+            "[{}: {}]",
+            item_type.as_deref().unwrap_or("input"),
+            json_text(raw)
+        ),
+    })
+}
+
+fn usage_text(usage: &TokenUsage) -> String {
+    let mut parts = Vec::new();
+    if let Some(total) = usage.total_tokens {
+        parts.push(format!("{total} tok"));
+    }
+    if let Some(input) = usage.input_tokens {
+        parts.push(format!("{input} in"));
+    }
+    if let Some(output) = usage.output_tokens {
+        parts.push(format!("{output} out"));
+    }
+    if let Some(reasoning) = usage.reasoning_output_tokens {
+        parts.push(format!("{reasoning} reasoning"));
+    }
+    if let Some(window) = usage.model_context_window {
+        parts.push(format!("{window} window"));
+    }
+    if parts.is_empty() {
+        "token usage unavailable".to_string()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn json_text(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "<invalid json>".to_string())
+}
+
+fn decision_label(meaning: &AskActionMeaning) -> String {
+    let label = match meaning {
+        AskActionMeaning::Scalar { decision } => match decision {
+            ui_state::CodexDecision::Accept => "accept once".to_string(),
+            ui_state::CodexDecision::AcceptForSession => "accept for session".to_string(),
+            ui_state::CodexDecision::Decline => "decline".to_string(),
+            ui_state::CodexDecision::Cancel => "cancel".to_string(),
+        },
+        AskActionMeaning::AcceptWithExecpolicyAmendment {
+            matches_proposal: true,
+        } => "accept and allow similar commands".to_string(),
+        AskActionMeaning::AcceptWithExecpolicyAmendment {
+            matches_proposal: false,
+        } => "acceptWithExecpolicyAmendment".to_string(),
+        AskActionMeaning::ApplyNetworkPolicyAmendment {
+            amendment,
+            proposed: true,
+        } => {
+            let action = match amendment.action {
+                NetworkPolicyAction::Allow => "allow",
+                NetworkPolicyAction::Deny => "deny",
+            };
+            format!(
+                "apply network policy change · {action} {}",
+                sanitize_label_text(&amendment.host)
+            )
+        }
+        AskActionMeaning::ApplyNetworkPolicyAmendment {
+            proposed: false, ..
+        } => "applyNetworkPolicyAmendment".to_string(),
+        AskActionMeaning::EmptyObject => "unavailable choice".to_string(),
+        AskActionMeaning::UnknownObject {
+            kind,
+            scalar_details,
+        } => {
+            let kind = bounded_label_segment(kind, DECISION_KIND_MAX);
+            let detail = bounded_label_segment(&scalar_details.join(" · "), DECISION_DETAIL_MAX);
+            if detail.is_empty() {
+                kind
+            } else {
+                format!("{kind} · {detail}")
+            }
+        }
+        AskActionMeaning::UnknownScalar { detail } => detail.clone(),
+    };
+    bounded_decision_label(&label)
+}
+
+fn sanitize_label_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '{' | '}' | '"' => ' ',
+            character if character.is_control() => ' ',
+            character => character,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn bounded_decision_label(label: &str) -> String {
+    if str_width(label) <= DECISION_LABEL_MAX {
+        return label.to_string();
+    }
+    format!(
+        "{}…",
+        clip_to_width(label, DECISION_LABEL_MAX.saturating_sub(1))
+    )
+}
+
+fn bounded_label_segment(label: &str, max: usize) -> String {
+    if str_width(label) <= max {
+        return label.to_string();
+    }
+    format!("{}…", clip_to_width(label, max.saturating_sub(1)))
+}
+
+fn text_width(width: usize) -> usize {
+    width.saturating_sub(TEXT_COL + 1).max(1)
+}
+
+fn glyph_text(
+    glyph: &str,
+    text: &str,
+    width: usize,
+    glyph_style: Style,
+    text_style: Style,
+) -> Vec<Line<'static>> {
+    markdown::plain_rows(text, text_width(width), text_style)
+        .into_iter()
+        .enumerate()
+        .map(|(index, spans)| {
+            let mut line = Line::default();
+            if index == 0 {
+                push_span(&mut line, GLYPH_COL, glyph.to_string(), glyph_style);
+            }
+            pad_to(&mut line, TEXT_COL);
+            line.spans.extend(spans);
+            line
+        })
+        .collect()
+}
+
+/// The `?` overlay: this chat's full effective key list, fullscreen like
+/// the Claude chat's. On short viewports the tail gives way and a `⋮` row
+/// states the cut honestly.
+fn help_overlay(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let sections = crate::bindings::codex_chat_sections(
+        &crate::bindings::Effective::new(chat.kitty, chat.leader),
+        crate::chat::family_keys(model, chat.agent),
+    );
+    let key_col = TEXT_COL
+        + 2
+        + sections
+            .iter()
+            .flat_map(|section| &section.bindings)
+            .map(|binding| str_width(&binding.keys))
+            .max()
+            .unwrap_or(0)
+        + 3;
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        if index > 0 {
+            rows.push(Line::default());
+        }
+        let mut title = Line::default();
+        push_span(&mut title, GLYPH_COL, section.title, theme.muted());
+        rows.push(title);
+        for binding in &section.bindings {
+            let mut line = Line::default();
+            push_span(&mut line, TEXT_COL + 2, binding.keys.clone(), theme.text());
+            push_span(&mut line, key_col, binding.action.clone(), theme.muted());
+            if let Some(mark) = crate::render::tier_mark(binding.tier) {
+                line.spans
+                    .push(Span::styled(format!(" · {mark}"), theme.muted()));
+            }
+            rows.push(line);
+        }
+    }
+
+    // Fixed chrome is five rows: the title, the gap under it, two rules
+    // and the hint. The body consumes every remaining viewport row.
+    let body_h = height.saturating_sub(5).max(1);
+    if rows.len() > body_h {
+        rows.truncate(body_h.saturating_sub(1));
+        let mut more = Line::default();
+        push_span(
+            &mut more,
+            GLYPH_COL,
+            "⋮ more — a taller terminal shows the full list",
+            theme.muted(),
+        );
+        rows.push(more);
+    }
+    while rows.len() < body_h {
+        rows.push(Line::default());
+    }
+
+    let mut title = Line::default();
+    push_span(&mut title, GLYPH_COL, "keys", theme.emphasis());
+    let hint = if chat.quit_guard.is_armed() {
+        let mut line = Line::default();
+        push_span(&mut line, TEXT_COL, QuitGuard::HINT, theme.warn());
+        line
+    } else {
+        let mut line = Line::default();
+        push_span(&mut line, TEXT_COL, "any key to close", theme.muted());
+        line
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
+    lines.push(title);
+    lines.push(Line::default());
+    lines.push(rule_row(width, theme));
+    lines.extend(rows);
+    lines.push(rule_row(width, theme));
+    lines.push(hint);
+    lines.truncate(height);
+    lines
+}
+
+/// A dim rule across the whole screen: the overlay's one boundary
+/// between a title, a body and the keys that act on it.
+fn rule_row(width: usize, theme: Theme) -> Line<'static> {
+    Line::from(Span::styled("─".repeat(width), theme.muted()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use ui_state::codex::McpServerStartup;
+
+    use super::*;
+
+    #[test]
+    fn typed_decision_labels_keep_terminal_wording_and_bounds() {
+        assert_eq!(
+            decision_label(&AskActionMeaning::AcceptWithExecpolicyAmendment {
+                matches_proposal: true,
+            }),
+            "accept and allow similar commands"
+        );
+        assert_eq!(
+            decision_label(&AskActionMeaning::ApplyNetworkPolicyAmendment {
+                amendment: ui_state::codex::NetworkPolicyAmendment {
+                    host: "crates.io".to_string(),
+                    action: NetworkPolicyAction::Allow,
+                },
+                proposed: true,
+            }),
+            "apply network policy change · allow crates.io"
+        );
+        assert_eq!(
+            decision_label(&AskActionMeaning::AcceptWithExecpolicyAmendment {
+                matches_proposal: false,
+            }),
+            "acceptWithExecpolicyAmendment",
+            "a known choice is not trusted without its typed proposal"
+        );
+
+        let fallback = decision_label(&AskActionMeaning::UnknownObject {
+            kind: "future Policy".to_string(),
+            scalar_details: vec![
+                "deploy quoted value with a deliberately very long scalar explanation".to_string(),
+                "7".to_string(),
+            ],
+        });
+        assert!(fallback.starts_with("future Policy · "));
+        assert!(fallback.contains("deploy quoted value"));
+        assert!(fallback.ends_with('…'));
+        assert!(str_width(&fallback) <= DECISION_LABEL_MAX);
+        assert!(
+            !fallback
+                .chars()
+                .any(|character| matches!(character, '{' | '}' | '"'))
+        );
+        assert_eq!(
+            decision_label(&AskActionMeaning::UnknownObject {
+                kind: "applyNetworkPolicyAmendment".to_string(),
+                scalar_details: vec!["crates.io".to_string(), "allow".to_string()],
+            }),
+            "applyNetworkPolicyAme… · crates.io · allow"
+        );
+        assert_eq!(
+            decision_label(&AskActionMeaning::EmptyObject),
+            "unavailable choice"
+        );
+    }
+
+    #[test]
+    fn cancelled_mcp_startup_never_renders_as_success() {
+        let server = |status| McpServerStartup {
+            status,
+            error: None,
+            failure_reason: None,
+        };
+        for (name, servers) in [
+            (
+                "cancelled only",
+                BTreeMap::from([("legacy".to_string(), server(McpStartupStatus::Cancelled))]),
+            ),
+            (
+                "ready and cancelled",
+                BTreeMap::from([
+                    ("ready".to_string(), server(McpStartupStatus::Ready)),
+                    ("legacy".to_string(), server(McpStartupStatus::Cancelled)),
+                ]),
+            ),
+        ] {
+            let lines = mcp_startup_rows(&McpStartupEntry { servers }, Theme::default(), 88);
+            let rendered = lines[0]
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            assert!(rendered.contains('⚠'), "{name}: {rendered}");
+            assert!(!rendered.contains('✓'), "{name}: {rendered}");
+        }
+    }
+}

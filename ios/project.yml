@@ -135,7 +135,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Amux/Amux.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: sh.amux.app
         # What the App Store shows, and the number that identifies one binary
-        # forever. `wt run release` writes both here; nothing else should.
+        # forever. `just ios release` writes both here; nothing else should.
         # The version matches the listing already on the App Store, so the
         # next release is the next version of it.
         MARKETING_VERSION: "1.0.31"
@@ -156,10 +156,10 @@ targets:
           # recorder snapshot a report is written from. Force-loading it
           # first means every bridge symbol is already defined by the time
           # the shipping archive the package carries is reached, so nothing
-          # is taken from that one. `wt run ios-door-smoke` reads the build
+          # is taken from that one. `just ios door-smoke` reads the build
           # marker back out of the running app and checks that the release
           # binary does not carry it.
-          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a
+          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
         Measured:
           # The same tools as Debug, and for the same reason: the suite drives
           # the app through the door and measures the workloads the harness
@@ -167,7 +167,7 @@ targets:
           # it does not carry is DEBUG, so the app and the packages behind it
           # are compiled the way a shipped build is.
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: AMUX_DEBUG_TOOLS
-          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxMobileDebugTools.xcframework/ios-arm64-simulator/libamux_mobile.a
+          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
           # The suite is `@testable import Amux`: it builds the app's own
           # screens and reads the app's own stores, which is what makes the
           # numbers the app's rather than a UI test's.
@@ -176,7 +176,7 @@ targets:
           # Belt as well as the AMUX_DEBUG_TOOLS braces: the debug sources
           # are not compiled at all, so a door symbol or a fixture cannot
           # reach a shipped binary by way of a stray reference outside a
-          # conditional. `wt run ios-door-smoke` checks the built binary.
+          # conditional. `just ios door-smoke` checks the built binary.
           EXCLUDED_SOURCE_FILE_NAMES: "$(SRCROOT)/Amux/Debug/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/* $(SRCROOT)/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/* $(SRCROOT)/Packages/AmuxCore/Sources/Instrumentation/*"
     dependencies:
       - package: AmuxCore

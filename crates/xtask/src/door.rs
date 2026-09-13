@@ -94,7 +94,7 @@ struct Devices {
     devices: std::collections::BTreeMap<String, Vec<Device>>,
 }
 
-/// The udid of the pinned simulator with this name. `wt run ios-simulator`
+/// The udid of the pinned simulator with this name. `just ios simulator`
 /// creates it; this never does, so a run cannot silently measure a device
 /// nobody pinned.
 pub fn simulator_udid(name: &str) -> Result<String, DoorError> {

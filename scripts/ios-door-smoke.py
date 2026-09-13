@@ -54,7 +54,7 @@ PANELS = [
     ("plus", "plus", "plus"),
 ]
 # Where the app is asked to write its report bundle. The two recordings in it
-# are what `wt run ios-replay` rebuilds a screen from.
+# are what `just ios replay` rebuilds a screen from.
 BUNDLE = OUTPUT / "bundle"
 SIMULATOR = "amux-golden"
 BUNDLE_ID = "sh.amux.app"
@@ -65,7 +65,7 @@ TOPOLOGY = "e2e-tests/topologies/two-hosts.json"
 DRIVING_MARKER = "+debug-tools"
 # Defined only by the library with the driving tools compiled in: freezing the
 # recorder for a report, and folding one back into a screen.
-DRIVING_SYMBOLS = ["amux_mobile_report_snapshot", "amux_mobile_replay_report"]
+DRIVING_SYMBOLS = ["amux_app_report_snapshot", "amux_app_replay_report"]
 
 # What is asked, and what must come back. The refusals come first on purpose:
 # a door that answered a screen nobody has built, or a type size nobody
@@ -401,7 +401,7 @@ def runner():
         root = Path(temporary)
         environment = os.environ | {key: str(root) for key in ("TMPDIR", "TMP", "TEMP")}
         process = subprocess.Popen(
-            ["e2e-runner", "testnet", "serve", "--topology", TOPOLOGY],
+            [*ios_bridge.TESTNET_SERVE, "--topology", TOPOLOGY],
             env=environment, stdout=subprocess.PIPE, text=True)
         try:
             ready = read_ready(process)

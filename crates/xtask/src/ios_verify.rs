@@ -6,24 +6,27 @@ use std::process::{Command, Stdio};
 
 // Ordering matters: build the bridge and app before simulator checks. Destructive
 // baseline updates and deliberate-failure probes are separate developer commands.
+// Each entry is a `just` invocation; a leading `ios` names the phone module.
 const RECIPES: &[&str] = &[
     "fmt-check",
     "lint",
     "test",
     "spec",
     "mobile-check",
-    "ios-lint",
-    "ios-rust",
-    "ios-simulator",
-    "ios-build",
-    "ios-loopback-smoke",
-    "ios-unit",
-    "ios-door-smoke",
-    "ios-goldens",
-    "ios-journey",
-    "ios-accessibility",
-    "ios-perf",
-    "ios-scope-audit",
+    "ios lint",
+    "ios graph-check",
+    "ios rust",
+    "ios simulator",
+    "ios build",
+    "ios loopback-smoke",
+    "ios unit",
+    "ios door-smoke",
+    "ios goldens",
+    "ios journey",
+    "ios accessibility",
+    "ios perf",
+    "ios package",
+    "ios scope-audit",
 ];
 
 const REQUIRED_JOURNEYS: &[&str] = &[
@@ -55,14 +58,29 @@ fn check_journeys(manifest: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn recipes(config: &str) -> Result<Vec<&'static str>, Box<dyn Error>> {
-    let config: toml::Value = toml::from_str(config)?;
-    let tasks = config
-        .get("task")
-        .and_then(toml::Value::as_table)
-        .ok_or("no declared tasks")?;
+/// The recipe names a justfile declares: every line that starts a recipe,
+/// with its parameters and dependencies stripped.
+fn declared(justfile: &str) -> BTreeSet<&str> {
+    justfile
+        .lines()
+        .filter(|line| !line.starts_with(['#', ' ', '\t']) && !line.starts_with("set "))
+        .filter_map(|line| line.split_once(':'))
+        .filter(|(name, rest)| !rest.starts_with('=') && !name.is_empty())
+        .map(|(name, _)| name.split_whitespace().next().unwrap_or(name))
+        .collect()
+}
+
+/// Every verification stage must be a recipe the two justfiles declare, so a
+/// renamed or removed recipe fails here, by name, before anything runs.
+fn recipes(root: &str, ios: &str) -> Result<Vec<&'static str>, Box<dyn Error>> {
+    let root = declared(root);
+    let ios = declared(ios);
     for recipe in RECIPES {
-        if !tasks.contains_key(*recipe) {
+        let known = match recipe.strip_prefix("ios ") {
+            Some(name) => ios.contains(name),
+            None => root.contains(recipe),
+        };
+        if !known {
             return Err(format!("iOS verification requires recipe {recipe}").into());
         }
     }
@@ -145,7 +163,7 @@ fn recipe_command(program: &str) -> Command {
 /// Asks the measurement script which machine this is. The script owns the
 /// answer; nothing here reads the measurement document.
 fn perf_machine() -> Result<PerfMachine, String> {
-    let output = recipe_command("timeout")
+    let output = recipe_command(crate::BOUNDED)
         .args(["120", "python3", "-B", "scripts/ios-perf.py", "--machine"])
         .output()
         .map_err(|error| error.to_string())?;
@@ -156,30 +174,35 @@ fn perf_machine() -> Result<PerfMachine, String> {
 }
 
 pub fn run() -> Result<(), Box<dyn Error>> {
-    let selected = recipes(&std::fs::read_to_string(".wt.toml")?)?;
+    let selected = recipes(
+        &std::fs::read_to_string("justfile")?,
+        &std::fs::read_to_string("ios/justfile")?,
+    )?;
     check_journeys(&std::fs::read_to_string("ios/Journeys/manifest.json")?)?;
     eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
     eprintln!("iOS verification: {}", selected.join(", "));
     for recipe in selected {
-        if recipe == "ios-perf" {
+        if recipe == "ios perf" {
             let machine = perf_machine()?;
             if !measure_perf(&machine) {
                 report_missing_baseline(&machine)?;
                 continue;
             }
         }
-        eprintln!("Running wt run {recipe}");
+        eprintln!("Running just {recipe}");
         // Recipes own their individual deadlines. The outer deadline also
         // bounds dependencies without cutting off a longer recipe early.
-        let mut child = recipe_command("timeout")
-            .args(["12600", "wt", "run", recipe])
+        let mut child = recipe_command(crate::BOUNDED)
+            .arg("12600")
+            .arg("just")
+            .args(recipe.split(' '))
             .stdout(Stdio::piped())
             .spawn()?;
         let mut completed = BTreeSet::new();
         for line in BufReader::new(child.stdout.take().ok_or("no recipe stdout")?).lines() {
             let line = line?;
             println!("{line}");
-            if recipe == "ios-journey"
+            if recipe == "ios journey"
                 && let Some(id) = line.strip_suffix(": passed")
             {
                 completed.insert(id.to_owned());
@@ -187,9 +210,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
         let status = child.wait()?;
         if !status.success() {
-            return Err(format!("wt run {recipe} failed: {status}").into());
+            return Err(format!("just {recipe} failed: {status}").into());
         }
-        if recipe == "ios-journey" {
+        if recipe == "ios journey" {
             check_completed_journeys(&completed)?;
         }
     }
@@ -258,64 +281,88 @@ mod tests {
         }
     }
 
-    fn config() -> String {
-        RECIPES
-            .iter()
-            .map(|name| format!("[task.{name}]\nrun='true'\n"))
-            .collect()
+    const ROOT_JUSTFILE: &str = include_str!("../../../justfile");
+    const IOS_JUSTFILE: &str = include_str!("../../../ios/justfile");
+
+    /// Justfiles declaring exactly the verification recipes, so a test can
+    /// remove one and watch the check name it.
+    fn justfiles() -> (String, String) {
+        let mut root = String::new();
+        let mut ios = String::new();
+        for recipe in RECIPES {
+            match recipe.strip_prefix("ios ") {
+                Some(name) => ios.push_str(&format!("{name}:\n    true\n")),
+                None => root.push_str(&format!("{recipe}:\n    true\n")),
+            }
+        }
+        (root, ios)
     }
 
     #[test]
     fn ios_verify_requires_every_recipe_without_selecting_update_or_remote_commands() {
-        assert_eq!(recipes(&config()).unwrap(), RECIPES);
+        let (root, ios) = justfiles();
+        assert_eq!(recipes(&root, &ios).unwrap(), RECIPES);
         for recipe in RECIPES {
-            let incomplete = config().replace(&format!("[task.{recipe}]\nrun='true'\n"), "");
+            let (mut root, mut ios) = justfiles();
+            match recipe.strip_prefix("ios ") {
+                Some(name) => ios = ios.replace(&format!("{name}:\n    true\n"), ""),
+                None => root = root.replace(&format!("{recipe}:\n    true\n"), ""),
+            }
             assert!(
-                recipes(&incomplete)
+                recipes(&root, &ios)
                     .unwrap_err()
                     .to_string()
                     .contains(recipe)
             );
         }
         for excluded in [
-            "ios-verify",
-            "ios-goldens-perturb",
-            "ci-gate",
-            "ci-observe",
-            "qa-cloud-signin",
-            "qa-sandbox-purchase",
-            "qa-live-journey",
+            "ios verify",
+            "ios goldens-perturb",
+            "ios ci-gate",
+            "ios ci-observe",
+            "ios qa-cloud-signin",
+            "ios qa-sandbox-purchase",
+            "ios qa-live-journey",
+            "ios release",
         ] {
             assert!(!RECIPES.contains(&excluded));
         }
     }
 
     #[test]
-    fn ios_verify_runs_accessibility_after_journeys_through_the_wt_entrypoint() {
-        let config = include_str!("../../../.wt.toml");
-        let selected = recipes(config).unwrap();
+    fn ios_verify_recipes_exist_and_run_accessibility_after_journeys() {
+        let selected = recipes(ROOT_JUSTFILE, IOS_JUSTFILE).unwrap();
         let journey = selected
             .iter()
-            .position(|name| *name == "ios-journey")
+            .position(|name| *name == "ios journey")
             .unwrap();
-        assert_eq!(selected[journey + 1], "ios-accessibility");
-        let config: toml::Value = toml::from_str(config).unwrap();
-        assert_eq!(
-            config["task"]["ios-verify"]["run"].as_str(),
-            Some("scripts/ios-verify.sh")
-        );
-        assert!(include_str!("../../../scripts/ios-verify.sh").contains("xtask -- ios-verify"));
+        assert_eq!(selected[journey + 1], "ios accessibility");
+        assert!(declared(IOS_JUSTFILE).contains("verify"));
+        assert!(IOS_JUSTFILE.contains("xtask -- ios-verify"));
     }
 
     #[test]
     fn ios_verify_checks_nightly_formatting_before_compilation() {
-        let config = include_str!("../../../.wt.toml");
-        assert_eq!(recipes(config).unwrap()[0], "fmt-check");
-        let config: toml::Value = toml::from_str(config).unwrap();
         assert_eq!(
-            config["task"]["fmt-check"]["run"].as_str(),
-            Some("timeout 300 cargo +nightly fmt --all -- --check")
+            recipes(ROOT_JUSTFILE, IOS_JUSTFILE).unwrap()[0],
+            "fmt-check"
         );
+        let fmt_check = ROOT_JUSTFILE
+            .lines()
+            .skip_while(|line| !line.starts_with("fmt-check:"))
+            .nth(1)
+            .unwrap();
+        assert!(
+            fmt_check.contains("cargo +nightly-") && fmt_check.contains("fmt --all -- --check")
+        );
+    }
+
+    #[test]
+    fn declared_recipes_ignore_settings_assignments_and_bodies() {
+        let names = declared(
+            "set shell := [\"sh\"]\nbounded := \"x\"\n# doc\nbuild: rust\n    cargo build\nunit *ARGS: rust\n    true\n",
+        );
+        assert_eq!(names, BTreeSet::from(["build", "unit"]));
     }
 
     #[test]

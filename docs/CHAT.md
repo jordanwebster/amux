@@ -8,7 +8,7 @@ on — the reducer core, the kernel/per-agent split, the facts/translation/
 interpretation boundary, and the chrome-first TUI rules all bind here
 and are not restated. `docs/PROTOCOL.md` owns the wire,
 `docs/ARCHITECTURE.md` the system. The executable half of this document
-is live — `claude::specs::pty`, the derived amux rows, the amux-ui chat
+is live — `claude_specs::specs::pty`, the derived node rows, the ui-state chat
 spec chapters, the golden-frame suites, and the opt-in `claude_pty_live`
 suite; where prose and a passing specification disagree, the specification
 wins. Row semantics below began with an evidence survey of ~10,100 transcript
@@ -1193,7 +1193,7 @@ a PTY, connect to a daemon, or depend on the local terminal. From the repository
 root:
 
 ```sh
-timeout 900 wt build
+just build
 target/debug/amux-shot list
 target/debug/amux-shot render claude-idle --out target/shot/claude-idle.png
 target/debug/amux-shot render claude-idle --theme light --color ansi \
@@ -1242,7 +1242,7 @@ chat-specific consequences.
 ## Executable specifications and live verification (H)
 
 The former monolithic real-Claude test leg is split at the provider boundary.
-`claude::specs::pty` owns 18 executable claims: prompt and multiline prompt,
+`claude_specs::specs::pty` owns 18 executable claims: prompt and multiline prompt,
 tools, permission variants, plan variants, question forms, interrupt,
 permission-mode cycle, and compact/clear relinks. Each claim is the same
 function in record and verify modes. Verification runs offline against strict,
@@ -1250,7 +1250,7 @@ sanitized recordings captured at Claude Code 2.1.251, including byte-for-byte
 intent writes, hook and transcript transports, provenance inventories, orphan
 checks, and the minimum supported version.
 
-`crates/amux/tests/claude_pty_live.rs` retains only facts recording replay
+`crates/node/tests/claude_pty_live.rs` retains only facts recording replay
 cannot establish, plus one end-to-end semantic-chat witness. Its current
 scenarios cover semantic chat, stale-sequence refusal, two-terminal fan-out,
 external read-only hook discovery, native-socket and PTY-fallback A2A delivery,
@@ -1270,7 +1270,7 @@ only broken claims, and writes additive drift for review.
 The SDK corpus derives through the real daemon adapter into
 `crates/amux/tests/fixtures/rows/claude-sdk/`. Client specs cover feed, agreement,
 commands, conversation and family messages. The redacted live conversation in
-`crates/amux-ui/tests/spec/fixtures/claude_sdk/converse.rows.jsonl` preserves all
+`crates/claude-specs/fixtures/claude-sdk/converse.rows.jsonl` preserves all
 572 parent rows, including the final child acknowledgement before another
 assistant row arrives. Replay compares the client fold after every message.
 
@@ -1279,8 +1279,9 @@ The opt-in harnesses `sdk_chat_live.sh`, `remote_open_live.sh`,
 conversation and asks, paired-host entry, creation defaults and overrides, and
 a user Stop hook under direct Claude and amux. They use isolated state and retain
 terminal frames and boundary evidence. The dialog gap above remains outside the
-successful live sequence. Workspace validation is `wt build`, `wt lint`,
-`wt test`, `wt run spec` and `wt run mobile-check`, under `timeout`.
+successful live sequence. Workspace validation is `just build`, `just lint`,
+`just test`, `just spec` and `just mobile-check`; each recipe carries its own
+timeout.
 
 ## Rejected alternatives
 

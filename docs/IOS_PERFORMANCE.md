@@ -2,7 +2,7 @@
 
 Every number the iPhone app is held to is defined here: the machine it is
 measured on, the workload it is measured over, the budget it must meet, and
-what the number stands for when it cannot stand for itself. `wt run ios-perf`
+what the number stands for when it cannot stand for itself. `just ios perf`
 reads the two tables at the bottom of this document, so the numbers a person
 reads here and the numbers the suite enforces are the same numbers.
 
@@ -13,7 +13,7 @@ found on disk.
 
 ## Running it periodically
 
-Run `timeout 3000 wt run ios-perf` when checking for regressions. It prints a
+Run `just ios perf` when checking for regressions. It prints a
 line per metric, with its median, budget and baseline comparison, and exits
 non-zero if any measured metric exceeds its budget or regression tolerance.
 Read `target/ios/perf/report.md` for the table, proxy labels and wall time;
@@ -30,7 +30,7 @@ or about twenty minutes from a cold tree. Each run records its actual wall time.
 Before spending that time, run `timeout 60 python3 -B scripts/ios-perf.py
 --describe`. It prints the machine row and whether its baseline exists without
 building or launching anything. `--machine` is the older spelling of the same
-query. The wt recipe also accepts `--describe`, but runs its build prerequisites
+query. The `just ios perf` recipe also accepts `--describe`, but runs its build prerequisites
 first. An unknown Mac is refused. To enroll one, add its `sysctl -n hw.model`
 value and a unique name to the Machines table below, record the OS, Xcode and
 simulator configuration, then deliberately record and review its baseline.
@@ -40,7 +40,7 @@ way to claim one Mac's measurements describe another.
 ## Baselines and drift
 
 Baselines under `ios/Perf/baselines/` are tracked in git, one file per machine.
-Record one with `timeout 3000 wt run ios-perf -- --baseline`, after checking
+Record one with `just ios perf --baseline`, after checking
 that the workload and measurement are still appropriate. Re-baselining is a
 deliberate reviewed act with a reason in the commit message, never a way to
 make a failing run pass. An invisible baseline lets performance ratchet
@@ -169,7 +169,7 @@ a budget: the size requirement is a policy about where size comes from, and the
 cadence facts are about the app capping nothing, which on a simulator reporting
 60 Hz cannot be the claim about 120.
 
-A run can be asked for one group of measurements — `wt run ios-perf -- --only
+A run can be asked for one group of measurements — `just ios perf --only
 streaming`, or `cold`, `reconciliation`, `echo` or `lifecycle` — which is for
 working on that group rather than for reporting. The verdict then carries only the rows this
 run measured, so a partial run cannot report a pass on a metric it never took;
@@ -184,7 +184,7 @@ not have to find out by starting one: on the pinned Mac, about seven and a half
 minutes once the app is built — five cold launches, a suite of about two and a
 half minutes, a release build for a phone to weigh, and a lifecycle audit whose
 waits alone are three and a half — and about twenty from a cold tree, where
-building the Rust bridge is the longest part and `wt run ios-rust` does it
+building the Rust bridge is the longest part and `just ios rust` does it
 before this recipe is reached. Every run prints its own figure and `report.md` carries it. The
 recipe's own timeout is a hang guard and says nothing about how long a run
 takes.

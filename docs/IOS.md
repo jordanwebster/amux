@@ -8,7 +8,9 @@ checkout. The phone does not run local agents.
 
 | Component | Owns |
 | --- | --- |
-| `crates/amux-mobile` | C ABI, embedded runtime lifecycle, frame-coalesced JSON projection and fleet cache over `amux` and `amux-ui` |
+| `crates/app-runtime` | Account sessions, the projection from reducer state to presentation values, the fleet cache and the frame-coalesced event queue; links `ui-runtime` and `client`, never the node |
+| `crates/app-embedded` | Starting, credentialing and stopping the provider-free embedded node and holding its relay link; the only crate with a `debug-tools` feature |
+| `crates/app-ffi` | The C ABI: `amux_app_*` symbols, JSON in and out, callbacks, opaque handles and the generated header |
 | `AmuxCore` | Swift bridge adapter, observable stores and model/action contracts, account and purchase service boundaries |
 | `AmuxDesign` | Light/dark tokens, bundled fonts, type scaling, glass and target geometry |
 | `AmuxFeatures` | SwiftUI screens driven by state and actions, plus registered UIKit leaves |
@@ -21,7 +23,7 @@ before returning and applies store changes on the main actor. Feed updates
 carry deltas, not a replacement transcript on each frame. A single multiplexed
 stream per host supplies the shared projection. Navigation pushes immediately
 and fills from remembered state while the host reconciles. See the
-[bridge contract](../crates/amux-mobile/README.md) for ownership, shutdown,
+[bridge contract](../crates/app-ffi/README.md) for ownership, shutdown,
 token refresh and the generated C interface.
 
 App startup restores the selected account and its cached fleet before asking
@@ -48,14 +50,15 @@ neither fixture driving nor reporting.
 
 Use an Apple silicon Mac with Xcode 26.6 (17F113), the iOS 26.5 simulator
 runtime, XcodeGen 2.46 or newer, Rust with the ARM64 iOS device and simulator
-targets, and the repository's `wt` command. Build and test through wt so the
-workspace uses one build configuration and the recipes' timeouts.
+targets, and `just`. Build and test through the recipes (`just --list ios`)
+so the workspace uses one build configuration and every step carries its
+wall-clock bound.
 
 ```sh
-timeout 900 wt run ios-simulator
-timeout 1800 wt run ios-build
-timeout 1800 wt run ios-unit
-timeout 300 wt run ios-lint
+just ios simulator
+just ios build
+just ios unit
+just ios lint
 ```
 
 `ios-build` builds the Rust XCFramework under the workspace `mobile` profile
@@ -85,9 +88,9 @@ changes, with the new pin and its reason recorded.
 
 ## Driving a debug build
 
-`timeout 1800 wt run ios-door-smoke` proves launch, fixture selection, visible
+`just ios door-smoke` proves launch, fixture selection, visible
 state, composited capture and the real loopback relay connection. For a single
-screen after building the workspace with `timeout 900 wt build`:
+screen after building the workspace with `just build`:
 
 ```sh
 timeout 120 target/debug/xtask door --simulator amux-golden \
@@ -121,7 +124,7 @@ successful remote interactions. Use live/scripted journeys for those outcomes.
 To benchmark a batch of ideas against the design app's original review loop:
 
 ```sh
-wt run ios-design-benchmark -- /absolute/path/to/appdesigns
+just ios design-benchmark /absolute/path/to/appdesigns
 ```
 
 This copies the design inputs into a fresh ignored directory under
@@ -140,8 +143,8 @@ To measure the same two/four-idea loop in the production app, compile all Debug
 alternatives together and capture them through one installed shell session:
 
 ```sh
-wt run ios-native-design-benchmark -- batch --ideas 2
-wt run ios-native-design-benchmark -- batch --ideas 4
+just ios native-design-benchmark batch --ideas 2
+just ios native-design-benchmark batch --ideas 4
 ```
 
 The four-idea batch includes a structural context band as well as gutter and
@@ -162,10 +165,10 @@ and glass mistakes.
 recipes and compares capture methods without updating expected images:
 
 ```sh
-wt run ios-explore -- observe ios-verify
-wt run ios-explore -- cycle --rounds 1 --methods current --screens home
-wt run ios-explore -- summarize target/ios/explorations/<run>
-wt run ios-explore -- timings target/ios/explorations/<run>
+just ios explore observe 'ios verify'
+just ios explore cycle --rounds 1 --methods current --screens home
+just ios explore summarize target/ios/explorations/<run>
+just ios explore timings target/ios/explorations/<run>
 ```
 
 Each run writes monotonic events and available logs to a new directory under
@@ -198,10 +201,10 @@ comparison work alongside performance measurements.
 ## Goldens and baseline changes
 
 ```sh
-timeout 2400 wt run ios-goldens
-timeout 2400 wt run ios-goldens -- dump upload-failed
-timeout 900 wt run ios-goldens-reference
-timeout 1200 wt run ios-goldens-perturb
+just ios goldens
+just ios goldens dump upload-failed
+just ios goldens-reference
+just ios goldens-perturb
 ```
 
 The unfiltered manifest covers 33 reference screens and 29 additional states,
@@ -221,7 +224,7 @@ visual approval, and only then establish the replacement goldens. No command
 automatically grants that approval.
 
 Inspect a mismatch before updating anything. A deliberate visual change uses
-`timeout 2400 wt run ios-goldens -- --update SCREEN`, limited to the changed
+`just ios goldens --update SCREEN`, limited to the changed
 screens, followed by an ordinary comparison. Inspect both appearances and
 record the reason in [the baseline notes](../ios/Goldens/BASELINE.md), including
 any departure from the preserved design. Never refresh baselines to conceal
@@ -232,7 +235,7 @@ VoiceOver navigation, gestures, transitions or network behavior.
 ## Copy and catalogues
 
 The [copy standard](IOS_COPY.md) defines wording, case, terminology and the
-catalogue review process. `wt run ios-lint` checks every Swift app/package
+catalogue review process. `just ios lint` checks every Swift app/package
 literal against the English catalogue or an exact, documented non-copy
 exemption. It includes helper/model copy and debug report views. The debug
 catalogue is excluded from Release. A copy change includes its affected
@@ -268,13 +271,13 @@ happily:
 `scripts/tests/icon_test.py` checks the sources: the set is there, every image
 it names is present, the size is right, there is no alpha, the catalog is
 compiled into the app target and the Info.plist key is declared.
-`wt run ios-scope-audit` proves the other side, opening the built bundle and
+`just ios scope-audit` proves the other side, opening the built bundle and
 refusing a build whose Info.plist has no top-level `CFBundleIconName` or that
 carries no 120×120 `AppIcon60x60@2x.png`.
 
 ## Journeys and replay
 
-`timeout 2400 wt run ios-journey -- NAME` runs a group from
+`just ios journey NAME` runs a group from
 `ios/Journeys/manifest.json`; omit NAME to run every group. Groups include home,
 conversation, asks, review, writing, hosts, claude-sessions, accounts,
 production-startup and reports.
@@ -293,7 +296,7 @@ runtime, and a relaunch must draw that connection’s saved fleet before the
 cloud answers again.
 
 For a captured debug report, begin with [the debugging guide](DEBUGGING.md).
-Run `timeout 1800 wt run ios-replay -- /path/to/report` to rebuild stores from
+Run `just ios replay /path/to/report` to rebuild stores from
 `msgs.jsonl` and the native `trace.jsonl`, then capture the restored screen and
 compare it with the report's own `frame.png`. The trace carries the place in the
 app, the instant the screen read its ages from and the account it was drawn for,
@@ -314,7 +317,7 @@ that revision in `git_sha`.
 
 ## Performance and device qualification
 
-Run `timeout 3000 wt run ios-perf` periodically to compare measured performance
+Run `just ios perf` periodically to compare measured performance
 with the budgets and recorded machine baseline. It prints each metric and
 fails on budget breaches or excessive drift. The
 [performance guide](IOS_PERFORMANCE.md) gives the cheap machine preflight,
@@ -332,7 +335,7 @@ Simulator timing proxies do not mark those checks passed.
   reports journey stages the screenshot notification and app coverage; it
   cannot post a real system screenshot or qualify either preview setting.
 
-`timeout 2400 wt run ios-accessibility` checks labels and target geometry across
+`just ios accessibility` checks labels and target geometry across
 states and sizes. Also exercise VoiceOver navigation, Dynamic Type, Reduce
 Motion/Transparency and system pickers on supported phones. For dictation,
 place the caret inside a draft, tap Dictate, grant speech and microphone
@@ -341,8 +344,8 @@ you speak, the composer says it is listening, and Stop Dictation keeps the
 draft. Check denied access offers Settings and unavailable on-device recognition
 leaves the draft intact. The simulator journey proves the denied state only;
 live speech recognition remains a physical-phone check. The
-complete `timeout 12600 wt run ios-verify` runs lint, tests, goldens, journeys,
-the full `ios-accessibility` audit, performance and Release scope inspection;
+complete `just ios verify` runs lint, tests, goldens, journeys,
+the full accessibility audit, performance and Release scope inspection;
 it does not publish or push.
 
 ## Claude sessions
@@ -354,8 +357,8 @@ transcript projections. SDK sessions expose the models, effort levels,
 permission mode and commands their session reports. PTY sessions take prompts
 and refuse model and effort changes with the shared gate reason.
 
-`timeout 2400 wt run ios-journey -- hosts` proves host-observed creation and
-pairing; `timeout 2400 wt run ios-journey -- claude-sessions` drives opening,
+`just ios journey hosts` proves host-observed creation and
+pairing; `just ios journey claude-sessions` drives opening,
 prompts and settings through the real app and relay. Its artifacts include
 the daemon inventory, SDK transport inputs, PTY inputs and screenshots of
 both conversations and a refused creation.
@@ -404,7 +407,7 @@ The figures come from the simulator, which reports 60 Hz and composites
 through the Mac's display, so the frame-rate ones are proxies —
 `docs/IOS_PERFORMANCE.md` says which and what for, and holds the
 physical-phone checklist, every line of which is still unmeasured. Take them again with
-`wt run ios-perf -- --only streaming`.
+`just ios perf --only streaming`.
 
 ## The composer's field is not SwiftUI
 

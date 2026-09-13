@@ -17,7 +17,7 @@ for the run and destroyed after it, signed in through the CLI's device-code
 flow with the same account. The agent is a real Claude session and the
 exchange is one question with a one-word answer, because it spends real money.
 
-    wt run qa-live-journey
+    just ios qa-live-journey
 
 Evidence a person runs by hand, never a test and never in CI. Nothing that
 identifies the account reaches the output: the address is masked, the account

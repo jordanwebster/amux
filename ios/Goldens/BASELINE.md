@@ -9,8 +9,8 @@ reviewable.
 The complete light/dark catalogue was approved from the consolidated production
 gallery on 2026-09-12 and established as the native baseline on 2026-09-13.
 
-Run `wt run ios-goldens` to compare every state. Run
-`wt run ios-goldens-reference` to place the 33 reference-backed screens beside
+Run `just ios goldens` to compare every state. Run
+`just ios goldens-reference` to place the 33 reference-backed screens beside
 the preserved designs.
 
 ## Known flaky captures

@@ -24,7 +24,7 @@ Drop any one of them and the replay draws a screen nobody was looking at.
 | `daemon.json` | The embedded phone service's own dump: its hosts, routes and sessions |
 | `replayed.json` | What the recording rebuilds: its fleet, its conversations, how old each row says it is, and whether a host had confirmed them |
 
-`timeout 2400 wt run ios-replay -- ios/Fixtures/reports/conversation` hands both
+`just ios replay ios/Fixtures/reports/conversation` hands both
 recordings to a debug build on the pinned simulator, rebuilds the stores from
 the messages alone, applies the trace on top and photographs the result in the
 real shell. The picture is compared with `frame.png` and what came out of the
@@ -60,7 +60,7 @@ difference is the text view's own arithmetic rather than a fact about the
 conversation, so no recording carries it.
 
 A failure here means a projection or a view changed under a bundle that used to
-replay. Either the change is intended, in which case `wt run ios-journey --
+replay. Either the change is intended, in which case `just ios journey
 conversation` records a fresh report through the app against a real relay and
 a real machine and this directory is refreshed from
 `target/ios/journeys/conversation/conversation-left`, or a screen has quietly

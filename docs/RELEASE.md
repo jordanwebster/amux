@@ -2,7 +2,7 @@
 
 The app ships from this repository, built by Xcode from the generated
 project — there is no Expo, no EAS and no hosted build service in the path.
-One command, `wt run release`, takes a clean checkout to a signed `.ipa` that
+One command, `just ios release`, takes a clean checkout to a signed `.ipa` that
 Apple has validated, and stops there. **Nothing in this document uploads
 anything.** Promoting the recipe to an upload is a separate, deliberate
 change; see [Where it stops](#where-it-stops).
@@ -28,7 +28,7 @@ it as a build setting rather than a literal is what lets a rehearsal archive
 the version a release *would* cut without editing a tracked file: the number
 can be passed to `xcodebuild` instead.
 
-`wt run release` derives the next version by bumping the patch component of
+`just ios release` derives the next version by bumping the patch component of
 the highest version it knows — the one in the project, or a higher one in the
 tags; `--version X.Y.Z` names a different one instead. The only version it
 refuses is one *below* the highest it knows, because a version can never move
@@ -70,7 +70,7 @@ App Store Connect already holds build numbers this repository never issued,
 from the app's earlier Expo builds. The tag ledger below knows nothing about
 them, and today it is empty. So the first number is *named*, not derived —
 and the recipe enforces that rather than leaving it to memory. With no
-`ios-v*` tag to count from, `wt run release` refuses:
+`ios-v*` tag to count from, `just ios release` refuses:
 
 ```
 no ios-v* tag records a build number, so there is nothing to count from and a
@@ -106,7 +106,7 @@ archived; nothing is recorded until validation has answered. A commit and an
 annotated tag are the only things a run leaves behind that a `git checkout`
 cannot undo, which is why they wait for Apple. See
 [When a release stops partway](#when-a-release-stops-partway).
-`wt run release` never pushes the tag; pushing tags stays a human act.
+`just ios release` never pushes the tag; pushing tags stays a human act.
 
 ## Release notes
 
@@ -206,7 +206,7 @@ API key. The last three are produced once and then reused; the
 ## The commands
 
 The Rust bridge first: the Release configuration links the `ios-arm64` slice
-of `target/ios/AmuxMobile.xcframework`, so `wt run ios-rust` builds the
+of `target/ios/AmuxApp.xcframework`, so `just ios rust` builds the
 device slice before anything is archived. The recipe also depends on
 `ios-scope-audit`, so a bundle carrying a debug surface or an excluded
 platform stops the release before an archive exists rather than after Apple
@@ -269,7 +269,7 @@ signs with — rather than stopping to ask. It does *not* extend to the
 distribution profile: Xcode's cloud signing refuses that from a script here,
 which is why the export signs by hand against a profile made once. The
 distribution certificate and the `amux App Store` profile are therefore
-standing inputs, and `wt run release -- --preflight` reports them as such.
+standing inputs, and `just ios release --preflight` reports them as such.
 
 Validate, the last step:
 
@@ -290,13 +290,13 @@ build, and is visible to nobody.
 ## One command
 
 ```
-wt run release              # bump, archive, export, validate, commit, tag
-wt run release -- --preflight   # check every input, do nothing
-wt run release -- --rehearse    # archive, export and validate with the
+just ios release              # bump, archive, export, validate, commit, tag
+just ios release --preflight   # check every input, do nothing
+just ios release --rehearse    # archive, export and validate with the
                                 # would-be numbers; write nothing, tag nothing
 ```
 
-Validation is the last step of both runs that build anything, so `wt run
+Validation is the last step of both runs that build anything, so `just ios
 release` is the whole release and there is no `altool` command to remember
 afterwards. A rehearsal ends the same way, which is what makes it a real
 proof rather than a dry run: Apple answers on the actual signed binary.
@@ -323,7 +323,7 @@ A release does the reversible work first and the permanent work last, so
 there are only two states to recover from and each has one command.
 
 **The numbers are written but nothing is committed.** Anything that fails in
-the archive, the export or the validation leaves this. `wt run release` says
+the archive, the export or the validation leaves this. `just ios release` says
 so and stops; `git status` shows two modified tracked files and no new
 commit, and `git tag --list 'ios-v*'` is unchanged. Undo the numbers:
 
@@ -350,7 +350,7 @@ one already tagged:
 
 ```
 git reset --hard HEAD~1        # nothing was pushed
-wt run release -- --build <N>
+just ios release --build <N>
 ```
 
 Never delete an existing `ios-v*` tag to make room. A tag is the ledger of a
@@ -367,7 +367,7 @@ That boundary is deliberate and worth keeping until somebody decides
 otherwise, because both of the next steps are irreversible in ways local
 work is not: an uploaded build consumes its build number permanently, and a
 TestFlight build is visible to everyone on the team the moment it finishes
-processing. Making `wt run release` upload is a one-line change to a
+processing. Making `just ios release` upload is a one-line change to a
 different `altool` verb — which is exactly why it should be a change somebody
 makes on purpose, with the release notes, the screenshots and the reviewers
 already decided, and not a flag that gets passed by accident.
@@ -481,10 +481,10 @@ security find-identity -v -p codesigning        # names an Apple Distribution id
 ls ~/Library/MobileDevice/Provisioning\ Profiles/
 ```
 
-**6. Check it.** `wt run release -- --preflight` reports every input —
+**6. Check it.** `just ios release --preflight` reports every input —
 including the certificate and the profile from step 5, by name — and says
 which one is missing. Nothing in this step reaches Apple beyond
-authenticating. Then `wt run release -- --rehearse` archives and exports for
+authenticating. Then `just ios release --rehearse` archives and exports for
 real, writing nothing to the tree and cutting no tag, which is the proof that
 the arrangement works end to end.
 

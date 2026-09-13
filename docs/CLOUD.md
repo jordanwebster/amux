@@ -248,7 +248,7 @@ service with a real account's credentials, and a red one is a conversation
 rather than a build failure. They are deliberately absent from the iOS
 verification list.
 
-- `wt run qa-cloud-signin` — signs a QA account into `https://amux.sh` with
+- `just ios qa-cloud-signin` — signs a QA account into `https://amux.sh` with
   no app at all, performing the same authorization-code sign-in with PKCE the
   phone performs, as the same `mobile` client with the same redirect and
   scopes. It then asks the three questions the app asks: who the account is,
@@ -257,7 +257,7 @@ verification list.
   actually keeps — a sign-in that works in a simulator against a double proves
   nothing about the production one.
 
-- `wt run qa-sandbox-purchase` — carries a real App Store sandbox purchase
+- `just ios qa-sandbox-purchase` — carries a real App Store sandbox purchase
   from a physical iPhone to the account service and reads back what the
   account may then do. A sandbox transaction exists in exactly one place: a
   phone signed into a sandbox Apple Account, running a development-signed
@@ -314,9 +314,9 @@ verification list.
   than ticking a box: what a build proved last time says nothing about the
   products, the bundle id or the provider configuration this one ships with.
   The web route to the same entitlement is a different question and is
-  covered by `wt run qa-cloud-signin` and `wt run qa-live-journey`.
+  covered by `just ios qa-cloud-signin` and `just ios qa-live-journey`.
 
-- `wt run qa-live-journey` — the whole product once, against the real one. It
+- `just ios qa-live-journey` — the whole product once, against the real one. It
   signs the QA account into `https://amux.sh`, hands the simulator app that
   session and nothing else, and then stands back: the app asks the account
   service who the account is and what it may do, asks it for a relay

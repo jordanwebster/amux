@@ -4,8 +4,8 @@ set -euo pipefail
 # Usage: ./make_release.sh [version]
 # If version is not provided, bumps the minor version of the current release.
 
-# Get current version from amux-cli Cargo.toml
-current=$(grep '^version = ' crates/amux-cli/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+# Get the current product version.
+current=$(grep '^version = ' crates/amux/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 
 if [ -n "${1:-}" ]; then
     new_version="$1"
@@ -19,14 +19,14 @@ echo "Releasing v${new_version} (current: v${current})"
 
 # Update version in all crate Cargo.toml files that track the release version
 sed -i '' "s/^version = \"${current}\"/version = \"${new_version}\"/" \
-    crates/amux/Cargo.toml \
-    crates/amux-cli/Cargo.toml
+    crates/amux/Cargo.toml
 
 # Update Cargo.lock
-cargo check --quiet
+cargo update --offline -p amux
+just release-check
 
 # Commit, tag, push
-git add crates/amux/Cargo.toml crates/amux-cli/Cargo.toml Cargo.lock
+git add crates/amux/Cargo.toml Cargo.lock
 git commit -m "v${new_version}"
 git tag "v${new_version}"
 git push

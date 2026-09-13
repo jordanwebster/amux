@@ -56,7 +56,7 @@ def compile_swift(directory: Path, headers: Path, source: Path, executable: Path
     subprocess.run([
         "xcrun", "--sdk", "iphonesimulator", "swiftc", "-swift-version", "6", "-target", "arm64-apple-ios26.0-simulator",
         "-sdk", sdk, "-Xlinker", "-fatal_warnings", "-I", str(headers),
-        "-L", str(directory), "-lamux_mobile", "-framework", "Security",
+        "-L", str(directory), "-lamux_app", "-framework", "Security",
         "-framework", "SystemConfiguration", "-framework", "CoreFoundation",
         str(source), "-o", str(executable),
     ], check=True, timeout=180)
@@ -76,7 +76,7 @@ def main() -> None:
         and library["SupportedArchitectures"] == ["arm64"]
     ]
     directory = framework / simulator_slice["LibraryIdentifier"]
-    executable = output / "amux-mobile-linkage"
+    executable = output / "app-ffi-linkage"
     compile_swift(directory, directory / simulator_slice["HeadersPath"], Path(__file__).with_name("LinkageSmoke.swift"), executable)
     device_id, already_booted = simulator()
     try:
@@ -86,7 +86,7 @@ def main() -> None:
         version = run("xcrun", "simctl", "spawn", device_id, str(executable), timeout=120)
         # The process performs its own assertions; require its success markers
         # too so an empty or misdirected spawn cannot pass the build recipe.
-        if (not version.startswith("amux_mobile_version=")
+        if (not version.startswith("amux_app_version=")
                 or "System configuration accepted" not in version
                 or "PlainLoopback rejected" not in version):
             raise RuntimeError(f"Unexpected simulator output: {version!r}")

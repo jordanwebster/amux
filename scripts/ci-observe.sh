@@ -1,3 +1,3 @@
 #!/bin/sh
 set -eu
-exec timeout 3600 cargo run -q -p xtask -- ci-observe "$@"
+exec "$(dirname "$0")/bounded" 3600 cargo run --locked -q -p xtask -- ci-observe "$@"

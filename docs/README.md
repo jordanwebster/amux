@@ -15,7 +15,7 @@ subject; when two overlap, the owner named here wins.
 - [iPhone app](IOS.md) — packages, bridge, build pins, fixture driving, goldens,
   journeys, replay and device qualification; [performance](IOS_PERFORMANCE.md)
   owns measurement definitions, budgets and reviewed baselines.
-- `UI.md` — the client layer: the amux-ui reducer core, the
+- `UI.md` — the client layer: the ui-state reducer core, the
   kernel/per-agent-layer split, edge contracts, and the TUI.
 - `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the
   client layer it stands on; includes the full-screen frame, interaction
@@ -30,6 +30,8 @@ subject; when two overlap, the owner named here wins.
 - `DEBUGGING.md` — agent workflow for profile debug reports: report locations,
   installation log tails, bundle layout, replay, marked tweaks, redaction,
   graduation and committed fixtures.
+- [Build](BUILD.md) — toolchain and profile choices, reproducible tasks,
+  committed protobuf output, and warm worktree snapshots.
 - `TESTING.md` — workspace test commands, focused target selection, and
   choosing protocol or subprocess boundaries for tests.
 - `CODEX.md` — the OpenAI Codex integration: process ownership, the two
@@ -37,7 +39,7 @@ subject; when two overlap, the owner named here wins.
   client-side layer that folds it.
 - `CLAUDE_TRANSCRIPT.md` — the grounded Claude Code transcript taxonomy
   consumed by the capture drift tooling and its committed fixtures.
-- `../crates/amux-shot/README.md` — the committed 120×40 PNG and wheel-recording
+- `../crates/shot/README.md` — the committed 120×40 PNG and wheel-recording
   tool for named TUI states.
 - [Profile screenshots](screenshots/profiles/README.md) — the switcher and
   both account fleets, with hashes and reproducible capture commands.
@@ -46,10 +48,13 @@ subject; when two overlap, the owner named here wins.
   ledgers.
 - `KEYMAPS.md` — semantic Claude PTY input; keymap data, resolution,
   interpretation, provenance, management and screen-detection limits.
-- `../crates/amux/tests/spec/` — the executable spec. The suite reads as
+- `../crates/testnet/tests/spec/` and `../crates/ui-state/tests/spec/` — the executable specs. The suites read as
   documentation and locks the protocol's guarantees; run it with
-  `timeout 600 wt run spec`.
-- [Native runtime bridge](../crates/amux-mobile/README.md) — C lifecycle, routing
+  `just spec`.
+- [App layer](NATIVE_INTEGRATION.md) — the three crates any rich client
+  reuses, their one dependency rule, the harness seams, the bridge build
+  recipes and what the tests hold.
+- [Native runtime bridge](../crates/app-ffi/README.md) — C lifecycle, routing
   tokens, callback ownership and the debug loopback boundary.
 - `CI.md` — native iOS verification recipes, pinned runner and commit-specific
   CI status.
@@ -58,14 +63,9 @@ subject; when two overlap, the owner named here wins.
   contract, archive, export and validation, and the one-time App Store
   Connect setup only a person can do.
 - [TESTNET.md](TESTNET.md) — isolated relay and daemon topologies, readiness and the
-  runner's loopback control protocol, provider scripts and the offline smoke
+  served control door's loopback protocol, provider scripts and the offline smoke
   recipe.
-- [IOS.md](IOS.md) — the iPhone app: how its screens are built and the
-  measurements behind the choices.
 - [CLOUD.md](CLOUD.md) — what the iPhone app asks of amux.sh: every endpoint it
   uses, the entitlement read, how a signed purchase reaches the cloud, and
   where each configuration value and secret lives.
-- [IOS_PERFORMANCE.md](IOS_PERFORMANCE.md) — what the iPhone app is measured on,
-  the workloads and budgets it is held to, which figures are proxies and the
-  physical-phone checklist.
 - `../DEVLOG.md` — recent work history and decisions.

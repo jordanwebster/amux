@@ -3,10 +3,10 @@
 Run the offline smoke suite with:
 
 ```sh
-timeout 900 wt run testnet-smoke
+just test-crate testnet -- testnet_ -- --nocapture --test-threads=1
 ```
 
-The recipe runs the workspace's `testnet_` tests serially and prints their
+This runs the testnet crate's `testnet_` tests serially and prints their
 control requests, replies and projected transcripts. It starts the runner as
 a subprocess from a declared topology, checks network controls through
 independent clients, sends a scripted Claude prompt and permission answer
@@ -15,15 +15,16 @@ Codex recording. Shutdown and SIGTERM must both exit successfully, release
 the relay and control listeners so they can be rebound, and remove temporary
 state. The network and provider journeys also assert that their sockets
 refuse connections after shutdown. No provider executable or cloud account
-is needed. The recipe uses the normal workspace build and its 900-second
-test timeout.
+is needed. The normal workspace test recipe carries its own wall-clock
+bound.
 
 ## Topology and readiness
 
-Start the debug runner with a topology file:
+Build the harness with `just ios tools`, then start the served network
+with a topology file:
 
 ```sh
-timeout 3600 wt run testnet -- serve --topology e2e-tests/topologies/two-hosts.json
+target/debug/testnet serve --topology e2e-tests/topologies/two-hosts.json
 ```
 
 A topology is a JSON object with a `cloud_url` and four required lists.
@@ -59,12 +60,16 @@ file; directories must
 exist. Invalid declarations fail before network startup. Empty lists are
 allowed, including users without a daemon.
 
-The runner starts real daemons and a loopback relay with isolated identities,
-trust stores and temporary data directories. The first and only stdout line
-is JSON containing `cloud_url`, `relay`, `control`, per-user bearer credentials, daemon
-identities and agent identities. Readiness follows daemon attachment and the
-declared pairings. A cold workspace build happens before the 30-second
-readiness deadline begins.
+The runner starts real daemons, a loopback relay and a fake identity service
+with isolated identities, trust stores and temporary data directories. The
+first and only stdout line is JSON containing `cloud_url`, `identity`,
+`relay`, `control`, per-user bearer credentials, daemon identities and agent
+identities. `identity` is the URL of the fake identity service, reported
+separately from `relay`: the service mints tokens and names the relay, the
+relay only carries traffic. Phone journeys hand the app one of the static
+user tokens rather than signing in through the service. Readiness follows
+daemon attachment and the declared pairings. A cold workspace build happens
+before the 30-second readiness deadline begins.
 
 Each user entry has `label`, `user_id` (UUID) and `token`. Each daemon entry
 has `name`, `host_id` (UUID) and `fingerprint` (64 hexadecimal SHA-256 digits
@@ -91,12 +96,12 @@ to exercise another cloud. Topologies with installation binding use the
 existing identity HTTP fixture's own URL for every attached device; that
 fixture names the cloud's independently addressed relay.
 
-`timeout 900 wt test -- testnet_control -- --nocapture` pairs by printed code
+`just test-crate testnet -- testnet_control -- --nocapture` pairs by printed code
 and QR over a relay whose address differs from the custom configured cloud.
-`timeout 900 wt test -- testnet_agents -- --nocapture` also exercises a
+`just test-crate testnet -- testnet_agents -- --nocapture` also exercises a
 client config loaded from readiness with a nondefault cloud. Phone pairing
-and account switching are exercised by `timeout 2400 wt run ios-journey -- hosts`
-and `timeout 2400 wt run ios-journey -- accounts`.
+and account switching are exercised by `just ios journey hosts`
+and `just ios journey accounts`.
 
 ## Control protocol
 
@@ -104,6 +109,13 @@ Send one JSON value per line to the TCP `control` address. Multiple clients
 may connect; operations execute in arrival order. Each request returns one
 `Ack` after its operation settles, or an `Error` with a message. An error does
 not undo an operation that has already started.
+
+Every request below is a verb the in-process harness also has, under the
+same name: `CloudOffline` is `TestNet::cloud_offline`, `StartQrPairing` is
+`Daemon::start_qr_pairing`, `AgentEmit` is `script::Provider::emit`, and so
+on. The `testnet` crate documentation carries the full table. A phone journey
+driving the door and a Rust spec calling the harness therefore say the same
+sentence, and adding a verb means adding the method first.
 
 | Request | Effect |
 | --- | --- |
@@ -127,13 +139,13 @@ An acknowledgement always has the same shape; unused fields are null or empty:
 ```
 
 Replay the control protocol and its independent daemon observations with
-`timeout 900 wt test -- testnet_control -- --nocapture`. Process teardown is
-covered by `timeout 900 wt test -- testnet_serve`.
+`just test-crate testnet -- testnet_control -- --nocapture`. Process teardown is
+covered by `just test-crate testnet -- testnet_serve`.
 
 ## Scripted Claude sessions
 
 Rust harnesses can create a process-free Claude PTY session with
-`amux::testnet::script::session(script).await`. Keep its returned `Provider`
+`testnet::script::session(script).await`. Keep its returned `Provider`
 handle alive while consuming the returned `claude::pty::Session`. The provider
 writes a temporary JSONL transcript and sends real Claude hooks; the session's
 normal tailer, parser and semantic ask handling produce the events.
@@ -198,7 +210,7 @@ handle remains held. Dropping the provider removes its temporary transcript
 and ends playback. Asynchronous playback errors are available from
 `Provider::error`.
 
-Run `timeout 900 wt test -- testnet_script -- --nocapture` to see the parsed
+Run `just test-crate testnet -- testnet_script -- --nocapture` to see the parsed
 transcript and hook capture along with checks for asks, deferred prompts,
 turn boundaries and cleanup.
 
@@ -222,13 +234,13 @@ The daemon checks the stream sequence and the real provider control validates
 input before script delivery. Observations remain readable after provider
 exit. Restart removes handles for the stopped daemon's scripted agents.
 
-`amux::testnet::connect_user(cloud_url, relay, token)` opens a client-only embedded runtime
+`testnet::connect_user(cloud_url, relay, token)` opens a client-only embedded runtime
 with the normal routing and client services against the loopback relay. It
 supplies the test token directly in place of production token exchange. The
 client has an isolated device identity and must pair with the host, even when
 both use the same account. Use `StartQrPairing` and the client's QR pairing API;
 after the agent appears, `Runtime::note_attached` opens its structured stream.
-Run `timeout 900 wt test -- testnet_agents -- --nocapture` to see the control
+Run `just test-crate testnet -- testnet_agents -- --nocapture` to see the control
 requests, exact host observations and projected transcript from a production
 `amux_ui::Runtime` using that connection. The test also checks account isolation,
 child asks, invalid controls, exit and restart cleanup.
@@ -257,7 +269,7 @@ model controls. Seeded PTY agents also accept their original UUID or name;
 their typed inputs remain in `observed`. An unknown UUID returns an error. Restart ends the scripted sessions and removes
 the daemon's script configuration; it does not launch a replacement provider.
 
-Run `timeout 900 wt test -- testnet_sdk -- --nocapture` to exercise paired
+Run `just test-crate testnet -- testnet_sdk -- --nocapture` to exercise paired
 creation over the relay, both SDK sessions, the PTY session, model control and
 its PTY refusal, and rejected creation without an inventory change. This
 tests the real host and shared client runtime; it does not prove the iPhone
@@ -265,7 +277,7 @@ view or qualify an authenticated Claude service.
 
 ## Convert a report transcript
 
-`timeout 900 wt run testnet -- script-from-report PATH/msgs.jsonl` prints a
+`target/debug/testnet script-from-report PATH/msgs.jsonl` prints a
 Script JSON value. The input uses the normal recorder header and retained Msg
 lines. Conversion requires one uninterrupted Claude PTY stream beginning at
 sequence 1 and a checkpoint without folded feed history. Lost checkpoint rows
@@ -280,7 +292,7 @@ semantic `amux.*` rows return `UnsupportedRow` because transcript playback
 cannot reconstruct hook decisions. This converter preserves transcript
 content; interactive asks and answers need an authored script.
 
-`timeout 900 wt test -- script_from_report -- --nocapture` checks the committed
+`just test-crate testnet -- script_from_report -- --nocapture` checks the committed
 synthetic recorder fixtures and compares the converted rows with output from
 a real Claude provider session.
 
@@ -291,7 +303,7 @@ On Windows the runner rejects a Codex topology before starting the network;
 Claude scripts and the network controls remain available.
 
 `e2e-tests/topologies/codex-recording.json` declares a Codex agent backed by
-`crates/codex/fixtures/approval_allow`. Recording manifests and content hashes
+`crates/codex-specs/fixtures/runtime/approval_allow`. Recording manifests and content hashes
 are checked before startup. The runner uses the recorded client handshake and
 thread-start parameters, then hands the real Codex session to the daemon's
 normal backend. Subsequent prompts and approval answers come from the attached
@@ -315,7 +327,7 @@ observation boundary. Restart and shutdown close its replay transport and driver
 Only single-transport recordings beginning with initialize, initialized and
 thread/start are supported; other recording shapes are refused.
 
-`timeout 900 wt test -- testnet_codex_recording -- --nocapture` drives the
+`just test-crate testnet -- testnet_codex_recording -- --nocapture` drives the
 production UI runtime over the relay, prints the approval and projected feed,
 verifies all five recorded writes, and checks that an unrecorded prompt or
 answer produces a named mismatch and settles its input without hanging.

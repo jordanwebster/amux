@@ -548,7 +548,7 @@ def main() -> int:
             "release refuses here until --build seeds the ledger")
     checks.append(numbering)
 
-    print("wt run release, on this Mac:")
+    print("just ios release, on this Mac:")
     for check in checks:
         print(check.line())
     # The tree's state is not an input a person produces, so it does not stop

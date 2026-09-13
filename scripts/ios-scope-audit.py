@@ -20,7 +20,7 @@ DEBUG_SYMBOLS = (
     "ReportCapture", "ReportFreeze", "ReportAssembly", "ReportStore", "ReportScreen",
     "FreezeOnScreenshot", "DebugReports", "FrozenFrame", "ColdStartProbe", "PerfRun",
     "Workloads", "BudgetTable",
-    "amux_mobile_report_snapshot", "amux_mobile_replay_report", "+debug-tools",
+    "amux_app_report_snapshot", "amux_app_replay_report", "+debug-tools",
 )
 FORBIDDEN_APIS = (
     "UNUserNotificationCenter", "requestAuthorizationWithOptions",
@@ -163,13 +163,13 @@ def detector_probe() -> None:
     """
     source = OUTPUT / "excluded-symbol.c"
     binary = OUTPUT / "excluded-symbol"
-    source.write_text("void amux_mobile_report_snapshot(void) {}\n"
-                      "int main(void) { amux_mobile_report_snapshot(); return 0; }\n")
+    source.write_text("void amux_app_report_snapshot(void) {}\n"
+                      "int main(void) { amux_app_report_snapshot(); return 0; }\n")
     sdk = run(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"]).stdout.decode().strip()
     run(["xcrun", "clang", "-target", "arm64-apple-ios26.0-simulator", "-isysroot", sdk,
          str(source), "-o", str(binary)])
     failures = binary_violations(*inspect_binary(binary))
-    if "excluded symbol or API: amux_mobile_report_snapshot" not in failures:
+    if "excluded symbol or API: amux_app_report_snapshot" not in failures:
         raise RuntimeError("audit accepted a test build containing a debug-only export")
     (OUTPUT / "detector-probe.txt").write_text("Rejected compiler-built probe:\n" + "\n".join(failures) + "\n")
 

@@ -12,7 +12,7 @@ and family lifecycle.
 
 The executable half of this document is the canonical `codex` crate's
 recorded specifications, the amux backend derivation tests, the
-`crates/amux-ui/tests/spec/` folds (`codex_feed`, `codex_asks`,
+`crates/ui-state/tests/spec/` folds (`codex_feed`, `codex_asks`,
 `codex_write`, `codex_agreement`), and the opt-in `codex_live` suite. Where
 prose and a passing specification disagree, the specification wins.
 
@@ -48,7 +48,7 @@ UI is one of two consumers rather than the source of truth.
 Provider behavior lives in the repository's canonical `crates/codex` crate.
 Its public daemon boundary is
 `codex::Session { events: ThreadEventStream, control: ThreadControl }`.
-The code under `crates/amux/src/agents/codex` is an adapter that turns those
+The code under `crates/agent-runtime/src/agents/codex` is an adapter that turns those
 events into amux rows, routes typed controls, implements delivery, and records
 the thread id for suspension; it is not a second provider implementation.
 
@@ -244,7 +244,7 @@ is captured and diffed, and never breaks the fold.
 
 ## The client layer
 
-`CodexLayer` (`crates/amux-ui/src/codex/`) is a typed per-agent layer, a
+`CodexLayer` (`crates/ui-state/src/codex/`) is a typed per-agent layer, a
 sibling of `ClaudeLayer`, not a specialization of anything shared. Per
 `docs/UI.md`, asymmetry between agents is expressed, not papered over:
 there is no generic intermediate representation and `AgentLayer` is an
@@ -385,21 +385,21 @@ is absent.
 Four tiers, in increasing cost:
 
 1. **`codex` unit tests and executable specifications.** Unit tests cover
-   framing and deterministic behavior. `codex::specs` runs one function per
+   framing and deterministic behavior. `codex_specs::specs` runs one function per
    claim either against codex-cli or against a strict recording. The registry
    enforces its minimum supported version, allowed model, recording inventory,
    and orphan checks. The committed corpus was recorded with codex-cli 0.150.1
    and `gpt-5.6-luna` passed explicitly.
-2. **Daemon adapter derivation.** `crates/amux/tests/derived_rows.rs` opens
+2. **Daemon adapter derivation.** `crates/node/tests/derived_rows.rs` opens
    recorded `codex::Session`s, feeds them through the real amux adapter, and
    proves the committed `crates/amux/tests/fixtures/rows/codex/` rows reproduce
    byte for byte from `crates/codex/fixtures/`.
    `a2a_fixtures` separately covers the thread-scoped MCP route and carrier
    facts that belong at the daemon boundary.
-3. **`crates/amux-ui/tests/spec/`.** Pure reducer folds use the derived rows;
+3. **`crates/ui-state/tests/spec/`.** Pure reducer folds use the derived rows;
    no clock or provider process is involved. Every registered sequence is
    swept for invariant violations after every Msg.
-4. **`crates/amux/tests/codex_live.rs`.** The opt-in `codex_live` suite keeps
+4. **`crates/node/tests/codex_live.rs`.** The opt-in `codex_live` suite keeps
    process-level facts that transport replay cannot prove: live create and
    turn behavior, approvals with filesystem assertions, interrupt and reuse,
    suspend/resume across app-server restart, raw and structured coexistence,
@@ -408,12 +408,12 @@ Four tiers, in increasing cost:
    inert when no scenario is named.
 
 ```sh
-wt test
-AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna wt run codex-live -- all
+just test
+AMUX_CODEX_LIVE_MODEL=gpt-5.6-luna just codex-live -- all
 ```
 
 The live suite is pinned to codex-cli 0.153.4. To check startup without model
-turns, run `wt run codex-live -- raw_unnamed raw_named unnamed_reconnect`.
+turns, run `just codex-live -- raw_unnamed raw_named unnamed_reconnect`.
 These scenarios require the vanilla TUI's local `/status` command to identify
 the expected thread, including after detach/reattach and app-server restart.
 Initial ANSI output alone is insufficient: Codex draws its startup screen

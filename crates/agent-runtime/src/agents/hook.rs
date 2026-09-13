@@ -1,0 +1,31 @@
+use model::ProtocolError;
+use thiserror::Error;
+
+pub(crate) enum ExternalHookBootstrap {
+    Noop,
+    Register(crate::agents::AgentSession),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HookOutcome {
+    Noop,
+    KeepSession,
+    Completed { text: String },
+    WithdrawSession,
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum HookError {
+    #[error("hooks are not supported for this agent type")]
+    UnsupportedAgentType,
+    #[error("invalid Claude hook payload: {message}")]
+    InvalidPayload { message: String },
+}
+
+impl HookError {
+    pub(crate) fn into_protocol_error(self) -> ProtocolError {
+        ProtocolError::ServerError {
+            message: self.to_string(),
+        }
+    }
+}

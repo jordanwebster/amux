@@ -1,4 +1,4 @@
-import AmuxMobile
+import AmuxApp
 import Foundation
 
 // Rust owns callback delivery. Snapshots run on the main thread without holding
@@ -67,10 +67,10 @@ private final class Observation: @unchecked Sendable {
     }
 
     private func discoveredHosts(handle: OpaquePointer) throws -> [String: String] {
-        guard let bytes = amux_mobile_snapshot(handle) else {
+        guard let bytes = amux_app_snapshot(handle) else {
             throw NSError(domain: "LoopbackSmoke", code: 4, userInfo: [NSLocalizedDescriptionKey: "Bridge snapshot unavailable"])
         }
-        defer { amux_mobile_free(bytes) }
+        defer { amux_app_free(bytes) }
         let model = try JSONSerialization.jsonObject(with: Data(String(cString: bytes).utf8)) as! [String: Any]
         let rows = model["hosts"] as! [String: [String: Any]]
         var hosts: [String: String] = [:]
@@ -113,10 +113,10 @@ private func smoke() throws {
     let observation = Observation(expected: Set(arguments.dropFirst(3)))
     let context = Unmanaged.passRetained(observation)
     defer { context.release() }
-    guard let handle = json.withCString({ amux_mobile_start($0, receive, context.toOpaque()) }) else {
+    guard let handle = json.withCString({ amux_app_start($0, receive, context.toOpaque()) }) else {
         throw NSError(domain: "LoopbackSmoke", code: 3, userInfo: [NSLocalizedDescriptionKey: "Bridge rejected loopback configuration"])
     }
-    defer { amux_mobile_stop(handle) }
+    defer { amux_app_stop(handle) }
     let hosts = try observation.wait(handle: handle)
     let output = String(decoding: try JSONSerialization.data(withJSONObject: hosts, options: [.sortedKeys]), as: UTF8.self)
     print("daemon_names=\(output)")

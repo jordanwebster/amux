@@ -1,4 +1,4 @@
-import AmuxMobile
+import AmuxApp
 import Foundation
 
 /// One thing attached to a message, as the text of the message spells it.
@@ -547,9 +547,9 @@ extension Bridge {
         guard let request = try? AmuxJSON.encoder.encode(
             Request(diff: diff, document: document, comments: comments)),
             let reply = String(data: request, encoding: .utf8)
-                .flatMap({ amux_mobile_review_element($0) })
+                .flatMap({ amux_app_review_element($0) })
         else { return nil }
-        defer { amux_mobile_free(reply) }
+        defer { amux_app_free(reply) }
         struct Reply: Decodable {
             let element: String
             let attachment: DraftAttachment
@@ -577,7 +577,7 @@ extension Bridge {
             id: attachment.id, kind: attachment.kind, name: attachment.name,
             size: attachment.size)
         guard let element = element(
-            from: request, calling: { amux_mobile_attachment_element($0) })
+            from: request, calling: { amux_app_attachment_element($0) })
         else { return nil }
         return DraftToken(
             kind: attachment.kind == .image ? .photo : .file,
@@ -598,8 +598,8 @@ extension Bridge {
     /// answer and not the phone's, so a paragraph that becomes a token in the
     /// terminal becomes one here.
     public static func pasted(_ text: String) -> Pasted {
-        guard let reply = amux_mobile_paste(text) else { return .prose(text) }
-        defer { amux_mobile_free(reply) }
+        guard let reply = amux_app_paste(text) else { return .prose(text) }
+        defer { amux_app_free(reply) }
         struct Reply: Decodable {
             let prose: String?
             let element: String?
@@ -628,7 +628,7 @@ extension Bridge {
               let json = String(data: data, encoding: .utf8),
               let reply = ffi(json)
         else { return nil }
-        defer { amux_mobile_free(reply) }
+        defer { amux_app_free(reply) }
         return try? AmuxJSON.decoder.decode(
             Element.self, from: Data(String(cString: reply).utf8)).element
     }
@@ -645,8 +645,8 @@ extension Bridge {
         // containing the marker still goes through the shared parser; Swift
         // never decides whether a candidate is valid.
         guard text.contains("<amux-attachment") else { return [.prose(text)] }
-        guard let json = amux_mobile_attachments(text) else { return [] }
-        defer { amux_mobile_free(json) }
+        guard let json = amux_app_attachments(text) else { return [] }
+        defer { amux_app_free(json) }
         let data = Data(String(cString: json).utf8)
         return (try? AmuxJSON.decoder.decode([Segment].self, from: data)) ?? []
     }

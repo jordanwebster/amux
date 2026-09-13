@@ -1,0 +1,55 @@
+#!/bin/sh
+# Run a command under a wall-clock bound: `bounded SECONDS COMMAND [ARGS...]`.
+#
+# Recipes carry timeouts so a hang surfaces as a failure instead of a stalled
+# agent loop. GNU timeout is not on stock macOS or every CI image, so this
+# wrapper uses it where present and otherwise falls back to a small Python
+# supervisor that kills the whole process group and exits 124, matching GNU
+# timeout's contract.
+
+set -eu
+
+if [ "$#" -lt 2 ]; then
+    echo "usage: $0 SECONDS COMMAND [ARGS...]" >&2
+    exit 64
+fi
+
+if command -v timeout >/dev/null 2>&1; then
+    exec timeout "$@"
+fi
+if command -v gtimeout >/dev/null 2>&1; then
+    exec gtimeout "$@"
+fi
+
+exec python3 - "$@" <<'PY'
+import os, signal, subprocess, sys
+
+seconds = float(sys.argv[1])
+command = sys.argv[2:]
+windows = os.name == "nt"
+child = subprocess.Popen(command, start_new_session=not windows)
+
+
+def stop(sig):
+    if windows:
+        child.kill()
+    else:
+        os.killpg(child.pid, sig)
+
+
+try:
+    sys.exit(child.wait(timeout=seconds))
+except subprocess.TimeoutExpired:
+    stop(signal.SIGTERM)
+    try:
+        child.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        stop(signal.SIGKILL)
+        child.wait()
+    print(f"bounded: {command[0]} exceeded {seconds:g}s", file=sys.stderr)
+    sys.exit(124)
+except KeyboardInterrupt:
+    stop(signal.SIGINT)
+    child.wait()
+    sys.exit(130)
+PY

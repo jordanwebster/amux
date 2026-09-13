@@ -1,0 +1,33 @@
+[package]
+name = "app-embedded"
+version = "0.1.0"
+edition.workspace = true
+description = "Owns a provider-free embedded node installation and its relay link for a rich client"
+publish = false
+
+[features]
+default = []
+# Driving affordances a test harness needs and a shipping build must not
+# carry: a plaintext loopback relay, and the served test network as a
+# development dependency of this crate's own suite.
+debug-tools = []
+
+[dependencies]
+app-runtime = { workspace = true }
+client = { workspace = true }
+node = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+app-embedded = { path = ".", features = ["debug-tools"] }
+model = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+testnet = { workspace = true }
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
+uuid = { workspace = true }

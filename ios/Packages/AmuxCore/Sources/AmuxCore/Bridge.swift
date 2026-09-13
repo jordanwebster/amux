@@ -1,11 +1,11 @@
-import AmuxMobile
+import AmuxApp
 import Foundation
 
 /// The shared Rust library this build is linked against. Swift never
 /// reimplements protocol, projection or send-gate behaviour; it reads it here.
 public enum Bridge {
     public static var version: String {
-        guard let version = amux_mobile_version() else { return "" }
+        guard let version = amux_app_version() else { return "" }
         return String(cString: version)
     }
 
@@ -15,7 +15,7 @@ public enum Bridge {
     /// can freeze a recorder snapshot. Reading it costs nothing and is the
     /// only way an app can tell from the inside.
     public static var build: String {
-        guard let build = amux_mobile_build() else { return "" }
+        guard let build = amux_app_build() else { return "" }
         return String(cString: build)
     }
 
@@ -41,8 +41,8 @@ extension Bridge {
     /// machine and one account's agent, and a phone signed in to two of them
     /// keeps a fleet for each.
     public static func cachedFleet(in directory: URL, for account: AccountId) -> [Event] {
-        guard let json = amux_mobile_cached_fleet(directory.path, account.value) else { return [] }
-        defer { amux_mobile_free(json) }
+        guard let json = amux_app_cached_fleet(directory.path, account.value) else { return [] }
+        defer { amux_app_free(json) }
         let data = Data(String(cString: json).utf8)
         return (try? AmuxJSON.decoder.decode([Event].self, from: data)) ?? []
     }

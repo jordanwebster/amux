@@ -1,0 +1,22 @@
+[package]
+name = "app-runtime"
+version = "0.1.0"
+edition.workspace = true
+description = "Account sessions, presentation projection, fleet cache and the frame-coalesced event queue any rich amux client reuses"
+publish = false
+
+[dependencies]
+artifacts = { workspace = true }
+client = { workspace = true }
+model = { workspace = true }
+ui-runtime = { workspace = true }
+ui-state = { workspace = true }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

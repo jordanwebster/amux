@@ -1,0 +1,998 @@
+//! Key handling for the fleet screen: keys mutate ViewState and produce
+//! `UiAction`s; all domain writes leave as Commands through the runtime.
+
+use chrono::{DateTime, Utc};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ui_state::{Command, Model};
+
+use crate::switcher::SwitcherOutcome;
+use crate::view::{Mode, Notice, OpenMode, UiAction, ViewState, VisibleRow, visible_rows};
+
+pub fn handle_key(
+    view: &mut ViewState,
+    model: &Model,
+    key: KeyEvent,
+    list_rows: usize,
+    now: DateTime<Utc>,
+) -> Option<UiAction> {
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+    // Any keypress dismisses transient status-line messages (dismissal is
+    // view state; the Model keeps the outcome).
+    view.notice = None;
+    if let Some(failure) = model.latest_op_failure() {
+        view.dismissed_error_seq = view.dismissed_error_seq.max(failure.seq);
+    }
+    let pending_g = std::mem::take(&mut view.pending_g);
+
+    // Ctrl+C is the chrome-wide guarded abandon key (`docs/CHAT.md`
+    // §Keybindings), ONE rule for the whole TUI: a focused non-empty text
+    // field (here: the filter, the rename draft) is cleared — the
+    // clearing press never arms — and otherwise the first press arms the
+    // quit guard, a second within the window quits. A single Ctrl+C never
+    // quits; the arm renders in the status line.
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        match &mut view.mode {
+            Mode::Filter if !view.filter.is_empty() => {
+                view.filter.clear();
+                view.selected = 0;
+                view.scroll = 0;
+                view.quit_guard.note_clear();
+            }
+            Mode::Rename { draft, .. } if !draft.is_empty() => {
+                draft.clear();
+                view.quit_guard.note_clear();
+            }
+            _ => {
+                if view.quit_guard.press(now) {
+                    return Some(UiAction::Quit);
+                }
+            }
+        }
+        return None;
+    }
+    // Any other key disarms the quit guard.
+    view.quit_guard.disarm();
+
+    // `<leader> p` opens the profile switcher — the one chord the fleet
+    // has, matching the chat's leader chords so the leader means the same
+    // thing on both screens. An armed leader followed by anything else
+    // falls through to the ordinary handling of that key, exactly as the
+    // chat's does. The switcher itself owns every key while it is open, so
+    // the chord cannot re-enter it.
+    if !matches!(view.mode, Mode::Switcher(_)) {
+        let pending_leader = std::mem::take(&mut view.pending_leader);
+        if pending_leader {
+            if key.code == KeyCode::Char('p') {
+                return Some(UiAction::ListProfiles);
+            }
+        } else if key.modifiers.contains(KeyModifiers::CONTROL)
+            && key.code == KeyCode::Char(view.leader)
+        {
+            view.pending_leader = true;
+            return None;
+        }
+    }
+
+    match view.mode.clone() {
+        Mode::Help => {
+            view.mode = Mode::Normal;
+            None
+        }
+        Mode::Switcher(mut state) => {
+            let outcome = state.handle_key(key);
+            view.mode = Mode::Switcher(state);
+            match outcome {
+                Some(SwitcherOutcome::Switch(entry)) => {
+                    view.mode = Mode::Normal;
+                    Some(UiAction::SwitchProfile(entry))
+                }
+                Some(SwitcherOutcome::Close) => {
+                    view.mode = Mode::Normal;
+                    None
+                }
+                None => None,
+            }
+        }
+        Mode::ConfirmDelete { agent, .. } => {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    view.mode = Mode::Normal;
+                    return Some(UiAction::Dispatch(Command::DeleteAgent { agent }));
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    view.mode = Mode::Normal;
+                }
+                _ => {}
+            }
+            None
+        }
+        Mode::Rename { agent, mut draft } => {
+            match key.code {
+                KeyCode::Enter => {
+                    view.mode = Mode::Normal;
+                    if !draft.trim().is_empty() {
+                        return Some(UiAction::Dispatch(Command::RenameAgent {
+                            agent,
+                            name: draft.trim().to_string(),
+                        }));
+                    }
+                }
+                KeyCode::Esc => view.mode = Mode::Normal,
+                KeyCode::Backspace => {
+                    draft.pop();
+                    view.mode = Mode::Rename { agent, draft };
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    draft.push(c);
+                    view.mode = Mode::Rename { agent, draft };
+                }
+                _ => view.mode = Mode::Rename { agent, draft },
+            }
+            None
+        }
+        Mode::Filter => match key.code {
+            KeyCode::Esc => {
+                view.mode = Mode::Normal;
+                None
+            }
+            // Ctrl+Enter (kitty tier — only a kitty-probed terminal can
+            // deliver it) opens the non-default mode; plain Enter the
+            // default. The `o` fallback is Normal-mode only — here it is
+            // a printable (P2).
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                open_selected(view, model, true)
+            }
+            KeyCode::Enter => open_selected(view, model, false),
+            KeyCode::Down => {
+                move_selection(view, model, 1, list_rows);
+                None
+            }
+            KeyCode::Up => {
+                move_selection(view, model, -1, list_rows);
+                None
+            }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                move_selection(view, model, 1, list_rows);
+                None
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                move_selection(view, model, -1, list_rows);
+                None
+            }
+            KeyCode::Backspace => {
+                view.filter.pop();
+                view.selected = 0;
+                view.scroll = 0;
+                None
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                view.filter.push(c);
+                view.selected = 0;
+                view.scroll = 0;
+                None
+            }
+            _ => None,
+        },
+        Mode::Normal => match key.code {
+            // `q` keeps its single-press quit where the guarded Ctrl+C
+            // takes two: a deliberately typed letter is not a reflex —
+            // the guard exists for the shell's ^C muscle memory, and
+            // Normal mode has no text field for `q` to type into.
+            KeyCode::Char('q') => Some(UiAction::Quit),
+            KeyCode::Char('j') | KeyCode::Down => {
+                move_selection(view, model, 1, list_rows);
+                None
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                move_selection(view, model, -1, list_rows);
+                None
+            }
+            KeyCode::Char('g') => {
+                if pending_g {
+                    view.selected = 0;
+                    view.scroll = 0;
+                } else {
+                    view.pending_g = true;
+                }
+                None
+            }
+            KeyCode::Char('G') => {
+                let visible = visible_rows(model, view).len();
+                view.selected = visible.saturating_sub(1);
+                view.clamp_selection(visible, list_rows);
+                None
+            }
+            KeyCode::Char('/') | KeyCode::Char('i') => {
+                view.mode = Mode::Filter;
+                None
+            }
+            // Entry (A1): Enter opens the settings-default mode;
+            // Ctrl+Enter (kitty tier) and the guaranteed plain fallback
+            // `o` open the other one.
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                open_selected(view, model, true)
+            }
+            KeyCode::Enter => open_selected(view, model, false),
+            KeyCode::Char('o') => open_selected(view, model, true),
+            KeyCode::Char('n') => {
+                let host = selected_agent_host(view, model);
+                Some(UiAction::Create { host })
+            }
+            KeyCode::Char('r') => {
+                if let Some(card) = selected_agent(view, model) {
+                    view.mode = Mode::Rename {
+                        agent: card.agent.id,
+                        draft: card.display_name(),
+                    };
+                }
+                None
+            }
+            KeyCode::Char('d') => {
+                if let Some(card) = selected_agent(view, model) {
+                    view.mode = Mode::ConfirmDelete {
+                        agent: card.agent.id,
+                        name: card.display_name(),
+                    };
+                }
+                None
+            }
+            // `z` is vim's fold key: it opens or shuts the family the
+            // selected row belongs to. On a row that is in no family
+            // there is nothing to fold and the press does nothing — the
+            // help overlay says so.
+            KeyCode::Char('z') => {
+                if view.toggle_fold(model, view.selected) {
+                    let visible = visible_rows(model, view).len();
+                    view.clamp_selection(visible, list_rows);
+                }
+                None
+            }
+            KeyCode::Char('?') => {
+                view.mode = Mode::Help;
+                None
+            }
+            _ => None,
+        },
+    }
+}
+
+fn move_selection(view: &mut ViewState, model: &Model, delta: isize, list_rows: usize) {
+    let visible = visible_rows(model, view).len();
+    if visible == 0 {
+        return;
+    }
+    let selected = view.selected as isize + delta;
+    view.selected = selected.clamp(0, visible as isize - 1) as usize;
+    view.clamp_selection(visible, list_rows);
+}
+
+fn selected_agent<'a>(view: &ViewState, model: &'a Model) -> Option<&'a ui_state::AgentCard> {
+    match visible_rows(model, view).into_iter().nth(view.selected) {
+        Some(VisibleRow::Agent(row)) => Some(row.card),
+        _ => None,
+    }
+}
+
+/// Create targets the selected row's host (falling back to the local host
+/// via `host: None`, which lets the daemon pick itself).
+fn selected_agent_host(view: &ViewState, model: &Model) -> Option<ui_state::HostId> {
+    selected_agent(view, model).map(|card| card.agent.host_id)
+}
+
+/// An entry key on a row: open the agent in the resolved mode (A1) —
+/// unless the host is known-offline, when the status line carries the
+/// daemon's `last_dial_error` instead (both modes need the host: attach
+/// for the PTY, chat for the stream subscription).
+fn open_selected(view: &mut ViewState, model: &Model, other_mode: bool) -> Option<UiAction> {
+    let card = selected_agent(view, model)?;
+    let host_id = card.agent.host_id;
+    if !model.host_online(host_id) {
+        let host = model.host_name(host_id).unwrap_or("host");
+        let detail = model
+            .host(host_id)
+            .and_then(|state| state.entry.last_dial_error.clone())
+            .unwrap_or_else(|| "no route".to_string());
+        view.notice = Some(Notice::problem(format!("{host} is offline: {detail}")));
+        return None;
+    }
+    let mode = entry_modes(card, model, view.default_open_mode).resolve(other_mode);
+    Some(match mode {
+        OpenMode::RawAttach => UiAction::Attach(card.agent.id),
+        OpenMode::Chat => UiAction::OpenChat(card.agent.id),
+    })
+}
+
+/// The one entry policy, read by every affordance that offers a way into
+/// an agent (A1, A3).
+///
+/// Read-only viewers and sessions with no terminal behind them have no
+/// raw mode at all. A terminal agent with no chat layer has raw mode
+/// alone. An agent with both modes on another machine defaults to the chat
+/// even where the setting says raw: the chat travels over the same
+/// stream the fleet already has, while raw attach pipes a terminal
+/// across the network, so the safe half of the pair leads — but the
+/// other-mode key still reaches raw for anyone who wants it.
+pub fn entry_modes(
+    card: &ui_state::AgentCard,
+    model: &Model,
+    configured: OpenMode,
+) -> crate::view::EntryModes {
+    if card.agent.readonly || !card.agent.kind.exposes(ui_state::Protocol::TerminalV1) {
+        return crate::view::EntryModes::ChatOnly;
+    }
+    if ui_state::AgentLayer::from_kind(&card.agent.kind).is_none() {
+        return crate::view::EntryModes::RawOnly;
+    }
+    // Unknown locality reads as local: the fleet is usually one machine,
+    // and this only picks which half of a pair Enter opens.
+    let remote = model.is_local(card.agent.host_id) == Some(false);
+    crate::view::EntryModes::Both {
+        default: match remote {
+            true => OpenMode::Chat,
+            false => configured,
+        },
+    }
+}
+
+/// The entry policy for the row the fleet has selected, for the hint
+/// line and the `?` overlay. With nothing selected the configured pair
+/// stands in, so an empty fleet still describes the keys it has.
+pub(crate) fn selected_entry_modes(view: &ViewState, model: &Model) -> crate::view::EntryModes {
+    match selected_agent(view, model) {
+        Some(card) => entry_modes(card, model, view.default_open_mode),
+        None => crate::view::EntryModes::Both {
+            default: view.default_open_mode,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ui_state::Model;
+
+    use super::*;
+    use crate::switcher::SwitcherState;
+    use crate::view::{Mode, UiAction, ViewState};
+
+    fn ctrl_c() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    }
+
+    fn t(seconds: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(1_755_000_000 + seconds, 0).expect("epoch")
+    }
+
+    /// The chrome-wide guarded Ctrl+C: with no text field to clear, the
+    /// first press arms (a single Ctrl+C never quits) and a fresh second
+    /// press quits — from every field-less mode.
+    #[test]
+    fn ctrl_c_arms_then_a_second_press_quits_from_any_fieldless_mode() {
+        let model = Model::default();
+        for mode in [Mode::Normal, Mode::Filter, Mode::Help] {
+            let mut view = ViewState {
+                mode,
+                ..ViewState::default()
+            };
+            let first = handle_key(&mut view, &model, ctrl_c(), 10, t(0));
+            assert_eq!(first, None, "the first press arms, never quits");
+            assert!(view.quit_guard.is_armed(), "armed state renders");
+            let second = handle_key(&mut view, &model, ctrl_c(), 10, t(2));
+            assert!(matches!(second, Some(UiAction::Quit)), "second quits");
+        }
+    }
+
+    fn leader(view: &ViewState) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(view.leader), KeyModifiers::CONTROL)
+    }
+
+    fn plain(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn open_switcher(view: &mut ViewState, model: &Model) {
+        let chord = leader(view);
+        handle_key(view, model, chord, 10, t(0));
+        let action = handle_key(view, model, plain(KeyCode::Char('p')), 10, t(0));
+        assert_eq!(action, Some(UiAction::ListProfiles));
+        // The shell answers the listing; that path is the chrome's.
+        view.mode = Mode::Switcher(SwitcherState::open(
+            vec![switcher_entry("Personal", 1), switcher_entry("Work", 2)],
+            None,
+        ));
+    }
+
+    fn switcher_entry(label: &str, index: u128) -> ui_runtime::ProfileEntry {
+        ui_runtime::ProfileEntry {
+            id: ui_state::ProfileId(uuid::Uuid::from_u128(index)),
+            label: label.to_string(),
+            email: Some(format!("{label}@example.com")),
+            status: "connected".to_string(),
+            socket: std::path::PathBuf::from(format!("/run/amux/{index}.sock")),
+        }
+    }
+
+    /// The fleet's one leader chord. It asks the shell for the account
+    /// list rather than opening anything itself: the chrome has no front
+    /// door.
+    #[test]
+    fn the_leader_chord_asks_for_the_switcher() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        let chord = leader(&view);
+        assert_eq!(handle_key(&mut view, &model, chord, 10, t(0)), None);
+        assert!(view.pending_leader, "the leader arms rather than acting");
+        assert_eq!(
+            handle_key(&mut view, &model, plain(KeyCode::Char('p')), 10, t(0)),
+            Some(UiAction::ListProfiles)
+        );
+        assert!(!view.pending_leader, "the chord consumed the leader");
+    }
+
+    /// An armed leader followed by anything else is that other key, not a
+    /// swallowed press — the same rule the chat's leader chords follow.
+    #[test]
+    fn an_unfinished_switcher_chord_falls_through_to_the_key_pressed() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        let chord = leader(&view);
+        handle_key(&mut view, &model, chord, 10, t(0));
+        assert_eq!(
+            handle_key(&mut view, &model, plain(KeyCode::Char('q')), 10, t(0)),
+            Some(UiAction::Quit)
+        );
+    }
+
+    #[test]
+    fn the_switcher_moves_with_j_k_and_the_arrows() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        open_switcher(&mut view, &model);
+        for (key, expected) in [
+            (plain(KeyCode::Char('j')), 1),
+            (plain(KeyCode::Char('k')), 0),
+            (plain(KeyCode::Down), 1),
+            (plain(KeyCode::Up), 0),
+        ] {
+            assert_eq!(handle_key(&mut view, &model, key, 10, t(0)), None);
+            let Mode::Switcher(state) = &view.mode else {
+                panic!("the switcher stays open while moving");
+            };
+            assert_eq!(state.selected, expected);
+        }
+    }
+
+    #[test]
+    fn switcher_enter_switches_and_esc_leaves_the_account_alone() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        open_switcher(&mut view, &model);
+        handle_key(&mut view, &model, plain(KeyCode::Char('j')), 10, t(0));
+        let action = handle_key(&mut view, &model, plain(KeyCode::Enter), 10, t(0));
+        assert_eq!(
+            action,
+            Some(UiAction::SwitchProfile(switcher_entry("Work", 2))),
+            "enter hands the selected account to the shell"
+        );
+        assert_eq!(view.mode, Mode::Normal, "switching closes the overlay");
+
+        open_switcher(&mut view, &model);
+        assert_eq!(
+            handle_key(&mut view, &model, plain(KeyCode::Esc), 10, t(0)),
+            None,
+            "esc asks the shell for nothing"
+        );
+        assert_eq!(view.mode, Mode::Normal, "esc closes the overlay");
+    }
+
+    #[test]
+    fn a_stale_arm_rearms_instead_of_quitting() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        handle_key(&mut view, &model, ctrl_c(), 10, t(0));
+        let late = handle_key(&mut view, &model, ctrl_c(), 10, t(10));
+        assert_eq!(late, None, "past the window the press only re-arms");
+        assert!(view.quit_guard.is_armed());
+    }
+
+    #[test]
+    fn any_other_key_disarms() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        handle_key(&mut view, &model, ctrl_c(), 10, t(0));
+        handle_key(
+            &mut view,
+            &model,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            10,
+            t(1),
+        );
+        assert!(!view.quit_guard.is_armed(), "another key disarms");
+        let press = handle_key(&mut view, &model, ctrl_c(), 10, t(2));
+        assert_eq!(press, None, "disarmed: the press arms again, no quit");
+    }
+
+    /// A non-empty focused text field makes Ctrl+C a clear — the clearing
+    /// press never arms; the NEXT press (field now empty) arms; a third
+    /// quits. Quit-from-a-full-field is three deliberate presses.
+    #[test]
+    fn ctrl_c_clears_the_filter_and_never_arms() {
+        let model = Model::default();
+        let mut view = ViewState {
+            mode: Mode::Filter,
+            filter: "auth".to_string(),
+            selected: 2,
+            ..ViewState::default()
+        };
+        assert_eq!(handle_key(&mut view, &model, ctrl_c(), 10, t(0)), None);
+        assert!(view.filter.is_empty(), "the press cleared the filter");
+        assert_eq!(view.selected, 0, "clearing resets the selection");
+        assert!(!view.quit_guard.is_armed(), "the clearing press never arms");
+        assert_eq!(handle_key(&mut view, &model, ctrl_c(), 10, t(1)), None);
+        assert!(view.quit_guard.is_armed(), "empty now: the press arms");
+        assert!(matches!(
+            handle_key(&mut view, &model, ctrl_c(), 10, t(2)),
+            Some(UiAction::Quit)
+        ));
+    }
+
+    #[test]
+    fn ctrl_c_clears_the_rename_draft_and_never_arms() {
+        let model = Model::default();
+        let mut view = ViewState {
+            mode: Mode::Rename {
+                agent: uuid::Uuid::from_u128(7),
+                draft: "half-typed".to_string(),
+            },
+            ..ViewState::default()
+        };
+        assert_eq!(handle_key(&mut view, &model, ctrl_c(), 10, t(0)), None);
+        let Mode::Rename { draft, .. } = &view.mode else {
+            panic!("still renaming — Ctrl+C cleared, it did not cancel");
+        };
+        assert!(draft.is_empty());
+        assert!(!view.quit_guard.is_armed());
+    }
+
+    // --- entry-mode resolution (A1/A3) ------------------------------------
+
+    use ui_state::{Msg, ServerMsg, update};
+    use uuid::Uuid;
+
+    fn agent_id() -> ui_state::AgentId {
+        Uuid::from_u128(7)
+    }
+
+    /// One synced host with one agent; `readonly` and `online` shape the
+    /// A3 and offline cases.
+    fn entry_model_with_kind(readonly: bool, online: bool, kind: ui_state::AgentKind) -> Model {
+        let mut model = Model::default();
+        let host = ui_state::HostEntry {
+            id: Uuid::from_u128(1),
+            name: "mbp".to_string(),
+            online,
+            version: None,
+            capabilities: None,
+            trust_status: ui_state::HostTrustStatus::Trusted,
+            last_dial_error: (!online).then(|| "connection refused".to_string()),
+            platform: None,
+        };
+        let agent = ui_state::Agent {
+            id: agent_id(),
+            host_id: Uuid::from_u128(1),
+            name: Some("fix-auth".to_string()),
+            command: "claude".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+            kind,
+            readonly,
+            args: Vec::new(),
+            created_at: chrono::DateTime::from_timestamp(1_755_000_000, 0).expect("epoch"),
+            parent: None,
+            working_on: None,
+        };
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(1)),
+            }),
+            Msg::Server(ServerMsg::HostUpserted { host }),
+            Msg::Server(ServerMsg::AgentUpserted { agent }),
+            Msg::Server(ServerMsg::HostsSynchronized),
+            Msg::Server(ServerMsg::AgentsSynchronized),
+        ] {
+            update(&mut model, msg);
+        }
+        model
+    }
+
+    fn entry_model(readonly: bool, online: bool) -> Model {
+        entry_model_with_kind(
+            readonly,
+            online,
+            ui_state::AgentKind::Claude {
+                driver: ui_state::ClaudeDriver::Pty,
+            },
+        )
+    }
+
+    /// The same fleet seen from a second machine: the connection names a
+    /// different local host, so the one agent on it is remote.
+    fn remote_entry_model(kind: ui_state::AgentKind) -> Model {
+        let mut model = entry_model_with_kind(false, true, kind);
+        update(
+            &mut model,
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(2)),
+            }),
+        );
+        model
+    }
+
+    fn selected_card(model: &Model) -> &ui_state::AgentCard {
+        model.agent(agent_id()).expect("the one agent")
+    }
+
+    /// An agent on another machine defaults to the chat whatever the
+    /// setting says — but raw attach is still there on the other-mode
+    /// key, so nothing is taken away.
+    #[test]
+    fn entry_policy_a_remote_terminal_agent_opens_chat_on_enter_and_raw_on_o() {
+        let model = remote_entry_model(ui_state::AgentKind::Claude {
+            driver: ui_state::ClaudeDriver::Pty,
+        });
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            let mut view = ViewState {
+                default_open_mode,
+                ..ViewState::default()
+            };
+            assert_eq!(
+                entry_modes(selected_card(&model), &model, default_open_mode),
+                crate::view::EntryModes::Both {
+                    default: OpenMode::Chat
+                }
+            );
+            assert_eq!(
+                handle_key(&mut view, &model, enter(), 10, t(0)),
+                Some(UiAction::OpenChat(agent_id()))
+            );
+            assert_eq!(
+                handle_key(&mut view, &model, o_key(), 10, t(0)),
+                Some(UiAction::Attach(agent_id()))
+            );
+        }
+    }
+
+    /// Remoteness moves the default, never the affordances: an agent on
+    /// this machine keeps whichever pair the setting configured.
+    #[test]
+    fn entry_policy_a_local_agent_keeps_the_configured_default() {
+        let model = entry_model(false, true);
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            assert_eq!(
+                entry_modes(selected_card(&model), &model, default_open_mode),
+                crate::view::EntryModes::Both {
+                    default: default_open_mode
+                }
+            );
+        }
+    }
+
+    /// The fleet knows nothing about Codex's native screen: a local Codex
+    /// agent keeps both ways in and Enter opens whichever the setting
+    /// picked. `amux attach` deliberately differs (it has no second key to
+    /// offer); the command line's half of this pair is pinned by
+    /// `entry_policy_attach_leads_with_the_codex_screen_on_this_machine`
+    /// in the `amux` CLI, and `docs/CHAT.md` names the difference.
+    #[test]
+    fn entry_policy_a_local_codex_agent_keeps_the_configured_default() {
+        let model = entry_model_with_kind(false, true, ui_state::AgentKind::Codex);
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            let mut view = ViewState {
+                default_open_mode,
+                ..ViewState::default()
+            };
+            assert_eq!(
+                entry_modes(selected_card(&model), &model, default_open_mode),
+                crate::view::EntryModes::Both {
+                    default: default_open_mode
+                }
+            );
+            let (primary, secondary) = match default_open_mode {
+                OpenMode::RawAttach => {
+                    (UiAction::Attach(agent_id()), UiAction::OpenChat(agent_id()))
+                }
+                OpenMode::Chat => (UiAction::OpenChat(agent_id()), UiAction::Attach(agent_id())),
+            };
+            assert_eq!(
+                handle_key(&mut view, &model, enter(), 10, t(0)),
+                Some(primary)
+            );
+            assert_eq!(
+                handle_key(&mut view, &model, o_key(), 10, t(0)),
+                Some(secondary)
+            );
+        }
+    }
+
+    /// A read-only viewer and a session with no terminal behind it have
+    /// one way in. No entry key may hand either of them to raw attach.
+    #[test]
+    fn entry_policy_chat_only_agents_never_yield_an_attach() {
+        let readonly = entry_model(true, true);
+        let structured = entry_model_with_kind(
+            false,
+            true,
+            ui_state::AgentKind::Claude {
+                driver: ui_state::ClaudeDriver::Sdk,
+            },
+        );
+        for model in [&readonly, &structured] {
+            for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+                assert_eq!(
+                    entry_modes(selected_card(model), model, default_open_mode),
+                    crate::view::EntryModes::ChatOnly
+                );
+                let mut view = ViewState {
+                    default_open_mode,
+                    ..ViewState::default()
+                };
+                for key in [enter(), ctrl_enter(), o_key()] {
+                    assert_eq!(
+                        handle_key(&mut view, model, key, 10, t(0)),
+                        Some(UiAction::OpenChat(agent_id()))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn entry_policy_agents_without_chat_attach_on_every_key_and_host() {
+        let local = entry_model_with_kind(false, true, ui_state::AgentKind::TestAgent);
+        let remote = remote_entry_model(ui_state::AgentKind::TestAgent);
+        for model in [&local, &remote] {
+            for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+                let mut view = ViewState {
+                    default_open_mode,
+                    ..ViewState::default()
+                };
+                let entry = selected_entry_modes(&view, model);
+                assert_eq!(entry, crate::view::EntryModes::RawOnly);
+                assert_eq!(crate::bindings::entry_hint(entry), "enter raw attach");
+                for kitty in [false, true] {
+                    view.kitty = kitty;
+                    let sections = crate::bindings::fleet_sections(
+                        &crate::bindings::Effective {
+                            kitty,
+                            leader_label: "C-a".to_string(),
+                        },
+                        entry,
+                        false,
+                    );
+                    let bindings = &sections[0].bindings;
+                    let enter_row = bindings.iter().find(|b| b.keys == "enter").unwrap();
+                    assert_eq!(enter_row.action, "open in raw attach");
+                    assert!(!bindings.iter().any(|b| {
+                        b.keys == "o" || b.keys == "ctrl+enter" || b.action.contains("chat")
+                    }));
+                    for key in [enter(), ctrl_enter(), o_key()] {
+                        assert_eq!(
+                            handle_key(&mut view, model, key, 10, t(0)),
+                            Some(UiAction::Attach(agent_id()))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remoteness cannot invent a terminal: an agent with no terminal
+    /// behind it stays chat-only from another machine too.
+    #[test]
+    fn entry_policy_remoteness_does_not_give_a_structured_session_a_terminal() {
+        let model = remote_entry_model(ui_state::AgentKind::Claude {
+            driver: ui_state::ClaudeDriver::Sdk,
+        });
+        assert_eq!(
+            entry_modes(selected_card(&model), &model, OpenMode::RawAttach),
+            crate::view::EntryModes::ChatOnly
+        );
+    }
+
+    /// The hint line and the `?` overlay read the same policy the keys
+    /// do, so a chat-only row is never offered a key it does not have.
+    #[test]
+    fn entry_policy_hints_and_help_rows_follow_the_selected_row() {
+        let structured = entry_model_with_kind(
+            false,
+            true,
+            ui_state::AgentKind::Claude {
+                driver: ui_state::ClaudeDriver::Sdk,
+            },
+        );
+        let view = ViewState::default();
+        assert_eq!(
+            crate::bindings::entry_hint(selected_entry_modes(&view, &structured)),
+            "enter chat"
+        );
+        let remote = remote_entry_model(ui_state::AgentKind::Claude {
+            driver: ui_state::ClaudeDriver::Pty,
+        });
+        assert_eq!(
+            crate::bindings::entry_hint(selected_entry_modes(&view, &remote)),
+            "enter chat  o raw attach"
+        );
+        let local = entry_model(false, true);
+        assert_eq!(
+            crate::bindings::entry_hint(selected_entry_modes(&view, &local)),
+            "enter raw attach  o chat"
+        );
+    }
+
+    /// An empty fleet still describes the keys it has: with nothing
+    /// selected the configured pair stands in.
+    #[test]
+    fn entry_policy_an_empty_fleet_falls_back_to_the_configured_pair() {
+        let model = Model::default();
+        let view = ViewState {
+            default_open_mode: OpenMode::Chat,
+            ..ViewState::default()
+        };
+        assert_eq!(
+            selected_entry_modes(&view, &model),
+            crate::view::EntryModes::Both {
+                default: OpenMode::Chat
+            }
+        );
+    }
+
+    fn enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    fn ctrl_enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)
+    }
+
+    fn o_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)
+    }
+
+    /// A1 with the shipped default (raw attach): Enter attaches;
+    /// Ctrl+Enter (kitty-delivered) and the plain fallback `o` open the
+    /// chat.
+    #[test]
+    fn enter_opens_the_default_mode_and_o_the_other() {
+        let model = entry_model(false, true);
+        let mut view = ViewState::default();
+        assert_eq!(
+            handle_key(&mut view, &model, enter(), 10, t(0)),
+            Some(UiAction::Attach(agent_id()))
+        );
+        assert_eq!(
+            handle_key(&mut view, &model, ctrl_enter(), 10, t(0)),
+            Some(UiAction::OpenChat(agent_id()))
+        );
+        assert_eq!(
+            handle_key(&mut view, &model, o_key(), 10, t(0)),
+            Some(UiAction::OpenChat(agent_id()))
+        );
+    }
+
+    /// Flipping `ui.default_open_mode` to chat swaps the pair — a
+    /// settings change, not a migration (A1).
+    #[test]
+    fn a_chat_default_swaps_the_entry_pair() {
+        let model = entry_model(false, true);
+        let mut view = ViewState {
+            default_open_mode: crate::view::OpenMode::Chat,
+            ..ViewState::default()
+        };
+        assert_eq!(
+            handle_key(&mut view, &model, enter(), 10, t(0)),
+            Some(UiAction::OpenChat(agent_id()))
+        );
+        assert_eq!(
+            handle_key(&mut view, &model, o_key(), 10, t(0)),
+            Some(UiAction::Attach(agent_id()))
+        );
+    }
+
+    /// A3: read-only agents open in chat only — raw attach is absent,
+    /// not disabled, so every entry key opens the one mode that exists.
+    #[test]
+    fn readonly_agents_open_in_chat_from_every_entry_key() {
+        let model = entry_model(true, true);
+        let mut view = ViewState::default();
+        for key in [enter(), ctrl_enter(), o_key()] {
+            assert_eq!(
+                handle_key(&mut view, &model, key, 10, t(0)),
+                Some(UiAction::OpenChat(agent_id()))
+            );
+        }
+    }
+
+    /// Claude's SDK driver exposes only claude_sdk_v1. Even when raw attach
+    /// is configured as the default, every entry key opens the typed SDK
+    /// placeholder instead of handing terminal_v1 to the attach callback.
+    #[test]
+    fn sdk_agents_open_in_chat_from_every_entry_key() {
+        let model = entry_model_with_kind(
+            false,
+            true,
+            ui_state::AgentKind::Claude {
+                driver: ui_state::ClaudeDriver::Sdk,
+            },
+        );
+
+        for default_open_mode in [OpenMode::RawAttach, OpenMode::Chat] {
+            let mut view = ViewState {
+                default_open_mode,
+                ..ViewState::default()
+            };
+            for key in [enter(), ctrl_enter(), o_key()] {
+                assert_eq!(
+                    handle_key(&mut view, &model, key, 10, t(0)),
+                    Some(UiAction::OpenChat(agent_id()))
+                );
+            }
+        }
+    }
+
+    /// Enter in Filter mode opens the default mode too (Ctrl+Enter the
+    /// other); `o` stays a printable there (P2).
+    #[test]
+    fn filter_mode_enter_opens_and_o_types() {
+        let model = entry_model(false, true);
+        let mut view = ViewState {
+            mode: Mode::Filter,
+            ..ViewState::default()
+        };
+        assert_eq!(
+            handle_key(&mut view, &model, o_key(), 10, t(0)),
+            None,
+            "`o` narrows the filter, never opens"
+        );
+        assert_eq!(view.filter, "o");
+        view.filter.clear();
+        assert_eq!(
+            handle_key(&mut view, &model, enter(), 10, t(0)),
+            Some(UiAction::Attach(agent_id()))
+        );
+        assert_eq!(
+            handle_key(&mut view, &model, ctrl_enter(), 10, t(0)),
+            Some(UiAction::OpenChat(agent_id()))
+        );
+    }
+
+    /// An offline host refuses both modes with the dial error in the
+    /// status line — chat needs the host's stream as much as attach
+    /// needs its PTY.
+    #[test]
+    fn an_offline_host_refuses_entry_with_the_dial_error() {
+        let model = entry_model(false, false);
+        let mut view = ViewState::default();
+        for key in [enter(), o_key()] {
+            assert_eq!(handle_key(&mut view, &model, key, 10, t(0)), None);
+            assert_eq!(
+                view.notice.as_ref().map(|notice| notice.text.as_str()),
+                Some("mbp is offline: connection refused")
+            );
+        }
+    }
+
+    #[test]
+    fn q_quits_in_normal_mode() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        let action = handle_key(
+            &mut view,
+            &model,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            10,
+            t(0),
+        );
+        assert!(matches!(action, Some(UiAction::Quit)));
+    }
+}

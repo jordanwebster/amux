@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure existing iOS recipes and compare capture paths without rebaselining.
 
-Use through `wt run ios-explore -- observe ios-build` or `capture --rounds 3`.
+Use through `just ios explore observe 'ios build'` or `just ios explore capture --rounds 3`.
 Each invocation owns a fresh output directory. Captures are experimental
 measurements, never a golden pass or a replacement for interaction tests.
 """
@@ -57,9 +57,9 @@ def command(*args, check=True):
 
 
 def observe(record, recipe, args):
-    if recipe not in {"ios-build", "ios-verify", "ios-unit", "ios-journey",
-                       "ios-goldens", "ios-perf", "ios-accessibility", "build",
-                       "test-recipes", "fmt-check", "mobile-check"}:
+    if recipe not in {"ios build", "ios verify", "ios unit", "ios journey",
+                       "ios goldens", "ios perf", "ios accessibility", "build",
+                       "ios script-tests", "fmt-check", "mobile-check"}:
         raise ValueError(f"unsupported measurement recipe {recipe}")
     if args[:1] == ["--"]:
         args = args[1:]
@@ -67,26 +67,26 @@ def observe(record, recipe, args):
     stage, stage_started = None, None
     expected = None
     with (record.directory / "recipe.log").open("w") as log:
-        with subprocess.Popen(["wt", "run", recipe, "--", *args], stdout=subprocess.PIPE,
+        with subprocess.Popen(["just", *recipe.split(" "), *args], stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, text=True) as child:
             for line in child.stdout:
                 log.write(line)
                 log.flush()
                 record.emit("recipe-output", line=line.rstrip())
-                if recipe == "ios-verify" and expected is None and line.startswith("iOS verification: "):
+                if recipe == "ios verify" and expected is None and line.startswith("iOS verification: "):
                     expected = line.strip().removeprefix("iOS verification: ").split(", ")
-                announced = line.strip().removeprefix("Running wt run ")
-                stage_start = line.startswith("Running wt run ") and expected and announced == expected[0]
+                announced = line.strip().removeprefix("Running just ")
+                stage_start = line.startswith("Running just ") and expected and announced == expected[0]
                 if stage_start:
                     expected.pop(0)
                     if stage is not None:
                         record.emit("stage-finished", recipe=stage,
                                     seconds=time.monotonic() - stage_started,
                                     completion="next-stage-started")
-                    stage = line.strip().removeprefix("Running wt run ")
+                    stage = line.strip().removeprefix("Running just ")
                     stage_started = time.monotonic()
                     record.emit("stage-started", recipe=stage)
-                if line.startswith("no baseline for this runner") and expected and expected[0] == "ios-perf":
+                if line.startswith("no baseline for this runner") and expected and expected[0] == "ios perf":
                     expected.pop(0)
                     record.emit("performance-not-measured", reason=line.strip())
                 if stage_start or line.rstrip().endswith(": passed"):
@@ -229,9 +229,9 @@ def timing_summary(events):
             expected = line.removeprefix("iOS verification: ").split(", ")
         if not expected:
             continue
-        if line.startswith("no baseline for this runner") and expected[0] == "ios-perf":
+        if line.startswith("no baseline for this runner") and expected[0] == "ios perf":
             skipped.append(dict(recipe=expected.pop(0), reason=line))
-        elif line == f"Running wt run {expected[0]}":
+        elif line == f"Running just {expected[0]}":
             if stages:
                 stages[-1].update(seconds=event["elapsed"] - stages[-1]["started"], status="completed")
             stages.append(dict(recipe=expected.pop(0), started=event["elapsed"], status="incomplete"))
@@ -372,7 +372,7 @@ def main():
     record = Record(args.action)
     try:
         if args.action == "cycle":
-            code = observe(record, "ios-build", [])
+            code = observe(record, "ios build", [])
             if code:
                 record.emit("finished", exit_code=code)
                 return code

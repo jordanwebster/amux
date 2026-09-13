@@ -18,8 +18,10 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path("ios/Tools").resolve()))
+sys.path.insert(0, str(Path(__file__).parent))
 # Started and torn down exactly as the door smoke starts and tears them down.
 from loopback_smoke import control, read_ready, released
+from ios_bridge import TESTNET_SERVE
 
 
 def answer(address: str, request: object) -> dict:
@@ -60,7 +62,7 @@ def runner(topology: str):
         root = Path(temporary)
         environment = os.environ | {key: str(root) for key in ("TMPDIR", "TMP", "TEMP")}
         process = subprocess.Popen(
-            ["e2e-runner", "testnet", "serve", "--topology", topology],
+            [*TESTNET_SERVE, "--topology", topology],
             env=environment, stdout=subprocess.PIPE, text=True)
         try:
             ready = read_ready(process)

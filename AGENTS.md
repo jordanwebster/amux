@@ -4,13 +4,9 @@ amux is unreleased and in active development. Never preserve backwards
 compatibility — old local protocols, config keys, and public APIs may be
 broken freely. Simplify decisions accordingly.
 
-- Build, test and lint through wt, never bare cargo: `wt build`, `wt test`,
-  `wt test -- <filter>`, `wt lint`, `wt fmt`, `wt run spec`,
-  `wt run mobile-check`; `wt tasks` lists everything available. The recipes
-  carry the timeouts — a firing timeout is a hang to diagnose, not a slow
-  suite — and use one build configuration. A bare `cargo` command with
-  `-p`, `--features` or `--release` creates a second one that outlives the
-  session.
+- Build, test and lint through `just` (`just --list`); `wt` is for worktrees,
+  sessions and this tree's daemon. Recipes carry timeouts; a firing timeout is
+  a hang to diagnose.
 - Update `DEVLOG.md` in the same commit as each chunk of work.
 - Committed documentation lives in `docs/` (start at `docs/README.md`);
   `notes/` is gitignored working material. Graduate notes into `docs/`

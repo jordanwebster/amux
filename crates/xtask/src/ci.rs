@@ -62,6 +62,10 @@ struct Jobs {
     jobs: Vec<Job>,
 }
 
+/// The GitHub job whose verification step gates a commit, as the workflow
+/// names it (`.github/workflows/ci.yml`, job `ios-verify`).
+const IOS_JOB: &str = "iOS verification";
+
 fn evaluate(
     head: &str,
     remote: &str,
@@ -90,7 +94,7 @@ fn evaluate(
     }
     let ios = jobs
         .iter()
-        .find(|job| job.name == "ios")
+        .find(|job| job.name == IOS_JOB)
         .ok_or(CiStatusError::JobAbsent { run_id: run.id })?;
     if ios.status != "completed" {
         return Err(CiStatusError::StillRunning { run_id: run.id });
@@ -100,7 +104,7 @@ fn evaluate(
             step.name == "Run iOS verification" && step.conclusion.as_deref() == Some("success")
         })
     {
-        return Err(failure("ios"));
+        return Err(failure(IOS_JOB));
     }
     if run.conclusion.as_deref() != Some("success") {
         return Err(failure("workflow"));
@@ -110,7 +114,7 @@ fn evaluate(
         .zip(ios.completed_at)
         .map(|(start, end)| (end - start).num_seconds())
         .filter(|seconds| *seconds >= 0)
-        .ok_or_else(|| failure("ios: missing or invalid duration"))?;
+        .ok_or_else(|| failure(&format!("{IOS_JOB}: missing or invalid duration")))?;
     Ok(CiRun {
         run_id: run.id,
         url: run.html_url.clone(),
@@ -124,7 +128,7 @@ fn command(program: &str, args: &[&str]) -> Result<String, CiStatusError> {
 }
 
 fn command_timeout(program: &str, args: &[&str], seconds: &str) -> Result<String, CiStatusError> {
-    let result = Command::new("timeout")
+    let result = Command::new(xtask::BOUNDED)
         .args([seconds, program])
         .args(args)
         .output()
@@ -592,7 +596,7 @@ mod tests {
                 conclusion: Some("success".into()),
             },
             vec![Job {
-                name: "ios".into(),
+                name: IOS_JOB.into(),
                 status: "completed".into(),
                 conclusion: Some("success".into()),
                 started_at: Some("2026-09-05T00:00:00Z".parse().unwrap()),
@@ -643,7 +647,7 @@ mod tests {
             let (run, mut jobs) = fixture();
             jobs[0].conclusion = Some(conclusion.into());
             assert!(
-                matches!(evaluate("head", "head", Some(&run), &jobs), Err(CiStatusError::Failed { job, .. }) if job == "ios")
+                matches!(evaluate("head", "head", Some(&run), &jobs), Err(CiStatusError::Failed { job, .. }) if job == IOS_JOB)
             );
         }
         let (run, mut jobs) = fixture();
