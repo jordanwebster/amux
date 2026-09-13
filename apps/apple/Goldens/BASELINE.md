@@ -107,6 +107,11 @@ Added state using the `ask-permission-codex` fixture. The same ask in Codex's vo
 ## comment
 
 Reference-backed capture of `comment` using the `comment` fixture. No visual departure is accepted.
+The sheet's field takes the keyboard as it arrives, so the software keyboard is
+part of the picture, as it is in the design's own capture. Re-approved
+2026-09-14 from a device with Simulator.app's hardware keyboard pinned off: the
+earlier baseline had been photographed with the Mac's keyboard connected, which
+is the one state in which no keyboard rises.
 
 ## diff
 
