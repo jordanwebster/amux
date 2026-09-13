@@ -701,7 +701,7 @@ private struct ConversationTranscript: View {
 
     var body: some View {
         let rows = model.confirmedRows()
-        TranscriptContainer(resting: resting, moved: reading) {
+        TranscriptContainer(resting: resting, moved: reading, tail: rows.last?.id) {
             if !subject.readable {
                 UnsupportedLayer(layer: "this agent’s transcript")
                     .padding(.top, design.metrics.feedGap)
