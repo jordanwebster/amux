@@ -20,14 +20,28 @@ import ios_bridge as bridge
 STAMP = bridge.OUTPUT / "rust-stamp.json"
 
 
+def packaged(framework: Path) -> bool:
+    """Whether an xcframework holds the library every slice of it should."""
+    slices = [entry for entry in framework.glob("*") if entry.is_dir()]
+    return bool(slices) and all(
+        (entry / bridge.LIBRARY).is_file() for entry in slices
+    )
+
+
 def main() -> None:
     bridge.OUTPUT.mkdir(parents=True, exist_ok=True)
     driving = bridge.OUTPUT / bridge.DRIVING_FRAMEWORK
     shipping = bridge.OUTPUT / bridge.FRAMEWORK
     linked = driving / bridge.DRIVING_SLICE / bridge.LIBRARY
     fingerprint = bridge.source_fingerprint()
+    # Both frameworks are asked for a library, not for a directory. A build
+    # cache can restore an xcframework's shape without the archives inside it
+    # -- they are the large part -- and a stamp alone would then call the
+    # bridge current and leave xcodebuild to report `does not contain a binary
+    # artifact` two stages later, which names neither the cache nor this
+    # check. What was actually built is the only thing worth trusting.
     if (STAMP.is_file() and STAMP.read_text().strip() == fingerprint
-            and linked.is_file() and shipping.is_dir()):
+            and linked.is_file() and packaged(shipping)):
         print("Rust sources unchanged; the bridge is current and cargo was not run", flush=True)
         return
     STAMP.unlink(missing_ok=True)

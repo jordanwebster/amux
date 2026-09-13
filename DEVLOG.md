@@ -1,3 +1,17 @@
+2026-09-13 — **Made the bridge's currency check look for the library.** The
+gate went red on a build that could not resolve the app's binary target:
+`AmuxApp.xcframework does not contain a binary artifact`, immediately after
+the bridge recipe announced that sources were unchanged and cargo had not run.
+Both were true. The build cache restores an xcframework's shape without the
+archives inside it — they are the large part — and the currency check asked
+only whether the directory existed, so a hollow framework read as current and
+nothing rebuilt it.
+
+It asks each slice for its library now, the way it already asked the driving
+framework for the one the debug configuration links. The failure it replaces
+named neither the cache nor the check, and surfaced two stages after the one
+that could have caught it.
+
 2026-09-13 — **Took the shipping bundle off the push path.** The first green
 run of the split gate gave `ios package` a number for the first time: ten
 minutes of a thirty-four minute job, the largest stage in it, and one that had
