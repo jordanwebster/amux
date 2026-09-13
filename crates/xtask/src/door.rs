@@ -291,7 +291,14 @@ fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
     // is kept, and the comparison against the baseline is what judges it.
     let mut previous: Option<Vec<u8>> = None;
     let mut agreed = 1;
-    for _ in 0..STEADY_SHOTS {
+    // TEMPORARY PROBE (branch iosci, not for main): keep every photograph of
+    // the settle loop under this directory so a machine nobody can log into
+    // can be asked what the display actually did over those six seconds.
+    let probe = std::env::var_os("AMUX_DOOR_PROBE").map(std::path::PathBuf::from);
+    if let Some(directory) = &probe {
+        std::fs::create_dir_all(directory)?;
+    }
+    for shot in 0..STEADY_SHOTS {
         simctl(&[
             "io",
             udid,
@@ -305,9 +312,23 @@ fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
             return Err(DoorError::WrongSize { got, device });
         }
         let bytes = std::fs::read(destination)?;
+        if let (Some(directory), Some(stem)) = (&probe, destination.file_stem()) {
+            let frame = directory.join(format!(
+                "{}.{shot:02}.png",
+                stem.to_string_lossy()
+            ));
+            std::fs::write(&frame, &bytes)?;
+            eprintln!(
+                "probe {} shot {shot} agreed {agreed} at {:?}",
+                stem.to_string_lossy(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+            );
+        }
         if previous.as_deref() == Some(bytes.as_slice()) {
             agreed += 1;
-            if agreed >= STEADY_RUN {
+            if agreed >= STEADY_RUN && probe.is_none() {
                 return Ok(());
             }
         } else {

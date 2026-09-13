@@ -1,0 +1,59 @@
+# TEMPORARY (branch iosci, not for main).
+#
+# Every golden capture taken on a GitHub runner carries the home indicator;
+# none taken on a developer's Mac does, on identical Xcode and simulator
+# runtime builds. Nobody can log into a runner to watch the screen, so this
+# asks it directly: keep all 24 photographs of one screen's settle loop and
+# upload them. If the indicator is gone by a later frame, the settle rule in
+# door.rs is wrong; if it is in all 24, it never retracts here and no amount
+# of waiting will help.
+name: iOS capture probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [iosci]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  probe:
+    name: Home indicator probe
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version | grep -Fx 'Xcode 26.6'
+      - name: Record what this machine is
+        run: |
+          sw_vers
+          uname -a
+          xcrun simctl list runtimes
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v2
+      - name: Install build tools
+        run: brew install xcodegen
+      - name: Build the app for the golden simulator
+        run: just ios build
+      - name: Capture one screen, keeping every frame of the settle loop
+        env:
+          AMUX_DOOR_PROBE: target/ios/probe
+        run: just ios goldens dictation-denied || true
+      - name: Upload every frame
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-probe-frames
+          path: |
+            target/ios/probe
+            target/ios/goldens
+          if-no-files-found: warn
+          retention-days: 7
