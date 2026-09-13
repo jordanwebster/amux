@@ -1,3 +1,29 @@
+2026-09-13 — **Took the shipping bundle off the push path.** The first green
+run of the split gate gave `ios package` a number for the first time: ten
+minutes of a thirty-four minute job, the largest stage in it, and one that had
+never executed in continuous integration before because the old job always
+died earlier. It builds every shipping slice under the size-optimised profile
+and links the result, and `ios scope-audit` then inspects that bundle; between
+them they were thirteen of the thirty-four minutes.
+
+Neither answers a question an ordinary change can change. What decides whether
+a provider, an agent host or a test crate can reach the phone is the device
+and simulator graphs, and the gate still checks those on every push. So both
+move to a third phase, `just ios shipping`, and `just ios verify` still runs
+them for whoever wants the whole thing. `just ios release` already depended on
+both, so a release cannot be cut without them — there is now a test that fails
+if that dependency is ever removed, because it is the only thing left holding
+them.
+
+The gate should land near twenty-one minutes. For the record, where the rest
+of it goes: `ios unit` is six separate `xcodebuild test` invocations, one per
+Swift package, whose actual test execution is fractions of a second in five of
+them — three hundred and twenty-two tests in under a second in one case — so
+almost all of its eight minutes is six cold starts and six compilations. One
+UI test, `DoorClearTests`, accounts for eighty-eight seconds on its own. And
+`ios simulator` boots the device twice, because the pinned region has to be
+written to a booted device and SpringBoard only reads it at startup.
+
 2026-09-13 — **Split iPhone verification into a gate and a capture half.** The
 one iPhone job in continuous integration was the developer's whole
 one-command check, which begins by running the Rust workspace — formatting,

@@ -33,9 +33,19 @@ const GATE: &[&str] = &[
     "ios build",
     "ios loopback-smoke",
     "ios unit",
-    "ios package",
-    "ios scope-audit",
 ];
+
+/// What the shipping bundle is held to: every slice built under the
+/// size-optimised profile, and the audit of what that bundle turned out to
+/// contain.
+///
+/// Off the push path because of what it costs against what it can catch. It
+/// was ten minutes of a thirty-four minute gate, and it asks a question about
+/// the release build that no ordinary change can answer differently — the
+/// graphs the gate already checks are what decide whether a provider or a
+/// test crate can reach the phone. `just ios release` depends on both, so a
+/// release cannot be cut without them.
+const SHIPPING: &[&str] = &["ios package", "ios scope-audit"];
 
 /// Everything that drives a running app and judges what it drew.
 ///
@@ -100,6 +110,7 @@ enum Phases {
     Everything,
     Gate,
     Captures,
+    Shipping,
 }
 
 impl Phases {
@@ -108,9 +119,11 @@ impl Phases {
             None => Ok(Self::Everything),
             Some("--gate") => Ok(Self::Gate),
             Some("--captures") => Ok(Self::Captures),
-            Some(other) => {
-                Err(format!("ios-verify takes --gate or --captures, not {other}").into())
-            }
+            Some("--shipping") => Ok(Self::Shipping),
+            Some(other) => Err(format!(
+                "ios-verify takes --gate, --captures or --shipping, not {other}"
+            )
+            .into()),
         }
     }
 
@@ -120,10 +133,12 @@ impl Phases {
                 .iter()
                 .chain(GATE)
                 .chain(CAPTURES)
+                .chain(SHIPPING)
                 .copied()
                 .collect(),
             Self::Gate => GATE.to_vec(),
             Self::Captures => CAPTURES.to_vec(),
+            Self::Shipping => SHIPPING.to_vec(),
         }
     }
 
@@ -140,7 +155,7 @@ impl Phases {
 fn recipes(phases: Phases, root: &str, ios: &str) -> Result<Vec<&'static str>, Box<dyn Error>> {
     let root = declared(root);
     let ios = declared(ios);
-    for recipe in WORKSPACE.iter().chain(GATE).chain(CAPTURES) {
+    for recipe in WORKSPACE.iter().chain(GATE).chain(CAPTURES).chain(SHIPPING) {
         // A stage may carry arguments; the recipe is its first word.
         let known = match recipe.strip_prefix("ios ") {
             Some(rest) => ios.contains(rest.split(' ').next().unwrap_or(rest)),
@@ -363,6 +378,7 @@ mod tests {
             .iter()
             .chain(GATE)
             .chain(CAPTURES)
+            .chain(SHIPPING)
             .copied()
             .collect()
     }
@@ -403,7 +419,12 @@ mod tests {
                 None => root = root.replace(&line, ""),
             }
             // Whichever half is asked for, a missing recipe is named.
-            for phases in [Phases::Everything, Phases::Gate, Phases::Captures] {
+            for phases in [
+                Phases::Everything,
+                Phases::Gate,
+                Phases::Captures,
+                Phases::Shipping,
+            ] {
                 assert!(
                     recipes(phases, &root, &ios)
                         .unwrap_err()
@@ -467,23 +488,47 @@ mod tests {
             );
         }
         assert!(gate.contains(&"ios unit"), "the gate stopped running units");
+        for shipping in SHIPPING {
+            assert!(
+                !gate.contains(shipping),
+                "{shipping} builds the shipping bundle and does not gate a push"
+            );
+        }
         assert!(
             !gate.iter().any(|stage| WORKSPACE.contains(stage)),
             "the gate repeats workspace jobs continuous integration already runs"
         );
     }
 
-    /// Between them the two halves are the whole thing, in the same order, so
+    /// Between them the parts are the whole thing, in the same order, so
     /// splitting the run cannot quietly drop a stage.
     #[test]
-    fn the_two_halves_are_the_whole_of_verification() {
+    fn the_parts_are_the_whole_of_verification() {
         let everything = recipes(Phases::Everything, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap();
         let split: Vec<&str> = recipes(Phases::Gate, ROOT_JUSTFILE, IOS_JUSTFILE)
             .unwrap()
             .into_iter()
             .chain(recipes(Phases::Captures, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap())
+            .chain(recipes(Phases::Shipping, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap())
             .collect();
         assert_eq!(everything, [WORKSPACE.to_vec(), split].concat());
+    }
+
+    /// The shipping stages leave the push path, so the release recipe is the
+    /// thing that must still owe them.
+    #[test]
+    fn a_release_cannot_be_cut_without_the_shipping_stages() {
+        let release = IOS_JUSTFILE
+            .lines()
+            .find(|line| line.starts_with("release "))
+            .expect("an ios release recipe");
+        for shipping in SHIPPING {
+            let name = shipping.strip_prefix("ios ").unwrap_or(shipping);
+            assert!(
+                release.contains(name),
+                "`{release}` no longer depends on {name}, which nothing else now runs"
+            );
+        }
     }
 
     #[test]
