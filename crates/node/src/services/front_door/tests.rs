@@ -1022,7 +1022,7 @@ async fn profile_pairing_identity_and_pending_requests_stay_on_the_selected_prof
     assert_ne!(identity.host_id, other.host_id);
     assert_ne!(identity.fingerprint, other.fingerprint);
     assert!(matches!(
-        first.begin_pair_pin(other.host_id, "123").await,
+        first.begin_pair_pin(other.host_id, "123", &[]).await,
         Err(crate::PairingError::InvalidPin)
     ));
     let pending = || crate::PendingPeer {

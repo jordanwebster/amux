@@ -273,7 +273,7 @@ async fn embedded_accounts_stay_isolated_and_recover_without_screen_clients() {
             panic!("expected PIN")
         };
         let admin = witnesses.admin(peers[index].record.id).await.unwrap();
-        let pending = admin.begin_pair_pin(hosts[index], pin).await.unwrap();
+        let pending = admin.begin_pair_pin(hosts[index], pin, &[]).await.unwrap();
         let paired = admin.confirm_pair(pending).await.unwrap();
         assert_eq!(paired.host_id, pairings[index].identity.host_id);
         assert_eq!(paired.pubkey, pairings[index].identity.pubkey);

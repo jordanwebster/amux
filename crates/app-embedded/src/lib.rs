@@ -18,8 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use app_runtime::{
-    AccountAdmin, CloudState, HostEventStreamFuture, HostInventory, Link, Places, Session,
-    Sessions, Tier, Token, TokenError, TokenRequest,
+    AccountAdmin, CloudState, FoundHost, HostEventStreamFuture, HostInventory, Link, Places,
+    Refusal, Session, Sessions, Tier, Token, TokenError, TokenRequest,
 };
 use client::{Client, DeviceIdentity, PeerEntry, PendingPeer};
 use futures_util::StreamExt;
@@ -413,24 +413,74 @@ impl AccountAdmin for AdminSeat {
         &self,
         host: HostId,
         pin: String,
-    ) -> BoxFuture<'_, Result<PendingPeer, String>> {
+        addrs: Vec<std::net::SocketAddr>,
+    ) -> BoxFuture<'_, Result<PendingPeer, Refusal>> {
         Box::pin(async move {
             self.admin
-                .begin_pair_pin(host, &pin)
+                .begin_pair_pin(host, &pin, &addrs)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(refusal)
         })
     }
-    fn begin_pair_link(&self, payload: String) -> BoxFuture<'_, Result<PendingPeer, String>> {
+    fn begin_pair_link(&self, payload: String) -> BoxFuture<'_, Result<PendingPeer, Refusal>> {
         Box::pin(async move {
             // A link that will not parse is refused in the same words a wrong
             // code is: what an unreadable link proves about the machine that
             // issued it is nothing.
-            let payload = node::parse_qr_pairing_payload(&payload).map_err(|e| e.to_string())?;
+            let payload = node::parse_qr_pairing_payload(&payload).map_err(|_| Refusal::Refused)?;
+            self.admin.begin_pair_qr(&payload).await.map_err(refusal)
+        })
+    }
+    fn pairing_candidates(&self) -> BoxFuture<'_, Result<Vec<client::PairingCandidate>, String>> {
+        Box::pin(async move {
             self.admin
-                .begin_pair_qr(&payload)
+                .list_pairing_hosts()
                 .await
                 .map_err(|e| e.to_string())
+        })
+    }
+    fn set_foreground(&self, active: bool) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            // The relay link is the session's own business and is put away
+            // separately; what this reaches is the links to the machines on
+            // this network, which only an installation this process owns has.
+            let Some((installation, _)) = &self.entitlement else {
+                return;
+            };
+            let Some(installation) = installation.upgrade() else {
+                return;
+            };
+            match active {
+                true => installation.host_resume().await,
+                false => installation.host_suspend().await,
+            }
+        })
+    }
+    fn hand_over_discovered(&self, found: Vec<FoundHost>) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            // Only this process's own installation browses through an
+            // application. A profile of a daemon this process attached to
+            // browses the network itself, and a set found here would be a
+            // second opinion it never asked for.
+            let Some((installation, _)) = &self.entitlement else {
+                return;
+            };
+            let Some(installation) = installation.upgrade() else {
+                return;
+            };
+            installation
+                .hand_over_discovered(
+                    found
+                        .into_iter()
+                        .map(|host| node::discovery::Advertisement {
+                            host_id: host.host,
+                            name: host.name,
+                            version: host.version,
+                            addrs: host.addrs,
+                        })
+                        .collect(),
+                )
+                .await;
         })
     }
     fn confirm_pair(&self, pending: PendingPeer) -> BoxFuture<'_, Result<PeerEntry, String>> {
@@ -480,6 +530,18 @@ impl AccountAdmin for AdminSeat {
                 .map(|peer| peer.name)
                 .map_err(|e| e.to_string())
         })
+    }
+}
+
+/// What a pairing failure is worth saying to a screen.
+///
+/// A machine only a relay could reach, on an account that has not paid for
+/// one, is the single failure a person can do something about; every other
+/// way an attempt can end tells somebody guessing codes nothing.
+fn refusal(error: client::PairingError) -> Refusal {
+    match error {
+        client::PairingError::PaymentRequired => Refusal::SubscriptionRequired,
+        _ => Refusal::Refused,
     }
 }
 

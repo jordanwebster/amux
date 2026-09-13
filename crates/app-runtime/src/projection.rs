@@ -298,11 +298,80 @@ pub enum PairingOutcome {
     Paired { host: model::HostId, name: String },
     /// Abandoned by the person, with nothing written anywhere.
     PairingAbandoned,
-    /// The secret did not authenticate, in the one shape every such failure has.
-    PairingRefused,
+    /// The attempt was turned down. Every way a secret can be wrong shares
+    /// one reason; a machine only a paid relay could reach names its own, so
+    /// a screen can offer the subscription rather than blaming the code.
+    PairingRefused { reason: RefusalReason },
     /// The attempt this refers to is not one this runtime is holding — it was
     /// already answered, or the app was restarted since.
     PairingLost,
+}
+
+/// Why a pairing attempt was turned down, as a screen words it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalReason {
+    Refused,
+    SubscriptionRequired,
+}
+
+impl From<crate::Refusal> for RefusalReason {
+    fn from(refusal: crate::Refusal) -> Self {
+        match refusal {
+            crate::Refusal::Refused => Self::Refused,
+            crate::Refusal::SubscriptionRequired => Self::SubscriptionRequired,
+        }
+    }
+}
+
+/// A machine this device could pair with, and how an attempt would reach it.
+///
+/// Deliberately not a host: an untrusted machine is an offer, not somewhere
+/// anything runs. What a screen needs beyond its name is the route — found on
+/// this network, or seen through the relay — because the two read differently
+/// and only one of them works without an account.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PairingCandidateDto {
+    /// The machine as it describes itself. Its own `via` is the route an
+    /// attempt would take — found on this network, or seen through the relay
+    /// — said once, because a candidate whose entry and whose attempt could
+    /// disagree about how to reach it would be two answers to one question.
+    #[serde(flatten)]
+    pub host: model::HostEntry,
+    /// Where an attempt would dial it, from what a browser resolved. Empty
+    /// for a machine only the relay can see.
+    pub addrs: Vec<String>,
+}
+
+impl PairingCandidateDto {
+    /// Where an attempt would dial this machine, as addresses again.
+    pub fn addrs(&self) -> Vec<std::net::SocketAddr> {
+        self.addrs
+            .iter()
+            .filter_map(|addr| addr.parse().ok())
+            .collect()
+    }
+}
+
+/// The route an attempt would take, as a host's own route.
+fn host_via(via: client::PeerVia) -> model::HostVia {
+    match via {
+        client::PeerVia::Direct => model::HostVia::Direct,
+        client::PeerVia::Relay => model::HostVia::Relay,
+        client::PeerVia::Ssh => model::HostVia::Ssh,
+    }
+}
+
+impl From<client::PairingCandidate> for PairingCandidateDto {
+    fn from(candidate: client::PairingCandidate) -> Self {
+        Self {
+            host: model::HostEntry {
+                via: host_via(candidate.via),
+                ..candidate.host
+            },
+            addrs: candidate.addrs.iter().map(ToString::to_string).collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -348,7 +417,7 @@ pub enum Event {
     /// authenticating a six-digit code is done against one machine and the
     /// phone has to know which.
     Discovered {
-        hosts: Vec<model::HostEntry>,
+        hosts: Vec<PairingCandidateDto>,
     },
     Connection {
         state: ConnectionDto,
@@ -544,10 +613,13 @@ pub struct Projection {
     /// The cloud state last sent, so a state that has not changed is not
     /// repeated every frame.
     cloud: Option<ui_state::CloudState>,
-    /// The machines last reported as discovered. A plain list rather than the
-    /// event, so a phone that has discovered nothing — which is every phone
-    /// until one is found — never sends an event saying so.
+    /// The relay-seen machines this device could pair with, as the model last
+    /// held them. Kept to notice when that set changes: what a screen is told
+    /// about candidates carries addresses the model does not have, so the
+    /// change is a reason to ask the profile again rather than an event.
     discovered: Vec<model::HostEntry>,
+    /// Whether that set has changed since anybody asked.
+    candidates_stale: bool,
     synchronized: bool,
     remote_inventories: BTreeMap<model::HostId, BTreeSet<AgentId>>,
     feeds: BTreeMap<AgentId, FeedState>,
@@ -557,6 +629,12 @@ pub struct Projection {
 }
 
 impl Projection {
+    /// Whether the machines this device could pair with may have changed
+    /// since this was last asked. Answering clears it.
+    pub fn take_candidates_stale(&mut self) -> bool {
+        std::mem::take(&mut self.candidates_stale)
+    }
+
     pub fn subscribe(&mut self, agent: AgentId) {
         self.subscribed.insert(agent);
     }
@@ -673,8 +751,8 @@ impl Projection {
             .map(|host| host.entry.clone())
             .collect();
         if self.discovered != discovered {
-            self.discovered = discovered.clone();
-            events.push(Event::Discovered { hosts: discovered });
+            self.discovered = discovered;
+            self.candidates_stale = true;
         }
         for agent in &self.subscribed {
             let session = session(model, *agent);

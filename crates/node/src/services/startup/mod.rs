@@ -2231,7 +2231,7 @@ mod tests {
             .unwrap();
         let admin = crate::installation::ProfileAdmin::for_test(host_a.client.clone());
         let pending = admin
-            .begin_pair_pin(identity_b.host_id, "123456")
+            .begin_pair_pin(identity_b.host_id, "123456", &[])
             .await
             .unwrap();
         let paired_peer = admin.confirm_pair(pending).await.unwrap();

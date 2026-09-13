@@ -1771,8 +1771,8 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
     let refused = answered(&mut receive, dispatch(begin("000000"))).await;
     assert_eq!(
         refused,
-        json!({"outcome": "pairing_refused"}),
-        "a refusal said more than that it was refused"
+        json!({"outcome": "pairing_refused", "reason": "refused"}),
+        "a wrong code said more than that it was refused"
     );
     assert_eq!(paired_peers().await, 0);
 
@@ -1889,7 +1889,10 @@ async fn mobile_pairing_by_link_authenticates_against_the_configured_cloud() {
         dispatch(json!({"command": "begin_pair_link", "payload": elsewhere})),
     )
     .await;
-    assert_eq!(wrong, json!({"outcome": "pairing_refused"}));
+    assert_eq!(
+        wrong,
+        json!({"outcome": "pairing_refused", "reason": "refused"})
+    );
     assert!(
         other_host
             .pairing_admin()

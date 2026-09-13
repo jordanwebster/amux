@@ -17,6 +17,8 @@ pub mod session;
 // The few values the C boundary spells without a runtime of its own.
 pub use model::{DisconnectReason, RelayConnection, Tier};
 pub use queue::{Control, Reply, Sink, Token, TokenError, TokenRequest, run};
-pub use session::{AccountAdmin, Link, Places, Session, Sessions, Waiting, Watchers};
+pub use session::{
+    AccountAdmin, FoundHost, Link, Places, Refusal, Session, Sessions, Waiting, Watchers,
+};
 pub use ui_runtime::{HostEventStream, HostEventStreamFuture, HostInventory};
 pub use ui_state::{CloudState, Command, OpId};

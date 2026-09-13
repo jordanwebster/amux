@@ -84,6 +84,16 @@ pub trait Discovery: Send + Sync + 'static {
 
     /// Re-issues the discovery query immediately.
     fn requery(&self);
+
+    /// Replaces what this browser has found with the set an outside browser
+    /// resolved, announcing what is new and saying goodbye to what is gone.
+    ///
+    /// A platform whose browsing lives outside this process — an iPhone,
+    /// where only the system may browse the local network — hands its whole
+    /// resolved set over each time it changes, because a browser that reports
+    /// a set has no separate word for a machine that left. A discovery that
+    /// browses for itself ignores it.
+    fn hand_over(&self, _found: Vec<Advertisement>) {}
 }
 
 #[derive(Debug, thiserror::Error)]

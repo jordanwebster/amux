@@ -467,7 +467,10 @@ async fn pairing_confirm_pin_returns_identity_before_mutual_trust() {
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let start = chrono::Utc::now();
     let pin = host.start_pairing().await;
-    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    let pending = client
+        .begin_pair_pin(host.host_id(), &pin, &[])
+        .await
+        .unwrap();
     assert_eq!(pending.host_id, host.host_id());
     assert_eq!(pending.name, "host");
     assert_eq!(
@@ -502,7 +505,10 @@ async fn pairing_confirm_pin_returns_identity_before_mutual_trust() {
     let client = phone.pairing_admin().await;
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let pin = host.start_pairing().await;
-    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    let pending = client
+        .begin_pair_pin(host.host_id(), &pin, &[])
+        .await
+        .unwrap();
     client.abandon_pair(pending).await.unwrap();
     assert_eq!(
         before,
@@ -595,7 +601,7 @@ async fn pairing_confirm_secret_failures_are_indistinguishable() {
     let pin = host.start_pairing().await;
     for invalid in [pin.wrong_guess().to_string(), "123".into()] {
         let error = client
-            .begin_pair_pin(host.host_id(), &invalid)
+            .begin_pair_pin(host.host_id(), &invalid, &[])
             .await
             .unwrap_err();
         assert!(matches!(error, node::PairingError::InvalidPin));
@@ -605,14 +611,17 @@ async fn pairing_confirm_secret_failures_are_indistinguishable() {
     let pin = host
         .start_pairing_with_ttl(Duration::from_millis(800))
         .await;
-    let pending = client.begin_pair_pin(host.host_id(), &pin).await.unwrap();
+    let pending = client
+        .begin_pair_pin(host.host_id(), &pin, &[])
+        .await
+        .unwrap();
     host.pair_mode_ends().await;
     assert!(matches!(
         client.confirm_pair(pending).await,
         Err(node::PairingError::InvalidPin)
     ));
     let error = client
-        .begin_pair_pin(host.host_id(), &pin)
+        .begin_pair_pin(host.host_id(), &pin, &[])
         .await
         .unwrap_err();
     assert!(matches!(error, node::PairingError::InvalidPin));
@@ -692,7 +701,7 @@ async fn pairing_on_another_cloud_fails_at_the_same_route_boundary_for_pin_and_q
     let before = (phone.trust_bytes_on_disk(), host.trust_bytes_on_disk());
     let pin = host.start_pairing().await;
     let pin_error = client
-        .begin_pair_pin(host.host_id(), &pin)
+        .begin_pair_pin(host.host_id(), &pin, &[])
         .await
         .unwrap_err();
     responder.cancel_pairing().await.unwrap();

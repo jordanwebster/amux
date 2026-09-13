@@ -34,16 +34,18 @@ mod method {
 }
 
 impl ProfileAdminClient {
-    /// Authenticate a PIN through the relay without writing either trust store.
+    /// Authenticate a PIN against one named machine, at the addresses the
+    /// caller knows for it and through the relay if none of them answers.
     pub async fn begin_pair_pin(
         &self,
         host: HostId,
         pin: &str,
+        addrs: &[std::net::SocketAddr],
     ) -> Result<PendingPeer, PairingError> {
         self.begin_pair(wire::BeginPairRequest {
             host_id: host.as_bytes().to_vec(),
             secret: Some(wire::begin_pair_request::Secret::Pin(pin.to_string())),
-            addrs: Vec::new(),
+            addrs: addrs.iter().map(ToString::to_string).collect(),
         })
         .await
     }

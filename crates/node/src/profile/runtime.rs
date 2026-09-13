@@ -561,6 +561,13 @@ impl ProfileRuntime {
         self.services.rebind_direct_quic(socket)
     }
 
+    /// Hands this profile the machines an outside browser resolved. What the
+    /// discovery makes of it is its own: a profile that browses for itself
+    /// ignores a set somebody else found.
+    pub fn hand_over_discovered(&self, found: Vec<crate::discovery::Advertisement>) {
+        self.discovery.hand_over(found);
+    }
+
     pub async fn suspend_direct_links(&self) {
         if self.dial == DirectDialPolicy::WhileForeground {
             self.services.close_direct_links().await;

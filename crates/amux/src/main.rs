@@ -704,7 +704,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
                         let candidate = resolve_pairing_candidate(&candidates, &name)?;
                         let pin = prompt_pairing_pin()?;
                         let pending = client
-                            .begin_pair_pin(candidate.host.id, &pin)
+                            .begin_pair_pin(candidate.host.id, &pin, &candidate.addrs)
                             .await
                             .with_context(|| {
                                 format!(

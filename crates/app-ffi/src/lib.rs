@@ -290,6 +290,67 @@ pub unsafe extern "C" fn amux_app_set_active(handle: *mut Handle, active: bool) 
     }));
 }
 
+/// Hands the bridge every machine the platform's browser has resolved on this
+/// network, as a JSON array of `{"host":UUID,"name":…,"version":N,"addrs":[…]}`.
+///
+/// The whole set each time, not a change to it: a browser reports what it can
+/// currently see, and a machine that has gone is a machine missing from the
+/// set rather than an event of its own. Handing over an empty array is how the
+/// app says it can see nothing — the browser stopped, or the person refused
+/// the local network — and the machines found earlier stop being offered.
+///
+/// Only the phone browses. Nothing in this library asks the system for the
+/// network, because on iOS only the system may, so what this device has found
+/// is exactly what was last handed to it.
+///
+/// # Safety
+/// handle must be live and found_json readable and NUL-terminated for this
+/// call. Neither pointer may race stop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_app_discovered(handle: *mut Handle, found_json: *const c_char) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { handle.as_ref() }?;
+        let json = unsafe { read_string(found_json) }?;
+        let found: Vec<FoundHostDto> = serde_json::from_str(json).ok()?;
+        let found = found
+            .into_iter()
+            .filter_map(|host| host.into_found())
+            .collect();
+        handle.commands.send(Control::Discovered(found)).ok()
+    }));
+}
+
+/// One machine as the platform's browser resolved it.
+#[derive(serde::Deserialize)]
+struct FoundHostDto {
+    host: String,
+    name: String,
+    /// The protocol version the advertisement's own record claims.
+    version: u32,
+    addrs: Vec<String>,
+}
+
+impl FoundHostDto {
+    /// The advertisement, or nothing where what was resolved cannot be dialled:
+    /// an identity that is not a host id, or no address at all.
+    fn into_found(self) -> Option<app_runtime::FoundHost> {
+        let addrs: Vec<std::net::SocketAddr> = self
+            .addrs
+            .iter()
+            .filter_map(|addr| addr.parse().ok())
+            .collect();
+        if addrs.is_empty() {
+            return None;
+        }
+        Some(app_runtime::FoundHost {
+            host: self.host.parse().ok()?,
+            name: self.name,
+            version: self.version,
+            addrs,
+        })
+    }
+}
+
 /// Freezes the shared reducer model as owned JSON; free with amux_app_free.
 /// Returns NULL for an unavailable worker or a five-second timeout.
 ///

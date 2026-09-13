@@ -789,6 +789,28 @@ impl Installation {
             _ => unreachable!(),
         }
     }
+    /// Hand every profile the machines an outside browser resolved.
+    ///
+    /// One device browses once. Each profile is a whole device to the machines
+    /// it knows, but they are all on the same network, so what the platform
+    /// found is offered to all of them and each decides what it may pair with.
+    pub async fn hand_over_discovered(&self, found: Vec<crate::discovery::Advertisement>) {
+        let slots = {
+            let state = self.inner.state.lock().unwrap();
+            state
+                .profiles
+                .values()
+                .filter(|entry| !entry.deleting)
+                .map(|entry| entry.slot.clone())
+                .collect::<Vec<_>>()
+        };
+        for slot in slots {
+            if let Some(runtime) = slot.runtime.lock().await.as_ref() {
+                runtime.hand_over_discovered(found.clone());
+            }
+        }
+    }
+
     /// Stop all cloud connectors while retaining local profiles, trust and clients.
     pub async fn host_suspend(&self) {
         let inner = self.inner.clone();

@@ -25,8 +25,8 @@ use crate::command::{
 };
 use crate::projection::{
     AccountsOutcome, Cadence, ConnectionOutcome, CreationOutcome, DeviceIdentityDto,
-    DevicesOutcome, Event, OpOutcomeDto, PairedDeviceDto, PairingOutcome, ProjectDto, Projection,
-    SubscriptionOutcome,
+    DevicesOutcome, Event, OpOutcomeDto, PairedDeviceDto, PairingCandidateDto, PairingOutcome,
+    ProjectDto, Projection, RefusalReason, SubscriptionOutcome,
 };
 use crate::session::Sessions;
 
@@ -90,6 +90,10 @@ pub enum Control {
     FrameInterval(Duration),
     /// Whether the app is in front of somebody.
     Active(bool),
+    /// Every machine the platform's own browser has resolved on this network,
+    /// as a whole set: a browser that reports a set has no separate word for
+    /// a machine that left, so the set is what a hand-over carries.
+    Discovered(Vec<crate::FoundHost>),
     Dispatch {
         op: OpId,
         command: Result<CommandDto, String>,
@@ -168,6 +172,14 @@ pub async fn run(
     let (revocations, mut revoked) = mpsc::unbounded_channel::<(OpId, DevicesOutcome)>();
     let (listings, mut listed) = mpsc::unbounded_channel::<(OpId, CreationOutcome)>();
     let (entitlements, mut entitled) = mpsc::unbounded_channel::<(OpId, ConnectionOutcome)>();
+    // The machines this device could pair with, read off the profile rather
+    // than derived from the fleet: an untrusted machine found on this network
+    // is not in the fleet at all, and the addresses an attempt would dial are
+    // the profile's to know.
+    let (candidate_reads, mut candidate_results) =
+        mpsc::unbounded_channel::<Vec<PairingCandidateDto>>();
+    let mut candidates: Vec<PairingCandidateDto> = Vec::new();
+    read_candidates(sessions, candidate_reads.clone());
     let mut devices: Option<DevicesRead> = None;
     let mut trusted: BTreeSet<HostId> = BTreeSet::new();
     read_devices(sessions, devices_reads.clone());
@@ -257,7 +269,28 @@ pub async fn run(
                     );
                 }
                 Some(Control::FrameInterval(interval)) => cadence.set_interval(interval),
-                Some(Control::Active(active)) => sessions.set_active(active),
+                Some(Control::Active(active)) => {
+                    sessions.set_active(active);
+                    let admin = sessions.admin.clone();
+                    tokio::spawn(async move { admin.set_foreground(active).await });
+                    // Coming back to the front redials what was found while
+                    // the app was away, so what a screen may pair with is
+                    // asked again rather than drawn from a set that went
+                    // stale in the background.
+                    if active {
+                        read_candidates(sessions, candidate_reads.clone());
+                    }
+                }
+                Some(Control::Discovered(found)) => {
+                    let admin = sessions.admin.clone();
+                    let reads = candidate_reads.clone();
+                    tokio::spawn(async move {
+                        admin.hand_over_discovered(found).await;
+                        // Asked straight afterwards: the set that was just
+                        // handed over is exactly what changed.
+                        let _ = reads.send(read_candidates_from(&*admin).await);
+                    });
+                }
                 Some(Control::Dispatch { op, command }) => {
                     match command {
                         Ok(CommandDto::Shared(command)) => sessions.ui.dispatch_with_id(op, command),
@@ -284,7 +317,19 @@ pub async fn run(
                             events.push(Event::OpResult { op, outcome: OpOutcomeDto::Subscription(outcome) });
                         }
                         Ok(CommandDto::Pairing(command)) => {
-                            pair(op, command, sessions, &mut pending_peers, pairings.clone());
+                            // A code is entered against a machine the person
+                            // is looking at, so the attempt dials where that
+                            // machine was found rather than making the
+                            // profile resolve it again.
+                            let addrs = match &command {
+                                PairingCommand::BeginPairPin { host, .. } => candidates
+                                    .iter()
+                                    .find(|candidate| candidate.host.id == *host)
+                                    .map(|candidate| candidate.addrs())
+                                    .unwrap_or_default(),
+                                _ => Vec::new(),
+                            };
+                            pair(op, command, addrs, sessions, &mut pending_peers, pairings.clone());
                         }
                         Ok(CommandDto::Devices(DevicesCommand::Revoke { host })) => {
                             revoke(op, host, sessions, revocations.clone(), devices_reads.clone());
@@ -322,6 +367,13 @@ pub async fn run(
                                     trusted.clear();
                                     projection = Projection::default();
                                     read_devices(sessions, devices_reads.clone());
+                                    // Candidates belong to the account that
+                                    // found them: another account's device
+                                    // has its own trust store and its own
+                                    // relay, so nothing carries across.
+                                    candidates.clear();
+                                    events.push(Event::Discovered { hosts: Vec::new() });
+                                    read_candidates(sessions, candidate_reads.clone());
                                     AccountsOutcome::Selected { account }
                                 }
                                 Err(_) => AccountsOutcome::Unknown { account },
@@ -395,6 +447,12 @@ pub async fn run(
                 if now_trusted != trusted {
                     trusted = now_trusted;
                     read_devices(sessions, devices_reads.clone());
+                    // A machine that has just been trusted is a host now, not
+                    // an offer, so the offers are worth reading again.
+                    read_candidates(sessions, candidate_reads.clone());
+                }
+                if projection.take_candidates_stale() {
+                    read_candidates(sessions, candidate_reads.clone());
                 }
                 let mut cache_errors = Vec::new();
                 for event in &mut events {
@@ -421,6 +479,13 @@ pub async fn run(
             Some((op, outcome)) = entitled.recv() => {
                 events.push(Event::OpResult { op, outcome: OpOutcomeDto::Connection(outcome) });
                 dirty = true;
+            },
+            Some(read) = candidate_results.recv() => {
+                if candidates != read {
+                    candidates = read.clone();
+                    events.push(Event::Discovered { hosts: read });
+                    dirty = true;
+                }
             },
             Some(read) = devices_results.recv() => {
                 if devices.as_ref().is_none_or(|held| {
@@ -607,6 +672,27 @@ fn project(entry: &model::ProjectEntry) -> ProjectDto {
     }
 }
 
+/// Reads the machines this device could pair with off the account, on a task
+/// of its own because it is a round trip that may dial nothing at all.
+fn read_candidates(sessions: &Sessions, reads: mpsc::UnboundedSender<Vec<PairingCandidateDto>>) {
+    let admin = sessions.admin.clone();
+    tokio::spawn(async move {
+        let _ = reads.send(read_candidates_from(&*admin).await);
+    });
+}
+
+async fn read_candidates_from(admin: &dyn crate::AccountAdmin) -> Vec<PairingCandidateDto> {
+    // Nothing came back is nothing to offer. A profile that cannot answer is
+    // a profile with no offers to draw, which is what an empty list says.
+    admin
+        .pairing_candidates()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(PairingCandidateDto::from)
+        .collect()
+}
+
 /// Runs one pairing step off the event loop and reports it back.
 ///
 /// Off the loop because every step is a round trip to a machine that may be
@@ -614,6 +700,7 @@ fn project(entry: &model::ProjectEntry) -> ProjectDto {
 fn pair(
     op: OpId,
     command: PairingCommand,
+    addrs: Vec<std::net::SocketAddr>,
     sessions: &Sessions,
     holding: &mut HashMap<String, PendingPeer>,
     results: mpsc::UnboundedSender<PairingDone>,
@@ -641,7 +728,7 @@ fn pair(
     tokio::spawn(async move {
         let done = match command {
             PairingCommand::BeginPairPin { host, pin } => {
-                began(op, admin.begin_pair_pin(host, pin).await)
+                began(op, admin.begin_pair_pin(host, pin, addrs).await)
             }
             PairingCommand::BeginPairLink { payload } => {
                 began(op, admin.begin_pair_link(payload).await)
@@ -653,7 +740,9 @@ fn pair(
                         host: peer.host_id,
                         name: peer.name,
                     },
-                    Err(_) => PairingOutcome::PairingRefused,
+                    Err(_) => PairingOutcome::PairingRefused {
+                        reason: RefusalReason::Refused,
+                    },
                 };
                 PairingDone {
                     op,
@@ -679,7 +768,7 @@ fn pair(
 
 /// The first phase's answer: the machine as it describes itself, kept under a
 /// handle, or the one refusal every wrong secret shares.
-fn began(op: OpId, result: Result<PendingPeer, String>) -> PairingDone {
+fn began(op: OpId, result: Result<PendingPeer, crate::Refusal>) -> PairingDone {
     match result {
         Ok(peer) => {
             let id = uuid::Uuid::new_v4().to_string();
@@ -697,10 +786,14 @@ fn began(op: OpId, result: Result<PendingPeer, String>) -> PairingDone {
         }
         // Mistyped, already used, expired, never issued, unreadable, or the
         // machine did not answer: one shape for all of them. Telling them
-        // apart is exactly what somebody guessing codes would want.
-        Err(_) => PairingDone {
+        // apart is exactly what somebody guessing codes would want. The one
+        // refusal that is not about the secret at all — a machine only a paid
+        // relay could reach — says so, because the person can act on it.
+        Err(refusal) => PairingDone {
             op,
-            outcome: PairingOutcome::PairingRefused,
+            outcome: PairingOutcome::PairingRefused {
+                reason: refusal.into(),
+            },
             hold: None,
         },
     }

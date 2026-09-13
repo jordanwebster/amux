@@ -10,10 +10,11 @@
 //! through the traits below.
 
 use std::collections::{BTreeSet, HashSet};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use client::{Client, DeviceIdentity, PeerEntry, PendingPeer};
+use client::{Client, DeviceIdentity, PairingCandidate, PeerEntry, PendingPeer};
 use futures_util::future::BoxFuture;
 use model::{HostId, ProfileId, RelayConnection, Tier};
 use tokio::sync::{mpsc, watch};
@@ -33,6 +34,33 @@ pub trait Link: Send + Sync {
     fn shortened(&self) -> u64;
 }
 
+/// Why a pairing attempt was turned down, in the only distinction a screen
+/// draws differently.
+///
+/// Every way a secret can be wrong is one refusal: whether the code was
+/// mistyped, already used, expired or never issued is exactly what somebody
+/// guessing codes would want to learn. A machine that is only reachable
+/// through a relay this account has not paid for is a different sentence
+/// altogether — nothing is wrong with the code, and the person can act on it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Refusal {
+    Refused,
+    SubscriptionRequired,
+}
+
+/// One machine the platform's browser resolved on this network.
+///
+/// A dial hint and nothing more: a name, the identity it claims and where to
+/// try it. Whether the machine is who it says is settled by the handshake
+/// when something dials it, never by the advertisement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FoundHost {
+    pub host: HostId,
+    pub name: String,
+    pub version: u32,
+    pub addrs: Vec<SocketAddr>,
+}
+
 /// What an account can do to its own device: read its identity and the
 /// machines it trusts, and change that trust.
 ///
@@ -44,15 +72,34 @@ pub trait AccountAdmin: Send + Sync {
     fn list_peers(&self) -> BoxFuture<'_, Result<Vec<PeerEntry>, String>>;
     fn unpair(&self, host: HostId, reason: String) -> BoxFuture<'_, Result<PeerEntry, String>>;
     /// Authenticate a six-digit code against the machine that issued it,
-    /// writing no trust yet.
+    /// writing no trust yet. The addresses are the ones the candidate the
+    /// person tapped carried, tried before the relay is consulted.
     fn begin_pair_pin(
         &self,
         host: HostId,
         pin: String,
-    ) -> BoxFuture<'_, Result<PendingPeer, String>>;
+        addrs: Vec<SocketAddr>,
+    ) -> BoxFuture<'_, Result<PendingPeer, Refusal>>;
     /// Authenticate the payload an `amux://pair` link carries, writing no
     /// trust yet. A payload that does not parse is a refusal like any other.
-    fn begin_pair_link(&self, payload: String) -> BoxFuture<'_, Result<PendingPeer, String>>;
+    /// The addresses the payload itself carries are the ones dialled.
+    fn begin_pair_link(&self, payload: String) -> BoxFuture<'_, Result<PendingPeer, Refusal>>;
+    /// The machines this profile could pair with: the ones an outside browser
+    /// handed over and the ones its relay can see, each with the route an
+    /// attempt would take and the addresses it would try.
+    fn pairing_candidates(&self) -> BoxFuture<'_, Result<Vec<PairingCandidate>, String>>;
+    /// Hand this device the machines the platform's own browser resolved.
+    ///
+    /// A phone may not browse the local network itself: the system browses
+    /// and the app is told, so what this device has found is whatever was
+    /// last handed to it. A client whose device browses for itself ignores
+    /// this.
+    fn hand_over_discovered(&self, found: Vec<FoundHost>) -> BoxFuture<'_, ()>;
+    /// Whether the app is in front of somebody, as this device's own links
+    /// care about it. Going away closes the links to the machines on this
+    /// network — a phone in a pocket must not hold a socket the system will
+    /// freeze — and coming back dials them again, found addresses first.
+    fn set_foreground(&self, active: bool) -> BoxFuture<'_, ()>;
     fn confirm_pair(&self, pending: PendingPeer) -> BoxFuture<'_, Result<PeerEntry, String>>;
     fn abandon_pair(&self, pending: PendingPeer) -> BoxFuture<'_, Result<(), String>>;
     /// Pair with the machine a link payload names in one step, trusting it

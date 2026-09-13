@@ -254,7 +254,7 @@ impl PairAttempt<'_> {
     /// PIN pairing to a host selected from the discovery inventory.
     pub async fn with_found_pin(self, pin: &str) -> anyhow::Result<()> {
         let admin = self.from.pairing_admin().await;
-        let pending = admin.begin_pair_pin(self.to.host_id(), pin).await?;
+        let pending = admin.begin_pair_pin(self.to.host_id(), pin, &[]).await?;
         admin.confirm_pair(pending).await?;
         Ok(())
     }
@@ -263,7 +263,7 @@ impl PairAttempt<'_> {
     /// tunnel to `other`.
     pub async fn with_cloud_pin(self, pin: &str) -> anyhow::Result<()> {
         let admin = self.from.pairing_admin().await;
-        let pending = admin.begin_pair_pin(self.to.host_id(), pin).await?;
+        let pending = admin.begin_pair_pin(self.to.host_id(), pin, &[]).await?;
         admin.confirm_pair(pending).await?;
         Ok(())
     }
