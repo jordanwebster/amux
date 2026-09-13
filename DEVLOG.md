@@ -1,3 +1,49 @@
+2026-09-13 — **Took two marks out of the fleet's vocabulary and said what
+they meant instead.** The sweep ring stood for "working" and never swept: its
+angle was fixed for the sake of a capture, so a working agent showed a frozen
+ring on a real phone. Setting it turning would have been the wrong repair. The
+mark answers "is this worth opening", and working is the state where the answer
+is no — drawn at the weight of a demand it made the least actionable rows the
+most eye-catching, and a fleet of a dozen agents a screen of pinwheels.
+
+The dashed circle stood for "unknown", hollow so as not to claim knowledge the
+app lacks. Good instinct, wired to almost nothing. The phone is sent an
+attention the core has already derived, and that derivation degrades to unknown
+in two places: when the machine is offline, and when a Claude turn's working
+inference has expired. So the circle has meant "your machine is offline" all
+along and declined to say so.
+
+Both are gone. What is left is the accent disc, for the one state that is
+waiting on a person, and every other state is a word on the third line where
+`Idle` and `Finished · 4 files · +118 −40` already were.
+
+`Unknown`, `Remembered` and `Cannot be read` all named this app's own
+epistemic state rather than anything about the world, and nobody opens an app
+to find out what the app knows. An offline machine says `studio offline`, which
+is the fact and the thing that can be fixed. An agent run by a provider this
+build has no case for says `gemini · update amux to open it`, naming what it is
+and what to do, where before it said only that it could not be read.
+
+An expired working inference says nothing at all, deliberately. By then the
+core knows only that it no longer trusts its own guess: the agent could be
+part-way through a long build and not writing transcript rows, could have
+finished with the delivery lost, could be wedged, could be fine behind a wedged
+stream. Nothing distinguishes those, so a word would be a diagnosis the app
+cannot support — and `Working` doubly so, since the core deliberately stopped
+asserting it and the phone re-asserting it is a second opinion about something
+only the host knows. The row already carries the honest fact in the age in its
+corner.
+
+The four sources that decided all this — the attention, whether the provider is
+readable, whether the owning machine has answered, whether it is online at all
+— are read once now, in one order, into `RowState`. The list row, the drawer
+row and the sentence VoiceOver reads each used to recombine a different subset
+by hand, which is how two marks came to mean nothing without anyone noticing.
+An offline machine outranks a demand, which is not a new decision: the core
+already makes it inside `effective_attention`. Reading the host directly rather
+than only through the attention is what also catches a remembered row, which
+keeps whatever attention it was cached with.
+
 2026-09-13 — **Gave the app a motion axis, and a press something to answer
 with.** The design system defined colour, type, metrics and surfaces as values
 and said nothing about time, so every moving thing in the app was a literal

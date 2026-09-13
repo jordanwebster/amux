@@ -1224,8 +1224,8 @@
       {"literal": "\"person\"", "context": "Image(systemName: \"person\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"?\"", "context": "return letters.isEmpty ? \"?\" : String(letters).uppercased()", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"\\(section.rows.count)\"", "context": "? \"\\(section.rows.count)\" : nil)", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"home.row.\\(row.id)\"", "context": "\"home.row.\\(row.id)\", label: spoken(row),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"home.row.\\(row.id)\"", "context": ".identified(\"home.row.\\(row.id)\", label: spoken(row), value: \"cannot be read\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.row.\\(row.id)\"", "context": "\"home.row.\\(row.id)\", label: spoken(row, state),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"home.row.\\(row.id)\"", "context": ".identified(\"home.row.\\(row.id)\", label: spoken(row, state), value: state.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\", \"", "context": ".compactMap { $0 }.joined(separator: \", \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\", \"", "context": "let names = section.rows.map(\\.name).joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
@@ -1240,7 +1240,7 @@
       {"literal": "\"ready\"", "context": "case .ready: \"ready\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"signed-out\"", "context": "case .signedOut: \"signed-out\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"unsubscribed\"", "context": "case .unsubscribed: \"unsubscribed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\" · \"", "context": "Text([stateWord, detail].compactMap { $0 }.joined(separator: \" · \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\" · \"", "context": "Text([state.word, detail].compactMap { $0 }.joined(separator: \" · \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"·\"", "context": "Text(\"·\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\" · \"", "context": "return [host, row.workingDirectory].compactMap { $0 }.joined(separator: \" · \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"line.3.horizontal.decrease\"", "context": "GlassIcon(glyph: \"line.3.horizontal.decrease\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1390,7 +1390,7 @@
       {"literal": "\"drawer.title\"", "context": ".identified(\"drawer.title\", value: \"amux\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"plus\"", "context": "GlassIcon(glyph: \"plus\", prominent: true, size: 30)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"drawer.newAgent\"", "context": ".identified(\"drawer.newAgent\", label: \"New Agent\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"drawer.row.\\(row.id)\"", "context": "\"drawer.row.\\(row.id)\", label: spoken(row),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
+      {"literal": "\"drawer.row.\\(row.id)\"", "context": "\"drawer.row.\\(row.id)\", label: spoken(row, state),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
       {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"externaldrive.connected.to.line.below\"", "context": "footLink(\"externaldrive.connected.to.line.below\", \"Hosts\", \"drawer.hosts\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"drawer.hosts\"", "context": "footLink(\"externaldrive.connected.to.line.below\", \"Hosts\", \"drawer.hosts\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1398,6 +1398,12 @@
       {"literal": "\"drawer.you\"", "context": "footLink(\"person.crop.circle\", \"You\", \"drawer.you\") { actions(.you) }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"drawer.online\"", "context": ".identified(\"drawer.online\", value: online)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"drawer.scrim\"", "context": ".identified(\"drawer.scrim\", label: \"Close Drawer\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift": [
+      {"literal": "\"working\"", "context": "case .working: \"working\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
+      {"literal": "\"host-offline\"", "context": "case .hostOffline: \"host-offline\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
+      {"literal": "\"unheard\"", "context": "case .unheard: \"unheard\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
+      {"literal": "\"unsupported\"", "context": "case .unsupported: \"unsupported\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Facts.swift": [
       {"literal": "\"facts\"", "context": ".identified(\"facts\", value: open ? \"open\" : \"folded\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},

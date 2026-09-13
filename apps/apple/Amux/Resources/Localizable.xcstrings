@@ -1,6 +1,30 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%@ is offline": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is offline"
+          }
+        }
+      }
+    },
+    "%@, update amux to open it": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, update amux to open it"
+          }
+        }
+      }
+    },
     "A report includes a screenshot and available session and host records.": {
       "comment": "Caption under the debug reporting actions on the You screen. Used in Accounts.swift.",
       "extractionState": "manual",
@@ -1213,18 +1237,6 @@
         }
       }
     },
-    "Cannot be read": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cannot be read"
-          }
-        }
-      }
-    },
     "Cannot send": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/ConversationFoot.swift.",
       "extractionState": "manual",
@@ -1754,7 +1766,7 @@
       }
     },
     "Finished": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift.",
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1886,7 +1898,7 @@
       }
     },
     "Idle": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift.",
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -3337,18 +3349,6 @@
         }
       }
     },
-    "State unknown": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "State unknown"
-          }
-        }
-      }
-    },
     "Stop": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Composer.swift.",
       "extractionState": "manual",
@@ -4621,18 +4621,6 @@
         }
       }
     },
-    "cannot be read": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "cannot be read"
-          }
-        }
-      }
-    },
     "checking": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
       "extractionState": "manual",
@@ -5521,18 +5509,6 @@
         }
       }
     },
-    "this build cannot read it": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "this build cannot read it"
-          }
-        }
-      }
-    },
     "trusted %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
       "extractionState": "manual",
@@ -5589,6 +5565,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "unread"
+          }
+        }
+      }
+    },
+    "update amux to open it": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "update amux to open it"
           }
         }
       }

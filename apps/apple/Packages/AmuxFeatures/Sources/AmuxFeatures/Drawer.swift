@@ -105,8 +105,10 @@ public struct AgentsDrawer: View {
                 SectionHead(title: title)
                 VStack(spacing: 0) {
                     ForEach(rows) { row in
+                        let state = RowState(row: row, host: model.host(row.hostId))
                         let content = DrawerRow(
                             row: row,
+                            state: state,
                             host: model.host(row.hostId)?.name,
                             open: row.id == current)
                         // The panel is a way to switch conversations, so an
@@ -117,18 +119,18 @@ public struct AgentsDrawer: View {
                         if row.readable {
                             Button { actions(.open(row.id)) } label: { content }
                                 .buttonStyle(.amuxRow)
-                                .accessibilityLabel(spoken(row))
+                                .accessibilityLabel(spoken(row, state))
                                 .accessibilityAddTraits(row.id == current ? [.isSelected] : [])
                                 .identified(
-                                    "drawer.row.\(row.id)", label: spoken(row),
-                                    value: row.id == current ? "open" : row.attention.spoken)
+                                    "drawer.row.\(row.id)", label: spoken(row, state),
+                                    value: row.id == current ? "open" : state.name)
                         } else {
                             content
                                 .accessibilityElement(children: .combine)
-                                .accessibilityLabel(spoken(row))
+                                .accessibilityLabel(spoken(row, state))
                                 .identified(
-                                    "drawer.row.\(row.id)", label: spoken(row),
-                                    value: "cannot be read")
+                                    "drawer.row.\(row.id)", label: spoken(row, state),
+                                    value: state.name)
                         }
                     }
                 }
@@ -136,10 +138,10 @@ public struct AgentsDrawer: View {
         }
     }
 
-    private func spoken(_ row: AgentRow) -> String {
-        var parts = [row.name, row.attention.spoken]
+    private func spoken(_ row: AgentRow, _ state: RowState) -> String {
+        var parts = [row.name]
+        if let said = state.spoken { parts.append(said) }
         parts.append(row.headline ?? model.host(row.hostId)?.name ?? row.workingDirectory)
-        if !row.readable { parts.append("this build cannot read it") }
         if row.id == current { parts.append("the conversation you are in") }
         return parts.joined(separator: ", ")
     }
@@ -217,17 +219,18 @@ public struct DrawerGroups: Equatable, Sendable {
 struct DrawerRow: View {
     @Environment(\.design) private var design
     let row: AgentRow
+    let state: RowState
     let host: String?
     let open: Bool
 
     var body: some View {
         HStack(spacing: 10) {
-            AttentionMark(attention: row.attention, size: 17)
+            AttentionMark(attention: state.attentionMark, size: 17)
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.name)
                     .designFont(row.unread ? .identifierUnread : .identifier, design)
                     .foregroundStyle(design.ink.color)
-                Text(row.headline ?? host ?? row.workingDirectory)
+                Text(second)
                     .designFont(.monoSmall, design)
                     .foregroundStyle(design.inkFaint.color)
                     .lineLimit(1)
@@ -242,6 +245,18 @@ struct DrawerRow: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(design.sunken.color)
             }
+        }
+    }
+
+    /// What it is doing, or where it runs — unless something outranks both.
+    /// An offline machine and a provider this build cannot open are the two
+    /// reasons not to switch to a row, and they belong where the eye is.
+    private var second: String {
+        switch state {
+        case .hostOffline, .unsupported:
+            [state.word, state.elaboration].compactMap { $0 }.joined(separator: " · ")
+        default:
+            row.headline ?? host ?? row.workingDirectory
         }
     }
 }
