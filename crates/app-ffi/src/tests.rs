@@ -3396,6 +3396,9 @@ async fn signed_out_starts_on_one_unbound_profile_and_pairs_on_this_network() {
         })
         .await;
         assert_eq!(device_names(&devices), vec!["workstation".to_owned()]);
+        println!("Signed-out cloud state C callback: {state}");
+        println!("Paired on this network with nobody signed in: {paired}");
+        println!("Trusted after pairing signed out: {devices}");
     })
     .await;
 
@@ -3405,6 +3408,10 @@ async fn signed_out_starts_on_one_unbound_profile_and_pairs_on_this_network() {
     let directory = profile_directory(&cache_dir);
     let unbound = directory[""].as_str().unwrap().to_owned();
     assert_eq!(directory.len(), 1, "a signed-out phone has one profile");
+    println!(
+        "Profile directory after a signed-out run: {}",
+        json!(directory)
+    );
     assert!(
         cache_dir
             .join("fleet")
@@ -3482,6 +3489,10 @@ async fn signed_out_sign_in_adopts_the_profile_and_a_second_account_gets_its_own
     })
     .await;
     let directory = profile_directory(&cache_dir);
+    println!(
+        "Profile directory after the first sign-in: {}",
+        json!(directory)
+    );
     assert_eq!(
         directory["personal"].as_str(),
         Some(unbound.as_str()),
@@ -3532,6 +3543,10 @@ async fn signed_out_sign_in_adopts_the_profile_and_a_second_account_gets_its_own
     })
     .await;
     let directory = profile_directory(&cache_dir);
+    println!(
+        "Profile directory after a second account: {}",
+        json!(directory)
+    );
     assert_eq!(directory["personal"].as_str(), Some(unbound.as_str()));
     assert_ne!(
         directory["work"].as_str(),
@@ -3585,6 +3600,8 @@ async fn signed_out_cloud_state_carries_the_tier_the_token_reply_supplied() {
             json!({"outcome": "entitlement_refreshed", "tier": "pro"}),
             "asking again answers with what the application's token says"
         );
+        println!("Connected cloud state C callback: {state}");
+        println!("Entitlement refreshed C callback: {answered}");
     })
     .await;
     net.shutdown().await;
