@@ -618,6 +618,26 @@ impl Installation {
         Ok(())
     }
 
+    /// Ask one profile's account service again what that account buys.
+    ///
+    /// A rich client has no cloud link of its own — the application resolved
+    /// the relay and holds the credentials — so the question goes back out
+    /// through the same credential provider the relay route was given.
+    pub async fn refresh_entitlement(
+        &self,
+        id: ProfileId,
+    ) -> Result<crate::Tier, InstallationError> {
+        let slot = self.inner.state.lock().unwrap().active(id)?.slot.clone();
+        let runtime = slot.runtime.lock().await;
+        self.inner.state.lock().unwrap().active(id)?;
+        runtime
+            .as_ref()
+            .ok_or_else(|| InstallationError::Unavailable("profile is not running".into()))?
+            .refresh_entitlement()
+            .await
+            .map_err(|error| InstallationError::Unavailable(error.to_string()))
+    }
+
     /// Obtain pairing and trust administration for a running profile in process.
     pub async fn admin(&self, id: ProfileId) -> Result<super::ProfileAdmin, InstallationError> {
         self.admin_service(id)
@@ -782,7 +802,13 @@ impl Installation {
     }
 
     /// Finish runtime and transport teardown asynchronously, even if this future is dropped.
-    pub async fn shutdown(self, reason: ShutdownReason) {
+    /// Stop every profile and refuse to start another.
+    ///
+    /// Takes a reference rather than ownership so an owner that shares this
+    /// handle — a rich client hands one to each profile's administration —
+    /// can still stop it. Shutting down twice is the second call finding
+    /// nothing left to stop.
+    pub async fn shutdown(&self, reason: ShutdownReason) {
         let inner = self.inner.clone();
         // The owned teardown continues if a host drops the shutdown future.
         let _ = tokio::spawn(async move { inner.shutdown(reason).await }).await;
@@ -1310,7 +1336,13 @@ impl Inner {
             }
         }))
         .await;
-        self.state.lock().unwrap().events.take();
+        let mut state = self.state.lock().unwrap();
+        state.events.take();
+        // Every profile is stopped, so nothing here writes again and the next
+        // owner of this directory may have it. Waiting for the last handle to
+        // this installation to be dropped would keep the root claimed for as
+        // long as anything still held one.
+        state.registry.release_root();
     }
 }
 

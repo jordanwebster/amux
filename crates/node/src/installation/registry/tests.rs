@@ -42,7 +42,15 @@ fn root_lock_release_does_not_wait_for_inherited_descriptors() {
     let registry = open(root.path());
     // A forked child retains the same open-file description until exec, even
     // with close-on-exec set. A duplicate reproduces that lifetime without fork.
-    let inherited = registry.root.as_ref().unwrap().lock.try_clone().unwrap();
+    let inherited = registry
+        .root
+        .as_ref()
+        .unwrap()
+        .lock
+        .as_ref()
+        .unwrap()
+        .try_clone()
+        .unwrap();
     assert!(matches!(
         Registry::open(InstallationRoot::OnDisk(root.path().to_owned())),
         Err(InstallationError::RootBusy(_))

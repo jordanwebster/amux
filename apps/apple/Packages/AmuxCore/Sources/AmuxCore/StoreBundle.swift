@@ -109,7 +109,7 @@ public final class StoreBundle {
         // the event and decides for itself. A result is claimed only by the
         // conversation that dispatched the operation it answers.
         case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant, .devices,
-             .attention:
+             .attention, .cloudState:
             for store in conversations.values { store.apply(event) }
         }
     }

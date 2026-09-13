@@ -237,7 +237,7 @@ public final class NewAgentStore {
             if result.op == awaitingListing { listed(result.outcome) }
             if result.op == awaitingCreate { started(result.outcome) }
         case .feed, .fleet, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices,
-             .attention:
+             .attention, .cloudState:
             break
         }
     }

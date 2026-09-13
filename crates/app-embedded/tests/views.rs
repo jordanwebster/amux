@@ -31,7 +31,7 @@ fn config(root: &Path, relay: String, accounts: &[(&str, &str)], active: &str) -
         "log_path": root.join("app.log"), "device_name": "phone",
         "relay": {"url": relay, "tls": "PlainLoopback"},
         "accounts": accounts.iter()
-            .map(|(id, token)| json!({"id": id, "token": {"Static": token}}))
+            .map(|(id, token)| json!({"id": id, "token": {"Static": {"bearer": token}}}))
             .collect::<Vec<_>>(),
         "active": active
     }))

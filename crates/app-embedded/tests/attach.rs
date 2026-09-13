@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use app_embedded::AdminSeat;
 use app_runtime::{Link, Places, Session, Sessions};
-use model::{AgentType, ProfileId, RelayConnection};
+use model::{AgentType, ProfileId, RelayCarrier, RelayConnection, Tier};
 use testnet::TestNet;
 use tokio::sync::watch;
-use ui_state::{Command, OpId};
+use ui_state::{CloudState, Command, OpId};
 
 /// A link nobody dials: the daemon is reached in process, so there is no
 /// relay to retry.
@@ -38,12 +38,17 @@ async fn closing_every_view_leaves_an_attached_daemon_serving_others() {
     let workstation = net.daemon("workstation");
     let seat = Arc::new(AdminSeat::new(workstation.pairing_admin().await));
     let (_connected, relay) = watch::channel(RelayConnection::Connected);
+    let (_cloud, cloud) = watch::channel(CloudState::Connected {
+        tier: Tier::Free,
+        carrier: RelayCarrier::Tcp,
+    });
     let root = tempfile::tempdir().unwrap();
     let session = Session {
-        account: "owner".into(),
+        account: Some("owner".into()),
         profile: ProfileId::new(),
         host: workstation.host_id(),
         relay,
+        cloud,
         link: Arc::new(NoLink),
         client: workstation.admin_client().await,
         admin: seat.clone(),
@@ -54,7 +59,7 @@ async fn closing_every_view_leaves_an_attached_daemon_serving_others() {
         report_dir: root.path().join("reports"),
         log_path: root.path().join("attach.log"),
     };
-    let mut sessions = Sessions::open(vec![session], "owner", places).unwrap();
+    let mut sessions = Sessions::open(vec![session], Some("owner"), places).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         while !sessions.ui.model().is_connected() {
             assert!(sessions.ui.next_message().await, "the view's runtime ended");

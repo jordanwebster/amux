@@ -35,6 +35,10 @@ use crate::session::Sessions;
 pub struct Token {
     pub bearer: String,
     pub expires_at: Option<SystemTime>,
+    /// What the account service said this account buys, where it said
+    /// anything. The bearer itself is opaque here, so this is the only place
+    /// the tier can come from; absent means free.
+    pub tier: Option<model::Tier>,
 }
 
 /// Why the application could not supply a token.
@@ -139,7 +143,7 @@ pub async fn run(
     mut token_requests: mpsc::Receiver<TokenRequest>,
     sink: &dyn Sink,
 ) -> Result<(), String> {
-    let mut cache = FleetCache::open(&cache_dir, sessions.active_account());
+    let mut cache = FleetCache::open(&cache_dir, sessions.active_profile());
     sink.send(&[cache.initial()]);
     let mut cadence = Cadence::new(frame_interval);
     cadence.emitted();
@@ -163,6 +167,7 @@ pub async fn run(
     let (devices_reads, mut devices_results) = mpsc::unbounded_channel::<DevicesRead>();
     let (revocations, mut revoked) = mpsc::unbounded_channel::<(OpId, DevicesOutcome)>();
     let (listings, mut listed) = mpsc::unbounded_channel::<(OpId, CreationOutcome)>();
+    let (entitlements, mut entitled) = mpsc::unbounded_channel::<(OpId, ConnectionOutcome)>();
     let mut devices: Option<DevicesRead> = None;
     let mut trusted: BTreeSet<HostId> = BTreeSet::new();
     read_devices(sessions, devices_reads.clone());
@@ -312,7 +317,7 @@ pub async fn run(
                                     watchers = sessions.watch_others(counts.clone());
                                     watched = sessions.inactive_accounts();
                                     attention.retain(|held, _| watched.contains(held));
-                                    cache = FleetCache::open(&cache_dir, &account);
+                                    cache = FleetCache::open(&cache_dir, sessions.active_profile());
                                     devices = None;
                                     trusted.clear();
                                     projection = Projection::default();
@@ -324,6 +329,25 @@ pub async fn run(
                             events.push(Event::OpResult {
                                 op,
                                 outcome: OpOutcomeDto::Accounts(outcome),
+                            });
+                        }
+                        Ok(CommandDto::Connection(ConnectionCommand::RefreshEntitlement)) => {
+                            // Off the loop: the question leaves this device
+                            // for an account service, and a screen that has
+                            // just taken a payment must keep drawing while it
+                            // is answered. The tier also arrives as a cloud
+                            // state, which is what the screens read.
+                            let admin = sessions.admin.clone();
+                            let entitlements = entitlements.clone();
+                            tokio::spawn(async move {
+                                let outcome = match admin.refresh_entitlement().await {
+                                    Ok(tier) => ConnectionOutcome::EntitlementRefreshed { tier },
+                                    // What went wrong is a sentence about an
+                                    // account service; a screen can only say
+                                    // that nothing came back.
+                                    Err(_) => ConnectionOutcome::EntitlementUnavailable,
+                                };
+                                let _ = entitlements.send((op, outcome));
                             });
                         }
                         Ok(CommandDto::Connection(ConnectionCommand::RetryNow)) => {
@@ -392,6 +416,10 @@ pub async fn run(
             },
             Some((op, outcome)) = listed.recv() => {
                 events.push(Event::OpResult { op, outcome: OpOutcomeDto::Creation(outcome) });
+                dirty = true;
+            },
+            Some((op, outcome)) = entitled.recv() => {
+                events.push(Event::OpResult { op, outcome: OpOutcomeDto::Connection(outcome) });
                 dirty = true;
             },
             Some(read) = devices_results.recv() => {

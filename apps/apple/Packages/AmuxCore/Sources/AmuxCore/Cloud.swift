@@ -133,12 +133,20 @@ public struct ConnectToken: Sendable, Equatable, Codable {
     public var host: String
     public var port: Int
     public var expiresAt: Date?
+    /// What the account service said this account buys, in the same reply that
+    /// issued the token. The bearer is opaque to this phone and to the core
+    /// underneath it, so this is the only honest source; absent is read as
+    /// free, which can never grant more than was paid for.
+    public var tier: Tier?
 
-    public init(bearer: String, host: String, port: Int, expiresAt: Date? = nil) {
+    public init(
+        bearer: String, host: String, port: Int, expiresAt: Date? = nil, tier: Tier? = nil
+    ) {
         self.bearer = bearer
         self.host = host
         self.port = port
         self.expiresAt = expiresAt
+        self.tier = tier
     }
 
     /// Where the relay is, as the runtime is told to reach it. Always TLS: the

@@ -110,7 +110,9 @@ async fn shutdown_yields_and_finishes_after_its_caller_is_cancelled() {
     // Hold a runtime operation so teardown must yield on this single-thread executor.
     let runtime = installation.test_runtime(profile.record.id).await.unwrap();
     let weak_state = runtime.as_ref().unwrap().weak_state();
-    let shutdown = tokio::spawn(installation.shutdown(ShutdownReason::UserRequested));
+    let shutdown = tokio::spawn(async move {
+        installation.shutdown(ShutdownReason::UserRequested).await;
+    });
     let event = tokio::time::timeout(Duration::from_secs(3), watch.recv())
         .await
         .unwrap();

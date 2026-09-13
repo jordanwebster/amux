@@ -109,7 +109,7 @@ public final class FleetStore {
             connection = update
             if !wasConnected && update.state == .connected { Signposts.emit(.streamConnected) }
         case .feed, .session, .opResult, .diff, .discovered, .tokenRequest, .invariant, .devices,
-             .attention:
+             .attention, .cloudState:
             break
         }
     }

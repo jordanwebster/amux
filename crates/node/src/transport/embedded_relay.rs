@@ -10,6 +10,7 @@ use tokio::net::TcpStream;
 use tokio::sync::watch;
 
 use crate::link::{CarrierKind, LinkCarrier, MuxCarrier, MuxRole, QuicCarrier};
+use crate::profile::status::{Observed, RuntimeStatus};
 use crate::routing::{
     LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher, LinkRole,
     spawn_connector_with_auth_establishment_and_shutdown,
@@ -403,15 +404,43 @@ impl Drop for AbortOnDrop {
     }
 }
 
-struct RoutingCredentials(Arc<dyn CredentialProvider>);
+/// The account's credentials, plus the last thing they said about the tier.
+///
+/// The tier is remembered rather than returned because the link's refresher
+/// answers a routing question and this answers an entitlement one: the same
+/// reply carries both, and only one of them has a caller waiting.
+struct RoutingCredentials {
+    provider: Arc<dyn CredentialProvider>,
+    tier: std::sync::Mutex<Option<crate::Tier>>,
+}
+
+impl RoutingCredentials {
+    fn new(provider: Arc<dyn CredentialProvider>) -> Self {
+        Self {
+            provider,
+            tier: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// What the account service last said this account buys, or free where it
+    /// said nothing.
+    fn tier(&self) -> crate::Tier {
+        self.tier
+            .lock()
+            .expect("relay tier lock poisoned")
+            .unwrap_or(crate::Tier::Free)
+    }
+}
+
 #[async_trait::async_trait]
 impl LinkConnectorTokenRefresher for RoutingCredentials {
     async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
         let token = self
-            .0
+            .provider
             .access_token()
             .await
             .map_err(|e| tonic::Status::unauthenticated(e.to_string()))?;
+        *self.tier.lock().expect("relay tier lock poisoned") = token.tier;
         Ok(LinkConnectorToken {
             token: token.bearer,
             expires_at: token
@@ -433,6 +462,7 @@ impl EmbeddedRelay {
         self,
         context: LinkConnectorCtx,
         transport: RelayTransport,
+        status: RuntimeStatus,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut backoff = Duration::from_millis(250);
@@ -441,6 +471,11 @@ impl EmbeddedRelay {
                     self.connection.send_replace(RelayConnection::Disconnected {
                         reason: DisconnectReason::Suspended,
                     });
+                    // A phone in a pocket has no link and expects one back the
+                    // moment somebody looks; that is the same thing a device
+                    // waiting out a backoff is doing, and a reader has nothing
+                    // to do differently about either.
+                    status.report(Observed::Retrying);
                     self.retry.while_suspended().await;
                     // Back in front of somebody: dial now, not on the wait the
                     // last failure had chosen.
@@ -449,7 +484,8 @@ impl EmbeddedRelay {
                     continue;
                 }
                 self.retry.attempted();
-                let result = self.connect(context.clone(), &transport).await;
+                status.report(Observed::Connecting);
+                let result = self.connect(context.clone(), &transport, &status).await;
                 self.retry.on_carrier(None);
                 let reason = match result {
                     Ok(()) => {
@@ -460,6 +496,12 @@ impl EmbeddedRelay {
                 };
                 self.connection
                     .send_replace(RelayConnection::Disconnected { reason });
+                status.report(match reason {
+                    // The relay turned this device away rather than failing to
+                    // answer: nothing a retry does fixes a credential.
+                    DisconnectReason::Rejected => Observed::AuthenticationRequired,
+                    _ => Observed::Retrying,
+                });
                 if reason == DisconnectReason::Suspended {
                     continue;
                 }
@@ -473,8 +515,9 @@ impl EmbeddedRelay {
         &self,
         context: LinkConnectorCtx,
         transport: &RelayTransport,
+        status: &RuntimeStatus,
     ) -> Result<(), DisconnectReason> {
-        let credentials = Arc::new(RoutingCredentials(self.credentials.clone()));
+        let credentials = Arc::new(RoutingCredentials::new(self.credentials.clone()));
         let token = tokio::select! {
             token = credentials.refresh_routing_token() => token.map_err(|e| {
                 tracing::debug!(error = %e, "relay credentials refused");
@@ -490,7 +533,7 @@ impl EmbeddedRelay {
         let (mut task, established) = spawn_connector_with_auth_establishment_and_shutdown(
             context.with_link_role(LinkRole::CloudRelay),
             carrier,
-            LinkConnectorAuth::new(token, credentials),
+            LinkConnectorAuth::new(token, credentials.clone()),
             shutdown_rx,
             // Nothing outside this loop asks for a fresh token: the refresher
             // below is the only way this link re-authenticates.
@@ -510,6 +553,14 @@ impl EmbeddedRelay {
         tracing::info!(carrier = ?relay_carrier, "relay link established");
         self.retry.on_carrier(Some(relay_carrier));
         self.connection.send_replace(RelayConnection::Connected);
+        // What this device is reaching the relay on, and what the account it
+        // is reaching it for buys. Both are facts of this link rather than of
+        // any configuration: the dial chose the carrier, and the tier came
+        // back with the token the application obtained.
+        status.report(Observed::Connected {
+            tier: credentials.tier(),
+            carrier: relay_carrier,
+        });
         tokio::select! {
             joined = &mut task => joined.map_err(|_| DisconnectReason::Ended)?.map_err(|e| {
                 tracing::debug!(error = %e, "relay connection ended");

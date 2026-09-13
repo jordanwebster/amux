@@ -56,6 +56,7 @@ impl CredentialProvider for TestnetCredentials {
         Ok(AccessToken {
             bearer: "testnet-profile-binding".into(),
             expires_at: None,
+            tier: None,
         })
     }
 

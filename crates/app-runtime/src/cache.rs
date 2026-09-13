@@ -1,10 +1,11 @@
 //! Last displayed inventory, independent of the live reducer and its send gates.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use model::ProfileId;
 use ui_state::Model;
 
 use crate::projection::Event;
@@ -14,36 +15,66 @@ pub struct FleetCache {
     fleet: Event,
 }
 
-/// The file name an account's remembered fleet is kept under.
+/// The file name one profile's remembered fleet is kept under.
 ///
-/// An account identifier is the application's — normally an email address —
-/// so it cannot be used as a path component as it stands: it may hold a
-/// separator, and two addresses differing only in case would be one file on a
-/// phone, whose filesystem does not distinguish them. Everything outside a
-/// lowercase, unambiguous set is therefore escaped rather than replaced, so
-/// distinct accounts always name distinct files.
-pub fn file_name(account: &str) -> String {
-    let mut name = String::with_capacity(account.len() + 8);
-    for byte in account.bytes() {
-        match byte {
-            b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' => name.push(byte as char),
-            _ => name.push_str(&format!("%{byte:02x}")),
-        }
+/// A profile identifier, not an account name. What a device remembers belongs
+/// to the profile that saw it, and a profile outlives the account it is
+/// labelled with: a phone that paired with machines before anybody signed in
+/// keeps those rows when the first account adopts that profile, because the
+/// profile is the same one.
+fn file_name(profile: ProfileId) -> String {
+    format!("{profile}.json")
+}
+
+/// Where the account-to-profile directory is kept, beside the fleets it
+/// explains.
+fn directory_path(cache_dir: &Path) -> PathBuf {
+    cache_dir.join("fleet").join("profiles.json")
+}
+
+/// The key an account is recorded under. A device with nobody signed in still
+/// has a profile and still remembers a fleet, so the empty key names it.
+fn directory_key(account: Option<&str>) -> String {
+    account.unwrap_or_default().to_owned()
+}
+
+/// Record which profile each account is on, and which one this device uses
+/// with nobody signed in.
+///
+/// A launch has rows to draw before it has started anything, and a profile
+/// identifier is made by the installation rather than chosen by the
+/// application, so an application cannot name the file its own fleet is in.
+/// This is how it finds out: written by the process that opened the profiles,
+/// read by the next launch before one exists.
+pub fn remember_profiles(
+    cache_dir: &Path,
+    profiles: &BTreeMap<String, ProfileId>,
+) -> io::Result<()> {
+    let path = directory_path(cache_dir);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
     }
-    name.push_str(".json");
-    name
+    fs::write(&path, serde_json::to_vec(profiles)?)
+}
+
+/// Which profile an account's remembered fleet is under, as the last run left
+/// it. `None` asks for the profile this device uses signed out.
+pub fn remembered_profile(cache_dir: &Path, account: Option<&str>) -> Option<ProfileId> {
+    let bytes = fs::read(directory_path(cache_dir)).ok()?;
+    let profiles: BTreeMap<String, ProfileId> = serde_json::from_slice(&bytes).ok()?;
+    profiles.get(&directory_key(account)).copied()
 }
 
 impl FleetCache {
-    /// Open the fleet one account remembers.
+    /// Open the fleet one profile remembers.
     ///
-    /// The remembered fleet is an account's, not the phone's: its rows are
-    /// that account's machines and that account's agents, and a phone signed
-    /// in to two accounts must never draw one of them under the other's name.
-    /// Each account therefore keeps its own file, the way each profile keeps
-    /// its own artifacts.
-    pub fn open(directory: &Path, account: &str) -> Self {
-        let path = directory.join("fleet").join(file_name(account));
+    /// The remembered fleet is a profile's, not the phone's: its rows are that
+    /// profile's machines and that profile's agents, and a phone holding two
+    /// accounts must never draw one of them under the other's name. Each
+    /// profile therefore keeps its own file, the way each keeps its own
+    /// artifacts.
+    pub fn open(directory: &Path, profile: ProfileId) -> Self {
+        let path = directory.join("fleet").join(file_name(profile));
         // The cache is disposable across schema changes or interrupted writes.
         let mut fleet = fs::read(&path)
             .ok()
@@ -172,6 +203,9 @@ mod tests {
     /// may hand it out to a machine as well.
     const PHONE: Uuid = Uuid::from_u128(9);
 
+    /// The profile whose fleet these tests read and write.
+    const PROFILE: ProfileId = ProfileId(Uuid::from_u128(11));
+
     fn connected() -> ServerMsg {
         ServerMsg::Connected {
             local_host_id: Some(PHONE),
@@ -254,10 +288,10 @@ mod tests {
         ] {
             update(&mut model, Msg::Server(msg));
         }
-        let mut cache = FleetCache::open(root.path(), "owner");
+        let mut cache = FleetCache::open(root.path(), PROFILE);
         collect(&mut cache, &mut Projection::default(), &model);
 
-        let mut cache = FleetCache::open(root.path(), "owner");
+        let mut cache = FleetCache::open(root.path(), PROFILE);
         let mut projection = Projection::default();
         let mut model = Model::default();
         let connection = RelayConnection::Disconnected {
@@ -309,7 +343,7 @@ mod tests {
             );
         }
         check(
-            &FleetCache::open(root.path(), "owner").initial(),
+            &FleetCache::open(root.path(), PROFILE).initial(),
             &[],
             false,
         );
@@ -349,11 +383,11 @@ mod tests {
         ] {
             update(&mut model, Msg::Server(msg));
         }
-        let mut cache = FleetCache::open(root.path(), "owner");
+        let mut cache = FleetCache::open(root.path(), PROFILE);
         collect(&mut cache, &mut Projection::default(), &model);
 
         // A fresh launch: nothing has been confirmed by anybody yet.
-        let mut cache = FleetCache::open(root.path(), "owner");
+        let mut cache = FleetCache::open(root.path(), PROFILE);
         assert_eq!(awaiting(&cache.initial()), [(11, true), (21, true)]);
 
         // The first machine answers. Its row is live and confirmed; the other
@@ -397,9 +431,9 @@ mod tests {
         ] {
             update(&mut model, Msg::Server(msg));
         }
-        let mut cache = FleetCache::open(root.path(), "owner");
+        let mut cache = FleetCache::open(root.path(), PROFILE);
         collect(&mut cache, &mut Projection::default(), &model);
-        let mut cache = FleetCache::open(root.path(), "owner");
+        let mut cache = FleetCache::open(root.path(), PROFILE);
         let mut projection = Projection::default();
         let mut model = Model::default();
         for msg in [

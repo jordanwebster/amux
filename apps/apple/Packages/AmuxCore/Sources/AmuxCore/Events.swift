@@ -29,6 +29,14 @@ public enum Event: Sendable, Equatable, Codable {
     /// answering, this says whose key has been granted access — including a
     /// machine that is away and would be trusted again the moment it returned.
     case devices(DeviceRoster)
+    /// What this device's link to the relay is doing, and what the account on
+    /// it buys. Apart from the connection because it answers a different
+    /// question: the connection says whether this phone is reachable, this
+    /// says whether anybody is signed in, on which carrier, and whether the
+    /// account pays for the relay. It is where entitlement is read from, so
+    /// nothing has to ask the account service a second time to know what to
+    /// offer.
+    case cloudState(CloudState)
 
     private enum Key: String, CodingKey {
         case fleet = "Fleet"
@@ -42,6 +50,7 @@ public enum Event: Sendable, Equatable, Codable {
         case attention = "Attention"
         case invariant = "Invariant"
         case devices = "Devices"
+        case cloudState = "CloudState"
     }
 
     private struct RequestId: Codable, Sendable, Equatable {
@@ -87,6 +96,7 @@ public enum Event: Sendable, Equatable, Codable {
         case .invariant:
             self = .invariant(detail: try container.decode(Detail.self, forKey: key).detail)
         case .devices: self = .devices(try container.decode(DeviceRoster.self, forKey: key))
+        case .cloudState: self = .cloudState(try container.decode(CloudState.self, forKey: key))
         }
     }
 
@@ -108,6 +118,7 @@ public enum Event: Sendable, Equatable, Codable {
         case .invariant(let detail):
             try container.encode(Detail(detail: detail), forKey: .invariant)
         case .devices(let roster): try container.encode(roster, forKey: .devices)
+        case .cloudState(let state): try container.encode(state, forKey: .cloudState)
         }
     }
 }
@@ -1620,6 +1631,79 @@ public enum DiffBase: Sendable, Equatable, Codable {
         switch self {
         case .workingTree: ""
         case .branch(let base): "branch:\(base)"
+        }
+    }
+}
+
+/// What an account pays for. Free reaches the machines on this network; pro
+/// pays for the relay that reaches the rest.
+public enum Tier: String, Codable, Sendable, Equatable {
+    case free
+    case pro
+}
+
+/// Which carrier a live relay link runs on. The dial decides it; nothing above
+/// can do better than read it.
+public enum RelayCarrier: String, Codable, Sendable, Equatable {
+    case quic
+    case tcp
+}
+
+/// This device's standing with the relay, as the core words it.
+///
+/// Not a connection state: a phone can be perfectly well connected to the
+/// machines on its own network with nobody signed in, and a signed-in phone
+/// on the free tier is connected to a relay that will not tunnel for it.
+public enum CloudState: Sendable, Equatable, Codable {
+    /// Nobody is signed in. The machines on this network still work.
+    case signedOut
+    case connecting
+    case connected(tier: Tier, carrier: RelayCarrier)
+    case retrying
+    /// The relay would not take this device's credentials. Nothing a retry
+    /// does fixes it; somebody has to sign in again.
+    case authRequired
+
+    /// The tier this device is entitled to right now, or nothing where it is
+    /// not on a relay at all. Absent is never "free": a phone that has not
+    /// linked yet has not been told.
+    public var tier: Tier? {
+        if case .connected(let tier, _) = self { return tier }
+        return nil
+    }
+
+    private enum Key: String, CodingKey {
+        case cloud, tier, carrier
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: Key.self)
+        switch try fields.decode(String.self, forKey: .cloud) {
+        case "signed_out": self = .signedOut
+        case "connecting": self = .connecting
+        case "connected":
+            self = .connected(
+                tier: try fields.decode(Tier.self, forKey: .tier),
+                carrier: try fields.decode(RelayCarrier.self, forKey: .carrier))
+        case "retrying": self = .retrying
+        case "auth_required": self = .authRequired
+        case let other:
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath, debugDescription: "unknown cloud state \(other)"))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var fields = encoder.container(keyedBy: Key.self)
+        switch self {
+        case .signedOut: try fields.encode("signed_out", forKey: .cloud)
+        case .connecting: try fields.encode("connecting", forKey: .cloud)
+        case .connected(let tier, let carrier):
+            try fields.encode("connected", forKey: .cloud)
+            try fields.encode(tier, forKey: .tier)
+            try fields.encode(carrier, forKey: .carrier)
+        case .retrying: try fields.encode("retrying", forKey: .cloud)
+        case .authRequired: try fields.encode("auth_required", forKey: .cloud)
         }
     }
 }

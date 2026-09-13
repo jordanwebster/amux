@@ -237,6 +237,14 @@ pub enum CloudStartError {
 }
 
 /// All state and tasks owned by one complete device profile.
+/// The parts of an embedder's relay a profile keeps: who can obtain a token
+/// for this account, and the live link's own account of itself.
+#[derive(Clone)]
+struct AttachedRelay {
+    credentials: Arc<dyn CredentialProvider>,
+    retry: Arc<crate::RelayRetry>,
+}
+
 pub struct ProfileRuntime {
     pub host_id: crate::HostId,
     paths: ProfilePaths,
@@ -258,6 +266,9 @@ pub struct ProfileRuntime {
     /// The embedder obtains relay credentials from the configured cloud through
     /// its own account API. Stopping the profile must also stop this link.
     relay_task: Mutex<Option<JoinHandle<()>>>,
+    /// What the attached relay left behind, so this profile can ask the same
+    /// account service for a fresh entitlement without a cloud link.
+    attached_relay: Mutex<Option<AttachedRelay>>,
     status: RuntimeStatus,
     #[cfg(unix)]
     unix_accept_task: Option<JoinHandle<()>>,
@@ -527,6 +538,7 @@ async fn build(
         cloud_link: Mutex::new(None),
         udp_blocked,
         relay_task: Mutex::new(None),
+        attached_relay: Mutex::new(None),
         status,
         #[cfg(unix)]
         unix_accept_task,
@@ -584,7 +596,21 @@ impl ProfileRuntime {
     }
 
     pub(crate) async fn attach_relay(&self, relay: crate::EmbeddedRelay) {
-        let task = relay.spawn(self.services.link_connector_ctx(), self.relay_transport());
+        let attached = AttachedRelay {
+            credentials: relay.credentials.clone(),
+            retry: relay.retry.clone(),
+        };
+        let task = relay.spawn(
+            self.services.link_connector_ctx(),
+            self.relay_transport(),
+            self.status.clone(),
+        );
+        *self.attached_relay.lock().await = Some(attached);
+        // A relay route belongs to an account, so a profile that has one is
+        // signed in as far as anything it greets is concerned: that is what
+        // tells a machine on the other side this device can be reached when
+        // it is not on the same network.
+        self.services.set_signed_in(true);
         if let Some(previous) = self.relay_task.lock().await.replace(task) {
             previous.abort();
             let _ = previous.await;
@@ -595,6 +621,10 @@ impl ProfileRuntime {
         if let Some(task) = self.relay_task.lock().await.take() {
             task.abort();
             let _ = task.await;
+            self.status.report(Observed::Local);
+        }
+        if self.attached_relay.lock().await.take().is_some() {
+            self.services.set_signed_in(false);
         }
     }
 
@@ -735,13 +765,32 @@ impl ProfileRuntime {
         Ok(())
     }
 
-    #[allow(dead_code)]
+    /// Ask the account service what this account buys, now.
+    ///
+    /// A daemon asks its own cloud link. A rich client has none — its relay
+    /// route was resolved by the application, which is also the only thing
+    /// that can obtain a token — so the question goes back out through that
+    /// application, and the answer is re-reported so a screen already showing
+    /// the old tier follows without waiting for the link to be rebuilt.
     pub async fn refresh_entitlement(&self) -> Result<crate::Tier, crate::auth::cloud::CloudError> {
-        let connector = self.cloud_link.lock().await;
-        let connector = connector.as_ref().ok_or_else(|| {
-            crate::auth::cloud::CloudError::Connection("cloud link is not running".into())
+        if let Some(connector) = self.cloud_link.lock().await.as_ref() {
+            return connector.refresh_entitlement().await;
+        }
+        let attached = self.attached_relay.lock().await.clone().ok_or_else(|| {
+            crate::auth::cloud::CloudError::Connection("no relay is attached".into())
         })?;
-        connector.refresh_entitlement().await
+        let token = attached
+            .credentials
+            .access_token()
+            .await
+            .map_err(|error| crate::auth::cloud::CloudError::Connection(error.to_string()))?;
+        let tier = token.tier.unwrap_or(crate::Tier::Free);
+        // Only a live link has a carrier to name, and a state that claimed one
+        // while nothing was connected would be a worse answer than silence.
+        if let Some(carrier) = attached.retry.carrier() {
+            self.status.report(Observed::Connected { tier, carrier });
+        }
+        Ok(tier)
     }
 
     pub async fn set_test_cloud_auth(&mut self, auth: CloudFixtureAuth) {
@@ -1136,6 +1185,7 @@ mod tests {
             Ok(crate::auth::AccessToken {
                 bearer: "test-token".into(),
                 expires_at: None,
+                tier: None,
             })
         }
         fn invalidate(&self, _token: &crate::auth::AccessToken) {}

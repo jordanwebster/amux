@@ -240,7 +240,7 @@ public actor AmuxCloudService: CloudService {
         let issued: Connected = try await ask(request, as: Connected.self, for: id)
         return ConnectToken(
             bearer: issued.token, host: issued.host, port: issued.port,
-            expiresAt: issued.expires_at)
+            expiresAt: issued.expires_at, tier: issued.tier)
     }
 
     /// Hands a signed App Store transaction to the account service.
@@ -544,6 +544,9 @@ private struct Connected: Decodable {
     let port: Int
     let token: String
     let expires_at: Date?
+    /// What this account buys, as the connect reply says it. Older services
+    /// leave it out; the core then treats the account as free.
+    let tier: Tier?
 }
 
 /// What a purchase is posted as. One field: the App Store's signed

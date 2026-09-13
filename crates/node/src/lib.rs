@@ -112,7 +112,7 @@ pub use installation::adjacent_link_socket_path;
 pub use installation::{
     BindError, BindRequest, BindTarget, CloudServiceId, CredentialSource, Installation,
     InstallationError, InstallationOptions, InstallationRoot, InstallationSettings, Listeners,
-    OperationId, ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch,
+    Observed, OperationId, ProfileAdmin, ProfileEvent, ProfileId, ProfileStatus, ProfileWatch,
     RelocationPolicy, ResumeReport, SuspendReason, SuspendReport,
 };
 pub use model::{

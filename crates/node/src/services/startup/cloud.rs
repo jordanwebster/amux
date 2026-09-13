@@ -955,6 +955,7 @@ mod tests {
             Ok(AccessToken {
                 bearer: "test-token".to_string(),
                 expires_at: None,
+                tier: None,
             })
         }
 

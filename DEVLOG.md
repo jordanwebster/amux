@@ -1,3 +1,34 @@
+2026-09-13 — **A phone runs with nobody signed in, and what the account buys
+travels with its token.** Starting the app's embedded node no longer requires an
+account or a relay. With neither, it opens one profile — the one the last
+account on screen was labelled with, or else the profile carrying no label at
+all, created on first launch — and the phone pairs with the machines on its own
+network from the addresses their codes carry. Signing in for the first time
+adopts that profile by labelling it with the account, so everything it paired
+with stays; signing out keeps it; a second account gets a profile of its own and
+the first stays listed, because a profile is a whole device to the machines it
+knows.
+
+The fleet a launch draws before it has started anything is now filed under the
+profile that saw it rather than under an account name, which is what makes
+adoption keep it. A profile identifier is the installation's to make, so the
+bridge records beside those files which profile each account was on, and the
+launch reads that directory first.
+
+What an account buys now arrives with the token the application obtained: the
+connect reply already carried a tier, the token reply carries it down, and the
+relay reports it with the carrier it dialled on as the profile's observed state.
+The app reads its entitlement from that rather than asking the account service a
+second time, and a purchase can ask again with one command instead of waiting
+for the link to be rebuilt. Nothing in Rust talks to an identity service to get
+any of it.
+
+Two things this uncovered. Shutting an installation down now releases its
+directory instead of waiting for the last handle to it to be dropped, because a
+rich client shares that handle with each profile's administration. And the
+iPhone package's test resources pointed one directory too shallow after the app
+moved to `apps/apple`, so its unit tests could not build at all.
+
 2026-09-13 — **The network-verb test waits for the links a verb moves, and
 stops requiring one the verb never promised.** `testnet_control_every_network_verb`
 read a daemon's connection count immediately after each control verb's

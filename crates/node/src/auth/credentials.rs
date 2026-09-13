@@ -4,6 +4,14 @@ use std::time::SystemTime;
 pub struct AccessToken {
     pub bearer: String,
     pub expires_at: Option<SystemTime>,
+    /// What the account service said this token buys, where it said anything.
+    ///
+    /// A bearer is opaque to this process, so nothing here can read a tier out
+    /// of one; the only honest source is whoever obtained it. A provider that
+    /// says nothing leaves this absent and every reader treats the account as
+    /// free, which is the assumption that can never grant more than was paid
+    /// for.
+    pub tier: Option<crate::Tier>,
 }
 
 #[derive(Debug, thiserror::Error)]

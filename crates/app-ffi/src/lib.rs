@@ -82,7 +82,8 @@ pub extern "C" fn amux_app_build() -> *const c_char {
 ///
 /// The account has to be named because what a device remembers belongs to the
 /// account that saw it: a launch that opens on a second account must draw that
-/// account's machines and not the ones the first account left behind.
+/// account's machines and not the ones the first account left behind. An empty
+/// account asks for what this device remembers with nobody signed in.
 ///
 /// # Safety
 /// cache_dir and account must be readable NUL-terminated UTF-8 strings for
@@ -93,10 +94,16 @@ pub unsafe extern "C" fn amux_app_cached_fleet(
     account: *const c_char,
 ) -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| {
-        let directory = unsafe { read_string(cache_dir) }?;
+        let directory = std::path::Path::new(unsafe { read_string(cache_dir) }?);
         let account = unsafe { read_string(account) }?;
-        let fleet = FleetCache::open(std::path::Path::new(directory), account).initial();
-        owned(&[fleet])
+        // A fleet is filed under the profile that saw it, and the profile's
+        // identifier is the installation's to make, so the account is resolved
+        // through what the last run recorded rather than used as a file name.
+        let profile = app_runtime::cache::remembered_profile(
+            directory,
+            Some(account).filter(|account| !account.is_empty()),
+        )?;
+        owned(&[FleetCache::open(directory, profile).initial()])
     }))
     .ok()
     .flatten()
@@ -585,12 +592,17 @@ pub unsafe extern "C" fn amux_app_free(string: *mut c_char) {
 struct TokenReply {
     token: Option<String>,
     expires_at: Option<u64>,
+    /// What the account service said this account buys, where the reply that
+    /// carried the token said. The bearer is opaque to this library, so this
+    /// is the only place a tier can come from; absent is treated as free.
+    tier: Option<app_runtime::Tier>,
     error: Option<String>,
 }
 
-/// Answers one TokenRequest with {"token":"…","expires_at":unix_seconds}
-/// (expiry is optional) or {"error":"…"}. Malformed replies fail that request;
-/// unknown, duplicate and expired request IDs are ignored.
+/// Answers one TokenRequest with {"token":"…","expires_at":unix_seconds,
+/// "tier":"free"|"pro"} (expiry and tier are optional) or {"error":"…"}.
+/// Malformed replies fail that request; unknown, duplicate and expired request
+/// IDs are ignored.
 ///
 /// # Safety
 /// handle must be live and token_json must be readable and NUL-terminated for
@@ -611,6 +623,7 @@ pub unsafe extern "C" fn amux_app_token_reply(
             Some(TokenReply {
                 token: Some(bearer),
                 expires_at,
+                tier,
                 error: None,
             }) if !bearer.is_empty() => {
                 let expiry = expires_at
@@ -620,6 +633,7 @@ pub unsafe extern "C" fn amux_app_token_reply(
                     _ => Ok(Token {
                         bearer,
                         expires_at: expiry.flatten(),
+                        tier,
                     }),
                 }
             }

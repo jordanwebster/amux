@@ -209,6 +209,7 @@ mod tests {
         let access_token = AccessToken {
             bearer: "test".to_string(),
             expires_at: Some(SystemTime::now()),
+            tier: None,
         };
 
         let error = fetch_connection(

@@ -15,15 +15,19 @@ final class SchemaTests: XCTestCase {
 
     func testEveryPinnedEventDecodes() throws {
         let events = try pinnedEvents()
-        XCTAssertEqual(events.count, 18)
+        XCTAssertEqual(events.count, 22)
     }
 
     /// The keys the phone holds arrive whole: a screen that showed half a
     /// fingerprint because the DTO lost a field would look right and be wrong.
     func testThisPhoneAndItsPairedDevicesCarryTheirFingerprints() throws {
         let events = try pinnedEvents()
-        guard case .devices(let roster) = try XCTUnwrap(events.last) else {
-            return XCTFail("expected a device roster last, got \(String(describing: events.last))")
+        let rosters = events.compactMap { event -> DeviceRoster? in
+            guard case .devices(let roster) = event else { return nil }
+            return roster
+        }
+        guard let roster = rosters.last else {
+            return XCTFail("expected a device roster in the pinned events")
         }
         XCTAssertEqual(roster.identity.name, "iPhone")
         XCTAssertEqual(roster.identity.fingerprint.count, 64)
@@ -35,7 +39,7 @@ final class SchemaTests: XCTestCase {
 
     func testTheFleetCarriesItsAgentsHostsAndReconciliation() throws {
         let events = try pinnedEvents()
-        guard case .fleet(let fleet) = events[1] else { return XCTFail("expected a Fleet, got \(events[1])") }
+        guard case .fleet(let fleet) = events[2] else { return XCTFail("expected a Fleet, got \(events[2])") }
         XCTAssertEqual(fleet.epoch, 1)
         XCTAssertTrue(fleet.reconciled)
         let card = try XCTUnwrap(fleet.agents.first)
@@ -53,16 +57,16 @@ final class SchemaTests: XCTestCase {
 
     func testTheThreeLayersStayApart() throws {
         let events = try pinnedEvents()
-        guard case .fleet(let codex) = events[9], case .fleet(let sdk) = events[12] else {
+        guard case .fleet(let codex) = events[11], case .fleet(let sdk) = events[15] else {
             return XCTFail("expected the codex and SDK fleets")
         }
         XCTAssertEqual(codex.agents.first?.agent.kind, .codex)
         XCTAssertEqual(sdk.agents.first?.agent.kind, .claude(driver: .sdk))
         XCTAssertEqual(sdk.agents.first?.attention, .unknown)
 
-        guard case .session(let pty) = events[2],
-              case .session(let codexSession) = events[10],
-              case .session(let sdkSession) = events[13] else {
+        guard case .session(let pty) = events[3],
+              case .session(let codexSession) = events[12],
+              case .session(let sdkSession) = events[16] else {
             return XCTFail("expected one session per layer")
         }
         XCTAssertEqual(pty.gate, .claudePty(.ready))
@@ -81,7 +85,7 @@ final class SchemaTests: XCTestCase {
     }
 
     func testSDKModelChoicesDecodeFromRecordedInitialization() throws {
-        guard case .session(let session) = try pinnedEvents()[13] else {
+        guard case .session(let session) = try pinnedEvents()[16] else {
             return XCTFail("expected SDK session facts")
         }
         XCTAssertEqual(session.provider.model, "claude-haiku-4-5-20251001")
@@ -97,8 +101,8 @@ final class SchemaTests: XCTestCase {
 
     func testFeedRowsKeepTheirLayerPositionAndKind() throws {
         let events = try pinnedEvents()
-        guard case .feed(let first) = events[3], case .feed(let rewritten) = events[8],
-              case .feed(let codex) = events[11] else {
+        guard case .feed(let first) = events[4], case .feed(let rewritten) = events[9],
+              case .feed(let codex) = events[13] else {
             return XCTFail("expected the three feed updates")
         }
         XCTAssertEqual(first.base, 0)
@@ -121,7 +125,7 @@ final class SchemaTests: XCTestCase {
 
     func testOutcomesDiffsTokensAndInvariants() throws {
         let events = try pinnedEvents()
-        guard case .opResult(let sent) = events[5], case .opResult(let refused) = events[6] else {
+        guard case .opResult(let sent) = events[6], case .opResult(let refused) = events[7] else {
             return XCTFail("expected two operation results")
         }
         XCTAssertEqual(sent.outcome, .inputSent)
@@ -136,7 +140,7 @@ final class SchemaTests: XCTestCase {
         // A patch arrives split into files and numbered on both sides. The
         // phone parses no diffs of its own, so what the core sends is what the
         // page draws and what a comment is anchored against.
-        guard case .diff(let diff) = events[7] else { return XCTFail("expected a Diff") }
+        guard case .diff(let diff) = events[8] else { return XCTFail("expected a Diff") }
         XCTAssertEqual(diff.diff.digest.hasPrefix("sha256:"), true)
         let file = try XCTUnwrap(diff.document.files.first)
         XCTAssertEqual(file.path, "one.rs")
@@ -148,17 +152,17 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(diff.document.identity.base, .workingTree)
         XCTAssertEqual(diff.document.identity.head, "abc")
 
-        XCTAssertEqual(events[4], .tokenRequest(requestId: 7, account: "personal"))
-        XCTAssertEqual(events[15], .invariant(detail: "example diagnostic"))
+        XCTAssertEqual(events[5], .tokenRequest(requestId: 7, account: "personal"))
+        XCTAssertEqual(events[18], .invariant(detail: "example diagnostic"))
         // What an account nobody is looking at has waiting, named for itself.
-        XCTAssertEqual(events[16], .attention(account: "work", waiting: 2))
+        XCTAssertEqual(events[19], .attention(account: "work", waiting: 2))
     }
 
     func testTheLinkStatesWhyItIsDown() throws {
         let events = try pinnedEvents()
         XCTAssertEqual(events[0], .connection(ConnectionUpdate(state: .connecting)))
         XCTAssertEqual(
-            events[14],
+            events[17],
             .connection(ConnectionUpdate(state: .disconnected, reason: .unreachable)))
     }
 
@@ -179,5 +183,21 @@ final class SchemaTests: XCTestCase {
         XCTAssertEqual(AmuxJSON.timestamp("2023-11-14T22:13:20+00:00"),
                        Date(timeIntervalSince1970: 1_700_000_000))
         XCTAssertNil(AmuxJSON.timestamp("yesterday"))
+    }
+}
+
+extension SchemaTests {
+    /// What this device's link is doing and what the account buys arrive as
+    /// their own event, so nothing has to ask an account service to know what
+    /// the relay will do for this phone.
+    func testTheCloudStateCarriesItsTierAndCarrier() throws {
+        let events = try pinnedEvents()
+        let states = events.compactMap { event -> CloudState? in
+            guard case .cloudState(let state) = event else { return nil }
+            return state
+        }
+        XCTAssertEqual(states.last, .connected(tier: .pro, carrier: .quic))
+        XCTAssertEqual(states.first, .signedOut, "a phone starts signed out")
+        XCTAssertEqual(states.last?.tier, .pro)
     }
 }

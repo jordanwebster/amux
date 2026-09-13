@@ -254,6 +254,13 @@ pub enum ConnectionOutcome {
     /// anything is the connection's to decide, and whether the relay answers
     /// arrives as a connection state rather than as an answer to this.
     RetryRequested,
+    /// The account service was asked again what this account buys, and said.
+    /// The same answer also arrives as a cloud state, which is what a screen
+    /// draws from; this tells the purchase that asked that it landed.
+    EntitlementRefreshed { tier: model::Tier },
+    /// Nobody could be asked: no account is signed in, or the request did not
+    /// reach the account service. The sentence goes to the log.
+    EntitlementUnavailable,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -366,6 +373,16 @@ pub enum Event {
     Invariant {
         detail: String,
     },
+    /// What this device's relay link is doing and what the account on it
+    /// buys.
+    ///
+    /// Apart from the connection state because it answers a different
+    /// question: the connection says whether this device is reachable, and
+    /// this says whether anybody is signed in, on which carrier, and whether
+    /// the account pays for the relay. It is where the app reads entitlement
+    /// from, so nothing has to ask an account service a second time to know
+    /// what to offer.
+    CloudState(ui_state::CloudState),
     /// This phone's own identity and every machine it trusts.
     ///
     /// Apart from the fleet because it answers a different question. The fleet
@@ -524,6 +541,9 @@ impl FeedState {
 #[derive(Default)]
 pub struct Projection {
     fleet: Option<Event>,
+    /// The cloud state last sent, so a state that has not changed is not
+    /// repeated every frame.
+    cloud: Option<ui_state::CloudState>,
     /// The machines last reported as discovered. A plain list rather than the
     /// event, so a phone that has discovered nothing — which is every phone
     /// until one is found — never sends an event saying so.
@@ -597,6 +617,14 @@ impl Projection {
         connection: &RelayConnection,
         events: &mut Vec<Event>,
     ) {
+        // Before the fleet, for the same reason the connection state is: what
+        // a row means depends on whether this device is signed in and what it
+        // is reaching its machines over.
+        let cloud = model.cloud_state();
+        if self.cloud.as_ref() != Some(cloud) {
+            self.cloud = Some(cloud.clone());
+            events.push(Event::CloudState(cloud.clone()));
+        }
         let fleet = Event::Fleet {
             epoch: model.epoch(),
             agents: model

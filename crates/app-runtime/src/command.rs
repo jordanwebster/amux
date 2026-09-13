@@ -127,6 +127,12 @@ pub enum SubscriptionCommand {
 pub enum ConnectionCommand {
     /// Stop waiting out the backoff and dial the relay now.
     RetryNow,
+    /// Ask the account service again what this account buys.
+    ///
+    /// What a purchase that has just gone through is waiting on: the receipt
+    /// is settled somewhere else entirely, and nothing on this device knows
+    /// it happened until somebody asks.
+    RefreshEntitlement,
 }
 
 /// One step of pairing this device with a machine.

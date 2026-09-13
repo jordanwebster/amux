@@ -378,15 +378,11 @@ impl EmbeddedBuilder {
             .await
             .map_err(|e| ServerError::State(e.to_string()))?;
         // Relay attachment changes the route; the cloud remains the one in config.
-        let relay_task = self.relay.map(|relay| {
-            relay.spawn(
-                runtime.services.link_connector_ctx(),
-                runtime.relay_transport(),
-            )
-        });
+        if let Some(relay) = self.relay {
+            runtime.attach_relay(relay).await;
+        }
         Ok(EmbeddedRuntime {
             runtime: Some(runtime),
-            relay_task,
         })
     }
 }
@@ -395,7 +391,6 @@ impl EmbeddedBuilder {
 /// Its administration handle is local and is never served on a peer connection.
 pub struct EmbeddedRuntime {
     runtime: Option<crate::profile::runtime::ProfileRuntime>,
-    relay_task: Option<JoinHandle<()>>,
 }
 
 impl EmbeddedRuntime {
@@ -426,10 +421,6 @@ impl EmbeddedRuntime {
     }
 
     pub async fn shutdown(mut self) {
-        if let Some(task) = self.relay_task.take() {
-            task.abort();
-            let _ = task.await;
-        }
         if let Some(runtime) = self.runtime.take() {
             runtime.stop(ShutdownReason::UserRequested).await;
         }
@@ -438,9 +429,6 @@ impl EmbeddedRuntime {
 
 impl Drop for EmbeddedRuntime {
     fn drop(&mut self) {
-        if let Some(task) = self.relay_task.take() {
-            task.abort();
-        }
         if let Some(runtime) = self.runtime.take() {
             tokio::spawn(runtime.stop(ShutdownReason::UserRequested));
         }

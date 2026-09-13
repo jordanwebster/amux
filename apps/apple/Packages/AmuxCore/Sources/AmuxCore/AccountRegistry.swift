@@ -133,9 +133,29 @@ public final class AccountRegistry {
     /// for a reason worth saying.
     public var gate: FleetGate {
         guard let entry = selectedAccount, entry.signedIn else { return .signedOut }
-        if case .active = entry.entitlement { return .ready }
-        return .unsubscribed
+        switch cloud.tier {
+        // What the relay will actually do for this account, as the link
+        // itself reports it. The account service's own answer is kept for the
+        // screens that name where a subscription was bought; what can be
+        // reached is decided here, by the link.
+        case .pro: return .ready
+        case .free: return .unsubscribed
+        // The link has not said yet — nothing is connected, or nobody has
+        // been asked for a token. Until it does, the answer the account
+        // service gave when this account signed in is the best one there is.
+        case nil:
+            if case .active = entry.entitlement { return .ready }
+            return .unsubscribed
+        }
     }
+
+    /// This device's standing with the relay, as the bridge last reported it.
+    ///
+    /// Read from the link rather than asked of the account service a second
+    /// time: a purchase that has gone through reaches this the moment the link
+    /// re-authenticates, and a screen deciding what to offer from a separate
+    /// question could offer something the link cannot do.
+    public private(set) var cloud: CloudState = .signedOut
 
     public func add(_ account: SignedInAccount, entitlement: Entitlement = .none) {
         if let index = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -195,6 +215,9 @@ public final class AccountRegistry {
         guard accounts.contains(where: { $0.id == id }) else { return }
         guard selected != id else { return }
         selected = id
+        // Nothing the previous account's link said is true of this one, and
+        // its own runtime has not started yet.
+        cloud = .signedOut
         stores = selectedAccount?.signedIn == true ? StoreBundle(account: id) : nil
         persist()
         switching?(id)
@@ -235,6 +258,7 @@ public final class AccountRegistry {
             return false
         }
         stores.apply(batch)
+        cloud = stores.hosts.cloud
         // How many machines this account reaches, from the connection that
         // just answered. The switcher reads it, and it is a fact rather than
         // a guess exactly because it came from here.

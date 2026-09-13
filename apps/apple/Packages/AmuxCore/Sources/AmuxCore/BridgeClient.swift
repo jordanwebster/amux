@@ -339,12 +339,19 @@ public final class BridgeClient: Sendable {
     private func answerToken(_ request: UInt64, for account: String) {
         Task { [tokenProvider] in
             let token = await tokenProvider(request, account)
-            let reply: [String: JSONValue] = if let token {
-                token.expiresAt.map {
-                    ["token": .string(token.bearer), "expires_at": .int(Int($0.timeIntervalSince1970))]
-                } ?? ["token": .string(token.bearer)]
-            } else {
-                ["error": .string("no credential for this account")]
+            // The tier travels with the token because it came back in the
+            // same reply: the core cannot read one out of an opaque bearer,
+            // and this is how it learns what the relay will do for this
+            // account without anybody asking a second time.
+            var reply: [String: JSONValue] = ["error": .string("no credential for this account")]
+            if let token {
+                reply = ["token": .string(token.bearer)]
+                if let expiry = token.expiresAt {
+                    reply["expires_at"] = .int(Int(expiry.timeIntervalSince1970))
+                }
+                if let tier = token.tier {
+                    reply["tier"] = .string(tier.rawValue)
+                }
             }
             guard let json = try? AmuxJSON.encoder.encode(reply) else { return }
             self.state.withLock { state in

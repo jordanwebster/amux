@@ -64,12 +64,16 @@ fn test_root() -> tempfile::TempDir {
 }
 
 /// Where one account's remembered fleet is kept under a phone's cache
-/// directory. Each account has a file of its own, so a test that reads the
-/// cache has to say whose.
+/// directory. A fleet belongs to the profile that saw it, and the bridge
+/// records which profile each account was on, so a test that reads the cache
+/// names the account and follows the same trail a launch does.
 fn cache_path(cache_dir: &std::path::Path, account: &str) -> std::path::PathBuf {
-    cache_dir
-        .join("fleet")
-        .join(app_runtime::cache::file_name(account))
+    let profile = app_runtime::cache::remembered_profile(
+        cache_dir,
+        Some(account).filter(|account| !account.is_empty()),
+    )
+    .expect("the bridge records which profile an account is on");
+    cache_dir.join("fleet").join(format!("{profile}.json"))
 }
 
 fn config(root: &std::path::Path, url: String, token: Value) -> Value {
@@ -151,7 +155,11 @@ async fn until(
             seen.push(event.clone());
             assert!(event.get("Invariant").is_none(), "{event}");
             if let Some(id) = event["TokenRequest"]["request_id"].as_u64() {
-                let reply = CString::new(json!({"token":token}).to_string()).unwrap();
+                // The phone in these tests reaches its machines through the
+                // relay, which is what a subscription pays for; a reply that
+                // said nothing would leave it on the free tier, where a
+                // machine only the relay can reach reads as away.
+                let reply = CString::new(json!({"token":token,"tier":"pro"}).to_string()).unwrap();
                 unsafe {
                     amux_app_token_reply(handle, id, reply.as_ptr());
                 }
@@ -180,7 +188,7 @@ async fn mobile_lifecycle_connects_reconnects_and_stops_at_the_c_boundary() {
     let static_config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
-        json!({"Static":token}),
+        json!({"Static":{"bearer":token,"tier":"pro"}}),
     );
     let parsed = serde_json::from_value::<StartConfig>(static_config.clone()).unwrap();
     let (requests, _receive) = mpsc::channel(1);
@@ -716,7 +724,7 @@ async fn mobile_unpaired_relay_hosts_are_discovered_without_entering_the_fleet()
             &config(
                 root.path(),
                 format!("http://{}", net.relay_addr()),
-                json!({"Static": token}),
+                json!({"Static":{"bearer":token,"tier":"pro"}}),
             ),
             &events,
         ),
@@ -805,7 +813,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     let config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
-        json!({"Static":token}),
+        json!({"Static":{"bearer":token,"tier":"pro"}}),
     );
     let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
     let (requests, _receive) = mpsc::channel(1);
@@ -1018,7 +1026,10 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
 #[test]
 fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
     let root = test_root();
-    let path = cache_path(root.path(), "personal");
+    // No bridge has run here, so nothing has recorded which profile an
+    // account is on; the file is named directly the way the library names it.
+    let profile = model::ProfileId::new();
+    let path = root.path().join("fleet").join(format!("{profile}.json"));
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     for bytes in [
         None,
@@ -1028,14 +1039,14 @@ fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
         if let Some(bytes) = bytes {
             std::fs::write(&path, bytes).unwrap();
         }
-        let cache = FleetCache::open(root.path(), "personal");
+        let cache = FleetCache::open(root.path(), profile);
         assert!(
             matches!(cache.initial(), Event::Fleet { agents, reconciled: false, .. } if agents.is_empty())
         );
     }
     let file = root.path().join("not-a-directory");
     std::fs::write(&file, "file").unwrap();
-    let mut cache = FleetCache::open(&file, "personal");
+    let mut cache = FleetCache::open(&file, profile);
     assert!(
         cache
             .update(&mut cache.initial(), &ui_state::Model::default())
@@ -1076,7 +1087,7 @@ mod mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing 
         let config = config(
             root.path(),
             format!("http://{}", net.relay_addr()),
-            json!({"Static": token}),
+            json!({"Static":{"bearer":token,"tier":"pro"}}),
         );
         let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
         let open_runtime = || {
@@ -1358,7 +1369,7 @@ async fn mobile_pairing_over_the_relay_admits_the_hosts_agents_to_the_fleet() {
             &config(
                 root.path(),
                 format!("http://{}", net.relay_addr()),
-                json!({ "Static": token }),
+                json!({"Static":{"bearer":token,"tier":"pro"}}),
             ),
             &events,
         ),
@@ -1445,7 +1456,7 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
     let config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
-        json!({"Static":token}),
+        json!({"Static":{"bearer":token,"tier":"pro"}}),
     );
     let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
     let (requests, _tokens) = mpsc::channel(1);
@@ -1648,7 +1659,7 @@ async fn mobile_pairing_by_code_writes_no_trust_until_it_is_confirmed() {
             &config(
                 root.path(),
                 format!("http://{}", net.relay_addr()),
-                json!({ "Static": token }),
+                json!({"Static":{"bearer":token,"tier":"pro"}}),
             ),
             &events,
         ),
@@ -1816,7 +1827,7 @@ async fn mobile_pairing_by_link_authenticates_against_the_configured_cloud() {
             &config(
                 root.path(),
                 format!("http://{}", net.relay_addr()),
-                json!({ "Static": token }),
+                json!({"Static":{"bearer":token,"tier":"pro"}}),
             ),
             &events,
         ),
@@ -1972,7 +1983,7 @@ async fn mobile_retry_now_shortens_a_live_connections_wait() {
     let config: StartConfig = serde_json::from_value(config(
         root.path(),
         format!("http://{}", net.relay_addr()),
-        json!({ "Static": token }),
+        json!({"Static":{"bearer":token,"tier":"pro"}}),
     ))
     .unwrap();
     let (requests, _receive) = mpsc::channel(1);
@@ -2064,7 +2075,7 @@ async fn mobile_retry_now_reaches_the_connection_through_the_bridge() {
             &config(
                 root.path(),
                 format!("http://{}", net.relay_addr()),
-                json!({ "Static": token }),
+                json!({"Static":{"bearer":token,"tier":"pro"}}),
             ),
             &events,
         ),
@@ -2129,7 +2140,7 @@ async fn mobile_revoking_a_machine_closes_the_stream_its_conversation_held() {
     let config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
-        json!({"Static":token}),
+        json!({"Static":{"bearer":token,"tier":"pro"}}),
     );
     let parsed: StartConfig = serde_json::from_value(config.clone()).unwrap();
     let (requests, _tokens) = mpsc::channel(1);
@@ -2404,7 +2415,7 @@ async fn mobile_a_refused_relay_reports_itself_unreachable() {
             &config(
                 root.path(),
                 format!("http://{address}"),
-                json!({"Static":"token"}),
+                json!({"Static":{"bearer":"token","tier":"pro"}}),
             ),
             &events,
         ),
@@ -2441,7 +2452,7 @@ async fn mobile_going_away_releases_the_link_and_coming_back_reconciles() {
     let static_config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
-        json!({"Static":token}),
+        json!({"Static":{"bearer":token,"tier":"pro"}}),
     );
     let parsed = serde_json::from_value::<StartConfig>(static_config.clone()).unwrap();
     let (requests, _receive) = mpsc::channel(1);
@@ -2631,8 +2642,11 @@ async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
                 root.path(),
                 format!("http://{}", net.relay_addr()),
                 &[
-                    ("personal", json!({ "Static": personal_token })),
-                    ("work", json!({ "Static": work_token })),
+                    (
+                        "personal",
+                        json!({"Static":{"bearer":personal_token,"tier":"pro"}}),
+                    ),
+                    ("work", json!({"Static":{"bearer":work_token,"tier":"pro"}})),
                 ],
                 "personal",
             ),
@@ -2782,8 +2796,11 @@ async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
                 moved.path(),
                 format!("http://{}", net.relay_addr()),
                 &[
-                    ("personal", json!({ "Static": personal_token })),
-                    ("work", json!({ "Static": work_token })),
+                    (
+                        "personal",
+                        json!({"Static":{"bearer":personal_token,"tier":"pro"}}),
+                    ),
+                    ("work", json!({"Static":{"bearer":work_token,"tier":"pro"}})),
                 ],
                 "personal",
             ),
@@ -2848,8 +2865,11 @@ async fn mobile_profiles_switching_drops_every_late_result_from_the_previous_acc
                 root.path(),
                 format!("http://{}", net.relay_addr()),
                 &[
-                    ("personal", json!({ "Static": personal_token })),
-                    ("work", json!({ "Static": work_token })),
+                    (
+                        "personal",
+                        json!({"Static":{"bearer":personal_token,"tier":"pro"}}),
+                    ),
+                    ("work", json!({"Static":{"bearer":work_token,"tier":"pro"}})),
                 ],
                 "personal",
             ),
@@ -2951,8 +2971,11 @@ async fn mobile_profiles_the_remembered_fleet_belongs_to_the_account_that_saw_it
                 root.path(),
                 format!("http://{}", net.relay_addr()),
                 &[
-                    ("personal", json!({ "Static": personal_token })),
-                    ("work", json!({ "Static": work_token })),
+                    (
+                        "personal",
+                        json!({"Static":{"bearer":personal_token,"tier":"pro"}}),
+                    ),
+                    ("work", json!({"Static":{"bearer":work_token,"tier":"pro"}})),
                 ],
                 "personal",
             ),
@@ -3069,8 +3092,11 @@ async fn mobile_profiles_report_what_is_waiting_on_the_account_that_is_not_on_sc
                 root.path(),
                 format!("http://{}", net.relay_addr()),
                 &[
-                    ("personal", json!({ "Static": personal_token })),
-                    ("work", json!({ "Static": work_token })),
+                    (
+                        "personal",
+                        json!({"Static":{"bearer":personal_token,"tier":"pro"}}),
+                    ),
+                    ("work", json!({"Static":{"bearer":work_token,"tier":"pro"}})),
                 ],
                 "work",
             ),
@@ -3157,7 +3183,7 @@ async fn every_handle_ends_exactly_once_however_it_is_stopped() {
     let config = config(
         root.path(),
         format!("http://{}", net.relay_addr()),
-        json!({"Static": token}),
+        json!({"Static":{"bearer":token,"tier":"pro"}}),
     );
 
     // Started, connected and stopped three times over the same installation.
@@ -3277,5 +3303,289 @@ async fn every_handle_ends_exactly_once_however_it_is_stopped() {
             "something followed the terminal event: {captured:?}"
         );
     }
+    net.shutdown().await;
+}
+
+/// The configuration of a phone nobody has signed in on: no relay, no
+/// accounts, and no account on screen.
+fn signed_out_config(root: &std::path::Path) -> Value {
+    json!({
+        "data_dir": root.join("data"), "cache_dir": root.join("cache"),
+        "log_path": root.join("mobile.log"), "device_name": "phone",
+    })
+}
+
+/// The same phone, signed out, remembering which account it last read.
+fn signed_out_after(root: &std::path::Path, last: &str) -> Value {
+    let mut config = signed_out_config(root);
+    config["active"] = json!(last);
+    config
+}
+
+/// Which profile each account is on, as the bridge recorded it for the next
+/// launch. The empty key is the profile a signed-out launch opens.
+fn profile_directory(cache_dir: &std::path::Path) -> serde_json::Map<String, Value> {
+    let bytes = std::fs::read(cache_dir.join("fleet").join("profiles.json"))
+        .expect("the bridge records which profile each account is on");
+    serde_json::from_slice::<Value>(&bytes)
+        .unwrap()
+        .as_object()
+        .cloned()
+        .unwrap()
+}
+
+/// Run one bridge over an already-prepared configuration and hand the events
+/// it produced to the body, stopping it afterwards.
+async fn running<F, T>(config: &Value, _token: &str, body: F) -> T
+where
+    F: AsyncFnOnce(*mut Handle, &mut mpsc::UnboundedReceiver<Value>, &Events) -> T,
+{
+    let (sender, mut receive) = mpsc::unbounded_channel();
+    let events = Events {
+        sender,
+        captured: Mutex::new(vec![]),
+        batches: Mutex::new(vec![]),
+    };
+    let run = Running {
+        handle: start(config, &events),
+        _events: &events,
+    };
+    assert!(!run.handle.is_null(), "the bridge did not start");
+    let result = body(run.handle, &mut receive, &events).await;
+    drop(run);
+    result
+}
+
+/// The trusted machines a batch last listed, by name.
+fn device_names(event: &Value) -> Vec<String> {
+    event["Devices"]["devices"]
+        .as_array()
+        .map(|devices| {
+            devices
+                .iter()
+                .map(|device| device["name"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A phone with nobody signed in is a phone that works: it opens a profile of
+/// its own, says it is signed out, and pairs with a machine on its own network
+/// from the addresses that machine's code carries.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_starts_on_one_unbound_profile_and_pairs_on_this_network() {
+    let net = TestNet::builder().daemon("workstation").start().await;
+    let host = net.daemon("workstation");
+    let root = test_root();
+    let config = signed_out_config(root.path());
+
+    running(&config, "", async |handle, receive, captured| {
+        let state = seen(receive, captured, 0, handle, |e| {
+            e.get("CloudState").is_some()
+        })
+        .await;
+        assert_eq!(state["CloudState"]["cloud"], "signed_out");
+        let paired = pair_with(handle, &host).await;
+        assert_eq!(
+            paired["host"],
+            json!("workstation"),
+            "a signed-out phone must pair with a machine on its own network: {paired}"
+        );
+        let devices = seen(receive, captured, 0, handle, |e| {
+            !device_names(e).is_empty()
+        })
+        .await;
+        assert_eq!(device_names(&devices), vec!["workstation".to_owned()]);
+    })
+    .await;
+
+    // The fleet is filed under the profile that saw it, and a launch that has
+    // started nothing can still find it.
+    let cache_dir = root.path().join("cache");
+    let directory = profile_directory(&cache_dir);
+    let unbound = directory[""].as_str().unwrap().to_owned();
+    assert_eq!(directory.len(), 1, "a signed-out phone has one profile");
+    assert!(
+        cache_dir
+            .join("fleet")
+            .join(format!("{unbound}.json"))
+            .exists(),
+        "the remembered fleet is filed under the profile"
+    );
+    let cached = unsafe {
+        let dir = CString::new(cache_dir.to_str().unwrap()).unwrap();
+        let account = CString::new("").unwrap();
+        amux_app_cached_fleet(dir.as_ptr(), account.as_ptr())
+    };
+    assert!(!cached.is_null(), "a signed-out launch draws its own fleet");
+    unsafe { amux_app_free(cached) };
+    net.shutdown().await;
+}
+
+/// The first account adopts the profile this phone already paired on, so its
+/// machines stay. Signing out keeps them. A second account is a second device:
+/// it gets a profile of its own and the first is still there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_sign_in_adopts_the_profile_and_a_second_account_gets_its_own() {
+    // The machine keeps its own listener as well as its relay link: a phone
+    // pairs with it over this network while nobody is signed in, and reaches
+    // it through the relay once somebody is.
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("workstation");
+    let (_, token) = net.user_credentials("owner");
+    let root = test_root();
+    let relay = format!("http://{}", net.relay_addr());
+
+    // Paired with nobody signed in.
+    running(
+        &signed_out_config(root.path()),
+        "",
+        async |handle, receive, captured| {
+            let paired = pair_with(handle, &host).await;
+            assert_eq!(paired["host"], json!("workstation"), "{paired}");
+            let devices = seen(receive, captured, 0, handle, |e| {
+                !device_names(e).is_empty()
+            })
+            .await;
+            assert_eq!(device_names(&devices), vec!["workstation".to_owned()]);
+        },
+    )
+    .await;
+    let cache_dir = root.path().join("cache");
+    let unbound = profile_directory(&cache_dir)[""]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Signing in for the first time takes that profile over, name and all.
+    let personal = accounts_config(
+        root.path(),
+        relay.clone(),
+        &[("personal", json!({"Static":{"bearer":token,"tier":"pro"}}))],
+        "personal",
+    );
+    running(&personal, &token, async |handle, receive, captured| {
+        let devices = seen(receive, captured, 0, handle, |e| {
+            !device_names(e).is_empty()
+        })
+        .await;
+        assert_eq!(
+            device_names(&devices),
+            vec!["workstation".to_owned()],
+            "adoption keeps what the phone paired with before anybody signed in"
+        );
+    })
+    .await;
+    let directory = profile_directory(&cache_dir);
+    assert_eq!(
+        directory["personal"].as_str(),
+        Some(unbound.as_str()),
+        "the first account adopts the profile rather than starting another"
+    );
+
+    // Signing out keeps everything, and keeps that account's machines on screen.
+    running(
+        &signed_out_after(root.path(), "personal"),
+        "",
+        async |handle, receive, captured| {
+            let state = seen(receive, captured, 0, handle, |e| {
+                e.get("CloudState").is_some()
+            })
+            .await;
+            assert_eq!(state["CloudState"]["cloud"], "signed_out");
+            let devices = seen(receive, captured, 0, handle, |e| {
+                !device_names(e).is_empty()
+            })
+            .await;
+            assert_eq!(device_names(&devices), vec!["workstation".to_owned()]);
+        },
+    )
+    .await;
+    assert_eq!(
+        profile_directory(&cache_dir)[""].as_str(),
+        Some(unbound.as_str()),
+        "signing out leaves the same profile on screen"
+    );
+
+    // A second account is a second device: its own profile, trusting nobody,
+    // and the first account is still here.
+    let both = accounts_config(
+        root.path(),
+        relay,
+        &[
+            ("personal", json!({"Static":{"bearer":token,"tier":"pro"}})),
+            ("work", json!({"Static":{"bearer":token,"tier":"pro"}})),
+        ],
+        "work",
+    );
+    running(&both, &token, async |handle, receive, captured| {
+        let devices = seen(receive, captured, 0, handle, |e| e.get("Devices").is_some()).await;
+        assert!(
+            device_names(&devices).is_empty(),
+            "a second account starts as a device that has paired with nobody"
+        );
+    })
+    .await;
+    let directory = profile_directory(&cache_dir);
+    assert_eq!(directory["personal"].as_str(), Some(unbound.as_str()));
+    assert_ne!(
+        directory["work"].as_str(),
+        Some(unbound.as_str()),
+        "a labelled profile is never relabelled"
+    );
+    net.shutdown().await;
+}
+
+/// What the account buys travels with the token the application obtained, and
+/// asking again re-reports it. Nothing here reads an entitlement service.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_out_cloud_state_carries_the_tier_the_token_reply_supplied() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let (_, token) = net.user_credentials("owner");
+    let root = test_root();
+    let config = accounts_config(
+        root.path(),
+        format!("http://{}", net.relay_addr()),
+        &[("personal", json!({"Static":{"bearer":token,"tier":"pro"}}))],
+        "personal",
+    );
+    running(&config, &token, async |handle, receive, _| {
+        let state = until(receive, handle, &token, |e| {
+            e["CloudState"]["cloud"] == "connected"
+        })
+        .await;
+        assert_eq!(state["CloudState"]["tier"], "pro");
+        assert!(
+            state["CloudState"]["carrier"] == "tcp" || state["CloudState"]["carrier"] == "quic",
+            "a live link names the carrier it ran on: {state}"
+        );
+
+        let json = CString::new(r#"{"command":"refresh_entitlement"}"#).unwrap();
+        let id = unsafe { amux_app_dispatch(handle, json.as_ptr()) };
+        assert!(!id.is_null());
+        let op = unsafe { CStr::from_ptr(id) }.to_str().unwrap().to_owned();
+        unsafe { amux_app_free(id) };
+        let answered = until(receive, handle, &token, |e| {
+            e["OpResult"]["op"] == op.as_str()
+        })
+        .await;
+        assert_eq!(
+            answered["OpResult"]["outcome"],
+            json!({"outcome": "entitlement_refreshed", "tier": "pro"}),
+            "asking again answers with what the application's token says"
+        );
+    })
+    .await;
     net.shutdown().await;
 }

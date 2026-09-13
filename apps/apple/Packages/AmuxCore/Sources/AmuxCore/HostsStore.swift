@@ -16,6 +16,13 @@ public final class HostsStore {
     /// takes the digits learns which.
     public private(set) var discovered: [HostEntry] = []
     public private(set) var connection = ConnectionUpdate(state: .connecting)
+    /// Whether anybody is signed in, what the link is doing and what the
+    /// account buys, as the core reports it.
+    ///
+    /// Read here rather than asked of the account service: this is the state
+    /// the link is actually in, and a screen that decides what to offer from
+    /// a separate question could offer something the link cannot do.
+    public private(set) var cloud: CloudState = .signedOut
     /// This phone and the machines it holds keys for.
     ///
     /// Nothing until the runtime has read its own trust store, and never
@@ -78,6 +85,8 @@ public final class HostsStore {
             connection = update
         case .devices(let roster):
             self.roster = roster
+        case .cloudState(let state):
+            cloud = state
         case .feed, .session, .opResult, .diff, .tokenRequest, .invariant, .attention:
             break
         }

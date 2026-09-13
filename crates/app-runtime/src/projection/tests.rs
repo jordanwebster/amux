@@ -222,6 +222,12 @@ fn mobile_projection_schema_snapshot() {
             paired_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
         }],
     });
+    // The link this device is on and what the account on it buys, in the one
+    // shape a paying subscriber over QUIC produces.
+    events.push(Event::CloudState(ui_state::CloudState::Connected {
+        tier: model::Tier::Pro,
+        carrier: model::RelayCarrier::Quic,
+    }));
     let actual = format!("{}\n", serde_json::to_string_pretty(&events).unwrap());
     if std::env::var_os("UPDATE_MOBILE_PROJECTION").is_some() {
         std::fs::write(

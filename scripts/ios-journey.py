@@ -169,7 +169,13 @@ def seed_cache(udid: str, fleet: dict) -> list[Path]:
     }))
     cache = data / "Library/Caches/amux/fleet"
     cache.mkdir(parents=True, exist_ok=True)
-    path = cache / f"{account}.json"
+    # A remembered fleet belongs to the profile that saw it, and a profile's
+    # identifier is made by the installation, so the library finds the file
+    # through the directory the last run wrote. A seeded cache writes both:
+    # the directory this account was on, and the fleet filed under it.
+    profile = "00000000-0000-4000-8000-00000000fee7"
+    (cache / "profiles.json").write_text(json.dumps({"": profile, account: profile}))
+    path = cache / f"{profile}.json"
     path.write_text(json.dumps(fleet))
     return [path]
 
