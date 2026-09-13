@@ -7,26 +7,48 @@ use std::process::{Command, Stdio};
 // Ordering matters: build the bridge and app before simulator checks. Destructive
 // baseline updates and deliberate-failure probes are separate developer commands.
 // Each entry is a `just` invocation; a leading `ios` names the phone module.
-const RECIPES: &[&str] = &[
-    "fmt-check",
-    "lint",
-    "test",
-    "spec",
+
+/// The Rust workspace the phone's bridge is cut from.
+///
+/// Someone running one command before pushing wants these first, because a
+/// bridge built from a workspace that does not compile is not worth
+/// photographing. Continuous integration already runs every one of them as
+/// its own job, on three operating systems, so it asks for the phone stages
+/// alone rather than paying for a second copy of the same fourteen minutes.
+const WORKSPACE: &[&str] = &["fmt-check", "lint", "test", "spec"];
+
+/// Everything about the phone that building it can settle.
+///
+/// These answer from code and from one simulator: what the device and
+/// simulator graphs are allowed to contain, whether the bridge and the app
+/// build, whether the packaged framework links and loads, and what the unit
+/// suites say. Nothing here compares a photograph, so nothing here depends on
+/// which machine is looking.
+const GATE: &[&str] = &[
     "mobile-check",
     "ios lint",
     "ios graph-check",
     "ios rust",
-    "ios simulator",
+    "ios simulator amux-golden",
     "ios build",
     "ios loopback-smoke",
     "ios unit",
+    "ios package",
+    "ios scope-audit",
+];
+
+/// Everything that drives a running app and judges what it drew.
+///
+/// This is the slow half and the environment-sensitive half, and they are the
+/// same half for one reason: a photograph of a simulator records the machine
+/// that took it as well as the app. Kept apart from the gate so that a change
+/// to the app is not held up by a difference between two Macs.
+const CAPTURES: &[&str] = &[
     "ios door-smoke",
     "ios goldens",
     "ios journey",
     "ios accessibility",
-    "ios package",
     "ios perf",
-    "ios scope-audit",
 ];
 
 const REQUIRED_JOURNEYS: &[&str] = &[
@@ -70,21 +92,67 @@ fn declared(justfile: &str) -> BTreeSet<&str> {
         .collect()
 }
 
+/// Which stages an invocation asks for. The whole thing by default, because
+/// the developer's one command is the reason this exists; continuous
+/// integration names the half it owns.
+#[derive(Clone, Copy, PartialEq)]
+enum Phases {
+    Everything,
+    Gate,
+    Captures,
+}
+
+impl Phases {
+    fn parse(argument: Option<&str>) -> Result<Self, Box<dyn Error>> {
+        match argument {
+            None => Ok(Self::Everything),
+            Some("--gate") => Ok(Self::Gate),
+            Some("--captures") => Ok(Self::Captures),
+            Some(other) => Err(format!("ios-verify takes --gate or --captures, not {other}").into()),
+        }
+    }
+
+    fn recipes(self) -> Vec<&'static str> {
+        match self {
+            Self::Everything => WORKSPACE
+                .iter()
+                .chain(GATE)
+                .chain(CAPTURES)
+                .copied()
+                .collect(),
+            Self::Gate => GATE.to_vec(),
+            Self::Captures => CAPTURES.to_vec(),
+        }
+    }
+
+    /// Journeys are only owed by a run that drives them.
+    fn drives_journeys(self) -> bool {
+        self != Self::Gate
+    }
+}
+
 /// Every verification stage must be a recipe the two justfiles declare, so a
-/// renamed or removed recipe fails here, by name, before anything runs.
-fn recipes(root: &str, ios: &str) -> Result<Vec<&'static str>, Box<dyn Error>> {
+/// renamed or removed recipe fails here, by name, before anything runs. Every
+/// stage is checked whichever subset was asked for, so a rename cannot hide
+/// behind the half nobody ran today.
+fn recipes(
+    phases: Phases,
+    root: &str,
+    ios: &str,
+) -> Result<Vec<&'static str>, Box<dyn Error>> {
     let root = declared(root);
     let ios = declared(ios);
-    for recipe in RECIPES {
+    for recipe in WORKSPACE.iter().chain(GATE).chain(CAPTURES) {
+        // A stage may carry arguments; the recipe is its first word.
         let known = match recipe.strip_prefix("ios ") {
-            Some(name) => ios.contains(name),
-            None => root.contains(recipe),
+            Some(rest) => ios.contains(rest.split(' ').next().unwrap_or(rest)),
+            None => root.contains(recipe.split(' ').next().unwrap_or(recipe)),
         };
         if !known {
             return Err(format!("iOS verification requires recipe {recipe}").into());
         }
     }
-    Ok(RECIPES.to_vec())
+    Ok(phases.recipes())
 }
 
 fn check_completed_journeys(completed: &BTreeSet<String>) -> Result<(), Box<dyn Error>> {
@@ -174,14 +242,19 @@ fn perf_machine() -> Result<PerfMachine, String> {
 }
 
 pub fn run() -> Result<(), Box<dyn Error>> {
+    let argument = std::env::args().nth(2);
+    let phases = Phases::parse(argument.as_deref())?;
     let selected = recipes(
+        phases,
         &std::fs::read_to_string("justfile")?,
         &std::fs::read_to_string("apps/apple/justfile")?,
     )?;
-    check_journeys(&std::fs::read_to_string(
-        "apps/apple/Journeys/manifest.json",
-    )?)?;
-    eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
+    if phases.drives_journeys() {
+        check_journeys(&std::fs::read_to_string(
+            "apps/apple/Journeys/manifest.json",
+        )?)?;
+        eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
+    }
     eprintln!("iOS verification: {}", selected.join(", "));
     for recipe in selected {
         if recipe == "ios perf" {
@@ -286,15 +359,27 @@ mod tests {
     const ROOT_JUSTFILE: &str = include_str!("../../../justfile");
     const IOS_JUSTFILE: &str = include_str!("../../../apps/apple/justfile");
 
+    /// Every stage of every phase, in the order a whole run takes them.
+    fn all_recipes() -> Vec<&'static str> {
+        WORKSPACE.iter().chain(GATE).chain(CAPTURES).copied().collect()
+    }
+
+    /// The recipe a stage names, without whatever arguments it carries.
+    fn recipe_name(stage: &str) -> &str {
+        let stage = stage.strip_prefix("ios ").unwrap_or(stage);
+        stage.split(' ').next().unwrap_or(stage)
+    }
+
     /// Justfiles declaring exactly the verification recipes, so a test can
     /// remove one and watch the check name it.
     fn justfiles() -> (String, String) {
         let mut root = String::new();
         let mut ios = String::new();
-        for recipe in RECIPES {
+        for recipe in all_recipes() {
+            let line = format!("{}:\n    true\n", recipe_name(recipe));
             match recipe.strip_prefix("ios ") {
-                Some(name) => ios.push_str(&format!("{name}:\n    true\n")),
-                None => root.push_str(&format!("{recipe}:\n    true\n")),
+                Some(_) => ios.push_str(&line),
+                None => root.push_str(&line),
             }
         }
         (root, ios)
@@ -303,19 +388,26 @@ mod tests {
     #[test]
     fn ios_verify_requires_every_recipe_without_selecting_update_or_remote_commands() {
         let (root, ios) = justfiles();
-        assert_eq!(recipes(&root, &ios).unwrap(), RECIPES);
-        for recipe in RECIPES {
+        assert_eq!(
+            recipes(Phases::Everything, &root, &ios).unwrap(),
+            all_recipes()
+        );
+        for recipe in all_recipes() {
             let (mut root, mut ios) = justfiles();
+            let line = format!("{}:\n    true\n", recipe_name(recipe));
             match recipe.strip_prefix("ios ") {
-                Some(name) => ios = ios.replace(&format!("{name}:\n    true\n"), ""),
-                None => root = root.replace(&format!("{recipe}:\n    true\n"), ""),
+                Some(_) => ios = ios.replace(&line, ""),
+                None => root = root.replace(&line, ""),
             }
-            assert!(
-                recipes(&root, &ios)
-                    .unwrap_err()
-                    .to_string()
-                    .contains(recipe)
-            );
+            // Whichever half is asked for, a missing recipe is named.
+            for phases in [Phases::Everything, Phases::Gate, Phases::Captures] {
+                assert!(
+                    recipes(phases, &root, &ios)
+                        .unwrap_err()
+                        .to_string()
+                        .contains(recipe)
+                );
+            }
         }
         for excluded in [
             "ios verify",
@@ -327,13 +419,13 @@ mod tests {
             "ios qa-live-journey",
             "ios release",
         ] {
-            assert!(!RECIPES.contains(&excluded));
+            assert!(!all_recipes().contains(&excluded));
         }
     }
 
     #[test]
     fn ios_verify_recipes_exist_and_run_accessibility_after_journeys() {
-        let selected = recipes(ROOT_JUSTFILE, IOS_JUSTFILE).unwrap();
+        let selected = recipes(Phases::Everything, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap();
         let journey = selected
             .iter()
             .position(|name| *name == "ios journey")
@@ -346,7 +438,7 @@ mod tests {
     #[test]
     fn ios_verify_checks_nightly_formatting_before_compilation() {
         assert_eq!(
-            recipes(ROOT_JUSTFILE, IOS_JUSTFILE).unwrap()[0],
+            recipes(Phases::Everything, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap()[0],
             "fmt-check"
         );
         let fmt_check = ROOT_JUSTFILE
@@ -357,6 +449,38 @@ mod tests {
         assert!(
             fmt_check.contains("cargo +nightly-") && fmt_check.contains("fmt --all -- --check")
         );
+    }
+
+    /// The gate is what gets to hold up a push, so what it may contain is a
+    /// rule rather than a habit: nothing that judges a photograph, because
+    /// two Macs disagree about those, and every recipe it names must exist.
+    #[test]
+    fn the_gate_builds_and_measures_nothing_it_has_to_photograph() {
+        let gate = recipes(Phases::Gate, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap();
+        for photographed in ["ios goldens", "ios journey", "ios accessibility"] {
+            assert!(
+                !gate.contains(&photographed),
+                "{photographed} compares pictures and cannot gate a push"
+            );
+        }
+        assert!(gate.contains(&"ios unit"), "the gate stopped running units");
+        assert!(
+            !gate.iter().any(|stage| WORKSPACE.contains(stage)),
+            "the gate repeats workspace jobs continuous integration already runs"
+        );
+    }
+
+    /// Between them the two halves are the whole thing, in the same order, so
+    /// splitting the run cannot quietly drop a stage.
+    #[test]
+    fn the_two_halves_are_the_whole_of_verification() {
+        let everything = recipes(Phases::Everything, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap();
+        let split: Vec<&str> = recipes(Phases::Gate, ROOT_JUSTFILE, IOS_JUSTFILE)
+            .unwrap()
+            .into_iter()
+            .chain(recipes(Phases::Captures, ROOT_JUSTFILE, IOS_JUSTFILE).unwrap())
+            .collect();
+        assert_eq!(everything, [WORKSPACE.to_vec(), split].concat());
     }
 
     #[test]

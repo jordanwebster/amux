@@ -3,6 +3,7 @@
 
 import json
 import subprocess
+import sys
 
 RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 # Every capture and every measurement names one of these two devices. The
@@ -114,6 +115,23 @@ def pin(udid: str) -> None:
     )
 
 
+def restart(udid: str) -> None:
+    """Give the device a SpringBoard that has not been driven by anything.
+
+    The home indicator is drawn on touch and retracts a moment later, and a
+    UI-test session leaves it up long after its last synthesised tap — on a
+    loaded machine, long enough that a capture never sees it go. A photograph
+    taken after one of those sessions therefore records the suite that ran
+    before it, which is not a property of the app and not something a baseline
+    can agree with.
+
+    Rebooting is the whole isolation: nothing survives it, so a capture pass
+    starts from the same screen whatever ran first.
+    """
+    run("xcrun", "simctl", "shutdown", udid, timeout=300)
+    run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
+
+
 def voice_over(udid: str, running: bool) -> None:
     """Turns the device's own screen reader on or off.
 
@@ -137,7 +155,15 @@ def voice_over(udid: str, running: bool) -> None:
 
 
 def main() -> None:
-    for name in DEVICES:
+    # Named devices, or both. Booting one takes minutes, and the suites that
+    # need only the golden device should not wait for the small one: it exists
+    # so the design is checked at the narrowest supported width, which is a
+    # question only the capture suites ask.
+    wanted = sys.argv[1:] or list(DEVICES)
+    unknown = [name for name in wanted if name not in DEVICES]
+    if unknown:
+        raise SystemExit(f"no pinned simulator named {', '.join(unknown)}")
+    for name in wanted:
         udid = ensure(name)
         pin(udid)
         print(f"{name}: {udid} (iOS 26.5, booted, en_US, 9:41, light)", flush=True)
