@@ -395,7 +395,7 @@
           "light",
           "dark"
         ],
-        "reason": "the pinned iOS simulator can settle bottom-anchored transcript text two physical pixels apart between launches despite identical UIKit scroll geometry"
+        "reason": "the lazy transcript stack latches an estimated height for the rows above the viewport at first layout, at one of a few values that never converge, which lands the rows it does build a fraction of a device pixel apart between mounts; on a cold launch the strip can also open a few hundred points above its tail when its tall bottom inset lands after the one scroll to the tail"
       },
       "simulator": "amux-golden",
       "appearances": [
@@ -739,7 +739,7 @@
         "appearances": [
           "dark"
         ],
-        "reason": "the pinned iOS simulator can settle bottom-anchored transcript text two physical pixels apart between launches despite identical UIKit scroll geometry"
+        "reason": "the lazy transcript stack latches an estimated height for the rows above the viewport at first layout, at one of a few values that never converge, which lands the rows it does build a fraction of a device pixel apart between mounts; on a cold launch the strip can also open a few hundred points above its tail when its tall bottom inset lands after the one scroll to the tail"
       },
       "simulator": "amux-golden",
       "appearances": [

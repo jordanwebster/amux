@@ -36,9 +36,10 @@ manifest: `strip.light`, `strip.dark`, and `ax-composer.dark`. They remain in
 every golden run, are compared at the unchanged tolerance, print their verdict,
 and retain expected, actual, and difference images in the uploaded CI artifact.
 Only a pixel-difference verdict is non-gating for those exact captures. A failed
-capture, missing baseline, or size change still fails. The manifest records the
-known two-physical-pixel transcript settling variation so the quarantine stays
-visible and can be removed when the simulator behavior is fixed.
+capture, missing baseline, or size change still fails. The manifest records why
+they vary — a lazy stack's latched estimate for the rows above the viewport, and
+on the strip a bottom inset that can land after the scroll to the tail — so the
+quarantine stays visible and can be removed when the transcript is fixed.
 
 ## The bridge
 

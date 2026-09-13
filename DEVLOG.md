@@ -36,11 +36,19 @@ answer a terminate on a runner. A command spawned inside a device just after
 boot can also hang past its timeout on a runner; it is asked three times now.
 The nightly schedule is back, running the golden catalogue alone.
 
-The three quarantined transcript flakes are the transcript feed resting one
-device pixel apart between mounts, not two; no scroll command changes which
-place it lands on, and the accessibility composer rests exactly on a
-half-pixel boundary, so a hair of float noise decides its rounding. That is
-still open. A pre-existing script test for the Rust bridge build fails on
+The three quarantined transcript flakes were measured to their cause and
+stay quarantined. The feed's lazy stack latches an estimate for the rows
+above the viewport at first layout, at one of a few values that never
+converge — the scroll view's content height differs by 66 points between
+the strip's two pictures — and that lands the rows it does build a fraction
+of a device pixel apart, so every glyph rasterises differently and no
+integer shift reconciles the two. Extra settling never converges it; an
+eager stack removes it entirely but measures every row of a long
+conversation on the main thread and rewraps the composer's prose, so it is
+not the fix. On a cold launch the strip can also open a few hundred points
+above its tail when its tall bottom inset lands after the one scroll to the
+tail, which the size-change anchor does not retry. That is the transcript's
+to fix. A pre-existing script test for the Rust bridge build fails on
 Python 3.14 independently of this work.
 
 2026-09-13 — **Made the bridge's currency check look for the library.** The

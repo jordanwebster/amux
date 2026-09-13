@@ -16,10 +16,17 @@ the preserved designs.
 ## Known flaky captures
 
 Three of the 124 captures are quarantined individually: `strip.light`,
-`strip.dark`, and `ax-composer.dark`. On the pinned simulator, their
-bottom-anchored transcript text can settle two physical pixels apart between
-launches even though UIKit reports identical scroll geometry. They are still
-captured and compared, and their triplets remain available for diagnosis. Only
+`strip.dark`, and `ax-composer.dark`. Their transcript feed is a lazy stack
+whose estimate for the rows above the viewport is latched at first layout at
+one of a few values and never revised, so the rows it does build land a
+fraction of a device pixel apart from one mount to the next and every glyph
+rasterises differently; the scroll view's content height differs between the
+two pictures by 66 points on the strip. On a cold launch the strip can also
+open a few hundred points above its tail, because its tall bottom inset can
+arrive after the one scroll to the tail and an inset change is not a size
+change. Both are the transcript's to fix, not the harness's: extra settling
+never converges them. They are still captured and compared, and their
+triplets remain available for diagnosis. Only
 their pixel-difference result is non-gating; capture failures, missing
 baselines, and size changes still fail. The global tolerance remains two per
 channel with at most 64 differing pixels.
