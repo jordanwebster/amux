@@ -573,8 +573,18 @@ impl ProfileRuntime {
 
     /// Attach an embedder's relay route without changing the configured cloud.
     /// One profile holds one relay; attaching a second replaces the first.
+    /// What a relay link of this profile dials on: the profile's own QUIC
+    /// endpoint and its memory of networks that ate UDP, so the relay races the
+    /// same two carriers the configured cloud link does.
+    pub(crate) fn relay_transport(&self) -> crate::transport::RelayTransport {
+        crate::transport::RelayTransport {
+            quic_endpoint: self.services.quic_endpoint(),
+            udp_blocked: self.udp_blocked.clone(),
+        }
+    }
+
     pub(crate) async fn attach_relay(&self, relay: crate::EmbeddedRelay) {
-        let task = relay.spawn(self.services.link_connector_ctx());
+        let task = relay.spawn(self.services.link_connector_ctx(), self.relay_transport());
         if let Some(previous) = self.relay_task.lock().await.replace(task) {
             previous.abort();
             let _ = previous.await;

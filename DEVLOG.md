@@ -1,3 +1,22 @@
+2026-09-13 — **A phone's relay link races QUIC against TCP, like every other
+device.** The relay link an embedded installation is handed — the one a phone
+uses, resolved by the application rather than by configuration — dialled TLS
+over TCP and nothing else. It now runs the same race the configured cloud link
+runs: QUIC first, TCP three hundred milliseconds behind it, the losing dial
+closed, and a network that refused UDP remembered on the profile so the next
+attempt on it goes straight to TCP. The profile owns both inputs, its QUIC
+endpoint and that memory, so the relay a device attaches and the cloud it is
+configured with reach the network through the same two carriers and learn from
+each other's failures.
+
+A relay with no publicly verifiable name can now be reached over QUIC too, by
+whoever resolved it supplying the trust: an HTTPS relay is verified from the
+system store as before, a cleartext relay on this machine has no identity QUIC
+could check and stays TCP-only, and a private or harness relay is QUIC as soon
+as its certificate is handed in with it. Which carrier the live link runs on is
+readable from the retry handle the application already holds, because the dial
+is the only place that knows.
+
 2026-09-13 — **Merge the native iPhone app and its app layer into the
 connections branch.** Main absorbed the phone app, which brought a shared app
 layer in three crates: `app-runtime` owns account sessions, the projection to

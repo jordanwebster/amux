@@ -17,3 +17,4 @@ pub use startup::{
     StartedUserServices, TestCloudTransport, UDP_BLOCKED_MEMORY, UdpBlockedMemory,
     establish_cloud_link, start_user_services,
 };
+pub(crate) use startup::{TCP_FALLBACK_DELAY, select_cloud_carrier};

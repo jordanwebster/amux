@@ -80,7 +80,7 @@ impl UdpBlockedMemory {
         }
     }
 
-    fn holds(&self, host: &str) -> bool {
+    pub(crate) fn holds(&self, host: &str) -> bool {
         let mut blocked_at = self
             .blocked_at
             .lock()
@@ -434,9 +434,9 @@ async fn prepare_cloud_connection(
     Ok((credentials, details))
 }
 
-type CloudDialResult = Result<Arc<dyn LinkCarrier>, String>;
+pub(crate) type CloudDialResult = Result<Arc<dyn LinkCarrier>, String>;
 
-async fn select_cloud_carrier<Q, T>(
+pub(crate) async fn select_cloud_carrier<Q, T>(
     host: &str,
     udp_blocked: Arc<UdpBlockedMemory>,
     fallback_delay: Duration,

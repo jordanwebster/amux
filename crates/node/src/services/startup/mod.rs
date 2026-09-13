@@ -12,6 +12,7 @@ pub use cloud::{
     CloudLink, CloudTransport, FREE_TIER_REFRESH_INTERVAL, TestCloudTransport, UDP_BLOCKED_MEMORY,
     UdpBlockedMemory, establish_cloud_link,
 };
+pub(crate) use cloud::{TCP_FALLBACK_DELAY, select_cloud_carrier};
 use futures_util::{Stream, StreamExt, stream};
 use host_api::LocalAgentHost;
 use tokio::io::{AsyncRead, AsyncWrite};

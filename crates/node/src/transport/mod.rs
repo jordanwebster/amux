@@ -12,6 +12,7 @@ mod unix;
 
 use std::time::Duration;
 
+pub(crate) use embedded_relay::RelayTransport;
 pub use embedded_relay::{EmbeddedRelay, RelayEndpoint, RelayRetry};
 pub(crate) use io::{
     BoxedGrpcAuth, BoxedGrpcConnectInfo, BoxedGrpcIo, GrpcIo, PreTrustPairingReachability,

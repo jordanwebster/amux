@@ -4,15 +4,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use model::RelayCarrier;
 pub use model::{DisconnectReason, RelayConnection};
 use tokio::net::TcpStream;
 use tokio::sync::watch;
 
-use crate::link::{CarrierKind, LinkCarrier, MuxCarrier, MuxRole};
+use crate::link::{CarrierKind, LinkCarrier, MuxCarrier, MuxRole, QuicCarrier};
 use crate::routing::{
     LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher, LinkRole,
     spawn_connector_with_auth_establishment_and_shutdown,
 };
+use crate::services::{TCP_FALLBACK_DELAY, UdpBlockedMemory, select_cloud_carrier};
 use crate::{CredentialProvider, ServerError};
 
 /// Validated endpoint: an HTTPS origin, or a plaintext loopback address that
@@ -22,6 +24,24 @@ pub struct RelayEndpoint {
     host: String,
     port: u16,
     plain: Option<SocketAddr>,
+    quic: Option<RelayQuicTrust>,
+}
+
+/// A relay QUIC identity supplied by whoever resolved the relay, for a relay
+/// this process cannot verify from the system trust store.
+#[derive(Clone)]
+struct RelayQuicTrust {
+    server_name: String,
+    config: quinn::ClientConfig,
+}
+
+/// Where this device's relay dials run, and what they remember about the
+/// network they ran on. One profile's QUIC endpoint and its UDP-blocked
+/// memory, so a phone that has learned this network eats UDP does not sit
+/// through a dial that cannot finish again.
+pub(crate) struct RelayTransport {
+    pub(crate) quic_endpoint: quinn::Endpoint,
+    pub(crate) udp_blocked: Arc<UdpBlockedMemory>,
 }
 
 impl RelayEndpoint {
@@ -43,6 +63,7 @@ impl RelayEndpoint {
                 .into(),
             port: url.port_or_known_default().unwrap_or(443),
             plain: None,
+            quic: None,
         })
     }
 
@@ -59,6 +80,7 @@ impl RelayEndpoint {
             host: address.ip().to_string(),
             port: address.port(),
             plain: Some(address),
+            quic: None,
         })
     }
 
@@ -75,36 +97,127 @@ impl RelayEndpoint {
         }
     }
 
+    /// Trust this relay's QUIC identity from a supplied configuration instead
+    /// of the system store.
+    ///
+    /// A relay reached over HTTPS is verified the way any other HTTPS origin
+    /// is and needs nothing here. A relay that is a machine on this network — a
+    /// harness, a private deployment — has no publicly verifiable name, so
+    /// without this the only carrier left for it is TCP. Supplying the trust is
+    /// how such an embedder gets QUIC.
+    pub fn with_quic_trust(mut self, server_name: String, config: quinn::ClientConfig) -> Self {
+        self.quic = Some(RelayQuicTrust {
+            server_name,
+            config,
+        });
+        self
+    }
+
     /// Opens the byte stream this endpoint names and wraps it as the link's
     /// carrier. Dialling happens here rather than lazily: the caller's retry
     /// loop reports what an unreachable relay did, and it can only do that if
     /// the failure arrives now.
-    async fn carrier(&self) -> Result<Arc<dyn LinkCarrier>, ServerError> {
-        fn relay_carrier<IO>(io: IO) -> Arc<dyn LinkCarrier>
-        where
-            IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
-        {
-            Arc::new(MuxCarrier::new(
-                io,
-                MuxRole::Connector,
-                CarrierKind::RelayTcp,
-            ))
-        }
-
-        if let Some(address) = self.plain {
-            let stream = TcpStream::connect(address)
+    ///
+    /// QUIC first with TCP behind it, the same race every other device runs:
+    /// the relay answers both, QUIC is the carrier the product wants, and a
+    /// network that silently eats UDP still has to reach the relay rather than
+    /// wait out a dial that can never finish. Losing dials are closed, and a
+    /// network that has refused UDP is remembered, so the next attempt on it
+    /// goes straight to TCP.
+    async fn carrier(
+        &self,
+        transport: &RelayTransport,
+    ) -> Result<(Arc<dyn LinkCarrier>, RelayCarrier), ServerError> {
+        let tcp = self.tcp_dial();
+        let Some(quic) = self.quic_dial(&transport.quic_endpoint) else {
+            return tcp
                 .await
-                .map_err(|e| ServerError::State(e.to_string()))?;
-            stream
-                .set_nodelay(true)
-                .map_err(|e| ServerError::State(e.to_string()))?;
-            super::configure_relay_tcp_keepalive(&stream);
-            return Ok(relay_carrier(stream));
+                .map(|carrier| (carrier, RelayCarrier::Tcp))
+                .map_err(ServerError::State);
+        };
+        select_cloud_carrier(
+            &self.host,
+            transport.udp_blocked.clone(),
+            TCP_FALLBACK_DELAY,
+            quic,
+            tcp,
+        )
+        .await
+        .map_err(ServerError::State)
+    }
+
+    /// The TCP dial: TLS to an HTTPS relay, cleartext to a loopback one.
+    fn tcp_dial(&self) -> impl Future<Output = Result<Arc<dyn LinkCarrier>, String>> + Send {
+        let plain = self.plain;
+        let host = self.host.clone();
+        let port = self.port;
+        async move {
+            fn relay_carrier<IO>(io: IO) -> Arc<dyn LinkCarrier>
+            where
+                IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
+            {
+                Arc::new(MuxCarrier::new(
+                    io,
+                    MuxRole::Connector,
+                    CarrierKind::RelayTcp,
+                ))
+            }
+
+            if let Some(address) = plain {
+                let stream = TcpStream::connect(address)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                stream.set_nodelay(true).map_err(|e| e.to_string())?;
+                super::configure_relay_tcp_keepalive(&stream);
+                return Ok(relay_carrier(stream));
+            }
+            let stream = super::tls_connect_stream(&host, port)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(relay_carrier(stream))
         }
-        let stream = super::tls_connect_stream(&self.host, self.port)
-            .await
-            .map_err(|e| ServerError::State(e.to_string()))?;
-        Ok(relay_carrier(stream))
+    }
+
+    /// The QUIC dial, or nothing when this relay has no identity QUIC could
+    /// verify: a cleartext relay nobody supplied trust for is reachable over
+    /// TCP alone, because QUIC has no cleartext mode to offer it.
+    fn quic_dial(
+        &self,
+        endpoint: &quinn::Endpoint,
+    ) -> Option<impl Future<Output = Result<Arc<dyn LinkCarrier>, String>> + Send + 'static> {
+        let trust = self.quic.clone();
+        if self.plain.is_some() && trust.is_none() {
+            return None;
+        }
+        let endpoint = endpoint.clone();
+        let plain = self.plain;
+        let host = self.host.clone();
+        let port = self.port;
+        Some(async move {
+            let carrier = match trust {
+                Some(trust) => {
+                    let addrs = match plain {
+                        Some(address) => vec![address],
+                        None => tokio::net::lookup_host((host.as_str(), port))
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .collect(),
+                    };
+                    QuicCarrier::connect_relay_candidates_with_config(
+                        &endpoint,
+                        addrs,
+                        &trust.server_name,
+                        port,
+                        trust.config,
+                    )
+                    .await
+                }
+                None => QuicCarrier::connect_relay(&endpoint, &host, port).await,
+            };
+            carrier
+                .map(|carrier| Arc::new(carrier) as Arc<dyn LinkCarrier>)
+                .map_err(|error| error.to_string())
+        })
     }
 }
 
@@ -169,6 +282,7 @@ pub struct RelayRetry {
     shortened: std::sync::atomic::AtomicU64,
     suspended: std::sync::atomic::AtomicBool,
     lifecycle: tokio::sync::Notify,
+    carrier: std::sync::Mutex<Option<RelayCarrier>>,
 }
 
 impl RelayRetry {
@@ -183,6 +297,17 @@ impl RelayRetry {
     /// backoff, so a reader can tell one attempt from none.
     pub fn attempts(&self) -> u64 {
         self.attempts.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Which carrier the live relay link runs on, and nothing at all while
+    /// there is no link. What a device is told about how it is reaching the
+    /// relay: the dial decides it, so nobody above can do better than read it.
+    pub fn carrier(&self) -> Option<RelayCarrier> {
+        *self.carrier.lock().expect("relay carrier lock poisoned")
+    }
+
+    fn on_carrier(&self, carrier: Option<RelayCarrier>) {
+        *self.carrier.lock().expect("relay carrier lock poisoned") = carrier;
     }
 
     /// How many of those attempts happened early because somebody asked.
@@ -304,7 +429,11 @@ impl LinkConnectorTokenRefresher for RoutingCredentials {
 }
 
 impl EmbeddedRelay {
-    pub(crate) fn spawn(self, context: LinkConnectorCtx) -> tokio::task::JoinHandle<()> {
+    pub(crate) fn spawn(
+        self,
+        context: LinkConnectorCtx,
+        transport: RelayTransport,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut backoff = Duration::from_millis(250);
             loop {
@@ -320,7 +449,8 @@ impl EmbeddedRelay {
                     continue;
                 }
                 self.retry.attempted();
-                let result = self.connect(context.clone()).await;
+                let result = self.connect(context.clone(), &transport).await;
+                self.retry.on_carrier(None);
                 let reason = match result {
                     Ok(()) => {
                         backoff = Duration::from_millis(250);
@@ -339,7 +469,11 @@ impl EmbeddedRelay {
         })
     }
 
-    async fn connect(&self, context: LinkConnectorCtx) -> Result<(), DisconnectReason> {
+    async fn connect(
+        &self,
+        context: LinkConnectorCtx,
+        transport: &RelayTransport,
+    ) -> Result<(), DisconnectReason> {
         let credentials = Arc::new(RoutingCredentials(self.credentials.clone()));
         let token = tokio::select! {
             token = credentials.refresh_routing_token() => token.map_err(|e| {
@@ -348,7 +482,7 @@ impl EmbeddedRelay {
             })?,
             () = self.retry.until_suspended() => return Err(DisconnectReason::Suspended),
         };
-        let carrier = self.endpoint.carrier().await.map_err(|e| {
+        let (carrier, relay_carrier) = self.endpoint.carrier(transport).await.map_err(|e| {
             tracing::debug!(error = %e, "relay endpoint unusable");
             DisconnectReason::Unreachable
         })?;
@@ -373,6 +507,8 @@ impl EmbeddedRelay {
                 })?,
             () = self.retry.until_suspended() => return Err(DisconnectReason::Suspended),
         };
+        tracing::info!(carrier = ?relay_carrier, "relay link established");
+        self.retry.on_carrier(Some(relay_carrier));
         self.connection.send_replace(RelayConnection::Connected);
         tokio::select! {
             joined = &mut task => joined.map_err(|_| DisconnectReason::Ended)?.map_err(|e| {
@@ -388,5 +524,153 @@ impl EmbeddedRelay {
                 Err(DisconnectReason::Suspended)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use tokio::net::TcpListener;
+
+    use super::*;
+    use crate::services::UDP_BLOCKED_MEMORY;
+
+    /// A relay at one address, answering on TCP and — when it has been given a
+    /// QUIC front — on UDP at the same port, which is how the product's relay
+    /// presents itself. Holds what it accepts: a dial has to complete, and a
+    /// dropped connection would fail the dial it is standing in for.
+    struct TestRelay {
+        addr: SocketAddr,
+        server_name: String,
+        quic_client: quinn::ClientConfig,
+        _tasks: Vec<tokio::task::JoinHandle<()>>,
+        _quic: Option<quinn::Endpoint>,
+    }
+
+    async fn relay_answering(quic: bool) -> TestRelay {
+        let rcgen::CertifiedKey { cert, signing_key } =
+            rcgen::generate_simple_self_signed(vec!["relay.test".to_string()]).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots
+            .add(CertificateDer::from(cert.der().as_ref().to_vec()))
+            .unwrap();
+        let quic_client = super::super::relay_quic_client_config_with_roots(roots).unwrap();
+
+        let server = super::super::relay_quic_server_config_from_der(
+            vec![CertificateDer::from(cert.der().as_ref().to_vec())],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der())),
+        )
+        .unwrap();
+
+        // One port on both namespaces, because the endpoint names one address
+        // for both carriers. The system hands out a free TCP port without
+        // regard to UDP, so a taken UDP port is somebody else's and the whole
+        // pair is tried again rather than failing a test about carriers.
+        let (listener, endpoint) = loop {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            if !quic {
+                break (listener, None);
+            }
+            match quinn::Endpoint::server(server.clone(), addr) {
+                Ok(endpoint) => break (listener, Some(endpoint)),
+                Err(_) => continue,
+            }
+        };
+        let addr = listener.local_addr().unwrap();
+        let mut tasks = vec![tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                held.push(stream);
+            }
+        })];
+        if let Some(endpoint) = &endpoint {
+            let accepting = endpoint.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut held = Vec::new();
+                while let Some(incoming) = accepting.accept().await {
+                    if let Ok(connection) = incoming.await {
+                        held.push(connection);
+                    }
+                }
+            }));
+        }
+
+        TestRelay {
+            addr,
+            server_name: "relay.test".into(),
+            quic_client,
+            _tasks: tasks,
+            _quic: endpoint,
+        }
+    }
+
+    fn dialling_from() -> RelayTransport {
+        RelayTransport {
+            quic_endpoint: quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap(),
+            udp_blocked: Arc::new(UdpBlockedMemory::new(UDP_BLOCKED_MEMORY)),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relay_answering_both_carriers_is_reached_over_quic() {
+        let relay = relay_answering(true).await;
+        let endpoint = RelayEndpoint::plain_loopback(relay.addr)
+            .unwrap()
+            .with_quic_trust(relay.server_name.clone(), relay.quic_client.clone());
+
+        let (carrier, selected) = endpoint.carrier(&dialling_from()).await.unwrap();
+
+        assert_eq!(selected, RelayCarrier::Quic);
+        assert_eq!(carrier.kind(), CarrierKind::RelayQuic);
+        println!("relay on both carriers: reached over {selected:?}");
+    }
+
+    #[tokio::test]
+    async fn a_network_that_eats_udp_falls_back_to_tcp_and_is_remembered() {
+        let relay = relay_answering(false).await;
+        let endpoint = RelayEndpoint::plain_loopback(relay.addr)
+            .unwrap()
+            .with_quic_trust(relay.server_name.clone(), relay.quic_client.clone());
+        let transport = dialling_from();
+
+        let (carrier, selected) = endpoint.carrier(&transport).await.unwrap();
+        assert_eq!(selected, RelayCarrier::Tcp);
+        assert_eq!(carrier.kind(), CarrierKind::RelayTcp);
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !transport.udp_blocked.holds("127.0.0.1") {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("a QUIC probe that failed everywhere was not remembered");
+
+        let started = tokio::time::Instant::now();
+        let (_, again) = endpoint.carrier(&transport).await.unwrap();
+        assert_eq!(again, RelayCarrier::Tcp);
+        assert!(
+            started.elapsed() < TCP_FALLBACK_DELAY,
+            "a remembered UDP-blocked network still waited out the QUIC race: {:?}",
+            started.elapsed()
+        );
+        println!("UDP-blocked network: fell back to TCP and dialled TCP first next time");
+    }
+
+    #[tokio::test]
+    async fn a_cleartext_relay_nobody_vouched_for_is_dialled_over_tcp_alone() {
+        let relay = relay_answering(true).await;
+        let endpoint = RelayEndpoint::plain_loopback(relay.addr).unwrap();
+        let transport = dialling_from();
+
+        let (carrier, selected) = endpoint.carrier(&transport).await.unwrap();
+
+        assert_eq!(selected, RelayCarrier::Tcp);
+        assert_eq!(carrier.kind(), CarrierKind::RelayTcp);
+        assert!(
+            !transport.udp_blocked.holds("127.0.0.1"),
+            "a relay with no verifiable identity taught this device nothing about UDP"
+        );
+        println!("cleartext relay with no supplied trust: TCP only, nothing learned about UDP");
     }
 }

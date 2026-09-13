@@ -378,9 +378,12 @@ impl EmbeddedBuilder {
             .await
             .map_err(|e| ServerError::State(e.to_string()))?;
         // Relay attachment changes the route; the cloud remains the one in config.
-        let relay_task = self
-            .relay
-            .map(|relay| relay.spawn(runtime.services.link_connector_ctx()));
+        let relay_task = self.relay.map(|relay| {
+            relay.spawn(
+                runtime.services.link_connector_ctx(),
+                runtime.relay_transport(),
+            )
+        });
         Ok(EmbeddedRuntime {
             runtime: Some(runtime),
             relay_task,
