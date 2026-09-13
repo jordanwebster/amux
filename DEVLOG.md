@@ -1,3 +1,16 @@
+2026-09-13 — **Reconnected the app's test resources to the files they mirror.**
+Four of the iPhone tests' resources are symlinks into the repository — the
+performance budget the instrumentation suite reads, and the three pinned
+projection schemas the core suite checks its decoding against — so a budget or
+a DTO changed at the source changes the suite rather than drifting past a
+stale copy. Their targets are relative, and moving the app one directory
+deeper left every one of them pointing a level short. Git moves a symlink by
+its contents, so nothing complained until Xcode went looking for the files.
+
+The iPhone verification job was the only thing that would notice, and it was
+already failing for the formatting that same move broke, so the second reason
+only surfaced once the first was fixed.
+
 2026-09-13 — **Moved the Retry Now contract off the network.** The burst test
 failed on Windows again, and for the reason the first attempt had already
 named without following far enough: a press must be listened to within a
