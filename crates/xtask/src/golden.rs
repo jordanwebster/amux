@@ -1087,8 +1087,8 @@ mod tests {
 
     #[test]
     fn the_committed_manifest_owes_the_catalogue_and_the_added_states() {
-        let manifest =
-            GoldenManifest::read(Path::new("../../apps/apple/Goldens/manifest.json")).expect("a manifest");
+        let manifest = GoldenManifest::read(Path::new("../../apps/apple/Goldens/manifest.json"))
+            .expect("a manifest");
         let references: Vec<&GoldenScreen> = manifest
             .screens
             .iter()
@@ -1172,7 +1172,8 @@ mod tests {
                 "missing added state: {id}"
             );
         }
-        let baseline_notes = std::fs::read_to_string("../../apps/apple/Goldens/BASELINE.md").unwrap();
+        let baseline_notes =
+            std::fs::read_to_string("../../apps/apple/Goldens/BASELINE.md").unwrap();
         for screen in &references {
             assert!(
                 baseline_notes
@@ -1209,8 +1210,11 @@ mod tests {
             );
             for appearance in &screen.appearances {
                 assert!(
-                    Path::new(&format!("../../apps/apple/Goldens/{}.{appearance}.png", screen.id))
-                        .is_file(),
+                    Path::new(&format!(
+                        "../../apps/apple/Goldens/{}.{appearance}.png",
+                        screen.id
+                    ))
+                    .is_file(),
                     "missing baseline for {}.{appearance}",
                     screen.id
                 );

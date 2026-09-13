@@ -1,3 +1,25 @@
+2026-09-13 — **Fixed the two real breakages in CI.** The move to `apps/apple/`
+lengthened four paths past rustfmt's line budget, in the iOS verification
+gate and the golden-manifest tests, so formatting failed and took the whole
+iOS verification job with it. Reformatted.
+
+The other was the phone's Retry Now burst test, which failed on Windows and
+nowhere else. It asked whether ten presses in a second produce one *dial*, and
+a dial cannot answer that: the relay is unreachable, the four-second backoff
+is running underneath, and the test had already spent three of those four
+seconds on simulated time before the burst. A runner slow enough to spend the
+remainder on one failed connection sees the backoff come round as well, which
+is a second dial nobody asked for. The connection already counts the thing
+that does answer — how many waits were cut short, which only a press can do —
+so the burst now asserts on that. The presses still happen on one paused clock
+so a loaded runner's wall time cannot stretch a burst past the cooldown it is
+meant to fit inside, but the clock runs again before the failed dial is waited
+for, since that needs real time to happen in.
+
+The remaining red jobs were infrastructure: the macOS end-to-end job could not
+download `just`, and the rest were cancelled by the matrix when the first
+failure landed.
+
 2026-09-13 — **Moved the iPhone app to `apps/apple/`.** The app was built on
 its own branch at `ios/` and has now merged, so it takes the place the
 licensing split made for it. Applications sit under `apps/`, the licence that

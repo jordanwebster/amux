@@ -178,7 +178,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &std::fs::read_to_string("justfile")?,
         &std::fs::read_to_string("apps/apple/justfile")?,
     )?;
-    check_journeys(&std::fs::read_to_string("apps/apple/Journeys/manifest.json")?)?;
+    check_journeys(&std::fs::read_to_string(
+        "apps/apple/Journeys/manifest.json",
+    )?)?;
     eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
     eprintln!("iOS verification: {}", selected.join(", "));
     for recipe in selected {
