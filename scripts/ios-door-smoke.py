@@ -20,6 +20,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path("ios/Tools").resolve()))
+import ios_bridge
 import ios_simulators
 # The test relay is started and torn down exactly as the linkage smoke starts
 # and tears it down; sharing the helpers keeps one description of what a clean
@@ -28,17 +29,6 @@ from loopback_smoke import control, read_ready, released
 
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
-RELEASE = DERIVED_DATA / "Build/Products/Release-iphonesimulator/Amux.app/Amux"
-# Type and module names that exist only to drive the app. None of them may
-# reach a build a person could install.
-DEBUG_ONLY = [
-    "DoorServer", "DoorHost", "DoorScreens", "DoorCapture", "DoorFrames",
-    "DoorRecording", "DrivenRoot", "VisibleTree", "AmuxTestSupport",
-    # The performance harness: its workloads are forty invented agents and a
-    # thousand invented transcript rows, and the launch it times exists only
-    # to be timed.
-    "Workloads", "ColdStartProbe", "PerfRun", "BudgetTable",
-]
 OUTPUT = Path("target/ios/door")
 CAPTURE = OUTPUT / "door-capture.png"
 COMPOSER_CAPTURE = OUTPUT / "composer-short-replacement.png"
@@ -60,12 +50,9 @@ SIMULATOR = "amux-golden"
 BUNDLE_ID = "sh.amux.app"
 TOPOLOGY = "e2e-tests/topologies/two-hosts.json"
 # What the bridge built with the driving tools answers when asked what it is.
-# The shipping library answers the version alone and does not contain this
-# text anywhere, which is what the release check below reads.
+# That a shipping build carries neither this text nor the driving symbols is
+# the scope audit's check, made against the packaged shipping library.
 DRIVING_MARKER = "+debug-tools"
-# Defined only by the library with the driving tools compiled in: freezing the
-# recorder for a report, and folding one back into a screen.
-DRIVING_SYMBOLS = ["amux_app_report_snapshot", "amux_app_replay_report"]
 
 # What is asked, and what must come back. The refusals come first on purpose:
 # a door that answered a screen nobody has built, or a type size nobody
@@ -358,41 +345,6 @@ def check_bundle(written: dict) -> None:
     )
 
 
-def release_is_shut(udid: str) -> None:
-    """The door is a debug tool. A release build must not contain it at all,
-    and it must link the shipping bridge rather than the driving one."""
-    subprocess.run([
-        "xcodebuild", "build",
-        "-project", "ios/Amux.xcodeproj",
-        "-scheme", "Amux",
-        "-configuration", "Release",
-        "-destination", f"id={udid}",
-        "-derivedDataPath", str(DERIVED_DATA),
-        "-quiet",
-    ], check=True, timeout=900)
-    symbols = subprocess.run(
-        ["nm", "-a", str(RELEASE)], check=True, text=True, capture_output=True, timeout=300,
-    ).stdout
-    present = sorted({name for name in DEBUG_ONLY if name in symbols})
-    if present:
-        raise SystemExit(f"the release build carries debug-only code: {', '.join(present)}")
-    linked = sorted(name for name in DRIVING_SYMBOLS if name in symbols)
-    if linked:
-        raise SystemExit(
-            f"the release build linked the bridge with the driving tools: {', '.join(linked)}")
-    # The build marker the door read back out of the debug app, looked for in
-    # the release binary's own bytes. The shipping library does not contain
-    # the text at all, so its absence here is which library was linked.
-    if DRIVING_MARKER.encode() in RELEASE.read_bytes():
-        raise SystemExit(
-            f"the release binary carries the driving build marker {DRIVING_MARKER}")
-    print(
-        f"{RELEASE}: none of {', '.join(DEBUG_ONLY)}, no {', '.join(DRIVING_SYMBOLS)}, "
-        f"no {DRIVING_MARKER}",
-        flush=True,
-    )
-
-
 @contextlib.contextmanager
 def runner():
     """The test relay and its daemons, started from a committed topology and
@@ -435,7 +387,6 @@ def main() -> None:
         machines = {daemon["name"] for daemon in ready["daemons"]}
         plan = exchange(f"http://{ready['relay']}", token)
         check(plan, speak(plan), machines)
-    release_is_shut(udid)
 
 
 if __name__ == "__main__":

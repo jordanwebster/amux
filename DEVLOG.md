@@ -4,6 +4,19 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-13 — **The door smoke no longer inspects a release build.** A first
+full iOS verification after the merge stopped at the door smoke twice: once
+on a missing import of the shared bridge-name module, then on its release
+check, which rebuilt the app in the Release configuration and required it to
+link the shipping bridge. A development tree now stages the single
+development slice as a stand-in for the shipping framework until `just ios
+package` builds the real one, so a Release link from the door smoke read the
+driving marker out of the stand-in. That check was a duplicate of the scope
+audit, which owns what the release bundle contains, checks the same symbols,
+marker and resources, and depends on the package it inspects. The door smoke
+keeps its purpose: launch, drive, capture, report and reach a served relay
+through the debug build. `just ios door-smoke` and the script tests pass.
+
 2026-09-13 — **Merged main's crate split into the native app branch and shaped the app layer.**
 Main had replaced the `amux` library with `model`, `wire`, `settings`,
 `client`, `host-api`, `node`, `agent-runtime`, `ui-state`, `ui-runtime`,
