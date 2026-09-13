@@ -10,7 +10,6 @@ the wrong clock.
 
 from pathlib import Path
 import json
-import os
 import subprocess
 import sys
 
@@ -40,14 +39,6 @@ def main() -> None:
     for name in sorted({screen["simulator"] for screen in selected(arguments)}):
         udid = ios_simulators.ensure(name)
         ios_simulators.pin(udid)
-        # A capture must record the app, not the suite that ran before it. The
-        # unit suites drive the app through XCUITest, and the home indicator
-        # those touches raise can outlast every photograph the door is willing
-        # to take, so a golden run following them photographs a bar no
-        # baseline has. Rebooting first is what makes a capture pass mean the
-        # same thing whether it runs alone or last.
-        if os.environ.get("AMUX_SKIP_CAPTURE_RESTART") != "1":
-            ios_simulators.restart(udid)
         subprocess.run(
             ["xcrun", "simctl", "install", udid, str(APPLICATION)],
             check=True, timeout=600)

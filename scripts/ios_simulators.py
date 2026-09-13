@@ -115,23 +115,6 @@ def pin(udid: str) -> None:
     )
 
 
-def restart(udid: str) -> None:
-    """Give the device a SpringBoard that has not been driven by anything.
-
-    The home indicator is drawn on touch and retracts a moment later, and a
-    UI-test session leaves it up long after its last synthesised tap — on a
-    loaded machine, long enough that a capture never sees it go. A photograph
-    taken after one of those sessions therefore records the suite that ran
-    before it, which is not a property of the app and not something a baseline
-    can agree with.
-
-    Rebooting is the whole isolation: nothing survives it, so a capture pass
-    starts from the same screen whatever ran first.
-    """
-    run("xcrun", "simctl", "shutdown", udid, timeout=300)
-    run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
-
-
 def voice_over(udid: str, running: bool) -> None:
     """Turns the device's own screen reader on or off.
 
