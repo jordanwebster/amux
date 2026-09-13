@@ -384,14 +384,21 @@ impl Topology {
             );
             if matches!(via, PairVia::Cloud) {
                 let user = |name: &str| {
-                    &topology
+                    topology
                         .daemons
                         .iter()
                         .find(|d| d.name == name)
                         .unwrap()
                         .user
+                        .as_deref()
                 };
-                ensure!(user(a) == user(b), "cloud pair crosses users: {a}, {b}");
+                // A machine nobody is signed in on has no cloud identity to
+                // pair through, so two of them are not a pair through the
+                // cloud however alike their absent accounts look.
+                match (user(a), user(b)) {
+                    (Some(x), Some(y)) if x == y => {}
+                    _ => bail!("cloud pair crosses users: {a}, {b}"),
+                }
             }
         }
         let mut agents = HashSet::new();
@@ -1422,6 +1429,31 @@ mod tests {
             ),
         ] {
             std::fs::write(&path, serde_json::to_vec(&serde_json::json!({"users":users,"daemons":daemons,"paired":paired,"agents":[]})).unwrap()).unwrap();
+            assert!(Topology::load(&path).is_err());
+        }
+        for bad in [
+            // A tier is what one named account buys; naming no such account
+            // is a topology that means nothing.
+            serde_json::json!({
+                "users": ["u"],
+                "tiers": {"other": "free"},
+                "daemons": [],
+                "paired": [],
+                "agents": [],
+            }),
+            // Two machines nobody is signed in on have no shared account to
+            // pair through, so this is not a pairing through the cloud.
+            serde_json::json!({
+                "users": [],
+                "daemons": [
+                    {"name":"a","repository_roots":[]},
+                    {"name":"b","repository_roots":[]},
+                ],
+                "paired": [["a", "b", "Cloud"]],
+                "agents": [],
+            }),
+        ] {
+            std::fs::write(&path, serde_json::to_vec(&bad).unwrap()).unwrap();
             assert!(Topology::load(&path).is_err());
         }
     }
