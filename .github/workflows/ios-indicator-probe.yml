@@ -33,8 +33,8 @@ jobs:
           ps aux | grep -i -E "WindowServer|loginwindow|CoreSimulator" | grep -v grep
           screencapture -x target/mac-before.png 2>&1 || true
       - uses: extractions/setup-just@v2
-      - name: Boot the golden simulator
-        run: just ios simulator amux-golden
+      - name: Boot both pinned simulators
+        run: just ios simulator
       - name: Imaging venv
         run: python3 -m venv target/probe-venv && target/probe-venv/bin/pip -q install pillow numpy
       - name: Series A, headless Settings launch
@@ -76,7 +76,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: indicator-probe-stock
+          name: indicator-probe-stock-${{ github.sha }}
           path: |
             target/probe
             target/mac-before.png
@@ -99,8 +99,8 @@ jobs:
       - uses: extractions/setup-just@v2
       - name: Install build tools
         run: brew install xcodegen
-      - name: Boot the golden simulator
-        run: just ios simulator amux-golden
+      - name: Boot both pinned simulators
+        run: just ios simulator
       - name: Imaging venv
         run: python3 -m venv target/probe-venv && target/probe-venv/bin/pip -q install pillow numpy
       - name: Goldens for probe and home with the door hiding overlays
@@ -120,7 +120,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: indicator-probe-door
+          name: indicator-probe-door-${{ github.sha }}
           path: |
             target/probe
             target/ios/goldens
