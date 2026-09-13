@@ -6,6 +6,7 @@ public protocol AppRuntime: AnyObject {
     var events: AsyncStream<[Event]> { get }
     @discardableResult func dispatch(_ command: BridgeCommand) -> OpId?
     @discardableResult func attach(_ picked: PickedAttachment, bytes: Data) -> OpId?
+    func discovered(_ hosts: [FoundHost])
     func setActive(_ active: Bool)
     func stop()
 }
@@ -24,6 +25,10 @@ public final class RuntimeCoordinator {
     /// Diagnostic detail for the driving door and reports, never screen copy.
     public private(set) var failure: String?
     public let deviceName: String
+    /// The browser whose findings this hands on, where the app gave it one.
+    /// It runs only while somebody is looking at the phone, so it is started
+    /// and stopped with the scene rather than with the connection.
+    public var discovery: LocalDiscovery?
     public var storesChanged: (@MainActor (StoreBundle) -> Void)?
     public var unsubscribed: (@MainActor (AgentId) -> Void)?
 
@@ -41,6 +46,10 @@ public final class RuntimeCoordinator {
     private var starting: Task<Void, Never>?
     private var generation = 0
     private var active = true
+    /// What the browser last saw, kept so a runtime started afterwards — a
+    /// sign-in, a switch, a retry — is told without waiting for the browser to
+    /// notice the same machines a second time.
+    private var found: [FoundHost] = []
     private var overrideRelay: URL?
     private var overrideTokens: [String: String] = [:]
 
@@ -161,6 +170,7 @@ public final class RuntimeCoordinator {
             configured = configuration
             runtimeAccount = account
             client.setActive(active)
+            if !found.isEmpty { client.discovered(found) }
             wireSelected(to: client)
             pump = Task { [weak self] in
                 for await batch in client.events {
@@ -283,14 +293,29 @@ public final class RuntimeCoordinator {
         }
     }
 
+    /// Every machine the phone's browser can currently see.
+    ///
+    /// Remembered as well as passed on, because the connection and the browser
+    /// have separate lives: the runtime is replaced on a sign-in or a switch,
+    /// and the machines on this network did not go anywhere when it was.
+    public func discovered(_ hosts: [FoundHost]) {
+        found = hosts
+        runtime?.discovered(hosts)
+    }
+
     public func setActive(_ active: Bool) {
         self.active = active
         runtime?.setActive(active)
+        // Browsing belongs to the foreground. Put away, the browser stops; the
+        // machines it found are kept, so coming back dials them at once
+        // instead of showing an empty network until the browser catches up.
+        if active { discovery?.start() } else { discovery?.stop() }
         if active && runtime == nil { start() }
     }
 
     public func stop() {
         generation += 1
+        discovery?.stop()
         starting?.cancel()
         starting = nil
         stopRuntime()

@@ -86,9 +86,16 @@ final class Composition {
         #else
         let allowLoopback = false
         #endif
-        runtime = RuntimeCoordinator(
+        let coordinator = RuntimeCoordinator(
             registry: accounts, cloud: cloud, support: AppFiles.support, cache: AppFiles.cache,
             deviceName: UIDevice.current.name, allowPlainLoopback: allowLoopback)
+        // Only the system may look at the network a phone is on, so the browser
+        // is the app's and the shared library is handed what it saw. Weak, or
+        // the two would hold each other alive for the life of the process.
+        coordinator.discovery = LocalDiscovery { [weak coordinator] hosts in
+            coordinator?.discovered(hosts)
+        }
+        runtime = coordinator
         #if AMUX_DEBUG_TOOLS
         reports = ReportStore()
         // The page the person is on goes into the report, so whoever opens the

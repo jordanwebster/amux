@@ -33,6 +33,7 @@ final class ScriptedRuntime: AppRuntime {
     let replies: AsyncStream<[Event]>.Continuation
     var commands: [BridgeCommand] = []
     var activity: [Bool] = []
+    var handedOver: [[FoundHost]] = []
     var stopped = false
     init() { (events, replies) = AsyncStream.makeStream() }
     func dispatch(_ command: BridgeCommand) -> OpId? {
@@ -40,6 +41,7 @@ final class ScriptedRuntime: AppRuntime {
         return OpId(UUID().uuidString)
     }
     func attach(_ picked: PickedAttachment, bytes: Data) -> OpId? { OpId(UUID().uuidString) }
+    func discovered(_ hosts: [FoundHost]) { handedOver.append(hosts) }
     func setActive(_ active: Bool) { activity.append(active) }
     func stop() { stopped = true; replies.finish() }
 }
@@ -269,5 +271,36 @@ final class RuntimeCoordinatorTests: XCTestCase {
         XCTAssertEqual(configuration?.relay, .init(url: "http://127.0.0.1:443", tls: .plainLoopback))
         let refused = await coordinator.override(relay: URL(string: "http://remote.example:8080")!, tokens: [:])
         XCTAssertFalse(refused)
+    }
+
+    func testARuntimeStartedLaterIsToldWhatTheBrowserAlreadySaw() async {
+        // Signing in builds a new runtime. The machines on this network did
+        // not go anywhere when it did, and waiting for the browser to notice
+        // them a second time would show an empty network meanwhile.
+        let directory = root
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = AccountRegistry()
+        registry.add(ada)
+        var clients: [ScriptedRuntime] = []
+        let coordinator = RuntimeCoordinator(
+            registry: registry, cloud: RelayCloud(), support: directory, cache: directory,
+            deviceName: "Phone",
+            factory: { _, _ in
+                let client = ScriptedRuntime()
+                clients.append(client)
+                return client
+            })
+        defer { coordinator.stop() }
+
+        let kitchen = FoundHost(
+            host: HostId(UUID(uuidString: "6D7A4B1E-3C2F-4A58-9B0D-1E2F3A4B5C6D")!),
+            name: "kitchen", version: 7, addrs: ["192.168.1.24:41234"])
+        coordinator.discovered([kitchen])
+        _ = await coordinator.reconnect()
+        XCTAssertEqual(clients.last?.handedOver, [[kitchen]])
+
+        // And the live one hears every later set, the empty one included.
+        coordinator.discovered([])
+        XCTAssertEqual(clients.last?.handedOver, [[kitchen], []])
     }
 }

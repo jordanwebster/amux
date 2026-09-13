@@ -18,7 +18,7 @@ func configuration(url: String, tls: String) -> String {
     """
     {"data_dir":"\(root.path)/data","cache_dir":"\(root.path)/cache","log_path":"\(root.path)/amux.log",\
     "device_name":"linkage-smoke","relay":{"url":"\(url)","tls":"\(tls)"},\
-    "accounts":[{"id":"personal","token":{"Static":"unused"}}],"active":"personal"}
+    "accounts":[{"id":"personal","token":{"Static":{"bearer":"unused"}}}],"active":"personal"}
     """
 }
 

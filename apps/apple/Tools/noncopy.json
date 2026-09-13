@@ -427,10 +427,6 @@
       {"literal": "\"PlainLoopback\"", "context": "case plainLoopback = \"PlainLoopback\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Callback\"", "context": "if let text = try? decoder.singleValueContainer().decode(String.self), text == \"Callback\" {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Callback\"", "context": "try container.encode(\"Callback\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"token\"", "context": "[\"token\": .string(token.bearer), \"expires_at\": .int(Int($0.timeIntervalSince1970))]", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"expires_at\"", "context": "[\"token\": .string(token.bearer), \"expires_at\": .int(Int($0.timeIntervalSince1970))]", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"token\"", "context": "} ?? [\"token\": .string(token.bearer)]", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"error\"", "context": "[\"error\": .string(\"no credential for this account\")]", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"subscribe\"", "context": "case \"subscribe\", \"unsubscribe\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"unsubscribe\"", "context": "case \"subscribe\", \"unsubscribe\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"subscribe\"", "context": "self = command == \"subscribe\" ? .subscribe(agent: agent) : .unsubscribe(agent: agent)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -458,7 +454,12 @@
       {"literal": "\"codex\"", "context": "case \"codex\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"unknown provider \\(other)\"", "context": "codingPath: decoder.codingPath, debugDescription: \"unknown provider \\(other)\"))", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1},
       {"literal": "\"claude\"", "context": "try container.encode(\"claude\", forKey: .provider)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"codex\"", "context": "try container.encode(\"codex\", forKey: .provider)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"codex\"", "context": "try container.encode(\"codex\", forKey: .provider)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"error\"", "context": "var reply: [String: JSONValue] = [\"error\": .string(\"no credential for this account\")]", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"no credential for this account\"", "context": "var reply: [String: JSONValue] = [\"error\": .string(\"no credential for this account\")]", "reason": "Token-callback diagnostic read by the shared library; not displayed by a view.", "count": 1},
+      {"literal": "\"token\"", "context": "reply = [\"token\": .string(token.bearer)]", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"expires_at\"", "context": "reply[\"expires_at\"] = .int(Int(expiry.timeIntervalSince1970))", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"tier\"", "context": "reply[\"tier\"] = .string(tier.rawValue)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Cloud.swift": [
       {"literal": "\"https://\\(host):\\(port)\"", "context": "public var relay: URL? { URL(string: \"https://\\(host):\\(port)\") }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
@@ -671,7 +672,19 @@
       {"literal": "\"working_tree\"", "context": "try container.encode(\"working_tree\", forKey: .kind)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"branch\"", "context": "try container.encode(\"branch\", forKey: .kind)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"branch:\\(base)\"", "context": "case .branch(let base): \"branch:\\(base)\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"timed_out\"", "context": "case timedOut = \"timed_out\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"timed_out\"", "context": "case timedOut = \"timed_out\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"CloudState\"", "context": "case cloudState = \"CloudState\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"signed_out\"", "context": "case \"signed_out\": self = .signedOut", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"connecting\"", "context": "case \"connecting\": self = .connecting", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"connected\"", "context": "case \"connected\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"retrying\"", "context": "case \"retrying\": self = .retrying", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"auth_required\"", "context": "case \"auth_required\": self = .authRequired", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"unknown cloud state \\(other)\"", "context": "codingPath: decoder.codingPath, debugDescription: \"unknown cloud state \\(other)\"))", "reason": "Decoding diagnostic for a cloud state this build does not know; not interface copy.", "count": 1},
+      {"literal": "\"signed_out\"", "context": "case .signedOut: try fields.encode(\"signed_out\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"connecting\"", "context": "case .connecting: try fields.encode(\"connecting\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"connected\"", "context": "try fields.encode(\"connected\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"retrying\"", "context": "case .retrying: try fields.encode(\"retrying\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"auth_required\"", "context": "case .authRequired: try fields.encode(\"auth_required\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift": [
       {"literal": "\"s\"", "context": "return \"\\(waiting) need you · \\(rows.count) agent\\(rows.count == 1 ? \"\" : \"s\")\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
@@ -2815,6 +2828,15 @@
       {"literal": "\"5c0a91de\"", "context": "[\"crates/amux-ui/tests/spec/pairing.rs\", \"5c0a91de\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"docs/PROTOCOL.md\"", "context": "[\"docs/PROTOCOL.md\", \"8f13c7a2\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"8f13c7a2\"", "context": "[\"docs/PROTOCOL.md\", \"8f13c7a2\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Discovery.swift": [
+      {"literal": "\"_amux._udp\"", "context": "public nonisolated static let service = \"_amux._udp\"", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
+      {"literal": "\"hid\"", "context": "guard let hid = record[\"hid\"], let host = HostId(hid),", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
+      {"literal": "\"v\"", "context": "let claimed = record[\"v\"], let version = UInt32(claimed)", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
+      {"literal": "\"\\(unscoped(address)):\\(port.rawValue)\"", "context": "return \"\\(unscoped(address)):\\(port.rawValue)\"", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
+      {"literal": "\"[\\(unscoped(address))]:\\(port.rawValue)\"", "context": "return \"[\\(unscoped(address))]:\\(port.rawValue)\"", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
+      {"literal": "\"\\(address)\"", "context": "String(\"\\(address)\".prefix { $0 != \"%\" })", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
+      {"literal": "\"%\"", "context": "String(\"\\(address)\".prefix { $0 != \"%\" })", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1}
     ]
   }
 }

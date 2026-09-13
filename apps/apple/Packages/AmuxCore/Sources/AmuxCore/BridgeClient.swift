@@ -52,6 +52,11 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
         case callback
 
         private enum Key: String, CodingKey { case Static }
+        /// The bridge's fixed credential carries the bearer and, optionally,
+        /// what the account it belongs to buys. Only a driving fixture says
+        /// the second; a real account is admitted on whatever its own token
+        /// claims, so this app never asserts a tier of its own.
+        private enum Fixed: String, CodingKey { case bearer }
 
         public init(from decoder: any Decoder) throws {
             if let text = try? decoder.singleValueContainer().decode(String.self), text == "Callback" {
@@ -59,7 +64,8 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
                 return
             }
             let container = try decoder.container(keyedBy: Key.self)
-            self = .fixed(try container.decode(String.self, forKey: .Static))
+            let fixed = try container.nestedContainer(keyedBy: Fixed.self, forKey: .Static)
+            self = .fixed(try fixed.decode(String.self, forKey: .bearer))
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -69,7 +75,8 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
                 try container.encode("Callback")
             case .fixed(let bearer):
                 var container = encoder.container(keyedBy: Key.self)
-                try container.encode(bearer, forKey: .Static)
+                var fixed = container.nestedContainer(keyedBy: Fixed.self, forKey: .Static)
+                try fixed.encode(bearer, forKey: .bearer)
             }
         }
     }
@@ -267,6 +274,23 @@ public final class BridgeClient: Sendable {
         state.withLock { state in
             guard let handle = state.handle else { return }
             amux_app_set_active(handle, active)
+        }
+    }
+
+    /// Hands over every machine this phone's browser can currently see.
+    ///
+    /// The whole set, not a change to it: a machine that has gone is a machine
+    /// missing from the set, and an empty set is how the app says it can see
+    /// nothing. Nothing in the shared library asks the system for the network,
+    /// because on iOS only the system may, so this is the only way it learns
+    /// what is nearby.
+    public func discovered(_ hosts: [FoundHost]) {
+        guard let json = try? AmuxJSON.encoder.encode(hosts) else { return }
+        state.withLock { state in
+            guard let handle = state.handle else { return }
+            String(decoding: json, as: UTF8.self).withCString { found in
+                amux_app_discovered(handle, found)
+            }
         }
     }
 

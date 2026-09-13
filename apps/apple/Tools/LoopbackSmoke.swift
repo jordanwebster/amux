@@ -106,7 +106,7 @@ private func smoke() throws {
         "log_path": root.appendingPathComponent("amux.log").path,
         "device_name": "simulator-loopback",
         "relay": ["url": "http://\(arguments[1])", "tls": "PlainLoopback"],
-        "accounts": [["id": "personal", "token": ["Static": arguments[2]]]],
+        "accounts": [["id": "personal", "token": ["Static": ["bearer": arguments[2]]]]],
         "active": "personal"
     ]
     let json = String(decoding: try JSONSerialization.data(withJSONObject: config), as: UTF8.self)

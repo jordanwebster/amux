@@ -24,9 +24,18 @@ DEBUG_SYMBOLS = (
 )
 FORBIDDEN_APIS = (
     "UNUserNotificationCenter", "requestAuthorizationWithOptions",
-    "ActivityKit", "ActivityAuthorizationInfo", "NWBrowser", "nw_browser_create",
+    "ActivityKit", "ActivityAuthorizationInfo",
+    # The app browses the local network through Network.framework and nothing
+    # else. The two legacy Bonjour entry points stay refused: they reach the
+    # same multicast without the system's own permission prompt in front of
+    # them, so code that used one would be browsing where nobody was asked.
     "DNSServiceBrowse", "NSNetServiceBrowser",
 )
+# The one service this app may look for, and the sentence the system shows
+# when it asks. A declaration for anything else is scope nobody agreed to.
+BONJOUR_SERVICES = ["_amux._udp"]
+LOCAL_NETWORK_PURPOSE = ("amux finds hosts on your network so this phone can "
+                         "pair and connect to them directly.")
 FORBIDDEN_ROWS = ("Live Activity", "Live Activities", "Mute", "Notifications")
 # Resources that only the driving and capture tools need. Code that reads them
 # is caught by the symbol list above, but a resource can be carried into the
@@ -112,8 +121,16 @@ def bundle_violations(info: dict, entitlements: dict, settings: dict,
     failures = icon_violations(info, bundle) + resource_violations(bundle)
     if "aps-environment" in entitlements:
         failures.append("push entitlement: aps-environment")
-    if "NSBonjourServices" in info:
-        failures.append("Bonjour services declared")
+    # Required as well as bounded. Without the declaration iOS answers the
+    # app's browser with nothing, and a phone on the same network as a machine
+    # reports finding none — which looks like an empty network, not a bundle
+    # built wrong, so nothing downstream would catch it.
+    if info.get("NSBonjourServices") != BONJOUR_SERVICES:
+        failures.append("Bonjour must be declared for exactly "
+                        f"{BONJOUR_SERVICES}, not {info.get('NSBonjourServices')}")
+    if info.get("NSLocalNetworkUsageDescription") != LOCAL_NETWORK_PURPOSE:
+        failures.append("the local network is browsed without the agreed "
+                        "explanation in Info.plist")
     if info.get("UIDeviceFamily") != [1]:
         failures.append("bundle device family must be iPhone only")
     if settings.get("TARGETED_DEVICE_FAMILY") != "1":
@@ -237,7 +254,8 @@ def main() -> None:
                   f"and a {'x'.join(map(str, png_size(APP / 'AppIcon60x60@2x.png')))} iPhone icon in the bundle.",
                   "PASS: no frozen-frame or test-support resource in the bundle.",
                   "PASS: no push authorization, Live Activity, Mute or Notifications row;",
-                  "no Bonjour declaration or network browser; iPhone destinations only;",
+                  f"Bonjour limited to {' '.join(BONJOUR_SERVICES)} behind the agreed explanation "
+                  "and no legacy browser; iPhone destinations only;",
                   "no amuxcloud or React Native package; no driving or report-capture code.",
                   "PASS: in-app attention copy and Contact Support remain."]
     lines += ["Limit: simulator Release bundle inspection; distribution signing is checked before release."]

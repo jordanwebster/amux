@@ -1,3 +1,44 @@
+2026-09-13 — **The phone browses its own network, and the release audit says
+how far that reaches.** The app now looks for amux hosts on the network it is
+on, through the one system browser an iPhone is allowed to use, and hands the
+whole resolved set to the shared library — which asks the system for nothing,
+because on a phone it may not. Bonjour gives a name and a port and never an
+address, so each advertisement is resolved by opening the connection the system
+resolves it for, reading the address it settled on and dropping it again. A
+link-local address is passed over: it means nothing without the interface it was
+learned on, and an address that has to travel to the library has nowhere to
+carry one.
+
+Browsing belongs to the foreground and stops when the phone is put away.
+Stopping withdraws nothing: the library is told separately that the app went
+away and closes its direct links itself, so coming back dials the machines it
+already knew about instead of showing an empty network until the browser has
+found the same ones a second time. The set outlives the connection too — signing
+in or switching accounts builds a new runtime, and the machines on this network
+did not go anywhere when it did.
+
+Being refused the network is told apart from being on a network with nothing on
+it. The one DNS code that means a person said no is read off the browser's own
+state, so a screen can explain a refusal rather than report an empty result.
+
+The release audit follows the scope rather than guarding a boundary that has
+moved. Network.framework's browser is now expected in the binary; the two legacy
+Bonjour entry points stay refused, because they reach the same multicast without
+the system's permission prompt in front of them. The bundle must declare Bonjour
+for amux's own service and no other, behind the exact sentence a person reads
+before answering. Requiring it, and not merely bounding it, is deliberate: iOS
+answers an undeclared browser with nothing, so a bundle built without the
+declaration would find no machines on a network full of them and look like an
+empty network rather than a mistake.
+
+Three smaller repairs came with it. The bridge's fixed credential grew a field
+when an account's tier moved onto its token, and the phone, the linkage smoke
+and the loopback smoke were all still writing the old one-string shape, so a
+runtime started with a fixed credential refused to start at all. The catalogue of
+reviewed literals picks up the cloud-state wire tags and the reworked token
+callback. And the app's Info.plist is generated from the project description, so
+the two new keys are declared there.
+
 2026-09-13 — **A phone is offered the machines its own browser found, and a
 refusal says which of two things happened.** A phone may not browse the local
 network itself: the system browses and the app is told, so the bridge takes the
