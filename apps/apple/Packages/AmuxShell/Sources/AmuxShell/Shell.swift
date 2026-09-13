@@ -616,6 +616,13 @@ private struct HostsTabRoot: View {
             // Revoking goes nowhere: the list it happens on is the list it
             // changes, and the machine leaves it when the runtime says so.
             case .revoke(let host): stores.revoke(host)
+            // A local network this phone refused is granted back in the
+            // system's settings and nowhere else: iOS asks once, and this app
+            // has no second ask to offer.
+            case .openSystemSettings:
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
             }
         }
         // The screen draws its own header, so the bar would be a second one.

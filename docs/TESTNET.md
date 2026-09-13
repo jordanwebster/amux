@@ -153,7 +153,7 @@ sentence, and adding a verb means adding the method first.
 | `{"StartPinPairing":{"daemon":"desktop","ttl_secs":30}}` | Start PIN pairing with a TTL of 1–3,600 seconds; return the six-digit `pin`. |
 | `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, naming the configured cloud identity. |
 | `{"Latency":{"millis":100}}` | Delay each newly received TCP chunk entering the relay by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
-| `{"Announce":{"daemon":"workstation"}}` | Put the machine on this network, as an advertisement a browsing device resolves. Nothing is trusted by it: what a browser gets is a name, an identity claim and addresses to try. |
+| `{"Announce":{"daemon":"workstation"}}` | Put the machine on this network, as an advertisement a browsing device resolves, and return that advertisement in `found` as `{"host","name","version","addrs"}`. Nothing is trusted by it: what a browser gets is a name, an identity claim and addresses to try. A device that cannot browse this network itself — a simulator, whose browser looks at the machine's real network — is told what is on it from `found`. |
 | `{"Withdraw":{"daemon":"workstation"}}` | Take it off again, the way a machine going away says goodbye. |
 | `{"Tier":{"user":"personal","tier":"pro"}}` | Change what a declared account buys, from the next token it is issued. Links already up keep the tier they were admitted on until they re-authenticate, which is what makes the change observable rather than instantaneous. |
 | `{"UdpBlocked":{"daemon":"phone","blocked":true}}` | Eat or restore every direct UDP datagram involving the machine — the network a phone on a hotel connection is on. |
@@ -164,7 +164,7 @@ sentence, and adding a verb means adding the method first.
 An acknowledgement always has the same shape; unused fields are null or empty:
 
 ```json
-{"Ack":{"pin":null,"qr":null,"observed":[],"sdk_inputs":[],"connections":2,"links":[],"agents":[],"devices":[]}}
+{"Ack":{"pin":null,"qr":null,"observed":[],"sdk_inputs":[],"connections":2,"links":[],"agents":[],"devices":[],"found":null}}
 ```
 
 Replay the control protocol and its independent daemon observations with

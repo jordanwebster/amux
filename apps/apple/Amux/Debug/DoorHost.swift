@@ -299,6 +299,18 @@ final class DoorHost {
             return attach(to: agent, kind: kind, name: name, mime: mime, base64: base64)
         case .pair(let qr): return await pair(with: qr)
         case .pairByCode(let host, let pin): return await pair(with: pin, on: host)
+        case .found(let hosts):
+            guard let coordinator else { return .error("this app has no runtime of its own") }
+            coordinator.discovered(hosts)
+            return .ack
+        case .localNetwork(let permission):
+            guard let coordinator else { return .error("this app has no runtime of its own") }
+            switch permission {
+            case "granted": coordinator.localNetwork(.granted)
+            case "denied": coordinator.localNetwork(.denied)
+            default: return .error("no local network answer called \(permission)")
+            }
+            return .ack
         case .revoke(let host): return revoke(host)
         case .send(let agent, let text): return send(text, to: agent)
         case .sendDraft(let agent, let prose): return sendDraft(prose, to: agent)

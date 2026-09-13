@@ -8,11 +8,19 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     public var data_dir: String
     public var cache_dir: String
     public var device_name: String
-    public var relay: Relay
+    /// The relay this phone reaches its account's machines through, where
+    /// there is one. A phone nobody has signed in on has none: it finds the
+    /// machines on its own network and dials them directly, and a relay is
+    /// what an account adds.
+    public var relay: Relay?
     /// Every account this phone is signed in to, in the order the switcher
-    /// lists them, and which of them is on screen.
+    /// lists them, and which of them is on screen. Empty is a phone nobody
+    /// has signed in on, which is a phone that works.
     public var accounts: [Account]
-    public var active: String
+    /// Which account is on screen, or the one this phone was last signed in
+    /// as. Signing out leaves that account's machines on screen rather than
+    /// emptying the app, so the name outlives the credential.
+    public var active: String?
     public var log_path: String
     /// One callback batch per display frame by default.
     public var frame_interval_ns: UInt64
@@ -82,8 +90,8 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     }
 
     public init(
-        dataDirectory: URL, cacheDirectory: URL, deviceName: String, relay: Relay,
-        accounts: [Account], active: String,
+        dataDirectory: URL, cacheDirectory: URL, deviceName: String, relay: Relay?,
+        accounts: [Account], active: String?,
         logPath: URL, frameIntervalNanoseconds: UInt64 = 16_666_667
     ) {
         self.data_dir = dataDirectory.path

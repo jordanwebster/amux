@@ -15,6 +15,10 @@
       {"literal": "\"probe-home\"", "context": "if name == \"probe-home\" {", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
+      {"literal": "\"this app has no runtime of its own\"", "context": "guard let coordinator else { return .error(\"this app has no runtime of its own\") }", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 2},
+      {"literal": "\"granted\"", "context": "case \"granted\": coordinator.localNetwork(.granted)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"denied\"", "context": "case \"denied\": coordinator.localNetwork(.denied)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"no local network answer called \\(permission)\"", "context": "default: return .error(\"no local network answer called \\(permission)\")", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 1},
       {"literal": "\"amux-cloud-script\"", "context": "if let json = Self.said(\"amux-cloud-script\"),", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"door\"", "context": "private(set) var stores = StoreBundle(account: AccountId(\"door\"), clock: { Scenario.reading })", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"no conversation is open with \\(agent)\"", "context": "else { return .error(\"no conversation is open with \\(agent)\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 2},
@@ -794,7 +798,7 @@
       {"literal": "\"http\"", "context": "address.scheme = \"http\"", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
       {"literal": "\"localhost\"", "context": "if host == \"localhost\" { address.host = \"127.0.0.1\" }", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
       {"literal": "\"127.0.0.1\"", "context": "if host == \"localhost\" { address.host = \"127.0.0.1\" }", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
-      {"literal": "\"runtime.log\"", "context": "}, active: account.value, logPath: support.appendingPathComponent(\"runtime.log\"))", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
+      {"literal": "\"runtime.log\"", "context": "logPath: support.appendingPathComponent(\"runtime.log\"))", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
       {"literal": "\".\"", "context": "let octets = host.split(separator: \".\", omittingEmptySubsequences: false)", "reason": "Debug session-import diagnostic or relay address syntax; not app interface copy.", "count": 1},
       {"literal": "\"127\"", "context": "|| octets.count == 4 && octets.first == \"127\" && octets.allSatisfy { UInt8($0) != nil }", "reason": "Debug session-import diagnostic or relay address syntax; not app interface copy.", "count": 1}
     ],
@@ -1438,6 +1442,8 @@
       {"literal": "\"conversation.child.\\(child.id)\"", "context": ".identified(\"conversation.child.\\(child.id)\", label: spoken(child))", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift": [
+      {"literal": "\"hosts.localNetwork.settings\"", "context": ".identified(\"hosts.localNetwork.settings\", label: \"Open Settings\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"hosts.localNetwork.refused\"", "context": ".identified(\"hosts.localNetwork.refused\", value: \"amux cannot see this network\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts\"", "context": ".identified(\"hosts\", value: subtitle)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.title\"", "context": ".identified(\"hosts.title\", value: \"Hosts\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.subtitle\"", "context": ".identified(\"hosts.subtitle\", value: subtitle)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1755,6 +1761,10 @@
       {"literal": "\"shell\"", "context": ".reported(\"shell\", value: router.tab.rawValue)", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Door.swift": [
+      {"literal": "\"found\"", "context": "case \"found\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"localNetwork\"", "context": "case \"localNetwork\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"found\"", "context": "try fields.encode(\"found\", forKey: .kind)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"localNetwork\"", "context": "try fields.encode(\"localNetwork\", forKey: .kind)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"amux-element-geometry\"", "context": "public static let elementGeometryArgument = \"amux-element-geometry\"", "reason": "Debug launch protocol spelling shared by the app and its UI-test driver, not displayed copy.", "count": 1},
       {"literal": "\"open\"", "context": "case \"open\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"cloud\"", "context": "case \"cloud\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},

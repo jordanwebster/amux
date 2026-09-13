@@ -1,6 +1,20 @@
 {
   "journeys": [
     {
+      "id": "onramp",
+      "stage": 4,
+      "topology": "e2e-tests/topologies/onramp.json",
+      "acts": [
+        "first-run",
+        "found-host",
+        "code-entry",
+        "paired",
+        "withdrawn-and-back",
+        "permission-refused"
+      ],
+      "claim": "A phone with no account, no relay and no subscription, and one machine the runner is really running on its own network. The phone opens on nothing; the machine puts itself on the network and the phone offers it by name with one thing to do about it; six digits the machine printed reach the machine's own name and the whole of its key, and trusting it leaves the machine holding exactly one device and the phone reading what it is running \u2014 with nobody signed in throughout, so every byte of that arrived over a link this phone opened to an address a browser resolved. The machine then leaves the network, goodbye and all, and the phone says so; it comes back and the phone reaches it again without anybody pressing anything. And a phone whose owner refused to let it look at the network is told that is what happened, and where it is undone."
+    },
+    {
       "id": "home-coldstart",
       "stage": 5,
       "topology": "e2e-tests/topologies/two-hosts.json",

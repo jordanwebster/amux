@@ -299,15 +299,21 @@ impl TestNet {
         names.map(|name| self.daemon(name))
     }
 
-    /// Emits a resolved advertisement for a daemon on this test network.
-    pub fn announce(&self, daemon: &Daemon) {
-        self.announce_as(daemon, daemon.host_id());
+    /// Emits a resolved advertisement for a daemon on this test network, and
+    /// answers with what a device browsing this network would resolve.
+    ///
+    /// Handing the advertisement back is what lets a device that cannot browse
+    /// this network itself — a simulator, whose browser looks at the machine's
+    /// real network rather than at this one — be told the same name, claim and
+    /// addresses a browser would have found.
+    pub fn announce(&self, daemon: &Daemon) -> Advertisement {
+        self.announce_as(daemon, daemon.host_id())
     }
 
     /// Emits an untrusted advertisement whose claimed host id differs from
     /// the listener's identity. This models a LAN spoof at the TLS boundary.
-    pub fn announce_as(&self, daemon: &Daemon, claimed_host_id: node::HostId) {
-        self.inner.discovery.announce_unchecked(Advertisement {
+    pub fn announce_as(&self, daemon: &Daemon, claimed_host_id: node::HostId) -> Advertisement {
+        let advertisement = Advertisement {
             host_id: claimed_host_id,
             name: daemon.name().to_string(),
             version: node::PROTOCOL_VERSION,
@@ -317,7 +323,11 @@ impl TestNet {
                     .direct_addr
                     .expect("cannot announce a profile whose LAN listener is off"),
             ],
-        });
+        };
+        self.inner
+            .discovery
+            .announce_unchecked(advertisement.clone());
+        advertisement
     }
 
     /// Emits a goodbye for a daemon on this test network.

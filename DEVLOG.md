@@ -1,3 +1,42 @@
+2026-09-13 — **The phone runs with nobody signed in, and the story of one
+machine on one network is told end to end.** The app used to hold a connection
+only for an account: with nobody signed in it started no runtime at all, so a
+phone out of its box could find nothing and pair with nothing. It now starts one
+either way. Without an account there is no relay in its configuration and no
+account in its list, and what that runtime says goes to the stores a signed-out
+phone draws from rather than through the account registry, whose job — keeping
+one account's answers off another account's screen — has nothing to decide about
+a phone that has no accounts.
+
+A runtime with no relay reports that it is not on one, which reads on the wire
+exactly like a worker that stopped. The coordinator used to take that as a dead
+worker and tear the runtime down seconds after starting it; now only a runtime
+that was given a relay can be understood to have stopped reaching it.
+
+Being refused the local network reaches the screen. The browser's answer is kept
+by the thing that outlives every browser the phone starts — a refusal does not
+go away when the app is put away — and the Hosts tab says what happened and
+offers the one place it can be undone, because iOS asks once and an app that was
+refused can never ask again.
+
+Underneath that is a journey: a phone with no account, no relay and no
+subscription, against one machine a test network is really running. It opens on
+nothing; the machine announces itself and the phone offers it by name with one
+thing to do about it; six digits the machine printed reach that machine's own
+name and the whole of its key, and trusting it leaves the machine holding exactly
+one device and the phone reading what it is running. The machine then says
+goodbye and stops answering where it had advertised, and the phone says it is
+offline; it comes back and the phone reaches it again with nobody pressing
+anything.
+
+Two of the phone's faculties are stood in for, and both because they are the
+system's rather than the app's. Only the system may browse, and a simulator's
+browser looks at the Mac's real network instead of the one under test — so the
+test network now answers an announcement with the advertisement it just put up,
+and the app is handed that through the same door its own browser goes through.
+And iOS asks about the local network once and remembers, so the refusal is said
+to the app rather than provoked.
+
 2026-09-13 — **The phone browses its own network, and the release audit says
 how far that reaches.** The app now looks for amux hosts on the network it is
 on, through the one system browser an iPhone is allowed to use, and hands the

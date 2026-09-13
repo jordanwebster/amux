@@ -95,6 +95,11 @@ final class Composition {
         coordinator.discovery = LocalDiscovery { [weak coordinator] hosts in
             coordinator?.discovered(hosts)
         }
+        // The stores this app draws with nobody signed in are the same ones
+        // the runtime writes into then. A phone without an account still finds
+        // the machines on its own network and still reaches the ones it has
+        // paired with, so there is a connection behind this screen too.
+        coordinator.signedOutStores = signedOut
         runtime = coordinator
         #if AMUX_DEBUG_TOOLS
         reports = ReportStore()

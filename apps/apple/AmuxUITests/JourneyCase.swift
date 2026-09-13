@@ -37,17 +37,27 @@ class JourneyCase: XCTestCase {
         let agent: String
         let host: String
 
-        init() throws {
+        /// - Parameter withoutAnAccount: a journey about a phone nobody has
+        ///   signed in on. There is no relay to reach, no credential to reach
+        ///   it with and no account's agent to open, so those four stand empty
+        ///   rather than the test refusing to start for want of them. The
+        ///   runner's control channel and the app's door are needed either
+        ///   way: they are how the machines are driven and how the screen is
+        ///   read.
+        init(withoutAnAccount: Bool = false) throws {
             let environment = ProcessInfo.processInfo.environment
             func required(_ name: String) throws -> String {
                 try XCTUnwrap(environment[name], "the journey did not pass \(name)")
             }
-            relay = try required("AMUX_RELAY")
-            token = try required("AMUX_TOKEN")
-            user = try required("AMUX_USER")
+            func account(_ name: String) throws -> String {
+                withoutAnAccount ? environment[name] ?? "" : try required(name)
+            }
+            relay = try account("AMUX_RELAY")
+            token = try account("AMUX_TOKEN")
+            user = try account("AMUX_USER")
             control = try required("AMUX_CONTROL")
             doorPort = try required("AMUX_DOOR_PORT")
-            agent = try required("AMUX_AGENT")
+            agent = try account("AMUX_AGENT")
             host = try required("AMUX_HOST")
         }
     }
@@ -260,6 +270,12 @@ class JourneyCase: XCTestCase {
         /// under one says so here.
         var appearance: String?
         var size: String?
+        /// Every machine a browser would resolve on the network this phone is
+        /// on, in the door's own words.
+        var hosts: [[String: Any]]?
+        /// What the system answered when this app asked to look at that
+        /// network: `granted` or `denied`.
+        var permission: String?
 
         var body: [String: Any] {
             var fields: [String: Any] = ["kind": kind]
@@ -287,6 +303,8 @@ class JourneyCase: XCTestCase {
             if let account { fields["account"] = account }
             if let appearance { fields["appearance"] = appearance }
             if let size { fields["size"] = size }
+            if let hosts { fields["hosts"] = hosts }
+            if let permission { fields["permission"] = permission }
             return fields
         }
     }

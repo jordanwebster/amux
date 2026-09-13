@@ -102,7 +102,7 @@ final class RuntimeCoordinatorTests: XCTestCase {
             for _ in 0..<1000 where clients.count < 2 { await Task.yield() }
             XCTAssertEqual(clients.count, 2)
             XCTAssertTrue(coordinator.runtime === clients.last)
-            XCTAssertEqual(configurations.last?.relay.url, "https://retry.example:443")
+            XCTAssertEqual(configurations.last?.relay?.url, "https://retry.example:443")
             let callsAfter = await cloud.calls.count
             XCTAssertGreaterThan(callsAfter, callsBefore)
             XCTAssertFalse(clients[0].commands.contains(.retryNow))
@@ -245,7 +245,7 @@ final class RuntimeCoordinatorTests: XCTestCase {
         _ = await coordinator.reconnect()
         XCTAssertEqual(clients.count, 2)
         XCTAssertTrue(clients[0].stopped)
-        XCTAssertEqual(configurations.last?.relay.url, "https://other.example:443")
+        XCTAssertEqual(configurations.last?.relay?.url, "https://other.example:443")
         let refused = await coordinator.override(relay: URL(string: "http://127.0.0.1:8080")!, tokens: [:])
         XCTAssertFalse(refused)
         XCTAssertNil(coordinator.runtime)
@@ -302,5 +302,49 @@ final class RuntimeCoordinatorTests: XCTestCase {
         // And the live one hears every later set, the empty one included.
         coordinator.discovered([])
         XCTAssertEqual(clients.last?.handedOver, [[kitchen], []])
+    }
+
+    func testAPhoneWithNobodySignedInStillRunsAndIsNotKilledBySayingItHasNoRelay() async throws {
+        // A phone without an account reaches no relay and answers for no
+        // account, and still finds and reaches the machines on its own
+        // network. A runtime with no relay reports that it is not on one,
+        // which reads on the wire exactly like a worker that stopped; only a
+        // runtime that was given a relay can have stopped reaching it.
+        let directory = root
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = AccountRegistry()
+        let signedOut = StoreBundle(account: AccountId("signed-out"))
+        var configurations: [BridgeConfiguration] = []
+        let client = ScriptedRuntime()
+        let coordinator = RuntimeCoordinator(
+            registry: registry, cloud: RelayCloud(), support: directory, cache: directory,
+            deviceName: "Phone", factory: { config, _ in
+                configurations.append(config)
+                return client
+            })
+        coordinator.signedOutStores = signedOut
+        defer { coordinator.stop() }
+        _ = await coordinator.reconnect()
+
+        XCTAssertTrue(coordinator.runtime === client, "a phone with no account started no runtime")
+        XCTAssertNil(coordinator.runtimeAccount)
+        XCTAssertNil(configurations.last?.relay)
+        XCTAssertEqual(configurations.last?.accounts, [])
+        XCTAssertNil(configurations.last?.active)
+
+        client.replies.yield([.connection(.init(state: .disconnected, reason: .stopped))])
+        let kitchen = HostEntry(id: HostId(UUID()), name: "kitchen", online: false,
+                                trustStatus: .untrustedButOnline)
+        client.replies.yield([.discovered([kitchen])])
+        for _ in 0..<1000 where signedOut.hosts.discovered.isEmpty { await Task.yield() }
+        XCTAssertTrue(coordinator.runtime === client,
+                      "a runtime that never had a relay was taken for a dead one")
+        XCTAssertNil(coordinator.failure)
+        XCTAssertEqual(signedOut.hosts.discovered.map(\.name), ["kitchen"],
+                       "what a signed-out runtime says reached no screen")
+
+        // And what the system says about the network reaches the same screen.
+        coordinator.localNetwork(.denied)
+        XCTAssertEqual(signedOut.hosts.localNetwork, .denied)
     }
 }

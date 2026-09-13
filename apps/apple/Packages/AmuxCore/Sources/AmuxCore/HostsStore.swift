@@ -29,6 +29,15 @@ public final class HostsStore {
     /// emptied by a failed read: a section that blanked itself would invite
     /// pairing again with everything still paired.
     public private(set) var roster: DeviceRoster?
+    /// Whether the system is letting this app look at the network this phone
+    /// is on.
+    ///
+    /// A person who refused is not a person on an empty network, and the two
+    /// look identical from here: no machines either way. Only this tells them
+    /// apart, so only this can decide whether the screen says there is nothing
+    /// nearby or says why it cannot look.
+    public private(set) var localNetwork: LocalNetworkPermission = .unknown
+
     /// Whether the paired devices are being read rather than counted.
     ///
     /// A screen state rather than a route, because the list is the same
@@ -97,6 +106,11 @@ public final class HostsStore {
     /// is still trusted, and the fingerprint a person compares before revoking
     /// one is not something the inventory carries.
     public var devices: [PairedDevice] { roster?.devices ?? [] }
+
+    /// What the system said about looking at this network.
+    public func sawLocalNetwork(_ permission: LocalNetworkPermission) {
+        localNetwork = permission
+    }
 
     /// Open and close the paired devices.
     public func readDevices() { readingDevices = true }

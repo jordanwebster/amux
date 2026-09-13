@@ -165,6 +165,23 @@ public enum DoorRequest: Sendable, Equatable {
     /// proves possession of one machine's offer, so the machine is found among
     /// the ones the relay is offering before its code is tried against it.
     case pairByCode(host: String, pin: String)
+    /// Hand this phone the whole set of machines a browser can see on the
+    /// network it is on, exactly as its own browser hands one over.
+    ///
+    /// Only the system may browse, and a simulator's browser looks at the
+    /// Mac's real network rather than at the one a test relay is running. So a
+    /// driver that put machines on a test network says here what a browser
+    /// would have resolved on it — the same names, claims and addresses, into
+    /// the same place the app's own browser puts them. The whole set goes over
+    /// each time: a machine that has gone is a machine missing from it.
+    case found(hosts: [FoundHost])
+    /// Say what the system answered when this app asked to look at the network.
+    ///
+    /// iOS asks once. A refusal cannot be provoked a second time, and a
+    /// simulator grants it silently, so the one state a person can be left in
+    /// — refused, with no way back inside the app — is unreachable by driving
+    /// the app alone.
+    case localNetwork(permission: String)
     /// Withdraw the key this phone holds for one machine, through the same
     /// store the paired devices sheet drives.
     ///
@@ -563,6 +580,7 @@ extension DoorRequest: Codable {
         case attachment, name, mime, base64, host, pin
         case note, marks
         case motion, transparency
+        case hosts, permission
     }
 
     public init(from decoder: any Decoder) throws {
@@ -652,6 +670,10 @@ extension DoorRequest: Codable {
             self = .pairByCode(
                 host: try fields.decode(String.self, forKey: .host),
                 pin: try fields.decode(String.self, forKey: .pin))
+        case "found":
+            self = .found(hosts: try fields.decode([FoundHost].self, forKey: .hosts))
+        case "localNetwork":
+            self = .localNetwork(permission: try fields.decode(String.self, forKey: .permission))
         case "revoke":
             self = .revoke(host: try fields.decode(String.self, forKey: .host))
         case "requestChanges":
@@ -806,6 +828,12 @@ extension DoorRequest: Codable {
             try fields.encode("pairByCode", forKey: .kind)
             try fields.encode(host, forKey: .host)
             try fields.encode(pin, forKey: .pin)
+        case .found(let hosts):
+            try fields.encode("found", forKey: .kind)
+            try fields.encode(hosts, forKey: .hosts)
+        case .localNetwork(let permission):
+            try fields.encode("localNetwork", forKey: .kind)
+            try fields.encode(permission, forKey: .permission)
         case .revoke(let host):
             try fields.encode("revoke", forKey: .kind)
             try fields.encode(host, forKey: .host)

@@ -13,6 +13,10 @@ public enum HostsAction: Equatable, Sendable {
     /// Stop trusting a machine. Destructive and immediate: what it ends is
     /// the access this phone granted, not a preference.
     case revoke(HostId)
+    /// Take the person to this app's own page in the system's settings, which
+    /// is the only place a refused local network can be granted again. The app
+    /// cannot ask a second time.
+    case openSystemSettings
 }
 
 /// The machines agents run on.
@@ -115,6 +119,7 @@ public struct HostsTab: View {
                         title: "Offline", hosts: model.offline,
                         caption: "Agents on an offline host report their state as unknown.")
                 }
+                if model.localNetwork == .denied { refusedNetwork }
                 if !model.discovered.isEmpty { offers }
                 if model.hosts.isEmpty && model.discovered.isEmpty { empty }
                 if let roster = model.roster { thisPhone(roster) }
@@ -249,6 +254,29 @@ public struct HostsTab: View {
 
     /// A phone with an account but no machines yet. It is not an error and it
     /// is not empty: it is the one step that has not happened.
+    /// Why there is nothing on this network, when the reason is that nobody
+    /// let this app look.
+    ///
+    /// Said here rather than left as an empty list, because the two are
+    /// indistinguishable on screen and only one of them is fixable: iOS asks
+    /// once and an app that was refused can never ask again, so the only way
+    /// back is the system's own settings.
+    private var refusedNetwork: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("amux cannot see this network")
+                .designFont(.bodyEmphasis, design)
+                .foregroundStyle(design.ink.color)
+            Explain("Turn on Local Network for amux in Settings to find hosts here.")
+            Button { actions(.openSystemSettings) } label: {
+                ActionLabel("Open Settings", kind: .outline)
+            }
+            .buttonStyle(.plain)
+            .identified("hosts.localNetwork.settings", label: "Open Settings")
+        }
+        .accessibilityElement(children: .contain)
+        .identified("hosts.localNetwork.refused", value: "amux cannot see this network")
+    }
+
     private var empty: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("No hosts yet")

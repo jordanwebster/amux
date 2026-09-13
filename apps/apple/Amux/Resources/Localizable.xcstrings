@@ -61,6 +61,30 @@
         }
       }
     },
+    "Turn on Local Network for amux in Settings to find hosts here.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on Local Network for amux in Settings to find hosts here."
+          }
+        }
+      }
+    },
+    "amux cannot see this network": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "amux cannot see this network"
+          }
+        }
+      }
+    },
     "in this session": {
       "comment": "English app copy. Used in Facts.swift.",
       "extractionState": "manual",

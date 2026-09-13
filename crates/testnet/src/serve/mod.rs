@@ -305,6 +305,15 @@ pub enum Reply {
         agents: Vec<InventoryAgent>,
         /// What a machine says it trusts, for an `Inventory`.
         devices: Vec<InventoryDevice>,
+        /// What a browser on this network would resolve, for an `Announce`.
+        ///
+        /// A device that cannot browse this network itself is told what is on
+        /// it from here: the name, the identity claim and the addresses the
+        /// machine just put up. Absent for every other verb.
+        ///
+        /// Boxed because every other acknowledgement carries none of it, and
+        /// an advertisement inline would widen every reply to its size.
+        found: Option<Box<FoundHost>>,
     },
     Error {
         message: String,
@@ -322,8 +331,18 @@ impl Reply {
             links: Vec::new(),
             agents: Vec::new(),
             devices: Vec::new(),
+            found: None,
         }
     }
+}
+
+/// One machine on this network, as an advertisement resolves it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FoundHost {
+    pub host: Uuid,
+    pub name: String,
+    pub version: u32,
+    pub addrs: Vec<String>,
 }
 
 fn default_cloud_url() -> String {
@@ -554,7 +573,7 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
     // A machine declared to be on this network is on it from the start, so a
     // device that browses before sending any control verb finds it there.
     for daemon in topology.daemons.iter().filter(|daemon| daemon.lan) {
-        net.announce(&net.daemon(&daemon.name));
+        let _ = net.announce(&net.daemon(&daemon.name));
     }
     for (name, script) in &topology.sdk_scripts {
         net.daemon(name).script_sdk_sessions(script.clone()).await;
@@ -735,7 +754,17 @@ async fn apply(
             ensure!(millis <= 1000, "relay latency must not exceed 1000 ms");
             net.relay_latency(millis);
         }
-        Control::Announce { daemon: name } => net.announce(&daemon(&name)?),
+        Control::Announce { daemon: name } => {
+            let advertised = net.announce(&daemon(&name)?);
+            if let Reply::Ack { found, .. } = &mut reply {
+                *found = Some(Box::new(FoundHost {
+                    host: advertised.host_id,
+                    name: advertised.name,
+                    version: advertised.version,
+                    addrs: advertised.addrs.iter().map(ToString::to_string).collect(),
+                }));
+            }
+        }
         Control::Withdraw { daemon: name } => net.withdraw(&daemon(&name)?),
         Control::Tier { user, tier } => {
             // An account the topology never declared would otherwise be
