@@ -39,6 +39,14 @@ reviewed literals picks up the cloud-state wire tags and the reworked token
 callback. And the app's Info.plist is generated from the project description, so
 the two new keys are declared there.
 
+The phone's recipes also stopped depending on which Python a shell happened to
+resolve first. Their scripts read pinned TOML with a module that arrived in
+3.11, macOS still ships 3.9, and a login shell that put the system one first
+failed the recipe on an import error naming the module rather than the
+mismatch — while the same recipe passed in an interactive shell. The
+interpreter is now chosen by asking each candidate whether it can read that
+format.
+
 2026-09-13 — **A phone is offered the machines its own browser found, and a
 refusal says which of two things happened.** A phone may not browse the local
 network itself: the system browses and the app is told, so the bridge takes the
