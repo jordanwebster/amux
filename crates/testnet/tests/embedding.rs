@@ -51,6 +51,7 @@ type Providers = Arc<Mutex<HashMap<ProfileId, Arc<HostCredentials>>>>;
 
 fn options(name: &str, providers: Providers, root: InstallationRoot) -> InstallationOptions {
     InstallationOptions {
+        discovery: None,
         relocation: Default::default(),
         root,
         settings: InstallationSettings {

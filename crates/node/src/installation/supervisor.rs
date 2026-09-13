@@ -146,6 +146,13 @@ pub struct InstallationOptions {
     pub identity_http: reqwest::Client,
     /// Optional desktop provider composition. Embedded owners leave this unset.
     pub host_factory: Option<Arc<dyn host_api::LocalAgentHostFactory>>,
+    /// Who browses this device's network, where the application does it.
+    ///
+    /// A phone may not browse the local network itself: the system browses and
+    /// the app is told, so the app hands the installation a discovery it feeds
+    /// and every profile reads that one. Left unset, each profile browses for
+    /// itself the way the platform allows.
+    pub discovery: Option<Arc<dyn crate::discovery::Discovery>>,
 }
 
 pub struct Installation {
@@ -159,13 +166,20 @@ pub(super) struct Inner {
     /// for accepted operations and prevents any new runtime from starting.
     lifecycle: RwLock<()>,
     root: PathBuf,
-    _temporary_root: Option<tempfile::TempDir>,
+    /// The directory an installation with nowhere to live made for itself,
+    /// removed when it shuts down rather than when the last handle to it goes.
+    /// Shutdown is when this installation is finished with its files, and a
+    /// screen that still holds a handle is not a reason to leave them behind.
+    temporary_root: Mutex<Option<tempfile::TempDir>>,
     settings: Arc<InstallationSettings>,
     config: InstallationConfig,
     listeners: Listeners,
     credentials: CredentialSource,
     identity_http: reqwest::Client,
     host_factory: Option<Arc<dyn host_api::LocalAgentHostFactory>>,
+    /// The application's own browser, where the application browses for this
+    /// device. Shared by every profile: they are on one network.
+    discovery: Option<Arc<dyn crate::discovery::Discovery>>,
     binding: AsyncMutex<VecDeque<binding::PendingLogin>>,
     fixtures: Option<RuntimeFixtureFactory>,
 }
@@ -437,6 +451,7 @@ impl Installation {
             credentials: CredentialSource::ProfileFiles,
             identity_http: reqwest::Client::new(),
             host_factory,
+            discovery: None,
         };
         Self::open_inner(options, Some(config), None).await
     }
@@ -520,13 +535,14 @@ impl Installation {
             }),
             lifecycle: RwLock::new(()),
             root,
-            _temporary_root: temporary_root,
+            temporary_root: Mutex::new(temporary_root),
             settings: Arc::new(options.settings),
             config,
             listeners: options.listeners,
             credentials: options.credentials,
             identity_http: options.identity_http,
             host_factory: options.host_factory,
+            discovery: options.discovery,
             binding: AsyncMutex::new(VecDeque::new()),
             fixtures,
         });
@@ -794,6 +810,8 @@ impl Installation {
     /// One device browses once. Each profile is a whole device to the machines
     /// it knows, but they are all on the same network, so what the platform
     /// found is offered to all of them and each decides what it may pair with.
+    /// Returns once every profile holds the set, so a caller that asks what it
+    /// may pair with next is answered from it.
     pub async fn hand_over_discovered(&self, found: Vec<crate::discovery::Advertisement>) {
         let slots = {
             let state = self.inner.state.lock().unwrap();
@@ -989,7 +1007,11 @@ impl Inner {
                 Some(factory) => factory(id).await,
                 None => Default::default(),
             };
-            let discovery = match fixtures.discovery.clone() {
+            let discovery = match fixtures
+                .discovery
+                .clone()
+                .or_else(|| self.discovery.clone())
+            {
                 Some(discovery) => discovery,
                 None => runtime::platform_discovery()
                     .map_err(|error| InstallationError::Unavailable(error.to_string()))?,
@@ -1365,6 +1387,8 @@ impl Inner {
         // this installation to be dropped would keep the root claimed for as
         // long as anything still held one.
         state.registry.release_root();
+        drop(state);
+        drop(self.temporary_root.lock().unwrap().take());
     }
 }
 

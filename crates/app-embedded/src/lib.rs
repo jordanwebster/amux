@@ -458,10 +458,10 @@ impl AccountAdmin for AdminSeat {
     }
     fn hand_over_discovered(&self, found: Vec<FoundHost>) -> BoxFuture<'_, ()> {
         Box::pin(async move {
-            // Only this process's own installation browses through an
-            // application. A profile of a daemon this process attached to
-            // browses the network itself, and a set found here would be a
-            // second opinion it never asked for.
+            // Only a device this process browses for has a browser to hand a
+            // set to. A profile of a daemon this process attached to browses
+            // the network itself, and a set found here would be a second
+            // opinion it never asked for.
             let Some((installation, _)) = &self.entitlement else {
                 return;
             };
@@ -595,6 +595,9 @@ impl Embedded {
     ) -> Result<Self, String> {
         let endpoint = config.endpoint()?;
         let next_id = Arc::new(AtomicU64::new(1));
+        // What this device has found is whatever the application last handed
+        // over, so the browser is the app's and every profile reads it.
+        let discovery = Arc::new(node::discovery::ScriptedDiscovery::new());
         // Which provider belongs to which profile is settled after the profile
         // exists, so the installation reads it out of this map rather than
         // being handed a provider it would have to guess an owner for.
@@ -616,6 +619,9 @@ impl Embedded {
             })),
             identity_http: reqwest::Client::new(),
             host_factory: None,
+            // The application browses this device's network; nothing here
+            // asks the system for it, because on a phone only the system may.
+            discovery: Some(discovery.clone()),
         })
         .await
         .map_err(|error| error.to_string())?;

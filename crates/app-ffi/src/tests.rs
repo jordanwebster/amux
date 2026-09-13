@@ -3609,3 +3609,253 @@ async fn signed_out_cloud_state_carries_the_tier_the_token_reply_supplied() {
     .await;
     net.shutdown().await;
 }
+
+/// Send one command and return the operation identifier it was given.
+fn command_op(handle: *mut Handle, command: Value) -> String {
+    let json = CString::new(command.to_string()).unwrap();
+    let id = unsafe { amux_app_dispatch(handle, json.as_ptr()) };
+    assert!(!id.is_null(), "a command was not dispatched");
+    let op = unsafe { CStr::from_ptr(id) }.to_str().unwrap().to_owned();
+    unsafe { amux_app_free(id) };
+    op
+}
+
+/// The outcome of a command already sent, waiting for it to come back.
+async fn outcome(
+    receive: &mut mpsc::UnboundedReceiver<Value>,
+    handle: *mut Handle,
+    token: &str,
+    op: String,
+) -> Value {
+    until(receive, handle, token, |e| {
+        e["OpResult"]["op"] == op.as_str()
+    })
+    .await["OpResult"]["outcome"]
+        .clone()
+}
+
+/// Hand the bridge the machines a browser resolved, as the whole set.
+fn hand_over(handle: *mut Handle, found: Value) {
+    let json = CString::new(found.to_string()).unwrap();
+    unsafe { amux_app_discovered(handle, json.as_ptr()) };
+}
+
+/// One machine as a phone's browser would report it.
+fn advertisement(host: &testnet::Daemon) -> Value {
+    json!({
+        "host": host.host_id().to_string(),
+        "name": host.name(),
+        "version": node::PROTOCOL_VERSION,
+        "addrs": [host.direct_addr().to_string()],
+    })
+}
+
+/// The machines a batch offered to pair with, by name.
+fn candidate_names(event: &Value) -> Vec<String> {
+    event["Discovered"]["hosts"]
+        .as_array()
+        .map(|hosts| {
+            hosts
+                .iter()
+                .map(|host| host["name"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A machine found on this network is something to pair with, not a host: it
+/// appears as an offer naming the route and the addresses an attempt would
+/// use, and it stops being offered the moment the browser stops seeing it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovered_a_handed_over_machine_is_offered_and_withdrawn_with_the_browser() {
+    let net = TestNet::builder().daemon("workstation").start().await;
+    let host = net.daemon("workstation");
+    let root = test_root();
+
+    running(
+        &signed_out_config(root.path()),
+        "",
+        async |handle, receive, captured| {
+            // Nothing has been handed over, so there is nothing to offer.
+            let from = mark(captured);
+            hand_over(handle, json!([advertisement(&host)]));
+            let offered = seen(receive, captured, from, handle, |e| {
+                !candidate_names(e).is_empty()
+            })
+            .await;
+            assert_eq!(candidate_names(&offered), vec!["workstation".to_owned()]);
+            let candidate = &offered["Discovered"]["hosts"][0];
+            assert_eq!(candidate["id"], json!(host.host_id().to_string()));
+            assert_eq!(
+                candidate["via"],
+                json!("direct"),
+                "a machine found on this network is reached directly: {offered}"
+            );
+            assert_eq!(
+                candidate["addrs"],
+                json!([host.direct_addr().to_string()]),
+                "an offer says where an attempt would dial: {offered}"
+            );
+            assert_eq!(
+                candidate["trust_status"], "untrusted_but_online",
+                "an offer is not a host: {offered}"
+            );
+            println!("Found on this network at the C callback: {offered}");
+
+            // The browser can no longer see it. A set with the machine
+            // missing is how that is said, and the offer goes with it.
+            let from = mark(captured);
+            hand_over(handle, json!([]));
+            let gone = seen(receive, captured, from, handle, |e| {
+                e.get("Discovered").is_some() && candidate_names(e).is_empty()
+            })
+            .await;
+            assert_eq!(candidate_names(&gone), Vec::<String>::new());
+            println!("Withdrawn from this network at the C callback: {gone}");
+        },
+    )
+    .await;
+    net.shutdown().await;
+}
+
+/// A code entered against a found machine is authenticated at the addresses
+/// the offer carried, and the machine that was an offer becomes a host this
+/// device reaches directly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovered_a_machine_is_dialed_directly_once_it_is_trusted() {
+    let net = TestNet::builder().daemon("workstation").start().await;
+    let host = net.daemon("workstation");
+    let root = test_root();
+
+    running(
+        &signed_out_config(root.path()),
+        "",
+        async |handle, receive, captured| {
+            let from = mark(captured);
+            hand_over(handle, json!([advertisement(&host)]));
+            let offered = seen(receive, captured, from, handle, |e| {
+                !candidate_names(e).is_empty()
+            })
+            .await;
+            assert_eq!(candidate_names(&offered), vec!["workstation".to_owned()]);
+
+            let pin = host
+                .pairing_admin()
+                .await
+                .start_pin_pairing()
+                .await
+                .unwrap();
+            let client::PairingSecret::Pin(pin) = pin.secret else {
+                panic!("PIN pairing returned a QR secret")
+            };
+            let begin = command_op(
+                handle,
+                json!({
+                    "command": "begin_pair_pin",
+                    "host": host.host_id().to_string(),
+                    "pin": pin,
+                }),
+            );
+            let pending = outcome(receive, handle, "", begin).await;
+            assert_eq!(
+                pending["outcome"], "pairing_pending",
+                "a code entered against a found machine authenticated: {pending}"
+            );
+            let confirm = command_op(
+                handle,
+                json!({
+                    "command": "confirm",
+                    "pending": pending["pending"].as_str().unwrap(),
+                }),
+            );
+            let confirmed = outcome(receive, handle, "", confirm).await;
+            assert_eq!(confirmed["outcome"], "paired", "{confirmed}");
+
+            // It is a host now, reached over this network, and no longer an
+            // offer to pair with.
+            let fleet = seen(receive, captured, 0, handle, |e| {
+                e["Fleet"]["hosts"]
+                    .as_array()
+                    .is_some_and(|hosts| hosts.iter().any(|h| h["entry"]["via"] == "direct"))
+            })
+            .await;
+            let entry = &fleet["Fleet"]["hosts"][0]["entry"];
+            assert_eq!(entry["id"], json!(host.host_id().to_string()));
+            assert_eq!(entry["via"], json!("direct"), "{fleet}");
+            let offers = seen(receive, captured, 0, handle, |e| {
+                e.get("Discovered").is_some() && candidate_names(e).is_empty()
+            })
+            .await;
+            assert_eq!(
+                candidate_names(&offers),
+                Vec::<String>::new(),
+                "a trusted machine is a host, not an offer: {offers}"
+            );
+            println!("Dialled directly after pairing on this network: {fleet}");
+        },
+    )
+    .await;
+    net.shutdown().await;
+}
+
+/// A machine only the relay can reach, on an account that has not paid for
+/// the relay, is refused with the one reason a person can act on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovered_pairing_a_relay_only_machine_on_a_free_account_asks_for_a_subscription() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_only()
+        .cloud_user("owner")
+        .start()
+        .await;
+    let host = net.daemon("workstation");
+    let (_, token) = net.user_credentials("owner");
+    // What the account buys is the relay's to decide, and this one has not
+    // bought the tunnel a pairing attempt would ride.
+    net.cloud_user_tier("owner", model::Tier::Free);
+    let root = test_root();
+    let config = config(
+        root.path(),
+        format!("http://{}", net.relay_addr()),
+        json!({"Static":{"bearer":token,"tier":"free"}}),
+    );
+
+    running(&config, &token, async |handle, receive, captured| {
+        // The phone learns of the machine through the relay: it is nowhere
+        // near this network, and an offer is what a screen would show.
+        let offered = seen(receive, captured, 0, handle, |e| {
+            !candidate_names(e).is_empty()
+        })
+        .await;
+        assert_eq!(candidate_names(&offered), vec!["workstation".to_owned()]);
+        assert_eq!(offered["Discovered"]["hosts"][0]["via"], json!("relay"));
+        println!("Seen through the relay at the C callback: {offered}");
+        let pin = host
+            .pairing_admin()
+            .await
+            .start_pin_pairing()
+            .await
+            .unwrap();
+        let client::PairingSecret::Pin(pin) = pin.secret else {
+            panic!("PIN pairing returned a QR secret")
+        };
+        let begin = command_op(
+            handle,
+            json!({
+                "command": "begin_pair_pin",
+                "host": host.host_id().to_string(),
+                "pin": pin,
+            }),
+        );
+        let refused = outcome(receive, handle, &token, begin).await;
+        assert_eq!(
+            refused,
+            json!({"outcome": "pairing_refused", "reason": "subscription_required"}),
+            "a machine only a paid relay could reach must say so"
+        );
+        println!("Refused for want of a subscription at the C callback: {refused}");
+    })
+    .await;
+    net.shutdown().await;
+}

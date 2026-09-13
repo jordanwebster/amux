@@ -139,6 +139,25 @@ impl FoundHosts {
         self.hosts.write().unwrap().remove(&host_id);
     }
 
+    /// Replaces the whole set with what one browse resolved.
+    ///
+    /// A browser that reports a set has no separate word for a machine that
+    /// left, so what is missing from the set is what is gone.
+    pub fn hand_over(&self, found: Vec<Advertisement>) {
+        let now = Instant::now();
+        let mut hosts = self.hosts.write().unwrap();
+        hosts.retain(|host_id, _| found.iter().any(|advert| advert.host_id == *host_id));
+        for advert in found {
+            hosts.insert(
+                advert.host_id,
+                FoundHost {
+                    advert,
+                    last_seen: now,
+                },
+            );
+        }
+    }
+
     /// Returns found hosts with the most recently resolved first.
     pub fn candidates(&self) -> Vec<Advertisement> {
         let mut hosts = self

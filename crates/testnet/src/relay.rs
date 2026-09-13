@@ -280,15 +280,20 @@ impl CloudRelay {
     }
 
     pub(crate) fn set_user_tier(&self, label: &str, tier: node::Tier) {
-        let user_id = if label == "default" {
-            self.user_id
+        let (user_id, token) = if label == "default" {
+            (self.user_id, self.token.clone())
         } else {
-            self.credentials_for_user(label).0
+            self.credentials_for_user(label)
         };
         self.user_tiers
             .write()
             .expect("testnet user tier registry poisoned")
             .insert(user_id, tier);
+        // The account's own bearer is re-minted at the new tier, so a device
+        // that authenticates with it afterwards is admitted on what the
+        // account now buys. Links already up keep the tier they were admitted
+        // on: admission is settled once, when a link connects.
+        self.register_token_with_tier(&token, user_id, DEFAULT_TOKEN_TTL, tier);
     }
 }
 
@@ -545,22 +550,27 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn changed_cloud_user_tier_is_minted_into_subsequent_tokens() {
+    async fn changed_cloud_user_tier_is_minted_into_this_accounts_tokens() {
         let relay = CloudRelay::start().await;
-        let (user_id, _) = relay.credentials_for_user("alice");
+        let (user_id, token) = relay.credentials_for_user("alice");
 
         relay.set_user_tier("alice", node::Tier::Free);
         relay.register_token("after-tier-change", user_id, DEFAULT_TOKEN_TTL);
 
-        assert_eq!(
+        let tier_of = |token: &str| {
             relay
                 .tokens
                 .read()
                 .unwrap()
-                .get("after-tier-change")
-                .unwrap()
-                .tier,
-            node::Tier::Free
+                .get(token)
+                .expect("a registered token")
+                .tier
+        };
+        assert_eq!(tier_of("after-tier-change"), node::Tier::Free);
+        assert_eq!(
+            tier_of(&token),
+            node::Tier::Free,
+            "the account's own bearer is what a client that has one keeps using"
         );
     }
 }

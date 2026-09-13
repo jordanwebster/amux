@@ -485,6 +485,10 @@ impl WatchProbe {
 
 fn options(name: &str, root: InstallationRoot, embedded: bool) -> InstallationOptions {
     InstallationOptions {
+        // A testnet installation is handed its discovery per profile through
+        // the runtime fixtures below, which is a finer grain than one browser
+        // for the whole device.
+        discovery: None,
         relocation: Default::default(),
         root,
         listeners: if embedded {

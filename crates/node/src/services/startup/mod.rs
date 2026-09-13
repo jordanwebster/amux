@@ -752,6 +752,10 @@ impl StartedUserServices {
         self.reachability_links.close_direct_links().await;
     }
 
+    pub fn hand_over_found(&self, found: Vec<crate::discovery::Advertisement>) {
+        self.reachability_links.hand_over_found(found);
+    }
+
     pub fn resume_direct_links(&self) -> Vec<JoinHandle<()>> {
         self.reachability_links.resume_direct_links()
     }

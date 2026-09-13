@@ -5,6 +5,7 @@ use super::*;
 
 fn options(root: InstallationRoot, listeners: Listeners) -> InstallationOptions {
     InstallationOptions {
+        discovery: None,
         relocation: Default::default(),
         root,
         listeners,

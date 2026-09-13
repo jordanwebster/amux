@@ -270,6 +270,7 @@ mod tests {
 
             let root = testnet::identity::short_installation_root();
             let installation = node::Installation::open(node::InstallationOptions {
+                discovery: None,
                 relocation: Default::default(),
                 root: node::InstallationRoot::OnDisk(root.path().into()),
                 settings: node::InstallationSettings {

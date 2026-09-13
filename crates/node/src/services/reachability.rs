@@ -305,6 +305,18 @@ impl ReachabilityLinkConnector {
             .unwrap_or_default()
     }
 
+    /// Records the whole set an outside browser resolved, so a caller that
+    /// hands one over and then asks what it may pair with is answered from
+    /// that set rather than from whatever the browse task has caught up with.
+    pub(crate) fn hand_over_found(&self, found: Vec<crate::discovery::Advertisement>) {
+        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
+            return;
+        };
+        if let Some(runtime) = inner.context.runtime.lock().unwrap().as_ref() {
+            runtime.found_hosts.hand_over(found);
+        }
+    }
+
     pub fn found_addrs(&self, peer: HostId) -> Vec<std::net::SocketAddr> {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return Vec::new();

@@ -561,10 +561,15 @@ impl ProfileRuntime {
         self.services.rebind_direct_quic(socket)
     }
 
-    /// Hands this profile the machines an outside browser resolved. What the
-    /// discovery makes of it is its own: a profile that browses for itself
-    /// ignores a set somebody else found.
+    /// Hands this profile the machines an outside browser resolved.
+    ///
+    /// Recorded as this profile's found set at once and offered to discovery,
+    /// which is what dials the new ones. Both, because a caller that hands a
+    /// set over and immediately asks what it may pair with must be answered
+    /// from the set it just gave rather than from whatever the browse task
+    /// has caught up with.
     pub fn hand_over_discovered(&self, found: Vec<crate::discovery::Advertisement>) {
+        self.services.hand_over_found(found.clone());
         self.discovery.hand_over(found);
     }
 

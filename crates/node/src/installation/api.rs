@@ -23,6 +23,7 @@ impl CredentialProvider for NoCredentials {
 
 fn options(root: &std::path::Path) -> InstallationOptions {
     InstallationOptions {
+        discovery: None,
         relocation: Default::default(),
         root: InstallationRoot::OnDisk(root.into()),
         settings: InstallationSettings {

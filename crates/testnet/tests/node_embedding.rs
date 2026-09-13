@@ -466,6 +466,7 @@ async fn hosted_installation(config: &Config) -> (Installation, node::installati
 
 fn installation_options(config: &Config, listeners: Listeners) -> InstallationOptions {
     InstallationOptions {
+        discovery: None,
         relocation: Default::default(),
         root: InstallationRoot::OnDisk(config.state_path.parent().unwrap().join("installation")),
         settings: InstallationSettings {

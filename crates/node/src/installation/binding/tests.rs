@@ -231,6 +231,7 @@ fn options_with_credentials(
     credentials: CredentialSource,
 ) -> InstallationOptions {
     InstallationOptions {
+        discovery: None,
         relocation: Default::default(),
         root,
         listeners: Listeners::InProcessOnly,

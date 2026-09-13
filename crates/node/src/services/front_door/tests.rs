@@ -30,6 +30,7 @@ async fn front(listeners: Listeners) -> (FrontDoor, tempfile::TempDir) {
     let root = crate::test_fixtures::short_installation_root();
     let installation = Arc::new(
         Installation::open(InstallationOptions {
+            discovery: None,
             relocation: Default::default(),
             root: InstallationRoot::OnDisk(root.path().into()),
             listeners,
