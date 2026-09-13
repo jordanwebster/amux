@@ -69,11 +69,29 @@ REGION = {
 }
 
 
+def spawn(udid: str, *command: str, attempts: int = 3) -> str:
+    """Run a command inside the device, asking again when the device is slow.
+
+    A device that `bootstatus` has just called booted can still hold a
+    spawned process past the timeout while it finishes coming up; a runner
+    creating its second device has taken over two minutes to answer
+    `defaults read`. An expired attempt says nothing about the answer, so it
+    is asked again rather than failing the pin.
+    """
+    for attempt in range(attempts):
+        try:
+            return run("xcrun", "simctl", "spawn", udid, *command)
+        except subprocess.TimeoutExpired:
+            if attempt + 1 == attempts:
+                raise
+            print(f"{udid}: {' '.join(command[:2])} took too long; asking again")
+    raise AssertionError("unreachable")
+
+
 def read_default(udid: str, key: str) -> str | None:
     """What the device says the key is, or None when it has never been set."""
     try:
-        printed = run("xcrun", "simctl", "spawn", udid, "defaults", "read",
-                      ".GlobalPreferences", key)
+        printed = spawn(udid, "defaults", "read", ".GlobalPreferences", key)
     except subprocess.CalledProcessError:
         return None
     # An array prints over several lines wrapped in parentheses; every value
@@ -87,8 +105,7 @@ def write_region(udid: str) -> bool:
     for key, (kind, arguments, settled) in REGION.items():
         if read_default(udid, key) == settled:
             continue
-        run("xcrun", "simctl", "spawn", udid, "defaults", "write",
-            ".GlobalPreferences", key, kind, *arguments)
+        spawn(udid, "defaults", "write", ".GlobalPreferences", key, kind, *arguments)
         changed = True
     return changed
 
@@ -105,7 +122,7 @@ def apps_listed(launchctl: str) -> list[str]:
 
 def running_apps(udid: str) -> list[str]:
     """The bundle identifiers of every app process the device has running."""
-    return apps_listed(run("xcrun", "simctl", "spawn", udid, "launchctl", "list"))
+    return apps_listed(spawn(udid, "launchctl", "list"))
 
 
 def quit_apps(udid: str) -> None:
