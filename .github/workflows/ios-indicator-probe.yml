@@ -4,6 +4,8 @@ name: iOS indicator probe
 
 on:
   workflow_dispatch:
+  push:
+    branches: [goldens-determinism]
 
 env:
   CARGO_TERM_COLOR: always
