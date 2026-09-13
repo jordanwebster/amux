@@ -27,7 +27,7 @@ include it; that full verification is also available when qualifying a release.
 Allow about seven and a half minutes on the pinned Mac with warm build outputs,
 or about twenty minutes from a cold tree. Each run records its actual wall time.
 
-Before spending that time, run `timeout 60 python3 -B scripts/ios-perf.py
+Before spending that time, run `timeout 60 scripts/python -B scripts/ios-perf.py
 --describe`. It prints the machine row and whether its baseline exists without
 building or launching anything. `--machine` is the older spelling of the same
 query. The `just ios perf` recipe also accepts `--describe`, but runs its build prerequisites

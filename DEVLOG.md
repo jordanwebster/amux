@@ -1,3 +1,324 @@
+2026-09-13 — **The phone recipes pick their own interpreter.** The scripts
+behind `just ios …` read Cargo manifests with tomllib, which arrived in Python
+3.11, while macOS still ships 3.9 as /usr/bin/python3. A shell whose PATH did
+not reach a newer interpreter — a CI runner, an agent's stripped environment —
+failed on the import line with nothing to say about what was missing. The
+recipes now run `scripts/python`, which finds the first interpreter that has
+tomllib on PATH or in the two prefixes a Mac keeps a newer Python in, and says
+what to install when there is none.
+
+2026-09-13 — **A remembered row says what the last turn changed.** The fleet
+card had a field for the arithmetic of a finished turn and nothing ever filled
+it: the inventory a machine sends counts no changed files, so a row that said
+an agent had finished could not say what it finished. The numbers are in the
+chat itself. Every landed edit a Claude session states carries the file and
+the lines it moved, so a card now sums the edits between the prompt that
+opened its most recent finished turn and the row that closed it — distinct
+files counted once, however many times the agent touched them.
+
+The same feed comes back from the cache, so a phone opening cold states the
+same turn it stated before it was closed, before any machine has answered.
+Two turns are deliberately not summed. One whose opening prompt has been
+evicted may have landed edits that went with it, and the remainder would be
+too small, so the row says nothing rather than an understatement. And Codex
+names the files a turn touched without ever counting lines; a row reading
+"+0 -0" over three changed files would be wrong, so a Codex row states its
+turn without arithmetic until the provider counts them.
+
+2026-09-13 — **The phone remembers through the shared client cache.** The
+iPhone app kept its own fleet file beside the reducer and merged it back into
+every callback. That file could never hold a chat, so a cached transcript on
+a phone would have needed a second format with its own rules. The app now
+uses the client cache the rest of the workspace uses, one directory per
+account under the phone's cache directory, and its runtime seeds its Model
+from it and writes back through it.
+
+Two things moved rather than disappeared. A remembered row is still only a
+memory until the machine that owns it answers, and the reducer cannot carry
+such a row past a completed snapshot, so the phone's projection keeps drawing
+it until a machine's own inventory or the account's complete paired-host list
+removes it. And a phone's node finishes its snapshot as soon as it is up,
+with nothing from machines it reads over a relay that is away; writing that
+back replaced what the phone last really saw with a blank, so a cold start
+after an offline session opened on nothing. A runtime can now be told when
+what it holds is worth remembering — the phone says yes only while its relay
+is up and its fleet is whole, and the whole fleet is written the moment it
+is, rather than waiting out a write window the connection may not survive.
+
+2026-09-13 — **Merge the native iPhone app and move the flight onto just.**
+Main now carries the app, so this branch takes it. Both sides had typed the
+session seam independently again: main's host-side supplier of provider
+sessions is richer than this branch's SDK-only opener, so the supplier wins
+and the opener is gone, including on the resume path main never exercised.
+Everything else keeps this branch's design in main's layout. The client
+service routes a repository listing by the host id it reads, and forwards
+the same message the host answers. The agent event stream carries main's
+host inventory, so a conversation the person opened survives an unreachable
+host; that map also remembers a chat opened before its card arrives, which
+is what this branch's fix was for.
+
+Two on-disk shapes moved. The cached chat layers gained the app's todos,
+cursor and provider facts, so all three layer schemas are v2 with fixtures
+regenerated under the new names. A stream's opened message defaults its
+resume outcome to fresh, which is exactly what every recording written
+before the field meant, so the committed phone bundles still replay.
+
+The flight's own commands now run through just: main retired wt as the task
+runner, and the milestone and task checks said wt. Its gate asked whether
+the app had landed; it now asks whether the app and its crates are here and
+still build for the phone.
+
+2026-09-13 — **Refuse a permission decision the wire cannot express.** The
+merge had left the Claude SDK permission decision's wire encoder infallible:
+any JSON that was not an explicit deny went out as an allow, so a client
+sending a malformed decision would have let a tool run. Encoding now fails
+for a missing or unknown behavior and the client reports it as an encode
+error, as both parents did; the decoder no longer pads an allow with null
+keys, so every input shape round-trips equal and the wire tests say so for
+every Claude PTY intent, SDK input and Codex input. The default log filter
+and the cache scenarios name the client crates main renamed, which is what
+had hidden the discard log; `just e2e-build` builds the retained-rows
+example the scenarios drive; and the runtime's cache tests cover the
+discard that follows pairing.
+
+2026-09-13 — **Keep the cache's disk out of the reducer crate.** The client
+cache had landed in `ui-state` whole, file I/O and log lines included. The
+on-disk shape now stays there as values and pure functions: the fleet and
+layer files, their schema versions and bounds, header and semantic checks,
+bounded encoding that sheds the oldest entries, and the pairing that turns
+parsed files into cached state. The store that owns the directory, writes
+atomically and discards what it cannot trust moved beside the runtime in
+`ui_runtime::cache`. The reducer specs round-trip through the serialized
+form without a temporary directory; the runtime's own tests cover the disk:
+discard logging, oversize files removed before parsing, an unusable
+directory starting cold, and concurrent writers in threads and processes.
+
+2026-09-13 — **Merge the crate split from main into the cache work.** Main
+split the daemon into model, wire, host-api, node and agent-runtime crates
+while this branch was typing the session seam end to end; both had built
+the same enum pair at the host boundary. The merge keeps this branch's
+design and lands it in main's layout: session arguments, inputs, outputs,
+the shared replay query and replay facts are values in `model`, the
+protobuf oneofs are translated once in `wire`, and the host API, node
+services and client all speak those values. Name-based agent lookup and
+its ambiguity error are gone from the wire; the CLI resolves names at its
+own edge. The scripted Claude SDK peer no longer hides behind a build
+flag: the runtime exposes an ordinary session opener, the harness installs
+it, and the stub binary, its example reader and the cache scenarios live
+with the rest of the test infrastructure in `testnet`. The client cache
+sits in `ui-state` for now; its file half moves next to the runtime in a
+follow-up. Seven daemon unit tests that main's test-ownership refactor had
+removed stay removed.
+
+2026-09-11 — **Record the offline terminal warm start end to end.** The cache
+harness now drives a real terminal in four scenarios. Each seeds an agent's
+chat, stages what the scenario is about while the terminal is closed, then
+starts the terminal again with the daemon stopped mid-syscall so only the
+cache can answer: the fleet paints its remembered row, Enter opens the
+remembered chat on its cached transcript, and the daemon is let go to finish
+the story. Resume replays only the rows after the cached cursor over one
+subscription; an evicted cursor refolds a tail behind the missing-history
+boundary; sequence numbers continue across a suspend and resume, so the
+cursor taken before it still resumes cleanly; and a chat layer written under
+another schema is discarded with one log line and no error on screen.
+
+Two things had to be fixed to get there. Opening a chat before the
+connection was up spent the cached cursor on a subscription that could not
+be made, so the reconnect replayed a plain tail; the subscription policy now
+waits for the connection, which arrives with the inventory that opens the
+stream from the cursor. And the row reader can now send several prompts over
+one subscription — the session's ready row is what permits a prompt, and a
+later subscription may find it already evicted.
+
+2026-09-11 — **Open the fleet from the profile config on disk.** Bare `amux`
+and `amux ui` no longer wait on a server round trip to learn which profile
+they are opening. When the disk already names it — an explicit `--config`
+path, a profile selected by id, or the id remembered from the last session —
+the config file is loaded and the terminal starts at once, painting its
+cached fleet while the connection is still being made. Choosing a profile by
+account name, or having nothing remembered, still needs the directory of
+profiles and resolves as before. Every connection attempt continues to
+resolve the profile through the server, start it when absent, refuse a
+profile reported unavailable — now as the fleet's disconnect reason rather
+than a failure before anything is drawn — and record the selection.
+
+2026-09-11 — **Script the offline terminal warm-start captures.** The cache
+harness now takes a scenario name and shares one setup: an isolated daemon
+with the scripted Claude process on PATH, a profile whose terminal opens chats
+on Enter and asks for a twenty-row tail, and helpers that read a cache
+directory or assert one claim about an agent's session in a daemon debug dump.
+The resume, gap, suspend and schema scenarios seed a real agent through a
+terminal that caches its chat, then stage what each is about while the
+terminal is closed. Their warm half is blocked: pausing the daemon leaves the
+terminal with nothing on screen, because every command resolves its profile
+through an unbounded front-door request before the fleet is drawn.
+
+2026-09-11 — **Complete the shared client cache boundary.** The UI library now
+owns the versioned fleet index, protocol-specific durable chat layers, atomic
+bounded storage, warm model seeding, cursor continuation and gap refolding,
+and coalesced runtime writes as one documented facility. Each client supplies
+its own kind-owned profile root; schema mismatches and invalid or oversized
+files degrade to a logged cold start rather than a user-facing failure.
+
+2026-09-11 — **Persist UI cache changes from the runtime shell.** A runtime
+with a client cache now restores its model before connecting, tracks durable
+fleet and per-agent changes after each fold, and coalesces row bursts into one
+write per agent every 250 milliseconds. Agent updates and removals reach disk
+before the fleet index, while explicit shutdown flushes bypass the delay and
+preserve the same ordering. Deterministic paused-time tests cover coalescing,
+inventory removal, write order, and immediate flushes. Embedded-daemon tests
+restart the runtime from that cache and verify both delta-only continuation and
+a single bounded-tail refold when the daemon has evicted the saved cursor.
+
+2026-09-11 — **Bound every client cache file before it reaches a cold
+start.** Fleet snapshots above one MiB are rejected before parsing. Chat
+snapshots above two MiB shed the oldest quarter of their retained entries per
+pass, recording those evictions so the feed keeps an honest history boundary;
+if non-feed state alone exceeds the limit, the old agent file is removed and
+that chat starts fresh. Oversize files already on disk are likewise removed
+before their JSON is parsed.
+
+2026-09-11 — **Keep fleet and chat caches in kind-owned atomic files.** The
+UI cache now writes a separately versioned fleet index and one versioned
+durable layer envelope per agent beneath a client-kind directory. Loads check
+size, schema, ownership, complete shape, layer pairing, cursor consistency,
+and fleet membership in a fixed order; one invalid chat cannot poison the
+remaining cache, and every rejected file is removed with one diagnostic line.
+Temporary files use process-unique names and are synchronized before an
+atomic rename, so readers never observe a partial JSON document.
+
+2026-09-11 — **Give each chat layer an explicit durable form.** Claude PTY,
+Claude SDK, and Codex folded state now converts through protocol-specific
+cache structs with independent schema versions instead of serializing the
+live model. Reload rebuilds dedupe indexes and clears connection-scoped replay
+flags, staleness, optimistic echoes, and in-flight inputs. Recorded provider
+rows exercise each round trip, while committed, version-named JSON fixtures
+make an on-disk shape change require a deliberate schema bump.
+
+2026-09-11 — **Prove command-line agent selection across paired hosts.** An
+end-to-end scenario creates colliding agent names on two hosts and confirms
+that attach refuses the ambiguous name with both ids, host ids, and working
+directories. The same scenario attaches to a uniquely named remote agent and
+exchanges input and output successfully.
+
+2026-09-11 — **Make the Rust client API identify agents by id.** Per-agent
+client operations no longer perform hidden fleet scans or accept ambiguous
+names. Message sends take the recipient's agent-and-host address and build the
+authenticated envelope in the client, while artifact puts explicitly state
+whether they are agent-authored attachments and child deletion carries the
+caller's id. Existing UI, CLI, examples, and test-network callers now resolve
+names at their own edge before using the shared API.
+
+2026-09-11 — **Forward host requests unchanged through the client service.**
+Routed per-agent calls now use the shared host request message itself: the
+client service reads only the agent id needed to choose a host, executes local
+requests directly, and forwards the original message to a remote host. Session
+arguments and inputs are decoded only on the host that owns the agent. Message
+delivery likewise validates the typed envelope sender while retaining the
+original wire envelope for remote delivery.
+
+2026-09-11 — **Use typed session values directly in the UI runtime.** The UI
+now selects structured subscription arguments through one exhaustive protocol
+match, sends provider-native inputs inside the shared session enum, and turns
+shared sequenced rows into feed entries through one checked conversion. The
+remaining UI protocol-name constants and string conversion have been removed.
+
+2026-09-11 — **Carry typed session values across client and host services.**
+Session subscriptions, inputs, controls, and outputs now cross the public
+client, routed client service, daemon internals, and host service as shared
+Rust enums. The protocol oneofs are translated exactly once at the wire edge;
+protocol-name strings, opaque protobuf byte payloads, and the per-protocol
+codec functions are gone. Structured protocols share one sequenced row type,
+while their provider-specific input vocabularies remain typed. The CLI, UI
+runtime, test network, and SDK row example now construct and consume these
+values directly, and focused tests round-trip every top-level enum arm and
+reject missing nested oneofs.
+
+2026-09-11 — **Share host request messages across the client service.** The
+client protocol now reuses the host inventory stream and every host request
+type for per-agent operations. The shared create, delete, and artifact requests
+carry the optional destination host, calling agent, and agent-attachment fields
+needed at the routed boundary; sends carry the complete envelope. The separate
+agent reference, mirrored client requests, client inventory messages, and
+ambiguous-name error detail are gone from the wire format. Generated Rust and
+the descriptor set were regenerated, and existing callers now construct the
+shared messages while the public client temporarily resolves its legacy name
+inputs against the fleet until the CLI-only resolution change lands.
+
+2026-09-10 — **Reject structured replay cursors ahead of the sequence watermark.**
+A resumed buffer now reports a replay gap when a client's cursor implies a
+next sequence beyond the buffer's current successor. The subscription uses the
+existing tail fallback, forcing clients to refold behind a missing-history
+boundary instead of silently accepting sequence numbers that the resumed
+backend can issue again. The exact successor of a suspended cursor remains a
+contiguous empty replay.
+
+2026-09-10 — **Persist structured sequence cursors when agents suspend.** Every
+Claude, Codex, and test-agent suspend record now requires the structured log's
+current sequence number, captured asynchronously with the rest of the backend
+state. Suspended files written without that field are deliberately incompatible:
+the loader resumes no agents and emits one error naming the rejected file.
+Restored structured logs begin at the stored cursor, including Codex logs with
+capture enabled, so their first new row is the cursor's successor and a client
+continuing from that cursor sees no replay gap. Focused tests cover capture and
+continuation for every structured backend plus the missing-field boundary.
+The installation-level restart spec now suspends through the administrative
+RPC, reopens the persistent installation, resumes the scripted SDK agent, and
+proves that a pre-suspend cursor receives the very next sequence without a
+gap. Resumed testnet SDK agents retain the same offline provider seam as fresh
+agents.
+
+2026-09-10 — **Add a deterministic offline Claude SDK transport.** The
+scripted stream-JSON provider and its host seam were first copied byte for byte
+from nativeapp commit `1c112501`, preserving the real SDK backend boundary. A
+separate follow-up commit added configurable assistant rows per prompt, idle
+ticks, and a public transport-generic serve loop; the stdin/stdout executable
+is only a front end over that loop. An isolated live smoke now launches the
+stub through the real daemon, sends a prompt through the public session API,
+reads the sequenced stream, and observes idle eviction at the configured
+30-row retention bound. The daemon retention and client replay-tail settings
+are explicit test knobs. A runtime-level regression now drives a structured
+agent open through the shell and observes the configured replay tail at the
+stream dispatcher, ensuring that the client knob is not merely parsed but
+actually applied. Provider meaning and richer row shapes remain the recorded
+corpora's responsibility. When nativeapp later enters this branch
+through main, `crates/amux/src/testnet/sdk.rs` will conflict because this branch
+extends the copied file; resolution must retain the row-count, idle-tick, and
+generic stdio changes on top of the shared baseline. Formatting, workspace
+lint, focused memory and process tests, and the offline real-daemon smoke pass.
+2026-09-13 — **Moved the iPhone app to `apps/apple/`.** The app was built on
+its own branch at `ios/` and has now merged, so it takes the place the
+licensing split made for it. Applications sit under `apps/`, the licence that
+covers them sits at `apps/LICENSE`, and the root LICENSE scopes by that
+directory rather than by one app's name — so a second application needs no
+licensing decision, only a directory.
+
+Two hundred and three references followed the move, in recipes, scripts, the
+CI workflow, the end-to-end topologies and the docs. `target/ios/` did not:
+that is where the Rust bridge's xcframework is built, it has nothing to do
+with the app's sources, and eighty-five references to it are deliberately
+unchanged. The root justfile now names the app's recipe file by path, so
+`just ios <recipe>` keeps working from anywhere in the checkout.
+
+Entries below this one describe the app at `ios/`, because that is where it
+was when they were written.
+
+2026-09-13 — **Split the repository's licensing by directory.** The core is
+now dual-licensed MIT or Apache-2.0, the Rust ecosystem's convention, so
+anything depending on amux composes with it without reasoning about licences.
+The iPhone app at `ios/` is source-available under the Functional Source
+License 1.1 with an Apache 2.0 future licence: everything is permitted except
+shipping it as a competing product, and every version converts to Apache-2.0
+two years after it is published.
+
+The two-year clock runs per version from the day code is made available, which
+for a public repository is the day a commit is pushed. Nothing has to be
+tracked, no change date nominated, and several applications on different
+release schedules need no shared calendar — each commit dates itself. The terms land
+before the app itself does, so no version of it is ever published under a
+licence that does not mean to cover it. The app moves to `apps/apple/` after
+the merge, taking its licence with it.
+
 # amux Development Log
 
 Dated decisions, behavior changes, and regression causes. Compacted 2026-09-14;
