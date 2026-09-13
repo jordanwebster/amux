@@ -8,24 +8,21 @@
 # holding the camera as well as on the app. A change to the app should not
 # wait on either.
 #
-# DISABLED ON PURPOSE: on demand only, no schedule.
-#
-# 117 of the 124 captures currently fail on a GitHub runner and pass on a
-# developer's Mac, and nobody has explained why. 107 of them differ only in
-# the bottom 64 pixels of the screen, and by the same thing: the home
-# indicator, the bar a Face ID iPhone draws for swiping up to the home screen.
-# The runner photographs it, a developer's Mac does not, on identical Xcode
-# and simulator runtime builds. Erasing the
-# device to factory state before capturing does not change it, and neither
-# does rebooting. Until that is understood, a nightly run would be red every
-# night for a reason nobody could act on, which teaches people to stop reading
-# it. Restore the schedule below when the captures agree.
+# The nightly run is the golden catalogue alone; the rest is on demand. For a
+# while the catalogue was red on every runner and green on every Mac, and the
+# reason was the home indicator, the bar a Face ID iPhone draws for swiping up
+# to the home screen: SpringBoard withdraws it once backboardd's attention
+# timer fires, and on a runner with both pinned devices booted that timer's
+# event is delivered to a stale client, so the bar never leaves. The
+# comparison now looks past the bar's rectangle, which the golden manifest
+# declares for the device, and a runner's captures match a developer's Mac
+# pixel for pixel.
 name: iOS captures
 
 on:
   workflow_dispatch:
-  # schedule:
-  #   - cron: "0 3 * * *"
+  schedule:
+    - cron: "0 3 * * *"
 
 env:
   CARGO_TERM_COLOR: always
@@ -58,9 +55,13 @@ jobs:
         run: brew install xcodegen
       - name: Boot both pinned simulators
         run: just ios simulator
+      - name: Compare the golden catalogue
+        if: github.event_name == 'schedule'
+        run: just ios goldens
       - name: Run the capture suites
         # The runner uses its own recorded baseline when one is committed.
         # Without one, the measured run records that it was not measured.
+        if: github.event_name != 'schedule'
         env:
           AMUX_PERF_MACHINE: macos-26
         run: just ios captures

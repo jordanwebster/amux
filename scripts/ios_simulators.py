@@ -2,6 +2,7 @@
 """Create or reuse the pinned simulators and pin what a screenshot can see."""
 
 import json
+import plistlib
 import subprocess
 import sys
 
@@ -92,9 +93,72 @@ def write_region(udid: str) -> bool:
     return changed
 
 
+def apps_listed(launchctl: str) -> list[str]:
+    """The bundle identifiers among launchd's job labels."""
+    found = []
+    for line in launchctl.splitlines():
+        label = line.split("\t")[-1]
+        if label.startswith("UIKitApplication:"):
+            found.append(label[len("UIKitApplication:"):].split("[", 1)[0])
+    return found
+
+
+def running_apps(udid: str) -> list[str]:
+    """The bundle identifiers of every app process the device has running."""
+    return apps_listed(run("xcrun", "simctl", "spawn", udid, "launchctl", "list"))
+
+
+def quit_apps(udid: str) -> None:
+    """Terminate every app on the device so the next launch starts from Home.
+
+    An app launched while another app is in front carries that app's name in
+    its status bar, as a way back to it. A developer's simulator can have
+    anything in front from ordinary use; a capture taken then differs from the
+    same capture on a runner by exactly that breadcrumb.
+    """
+    for bundle in running_apps(udid):
+        if bundle.startswith("com.apple.chrono."):
+            continue  # a widget renderer, not something in front
+        subprocess.run(
+            ["xcrun", "simctl", "terminate", udid, bundle],
+            capture_output=True, timeout=60,
+        )
+
+
+SIMULATOR_APP = "com.apple.iphonesimulator"
+
+
+def disconnect_hardware_keyboard(udid: str) -> bool:
+    """Pin Simulator.app's hardware keyboard off for the device.
+
+    With the Mac's keyboard connected the software keyboard never rises, so a
+    screen whose field takes focus is captured without it; a headless device,
+    which is what a runner has, always raises it. Simulator.app reads this
+    when it attaches a window, so a change takes effect the next time it is
+    opened. Goes through `defaults` rather than the file so the preference
+    daemon's copy is the one that changes. Answers whether anything moved.
+    """
+    exported = subprocess.run(
+        ["defaults", "export", SIMULATOR_APP, "-"],
+        check=True, capture_output=True, timeout=60,
+    ).stdout
+    preferences = plistlib.loads(exported) if exported.strip() else {}
+    device = preferences.setdefault("DevicePreferences", {}).setdefault(udid, {})
+    if device.get("ConnectHardwareKeyboard") is False:
+        return False
+    device["ConnectHardwareKeyboard"] = False
+    subprocess.run(
+        ["defaults", "import", SIMULATOR_APP, "-"],
+        check=True, input=plistlib.dumps(preferences), capture_output=True, timeout=60,
+    )
+    return True
+
+
 def pin(udid: str) -> None:
     """Boot the device and fix everything a capture would otherwise vary on."""
     run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
+    if disconnect_hardware_keyboard(udid):
+        print(f"{udid}: hardware keyboard pinned off; reopen Simulator.app for it to apply")
     # Language and region are read by an app at launch, so they are set before
     # anything under test is installed rather than between screens.
     if write_region(udid):
@@ -106,6 +170,7 @@ def pin(udid: str) -> None:
         run("xcrun", "simctl", "shutdown", udid, timeout=300)
         run("xcrun", "simctl", "bootstatus", udid, "-b", timeout=600)
     run("xcrun", "simctl", "ui", udid, "appearance", "light")
+    quit_apps(udid)
     run(
         "xcrun", "simctl", "status_bar", udid, "override",
         "--time", "9:41",

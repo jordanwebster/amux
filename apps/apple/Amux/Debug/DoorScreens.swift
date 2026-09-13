@@ -266,9 +266,6 @@ struct DrivenRoot<Content: View>: View {
         // blinks on a timer of its own draws its resting state so two runs
         // take the same picture.
         .environment(\.photographed, host.screen != nil || host.replayed != nil)
-        // PROBE: ask SpringBoard to auto-hide the home indicator while a screen
-        // is photographed, to learn whether a runner honours the request.
-        .persistentSystemOverlays(host.screen != nil || host.replayed != nil ? .hidden : .automatic)
         // Built afresh on every appearance request rather than moved into the
         // new one: a material already on screen cross-fades over a length of
         // time nobody publishes, and a still of that fade is a picture of

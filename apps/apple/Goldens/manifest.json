@@ -1,4 +1,20 @@
 {
+  "simulators": {
+    "amux-golden": {
+      "system_chrome": [
+        {
+          "what": "home indicator: SpringBoard's bar, 144 by 5 points, 8 points above the bottom edge, at 3x with three pixels of margin; drawn at launch and withdrawn once backboardd reports attention lost, which a loaded GitHub runner never does",
+          "x": 384,
+          "y": 2580,
+          "width": 438,
+          "height": 21
+        }
+      ]
+    },
+    "amux-small": {
+      "system_chrome": []
+    }
+  },
   "screens": [
     {
       "id": "probe",

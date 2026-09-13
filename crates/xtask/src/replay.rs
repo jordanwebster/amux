@@ -124,6 +124,9 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         &out.join("frame"),
         TOLERANCE,
         MAX_DIFFERING_PIXELS,
+        // A frozen frame is drawn by the app itself, with no system chrome
+        // over it, so every pixel of it is the app's to compare.
+        &[],
     )?;
     println!("{}: {verdict}", screen.display());
     match verdict {

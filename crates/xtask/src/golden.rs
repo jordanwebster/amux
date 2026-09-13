@@ -57,6 +57,41 @@ pub struct GoldenFlake {
     pub reason: String,
 }
 
+/// A region of a simulator's display that the system draws over every app,
+/// which no capture compares.
+///
+/// A golden is a photograph of the display, so it holds whatever SpringBoard
+/// puts over the app as well as the app. The status bar is pinned, but the
+/// home indicator cannot be: SpringBoard draws it when an app launches and
+/// withdraws it once backboardd's attention timer says nobody is touching the
+/// screen, and on a GitHub runner with both pinned devices booted that timer's
+/// event is delivered to a stale client, so the bar never withdraws there and
+/// always does on a developer's Mac. The bar is not the app's drawing, so the
+/// pixels under it are not the app's golden; they are painted over in the
+/// difference image so nobody mistakes them for compared ones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemChrome {
+    /// What the system draws there, for whoever reads the manifest.
+    pub what: String,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl SystemChrome {
+    fn covers(&self, x: u32, y: u32) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
+/// What the manifest knows about one pinned simulator.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoldenSimulator {
+    #[serde(default)]
+    pub system_chrome: Vec<SystemChrome>,
+}
+
 /// One row of the manifest: a golden this flight owes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoldenScreen {
@@ -87,6 +122,10 @@ impl GoldenScreen {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoldenManifest {
+    /// Every simulator a screen may name, with the chrome it draws over the
+    /// app. Declaring a device is what forces the question of its chrome to
+    /// be answered before a screen is captured on it.
+    pub simulators: BTreeMap<String, GoldenSimulator>,
     pub screens: Vec<GoldenScreen>,
 }
 
@@ -97,6 +136,14 @@ impl GoldenManifest {
         let manifest: Self = serde_json::from_str(&text)
             .map_err(|error| GoldenError::Io(format!("{}: {error}", path.display())))?;
         for screen in &manifest.screens {
+            if !manifest.simulators.contains_key(&screen.simulator) {
+                return Err(GoldenError::Io(format!(
+                    "{}: screen {} names simulator {}, which the manifest does not declare",
+                    path.display(),
+                    screen.id,
+                    screen.simulator
+                )));
+            }
             let Some(flake) = &screen.flaky else {
                 continue;
             };
@@ -125,6 +172,14 @@ impl GoldenManifest {
 
     pub fn screen(&self, id: &str) -> Option<&GoldenScreen> {
         self.screens.iter().find(|screen| screen.id == id)
+    }
+
+    /// The system chrome a screen's simulator draws over it.
+    pub fn system_chrome(&self, screen: &GoldenScreen) -> &[SystemChrome] {
+        self.simulators
+            .get(&screen.simulator)
+            .map(|simulator| simulator.system_chrome.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -276,12 +331,16 @@ fn write_png(path: &Path, image: &Image) -> Result<(), GoldenError> {
 /// same simulator can differ by a value or two where a gradient is dithered,
 /// and failing on that would train everybody to update baselines without
 /// looking. Anything a person could see differs by far more.
+///
+/// Pixels under the simulator's system chrome are never counted, whatever
+/// they hold: that part of the picture is the system's, not the app's.
 pub fn diff(
     expected: &Path,
     actual: &Path,
     out: &Path,
     tolerance: u8,
     max_differing_pixels: u64,
+    system_chrome: &[SystemChrome],
 ) -> Result<GoldenVerdict, GoldenError> {
     if !actual.is_file() {
         return Ok(GoldenVerdict::CaptureFailed(format!(
@@ -306,6 +365,8 @@ pub fn diff(
 
     // The difference image marks every pixel that differs at all, in red, over
     // a dimmed copy of the capture, so what changed is legible at a glance.
+    // Pixels under system chrome are washed blue instead, differing or not:
+    // a reviewer should be able to see what was not compared.
     let mut marked = Image {
         width: taken.width,
         height: taken.height,
@@ -315,6 +376,14 @@ pub fn diff(
     let mut first = None;
     for index in 0..(taken.width * taken.height) as usize {
         let at = index * 4;
+        let (x, y) = (index as u32 % taken.width, index as u32 / taken.width);
+        if system_chrome.iter().any(|chrome| chrome.covers(x, y)) {
+            marked.pixels[at] /= 4;
+            marked.pixels[at + 1] = marked.pixels[at + 1] / 4 + 40;
+            marked.pixels[at + 2] = marked.pixels[at + 2] / 4 + 150;
+            marked.pixels[at + 3] = 255;
+            continue;
+        }
         let apart = (0..4)
             .map(|channel| baseline.pixels[at + channel].abs_diff(taken.pixels[at + channel]))
             .max()
@@ -322,7 +391,7 @@ pub fn diff(
         if apart > tolerance {
             differing += 1;
             if first.is_none() {
-                first = Some((index as u32 % taken.width, index as u32 / taken.width));
+                first = Some((x, y));
             }
             marked.pixels[at] = 255;
             marked.pixels[at + 1] = 32;
@@ -523,12 +592,17 @@ pub fn run(
                 }
                 std::fs::copy(&taken, &baseline)?;
             }
+            let chrome = manifest
+                .screen(&id)
+                .map(|screen| manifest.system_chrome(screen))
+                .unwrap_or(&[]);
             let verdict = diff(
                 &baseline,
                 &taken,
                 &out.join(format!("{id}.{appearance}")),
                 tolerance,
                 max_differing_pixels,
+                chrome,
             )?;
             outcomes.push(GoldenOutcome {
                 id,
@@ -831,12 +905,24 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
         .map(|text| text.parse())
         .transpose()?
         .unwrap_or(MAX_DIFFERING_PIXELS);
+    // The chrome of a named pinned simulator, so a pair of files compares the
+    // way the run compares them; without one, every pixel counts.
+    let chrome = match value(arguments, "--simulator") {
+        Some(name) => GoldenManifest::read(Path::new(MANIFEST))?
+            .simulators
+            .get(&name)
+            .ok_or_else(|| format!("the manifest does not declare simulator {name}"))?
+            .system_chrome
+            .clone(),
+        None => Vec::new(),
+    };
     let verdict = diff(
         Path::new(&expected),
         Path::new(&actual),
         Path::new(&out),
         tolerance,
         allowed,
+        &chrome,
     )?;
     println!("{verdict}");
     if verdict.passed() {
@@ -994,7 +1080,7 @@ mod tests {
         write(&actual, 4, 4, [10, 20, 30, 255]);
         let out = room.path().join("out");
         assert_eq!(
-            diff(&expected, &actual, &out, 2, 0).expect("a verdict"),
+            diff(&expected, &actual, &out, 2, 0, &[]).expect("a verdict"),
             GoldenVerdict::Same
         );
         assert!(out.join("expected.png").is_file());
@@ -1010,7 +1096,7 @@ mod tests {
         write(&expected, 4, 4, [10, 20, 30, 255]);
         write(&actual, 4, 4, [11, 21, 31, 255]);
         assert_eq!(
-            diff(&expected, &actual, &room.path().join("out"), 2, 0).expect("a verdict"),
+            diff(&expected, &actual, &room.path().join("out"), 2, 0, &[]).expect("a verdict"),
             GoldenVerdict::Same
         );
     }
@@ -1022,7 +1108,7 @@ mod tests {
         let actual = room.path().join("actual.png");
         write(&expected, 4, 4, [10, 20, 30, 255]);
         write(&actual, 4, 4, [200, 20, 30, 255]);
-        match diff(&expected, &actual, &room.path().join("out"), 2, 0).expect("a verdict") {
+        match diff(&expected, &actual, &room.path().join("out"), 2, 0, &[]).expect("a verdict") {
             GoldenVerdict::Different { pixels, first } => {
                 assert_eq!(pixels, 16);
                 assert_eq!(first, (0, 0));
@@ -1040,7 +1126,7 @@ mod tests {
         write(&expected, 4, 4, [10, 20, 30, 255]);
         write(&actual, 8, 4, [10, 20, 30, 255]);
         assert_eq!(
-            diff(&expected, &actual, &room.path().join("out"), 2, 0).expect("a verdict"),
+            diff(&expected, &actual, &room.path().join("out"), 2, 0, &[]).expect("a verdict"),
             GoldenVerdict::SizeMismatch {
                 expected: (4, 4),
                 actual: (8, 4)
@@ -1059,7 +1145,8 @@ mod tests {
                 &actual,
                 &room.path().join("out"),
                 2,
-                0
+                0,
+                &[]
             )
             .expect("a verdict"),
             GoldenVerdict::MissingBaseline
@@ -1077,12 +1164,100 @@ mod tests {
             &room.path().join("out"),
             2,
             0,
+            &[],
         )
         .expect("a verdict");
         assert!(
             matches!(verdict, GoldenVerdict::CaptureFailed(_)),
             "expected a failed capture, got {verdict}"
         );
+    }
+
+    /// Paints one pixel of a solid image another colour.
+    fn write_with_speck(path: &Path, width: u32, height: u32, colour: [u8; 4], at: (u32, u32)) {
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for _ in 0..width * height {
+            pixels.extend_from_slice(&colour);
+        }
+        let index = ((at.1 * width + at.0) * 4) as usize;
+        pixels[index..index + 4].copy_from_slice(&[250, 250, 250, 255]);
+        write_png(
+            path,
+            &Image {
+                width,
+                height,
+                pixels,
+            },
+        )
+        .expect("a PNG");
+    }
+
+    fn bar() -> SystemChrome {
+        SystemChrome {
+            what: "home indicator".into(),
+            x: 1,
+            y: 2,
+            width: 2,
+            height: 1,
+        }
+    }
+
+    #[test]
+    fn a_difference_under_system_chrome_is_not_a_difference() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let expected = room.path().join("expected.png");
+        let actual = room.path().join("actual.png");
+        write(&expected, 4, 4, [10, 20, 30, 255]);
+        write_with_speck(&actual, 4, 4, [10, 20, 30, 255], (2, 2));
+        let out = room.path().join("out");
+        assert_eq!(
+            diff(&expected, &actual, &out, 2, 0, &[]).expect("a verdict"),
+            GoldenVerdict::Different {
+                pixels: 1,
+                first: (2, 2)
+            }
+        );
+        assert_eq!(
+            diff(&expected, &actual, &out, 2, 0, &[bar()]).expect("a verdict"),
+            GoldenVerdict::Same
+        );
+    }
+
+    #[test]
+    fn a_difference_beside_system_chrome_still_counts() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let expected = room.path().join("expected.png");
+        let actual = room.path().join("actual.png");
+        write(&expected, 4, 4, [10, 20, 30, 255]);
+        write_with_speck(&actual, 4, 4, [10, 20, 30, 255], (3, 2));
+        let out = room.path().join("out");
+        assert_eq!(
+            diff(&expected, &actual, &out, 2, 0, &[bar()]).expect("a verdict"),
+            GoldenVerdict::Different {
+                pixels: 1,
+                first: (3, 2)
+            }
+        );
+        // The chrome is washed blue in the difference image whether or not
+        // anything under it differed, so what was not compared is visible.
+        let marked = read_png(&out.join("diff.png")).expect("a difference image");
+        let at = ((2 * 4 + 1) * 4) as usize;
+        assert!(marked.pixels[at + 2] > marked.pixels[at] + 100);
+    }
+
+    #[test]
+    fn a_screen_on_an_undeclared_simulator_is_refused() {
+        let room = tempfile::tempdir().expect("a temporary directory");
+        let path = room.path().join("manifest.json");
+        std::fs::write(
+            &path,
+            r#"{"simulators": {}, "screens": [{"id": "probe", "stage": 4, "screen": "probe",
+                "fixture": "probe", "origin": "added_state", "reason": "r",
+                "simulator": "amux-golden", "appearances": ["light"]}]}"#,
+        )
+        .expect("a manifest");
+        let error = GoldenManifest::read(&path).expect_err("an undeclared simulator");
+        assert!(error.to_string().contains("does not declare"), "{error}");
     }
 
     #[test]
@@ -1253,5 +1428,21 @@ mod tests {
             flaky_captures,
             ["ax-composer.dark", "strip.dark", "strip.light"]
         );
+
+        // Every pinned device is declared, and only the Face ID phone has
+        // chrome the comparison must look past.
+        let golden = manifest
+            .simulators
+            .get("amux-golden")
+            .expect("the golden phone");
+        assert_eq!(golden.system_chrome.len(), 1);
+        let bar = &golden.system_chrome[0];
+        assert!(bar.what.starts_with("home indicator"), "{}", bar.what);
+        assert_eq!((bar.x, bar.y, bar.width, bar.height), (384, 2580, 438, 21));
+        let small = manifest
+            .simulators
+            .get("amux-small")
+            .expect("the small phone");
+        assert!(small.system_chrome.is_empty());
     }
 }

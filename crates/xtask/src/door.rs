@@ -266,18 +266,19 @@ fn converse(
 /// has stopped moving.
 ///
 /// Rest means a run of identical photographs rather than a pair of them,
-/// because one thing on the display holds still and then moves anyway: the
-/// home indicator is drawn when an app launches and takes itself away about a
-/// second later. A pair of photographs half a second apart can both catch it,
-/// so the first screen of a run kept a bar the twentieth screen did not, and
-/// which screen was first decided what the picture said. A run long enough to
-/// outlast that cannot be fooled by it.
+/// because a pair half a second apart can both catch something that is about
+/// to move, and the first screen of a run then says something the twentieth
+/// does not.
 ///
 /// The app is the only thing running on the device and the door has already
 /// said the screen is built, so what is photographed is the screen under test
-/// with nothing over it. The frame includes the system's own status bar,
-/// pinned to 9:41 with a full battery, which the design's own references draw
-/// too.
+/// with the system's own chrome over it. The status bar is pinned to 9:41
+/// with a full battery, which the design's own references draw too. The home
+/// indicator cannot be pinned: SpringBoard draws it at launch and withdraws it
+/// when backboardd's attention timer fires, and on a loaded GitHub runner that
+/// event reaches a stale client and the bar stays for the whole run. So the
+/// comparison, not the photograph, is what looks past it: the manifest names
+/// the bar's rectangle for the device and no pixel under it is compared.
 fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
     if let Some(directory) = destination.parent() {
         std::fs::create_dir_all(directory)?;

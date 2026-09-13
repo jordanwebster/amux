@@ -1,5 +1,5 @@
-# Throwaway diagnostic: why does a GitHub runner's simulator keep drawing the
-# home indicator when a developer's Mac hides it a second after launch?
+# Throwaway: prove the golden catalogue is green on a runner with both pinned
+# devices booted, which is the condition under which the home indicator stays.
 name: iOS indicator probe
 
 on:
@@ -12,80 +12,10 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  stock:
-    name: Stock Settings, no app build
+  catalogue:
+    name: Golden catalogue with both devices booted
     runs-on: macos-26
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - name: Select Xcode 26.6
-        run: |
-          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-          xcodebuild -version
-      - name: Host facts
-        run: |
-          set +e
-          sw_vers; sysctl hw.model hw.ncpu hw.memsize; uname -a
-          echo "managername: $(launchctl managername)"; who; id
-          system_profiler SPDisplaysDataType
-          defaults read com.apple.iphonesimulator 2>&1 | head -40
-          pgrep -lf Simulator.app
-          ps aux | grep -i -E "WindowServer|loginwindow|CoreSimulator" | grep -v grep
-          screencapture -x target/mac-before.png 2>&1 || true
-      - uses: extractions/setup-just@v2
-      - name: Boot both pinned simulators
-        run: just ios simulator
-      - name: Imaging venv
-        run: python3 -m venv target/probe-venv && target/probe-venv/bin/pip -q install pillow numpy
-      - name: Series A, headless Settings launch
-        run: |
-          U=$(xcrun simctl list devices | grep 'amux-golden (' | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
-          echo "UDID=$U" >> "$GITHUB_ENV"
-          target/probe-venv/bin/python scripts/ios_indicator_probe.py "$U" target/probe A com.apple.Preferences 40
-      - name: Series A2, the same device thirty seconds later without relaunch
-        run: |
-          sleep 30
-          target/probe-venv/bin/python scripts/ios_indicator_probe.py "$UDID" target/probe A2 - 5
-      - name: Device log around the launch
-        run: |
-          mkdir -p target/probe
-          xcrun simctl spawn "$UDID" log show --last 6m --info --debug 2>/dev/null \
-            | grep -E "AttentionAwareness|IdleTimer|HomeGrabber|HomeAffordance|homeAffordance|Pearl|attention" \
-            > target/probe/log-A.txt || true
-          wc -l target/probe/log-A.txt
-          grep -E "Display state|stationary|HomeGrabberView-1|AttentionLost|attention lost timeout|_shouldUseAttentionSensor|SBDisableAutoDim" target/probe/log-A.txt | head -60
-      - name: Device defaults
-        run: |
-          for d in .GlobalPreferences com.apple.Accessibility com.apple.springboard com.apple.backboardd com.apple.UIKit; do
-            echo "== $d"; xcrun simctl spawn "$UDID" defaults read "$d" 2>&1 | head -80
-          done > target/probe/defaults.txt || true
-          cat target/probe/defaults.txt
-      - name: Series B, with Simulator.app attached to the device
-        run: |
-          open -a Simulator --args -CurrentDeviceUDID "$UDID" || echo "could not open Simulator.app"
-          sleep 30
-          pgrep -lf Simulator.app || true
-          screencapture -x target/probe/mac-with-simulator.png 2>&1 || true
-          target/probe-venv/bin/python scripts/ios_indicator_probe.py "$UDID" target/probe B com.apple.Preferences 40
-      - name: Device log after Simulator.app
-        run: |
-          xcrun simctl spawn "$UDID" log show --last 2m --info --debug 2>/dev/null \
-            | grep -E "AttentionAwareness|IdleTimer|HomeGrabber|HomeAffordance" > target/probe/log-B.txt || true
-          wc -l target/probe/log-B.txt
-      - name: Upload probe
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: indicator-probe-stock-${{ github.sha }}
-          path: |
-            target/probe
-            target/mac-before.png
-          retention-days: 7
-
-  door:
-    name: Door with overlays hidden
-    runs-on: macos-26
-    timeout-minutes: 150
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode 26.6
@@ -101,27 +31,12 @@ jobs:
         run: brew install xcodegen
       - name: Boot both pinned simulators
         run: just ios simulator
-      - name: Imaging venv
-        run: python3 -m venv target/probe-venv && target/probe-venv/bin/pip -q install pillow numpy
-      - name: Goldens for probe and home with the door hiding overlays
-        run: just ios goldens probe home settings you
-        continue-on-error: true
-      - name: Series C, the door app launched plainly afterwards
-        run: |
-          U=$(xcrun simctl list devices | grep 'amux-golden (' | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
-          echo "UDID=$U" >> "$GITHUB_ENV"
-          target/probe-venv/bin/python scripts/ios_indicator_probe.py "$U" target/probe C sh.amux.app 30
-      - name: Device log
-        run: |
-          xcrun simctl spawn "$UDID" log show --last 15m --info --debug 2>/dev/null \
-            | grep -E "AttentionAwareness|IdleTimer|HomeGrabber|HomeAffordance|homeAffordance" > target/probe/log-C.txt || true
-          wc -l target/probe/log-C.txt
-      - name: Upload probe
+      - name: Compare the golden catalogue
+        run: just ios goldens
+      - name: Upload golden triplets
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: indicator-probe-door-${{ github.sha }}
-          path: |
-            target/probe
-            target/ios/goldens
+          name: catalogue-${{ github.sha }}
+          path: target/ios/goldens
           retention-days: 7
