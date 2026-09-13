@@ -1,3 +1,33 @@
+2026-09-13 — **Made the working line elastic, and let the composer grow into
+a turn.** The line under the activity was a rigid capsule of fixed width
+sliding to and fro. The rule above it had already gone trackless, on the
+grounds that a track is the shape of a thing with a known end and nothing here
+knows when a turn will finish — but a fixed-width block sliding between two
+walls still reads as a shuttle on a track. A length that will not hold still
+finishes the thought.
+
+It is two ends now rather than one block. Each crosses the same stretch of the
+row and they differ only in when they set off: the leading end leaves first,
+the trailing end follows a beat later, so the line pulls long as it departs and
+gathers up as it arrives. Set the lag to zero and the shuttle comes back.
+
+Written as keyframes rather than as a formula sampled off a clock. A design
+prototype derived the positions from a capture clock with floor-and-parity
+arithmetic, which is right for filming a deterministic movie and wrong for a
+phone: it needs a clock ticking whether or not anyone is looking, and the leg
+mirroring has to be reasoned about by hand. Two keyframe tracks over one
+timeline is what the thing actually is, and the phase lag is two durations.
+SwiftUI owns the clock and stops it when the view goes away.
+
+The held frame does not move. The segment breathes between a tenth of the row
+and a little under half, at its longest exactly mid-crossing — which is where
+it already held for captures and for Reduce Motion, so no baseline churns.
+
+And the composer grows into the working state instead of jumping into it. The
+activity and its line were inserted into the box with no transition, so the box
+got taller between two frames the moment a turn started and shorter when it
+ended — under a thumb that is usually about to write in it.
+
 2026-09-13 — **Took two marks out of the fleet's vocabulary and said what
 they meant instead.** The sweep ring stood for "working" and never swept: its
 angle was fixed for the sake of a capture, so a working agent showed a frozen
