@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generating ios/Amux.xcodeproj, in one place.
+"""Generating apps/apple/Amux.xcodeproj, in one place.
 
 Every recipe that builds the app regenerates the project first, and every one
 of them has to apply the same repair afterwards: XcodeGen writes the StoreKit
@@ -11,7 +11,7 @@ and hand the next test run an App Store with nothing in it.
 from pathlib import Path
 import subprocess
 
-SCHEME = Path("ios/Amux.xcodeproj/xcshareddata/xcschemes/Amux.xcscheme")
+SCHEME = Path("apps/apple/Amux.xcodeproj/xcshareddata/xcschemes/Amux.xcscheme")
 STOREKIT = """      <StoreKitConfigurationFileReference
          identifier = "../../Amux/Amux.storekit">
       </StoreKitConfigurationFileReference>
@@ -19,11 +19,11 @@ STOREKIT = """      <StoreKitConfigurationFileReference
 
 
 def generate() -> None:
-    # The project is generated from ios/project.yml and committed, so a
+    # The project is generated from apps/apple/project.yml and committed, so a
     # regeneration that changes it shows up in the diff like any other change.
     subprocess.run(
         ["xcodegen", "generate", "--spec", "project.yml", "--quiet"],
-        cwd="ios", check=True, timeout=300,
+        cwd="apps/apple", check=True, timeout=300,
     )
     store_kit_in_tests()
 

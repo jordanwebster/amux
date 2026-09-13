@@ -25,7 +25,7 @@
 
 set -eu
 
-package=${AMUX_FEATURES_SOURCES:-ios/Packages/AmuxFeatures/Sources/AmuxFeatures}
+package=${AMUX_FEATURES_SOURCES:-apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures}
 
 # Every complaint about one tree of sources, one per line. Says nothing and
 # answers 0 when the tree is clean.

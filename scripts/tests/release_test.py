@@ -238,11 +238,11 @@ class TheRehearsal(unittest.TestCase):
                                                  " M notes/scratch.md\n"))
 
     def test_a_file_the_run_wrote_is_named(self):
-        self.assertEqual([" M ios/project.yml"], recipe.tree_changes(
-            "", " M ios/project.yml\n"))
-        self.assertEqual(["?? ios/Amux/Generated.swift"], recipe.tree_changes(
+        self.assertEqual([" M apps/apple/project.yml"], recipe.tree_changes(
+            "", " M apps/apple/project.yml\n"))
+        self.assertEqual(["?? apps/apple/Amux/Generated.swift"], recipe.tree_changes(
             " M notes/scratch.md\n",
-            " M notes/scratch.md\n?? ios/Amux/Generated.swift\n"))
+            " M notes/scratch.md\n?? apps/apple/Amux/Generated.swift\n"))
 
     def test_the_claim_and_the_refusal_both_come_from_that_comparison(self):
         source = (SCRIPTS / "release.py").read_text()
@@ -264,7 +264,7 @@ class TheProject(unittest.TestCase):
     def test_the_bundle_reads_them_from_the_build_settings(self):
         # What lets a rehearsal archive the would-be release without touching
         # the tree: both numbers can be passed to xcodebuild instead.
-        plist = (ROOT / "ios/Amux/Info.plist").read_text()
+        plist = (ROOT / "apps/apple/Amux/Info.plist").read_text()
         self.assertIn("$(MARKETING_VERSION)", plist)
         self.assertIn("$(CURRENT_PROJECT_VERSION)", plist)
 
@@ -315,7 +315,7 @@ class TheExportOptions(unittest.TestCase):
 
     def test_the_team_is_inserted_at_run_time(self):
         with checkout() as root:
-            (root / "ios").mkdir()
+            (root / "apps/apple").mkdir(parents=True)
             (root / recipe.EXPORT_OPTIONS).write_bytes(
                 (ROOT / recipe.EXPORT_OPTIONS).read_bytes())
             written = recipe.export_options("ABCDE12345")
@@ -369,7 +369,7 @@ class TheProvisioningProfile(unittest.TestCase):
 
     def test_the_export_names_one_per_bundle_id(self):
         with checkout() as root:
-            (root / "ios").mkdir()
+            (root / "apps/apple").mkdir(parents=True)
             (root / recipe.EXPORT_OPTIONS).write_bytes(
                 (ROOT / recipe.EXPORT_OPTIONS).read_bytes())
             self.assertEqual({"sh.amux.app": "amux App Store"},

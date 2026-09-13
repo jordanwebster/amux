@@ -14,11 +14,11 @@ from pathlib import Path
 import re
 import sys
 
-ROOT = Path(__file__).resolve().parents[2]
-CATALOGUE = Path("ios/Amux/Resources/Localizable.xcstrings")
+ROOT = Path(__file__).resolve().parents[3]
+CATALOGUE = Path("apps/apple/Amux/Resources/Localizable.xcstrings")
 DEBUG_CATALOGUE = Path(
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/DebugCopy.xcstrings")
-EXEMPTIONS = Path("ios/Tools/noncopy.json")
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Resources/DebugCopy.xcstrings")
+EXEMPTIONS = Path("apps/apple/Tools/noncopy.json")
 
 
 @dataclass(frozen=True)
@@ -133,15 +133,15 @@ def literals(source):
 
 
 def swift_sources(root):
-    roots = [root / "ios/Amux/Sources", root / "ios/Amux/Debug",
-             *sorted((root / "ios/Packages").glob("*/Sources"))]
+    roots = [root / "apps/apple/Amux/Sources", root / "apps/apple/Amux/Debug",
+             *sorted((root / "apps/apple/Packages").glob("*/Sources"))]
     return sorted(path for directory in roots for path in directory.rglob("*.swift"))
 
 
 def debug_source(path):
-    return (path.startswith("ios/Amux/Debug/")
-            or path.startswith("ios/Packages/AmuxTestSupport/Sources/")
-            or path.startswith("ios/Packages/AmuxCore/Sources/Instrumentation/"))
+    return (path.startswith("apps/apple/Amux/Debug/")
+            or path.startswith("apps/apple/Packages/AmuxTestSupport/Sources/")
+            or path.startswith("apps/apple/Packages/AmuxCore/Sources/Instrumentation/"))
 
 
 def read_json(path):

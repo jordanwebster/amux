@@ -16,7 +16,7 @@ checkout. The phone does not run local agents.
 | `AmuxFeatures` | SwiftUI screens driven by state and actions, plus registered UIKit leaves |
 | `AmuxShell` | iPhone navigation, tabs, routes, deep links and service coordination |
 | `AmuxTestSupport` | Named fixtures, scripted account and StoreKit adapters, driving protocol, report models and views |
-| `ios/Amux` | App entry, platform services, debug capture and driving server |
+| `apps/apple/Amux` | App entry, platform services, debug capture and driving server |
 
 The runtime streams ordered batches into Swift; Swift copies callback bytes
 before returning and applies store changes on the main actor. Feed updates
@@ -62,7 +62,7 @@ just ios lint
 ```
 
 `ios-build` builds the Rust XCFramework under the workspace `mobile` profile
-and regenerates `ios/Amux.xcodeproj` from `ios/project.yml`. Commit generator
+and regenerates `apps/apple/Amux.xcodeproj` from `apps/apple/project.yml`. Commit generator
 input and generated project together when changing targets. Outputs live under
 `target/ios/`, with the Debug simulator app in
 `DerivedData/Build/Products/Debug-iphonesimulator/Amux.app`.
@@ -214,7 +214,7 @@ checking successive frames for stability. This includes the render server's
 glass and the pinned system status bar. The in-app report capture instead uses
 `drawHierarchy(in:afterScreenUpdates:)` to freeze its own window.
 Expected, actual and difference PNGs land in `target/ios/goldens/`. The reference
-recipe pairs all 66 preserved design images in `ios/Goldens/References/` with
+recipe pairs all 66 preserved design images in `apps/apple/Goldens/References/` with
 the app baselines under `target/ios/goldens/reference/`. Reference comparisons support
 visual review; baseline comparisons detect regressions only after a baseline
 has been visually approved. During the direct design port, existing native
@@ -226,7 +226,7 @@ automatically grants that approval.
 Inspect a mismatch before updating anything. A deliberate visual change uses
 `just ios goldens --update SCREEN`, limited to the changed
 screens, followed by an ordinary comparison. Inspect both appearances and
-record the reason in [the baseline notes](../ios/Goldens/BASELINE.md), including
+record the reason in [the baseline notes](../apps/apple/Goldens/BASELINE.md), including
 any departure from the preserved design. Never refresh baselines to conceal
 nondeterminism. The perturbation recipe deliberately changes a visible token
 and must detect a difference. Pixel equality alone does not establish usable
@@ -245,7 +245,7 @@ light/dark goldens and baseline explanation.
 
 The icon is the one already published on the App Store, copied into this
 repository as
-`ios/Amux/Assets.xcassets/AppIcon.appiconset/AppIcon.png`. Nothing in the
+`apps/apple/Amux/Assets.xcassets/AppIcon.appiconset/AppIcon.png`. Nothing in the
 build designs, draws, scales or regenerates it, and no script reads the
 artwork from anywhere else — the committed PNG is the only copy a build sees,
 so the app that ships from here carries the same mark as the app already on
@@ -263,7 +263,7 @@ happily:
   transparent pixel on a home screen has nothing to show through to.
 - **A 120×120 iPhone icon in the bundle.** The catalog compiler writes
   `AppIcon60x60@2x.png`; an upload without it fails with code 90022.
-- **A top-level `CFBundleIconName`.** `ios/project.yml` declares it. The
+- **A top-level `CFBundleIconName`.** `apps/apple/project.yml` declares it. The
   catalog compiler writes its own copy nested inside `CFBundleIcons`, which
   is not where Apple looks; without the declared one the upload fails with
   code 90713.
@@ -278,7 +278,7 @@ carries no 120×120 `AppIcon60x60@2x.png`.
 ## Journeys and replay
 
 `just ios journey NAME` runs a group from
-`ios/Journeys/manifest.json`; omit NAME to run every group. Groups include home,
+`apps/apple/Journeys/manifest.json`; omit NAME to run every group. Groups include home,
 conversation, asks, review, writing, hosts, claude-sessions, accounts,
 production-startup and reports.
 The recipe starts declared topologies, runs accessibility-driven XCUITests,

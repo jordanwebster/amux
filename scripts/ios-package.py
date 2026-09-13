@@ -15,7 +15,7 @@ import tomllib
 sys.path.insert(0, str(Path(__file__).parent))
 import ios_bridge as bridge
 
-LINKAGE_SMOKE = Path("ios/Tools/linkage_smoke.py")
+LINKAGE_SMOKE = Path("apps/apple/Tools/linkage_smoke.py")
 
 
 def main() -> None:

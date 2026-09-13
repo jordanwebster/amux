@@ -31,8 +31,8 @@ amux is in early development. Core multiplexing works locally. Cloud relay and m
 The amux core is open source, dual-licensed under either [MIT](LICENSE-MIT) or
 [Apache 2.0](LICENSE-APACHE), at your option.
 
-The iPhone app under `ios/` is source-available under the
-[Functional Source License](ios/LICENSE) (FSL-1.1-ALv2): free to read, build,
+The applications under `apps/` are source-available under the
+[Functional Source License](apps/LICENSE) (FSL-1.1-ALv2): free to read, build,
 modify and use for anything except competing with us, and Apache-2.0 two years
 after each version is published.
 

@@ -33,7 +33,7 @@ class NativeDesignBenchmarkTests(unittest.TestCase):
     def test_full_review_covers_every_selected_design_capture(self):
         captures = {
             path.name.removesuffix(".only.light.png")
-            for path in (benchmark.ROOT / "ios/Goldens/References")
+            for path in (benchmark.ROOT / "apps/apple/Goldens/References")
                 .glob("*.only.light.png")
         }
         # Notifications are an agreed product exclusion, not a silently

@@ -20,9 +20,9 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-CATALOG = ROOT / "ios/Amux/Assets.xcassets"
+CATALOG = ROOT / "apps/apple/Amux/Assets.xcassets"
 ICON = CATALOG / "AppIcon.appiconset"
-SPEC = ROOT / "ios/project.yml"
+SPEC = ROOT / "apps/apple/project.yml"
 
 
 def png_header(path: Path) -> tuple[int, int, int, int]:

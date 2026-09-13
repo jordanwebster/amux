@@ -47,7 +47,7 @@ class InventoryBoundary(unittest.TestCase):
         self.write_catalogue(lint.CATALOGUE, ["Pair", "Hello %@"])
         self.write_catalogue(lint.DEBUG_CATALOGUE, ["Report"])
         self.write(lint.EXEMPTIONS, json.dumps({"version": 1, "files": {}}))
-        self.source = Path("ios/Packages/AmuxFeatures/Sources/Feature.swift")
+        self.source = Path("apps/apple/Packages/AmuxFeatures/Sources/Feature.swift")
         self.write(self.source, 'Text("Pair")')
 
     def write(self, path, text):
@@ -66,11 +66,11 @@ class InventoryBoundary(unittest.TestCase):
     def test_view_helper_new_package_and_debug_copy_fail_when_missing(self):
         cases = [
             (self.source, 'Text("Missing view copy")'),
-            (Path("ios/Packages/AmuxCore/Sources/Store.swift"),
+            (Path("apps/apple/Packages/AmuxCore/Sources/Store.swift"),
              'var failure: String { "Missing helper copy" }'),
-            (Path("ios/Packages/Future/Sources/New.swift"), 'let label = #"Raw copy"#'),
-            (Path("ios/Amux/Debug/Report.swift"), 'Text("Missing debug copy")'),
-            (Path("ios/Packages/AmuxTestSupport/Sources/Report.swift"),
+            (Path("apps/apple/Packages/Future/Sources/New.swift"), 'let label = #"Raw copy"#'),
+            (Path("apps/apple/Amux/Debug/Report.swift"), 'Text("Missing debug copy")'),
+            (Path("apps/apple/Packages/AmuxTestSupport/Sources/Report.swift"),
              'let label = """\nMultiline copy\n"""'),
             (self.source, r'Text("Hello \(name ?? "missing fallback")")'),
         ]
@@ -85,7 +85,7 @@ class InventoryBoundary(unittest.TestCase):
         self.write(self.source, 'Text("Report")')
         self.assertTrue(lint.check(self.root)[0])
         (self.root / self.source).unlink()
-        self.write(Path("ios/Amux/Debug/Report.swift"), 'Text("Report")')
+        self.write(Path("apps/apple/Amux/Debug/Report.swift"), 'Text("Report")')
         self.assertEqual(lint.check(self.root)[0], [])
 
     def test_exemption_is_bound_to_exact_source_and_file(self):
@@ -99,9 +99,9 @@ class InventoryBoundary(unittest.TestCase):
         self.write(self.source, source + '\nText("operation")')
         self.assertTrue(lint.check(self.root)[0])
         self.write(self.source, source)
-        self.write(Path("ios/Packages/AmuxCore/Sources/Other.swift"), source)
+        self.write(Path("apps/apple/Packages/AmuxCore/Sources/Other.swift"), source)
         self.assertTrue(lint.check(self.root)[0])
-        (self.root / "ios/Packages/AmuxCore/Sources/Other.swift").unlink()
+        (self.root / "apps/apple/Packages/AmuxCore/Sources/Other.swift").unlink()
         self.write(self.source, 'Text("Pair")')
         self.assertTrue(any("stale" in issue for issue in lint.check(self.root)[0]))
 

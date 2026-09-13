@@ -20,7 +20,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path("ios/Tools").resolve()))
+sys.path.insert(0, str(Path("apps/apple/Tools").resolve()))
 import ios_simulators
 
 DERIVED_DATA = Path("target/ios/DerivedData")
@@ -41,7 +41,7 @@ def main() -> int:
     with log.open("w") as sink:
         returned = subprocess.run([
             "xcodebuild", "test",
-            "-project", "ios/Amux.xcodeproj",
+            "-project", "apps/apple/Amux.xcodeproj",
             "-scheme", "Amux",
             "-configuration", "Debug",
             "-destination", f"id={udid}",

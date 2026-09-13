@@ -4,7 +4,7 @@
 
 set shell := ["sh", "-cu"]
 set positional-arguments
-set working-directory := ".."
+set working-directory := "../.."
 
 # Wall-clock bound for every recipe; portable where GNU timeout is absent.
 bounded := "scripts/bounded"
@@ -24,7 +24,7 @@ tools:
 # before anything is compiled and says which line is wrong.
 # Check the Swift sources against the screens package's writing rules.
 lint:
-    {{bounded}} 300 sh -c 'sh ios/Tools/feature-lint.sh && ios/Tools/strings-lint.sh'
+    {{bounded}} 300 sh -c 'sh apps/apple/Tools/feature-lint.sh && apps/apple/Tools/strings-lint.sh'
 
 # The one bridge slice a development build links: the simulator, with the
 # driving tools, under the ordinary development profile. Repackages only when
@@ -58,7 +58,7 @@ graph-check:
 simulator:
     {{bounded}} 900 python3 -B scripts/ios_simulators.py
 
-# Generates ios/Amux.xcodeproj from ios/project.yml, then builds the app for
+# Generates apps/apple/Amux.xcodeproj from apps/apple/project.yml, then builds the app for
 # the golden simulator. The bridge is an input, so `rust` runs first.
 # Generate the Xcode project and build the debug app.
 build: rust
@@ -105,7 +105,7 @@ replay *ARGS: build
 
 # The app driven the way a person drives it, against a real relay and real
 # daemons started from a committed topology. No arguments runs every journey
-# ios/Journeys/manifest.json declares.
+# apps/apple/Journeys/manifest.json declares.
 # Drive the app like a person against real daemons and a real relay.
 journey *ARGS: build tools
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2400 python3 -B scripts/ios-journey.py "$@"
@@ -135,7 +135,7 @@ perf *ARGS: rust package tools
 # simulator against a served test network and read the relay inventory back.
 # Link the driving bridge from bare Swift and read a served relay back.
 loopback-smoke: tools
-    {{bounded}} 1800 python3 -B ios/Tools/loopback_smoke.py
+    {{bounded}} 1800 python3 -B apps/apple/Tools/loopback_smoke.py
 
 # Inspect the release bundle for excluded platforms and debug-only surfaces.
 # Release links the shipping library, so the package is its input.

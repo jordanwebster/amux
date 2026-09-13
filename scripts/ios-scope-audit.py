@@ -179,7 +179,7 @@ def main() -> None:
     report = OUTPUT / "audit.txt"
     report.write_text("Release scope audit started; no verdict yet.\n")
     ios_project.generate()
-    args = ["xcodebuild", "-project", "ios/Amux.xcodeproj", "-scheme", "Amux",
+    args = ["xcodebuild", "-project", "apps/apple/Amux.xcodeproj", "-scheme", "Amux",
             "-configuration", "Release", "-destination", "generic/platform=iOS Simulator",
             "-derivedDataPath", str(DERIVED), "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES"]
     built = run([*args, "build", "-quiet"], timeout=900)
@@ -213,7 +213,7 @@ def main() -> None:
     if not any(copy in strings for copy in ("need you", "needs you")):
         failures.append("in-app attention copy is absent")
     graphs = []
-    for package in sorted(Path("ios/Packages").glob("*/Package.swift")):
+    for package in sorted(Path("apps/apple/Packages").glob("*/Package.swift")):
         graphs.append(json.loads(run([
             "swift", "package", "--package-path", str(package.parent),
             "--scratch-path", str((OUTPUT / "SwiftPM" / package.parent.name).resolve()),

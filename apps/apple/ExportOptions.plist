@@ -35,6 +35,6 @@
 	<true/>
 	<!-- teamID is deliberately absent: it identifies a team and this file is
 	     committed. `wt run release` copies this file and inserts the Team ID
-	     from the untracked ios/Signing.local.xcconfig. -->
+	     from the untracked apps/apple/Signing.local.xcconfig. -->
 </dict>
 </plist>

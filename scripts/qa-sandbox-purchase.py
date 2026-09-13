@@ -50,9 +50,9 @@ OTHER_ACCOUNT_VARIABLE = "AMUX_QA_EMAIL"
 # The Team ID, written by whoever owns this Mac's signing identity.
 # Untracked: a Team ID is not a secret but it is not this repository's either,
 # and a committed one would build somebody else's app.
-SIGNING_FILE = Path("ios/Signing.local.xcconfig")
+SIGNING_FILE = Path("apps/apple/Signing.local.xcconfig")
 REQUIRED_SETTINGS = ("DEVELOPMENT_TEAM",)
-# The app's identity, committed in ios/project.yml because it is the same
+# The app's identity, committed in apps/apple/project.yml because it is the same
 # everywhere: this build is the next version of the listing already on the
 # App Store, and the subscriptions belong to that listing. A local override
 # would sign a different app and find no products; the test beside this
@@ -273,7 +273,7 @@ def build_and_install(phone: dict, settings: dict[str, str]) -> None:
     print("building a development-signed build for the phone", flush=True)
     subprocess.run([
         "xcodebuild", "build",
-        "-project", "ios/Amux.xcodeproj",
+        "-project", "apps/apple/Amux.xcodeproj",
         "-scheme", "Amux",
         "-configuration", "Debug",
         "-destination", f"id={identifier}",

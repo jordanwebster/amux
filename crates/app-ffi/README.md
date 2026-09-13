@@ -71,7 +71,7 @@ generated header changed; when no Rust input changed it runs no cargo at all.
 workspace `mobile` profile with an explicit iOS 26.0 deployment target,
 packages their generated headers and Clang module maps as
 `target/ios/AmuxApp.xcframework`, then compiles
-`ios/Tools/LinkageSmoke.swift` against the packaged simulator slice and runs
+`apps/apple/Tools/LinkageSmoke.swift` against the packaged simulator slice and runs
 it on the pinned simulator.
 
 The smoke prints `amux_app_version` and checks that the shipping library
@@ -174,7 +174,7 @@ and replays an exported recorder snapshot through the shared reducer.
 
 `just ios loopback-smoke` builds the driving simulator library under the
 `dev` profile, stages it separately in `target/ios/loopback`,
-and compiles `ios/Tools/LoopbackSmoke.swift`. The recipe starts the testnet
+and compiles `apps/apple/Tools/LoopbackSmoke.swift`. The recipe starts the testnet
 runner with two real Mac daemons and passes its relay address and temporary
 bearer token to Swift on the pinned simulator. Swift prints the online daemon
 names and identities from the shared reducer snapshot, verifies that these

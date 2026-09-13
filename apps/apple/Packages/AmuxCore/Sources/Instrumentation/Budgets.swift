@@ -49,7 +49,7 @@ public struct BudgetTable: Sendable, Equatable {
     public let budgets: [Metric: Budget]
     /// What this machine measured when its baseline was recorded, if it has
     /// one, per metric and workload. Loaded from
-    /// `ios/Perf/baselines/<machine>.json`.
+    /// `apps/apple/Perf/baselines/<machine>.json`.
     public let baselines: [Measured: Double]
 
     public init(

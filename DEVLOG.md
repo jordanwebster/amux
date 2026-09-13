@@ -1,3 +1,20 @@
+2026-09-13 — **Moved the iPhone app to `apps/apple/`.** The app was built on
+its own branch at `ios/` and has now merged, so it takes the place the
+licensing split made for it. Applications sit under `apps/`, the licence that
+covers them sits at `apps/LICENSE`, and the root LICENSE scopes by that
+directory rather than by one app's name — so a second application needs no
+licensing decision, only a directory.
+
+Two hundred and three references followed the move, in recipes, scripts, the
+CI workflow, the end-to-end topologies and the docs. `target/ios/` did not:
+that is where the Rust bridge's xcframework is built, it has nothing to do
+with the app's sources, and eighty-five references to it are deliberately
+unchanged. The root justfile now names the app's recipe file by path, so
+`just ios <recipe>` keeps working from anywhere in the checkout.
+
+Entries below this one describe the app at `ios/`, because that is where it
+was when they were written.
+
 2026-09-13 — **Split the repository's licensing by directory.** The core is
 now dual-licensed MIT or Apache-2.0, the Rust ecosystem's convention, so
 anything depending on amux composes with it without reasoning about licences.

@@ -159,7 +159,7 @@ targets:
           # is taken from that one. `just ios door-smoke` reads the build
           # marker back out of the running app and checks that the release
           # binary does not carry it.
-          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
+          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
         Measured:
           # The same tools as Debug, and for the same reason: the suite drives
           # the app through the door and measures the workloads the harness
@@ -167,7 +167,7 @@ targets:
           # it does not carry is DEBUG, so the app and the packages behind it
           # are compiled the way a shipped build is.
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: AMUX_DEBUG_TOOLS
-          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
+          OTHER_LDFLAGS: -Wl,-force_load,$(SRCROOT)/../../target/ios/AmuxAppDebugTools.xcframework/ios-arm64-simulator/libamux_app.a
           # The suite is `@testable import Amux`: it builds the app's own
           # screens and reads the app's own stores, which is what makes the
           # numbers the app's rather than a UI test's.

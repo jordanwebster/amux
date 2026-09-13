@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn script_from_report_reads_the_phone_bundle_and_refuses_a_recording_with_no_session() {
         let phone = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../ios/Fixtures/reports/sample/msgs.jsonl");
+            .join("../../apps/apple/Fixtures/reports/sample/msgs.jsonl");
         let recorded = read_snapshot(&phone).expect("the phone writes the recorder format");
         let refusal = script_from_report(&recorded).unwrap_err();
         assert_eq!(refusal, ConversionRefusal::PartialSession);
@@ -251,7 +251,7 @@ mod tests {
             panic!("raw rows")
         };
         println!(
-            "ios/Fixtures/reports/sample: {} recorded messages, {refusal}",
+            "apps/apple/Fixtures/reports/sample: {} recorded messages, {refusal}",
             recorded.msgs.len()
         );
         println!(

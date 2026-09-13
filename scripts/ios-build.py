@@ -15,7 +15,7 @@ DERIVED_DATA = Path("target/ios/DerivedData")
 def build(udid: str) -> None:
     subprocess.run([
         "xcodebuild", "build",
-        "-project", "ios/Amux.xcodeproj",
+        "-project", "apps/apple/Amux.xcodeproj",
         "-scheme", "Amux",
         "-configuration", "Debug",
         "-destination", f"id={udid}",

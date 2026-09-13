@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, str(Path("ios/Tools").resolve()))
+sys.path.insert(0, str(Path("apps/apple/Tools").resolve()))
 sys.path.insert(0, str(Path(__file__).parent))
 # Started and torn down exactly as the door smoke starts and tears them down.
 from loopback_smoke import control, read_ready, released

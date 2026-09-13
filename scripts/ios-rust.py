@@ -42,7 +42,7 @@ def main() -> None:
     if not linked.is_file():
         raise RuntimeError(
             f"{linked} is missing. The debug configuration of the app links this "
-            "exact path (ios/project.yml), so a change in how xcodebuild names "
+            "exact path (apps/apple/project.yml), so a change in how xcodebuild names "
             "the slice has to fail here rather than at link time.")
     # The Swift package names the shipping framework as a binary target, so
     # the project cannot resolve until something is there. A development tree

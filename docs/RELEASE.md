@@ -9,8 +9,8 @@ change; see [Where it stops](#where-it-stops).
 
 The app is the next version of the listing already on the App Store, not a
 new one. Its bundle identifier, `sh.amux.app`, is what signing and the App
-Store record agree on, and it is committed in `ios/project.yml`, from which
-XcodeGen writes `ios/Amux/Info.plist`. The listing's numeric Apple ID is not
+Store record agree on, and it is committed in `apps/apple/project.yml`, from which
+XcodeGen writes `apps/apple/Amux/Info.plist`. The listing's numeric Apple ID is not
 recorded here: nothing this recipe runs asks for it, and an upload — the one
 step that would — is not something this recipe does. Read it back from the
 App Store Connect record when it is wanted:
@@ -22,8 +22,8 @@ A build carries two numbers, and they are not interchangeable.
 
 **The marketing version** (`CFBundleShortVersionString`) is what a person
 sees in the App Store: `1.0.32`. It lives in one place — the app target's
-`MARKETING_VERSION` build setting in `ios/project.yml` — and the committed
-`ios/Amux/Info.plist` reads it from there as `$(MARKETING_VERSION)`. Writing
+`MARKETING_VERSION` build setting in `apps/apple/project.yml` — and the committed
+`apps/apple/Amux/Info.plist` reads it from there as `$(MARKETING_VERSION)`. Writing
 it as a build setting rather than a literal is what lets a rehearsal archive
 the version a release *would* cut without editing a tracked file: the number
 can be passed to `xcodebuild` instead.
@@ -125,13 +125,13 @@ nothing new to compose at that point.
 
 Three things sign this app, and they belong in different places.
 
-**Committed, in `ios/project.yml`:** device signing is off by default
+**Committed, in `apps/apple/project.yml`:** device signing is off by default
 (`CODE_SIGNING_ALLOWED: NO`), and the simulator SDK turns it back on with an
 ad-hoc identity (`CODE_SIGN_IDENTITY[sdk=iphonesimulator*]: "-"`). Every
 routine build in this repository is a simulator build, so the default is the
 one that needs no identity at all.
 
-**Committed, `ios/Amux/Amux.entitlements`:** `keychain-access-groups` naming
+**Committed, `apps/apple/Amux/Amux.entitlements`:** `keychain-access-groups` naming
 the app's own group. On the simulator that grant comes from the ad-hoc
 signature, which is why the entitlements file exists at all — see the
 Keychain section of [IOS.md](IOS.md). On a phone the same grant comes from
@@ -140,7 +140,7 @@ requested by the binary: the distribution archive keeps
 `CODE_SIGN_ENTITLEMENTS` pointing at that same file, and an archive built
 without it produces an app whose Keychain reads fail on the device only.
 
-**Untracked, `ios/Signing.local.xcconfig`:** the Team ID, and nothing else.
+**Untracked, `apps/apple/Signing.local.xcconfig`:** the Team ID, and nothing else.
 
 ```
 // The Apple Developer team this Mac signs as.
@@ -165,7 +165,7 @@ An identity reads `Apple Distribution: <person> (<ten characters>)`, and the
 string in the parentheses is *usually* the Team ID but is the individual's
 identifier on a personal Development certificate — a different value, ten
 characters long, that looks exactly as plausible. Writing that one into
-`ios/Signing.local.xcconfig` costs an afternoon: every credential is valid,
+`apps/apple/Signing.local.xcconfig` costs an afternoon: every credential is valid,
 every flag is right, and `xcodebuild` stops with *No Account for Team "…".
 Add a new account in Accounts settings*, which reads like a missing Apple
 Account rather than a wrong ten characters. Take the Team ID from
@@ -177,7 +177,7 @@ security find-certificate -c "Apple Distribution" -p | \
   openssl x509 -noout -subject
 ```
 
-**The export signs by hand.** `ios/ExportOptions.plist` sets
+**The export signs by hand.** `apps/apple/ExportOptions.plist` sets
 `signingStyle: manual` and names both the certificate type
 (`Apple Distribution`) and the profile (`amux App Store`, for
 `sh.amux.app`). Automatic signing is what Xcode does in the IDE, and it does
@@ -210,14 +210,14 @@ of `target/ios/AmuxApp.xcframework`, so `just ios rust` builds the
 device slice before anything is archived. The recipe also depends on
 `ios-scope-audit`, so a bundle carrying a debug surface or an excluded
 platform stops the release before an archive exists rather than after Apple
-has one. Then the project is generated from `ios/project.yml`, as every other
+has one. Then the project is generated from `apps/apple/project.yml`, as every other
 iOS recipe does.
 
 Archive:
 
 ```
 xcodebuild archive \
-  -project ios/Amux.xcodeproj -scheme Amux -configuration Release \
+  -project apps/apple/Amux.xcodeproj -scheme Amux -configuration Release \
   -destination 'generic/platform=iOS' \
   -archivePath target/ios/release/Amux.xcarchive \
   -derivedDataPath target/ios/ReleaseDerivedData \
@@ -225,12 +225,12 @@ xcodebuild archive \
   -authenticationKeyPath "$HOME/.appstoreconnect/private_keys/AuthKey_<KEY ID>.p8" \
   -authenticationKeyID <key id> -authenticationKeyIssuerID <issuer id> \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic \
-  DEVELOPMENT_TEAM=<from ios/Signing.local.xcconfig> \
+  DEVELOPMENT_TEAM=<from apps/apple/Signing.local.xcconfig> \
   MARKETING_VERSION=<version> CURRENT_PROJECT_VERSION=<build>
 ```
 
 The two numbers are passed rather than assumed: a full release has already
-written them into `ios/project.yml`, and a rehearsal has not written them
+written them into `apps/apple/project.yml`, and a rehearsal has not written them
 anywhere, so passing them is what makes both runs archive the same way.
 
 Export:
@@ -245,7 +245,7 @@ xcodebuild -exportArchive \
   -authenticationKeyID <key id> -authenticationKeyIssuerID <issuer id>
 ```
 
-`ios/ExportOptions.plist` is committed and holds no Team ID; the recipe
+`apps/apple/ExportOptions.plist` is committed and holds no Team ID; the recipe
 copies it to `target/ios/release/ExportOptions.plist` and inserts `teamID`
 from the local signing file, so the committed file stays free of anything
 that identifies a team. Its keys:
@@ -328,7 +328,7 @@ so and stops; `git status` shows two modified tracked files and no new
 commit, and `git tag --list 'ios-v*'` is unchanged. Undo the numbers:
 
 ```
-git checkout ios/project.yml ios/Amux.xcodeproj/project.pbxproj
+git checkout apps/apple/project.yml apps/apple/Amux.xcodeproj/project.pbxproj
 ```
 
 Then fix what failed and run the release again. Nothing was spent: the build
@@ -441,11 +441,11 @@ because the string in an identity's parentheses is not always it.
 ```
 printf 'DEVELOPMENT_TEAM = %s\n' \
   "$(security find-generic-password -s amux-appstoreconnect -a team-id -w)" \
-  > ios/Signing.local.xcconfig
+  > apps/apple/Signing.local.xcconfig
 ```
 
 `.gitignore` already covers it. Confirm with
-`git check-ignore -q ios/Signing.local.xcconfig`.
+`git check-ignore -q apps/apple/Signing.local.xcconfig`.
 
 **5. Make the distribution certificate and the App Store profile.** Both,
 once. The export signs by hand, so neither appears on its own during a run —
@@ -459,7 +459,7 @@ Request a Certificate From a Certificate Authority** (saved to disk).
 Download the resulting `.cer` and double-click it to install it, with its
 private key, into the login keychain. Then **Profiles → +**, choose **App
 Store Connect** distribution, select `sh.amux.app` and that certificate, and
-name the profile exactly **`amux App Store`** — `ios/ExportOptions.plist`
+name the profile exactly **`amux App Store`** — `apps/apple/ExportOptions.plist`
 asks for that name. Download it and double-click it to install it into
 `~/Library/MobileDevice/Provisioning Profiles`.
 

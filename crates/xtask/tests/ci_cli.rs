@@ -351,10 +351,10 @@ exec "$XTASK" ci-status --wait 0
 
 fn ios_verify_fixture() -> tempfile::TempDir {
     let dir = commands();
-    std::fs::create_dir_all(dir.path().join("ios/Journeys")).unwrap();
+    std::fs::create_dir_all(dir.path().join("apps/apple/Journeys")).unwrap();
     std::fs::write(
-        dir.path().join("ios/Journeys/manifest.json"),
-        include_str!("../../../ios/Journeys/manifest.json"),
+        dir.path().join("apps/apple/Journeys/manifest.json"),
+        include_str!("../../../apps/apple/Journeys/manifest.json"),
     )
     .unwrap();
     // The two justfiles the runner validates its stages against, declaring
@@ -383,7 +383,7 @@ fn ios_verify_fixture() -> tempfile::TempDir {
             .collect()
     };
     std::fs::write(dir.path().join("justfile"), declare(&root)).unwrap();
-    std::fs::write(dir.path().join("ios/justfile"), declare(&ios)).unwrap();
+    std::fs::write(dir.path().join("apps/apple/justfile"), declare(&ios)).unwrap();
     executable(
         &dir.path().join("just"),
         r#"#!/bin/sh
@@ -474,7 +474,7 @@ fn ios_verify_cli_reports_missing_runner_baseline_and_fails_machine_errors() {
     for present in [false, true] {
         std::fs::write(dir.path().join("calls"), "").unwrap();
         let machine = serde_json::json!({"name":"macos-26", "hard":false,
-            "baseline":"ios/Perf/baselines/macos-26.json", "baseline_present":present});
+            "baseline":"apps/apple/Perf/baselines/macos-26.json", "baseline_present":present});
         let output = ios_verify_command(dir.path())
             .env("PERF_MACHINE", machine.to_string())
             .output()

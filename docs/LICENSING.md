@@ -5,15 +5,12 @@ this page answers the questions it raises.
 
 ## Which licence applies to a file
 
-Everything inside `ios/` — the iPhone app — is under the Functional Source
-License 1.1 with an Apache 2.0 future licence, written `FSL-1.1-ALv2`.
-Everything else is dual MIT or Apache-2.0, at the recipient's option.
+Everything inside `apps/` is under the Functional Source License 1.1 with an
+Apache 2.0 future licence, written `FSL-1.1-ALv2`. The iPhone app is at
+`apps/apple/`. Everything else is dual MIT or Apache-2.0, at the recipient's
+option.
 
 There is no third case and no per-file exception. The path decides.
-
-The app will move to `apps/apple/`, so that applications sit together under
-one directory as more of them arrive. That is a move, not a change of terms:
-the licence file travels with the code it covers.
 
 ## What the FSL actually forbids
 

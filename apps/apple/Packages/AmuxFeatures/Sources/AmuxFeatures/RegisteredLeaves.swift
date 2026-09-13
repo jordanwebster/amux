@@ -11,7 +11,7 @@ import Foundation
 /// selects a range of lines under a finger.
 ///
 /// A leaf is one file under `Leaves/`, wrapped in one representable, named
-/// here, and justified by a written measurement. `ios/Tools/feature-lint.sh`
+/// here, and justified by a written measurement. `apps/apple/Tools/feature-lint.sh`
 /// refuses UIKit anywhere else in this package, so the list here is the whole
 /// of it and nobody has to go looking.
 ///

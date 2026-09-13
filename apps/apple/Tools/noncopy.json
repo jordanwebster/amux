@@ -1,20 +1,20 @@
 {
   "version": 1,
   "files": {
-    "ios/Amux/Debug/DesignVariant.swift": [
+    "apps/apple/Amux/Debug/DesignVariant.swift": [
       {"literal": "\"tight-gutter\"", "context": "case tightGutter = \"tight-gutter\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"large-title\"", "context": "case largeTitle = \"large-title\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"context-band\"", "context": "case contextBand = \"context-band\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Amux/Debug/ScenarioShell.swift": [
+    "apps/apple/Amux/Debug/ScenarioShell.swift": [
       {"literal": "\"spec-suite\"", "context": "? Scenario.focus : Scenario.agentId(\"spec-suite\")", "reason": "Stable fixture agent identity, not interface copy.", "count": 1},
       {"literal": "\"No shell scenario for \\(screen.rawValue)\"", "context": "preconditionFailure(\"No shell scenario for \\(screen.rawValue)\")", "reason": "Debug scenario configuration diagnostic, not interface copy.", "count": 1}
     ],
-    "ios/Amux/Debug/ColdStartProbe.swift": [
+    "apps/apple/Amux/Debug/ColdStartProbe.swift": [
       {"literal": "\"amux-probe\"", "context": "static let argument = \"amux-probe\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"probe-home\"", "context": "if name == \"probe-home\" {", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Amux/Debug/DoorHost.swift": [
+    "apps/apple/Amux/Debug/DoorHost.swift": [
       {"literal": "\"amux-cloud-script\"", "context": "if let json = Self.said(\"amux-cloud-script\"),", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"door\"", "context": "private(set) var stores = StoreBundle(account: AccountId(\"door\"), clock: { Scenario.reading })", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"no conversation is open with \\(agent)\"", "context": "else { return .error(\"no conversation is open with \\(agent)\") }", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 2},
@@ -126,19 +126,19 @@
       {"literal": "\"nil\"", "context": "return .error(\"no design variant named \\(name ?? \"nil\")\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"no design variant named \\(name ?? \"nil\")\"", "context": "return .error(\"no design variant named \\(name ?? \"nil\")\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Amux/Debug/DoorRecording.swift": [
+    "apps/apple/Amux/Debug/DoorRecording.swift": [
       {"literal": "\"the screen could not be photographed, so there is no report\"", "context": "case .notPhotographed: \"the screen could not be photographed, so there is no report\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"the bundle's \\(what) could not be read\"", "context": "case .unreadable(let what): \"the bundle's \\(what) could not be read\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"the recording could not be replayed: \\(why)\"", "context": "case .refused(let why): \"the recording could not be replayed: \\(why)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Amux/Debug/DoorScreens.swift": [
+    "apps/apple/Amux/Debug/DoorScreens.swift": [
       {"literal": "\"-\\(Door.elementGeometryArgument)\"", "context": "\"-\\(Door.elementGeometryArgument)\")", "reason": "Debug launch argument assembled from the shared protocol spelling, not displayed copy.", "count": 1},
       {"literal": "\"spec-suite\"", "context": "? Scenario.focus : Scenario.agentId(\"spec-suite\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
       {"literal": "\"refactor-auth\"", "context": "DiffPage(model: review, subject: \"refactor-auth\") { _ in }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"refactor-auth\"", "context": "model: review, subject: \"refactor-auth\", wheel: \"spec/pairing.rs\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"spec/pairing.rs\"", "context": "model: review, subject: \"refactor-auth\", wheel: \"spec/pairing.rs\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
-    "ios/Amux/Debug/DoorServer.swift": [
+    "apps/apple/Amux/Debug/DoorServer.swift": [
       {"literal": "\"the driving door could not open: \\(error)\"", "context": "fatalError(\"the driving door could not open: \\(error)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"socket() failed with errno \\(code)\"", "context": "case .socket(let code): \"socket() failed with errno \\(code)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"bind() failed with errno \\(code)\"", "context": "case .bind(let code): \"bind() failed with errno \\(code)\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -148,10 +148,10 @@
       {"literal": "\"unreadable request: \\(error)\"", "context": "write(.error(\"unreadable request: \\(error)\"), to: connection)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"the door did not answer\"", "context": "private var value: DoorReply = .error(\"the door did not answer\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Amux/Debug/DoorWindow.swift": [
+    "apps/apple/Amux/Debug/DoorWindow.swift": [
       {"literal": "\"capture failed: \\(error.localizedDescription)\"", "context": "return .error(\"capture failed: \\(error.localizedDescription)\")", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Amux/Debug/Perturbation.swift": [
+    "apps/apple/Amux/Debug/Perturbation.swift": [
       {"literal": "\"ground\"", "context": "ground: ramp(\"ground\", base.ground),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"raised\"", "context": "raised: ramp(\"raised\", base.raised),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"sunken\"", "context": "sunken: ramp(\"sunken\", base.sunken),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -164,7 +164,7 @@
       {"literal": "\"added\"", "context": "added: ramp(\"added\", base.added),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"removed\"", "context": "removed: ramp(\"removed\", base.removed),", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Amux/Sources/Composition.swift": [
+    "apps/apple/Amux/Sources/Composition.swift": [
       {"literal": "\"accounts.json\"", "context": "let accounts = AccountRegistry(file: AppFiles.support.appendingPathComponent(\"accounts.json\"))", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
       {"literal": "\"signed-out\"", "context": "private let signedOut = StoreBundle(account: AccountId(\"signed-out\"))", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"-\\(Door.scriptedCloudArgument)\"", "context": ".contains(\"-\\(Door.scriptedCloudArgument)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
@@ -174,7 +174,7 @@
       {"literal": "\"AmuxGitSHA\"", "context": "Bundle.main.object(forInfoDictionaryKey: \"AmuxGitSHA\") as? String ?? \"\"", "reason": "Built Info.plist key for the checkout revision; not interface copy.", "count": 1},
       {"literal": "\"amux\"", "context": ".appendingPathComponent(\"amux\", isDirectory: true)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/AgentWrites.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/AgentWrites.swift": [
       {"literal": "\"command\"", "context": "\"command\": .string(\"set_model\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"set_model\"", "context": "\"command\": .string(\"set_model\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"agent\"", "context": "\"agent\": .string(agent.description),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 6},
@@ -197,7 +197,7 @@
       {"literal": "\"command\"", "context": "\"command\": .string(\"delete_agent\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"delete_agent\"", "context": "\"command\": .string(\"delete_agent\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift": [
       {"literal": "\"https://amux.sh\"", "context": "base: URL(string: \"https://amux.sh\")!,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"mobile\"", "context": "clientID: \"mobile\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"amux://callback\"", "context": "callback: URL(string: \"amux://callback\")!,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -288,7 +288,7 @@
       {"literal": "\"_\"", "context": ".replacingOccurrences(of: \"/\", with: \"_\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"=\"", "context": ".replacingOccurrences(of: \"=\", with: \"\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/AskPanels.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/AskPanels.swift": [
       {"literal": "\"command\"", "context": "\"command\": .string(\"claude\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"claude\"", "context": "\"command\": .string(\"claude\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"claude_command\"", "context": "\"claude_command\": .string(\"answer_ask\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -422,7 +422,7 @@
       {"literal": "\"plan_title\"", "context": "title: invocation?[\"plan_title\"]?.stringValue,", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1},
       {"literal": "\"plan_title\"", "context": "title: kind?[\"plan_title\"]?.stringValue,", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/BridgeClient.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/BridgeClient.swift": [
       {"literal": "\"System\"", "context": "case system = \"System\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"PlainLoopback\"", "context": "case plainLoopback = \"PlainLoopback\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Callback\"", "context": "if let text = try? decoder.singleValueContainer().decode(String.self), text == \"Callback\" {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -460,13 +460,13 @@
       {"literal": "\"claude\"", "context": "try container.encode(\"claude\", forKey: .provider)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"codex\"", "context": "try container.encode(\"codex\", forKey: .provider)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/Cloud.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Cloud.swift": [
       {"literal": "\"https://\\(host):\\(port)\"", "context": "public var relay: URL? { URL(string: \"https://\\(host):\\(port)\") }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/CloudSessionStore.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/CloudSessionStore.swift": [
       {"literal": "\"sh.amux.app.refresh\"", "context": "public init(service: String = \"sh.amux.app.refresh\") {", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/Coding.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Coding.swift": [
       {"literal": "\"not an RFC 3339 timestamp: \\(text)\"", "context": "debugDescription: \"not an RFC 3339 timestamp: \\(text)\"))", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1},
       {"literal": "\"+00:00\"", "context": "guard text.hasSuffix(\"Z\") || text.hasSuffix(\"+00:00\") else { return nil }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"Z\"", "context": "guard text.hasSuffix(\"Z\") || text.hasSuffix(\"+00:00\") else { return nil }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -477,7 +477,7 @@
       {"literal": "\"en_US_POSIX\"", "context": "formatter.locale = Locale(identifier: \"en_US_POSIX\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"yyyy-MM-dd'T'HH:mm:ss'Z'\"", "context": "formatter.dateFormat = \"yyyy-MM-dd'T'HH:mm:ss'Z'\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/ComposerState.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/ComposerState.swift": [
       {"literal": "\"command\"", "context": "\"command\": .string(\"claude\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"claude\"", "context": "\"command\": .string(\"claude\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"claude_command\"", "context": "\"claude_command\": .string(\"interrupt\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -492,15 +492,15 @@
       {"literal": "\"codex_command\"", "context": "\"codex_command\": .string(\"interrupt\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"interrupt\"", "context": "\"codex_command\": .string(\"interrupt\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/ConversationFacts.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/ConversationFacts.swift": [
       {"literal": "\"\\(tasks.done)/\\(tasks.total)\"", "context": "return \"\\(tasks.done)/\\(tasks.total)\"", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/ConversationStore.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/ConversationStore.swift": [
       {"literal": "\"pending-\\($0.id.uuidString)\"", "context": "id: \"pending-\\($0.id.uuidString)\", layer: layer,", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"feed replacement past the end at \\(replacement.position)\"", "context": "invariants.append(\"feed replacement past the end at \\(replacement.position)\")", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1},
       {"literal": "\"feed gap between \\(end) and \\(update.base)\"", "context": "invariants.append(\"feed gap between \\(end) and \\(update.base)\")", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/Events.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Events.swift": [
       {"literal": "\"Fleet\"", "context": "case fleet = \"Fleet\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Discovered\"", "context": "case discovered = \"Discovered\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Feed\"", "context": "case feed = \"Feed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -673,13 +673,13 @@
       {"literal": "\"branch:\\(base)\"", "context": "case .branch(let base): \"branch:\\(base)\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"timed_out\"", "context": "case timedOut = \"timed_out\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift": [
       {"literal": "\"s\"", "context": "return \"\\(waiting) need you · \\(rows.count) agent\\(rows.count == 1 ? \"\" : \"s\")\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/Identifiers.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Identifiers.swift": [
       {"literal": "\"not a UUID: \\(text)\"", "context": ".init(codingPath: decoder.codingPath, debugDescription: \"not a UUID: \\(text)\"))", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/Markdown.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Markdown.swift": [
       {"literal": "\"#\"", "context": "if trimmed.hasPrefix(\"#\"), let level = Self.headingLevel(trimmed) {", "reason": "Markdown parsing syntax, preserved verbatim.", "count": 1},
       {"literal": "\"-\"", "context": "if trimmed.allSatisfy({ $0 == \"-\" || $0 == \"*\" || $0 == \"_\" }), trimmed.count >= 3 {", "reason": "Markdown parsing syntax, preserved verbatim.", "count": 1},
       {"literal": "\"*\"", "context": "if trimmed.allSatisfy({ $0 == \"-\" || $0 == \"*\" || $0 == \"_\" }), trimmed.count >= 3 {", "reason": "Markdown parsing syntax, preserved verbatim.", "count": 1},
@@ -706,7 +706,7 @@
       {"literal": "\". \"", "context": "if !digits.isEmpty, body.dropFirst(digits.count).hasPrefix(\". \") {", "reason": "Markdown parsing syntax, preserved verbatim.", "count": 1},
       {"literal": "\"\\(digits).\"", "context": "return (true, depth, \"\\(digits).\",", "reason": "Markdown parsing syntax, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/MessageDraft.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/MessageDraft.swift": [
       {"literal": "\"<amux-attachment\"", "context": "guard text.contains(\"<amux-attachment\") else { return [.prose(text)] }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"image\"", "context": "case \"image\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"file\"", "context": "case \"file\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -736,12 +736,12 @@
       {"literal": "\"text\"", "context": "try container.encode(\"text\", forKey: .segment)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"command_token\"", "context": "try container.encode(\"command_token\", forKey: .segment)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/NewAgentStore.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/NewAgentStore.swift": [
       {"literal": "\"/\"", "context": "let trimmed = directory.hasSuffix(\"/\") ? String(directory.dropLast()) : directory", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"/\"", "context": "let last = trimmed.split(separator: \"/\").last.map(String.init)", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"agent\"", "context": "return last.flatMap { $0.isEmpty ? nil : $0 } ?? \"agent\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/Permissions.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Permissions.swift": [
       {"literal": "\"provider\"", "context": "guard let provider = facts[\"provider\"]?.stringValue else {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"claude\"", "context": "case \"claude\": self = .claude(mode: facts[\"mode\"]?.stringValue)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"mode\"", "context": "case \"claude\": self = .claude(mode: facts[\"mode\"]?.stringValue)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -766,14 +766,14 @@
       {"literal": "\"unreported\"", "context": "guard let policy else { return \"unreported\" }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"-\"", "context": "return policy.replacingOccurrences(of: \"-\", with: \" \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/ReviewStore.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/ReviewStore.swift": [
       {"literal": "\"start_side\"", "context": "case startSide = \"start_side\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"start_line\"", "context": "case startLine = \"start_line\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"\\(path):\\(side.rawValue):\\(line):\\(startLine)\"", "context": "public var id: String { \"\\(path):\\(side.rawValue):\\(line):\\(startLine)\" }", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"\\(line)\"", "context": "startLine == line ? \"\\(line)\" : \"\\(startLine)\\u{2013}\\(line)\"", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"s\"", "context": "return \"\\(count) line\\(count == 1 ? \"\" : \"s\") in \\(file.path)\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/RuntimeCoordinator.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/RuntimeCoordinator.swift": [
       {"literal": "\"localhost\"", "context": "let loopback = host == \"localhost\" || host == \"::1\" || host == \"[::1]\"", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
       {"literal": "\"::1\"", "context": "let loopback = host == \"localhost\" || host == \"::1\" || host == \"[::1]\"", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
       {"literal": "\"[::1]\"", "context": "let loopback = host == \"localhost\" || host == \"::1\" || host == \"[::1]\"", "reason": "Storage filename, keychain service identifier, or relay URL syntax; not app interface copy.", "count": 1},
@@ -785,25 +785,25 @@
       {"literal": "\".\"", "context": "let octets = host.split(separator: \".\", omittingEmptySubsequences: false)", "reason": "Debug session-import diagnostic or relay address syntax; not app interface copy.", "count": 1},
       {"literal": "\"127\"", "context": "|| octets.count == 4 && octets.first == \"127\" && octets.allSatisfy { UInt8($0) != nil }", "reason": "Debug session-import diagnostic or relay address syntax; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/Signposts.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Signposts.swift": [
       {"literal": "\"sh.amux.app\"", "context": "public static let subsystem = \"sh.amux.app\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"performance\"", "context": "private static let log = OSLog(subsystem: subsystem, category: \"performance\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"amux\"", "context": "os_signpost(.event, log: log, name: \"amux\", \"%{public}s\", signpost.rawValue)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"%{public}s\"", "context": "os_signpost(.event, log: log, name: \"amux\", \"%{public}s\", signpost.rawValue)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/SlashCommands.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/SlashCommands.swift": [
       {"literal": "\":\"", "context": "guard let colon = name.lastIndex(of: \":\") else { return false }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"plugin\"", "context": "let plugin = fields[\"plugin\"]?.stringValue {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"/\"", "context": "guard command == nil, body.hasPrefix(\"/\") else { return nil }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/Store.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/Store.swift": [
       {"literal": "\"amux_pro_monthly\"", "context": "public static let monthlyID = \"amux_pro_monthly\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"amux_pro_yearly\"", "context": "public static let yearlyID = \"amux_pro_yearly\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"unreachable\"", "context": "case .unreachable: \"unreachable\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"refused\"", "context": "case .refused: \"refused\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"amux.sh\"", "context": "case .web: \"amux.sh\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2}
     ],
-    "ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift": [
       {"literal": "\"kind\"", "context": "? (row[\"kind\"]?[\"kind\"]?.stringValue == \"tool\" ? row[\"kind\"]?[\"entry\"] : nil)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 3},
       {"literal": "\"tool\"", "context": "? (row[\"kind\"]?[\"kind\"]?.stringValue == \"tool\" ? row[\"kind\"]?[\"entry\"] : nil)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"entry\"", "context": "? (row[\"kind\"]?[\"kind\"]?.stringValue == \"tool\" ? row[\"kind\"]?[\"entry\"] : nil)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1022,7 +1022,7 @@
       {"literal": "\"permission_denied\"", "context": "case \"permission_denied\": \"Outside the working tree\"", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1},
       {"literal": "\"hidden\"", "context": "head: shown, hidden: facts[\"hidden\"]?.intValue ?? (truncated ? -1 : max(0, lines.count - 2)))", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/Instrumentation/Budgets.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/Instrumentation/Budgets.swift": [
       {"literal": "\"Machines\"", "context": "for cells in try rows(of: \"Machines\", in: markdown) {", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\" | \"", "context": "guard cells.count >= 4 else { throw BudgetTableError.rowUnreadable(cells.joined(separator: \" | \")) }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"—\"", "context": "model: model == \"—\" ? nil : model,", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
@@ -1041,10 +1041,10 @@
       {"literal": "\"`\"", "context": "cell.replacingOccurrences(of: \"`\", with: \"\").trimmed", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"%\"", "context": "let text = bare(cell).replacingOccurrences(of: \"%\", with: \"\")", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/Instrumentation/Instruments.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/Instrumentation/Instruments.swift": [
       {"literal": "\"CADisableMinimumFrameDurationOnPhone\"", "context": ".object(forInfoDictionaryKey: \"CADisableMinimumFrameDurationOnPhone\") as? Bool ?? false", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/Instrumentation/Judge.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/Instrumentation/Judge.swift": [
       {"literal": "\"ms\"", "context": "case milliseconds = \"ms\"", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"ms/s\"", "context": "case millisecondsPerSecond = \"ms/s\"", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"%\"", "context": "case percent = \"%\"", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
@@ -1061,7 +1061,7 @@
       {"literal": "\"%.2f\"", "context": "String(format: value < 10 ? \"%.2f\" : \"%.1f\", value)", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"%.1f\"", "context": "String(format: value < 10 ? \"%.2f\" : \"%.1f\", value)", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/Instrumentation/PerfRun.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/Instrumentation/PerfRun.swift": [
       {"literal": "\"perf\"", "context": "return documents.appendingPathComponent(\"perf\", isDirectory: true)", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"inputs.json\"", "context": "public static var inputs: URL { directory.appendingPathComponent(\"inputs.json\") }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"cold-samples.jsonl\"", "context": "public static var coldSamples: URL { directory.appendingPathComponent(\"cold-samples.jsonl\") }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
@@ -1071,7 +1071,7 @@
       {"literal": "\"verdict.json\"", "context": "public static var verdict: URL { directory.appendingPathComponent(\"verdict.json\") }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"cadence.json\"", "context": "public static var cadence: URL { directory.appendingPathComponent(\"cadence.json\") }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxCore/Sources/Instrumentation/Workloads.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/Instrumentation/Workloads.swift": [
       {"literal": "\"studio\"", "context": "name: [\"studio\", \"mini\", \"air\"][index],", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"mini\"", "context": "name: [\"studio\", \"mini\", \"air\"][index],", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"air\"", "context": "name: [\"studio\", \"mini\", \"air\"][index],", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
@@ -1166,7 +1166,7 @@
       {"literal": "\"design\"", "context": "private static let projects = [\"amux\", \"relay\", \"phone\", \"core\", \"design\", \"runner\"]", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"runner\"", "context": "private static let projects = [\"amux\", \"relay\", \"phone\", \"core\", \"design\", \"runner\"]", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxDesign/Sources/AmuxDesign/Design.swift": [
+    "apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Design.swift": [
       {"literal": "\"ground\"", "context": "(\"ground\", ground), (\"raised\", raised), (\"sunken\", sunken),", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1},
       {"literal": "\"raised\"", "context": "(\"ground\", ground), (\"raised\", raised), (\"sunken\", sunken),", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1},
       {"literal": "\"sunken\"", "context": "(\"ground\", ground), (\"raised\", raised), (\"sunken\", sunken),", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1},
@@ -1179,14 +1179,14 @@
       {"literal": "\"added\"", "context": "(\"added\", added), (\"removed\", removed),", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1},
       {"literal": "\"removed\"", "context": "(\"added\", added), (\"removed\", removed),", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxDesign/Sources/AmuxDesign/Faces.swift": [
+    "apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Faces.swift": [
       {"literal": "\"Instrument Sans\"", "context": "display: \"Instrument Sans\", body: \"Instrument Sans\", mono: \"Geist Mono\")", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 2},
       {"literal": "\"Geist Mono\"", "context": "display: \"Instrument Sans\", body: \"Instrument Sans\", mono: \"Geist Mono\")", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1},
       {"literal": "\"InstrumentSans.ttf\"", "context": "public static let files = [\"InstrumentSans.ttf\", \"GeistMono.ttf\"]", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1},
       {"literal": "\"GeistMono.ttf\"", "context": "public static let files = [\"InstrumentSans.ttf\", \"GeistMono.ttf\"]", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1},
       {"literal": "\"Fonts/\\(file)\"", "context": "Bundle.module.url(forResource: \"Fonts/\\(file)\", withExtension: nil)", "reason": "Font, token or design preview identifier, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Accounts.swift": [
       {"literal": "\"account.\\(entry.account.email)\"", "context": "\"account.\\(entry.account.email)\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"checkmark\"", "context": "Image(systemName: \"checkmark\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"\\(waiting)\"", "context": "Text(\"\\(waiting)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
@@ -1213,7 +1213,7 @@
       {"literal": "\"you.\\(id)\"", "context": ".identified(\"you.\\(id)\", label: title)", "reason": "Stable element/record identifier, not a displayed label.", "count": 2},
       {"literal": "\"you.help.caption\"", "context": ".identified(\"you.help.caption\")", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift": [
       {"literal": "\"home\"", "context": ".identified(\"home\", value: accounts.gate.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"home.subtitle\"", "context": ".identified(\"home.subtitle\", value: subtitle)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"plus\"", "context": "GlassIcon(glyph: \"plus\", prominent: true)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1246,7 +1246,7 @@
       {"literal": "\"line.3.horizontal.decrease\"", "context": "GlassIcon(glyph: \"line.3.horizontal.decrease\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"home.filter\"", "context": ".identified(\"home.filter\", label: \"Filter Agents\", value: filter.rawValue)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift": [
       {"literal": "\"conversation.ask\"", "context": ".identified(\"conversation.ask\", value: panel.id)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"ask.head\"", "context": ".identified(\"ask.head\", label: title)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"ask.subject\"", "context": ".identified(\"ask.subject\", value: text)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1277,7 +1277,7 @@
       {"literal": "\"ask.unreadable\"", "context": ".identified(\"ask.unreadable\", value: label)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"text.bubble\"", "context": "Image(systemName: \"text.bubble\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Attach.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Attach.swift": [
       {"literal": "\"photo\"", "context": "tile(.photo, glyph: \"photo\", label: \"Photo\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"doc\"", "context": "tile(.file, glyph: \"doc\", label: \"File\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"plus\"", "context": ".identified(\"plus\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1287,7 +1287,7 @@
       {"literal": "\", \"", "context": "[\"Permissions\", permission.current].compactMap { $0 }.joined(separator: \", \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"plus.permissions\"", "context": ".identified(\"plus.permissions\", label: \"Permissions\", value: permission.current ?? \"\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift": [
       {"literal": "\"hand.raised.fill\"", "context": "case .permission: \"hand.raised.fill\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"questionmark\"", "context": "case .question: \"questionmark\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"checkmark\"", "context": "case .finished: \"checkmark\"", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
@@ -1295,7 +1295,7 @@
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
       {"literal": "\"chevron.left\"", "context": "Image(systemName: \"chevron.left\")", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Composer.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Composer.swift": [
       {"literal": "\"composer.dictation\"", "context": ".identified(\"composer.dictation\", label: sentence)", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
       {"literal": "\"composer.dictation.settings\"", "context": ".identified(\"composer.dictation.settings\", label: \"Open Settings\")", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
       {"literal": "\"stop.circle\"", "context": "Image(systemName: dictation.active ? \"stop.circle\" : \"mic\")", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
@@ -1315,7 +1315,7 @@
       {"literal": "\"composer.working\"", "context": "\"composer.working\", label: activity.name, value: activity.elapsed ?? \"\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"stop.fill\"", "context": ".font(.system(size: glyph == \"stop.fill\" ? 12 : 14, weight: .bold))", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift": [
       {"literal": "\" · \"", "context": "return [host, \"unreachable\"].compactMap { $0 }.joined(separator: \" · \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\" · \"", "context": "return [host, directory].compactMap { $0 }.joined(separator: \" · \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"conversation\"", "context": ".identified(\"conversation\", value: model.agent.description)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1329,7 +1329,7 @@
       {"literal": "\"\\u{2212}\\(changes.deletions)\"", "context": "private var deletions: String { \"\\u{2212}\\(changes.deletions)\" }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"conversation.changes\"", "context": "\"conversation.changes\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/ConversationFoot.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ConversationFoot.swift": [
       {"literal": "\" · \"", "context": ".compactMap { $0 }.joined(separator: \" · \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"conversation.retry\"", "context": ".identified(\"conversation.retry\", label: \"Retry Now\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"conversation.foot\"", "context": ".identified(\"conversation.foot\", label: headline, value: detail)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1337,7 +1337,7 @@
       {"literal": "\"stop.circle\"", "context": "Image(systemName: \"stop.circle\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"conversation.exited\"", "context": ".identified(\"conversation.exited\", label: headline, value: sentence)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DeleteAccount.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/DeleteAccount.swift": [
       {"literal": "\"checkmark\"", "context": "consequence(\"checkmark\", kept: true,", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"xmark\"", "context": "consequence(\"xmark\", kept: false, \"This phone can no longer reach them.\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"xmark\"", "context": "consequence(\"xmark\", kept: false, billing)", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
@@ -1354,7 +1354,7 @@
       {"literal": "\"delete.cancel\"", "context": ".identified(\"delete.cancel\", label: \"Cancel\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"delete.confirm\"", "context": ".identified(\"delete.confirm\", label: \"Delete\", enabled: confirmed)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DiffPage.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/DiffPage.swift": [
       {"literal": "\"diff\"", "context": "private nonisolated static let space = \"diff\"", "reason": "Stable accessibility and driving identifier, not interface copy.", "count": 1},
       {"literal": "\"review\"", "context": ".identified(\"review\", value: model.diff.description)", "reason": "Stable accessibility and driving identifier, not interface copy.", "count": 1},
       {"literal": "\"review.chrome\"", "context": ".identified(\"review.chrome\", label: \"Review\", value: magnitudes)", "reason": "Stable accessibility and driving identifier, not interface copy.", "count": 1},
@@ -1385,7 +1385,7 @@
       {"literal": "\"/\"", "context": "return parts.count >= 2 ? parts.suffix(2).joined(separator: \"/\") : name", "reason": "Stable accessibility and driving identifier, not interface copy.", "count": 1},
       {"literal": "\"review.back\"", "context": "BackLink(subject, identifier: \"review.back\") { actions(.back) }", "reason": "Stable accessibility and driving identifier, not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Drawer.swift": [
       {"literal": "\"drawer\"", "context": ".identified(\"drawer\", value: current?.description ?? \"none\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"drawer.title\"", "context": ".identified(\"drawer.title\", value: \"amux\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"plus\"", "context": "GlassIcon(glyph: \"plus\", prominent: true, size: 30)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1399,7 +1399,7 @@
       {"literal": "\"drawer.online\"", "context": ".identified(\"drawer.online\", value: online)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"drawer.scrim\"", "context": ".identified(\"drawer.scrim\", label: \"Close Drawer\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Facts.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Facts.swift": [
       {"literal": "\"facts\"", "context": ".identified(\"facts\", value: open ? \"open\" : \"folded\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"chevron.down\"", "context": "Image(systemName: open ? \"chevron.down\" : \"chevron.up\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"chevron.up\"", "context": "Image(systemName: open ? \"chevron.down\" : \"chevron.up\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
@@ -1424,7 +1424,7 @@
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1},
       {"literal": "\"conversation.child.\\(child.id)\"", "context": ".identified(\"conversation.child.\\(child.id)\", label: spoken(child))", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift": [
       {"literal": "\"hosts\"", "context": ".identified(\"hosts\", value: subtitle)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.title\"", "context": ".identified(\"hosts.title\", value: \"Hosts\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.subtitle\"", "context": ".identified(\"hosts.subtitle\", value: subtitle)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1459,10 +1459,10 @@
       {"literal": "\"MacBook Air\"", "context": "case \"MacBook Air\": \"laptopcomputer\"", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
       {"literal": "\"laptopcomputer\"", "context": "case \"MacBook Air\": \"laptopcomputer\"", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Leaves/TokenTextField.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Leaves/TokenTextField.swift": [
       {"literal": "\"amuxToken\"", "context": "static let amuxToken = NSAttributedString.Key(\"amuxToken\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift": [
       {"literal": "\"new-agent\"", "context": ".identified(\"new-agent\", value: model.directory)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"new-agent.title\"", "context": ".identified(\"new-agent.title\", value: \"New Agent\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"new-agent.no-hosts\"", "context": ".identified(\"new-agent.no-hosts\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1497,7 +1497,7 @@
       {"literal": "\"new-agent.typed.use\"", "context": "\"new-agent.typed.use\", label: \"Use This Path\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"new-agent.back\"", "context": "BackLink(\"Agents\", identifier: \"new-agent.back\") {", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Overflow.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Overflow.swift": [
       {"literal": "\"pencil\"", "context": "row(.rename, glyph: \"pencil\", label: \"Rename\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"at\"", "context": "row(.copyAddress(address), glyph: \"at\", label: \"Copy Address\", detail: address)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"trash\"", "context": "row(.delete, glyph: \"trash\", label: \"Delete Agent\", destructive: true)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1516,7 +1516,7 @@
       {"literal": "\"agent-delete.confirm\"", "context": ".identified(\"agent-delete.confirm\", label: \"Delete\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"agent-delete\"", "context": ".identified(\"agent-delete\", value: name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift": [
       {"literal": "\"pin\"", "context": ".identified(\"pin\", value: model.digits)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"pin.title\"", "context": ".identified(\"pin.title\", value: \"Enter the code\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"pin.instruction\"", "context": ".identified(\"pin.instruction\", value: instruction)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1546,7 +1546,7 @@
       {"literal": "\"pair-confirm.done\"", "context": ".identified(\"pair-confirm.done\", label: \"Done\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"pin.back\"", "context": "BackLink(\"Hosts\", identifier: \"pin.back\") { actions(.cancel) }", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift": [
       {"literal": "\"paywall\"", "context": ".identified(\"paywall\", value: state)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"buying\"", "context": "case .buying: \"buying\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"confirming\"", "context": "case .confirming: \"confirming\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1568,13 +1568,13 @@
       {"literal": "\"paywall.back\"", "context": "BackLink(back, identifier: \"paywall.back\") { actions(.cancel) }", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
       {"literal": "\"paywall.restore\"", "context": "\"paywall.restore\", label: \"Restore Purchases\",", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/ProbeMeasurement.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ProbeMeasurement.swift": [
       {"literal": "\"probe.home.row.\\(row.id.description)\"", "context": ".identified(\"probe.home.row.\\(row.id.description)\", label: row.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"probe.home\"", "context": ".identified(\"probe.home\", value: \"\\(rows.count)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"\\(rows.count)\"", "context": ".identified(\"probe.home\", value: \"\\(rows.count)\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"transcript.\"", "context": "identifierPrefix: String = \"transcript.\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/ProbeScreen.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ProbeScreen.swift": [
       {"literal": "\"probe.title\"", "context": ".identified(\"probe.title\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"amux/probe\"", "context": "Text(\"amux/probe\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"probe.identifier\"", "context": ".identified(\"probe.identifier\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1583,7 +1583,7 @@
       {"literal": "\"probe.mono\"", "context": ".identified(\"probe.mono\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"probe\"", "context": ".identified(\"probe\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Screen.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Screen.swift": [
       {"literal": "\"home-quiet\"", "context": "case homeQuiet = \"home-quiet\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"run-live\"", "context": "case runLive = \"run-live\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"review-cta\"", "context": "case reviewCta = \"review-cta\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1597,7 +1597,7 @@
       {"literal": "\"sign-in\"", "context": "case signIn = \"sign-in\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"first-run-paid\"", "context": "case firstRunPaid = \"first-run-paid\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Settings.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Settings.swift": [
       {"literal": "\"chevron.down\"", "context": "Image(systemName: \"chevron.down\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"composer.model\"", "context": ".identified(\"composer.model\", label: \"Model and Effort\", value: label)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"settings.refused\"", "context": ".identified(\"settings.refused\", label: refusal)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1609,7 +1609,7 @@
       {"literal": "\", \"", "context": "[choice.name, choice.detail].compactMap { $0 }.joined(separator: \", \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"permissions.\\(choice.id)\"", "context": "\"permissions.\\(choice.id)\", label: choice.name,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift": [
       {"literal": "\"sign-in\"", "context": ".identified(\"sign-in\", value: state)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"failed\"", "context": "case .failed: \"failed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"sign-in.title\"", "context": ".identified(\"sign-in.title\", value: \"Sign in\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1626,20 +1626,20 @@
       {"literal": "\"sign-in.back\"", "context": "BackLink(back, identifier: \"sign-in.back\") { actions(.cancel) }", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
       {"literal": "\"sign-in.continue\"", "context": "\"sign-in.continue\", label: title, value: state,", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Slash.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Slash.swift": [
       {"literal": "\"slash\"", "context": ".identified(\"slash\", value: commands.typed)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"/\\(command.name)\"", "context": "Text(\"/\\(command.name)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"slash.\\(command.name)\"", "context": ".identified(\"slash.\\(command.name)\", label: \"/\\(command.name)\", value: command.origin)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"/\\(command.name)\"", "context": ".identified(\"slash.\\(command.name)\", label: \"/\\(command.name)\", value: command.origin)", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Tokens.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Tokens.swift": [
       {"literal": "\"photo\"", "context": "case .photo: \"photo\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"doc\"", "context": "case .file: \"doc\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"text.alignleft\"", "context": "case .text: \"text.alignleft\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"checkmark.bubble\"", "context": "case .review: \"checkmark.bubble\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"chevron.forward\"", "context": "case .command: \"chevron.forward\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift": [
       {"literal": "\"<amux-attachment\"", "context": "if text.contains(\"<amux-attachment\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"compaction\"", "context": "kind: \"compaction\", glyph: \"arrow.down.right.and.arrow.up.left\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"arrow.down.right.and.arrow.up.left\"", "context": "kind: \"compaction\", glyph: \"arrow.down.right.and.arrow.up.left\",", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1699,10 +1699,10 @@
       {"literal": "\"provider-error\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"transcript.exploration\"", "context": "\"transcript.exploration\", label: \"\\(counts), \\(anchor)\",", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxShell/Sources/AmuxShell/ConversationRecording.swift": [
+    "apps/apple/Packages/AmuxShell/Sources/AmuxShell/ConversationRecording.swift": [
       {"literal": "\"drawer\"", "context": "public static let drawer = \"drawer\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxShell/Sources/AmuxShell/DeepLink.swift": [
+    "apps/apple/Packages/AmuxShell/Sources/AmuxShell/DeepLink.swift": [
       {"literal": "\"amux\"", "context": "public static let scheme = \"amux\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"pair\"", "context": "case \"pair\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"payload\"", "context": ".queryItems?.first(where: { $0.name == \"payload\" })?.value,", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1715,10 +1715,10 @@
       {"literal": "\"/\"", "context": ".replacingOccurrences(of: \"_\", with: \"/\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"=\"", "context": "if remainder > 0 { standard += String(repeating: \"=\", count: 4 - remainder) }", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1}
     ],
-    "ios/Packages/AmuxShell/Sources/AmuxShell/Placeholders.swift": [
+    "apps/apple/Packages/AmuxShell/Sources/AmuxShell/Placeholders.swift": [
       {"literal": "\"page.\\(route.name)\"", "context": ".identified(\"page.\\(route.name)\", value: route.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxShell/Sources/AmuxShell/Route.swift": [
+    "apps/apple/Packages/AmuxShell/Sources/AmuxShell/Route.swift": [
       {"literal": "\"conversation\"", "context": "case .conversation: \"conversation\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"changes\"", "context": "case .changes: \"changes\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"new-agent\"", "context": "case .newAgent: \"new-agent\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1732,7 +1732,7 @@
       {"literal": "\"externaldrive.connected.to.line.below\"", "context": "case .hosts: \"externaldrive.connected.to.line.below\"", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"person.crop.circle\"", "context": "case .you: \"person.crop.circle\"", "reason": "SF Symbol asset name, not a displayed label.", "count": 1}
     ],
-    "ios/Packages/AmuxShell/Sources/AmuxShell/Shell.swift": [
+    "apps/apple/Packages/AmuxShell/Sources/AmuxShell/Shell.swift": [
       {"literal": "\"img\"", "context": "name: \"photo.\\(type.preferredFilenameExtension ?? \"img\")\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"photo.\\(type.preferredFilenameExtension ?? \"img\")\"", "context": "name: \"photo.\\(type.preferredFilenameExtension ?? \"img\")\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"application/octet-stream\"", "context": "mime: type.preferredMIMEType ?? \"application/octet-stream\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1741,7 +1741,7 @@
       {"literal": "\"not selected\"", "context": "value: isSelected ? \"selected\" : \"not selected\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"shell\"", "context": ".reported(\"shell\", value: router.tab.rawValue)", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Door.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Door.swift": [
       {"literal": "\"amux-element-geometry\"", "context": "public static let elementGeometryArgument = \"amux-element-geometry\"", "reason": "Debug launch protocol spelling shared by the app and its UI-test driver, not displayed copy.", "count": 1},
       {"literal": "\"open\"", "context": "case \"open\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"cloud\"", "context": "case \"cloud\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -1878,7 +1878,7 @@
       {"literal": "\"designVariant\"", "context": "case \"designVariant\":", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"designVariant\"", "context": "try fields.encode(\"designVariant\", forKey: .kind)", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixture.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixture.swift": [
       {"literal": "\"frozen-frame\"", "context": "let url = Bundle.main.url(forResource: \"frozen-frame\", withExtension: \"png\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"png\"", "context": "let url = Bundle.main.url(forResource: \"frozen-frame\", withExtension: \"png\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"{\\\"kind\\\":\\\"route\\\",\\\"screen\\\":\\\"run\\\"}\\n\"", "context": "trace: \"{\\\"kind\\\":\\\"route\\\",\\\"screen\\\":\\\"run\\\"}\\n\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -1894,7 +1894,7 @@
       {"literal": "\"jw@fox.dev\"", "context": "id: AccountId(\"side\"), email: \"jw@fox.dev\", displayName: \"Side project\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"Side project\"", "context": "id: AccountId(\"side\"), email: \"jw@fox.dev\", displayName: \"Side project\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift": [
       {"literal": "\"dictation-listening\"", "context": "Built(.typing, \"dictation-listening\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
       {"literal": "\"dictation-permission\"", "context": "Built(.typing, \"dictation-permission\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
       {"literal": "\"dictation-denied\"", "context": "Built(.typing, \"dictation-denied\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
@@ -2050,7 +2050,7 @@
       {"literal": "\"thinking\"", "context": "gate: .working, phase: \"thinking\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"spec-suite\"", "context": "agent: Scenario.agentId(\"spec-suite\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift": [
       {"literal": "\"ladybug\"", "context": "Image(systemName: \"ladybug\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"report.prompt\"", "context": ".identified(\"report.prompt\", label: \"Report\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"report.screen\"", "context": ".identified(\"report.screen\", value: state)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -2068,7 +2068,7 @@
       {"literal": "\"report.frame\"", "context": ".identified(\"report.frame\", value: \"\\(marks.count) marked\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"report.cancel\"", "context": "\"Cancel\", identifier: \"report.cancel\", accessibilityLabel: \"Cancel\"", "reason": "Debug accessibility identifier or SF Symbol; not interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift": [
       {"literal": "\"report.json\"", "context": "public static let reportFile = \"report.json\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"frame.png\"", "context": "public static let frameFile = \"frame.png\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"trace.jsonl\"", "context": "public static let traceFile = \"trace.jsonl\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -2123,7 +2123,7 @@
       {"literal": "\"daemon\"", "context": "if let daemon = report[\"daemon\"] as? String {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"daemon_absent_reason\"", "context": "split.daemonAbsent = report[\"daemon_absent_reason\"] as? String", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Scenario.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Scenario.swift": [
       {"literal": "\"studio\"", "context": "public static let studio = hostId(\"studio\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"mini\"", "context": "public static let mini = hostId(\"mini\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"air\"", "context": "public static let air = hostId(\"air\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2236,7 +2236,7 @@
       {"literal": "\"homelab\"", "context": "id: homelab, name: \"homelab\", online: true, version: \"0.4.0\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"0.4.0\"", "context": "id: homelab, name: \"homelab\", online: true, version: \"0.4.0\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedCloud.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedCloud.swift": [
       {"literal": "\"scripted-connect-token\"", "context": "token: String? = \"scripted-connect-token\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"relay.example\"", "context": "relayHost: String = \"relay.example\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"report-1\"", "context": "upload: UploadOutcome = .accepted(id: \"report-1\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2274,7 +2274,7 @@
       {"literal": "\"blockedByRenewal\"", "context": "guard deletion == \"blockedByRenewal\", let url = URL(string: manageURL) else {", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"relay.example\"", "context": "public var relayHost = \"relay.example\"", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedStore.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedStore.swift": [
       {"literal": "\"£7.99\"", "context": "Plan(id: Plan.monthlyID, period: .monthly, price: \"£7.99\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"£79.99\"", "context": "Plan(id: Plan.yearlyID, period: .yearly, price: \"£79.99\", saving: \"2 months free\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"2 months free\"", "context": "Plan(id: Plan.yearlyID, period: .yearly, price: \"£79.99\", saving: \"2 months free\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2290,7 +2290,7 @@
       {"literal": "\"nothingToRestore\"", "context": "case \"nothingToRestore\": .nothingToRestore", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"fails\"", "context": "case \"fails\": .fails(reason)", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Sessions.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Sessions.swift": [
       {"literal": "\"phase\"", "context": "phase: .claudePty(.object([\"phase\": .string(phase), \"tag\": .string(\"inferred\")])),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"tag\"", "context": "phase: .claudePty(.object([\"phase\": .string(phase), \"tag\": .string(\"inferred\")])),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"inferred\"", "context": "phase: .claudePty(.object([\"phase\": .string(phase), \"tag\": .string(\"inferred\")])),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2482,7 +2482,7 @@
       {"literal": "\"acceptEdits\"", "context": "permission: .object([\"provider\": .string(\"claude\"), \"mode\": .string(\"acceptEdits\")]))", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"\"\"\n        The client maps gRPC statuses onto distinct strings in three places. The protocol \\\n        refuses to distinguish them, so the client must not either. This is a small change \\\n        with a wide blast radius, because the strings are asserted on in specs.\n\n        ## Approach\n\n        Replace the match in `amux-ui/src/pairing.rs` with a single arm, then delete what \\\n        becomes unreachable. The daemon-side mapping stays: it is allowed to know which \\\n        failure happened.\n\n        1. Read every call site that maps a gRPC status to a string — 6 files\n        2. Replace the match in `amux-ui/src/pairing.rs` with one arm\n        3. Delete the three error constants nothing else reads\n        4. Update the two spec tests that assert on the old strings\n\n        ## Risk\n\n        The relay's own reconnect path reads `INVALID_PIN` by name. I will grep for it \\\n        before deleting anything, and if it is load-bearing I will come back rather than guess.\n\n        ```text\n        crates/amux-ui/src/pairing.rs   -14 +9\n        crates/amux-ui/src/errors.rs     -8 +0\n        crates/amux-ui/tests/pairing.rs  -6 +4\n        ```\n\n        ## What I will not do\n\n        - Touch the daemon-side mapping\n        - Change the retry budget, which looks wrong but is a separate change\n        - Rename anything, so the diff stays about one thing\n        \"\"\"", "context": "public static let planMarkdown = \"\"\"\n        The client maps gRPC statuses onto distinct strings in three places. The protocol \\\n        refuses to distinguish them, so the client must not either. This is a small change \\\n        with a wide blast radius, because the strings are asserted on in specs.\n\n        ## Approach\n\n        Replace the match in `amux-ui/src/pairing.rs` with a single arm, then delete what \\\n        becomes unreachable. The daemon-side mapping stays: it is allowed to know which \\\n        failure happened.\n\n        1. Read every call site that maps a gRPC status to a string — 6 files\n        2. Replace the match in `amux-ui/src/pairing.rs` with one arm\n        3. Delete the three error constants nothing else reads\n        4. Update the two spec tests that assert on the old strings\n\n        ## Risk\n\n        The relay's own reconnect path reads `INVALID_PIN` by name. I will grep for it \\\n        before deleting anything, and if it is load-bearing I will come back rather than guess.\n\n        ```text\n        crates/amux-ui/src/pairing.rs   -14 +9\n        crates/amux-ui/src/errors.rs     -8 +0\n        crates/amux-ui/tests/pairing.rs  -6 +4\n        ```\n\n        ## What I will not do\n\n        - Touch the daemon-side mapping\n        - Change the retry budget, which looks wrong but is a separate change\n        - Rename anything, so the diff stays about one thing\n        \"\"\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/States.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/States.swift": [
       {"literal": "\"no route to host\"", "context": "lost.entry.lastDialError = \"no route to host\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"connection reset\"", "context": "lost[0].entry.lastDialError = \"connection reset\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"reason\"", "context": "reason: .object([\"reason\": .string(\"host_unreachable\")]))),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2492,7 +2492,7 @@
       {"literal": "\"docs/PROTOCOL.md\"", "context": "review.toggle(file: \"docs/PROTOCOL.md\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"\"\"\n            Worth a test that two different failures produce byte-identical \\\n            output, otherwise this can regress silently.\n            \"\"\"", "context": "\"\"\"\n            Worth a test that two different failures produce byte-identical \\\n            output, otherwise this can regress silently.\n            \"\"\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Trace.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Trace.swift": [
       {"literal": "\"sheet\"", "context": "case \"sheet\": self = .sheet(try fields.decodeIfPresent(String.self, forKey: .sheet))", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"appearance\"", "context": "case \"appearance\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"dynamicType\"", "context": "case \"dynamicType\": self = .dynamicType(try fields.decode(String.self, forKey: .size))", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
@@ -2533,7 +2533,7 @@
       {"literal": "\"setAside\"", "context": "case \"setAside\":", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
       {"literal": "\"setAside\"", "context": "try fields.encode(\"setAside\", forKey: .kind)", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Transcript.swift": [
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Transcript.swift": [
       {"literal": "\"entry\"", "context": "\"entry\": .string(\"prompt\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"prompt\"", "context": "\"entry\": .string(\"prompt\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"text\"", "context": "\"text\": .string(text),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 3},

@@ -19,7 +19,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path("ios/Tools").resolve()))
+sys.path.insert(0, str(Path("apps/apple/Tools").resolve()))
 import ios_bridge
 import ios_simulators
 # The test relay is started and torn down exactly as the linkage smoke starts
@@ -253,7 +253,7 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
     if not before["build"].endswith(DRIVING_MARKER):
         raise SystemExit(
             f"the debug build linked {before['build']}, not the library with the driving "
-            f"tools; the debug configuration force-loads it (ios/project.yml)")
+            f"tools; the debug configuration force-loads it (apps/apple/project.yml)")
     if before["started"] or before["discovered"]:
         raise SystemExit(f"the app had already connected before it was asked to: {before}")
     if after["connection"] != "connected" or not after["reconciled"]:

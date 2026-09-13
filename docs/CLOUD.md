@@ -214,10 +214,10 @@ carries the service's own `error_description` and is shown as it is.
 of it is visible in any copy of the app anyway:
 
 - The App Store product identifiers, `amux_pro_monthly` and `amux_pro_yearly`,
-  in `ios/Packages/AmuxCore/Sources/AmuxCore/Store.swift`.
+  in `apps/apple/Packages/AmuxCore/Sources/AmuxCore/Store.swift`.
 - The amux.sh base URL, the client identifier `mobile`, the redirect
   `amux://callback` and the scopes, in `CloudEndpoint.production` in
-  `ios/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift`. Every other URL
+  `apps/apple/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift`. Every other URL
   the app offers — support, the account page — is derived from that base, so a
   build pointed elsewhere cannot offer the production one's pages.
 - No entitlement identifier at all. What an account may do is `pro` in the
@@ -262,7 +262,7 @@ verification list.
   account may then do. A sandbox transaction exists in exactly one place: a
   phone signed into a sandbox Apple Account, running a development-signed
   build. Apple's engineers say so plainly — sandbox sign-in is not supported
-  on the Simulator — and `ios/Amux/Amux.storekit` is a StoreKit Testing
+  on the Simulator — and `apps/apple/Amux/Amux.storekit` is a StoreKit Testing
   configuration, whose transactions are signed by the local test certificate
   and are not sandbox transactions. So this recipe never runs on a simulator
   and never invents a transaction. What it proves is the one thing no
@@ -274,7 +274,7 @@ verification list.
   touching neither StoreKit, the store nor amux.sh. Without it, anything
   missing is named and the run exits non-zero. Four facts are checked here —
   the account's address, its keychain password, a phone reachable over `xcrun
-  devicectl`, and a Team ID in `ios/Signing.local.xcconfig`, an untracked file
+  devicectl`, and a Team ID in `apps/apple/Signing.local.xcconfig`, an untracked file
   `.gitignore` covers because this repository builds simulator-only and holds
   no signing identity. The bundle id is not in that file: it is committed, so
   a phone build signs the same app the App Store knows. `docs/RELEASE.md`

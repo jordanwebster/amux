@@ -46,7 +46,7 @@ commands and provider/user content.
 `timeout 300 wt run ios-lint` runs the copy inventory and its failure probes
 alongside the feature architecture checks. It runs without Xcode or a
 simulator. The English catalogue is
-`ios/Amux/Resources/Localizable.xcstrings`. Debug report copy is in
+`apps/apple/Amux/Resources/Localizable.xcstrings`. Debug report copy is in
 `AmuxTestSupport/Sources/AmuxTestSupport/Resources/DebugCopy.xcstrings` and its
 resource directory is excluded from Release.
 
@@ -62,7 +62,7 @@ The checker scans all Swift sources in the app and every package, including
 debug report views. Raw strings, multiline strings and strings inside
 interpolation are included. It refuses any new nonempty literal until it
 appears in the appropriate catalogue or receives an exact non-copy exemption
-in `ios/Tools/noncopy.json`. An exemption names its file, literal, surrounding
+in `apps/apple/Tools/noncopy.json`. An exemption names its file, literal, surrounding
 source, occurrence count and reason. It is for protocol fields, asset names,
 formatting, harness diagnostics and verbatim fixture content. It is never a
 way to approve interface copy. Reusing an exempt protocol key as a new label,
@@ -76,7 +76,7 @@ catalogue entries as complete rendered phrases where views combine them.
 
 After a visible change, inspect both appearances and any affected small or
 accessibility layouts, update only the relevant goldens, explain departures
-in `ios/Goldens/BASELINE.md`, and run an ordinary comparison. Report descriptions
+in `apps/apple/Goldens/BASELINE.md`, and run an ordinary comparison. Report descriptions
 must match the bundle's declared parts: this app cannot read its system log
 back, so the contents caption names available session and host records and
 does not promise an app log.

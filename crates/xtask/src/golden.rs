@@ -1,6 +1,6 @@
 //! Golden captures: what the app draws, compared with what it drew last time.
 //!
-//! A baseline under `ios/Goldens` is a regression baseline — the app's own
+//! A baseline under `apps/apple/Goldens` is a regression baseline — the app's own
 //! output, locked. The design's preserved captures are a separate report:
 //! they are what the app is trying to look like, and a difference from one of
 //! them is a conversation, not a failure.
@@ -593,8 +593,8 @@ pub fn judge(outcomes: &[GoldenOutcome], built_only: bool) -> GoldenReport {
 
 // MARK: - The command
 
-const MANIFEST: &str = "ios/Goldens/manifest.json";
-const BASELINES: &str = "ios/Goldens";
+const MANIFEST: &str = "apps/apple/Goldens/manifest.json";
+const BASELINES: &str = "apps/apple/Goldens";
 const OUT: &str = "target/ios/goldens";
 const PERTURBED_OUT: &str = "target/ios/goldens/perturbed";
 /// The screen the perturbation check is run on, and the token it moves. The
@@ -848,7 +848,7 @@ fn diff_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> 
 
 fn reference_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let captures =
-        value(arguments, "--captures").unwrap_or_else(|| "ios/Goldens/References".into());
+        value(arguments, "--captures").unwrap_or_else(|| "apps/apple/Goldens/References".into());
     let out = value(arguments, "--out").unwrap_or_else(|| format!("{OUT}/reference"));
     let manifest = GoldenManifest::read(Path::new(MANIFEST))?;
     if !Path::new(&captures).is_dir() {
@@ -1088,7 +1088,7 @@ mod tests {
     #[test]
     fn the_committed_manifest_owes_the_catalogue_and_the_added_states() {
         let manifest =
-            GoldenManifest::read(Path::new("../../ios/Goldens/manifest.json")).expect("a manifest");
+            GoldenManifest::read(Path::new("../../apps/apple/Goldens/manifest.json")).expect("a manifest");
         let references: Vec<&GoldenScreen> = manifest
             .screens
             .iter()
@@ -1172,7 +1172,7 @@ mod tests {
                 "missing added state: {id}"
             );
         }
-        let baseline_notes = std::fs::read_to_string("../../ios/Goldens/BASELINE.md").unwrap();
+        let baseline_notes = std::fs::read_to_string("../../apps/apple/Goldens/BASELINE.md").unwrap();
         for screen in &references {
             assert!(
                 baseline_notes
@@ -1187,7 +1187,7 @@ mod tests {
             for appearance in &screen.appearances {
                 assert!(
                     Path::new(&format!(
-                        "../../ios/Goldens/References/{capture}.only.{appearance}.png"
+                        "../../apps/apple/Goldens/References/{capture}.only.{appearance}.png"
                     ))
                     .is_file(),
                     "missing preserved reference for {}.{appearance}",
@@ -1209,7 +1209,7 @@ mod tests {
             );
             for appearance in &screen.appearances {
                 assert!(
-                    Path::new(&format!("../../ios/Goldens/{}.{appearance}.png", screen.id))
+                    Path::new(&format!("../../apps/apple/Goldens/{}.{appearance}.png", screen.id))
                         .is_file(),
                     "missing baseline for {}.{appearance}",
                     screen.id

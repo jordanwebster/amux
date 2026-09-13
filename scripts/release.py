@@ -19,7 +19,7 @@ Three ways to run it:
   (neither)     write the numbers, archive, export and validate, and only
                 then commit the numbers and cut the tag.
 
-The Team ID comes from the untracked ios/Signing.local.xcconfig and the App
+The Team ID comes from the untracked apps/apple/Signing.local.xcconfig and the App
 Store Connect key from this Mac's login keychain; neither is ever written to a
 file this repository tracks.
 """
@@ -36,12 +36,12 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 import ios_project
 
-SPEC = Path("ios/project.yml")
-SIGNING_FILE = Path("ios/Signing.local.xcconfig")
+SPEC = Path("apps/apple/project.yml")
+SIGNING_FILE = Path("apps/apple/Signing.local.xcconfig")
 TEAM_SETTING = "DEVELOPMENT_TEAM"
 KEYCHAIN_SERVICE = "amux-appstoreconnect"
 KEY_DIRECTORY = Path.home() / ".appstoreconnect/private_keys"
-EXPORT_OPTIONS = Path("ios/ExportOptions.plist")
+EXPORT_OPTIONS = Path("apps/apple/ExportOptions.plist")
 # Where Xcode looks for provisioning profiles. The export names the profile it
 # wants, so the profile has to be sitting here before a release runs.
 PROFILES = Path.home() / "Library/MobileDevice/Provisioning Profiles"
@@ -398,7 +398,7 @@ def write_numbers(version: str, build: int) -> None:
                       "the numbers would not have reached the built app")
     SPEC.write_text(spec)
     # The project is generated and committed, so the numbers reach
-    # ios/Amux.xcodeproj in the same commit that raises them.
+    # apps/apple/Amux.xcodeproj in the same commit that raises them.
     ios_project.generate()
 
 
@@ -431,7 +431,7 @@ def archive(version: str, build: int, facts: dict) -> None:
     print(f"archiving {version} ({build})", flush=True)
     subprocess.run([
         "xcodebuild", "archive",
-        "-project", "ios/Amux.xcodeproj", "-scheme", "Amux",
+        "-project", "apps/apple/Amux.xcodeproj", "-scheme", "Amux",
         "-configuration", "Release",
         "-destination", "generic/platform=iOS",
         "-archivePath", str(ARCHIVE),
@@ -498,8 +498,8 @@ def commit_and_tag(version: str, build: int, message: str) -> None:
     `git checkout` undoes, where a commit and an annotated tag naming a build
     Apple rejected would have to be unpicked by hand. docs/RELEASE.md holds
     the recovery for each place a run can stop."""
-    subprocess.run(["git", "add", str(SPEC), "ios/Amux/Info.plist",
-                    "ios/Amux.xcodeproj/project.pbxproj"],
+    subprocess.run(["git", "add", str(SPEC), "apps/apple/Amux/Info.plist",
+                    "apps/apple/Amux.xcodeproj/project.pbxproj"],
                    check=True, timeout=120)
     subprocess.run(["git", "commit", "-m", f"Version {version} (build {build})"],
                    check=True, timeout=120)

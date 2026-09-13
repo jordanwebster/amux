@@ -5,7 +5,7 @@ The Mac's part of a measured run is small and deliberate: name the machine,
 refuse one that has no budget row, tell the app which machine it is, launch
 the cold starts the app cannot time from inside itself, and copy the verdict
 back out. Every number is taken in the app's own process by the suite in
-ios/AmuxPerformanceTests.
+apps/apple/AmuxPerformanceTests.
 """
 
 from pathlib import Path
@@ -23,7 +23,7 @@ import ios_simulators
 from ios_testnet import Door, answer, free_port, runner
 
 DOCUMENT = Path("docs/IOS_PERFORMANCE.md")
-BASELINES = Path("ios/Perf/baselines")
+BASELINES = Path("apps/apple/Perf/baselines")
 DERIVED_DATA = Path("target/ios/DerivedData")
 # The configuration a measured run is built in: optimised the way a shipped
 # build is, with the driving door, the fixtures and the workload generator
@@ -161,7 +161,7 @@ def build(udid: str) -> None:
     shutil.rmtree(RELEASE_RESULT, ignore_errors=True)
     subprocess.run([
         "xcodebuild", "build-for-testing",
-        "-project", "ios/Amux.xcodeproj",
+        "-project", "apps/apple/Amux.xcodeproj",
         "-scheme", "AmuxPerformance",
         "-configuration", CONFIGURATION,
         "-destination", f"id={udid}",
@@ -514,7 +514,7 @@ def sizes(output: Path) -> None:
     shutil.rmtree(RELEASE_RESULT, ignore_errors=True)
     subprocess.run([
         "xcodebuild", "build",
-        "-project", "ios/Amux.xcodeproj",
+        "-project", "apps/apple/Amux.xcodeproj",
         "-scheme", "Amux",
         "-configuration", "Release",
         "-destination", "generic/platform=iOS",
@@ -605,7 +605,7 @@ def measure(udid: str) -> None:
     """
     subprocess.run([
         "xcodebuild", "test-without-building",
-        "-project", "ios/Amux.xcodeproj",
+        "-project", "apps/apple/Amux.xcodeproj",
         "-scheme", "AmuxPerformance",
         "-configuration", CONFIGURATION,
         "-destination", f"id={udid}",

@@ -104,7 +104,7 @@ final class GoldenManifestTests: XCTestCase {
         for entry in try manifest().screens {
             XCTAssertTrue(
                 headings.contains(entry.id),
-                "\(entry.id) has no matching ## heading in ios/Goldens/BASELINE.md")
+                "\(entry.id) has no matching ## heading in apps/apple/Goldens/BASELINE.md")
         }
     }
 }

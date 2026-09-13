@@ -176,9 +176,9 @@ fn perf_machine() -> Result<PerfMachine, String> {
 pub fn run() -> Result<(), Box<dyn Error>> {
     let selected = recipes(
         &std::fs::read_to_string("justfile")?,
-        &std::fs::read_to_string("ios/justfile")?,
+        &std::fs::read_to_string("apps/apple/justfile")?,
     )?;
-    check_journeys(&std::fs::read_to_string("ios/Journeys/manifest.json")?)?;
+    check_journeys(&std::fs::read_to_string("apps/apple/Journeys/manifest.json")?)?;
     eprintln!("Required iOS journeys: {}", REQUIRED_JOURNEYS.join(", "));
     eprintln!("iOS verification: {}", selected.join(", "));
     for recipe in selected {
@@ -282,7 +282,7 @@ mod tests {
     }
 
     const ROOT_JUSTFILE: &str = include_str!("../../../justfile");
-    const IOS_JUSTFILE: &str = include_str!("../../../ios/justfile");
+    const IOS_JUSTFILE: &str = include_str!("../../../apps/apple/justfile");
 
     /// Justfiles declaring exactly the verification recipes, so a test can
     /// remove one and watch the check name it.
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn ios_verify_requires_every_journey_to_exist_and_report_a_full_pass() {
-        let manifest = include_str!("../../../ios/Journeys/manifest.json");
+        let manifest = include_str!("../../../apps/apple/Journeys/manifest.json");
         check_journeys(manifest).unwrap();
         let all: BTreeSet<_> = REQUIRED_JOURNEYS
             .iter()
@@ -404,7 +404,7 @@ mod tests {
                 let machine = PerfMachine {
                     name: "test-machine".into(),
                     hard,
-                    baseline: "ios/Perf/baselines/test-machine.json".into(),
+                    baseline: "apps/apple/Perf/baselines/test-machine.json".into(),
                     baseline_present,
                 };
                 assert_eq!(measure_perf(&machine), hard || baseline_present);

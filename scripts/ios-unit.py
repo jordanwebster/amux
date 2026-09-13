@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import ios_simulators
 import ios_project
 
-PACKAGES = Path("ios/Packages")
+PACKAGES = Path("apps/apple/Packages")
 DERIVED_DATA = Path("target/ios/DerivedData")
 
 
@@ -109,7 +109,7 @@ def test(package: str, udid: str, arguments: list[str]) -> None:
         if not any(arg.startswith("-only-testing:") for arg in arguments):
             arguments = [*arguments, "-only-testing:AmuxAppTests"]
         subprocess.run([
-            "xcodebuild", "test", "-project", "ios/Amux.xcodeproj", "-scheme", "Amux",
+            "xcodebuild", "test", "-project", "apps/apple/Amux.xcodeproj", "-scheme", "Amux",
             "-configuration", "Debug", "-destination", f"id={udid}",
             "-derivedDataPath", str(DERIVED_DATA.resolve()), *arguments,
         ], check=True, timeout=1500)

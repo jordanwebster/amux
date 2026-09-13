@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 import ios_simulators
 
-MANIFEST = Path("ios/Goldens/manifest.json")
+MANIFEST = Path("apps/apple/Goldens/manifest.json")
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
 BUNDLE_ID = "sh.amux.app"

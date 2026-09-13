@@ -12,7 +12,7 @@ default:
     @just --list
 
 # The iPhone app's recipes: `just ios build`, `just ios verify`, ... (`just --list ios`).
-mod ios
+mod ios 'apps/apple/justfile'
 
 # Build the desktop product binaries.
 build:

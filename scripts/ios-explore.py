@@ -137,7 +137,7 @@ class Door:
             # explicitly so an earlier accessibility fixture cannot leak in.
             self.request("dynamicType", size="large")
             self.request("assist", motion=False, transparency=False)
-            source = Path("ios/Fixtures/reports") / screen["fixture"]
+            source = Path("apps/apple/Fixtures/reports") / screen["fixture"]
             target = self.scratch / screen["fixture"]
             if not target.exists():
                 shutil.copytree(source, target)
@@ -251,7 +251,7 @@ def timings(directory):
 
 
 def capture(record, args):
-    manifest = json.loads(Path("ios/Goldens/manifest.json").read_text())["screens"]
+    manifest = json.loads(Path("apps/apple/Goldens/manifest.json").read_text())["screens"]
     known = {s["id"]: s for s in manifest}
     known.update({"shell-home": dict(id="shell-home", fixture="sample"),
                   "shell-conversation": dict(id="shell-conversation", fixture="conversation"),

@@ -124,18 +124,18 @@ SOURCE_INPUTS = [
     "ios/Sources/Screens/RunScreens.swift",
 ]
 PRODUCTION_INPUTS = [
-    "ios/Packages/AmuxDesign/Sources/AmuxDesign/Design.swift",
-    "ios/Packages/AmuxDesign/Sources/AmuxDesign/TabChrome.swift",
-    "ios/Packages/AmuxCore/Sources/AmuxCore/AskPanels.swift",
-    "ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift",
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift",
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift",
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Composer.swift",
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift",
-    "ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift",
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift",
-    "ios/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Sessions.swift",
-    "ios/Amux/Debug/DesignVariant.swift",
+    "apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/Design.swift",
+    "apps/apple/Packages/AmuxDesign/Sources/AmuxDesign/TabChrome.swift",
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/AskPanels.swift",
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift",
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift",
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift",
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Composer.swift",
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Conversation.swift",
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift",
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift",
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Sessions.swift",
+    "apps/apple/Amux/Debug/DesignVariant.swift",
 ]
 
 
@@ -233,12 +233,12 @@ def visual_inputs(base, full, production=False):
     if not full:
         return PRODUCTION_INPUTS if production else SOURCE_INPUTS
     roots = ([
-        "ios/Packages/AmuxDesign/Sources",
-        "ios/Packages/AmuxCore/Sources/AmuxCore",
-        "ios/Packages/AmuxFeatures/Sources",
-        "ios/Packages/AmuxTestSupport/Sources",
-        "ios/Amux/Sources",
-        "ios/Amux/Debug",
+        "apps/apple/Packages/AmuxDesign/Sources",
+        "apps/apple/Packages/AmuxCore/Sources/AmuxCore",
+        "apps/apple/Packages/AmuxFeatures/Sources",
+        "apps/apple/Packages/AmuxTestSupport/Sources",
+        "apps/apple/Amux/Sources",
+        "apps/apple/Amux/Debug",
     ] if production else [
         "ios/Sources/Components",
         "ios/Sources/Design",
@@ -270,7 +270,7 @@ def inventory(design_source, appearances, review_screens, full):
     for screen in review_screens:
         for appearance in appearances:
             name = f"{screen}.only.{appearance}.png"
-            reference = ROOT / "ios/Goldens/References" / name
+            reference = ROOT / "apps/apple/Goldens/References" / name
             original = design_source / "design/captures" / name
             if sha256(reference) != sha256(original):
                 raise RuntimeError(f"preserved reference differs from source capture: {name}")
@@ -347,7 +347,7 @@ def review(args, output, door, review_screens, adaptation_states):
             door.request("appearance", appearance=appearance)
             door.request("settle")
             native = door.capture(f"{screen}.production.{appearance}.png")
-            source = ROOT / "ios/Goldens/References" / f"{screen}.only.{appearance}.png"
+            source = ROOT / "apps/apple/Goldens/References" / f"{screen}.only.{appearance}.png"
             source_copy = output / f"{screen}.source.{appearance}.png"
             shutil.copyfile(source, source_copy)
             source_srgb = normalize(source_copy, output / f"{screen}.source.{appearance}.srgb.png")

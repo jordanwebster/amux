@@ -41,7 +41,7 @@ import time
 import uuid
 
 sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path("ios/Tools").resolve()))
+sys.path.insert(0, str(Path("apps/apple/Tools").resolve()))
 import ios_simulators
 # The relay, its daemons and the two sockets a phone is driven through live
 # next door, because the performance run reads connections off the same relay
@@ -49,7 +49,7 @@ import ios_simulators
 from ios_testnet import answer, free_port, runner
 from loopback_smoke import control
 
-MANIFEST = Path("ios/Journeys/manifest.json")
+MANIFEST = Path("apps/apple/Journeys/manifest.json")
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
 OUTPUT = Path("target/ios/journeys")
@@ -357,7 +357,7 @@ def perform(
     with log.open("w") as sink:
         started = subprocess.Popen([
             "xcodebuild", "test",
-            "-project", "ios/Amux.xcodeproj",
+            "-project", "apps/apple/Amux.xcodeproj",
             "-scheme", "Amux",
             "-configuration", "Debug",
             "-destination", f"id={udid}",
@@ -512,7 +512,7 @@ def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
               if "remembered" not in (row["value"] or "")]
     journey.expect(not unsaid, f"rows that look remembered but do not say so: {unsaid}")
     # Nothing spins: the wait is spent reading rows, not watching a symbol.
-    # `ios/Tools/feature-lint.sh` refuses a spinner in the sources; this is the
+    # `apps/apple/Tools/feature-lint.sh` refuses a spinner in the sources; this is the
     # same claim about what a person is actually looking at.
     spinners = [element["identifier"] for element in before["elements"]
                 if "progress" in element["identifier"].lower()
