@@ -124,9 +124,11 @@ visual-interactions: build
     {{bounded}} 600 python3 -B scripts/ios-visual-interactions.py
 
 # The measured run: the pinned workloads against the budgets in
-# docs/IOS_PERFORMANCE.md, on a machine that document has a row for.
+# docs/IOS_PERFORMANCE.md, on a machine that document has a row for. The
+# measured build links the driving slice; the release size it also records
+# links the shipping package, so both are inputs.
 # Measure the pinned workloads against the performance budgets.
-perf *ARGS: rust tools
+perf *ARGS: rust package tools
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2700 python3 -B scripts/ios-perf.py "$@"
 
 # Link the driving bridge from a bare Swift executable, run it on the

@@ -60,12 +60,12 @@ impl ProviderSources for DaemonSources {
         agent_id: Uuid,
         intent: &ClaudePtyIntent,
         pins: &[ArtifactId],
-    ) {
-        if let Some(provider) = self.claude(agent_id) {
-            // A script that refuses the input records the failure on its
-            // provider, where the test reads it; the runtime already
-            // accepted the input and is not told twice.
-            let _ = provider.feed(intent.clone(), pins.to_vec());
+    ) -> Result<(), String> {
+        match self.claude(agent_id) {
+            Some(provider) => provider
+                .feed(intent.clone(), pins.to_vec())
+                .map_err(|error| error.to_string()),
+            None => Ok(()),
         }
     }
 

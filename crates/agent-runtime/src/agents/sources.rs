@@ -16,13 +16,21 @@ use uuid::Uuid;
 pub trait ProviderSources: Send + Sync {
     /// Every semantic input a Claude PTY agent accepted, with the artifacts
     /// pinned to it, after the session's control took it.
+    ///
+    /// A supplier that did not expect the input says so, and the runtime
+    /// reports that refusal to the client as the input's outcome. The scripted
+    /// provider stands in for a person's real agent, and a script that has no
+    /// answer for a prompt is a test that went off its script: failing the
+    /// send there, with the script's reason, is what stops a driver waiting
+    /// on a reply that will never come.
     fn observe_claude_pty_input(
         &self,
         agent_id: Uuid,
         intent: &ClaudePtyIntent,
         pins: &[ArtifactId],
-    ) {
+    ) -> Result<(), String> {
         let _ = (agent_id, intent, pins);
+        Ok(())
     }
 
     /// An SDK session for this agent instead of spawning the SDK process, or

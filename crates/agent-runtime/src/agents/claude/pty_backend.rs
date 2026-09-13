@@ -863,7 +863,9 @@ impl StructuredInput for ClaudeInputTarget {
             .await
             .map_err(input_protocol_error)?;
         if let Some(sources) = &self.sources {
-            sources.observe_claude_pty_input(self.agent_id, &intent, &pins);
+            sources
+                .observe_claude_pty_input(self.agent_id, &intent, &pins)
+                .map_err(|message| ProtocolError::ServerError { message })?;
         }
         Ok(())
     }

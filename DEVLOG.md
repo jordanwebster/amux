@@ -4,6 +4,34 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-09-13 — **A scripted provider's refusal reaches the phone again.** The
+full iOS verification after the merge ran clean through lint, the Rust
+suites, the graph check, the bridge, the simulator, the loopback and door
+smokes, the unit suites, 123 of 124 goldens, the accessibility audit, the
+shipping package and the scope audit, and stopped in three places. The one
+golden difference was a keypad key photographed mid-press; the capture
+matched on a rerun, and it is not among the three quarantined flakes. The
+journey recipe still read the projection schema from the bridge's old path;
+it reads it from `app-runtime` now. The performance recipe builds the app
+in the Release configuration, which links the shipping bridge, so it now
+depends on `ios package` and the verification order runs the package before
+it; its one red figure, a 2.70 ms reconciliation median against a 2.35 ms
+recorded baseline with a 1000 ms budget, was 2.3 ms on the next run, and no
+baseline or budget changed.
+
+The conversation journey then waited ninety seconds for a send that never
+settled. The idle script has no reaction for a prompt, so the script engine
+reports that it has no answer. Before the port the daemon returned that as
+the send's error, the phone dropped its optimistic echo and the composer
+came back; the new provider-source seam recorded the input and discarded
+the refusal, so the echo waited for a transcript row that would never come.
+The seam's input observation is fallible again: a supplier that did not
+expect an input says so, and the runtime reports it as the input's outcome.
+A script with no answer for a prompt is a test that went off its script, and
+failing the send there with the script's reason is what stops a driver
+waiting on a reply that will never arrive. The agent-runtime, testnet and app
+crate suites pass with the change.
+
 2026-09-13 — **The door smoke no longer inspects a release build.** A first
 full iOS verification after the merge stopped at the door smoke twice: once
 on a missing import of the shared bridge-name module, then on its release

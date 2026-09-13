@@ -24,8 +24,8 @@ const RECIPES: &[&str] = &[
     "ios goldens",
     "ios journey",
     "ios accessibility",
-    "ios perf",
     "ios package",
+    "ios perf",
     "ios scope-audit",
 ];
 
