@@ -115,6 +115,32 @@ def pin(udid: str) -> None:
     )
 
 
+def erase(udid: str) -> None:
+    """Return the device to factory state.
+
+    A capture must be a photograph of the app, not of everything that has
+    happened to a simulator since somebody created it. What `pin()` names is
+    fixed; everything it does not name is free to vary, and it varies three
+    ways that are all the same bug: another checkout changes it during a run,
+    a long-lived device accumulates state nobody chose, and a device created
+    an hour ago has none of that accumulation. Erasing removes the whole
+    class, so what a capture records is factory state plus a stated
+    configuration.
+
+    It does not make that configuration right. Anything the device inherits
+    from the Mac it was created on -- language, region, keyboards -- is
+    inherited again by the erased device, so `pin()` still has to name
+    everything the catalogue can see.
+    """
+    # Erasing wants the device down, and a device already down must not make
+    # that an error.
+    subprocess.run(
+        ["xcrun", "simctl", "shutdown", udid],
+        check=False, text=True, capture_output=True, timeout=300,
+    )
+    run("xcrun", "simctl", "erase", udid, timeout=600)
+
+
 def voice_over(udid: str, running: bool) -> None:
     """Turns the device's own screen reader on or off.
 
