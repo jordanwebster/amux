@@ -2026,31 +2026,36 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
     // Ten presses in a second, once the cooldown from the first has passed.
     // Exactly one of them is listened to; the rest are somebody pressing again
     // because nothing looked like it happened.
+    //
+    // A shortened wait is the evidence, not a dial. The relay is unreachable
+    // and the backoff is still running underneath, so a dial here could be
+    // either one of the presses or the four-second wait coming round, and a
+    // runner slow enough to spend the rest of that wait on one failed dial
+    // would see both. How many waits were cut short says only what the
+    // presses did.
+    //
+    // Hold one paused clock across the presses themselves: resuming between
+    // them would let a loaded runner's wall time count toward the cooldown,
+    // and ten presses spread over more than a second are no longer a burst.
+    // The failed dial that follows needs real time to happen in, so the clock
+    // runs again before it is waited for.
     advance(Duration::from_millis(1200)).await;
-    let before_ten = runtime.sessions.link.attempts();
-    // Keep one paused clock across the whole burst and the observation that
-    // follows. Repeatedly resuming here would let a loaded runner's wall time
-    // count toward the cooldown between presses.
+    let before_ten = runtime.sessions.link.shortened();
     tokio::time::pause();
     for _ in 0..10 {
         runtime.sessions.link.retry_now();
-        tokio::time::advance(Duration::from_millis(50)).await;
+        tokio::time::advance(Duration::from_millis(20)).await;
     }
+    tokio::time::resume();
     disconnected(&mut relay).await;
-    tokio::time::advance(Duration::from_millis(500)).await;
-    let after_ten = runtime.sessions.link.attempts();
+    advance(Duration::from_millis(100)).await;
+    let after_ten = runtime.sessions.link.shortened();
     assert_eq!(
         after_ten,
         before_ten + 1,
-        "ten presses produced {} attempts, not one",
+        "ten presses cut short {} waits, not one",
         after_ten - before_ten
     );
-    assert_eq!(
-        runtime.sessions.link.shortened(),
-        2,
-        "ten presses cut short more than one wait"
-    );
-    tokio::time::resume();
 
     // And the connection is still what recovers: with the relay back, the
     // phone reconnects on its own schedule.
