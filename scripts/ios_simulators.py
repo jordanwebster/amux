@@ -117,12 +117,22 @@ def quit_apps(udid: str) -> None:
     same capture on a runner by exactly that breadcrumb.
     """
     for bundle in running_apps(udid):
-        if bundle.startswith("com.apple.chrono."):
-            continue  # a widget renderer, not something in front
-        subprocess.run(
-            ["xcrun", "simctl", "terminate", udid, bundle],
-            capture_output=True, timeout=60,
-        )
+        if bundle in SYSTEM_PROCESSES or bundle.startswith("com.apple.chrono."):
+            continue
+        # Best effort: a process that will not go quietly is not worth a
+        # failed run, since nothing a runner has in front leaves a breadcrumb.
+        try:
+            subprocess.run(
+                ["xcrun", "simctl", "terminate", udid, bundle],
+                capture_output=True, timeout=20,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"{udid}: {bundle} did not terminate in 20 seconds; carrying on")
+
+
+# Launched by SpringBoard for its own use, never in front, and one of them
+# (Spotlight) does not answer a terminate on a GitHub runner at all.
+SYSTEM_PROCESSES = {"com.apple.Spotlight", "com.apple.family"}
 
 
 SIMULATOR_APP = "com.apple.iphonesimulator"

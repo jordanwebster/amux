@@ -28,8 +28,11 @@ channel with at most 64 differing pixels.
 
 The app images are photographs of the pinned iOS simulator after rendering has
 settled. They include the simulator's status bar and Dynamic Island. The design
-captures use drawn system chrome and include a home indicator, while settled
-simulator captures omit that indicator.
+captures use drawn system chrome and include a home indicator. A simulator
+capture may or may not: SpringBoard withdraws the bar on a timer that a loaded
+runner never fires, so the manifest declares the bar's rectangle for the Face
+ID phone and no pixel under it is compared. The committed baselines were
+photographed without it.
 
 Names, agent output, model lists, host inventories, timestamps, counts, prices,
 and patch contents come from executable fixtures and may differ from the

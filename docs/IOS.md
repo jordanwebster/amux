@@ -213,6 +213,26 @@ captures the simulator's composited display through `simctl io screenshot`,
 checking successive frames for stability. This includes the render server's
 glass and the pinned system status bar. The in-app report capture instead uses
 `drawHierarchy(in:afterScreenUpdates:)` to freeze its own window.
+
+A photograph of the display holds the system's chrome as well as the app, so
+the manifest declares each pinned simulator and the chrome it draws over every
+app, and the comparison counts no pixel under it. Today that is one rectangle:
+the home indicator on the Face ID phone. SpringBoard draws it when an app
+launches and withdraws it once backboardd's attention timer decides nobody is
+touching the screen, and that timer is not reliable everywhere: on a GitHub
+runner with both pinned devices booted its event reaches a stale client and
+the bar never leaves. The difference image washes the excluded rectangle blue
+so a reviewer can see what was not compared. The small phone has a home button
+and declares no chrome.
+
+The simulator recipe pins the rest of what a photograph could vary on: the
+region and 12-hour clock, the light appearance, the status bar, and two things
+a developer's own use of the simulator can leave behind. Every app on the
+device is terminated before the capture app launches, because an app launched
+over another carries that app's name in the status bar as a way back to it.
+And Simulator.app's hardware keyboard is pinned off for both devices, so a
+field that takes focus raises the software keyboard on a Mac exactly as it does
+on a headless runner; Simulator.app reads that when it next opens the device.
 Expected, actual and difference PNGs land in `target/ios/goldens/`. The reference
 recipe pairs all 66 preserved design images in `apps/apple/Goldens/References/` with
 the app baselines under `target/ios/goldens/reference/`. Reference comparisons support

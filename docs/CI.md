@@ -25,6 +25,12 @@ the baseline enrols it with no further edit. `AMUX_PERF_MACHINE` names the
 row deliberately; the GitHub runner sets it because no hardware row identifies
 it.
 
+The nightly `iOS captures` workflow compares the golden catalogue on a GitHub
+runner with both pinned devices booted; dispatching it by hand runs every
+capture suite. A runner's captures match a developer's Mac pixel for pixel
+except under the home indicator, which the comparison is told to look past
+(see [the goldens section](IOS.md#goldens-and-baseline-changes)).
+
 Three of the 124 simulator captures are explicitly marked flaky in the golden
 manifest: `strip.light`, `strip.dark`, and `ax-composer.dark`. They remain in
 every golden run, are compared at the unchanged tolerance, print their verdict,

@@ -158,6 +158,17 @@ extension EnvironmentValues {
 /// and the safe-area insets arrive. Keep the opening tail attached to those
 /// layout changes until the reader takes control. Waiting for every lazy row
 /// to report that it finished measuring can wait forever on an offscreen row.
+///
+/// The bottom anchors alone do not hold it there: a feed opened on a long
+/// history comes to rest part of the way up it often enough to be seen. One
+/// scroll to the bottom does hold it, but asks for a bottom computed from
+/// whatever content height had been measured when it was issued, so where the
+/// same transcript settled moved by a physical pixel from one opening to the
+/// next depending on how far measurement had got. The tail is therefore asked
+/// for again each time the measured height changes, and stops being asked for
+/// as soon as one height is reported twice running — the feed is on the tail
+/// of a history that has finished measuring itself — or the reader takes the
+/// feed somewhere, or the corrections run out.
 struct TranscriptContainer<Content: View>: View {
     /// Where a recording left the reader, to be put back instead of the tail.
     /// Nothing is the ordinary case and the one the app itself always passes:
@@ -166,14 +177,9 @@ struct TranscriptContainer<Content: View>: View {
     /// Told where the reader has come to rest, once they have taken the feed
     /// off its tail. Nothing in the shipping app listens.
     var moved: ((TranscriptResting) -> Void)?
-    /// The newest row now published to the view. Following this identity once
-    /// is cheaper and more stable than issuing a scroll from every geometry
-    /// change the resulting layout causes.
-    var tail: String?
     @ViewBuilder let content: Content
     @State private var position = ScrollPosition()
     @State private var readerMoved = false
-    @State private var openedAtTail = false
     @State private var tops = TranscriptTops()
     @State private var page = TranscriptPage()
 
@@ -210,11 +216,6 @@ struct TranscriptContainer<Content: View>: View {
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .sizeChanges)
         .defaultScrollAnchor(.bottom, for: .alignment)
         .scrollPosition($position))
-        .onChange(of: tail, initial: true) { _, tail in
-            guard resting == nil, !readerMoved, !openedAtTail, tail != nil else { return }
-            openedAtTail = true
-            Task { @MainActor in position.scrollTo(edge: .bottom) }
-        }
         .onScrollPhaseChange { _, phase in
             if phase == .tracking || phase == .interacting {
                 readerMoved = true
@@ -235,26 +236,28 @@ struct TranscriptContainer<Content: View>: View {
         }
     }
 
-    /// Installs scroll geometry only for recording or restoring a reading
-    /// position. An ordinary conversation has neither consumer; writing
-    /// geometry into view state there would relayout the transcript while it
+    /// Watches the page as its heights arrive: every transcript needs that to
+    /// open where it belongs. What is measured is deliberately kept out of
+    /// view state — writing it there would relayout the transcript while it
     /// was already laying out a newly arrived row.
     @ViewBuilder
     private func restoring<Scrollable: View>(_ content: Scrollable) -> some View {
-        if resting != nil || moved != nil {
-            content
-                .onScrollGeometryChange(for: TranscriptLayout.self) { geometry in
-                    TranscriptLayout(geometry)
-                } action: { _, layout in
-                    // A geometry callback runs while lazy measurements are
-                    // being applied. Ask after that layout has finished.
-                    Task { @MainActor in
-                        guard layout.containerSize.height > 0, resting != nil else { return }
-                        restore()
-                    }
+        let watched = content
+            .onScrollGeometryChange(for: TranscriptLayout.self) { geometry in
+                TranscriptLayout(geometry)
+            } action: { _, layout in
+                // A geometry callback runs while lazy measurements are being
+                // applied. Ask after that layout has finished.
+                Task { @MainActor in
+                    guard layout.containerSize.height > 0 else { return }
+                    if resting != nil { restore() } else { keepAtTail(layout) }
                 }
-                // Where the page has reached, separately from the layout
-                // changes that can put a restored reader back in place.
+            }
+        // Where the page has reached is read only for a reading position:
+        // recording one, or putting one back. Following the tail does not
+        // need it, and an ordinary conversation has neither consumer.
+        if resting != nil || moved != nil {
+            watched
                 .onScrollGeometryChange(for: TranscriptReach.self) { geometry in
                     TranscriptReach(geometry)
                 } action: { _, reach in
@@ -264,8 +267,29 @@ struct TranscriptContainer<Content: View>: View {
                     Task { @MainActor in restore() }
                 }
         } else {
-            content
+            watched
         }
+    }
+
+    /// Puts an opening feed back on its tail, for as long as the history under
+    /// it is still measuring itself.
+    ///
+    /// A height reported twice running is the end of it: everything the feed
+    /// has built has answered, and a bottom asked for now is the bottom the
+    /// reader will be left looking at. Asking again after that would only
+    /// trade one rounding of the same position for another, which is what made
+    /// the same screen settle a physical pixel apart between openings.
+    ///
+    /// The ceiling is what keeps a transcript whose rows never stop measuring
+    /// — one still streaming as it opens — from correcting itself forever.
+    /// Beyond it the bottom anchors carry the feed, as they do for every row
+    /// that arrives after the opening.
+    private func keepAtTail(_ layout: TranscriptLayout) {
+        guard !readerMoved, page.tailCorrections < TranscriptPage.tailCorrections else { return }
+        guard page.measured != layout.contentSize.height else { return }
+        page.measured = layout.contentSize.height
+        page.tailCorrections += 1
+        position.scrollTo(edge: .bottom)
     }
 
     /// Puts the reader back where a recording left them.
@@ -312,9 +336,18 @@ private final class TranscriptPage {
     /// an entry that has not been laid out yet and buy no movement at all.
     static let corrections = 64
 
+    /// How many times an opening feed may be put back on its tail. Small,
+    /// because each one costs a scroll and the measurements it is chasing
+    /// converge in a handful of passes.
+    static let tailCorrections = 24
+
     /// Where the readable top of the page is: below the chrome that floats
     /// over it, in the same measure the entries answer in.
     var readableTop: CGFloat = 0
+    /// The content height the last tail correction was made against, so a
+    /// height reported twice running is recognised as the feed's last word.
+    var measured: CGFloat?
+    var tailCorrections = 0
     /// What the scroll view says its own offset is, which is neither the same
     /// number nor counted from the same place. It is only ever added to.
     var offset: CGFloat = 0
