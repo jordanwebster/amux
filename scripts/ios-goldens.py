@@ -38,10 +38,6 @@ def main() -> None:
     arguments = sys.argv[1:]
     for name in sorted({screen["simulator"] for screen in selected(arguments)}):
         udid = ios_simulators.ensure(name)
-        # Factory state, then the stated configuration on top of it, so a
-        # capture pass means the same thing whether it runs first or last and
-        # whoever's simulator it lands on.
-        ios_simulators.erase(udid)
         ios_simulators.pin(udid)
         subprocess.run(
             ["xcrun", "simctl", "install", udid, str(APPLICATION)],

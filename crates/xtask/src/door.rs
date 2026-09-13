@@ -340,13 +340,23 @@ fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
 }
 
 /// How many photographs of one screen are taken while waiting for a run of
-/// them to agree. Each costs about a quarter of a second.
+/// them to agree.
+///
+/// What one costs is the machine's, not ours: measured at 0.13s on a
+/// developer's Mac and 0.7s on a continuous-integration runner, so this
+/// ceiling is worth between three and seventeen seconds depending on who is
+/// holding the camera.
 const STEADY_SHOTS: usize = 24;
 
 /// How many photographs in a row have to be the same file before the display
-/// counts as still. Eight of them span about two seconds, which is longer than
-/// the home indicator stays on screen after a launch, so a capture cannot lock
-/// onto a frame that still has it.
+/// counts as still.
+///
+/// This says the display has stopped changing. It cannot say the display is
+/// showing the right thing, and the two are not the same: a run of identical
+/// frames is equally consistent with a screen that has come to rest and with
+/// one holding something that should have gone away. So a capture that comes
+/// back wrong is not evidence against this number until somebody has watched
+/// the frames and seen the screen still moving when it was taken.
 const STEADY_RUN: usize = 8;
 
 /// A PNG's width and height, read from the header rather than decoded.
