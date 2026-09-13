@@ -12,6 +12,14 @@ framework for the one the debug configuration links. The failure it replaces
 named neither the cache nor the check, and surfaced two stages after the one
 that could have caught it.
 
+Detecting it was only half the repair, which the next red run made plain. The
+stamp was correctly invalidated and cargo ran, but the line that fills in the
+shipping framework asked whether the directory was absent — and a hollow one
+is present — so nothing put a library in it and the build failed exactly as
+before. Both halves ask the same question now. Reproduced by deleting the
+archives from a real xcframework and leaving its shape, which is what a
+restored cache hands you.
+
 2026-09-13 — **Took the shipping bundle off the push path.** The first green
 run of the split gate gave `ios package` a number for the first time: ten
 minutes of a thirty-four minute job, the largest stage in it, and one that had

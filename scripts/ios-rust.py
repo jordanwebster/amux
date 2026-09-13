@@ -64,10 +64,13 @@ def main() -> None:
     # the debug configurations force-load the driving library first, so which
     # archive sits here does not change what they link. `ios package` replaces
     # it with the real one, and the shipping recipes depend on that.
-    if not shipping.is_dir():
+    # Whether it is there at all, and whether what is there holds a library:
+    # a restored build cache can leave the second false while the first is
+    # true, and a shape with no archive in it resolves no better than nothing.
+    if not packaged(shipping):
         bridge.package(shipping, [staging / bridge.SIMULATOR_TRIPLE])
         (bridge.OUTPUT / "framework.sha256").unlink(missing_ok=True)
-        print(f"{shipping.name} did not exist; staged the development slice as a stand-in "
+        print(f"{shipping.name} held no library; staged the development slice as a stand-in "
               "until `just ios package` builds the shipping library", flush=True)
 
     profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"].get("dev", {})
