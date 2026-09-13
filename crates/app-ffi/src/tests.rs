@@ -1924,16 +1924,16 @@ async fn mobile_pairing_by_link_authenticates_against_the_configured_cloud() {
 
 /// A phone that always has the same token. The relay's own credentials, not an
 /// account's.
-/// Retry Now shortens the wait to the next attempt, and pressing it ten times
-/// in a second is one attempt.
+/// Retry Now shortens a real connection's wait to the next attempt.
 ///
-/// Both halves matter and they pull against each other. Without the first, the
-/// control is a lie: it draws a button that does nothing while the connection
-/// finishes a four-second sleep. Without the second, the control is a way to
-/// turn an unreachable relay into a tight reconnect loop, which is the whole
-/// reason the backoff exists.
+/// Without this the control is a lie: it draws a button that does nothing
+/// while the connection finishes a four-second sleep. What one press is
+/// allowed to do to the backoff, and what ten in a second are not, is settled
+/// against the retry itself in `node::transport::embedded_relay`, where the
+/// clock is simulated and a second of a loaded runner's wall time cannot be
+/// mistaken for a second of the cooldown.
 #[tokio::test]
-async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
+async fn mobile_retry_now_shortens_a_live_connections_wait() {
     // Jump only explicit test delays. Resume time while real socket IO is
     // pending so Tokio cannot auto-advance through unrelated network timers.
     async fn advance(duration: Duration) {
@@ -2000,58 +2000,25 @@ async fn mobile_retry_now_shortens_one_wait_and_ten_presses_are_one_attempt() {
         "a wait was cut short before anything had asked"
     );
 
-    // One press during the four-second wait dials immediately; observing
-    // another 900ms must not produce a second attempt.
+    // One press during the four-second wait dials immediately.
+    //
+    // A shortened wait is the evidence, not a dial. The relay is unreachable
+    // and the backoff is running underneath, so a dial here could be the press
+    // or the four-second wait coming round; how many waits were cut short says
+    // only what the press did. That the dial happened at all is what the
+    // connection reporting a failed attempt already shows.
     runtime.sessions.link.retry_now();
     // Advancing a timer does not run a spawned dial or complete its socket IO.
     // The failed dial publishes Disconnected after incrementing the counter.
     disconnected(&mut relay).await;
-    advance(Duration::from_millis(900)).await;
-    let after_one = runtime.sessions.link.attempts();
-    assert_eq!(
-        after_one,
-        settled + 1,
-        "one press produced {} attempts, not one",
-        after_one - settled
+    assert!(
+        runtime.sessions.link.attempts() > settled,
+        "the press never dialled"
     );
     assert_eq!(
         runtime.sessions.link.shortened(),
         1,
         "the attempt after a press was the backoff coming round, not the press"
-    );
-
-    // Ten presses in a second, once the cooldown from the first has passed.
-    // Exactly one of them is listened to; the rest are somebody pressing again
-    // because nothing looked like it happened.
-    //
-    // A shortened wait is the evidence, not a dial. The relay is unreachable
-    // and the backoff is still running underneath, so a dial here could be
-    // either one of the presses or the four-second wait coming round, and a
-    // runner slow enough to spend the rest of that wait on one failed dial
-    // would see both. How many waits were cut short says only what the
-    // presses did.
-    //
-    // Hold one paused clock across the presses themselves: resuming between
-    // them would let a loaded runner's wall time count toward the cooldown,
-    // and ten presses spread over more than a second are no longer a burst.
-    // The failed dial that follows needs real time to happen in, so the clock
-    // runs again before it is waited for.
-    advance(Duration::from_millis(1200)).await;
-    let before_ten = runtime.sessions.link.shortened();
-    tokio::time::pause();
-    for _ in 0..10 {
-        runtime.sessions.link.retry_now();
-        tokio::time::advance(Duration::from_millis(20)).await;
-    }
-    tokio::time::resume();
-    disconnected(&mut relay).await;
-    advance(Duration::from_millis(100)).await;
-    let after_ten = runtime.sessions.link.shortened();
-    assert_eq!(
-        after_ten,
-        before_ten + 1,
-        "ten presses cut short {} waits, not one",
-        after_ten - before_ten
     );
 
     // And the connection is still what recovers: with the relay back, the
