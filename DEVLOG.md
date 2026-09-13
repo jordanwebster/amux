@@ -1,3 +1,34 @@
+2026-09-13 — **A phone is offered the machines its own browser found, and a
+refusal says which of two things happened.** A phone may not browse the local
+network itself: the system browses and the app is told, so the bridge takes the
+whole resolved set each time it changes and a machine that has gone is a machine
+missing from the set. The set reaches every profile of the embedded
+installation, and is recorded as each profile's found hosts as it arrives, so a
+screen that asks what it may pair with straight afterwards is answered from the
+set it just handed over rather than from whatever the browse task had caught up
+with.
+
+What a screen is offered is no longer derived from the fleet, which cannot know
+a machine nothing has ever connected to. It is read off the profile — the
+machines found on this network and the ones the relay can see, merged — and each
+carries the route an attempt would take and the addresses it would dial.
+Entering a code dials those addresses before the relay is consulted, and a
+machine that becomes trusted stops being an offer and becomes a host reached
+directly.
+
+A pairing refusal now names the one distinction a person can act on. Every way a
+secret can be wrong stays a single answer, because telling those apart is what
+somebody guessing codes would want; a machine only a paid relay could reach, on
+an account that has not paid for one, says so instead. Two things had to be
+repaired to prove it: a test network that changed what an account buys left that
+account's only bearer minted at the old tier, and an installation that made a
+directory for itself had stopped removing it at shutdown once shutdown no longer
+consumed the installation.
+
+Going away closes the links to the machines on this network and coming back
+dials them again, found addresses first, beside the relay link the session puts
+away on its own.
+
 2026-09-13 — **A test network can be announced, withdrawn and re-tiered from
 outside the process.** The harness could already put a machine on the network,
 take it off, change what an account buys and eat direct datagrams; a topology
