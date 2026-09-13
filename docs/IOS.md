@@ -216,14 +216,20 @@ glass and the pinned system status bar. The in-app report capture instead uses
 
 A photograph of the display holds the system's chrome as well as the app, so
 the manifest declares each pinned simulator and the chrome it draws over every
-app, and the comparison counts no pixel under it. Today that is one rectangle:
-the home indicator on the Face ID phone. SpringBoard draws it when an app
-launches and withdraws it once backboardd's attention timer decides nobody is
-touching the screen, and that timer is not reliable everywhere: on a GitHub
-runner with both pinned devices booted its event reaches a stale client and
-the bar never leaves. The difference image washes the excluded rectangle blue
-so a reviewer can see what was not compared. The small phone has a home button
-and declares no chrome.
+app, and the comparison counts no pixel under it. That is the status bar's
+clock and indicators on both phones and the home indicator on the Face ID
+phone. The status bar is pinned to 9:41 with full bars and a charged battery,
+but SpringBoard draws it in the style the app's scene asks for, and on a
+loaded runner it applies a change of style late enough that a capture taken
+after the screen itself settled still shows the previous appearance's colour.
+The home indicator is drawn when an app launches and withdrawn once
+backboardd's attention timer decides nobody is touching the screen, and that
+timer is not reliable everywhere: on a GitHub runner with both pinned devices
+booted its event reaches a stale client and the bar never leaves. The
+difference image washes every excluded rectangle blue so a reviewer can see
+what was not compared. What the comparison therefore no longer notices is a
+wrong status-bar text colour; everything the app draws, including what sits
+under the status bar, is still compared.
 
 The simulator recipe pins the rest of what a photograph could vary on: the
 region and 12-hour clock, the light appearance, the status bar, and two things

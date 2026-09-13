@@ -1429,20 +1429,35 @@ mod tests {
             ["ax-composer.dark", "strip.dark", "strip.light"]
         );
 
-        // Every pinned device is declared, and only the Face ID phone has
-        // chrome the comparison must look past.
+        // Every pinned device is declared with the chrome the comparison
+        // must look past; only the Face ID phone has a home indicator.
         let golden = manifest
             .simulators
             .get("amux-golden")
             .expect("the golden phone");
-        assert_eq!(golden.system_chrome.len(), 1);
-        let bar = &golden.system_chrome[0];
-        assert!(bar.what.starts_with("home indicator"), "{}", bar.what);
+        let named: Vec<&str> = golden
+            .system_chrome
+            .iter()
+            .map(|chrome| chrome.what.split(':').next().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                "status bar clock",
+                "status bar indicators",
+                "home indicator"
+            ]
+        );
+        let bar = &golden.system_chrome[2];
         assert_eq!((bar.x, bar.y, bar.width, bar.height), (384, 2580, 438, 21));
         let small = manifest
             .simulators
             .get("amux-small")
             .expect("the small phone");
-        assert!(small.system_chrome.is_empty());
+        assert_eq!(
+            small.system_chrome.len(),
+            2,
+            "a home button, so no indicator"
+        );
     }
 }
