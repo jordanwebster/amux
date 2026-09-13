@@ -1,3 +1,48 @@
+2026-09-14 — **The golden catalogue is green on a GitHub runner.** It had been
+red on every runner and green on every Mac since it existed, and the reason
+was the home indicator: 116 of 124 captures differed by exactly its rectangle
+and nothing else, and every capture on the home-button phone passed.
+SpringBoard draws the bar when an app launches and withdraws it once
+backboardd's attention-awareness timer reports that nobody is touching the
+screen, which on a Mac takes about 1.5 seconds for any app. With both pinned
+devices booted on a runner, backboardd delivers that attention-lost event to
+a stale client identifier, so the live indicator never hears it and the bar
+stays for the whole run. A single booted device on the same runner hides it,
+which is why every earlier probe was clean. Nothing reproduces it on a Mac:
+headless, freshly created, two devices booted, all fade. Asking the app to
+hide persistent overlays rides the same timer and changed nothing.
+
+So the comparison, not the photograph, looks past it. The manifest declares
+each pinned simulator and the chrome SpringBoard draws over every app, and
+`xtask golden` counts no pixel under it, washing the excluded rectangles blue
+in the difference image. The first full catalogue under that rule finished
+on a runner with the bar out of every verdict and six captures failing on
+the status bar instead: its clock and indicators drawn in the previous
+appearance's colour, because SpringBoard applies a change of style late
+enough on a loaded runner to be photographed after the screen has settled.
+Those are chrome too now, on both phones. Against the runner's own captures,
+every screen outside the quarantine then matches its committed baseline with
+no differing pixels.
+
+Two more things a capture could vary on are pinned. The `comment` baseline
+had been approved on a Mac with Simulator.app's hardware keyboard connected,
+the one state in which no software keyboard rises, so every headless capture
+failed it over two thirds of the screen; the keyboard is pinned off per
+device and the sheet re-approved with its keyboard, as the design's own
+capture has it. And an app launched over another carries that app's name in
+the status bar as a way back, so every app on the device is terminated before
+the capture app launches — except SpringBoard's own Spotlight, which does not
+answer a terminate on a runner. A command spawned inside a device just after
+boot can also hang past its timeout on a runner; it is asked three times now.
+The nightly schedule is back, running the golden catalogue alone.
+
+The three quarantined transcript flakes are the transcript feed resting one
+device pixel apart between mounts, not two; no scroll command changes which
+place it lands on, and the accessibility composer rests exactly on a
+half-pixel boundary, so a hair of float noise decides its rounding. That is
+still open. A pre-existing script test for the Rust bridge build fails on
+Python 3.14 independently of this work.
+
 2026-09-13 — **Made the bridge's currency check look for the library.** The
 gate went red on a build that could not resolve the app's binary target:
 `AmuxApp.xcframework does not contain a binary artifact`, immediately after
