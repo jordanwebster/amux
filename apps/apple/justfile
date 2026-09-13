@@ -54,9 +54,17 @@ graph-check:
 
 # The pinned devices every capture and measurement runs on. Creating them is
 # idempotent; they are left booted because every later recipe needs them up.
+#
+# The bound here is a backstop, not the budget. A runner that has never seen
+# these devices creates both and boots each of them twice — once to make the
+# device, once more so SpringBoard reads the pinned region it was created
+# without — and a cold machine has taken eleven minutes over that. What
+# catches a simulator that is genuinely stuck is the per-boot timeout inside
+# the script, which names the device and the step it hung on; an outer bound
+# tight enough to fire first only reports that something took a while.
 # Create and boot the pinned simulators.
 simulator:
-    {{bounded}} 900 python3 -B scripts/ios_simulators.py
+    {{bounded}} 3600 python3 -B scripts/ios_simulators.py
 
 # Generates apps/apple/Amux.xcodeproj from apps/apple/project.yml, then builds the app for
 # the golden simulator. The bridge is an input, so `rust` runs first.

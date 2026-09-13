@@ -1,3 +1,13 @@
+2026-09-13 — **Made the simulator recipe's bound a backstop again.** Creating
+and booting the two pinned simulators from nothing takes a cold runner most of
+the twelve minutes the recipe allowed it: 687 seconds on the run that passed,
+779 on the next one, and on one unlucky machine the second device did not
+finish at all. The script's own per-boot timeouts allow far longer than the
+recipe did, so the outer bound was firing first and reporting only that
+something had taken a while. It is 3600 seconds now. What still catches a
+simulator that is genuinely stuck is the timeout around each boot, which names
+the device and the step.
+
 2026-09-13 — **Reconnected the app's test resources to the files they mirror.**
 Four of the iPhone tests' resources are symlinks into the repository — the
 performance budget the instrumentation suite reads, and the three pinned
