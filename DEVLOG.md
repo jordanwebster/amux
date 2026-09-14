@@ -16810,3 +16810,12 @@ File these independent follow-ups:
 - An Android discovery adapter.
 - Per-peer scopes.
 - Faster entitlement reconciliation.
+
+2026-09-15 — **Host-route updates settle after the active channel does.** A
+direct link entering the routing table notifies the connection manager and the
+client model independently. Under load, the client model could publish its
+update first, still describe the active relay channel, and never publish again
+after the connection manager selected direct. The connection manager now
+re-publishes the host once direct activation completes, and likewise after an
+active direct link goes away, so a client holding one host subscription sees
+the settled route instead of depending on task scheduling.

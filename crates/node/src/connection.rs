@@ -201,19 +201,31 @@ impl ConnectionManager {
                     self.state.read().await.active.get(&host.id),
                     Some(Route::Direct(_))
                 );
-                if !already_direct
-                    && let Err(error) = self
+                if !already_direct {
+                    match self
                         .activate_route(host.id, Route::Direct(link), ChannelClass::Calls)
                         .await
-                {
-                    tracing::warn!(peer = %host.id, error = %error, "failed to activate direct route");
+                    {
+                        Ok(_) => self.routing.republish_settled_route(host.id).await,
+                        Err(error) => {
+                            tracing::warn!(peer = %host.id, error = %error, "failed to activate direct route");
+                        }
+                    }
                 }
             }
             RoutingEvent::NeighborDown { host_id, link, .. } => {
                 self.channels.drop_link(link);
-                let mut state = self.state.write().await;
-                if state.active.get(&host_id) == Some(&Route::Direct(link)) {
-                    state.active.remove(&host_id);
+                let removed_active = {
+                    let mut state = self.state.write().await;
+                    if state.active.get(&host_id) == Some(&Route::Direct(link)) {
+                        state.active.remove(&host_id);
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if removed_active {
+                    self.routing.republish_settled_route(host_id).await;
                 }
             }
             RoutingEvent::ClaimUp { relay, host } => {

@@ -511,6 +511,22 @@ impl RoutingCore {
         self.state.write().await.host_events.subscribe()
     }
 
+    /// Announces the settled route after a connection consumer has applied a
+    /// routing event.
+    ///
+    /// Routing and host subscribers run independently. A direct link can
+    /// therefore enter the routing table before the connection manager has
+    /// activated its channel, causing the first route-change description to
+    /// reflect the route that is being replaced. The consumer calls this once
+    /// its own state agrees with the routing table so long-lived host watchers
+    /// receive the final description too.
+    pub(crate) async fn republish_settled_route(&self, host_id: HostId) {
+        let mut state = self.state.write().await;
+        if state.is_present(host_id) {
+            emit_route_change(&mut state, host_id);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) async fn subscribe_hosts_with_snapshot(
         &self,
