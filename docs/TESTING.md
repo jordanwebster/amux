@@ -33,15 +33,15 @@ just spec -- a2a_cross_device
 The two spec targets are part of `just test`; `just spec` is the focused
 way to read or diagnose them.
 
-### Scripted discovery and direct-QUIC faults
+### Scripted discovery and the QUIC fault proxy
 
-Spec tests use one `TestNet` for both scripted LAN discovery and direct-QUIC
-network conditions. Every listening daemon is advertised at a stable loopback
-UDP proxy address while its real QUIC endpoint stays private to the harness.
+Spec tests use one `TestNet` for both `ScriptedDiscovery` and the loopback UDP
+fault proxy. Every listening daemon is advertised at a stable proxy address
+while its real QUIC endpoint stays private to the harness.
 This keeps discovery deterministic and ensures pairing, trusted links, and
 session streams all traverse the same controllable datagram path.
 
-Use `TestNet::latency` and `TestNet::loss` to shape traffic in both directions,
+Use `TestNet::direct_latency` and `TestNet::loss` to shape direct traffic in both directions,
 `TestNet::udp_blocked` to isolate one named daemon, and
 `TestNet::rebind_client` to move its endpoint behind the stable advertised
 address. The daemon helpers `connects_to_via_direct_quic`, `sees_away`, and
@@ -128,6 +128,12 @@ Use this tier for OS behavior such as pipe backpressure, exit status, signals
 and process shutdown. A fixture must report readiness before a behavior
 deadline starts, and shutdown tests must prove that the child exited rather
 than merely that a signal was sent.
+
+An end-to-end account block declares its starting `tier` as `free` or `pro`.
+Within a `.test` script, `@@tier <account> <free|pro>` changes the relay token
+tier for the next entitlement refresh. Use that directive to prove both the
+free presence-only state and the subscribed state without contacting the real
+account service.
 
 ## 5. Phone journeys
 

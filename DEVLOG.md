@@ -1,3 +1,14 @@
+2026-09-14 — **The documentation now describes local-first discovery and the
+finished link stack.** A host advertises its default QUIC listener without
+turning discovery into trust, desktops maintain direct links for their daemon's
+lifetime, and the phone browses and dials only in the foreground from a profile
+that needs no account. One cloud-link manager races QUIC with the relay's TCP
+fallback and publishes its tier and carrier through the profile status stream.
+An account adds away/offline presence; a subscription lets the cloud relay copy
+agent streams, while direct, SSH and self-hosted relay links never consult a
+tier. The architecture, product explanation, client model, iPhone lifecycle,
+copy terms and test guide now use the same account, route and carrier rules.
+
 2026-09-14 — **The review journey reads the sheet the finger left behind.** A
 range taken hold of is scrolled out from under the comment sheet while the
 finger is still down, so the rows under it move and the range goes on growing;

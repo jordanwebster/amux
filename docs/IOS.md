@@ -20,20 +20,42 @@ checkout. The phone does not run local agents.
 
 The runtime streams ordered batches into Swift; Swift copies callback bytes
 before returning and applies store changes on the main actor. Feed updates
-carry deltas, not a replacement transcript on each frame. A single multiplexed
-stream per host supplies the shared projection. Navigation pushes immediately
+carry deltas, not a replacement transcript on each display update. Native link
+streams supply the shared projection. Navigation pushes immediately
 and fills from remembered state while the host reconciles. See the
 [bridge contract](../crates/app-ffi/README.md) for ownership, shutdown,
 token refresh and the generated C interface.
 
-App startup restores the selected account and its cached fleet before asking
-the account service for a connect token. The runtime dials the relay named by
-that token, using system TLS. Only debug builds allow plaintext for loopback
-relays. One installation in Application Support holds a profile per account;
-fleet files live under Caches. Account names, grants and selection survive
-launch in the registry, while refresh tokens stay in the device Keychain.
-Switching accounts re-points the connection and its stores; signing out drops
-access, and backgrounding releases the relay connection.
+App startup does not require an account. With nobody signed in, the embedded
+installation opens one unbound profile and restores that profile's fleet cache.
+The first sign-in adopts the unbound profile, including its key, pairings and
+cache. A different account gets a different profile; signing out preserves the
+profile and its local relationships.
+
+`LocalDiscovery` in `AmuxCore/Discovery.swift` is the app's only network
+browser. While the scene is active it browses `_amux._udp` with `NWBrowser`,
+resolves the advertised endpoints, and hands the complete found-host set to the
+Rust runtime. Discovery is only a source of candidates and addresses: pairing
+and the pinned handshake still establish trust. The app declares
+`_amux._udp` in `NSBonjourServices` and explains the iOS local-network
+permission as: “amux finds hosts on your network so this phone can pair and
+connect to them directly.” If access is denied, the home explains why no hosts
+can be found and offers the system Settings route.
+
+Foreground browsing is deliberate. Entering the foreground starts the browser,
+hands its latest set to the runtime and redials found addresses before stored
+ones. Backgrounding stops browsing and closes direct QUIC and relay links; the
+cached fleet remains available, but the app does not claim background network
+work or alerts. Returning to the foreground queries again and reconnects. The
+relay is dialled only for a signed-in profile; it races QUIC with its TCP
+fallback and publishes its tier and winning carrier through the same runtime
+status stream as the desktop.
+
+One installation in Application Support holds the unbound or account-bound
+profiles; fleet files live under Caches, keyed by profile. Account names,
+grants and selection survive launch in the registry, while refresh tokens stay
+in the device Keychain. Switching accounts re-points the stores to the selected
+profile rather than moving its trust to another account.
 
 When an update or simulator reinstall moves the app’s data container, the mobile
 runtime rebases saved profile paths within the installation before reopening

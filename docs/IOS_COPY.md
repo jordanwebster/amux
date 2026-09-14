@@ -30,9 +30,19 @@ consequences. Do not add reassurance or describe implementation choices.
 | The account service | account |
 | What a subscription provides | relay |
 | Adding a host | pair |
+| A host reached on the local network | on this network |
+| The route to a host on the local network | direct |
+| An unpaired host discovered on the local network | found |
+| A host visible through a free relay link but unavailable for agent operations | away |
+| A host with no usable route and no relay presence | offline |
 | Leaving an account or ending a device's access | sign out / revoke |
 | The debug bundle | report |
 | A plan you do not accept | send back |
+
+Use **away** only when the relay currently sees the host but the selected
+account has no subscription. Use **offline** when there is no usable route and
+the relay does not currently see the host. Never describe an offline host as
+away, and never offer a subscription merely because a host is offline.
 
 Use second person and present tense. An agent or host is *it*. Avoid hedging,
 filler and exclamation marks. Use digits for numbers, a middle dot between
