@@ -1,3 +1,14 @@
+2026-09-14 — **A bridge that is all shape and no archive is rebuilt, and the
+test that said otherwise now agrees.** Asking whether the frameworks are current
+by looking for the libraries inside them, rather than for the directories that
+hold them, left one test describing the old rule: it stood up an empty shipping
+framework, called that present, and expected no build. Under the rule the build
+now follows it starts one, so the test ran into a cargo it had only pretended to
+have. Its fixture now holds a library, which is what "present" was always meant
+to say, and the case it used to cover by accident — a shape with no archive in
+it, which is what a restored build cache leaves behind — is now a test of its
+own, so nothing has to notice it again two stages later as a missing binary.
+
 2026-09-13 — **The phone runs with nobody signed in, and the story of one
 machine on one network is told end to end.** The app used to hold a connection
 only for an account: with nobody signed in it started no runtime at all, so a
