@@ -1466,17 +1466,34 @@ mod tests {
                 assert!(!reason.is_empty(), "{} says why it is owed", screen.id);
             }
         }
-        // Every screen in both appearances. Adding one to the catalogue moves
-        // this, which is the point: a screen joins the sweep deliberately and
-        // in the same commit as its baselines.
-        assert_eq!(
-            manifest
-                .screens
-                .iter()
-                .map(|screen| screen.appearances.len())
-                .sum::<usize>(),
-            126
-        );
+        // Every checked-in baseline is claimed by the manifest. Everything
+        // above reads the manifest and looks for the file; this reads the
+        // directory and looks for the entry, which is the only direction that
+        // catches a screen dropped from the catalogue with its photographs
+        // left behind, or a stray capture committed by hand.
+        let claimed: std::collections::BTreeSet<String> = manifest
+            .screens
+            .iter()
+            .flat_map(|screen| {
+                screen
+                    .appearances
+                    .iter()
+                    .map(move |appearance| format!("{}.{appearance}.png", screen.id))
+            })
+            .collect();
+        let mut orphans: Vec<String> = std::fs::read_dir("../../apps/apple/Goldens")
+            .expect("the baselines")
+            .map(|entry| {
+                entry
+                    .expect("a baseline")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.ends_with(".png") && !claimed.contains(name))
+            .collect();
+        orphans.sort();
+        assert_eq!(orphans, Vec::<String>::new(), "baselines nothing claims");
         let mut flaky_captures: Vec<_> = manifest
             .screens
             .iter()

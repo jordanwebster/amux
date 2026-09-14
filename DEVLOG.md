@@ -1,3 +1,27 @@
+2026-09-14 — **Corrected a comment that states a cause I had disproved, and
+replaced the catalogue's size with a claim worth making.** The row button style
+carried a note saying an overlay drawn at zero opacity moved one card's rows by
+two thirds of a point. I had tried exactly that and the capture still failed;
+the cause was a `.scale` transition leaving its transform at identity, and that
+is recorded where it was actually measured, on the control style. The branch
+the note explained is still right — a tint that exists only while a press does
+— so only the reason changed. A comment that states a false cause is worse than
+no comment: the next person to touch that file would have spent their time
+where I had already looked.
+
+The catalogue's size was a change detector rather than a property. Adding a
+screen already requires a fixture, a registration, a stated reason, a baseline
+heading and two committed photographs, every one of which is asserted a few
+lines above it; the number guarded none of that, and the only way to answer it
+is to retype it — which is what the last commit did, with a comment explaining
+why the number deserved to be there.
+
+What was missing runs the other way. Every check reads the manifest and looks
+for the file. Nothing read the directory and looked for the entry, so a screen
+dropped from the catalogue could leave its photographs behind, or a stray
+capture could be committed by hand, and the suite would agree. The sweep now
+names any baseline nothing claims.
+
 2026-09-14 — **Pinned what a fleet row says, and photographed the two states
 that had never been drawn.** `RowState` reads four independent facts in one
 order and that order is the whole of the design, so it now has tests rather

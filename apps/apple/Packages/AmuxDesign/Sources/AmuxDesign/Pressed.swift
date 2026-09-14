@@ -35,10 +35,9 @@ public struct AmuxRowButtonStyle: ButtonStyle {
         let configuration: Configuration
         let cornerRadius: CGFloat
 
-        // Nothing is wrapped around a row that is not being pressed. Even an
-        // overlay drawn at zero opacity changes how the row's frame rounds to
-        // the device's pixels, which moved one card's rows two thirds of a
-        // point and the captures caught it.
+        // The tint exists only while the press does, rather than sitting over
+        // every row at zero opacity waiting for one: an acknowledgement is
+        // instant, so there is nothing an interpolated value would buy.
         @ViewBuilder
         var body: some View {
             if configuration.isPressed {
