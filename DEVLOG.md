@@ -1,3 +1,15 @@
+2026-09-14 — **Signing out leaves a working phone even when somebody else is
+still signed in.** A phone with nobody on screen reaches no relay, and the
+connection it starts is refused outright if it names an account anyway: an
+account is reached through the relay, and the relay address comes with the
+credential of the account on screen. The app still listed every signed-in
+account in that case, so signing out of the account you were looking at — or
+picking an already signed-out one out of the switcher — while a second account
+stayed signed in left the phone with no connection at all, and so no way to
+find, pair with or reach the machines on its own network. With nobody on
+screen the connection now lists no accounts, names the remembered one so its
+machines stay on screen, and runs.
+
 2026-09-14 — **One place decides which Python runs a script.** The recipes
 already chose an interpreter rather than trusting whatever `python3` resolved
 to, because macOS still ships 3.9 and these scripts read TOML with a module

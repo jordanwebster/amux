@@ -347,4 +347,77 @@ final class RuntimeCoordinatorTests: XCTestCase {
         coordinator.localNetwork(.denied)
         XCTAssertEqual(signedOut.hosts.localNetwork, .denied)
     }
+
+    func testSigningOutWithASecondAccountSignedInStillLeavesAPhoneThatBrowsesAndDials() async throws {
+        // An account is reached through the relay, and the relay address comes
+        // with the credential of the account on screen. With nobody on screen
+        // there is no such address, so a connection that still listed the other
+        // signed-in account would name an account it has no route for and be
+        // refused — leaving a phone that cannot even see its own network
+        // because somebody else happens to be signed in on it.
+        let directory = root
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let registry = AccountRegistry()
+        registry.add(ada)
+        registry.add(bo)
+        registry.select(bo.id)
+        let signedOut = StoreBundle(account: AccountId("signed-out"))
+        var clients: [ScriptedRuntime] = []
+        var configurations: [BridgeConfiguration] = []
+        let coordinator = RuntimeCoordinator(
+            registry: registry, cloud: RelayCloud(), support: directory, cache: directory,
+            deviceName: "Phone", factory: { config, _ in
+                configurations.append(config)
+                let client = ScriptedRuntime()
+                clients.append(client)
+                return client
+            })
+        coordinator.signedOutStores = signedOut
+        defer { coordinator.stop() }
+        let kitchen = FoundHost(
+            host: HostId(UUID(uuidString: "6D7A4B1E-3C2F-4A58-9B0D-1E2F3A4B5C6D")!),
+            name: "kitchen", version: 7, addrs: ["192.168.1.24:41234"])
+        coordinator.discovered([kitchen])
+        _ = await coordinator.reconnect()
+        XCTAssertEqual(configurations.last?.accounts.map(\.id), ["ada", "bo"])
+        XCTAssertNotNil(configurations.last?.relay)
+
+        registry.signOut(bo.id)
+        for _ in 0..<1000 where clients.count < 2 { await Task.yield() }
+        XCTAssertEqual(clients.count, 2, "signing out left the phone without a runtime")
+        XCTAssertTrue(coordinator.runtime === clients.last)
+        XCTAssertNil(coordinator.runtimeAccount)
+        XCTAssertNil(coordinator.failure)
+        XCTAssertNil(configurations.last?.relay)
+        XCTAssertEqual(configurations.last?.accounts, [],
+                       "a phone with nobody on screen listed an account it has no relay for")
+        XCTAssertEqual(configurations.last?.active, "bo",
+                       "signing out must leave the last account's machines on screen")
+
+        // It is a phone that works: it hears the network the browser already
+        // found, and what it finds there reaches the signed-out screen.
+        XCTAssertEqual(clients.last?.handedOver, [[kitchen]])
+        let host = HostEntry(id: HostId(UUID()), name: "kitchen", online: false,
+                             trustStatus: .untrustedButOnline)
+        clients.last?.replies.yield([.connection(.init(state: .disconnected, reason: .stopped)),
+                                     .discovered([host])])
+        for _ in 0..<1000 where signedOut.hosts.discovered.isEmpty { await Task.yield() }
+        XCTAssertEqual(signedOut.hosts.discovered.map(\.name), ["kitchen"])
+        XCTAssertNil(coordinator.failure)
+
+        // The same holds for picking an account out of the switcher that is
+        // already signed out, with the other one still signed in behind it.
+        registry.select(ada.id)
+        for _ in 0..<1000 where clients.count < 3 { await Task.yield() }
+        XCTAssertEqual(configurations.last?.accounts.map(\.id), ["ada"])
+        XCTAssertNotNil(configurations.last?.relay)
+        registry.select(bo.id)
+        for _ in 0..<1000 where clients.count < 4 { await Task.yield() }
+        XCTAssertEqual(clients.count, 4)
+        XCTAssertTrue(coordinator.runtime === clients.last)
+        XCTAssertNil(coordinator.failure)
+        XCTAssertNil(configurations.last?.relay)
+        XCTAssertEqual(configurations.last?.accounts, [])
+        XCTAssertEqual(configurations.last?.active, "bo")
+    }
 }

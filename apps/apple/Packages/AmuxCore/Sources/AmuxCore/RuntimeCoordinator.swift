@@ -100,8 +100,7 @@ public final class RuntimeCoordinator {
         starting?.cancel()
         let replaced = wired !== registry.stores
         unwire()
-        if let configured,
-           configured.accounts.map(\.id) != registry.accounts.filter(\.signedIn).map({ $0.id.value }) {
+        if let configured, configured.accounts.map(\.id) != listed.map(\.value) {
             stopRuntime()
         }
         if replaced, let stores = registry.stores {
@@ -224,6 +223,22 @@ public final class RuntimeCoordinator {
         registry.selectedAccount?.signedIn == true ? registry.stores : signedOutStores
     }
 
+    /// The accounts a configuration may list.
+    ///
+    /// Every account this phone is signed in to while one of them is on
+    /// screen, so the switcher can say that an account nobody is looking at
+    /// has something waiting. None at all with nobody on screen, even when
+    /// another account is still signed in: an account is reached through the
+    /// relay, the relay address comes with the on-screen account's credential,
+    /// and a connection that listed an account it has no route for is refused
+    /// outright — which would leave a phone whose other account happens to be
+    /// signed in with no connection at all, and so no way to find or reach the
+    /// machines on its own network.
+    private var listed: [AccountId] {
+        guard registry.selectedAccount?.signedIn == true else { return [] }
+        return registry.accounts.filter(\.signedIn).map(\.id)
+    }
+
     private func configuration(relay: URL?, account: AccountId?) throws -> BridgeConfiguration {
         var endpoint: BridgeConfiguration.Relay?
         if let relay {
@@ -243,9 +258,9 @@ public final class RuntimeCoordinator {
         return BridgeConfiguration(
             dataDirectory: support, cacheDirectory: cache, deviceName: deviceName,
             relay: endpoint,
-            accounts: registry.accounts.filter(\.signedIn).map {
-                .init(id: $0.id.value,
-                      token: overrideTokens[$0.id.value].map { .fixed($0) } ?? .callback)
+            accounts: listed.map { id in
+                .init(id: id.value,
+                      token: overrideTokens[id.value].map { .fixed($0) } ?? .callback)
             },
             // With nobody signed in, the account last on screen: its profile
             // and the machines it paired with stay where they were rather than
