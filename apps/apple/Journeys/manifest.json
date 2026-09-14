@@ -12,7 +12,7 @@
         "withdrawn-and-back",
         "permission-refused"
       ],
-      "claim": "A phone with no account, no relay and no subscription, and one machine the runner is really running on its own network. The phone opens on nothing; the machine puts itself on the network and the phone offers it by name with one thing to do about it; six digits the machine printed reach the machine's own name and the whole of its key, and trusting it leaves the machine holding exactly one device and the phone reading what it is running \u2014 with nobody signed in throughout, so every byte of that arrived over a link this phone opened to an address a browser resolved. The machine then leaves the network, goodbye and all, and the phone says so; it comes back and the phone reaches it again without anybody pressing anything. And a phone whose owner refused to let it look at the network is told that is what happened, and where it is undone."
+      "claim": "A phone with no account, no relay and no subscription, and one machine the runner is really running on its own network. The phone opens on nothing; the machine puts itself on the network and the phone offers it by name with one thing to do about it; six digits the machine printed reach the machine's own name and the whole of its key, and trusting it leaves the machine holding exactly one device and the phone reading what it is running — with nobody signed in throughout, so every byte of that arrived over a link this phone opened to an address a browser resolved. The machine then leaves the network, goodbye and all, and the phone says so; it comes back and the phone reaches it again without anybody pressing anything. And a phone whose owner refused to let it look at the network is told that is what happened, and where it is undone."
     },
     {
       "id": "home-coldstart",
@@ -125,6 +125,24 @@
       "stage": 13,
       "topology": "e2e-tests/topologies/accounts.json",
       "claim": "Signing in through the scripted account service starts the application's own runtime at the relay its connect token names, with no door connection credentials. After pairing, Hosts shows the real daemon and home shows its agent. Reinstalling the same build moves the app container while preserving its files. Relaunching restores the selected account and draws the fleet saved by that connection before the account service answers or any runtime starts, then the remembered profile reconnects."
+    },
+    {
+      "id": "free-tier",
+      "stage": 14,
+      "topology": "e2e-tests/topologies/free-tier.json",
+      "claim": "A phone signed in to an account that has never paid for the relay, against three machines the runner is really running. On its own network it pairs with one of them and runs its agent, which is what an account with nothing bought is entitled to and all it needs. Both machines then leave that network: the one signed in to this account is still visible to the relay, which will carry nothing to it, so the phone says it is away, keeps its agent on the list saying in words that nothing is arriving, and names it in the one line above the list; the machine signed in to nobody says that instead, because what is in the way is on the machine and no money moves it. Opening the away machine's agent shows the last thing it said with the offer where the composer would be, naming the machine it would reach. Six digits a third machine printed — a machine only the relay has ever seen — authenticate and still do not pair, and the keypad answers with the same offer rather than calling a correct code wrong. Then the account service starts saying the account is subscribed and the phone asks its own link to read that again: the machine is through the relay and its agent is live at once, with nothing left above the list. The App Store is never reached and the account service is a double the app is handed at launch, which is what makes an unpaid account a state a finger can reach; the relay, the machines and the credential they are all admitted on are real."
+    },
+    {
+      "id": "signed-out",
+      "stage": 14,
+      "topology": "e2e-tests/topologies/onramp.json",
+      "claim": "A phone nobody has signed in on, following the machine it paired with off its own network and back. Paired by the code that machine printed and reading what it runs, it is left with neither when the machine says goodbye and stops answering — and keeps all of it: the agents stay on the list as what they are, the machine reads offline, and the one line above the list offers an account as the thing that would reach it from somewhere else. The machine announces itself again, the phone reaches it with nobody pressing anything, and that offer goes away with the thing it was for: a phone that can reach everything it owns is never asked for an account. No account, no relay and no subscription exist anywhere in this story."
+    },
+    {
+      "id": "profiles",
+      "stage": 14,
+      "topology": "e2e-tests/topologies/profiles.json",
+      "claim": "One phone, one machine on its network signed in to nobody, and two accounts coming and going over the top of it. The phone pairs with the machine before it has ever had an account; the first account to sign in takes over the profile it was already running, so the machine, its key and its agent are still there afterwards. Signing out leaves every one of them where it is and keeps the account listed with nothing signed in. A second account is a second device as far as the machine is concerned: its own profile, no machines and no agents, with the first account still listed beside it."
     }
   ]
 }

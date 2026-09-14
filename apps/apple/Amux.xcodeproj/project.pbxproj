@@ -41,6 +41,7 @@
 		82056283E7015DF9A446A93F /* DoorWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */; };
 		85050772CD14A43D2447A999 /* AmuxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBADB0CC914373F8BD52E715 /* AmuxApp.swift */; };
 		894FA032EAF19BFC5E92664F /* Trace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21A4FC885DCA537FD2ABD0FD /* Trace.swift */; };
+		89BCB15DAC496850F2C9EAD5 /* SignedOutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6B0DBF15C34286BDCECEB5D /* SignedOutTests.swift */; };
 		8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */; };
 		8F140E2B8F22F4D06C725763 /* ReportFreeze.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0B3C347A308DFA4C4468BE /* ReportFreeze.swift */; };
 		9222A460D7D6704965F130AF /* VisualInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD55A5CE02759F024BF86B2D /* VisualInteractionTests.swift */; };
@@ -59,7 +60,9 @@
 		C80961F296CEC5BE7BD77318 /* ClaudeSessionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */; };
 		CA1F697290D6919EF12B1899 /* frozen-frame.png in Resources */ = {isa = PBXBuildFile; fileRef = 6DC1FF3D962A7B46549AF24A /* frozen-frame.png */; };
 		CAD420C705F7B9D3741E4C03 /* ReportTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03CB11BE8186B9B3BB3A02C2 /* ReportTools.swift */; };
+		CB16FF676321C77AFEBADD2F /* ProfilesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A4F3E727482D8B311E0B388 /* ProfilesTests.swift */; };
 		CE11C489AB20BA6178BB5061 /* ScriptedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDC802B81DEFE678F21C7226 /* ScriptedStore.swift */; };
+		CFA4FA68F1818A9A493952AC /* FreeTierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E433104CB593345DC1BC328 /* FreeTierTests.swift */; };
 		D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71AECE15627BD11A3278E26C /* HostsTests.swift */; };
 		D6110EDBF7C482ED12425744 /* Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11108752C34ADBDF5089E372 /* Fixtures.swift */; };
 		DDDED99192D1F649C8282E0A /* Perturbation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D67FA937AF3288820FA3464 /* Perturbation.swift */; };
@@ -105,6 +108,7 @@
 		068E67CC97AD687C742CD825 /* DesignVariant.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignVariant.swift; sourceTree = "<group>"; };
 		0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JourneyCase.swift; sourceTree = "<group>"; };
 		11108752C34ADBDF5089E372 /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
+		1A4F3E727482D8B311E0B388 /* ProfilesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfilesTests.swift; sourceTree = "<group>"; };
 		1E66BD0F085353353B013CB1 /* AmuxCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxCore; path = Packages/AmuxCore; sourceTree = SOURCE_ROOT; };
 		21A4FC885DCA537FD2ABD0FD /* Trace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trace.swift; sourceTree = "<group>"; };
 		25AE3ED34EF70375D2BC299C /* Report.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Report.swift; sourceTree = "<group>"; };
@@ -143,11 +147,13 @@
 		8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostsLifecycleTests.swift; sourceTree = "<group>"; };
 		8ED8247A9E0214AD28831928 /* Amux.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Amux.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		979C7C4DC969977B66A65802 /* DoorScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorScreens.swift; sourceTree = "<group>"; };
+		9E433104CB593345DC1BC328 /* FreeTierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreeTierTests.swift; sourceTree = "<group>"; };
 		A11D2D96B556BEC7A819E35F /* ColdStartProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColdStartProbe.swift; sourceTree = "<group>"; };
 		A5460B8E61AD1A082B4A0FE7 /* DoorWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoorWindow.swift; sourceTree = "<group>"; };
 		B1186A0565AF5053EC2C320C /* ReportAssembly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportAssembly.swift; sourceTree = "<group>"; };
 		B4EFC5ACC5BD2F025A261F98 /* AmuxTestSupport */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AmuxTestSupport; path = Packages/AmuxTestSupport; sourceTree = SOURCE_ROOT; };
 		B60FB9981D4C68D3915DA21A /* Composition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Composition.swift; sourceTree = "<group>"; };
+		B6B0DBF15C34286BDCECEB5D /* SignedOutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignedOutTests.swift; sourceTree = "<group>"; };
 		B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTests.swift; sourceTree = "<group>"; };
 		BC486A7A07178E55789AE94C /* ReviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewTests.swift; sourceTree = "<group>"; };
 		BE1CD31C989C5DC52354A7AE /* WritingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WritingTests.swift; sourceTree = "<group>"; };
@@ -244,14 +250,17 @@
 				7AE20E1CF299C0AA93C3994A /* ClaudeSessionsTests.swift */,
 				B9F94BFD8E213FABB8AFE823 /* ConversationTests.swift */,
 				7BF809F88F54D264E26E1F0B /* DrawerTests.swift */,
+				9E433104CB593345DC1BC328 /* FreeTierTests.swift */,
 				8EB1820B4AFB0A1E2D403CB1 /* HostsLifecycleTests.swift */,
 				71AECE15627BD11A3278E26C /* HostsTests.swift */,
 				0A5DBC2DD2CA8517B354F408 /* JourneyCase.swift */,
 				31777DF351ACE50870B1C6A5 /* LaunchTests.swift */,
 				7A850E769712D6AB4A64074B /* OnrampTests.swift */,
 				383300BBC8CEEE1F13228DF4 /* ProductionStartupTests.swift */,
+				1A4F3E727482D8B311E0B388 /* ProfilesTests.swift */,
 				00E2A1B596AD6E7D5B1E9C41 /* ReportsTests.swift */,
 				BC486A7A07178E55789AE94C /* ReviewTests.swift */,
+				B6B0DBF15C34286BDCECEB5D /* SignedOutTests.swift */,
 				CD55A5CE02759F024BF86B2D /* VisualInteractionTests.swift */,
 				BE1CD31C989C5DC52354A7AE /* WritingTests.swift */,
 			);
@@ -630,14 +639,17 @@
 				C80961F296CEC5BE7BD77318 /* ClaudeSessionsTests.swift in Sources */,
 				37B3A90E102873B3B8907D4A /* ConversationTests.swift in Sources */,
 				6CB9FD43FC5780AC80F0425B /* DrawerTests.swift in Sources */,
+				CFA4FA68F1818A9A493952AC /* FreeTierTests.swift in Sources */,
 				A27D9A47B7ED93DE56F742AB /* HostsLifecycleTests.swift in Sources */,
 				D1A7249247B147B6A897D074 /* HostsTests.swift in Sources */,
 				8B94E9018AA81664186ED057 /* JourneyCase.swift in Sources */,
 				0B367BC318C7015B7254FFAB /* LaunchTests.swift in Sources */,
 				3119EDD9BD2DC8F4346FC10E /* OnrampTests.swift in Sources */,
 				6342144C68A9F27FC0B5B275 /* ProductionStartupTests.swift in Sources */,
+				CB16FF676321C77AFEBADD2F /* ProfilesTests.swift in Sources */,
 				526D112B4DCB651C254E5F9F /* ReportsTests.swift in Sources */,
 				7D4CF562DADA4EB7723324CD /* ReviewTests.swift in Sources */,
+				89BCB15DAC496850F2C9EAD5 /* SignedOutTests.swift in Sources */,
 				9222A460D7D6704965F130AF /* VisualInteractionTests.swift in Sources */,
 				9A0DED937618A8CC258CEFDF /* WritingTests.swift in Sources */,
 			);

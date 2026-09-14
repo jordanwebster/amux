@@ -56,15 +56,20 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
     /// Where the relay credential comes from. `callback` means the bridge asks
     /// this app each time, which is what a rotating cloud token needs.
     public enum Token: Codable, Sendable, Equatable {
-        case fixed(String)
+        /// A bearer this app already holds, and what the account that holds it
+        /// buys.
+        ///
+        /// The tier travels with it for the same reason it travels with a
+        /// credential the account service issues: the bearer is opaque here
+        /// and below, so nothing underneath can read a tier out of it, and a
+        /// link that reported none would report free — which would put every
+        /// machine on the far side of the relay out of reach on a phone whose
+        /// account had paid for them.
+        case fixed(String, tier: Tier?)
         case callback
 
         private enum Key: String, CodingKey { case Static }
-        /// The bridge's fixed credential carries the bearer and, optionally,
-        /// what the account it belongs to buys. Only a driving fixture says
-        /// the second; a real account is admitted on whatever its own token
-        /// claims, so this app never asserts a tier of its own.
-        private enum Fixed: String, CodingKey { case bearer }
+        private enum Fixed: String, CodingKey { case bearer, tier }
 
         public init(from decoder: any Decoder) throws {
             if let text = try? decoder.singleValueContainer().decode(String.self), text == "Callback" {
@@ -73,7 +78,9 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
             }
             let container = try decoder.container(keyedBy: Key.self)
             let fixed = try container.nestedContainer(keyedBy: Fixed.self, forKey: .Static)
-            self = .fixed(try fixed.decode(String.self, forKey: .bearer))
+            self = .fixed(
+                try fixed.decode(String.self, forKey: .bearer),
+                tier: try fixed.decodeIfPresent(Tier.self, forKey: .tier))
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -81,10 +88,11 @@ public struct BridgeConfiguration: Codable, Sendable, Equatable {
             case .callback:
                 var container = encoder.singleValueContainer()
                 try container.encode("Callback")
-            case .fixed(let bearer):
+            case .fixed(let bearer, let tier):
                 var container = encoder.container(keyedBy: Key.self)
                 var fixed = container.nestedContainer(keyedBy: Fixed.self, forKey: .Static)
                 try fixed.encode(bearer, forKey: .bearer)
+                try fixed.encodeIfPresent(tier, forKey: .tier)
             }
         }
     }

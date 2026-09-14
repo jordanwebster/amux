@@ -21,6 +21,15 @@ public struct ScriptedCloudState: Codable, Sendable, Equatable {
     /// How long every answer takes. Zero is instant.
     public var latency: Duration
 
+    /// What the relay will carry for this account, which is what an active
+    /// subscription buys and nothing else does.
+    public var tier: Tier {
+        switch entitlement {
+        case .active: .pro
+        case .none, .lapsed: .free
+        }
+    }
+
     public init(
         signIn: SignInOutcome = .succeeds(Self.ada),
         entitlement: Entitlement = .active(grant: .purchased(.web), renews: nil),
@@ -194,7 +203,14 @@ public final class ScriptedCloudService: CloudService, @unchecked Sendable {
         guard let token = state.token else { throw CloudError.unauthenticated }
         // Testnet credentials do not expire. Giving one the fixture clock’s
         // date would make it already expired against the runtime’s real clock.
-        return ConnectToken(bearer: token, host: state.relayHost, port: state.relayPort)
+        //
+        // The tier follows what the account has bought, because that is what
+        // amux.sh does: the same reply issues the credential and says what the
+        // relay will carry on it. A token that said nothing would be read as
+        // free, and every machine on the far side of the relay would go out of
+        // reach on an account that had paid for exactly that.
+        return ConnectToken(
+            bearer: token, host: state.relayHost, port: state.relayPort, tier: state.tier)
     }
 
     public func recordPurchase(

@@ -69,6 +69,10 @@ public final class RuntimeCoordinator {
     private var permission: LocalNetworkPermission = .unknown
     private var overrideRelay: URL?
     private var overrideTokens: [String: String] = [:]
+    /// What a driver said those credentials buy. The account service says
+    /// it in the same reply that issues a real one, and a link that
+    /// reported nothing would report free.
+    private var overrideTier: Tier?
 
     public init(
         registry: AccountRegistry, cloud: any CloudService, support: URL, cache: URL,
@@ -125,14 +129,21 @@ public final class RuntimeCoordinator {
         registry.select(account)
         overrideRelay = nil
         overrideTokens = [:]
+        overrideTier = nil
         return await reconnect()
     }
 
     /// Launch-time credentials supplied by a debug driver use the same installation,
     /// profiles, event pump and store wiring as credentials issued by the service.
-    public func override(relay: URL, tokens: [String: String]) async -> Bool {
+    ///
+    /// - Parameter tier: what those credentials buy, which the relay will
+    ///   enforce from the token's own claim and every screen reads off the
+    ///   link. A driver says it because nothing here can read it out of an
+    ///   opaque bearer.
+    public func override(relay: URL, tokens: [String: String], tier: Tier? = nil) async -> Bool {
         overrideRelay = relay
         overrideTokens = tokens
+        overrideTier = tier
         return await reconnect()
     }
 
@@ -260,7 +271,8 @@ public final class RuntimeCoordinator {
             relay: endpoint,
             accounts: listed.map { id in
                 .init(id: id.value,
-                      token: overrideTokens[id.value].map { .fixed($0) } ?? .callback)
+                      token: overrideTokens[id.value]
+                          .map { .fixed($0, tier: overrideTier) } ?? .callback)
             },
             // With nobody signed in, the account last on screen: its profile
             // and the machines it paired with stay where they were rather than

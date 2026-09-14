@@ -434,6 +434,23 @@ def perform(
         written.unlink()
 
 
+def fresh(udid: str) -> None:
+    """A phone out of its box: the app gone from the device, and every account,
+    key and cache any journey before this one left on it gone with it.
+
+    Deleting those files under an installed app is not enough for a story that
+    turns on nobody having signed in. The app the simulator is still holding
+    writes what it has in memory back out when it is finally stopped, which can
+    put an earlier journey's account back after its file has been removed.
+    Taking the app off the device removes the process and the container
+    together, and nothing can be restored from a container that is not there.
+    """
+    ios_simulators.quit_apps(udid)
+    subprocess.run(["xcrun", "simctl", "uninstall", udid, BUNDLE_ID],
+                   check=False, capture_output=True, timeout=120)
+    install(udid)
+
+
 def install(udid: str) -> None:
     """Puts the build under test on the simulator, once per journey."""
     ios_simulators.run("xcrun", "simctl", "install", udid, str(APPLICATION), timeout=300)
@@ -496,9 +513,7 @@ def onramp(journey: Journey, udid: str, ready: dict) -> None:
     helper = next(agent for agent in ready["agents"] if agent["name"] == "helper")
     control_address = ready["control"]
 
-    install(udid)
-    forget_cache(udid)
-    forget_pairings(udid)
+    fresh(udid)
     journey.say("workstation is on this network and nobody is signed in anywhere: no account, no "
                 "relay and no subscription exist in this story")
 
@@ -594,7 +609,7 @@ def onramp(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("afterItLeft") == "offline",
                        f"the machine left this network and the phone reads it as "
                        f"{seen.get('afterItLeft')!r}")
-        journey.expect(seen.get("afterItCameBack") == "reachable",
+        journey.expect(seen.get("afterItCameBack") == "on-this-network",
                        f"the machine came back and the phone reads it as "
                        f"{seen.get('afterItCameBack')!r}")
         journey.expect(seen.get("accountsWhenItCameBack") == 0,
@@ -637,6 +652,268 @@ def onramp(journey: Journey, udid: str, ready: dict) -> None:
         journey.say("photographed " + ", ".join(sorted(photographs)))
     forget_cache(udid)
     forget_pairings(udid)
+
+
+def free_tier(journey: Journey, udid: str, ready: dict) -> None:
+    """An account that has not paid for the relay, on a phone that walks away
+    from the machine it paired with.
+
+    Everything the account buys is exactly one thing — the tunnel — so this is
+    the only journey where what changes on screen is what a subscription is
+    for. The machines are real and so is the relay; what moves is where the
+    phone is standing and what amux.sh says the account has bought.
+
+    The account service is the scripted one, as it is wherever money is
+    involved: the App Store's sheet belongs to another process and nobody
+    outside it can press it. The credential it hands over is this account's own
+    and the relay validates it, so the tier a screen reads is the tier the
+    relay admitted the link on rather than a claim the app made about itself.
+    """
+    daemons = {daemon["name"]: daemon for daemon in ready["daemons"]}
+    helper = next(agent for agent in ready["agents"] if agent["name"] == "helper")
+    token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]
+
+    fresh(udid)
+    journey.say("personal has bought nothing, workstation and spare are on this network, "
+                "studio is only on the relay, and workstation is running one agent")
+
+    pictures = ("at-home", "away", "chat-away", "code-needs-subscription", "subscribed")
+    read = journey.directory / "free-tier.json"
+    photographs = {name: journey.directory / f"{name}.png" for name in pictures}
+    perform(
+        journey, udid, "AmuxUITests/FreeTierTests",
+        {"free-tier.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_RELAY": f"http://{ready['relay']}",
+            "AMUX_TOKEN": token,
+            "AMUX_USER": "personal",
+            "AMUX_CONTROL": ready["control"],
+            "AMUX_DOOR_PORT": str(free_port()),
+            "AMUX_HOST": "workstation",
+            "AMUX_AGENT": helper["agent_id"],
+            "AMUX_WORKSTATION": daemons["workstation"]["host_id"],
+            "AMUX_STUDIO": daemons["studio"]["host_id"],
+            "AMUX_SPARE": daemons["spare"]["host_id"],
+        })
+    seen = json.loads(read.read_text())
+
+    journey.expect(seen.get("atHome", {}).get("workstation") == "on-this-network"
+                   and not (seen.get("agentAtHome") or "host-away").startswith("host-"),
+                   f"at home the phone reads its machines as {seen.get('atHome')} and its agent "
+                   f"as {seen.get('agentAtHome')!r}")
+    journey.say(f"on this network an account that has bought nothing pairs with its machine and "
+                f"runs it: {seen.get('atHome')}, with the agent reading "
+                f"{seen.get('agentAtHome')!r}")
+
+    away = seen.get("away", {})
+    journey.expect(away.get("workstation") == "away",
+                   f"off the network the relay's machine reads {away.get('workstation')!r}")
+    journey.expect(away.get("spare") == "offline",
+                   f"the machine with no account reads {away.get('spare')!r}")
+    journey.expect("never signed in" in (seen.get("neverSignedIn") or ""),
+                   f"the machine signed in to nothing reads {seen.get('neverSignedIn')!r}")
+    journey.expect((seen.get("agentWhileAway") or "").startswith("host-away")
+                   and "not live" in (seen.get("agentSaysWhileAway") or ""),
+                   f"the agent on the away machine reads {seen.get('agentWhileAway')!r}, said as "
+                   f"{seen.get('agentSaysWhileAway')!r}")
+    journey.expect(seen.get("homeLineWhileAway")
+                   == "workstation is away · subscribe to reach your agents from anywhere",
+                   f"the one line above the list reads {seen.get('homeLineWhileAway')!r}")
+    journey.say(f"away from it the relay can see workstation and will carry nothing to it: the "
+                f"machines read {away}, the agent stays on the list as "
+                f"{seen.get('agentSaysWhileAway')!r}, and the home says "
+                f"{seen.get('homeLineWhileAway')!r}")
+
+    journey.expect("workstation" in (seen.get("chatOfferDetail") or "")
+                   and seen.get("chatOfferAction") == "Subscribe",
+                   f"opening the agent offered {seen.get('chatOffer')!r} / "
+                   f"{seen.get('chatOfferDetail')!r}")
+    journey.say(f"opening that agent shows what it last said with the offer where the composer "
+                f"would be: {seen.get('chatOffer')!r} — {seen.get('chatOfferDetail')!r}")
+
+    journey.expect(bool(seen.get("keypadOffer")),
+                   "a code for a machine only the relay has seen was answered with nothing")
+    journey.say(f"the code studio printed authenticated and pairing still did not happen, so the "
+                f"keypad says the one thing that would: {seen.get('keypadOffer')!r}")
+
+    subscribed = seen.get("afterSubscribing", {})
+    journey.expect(subscribed.get("workstation") == "through-the-relay",
+                   f"after the subscription workstation reads {subscribed.get('workstation')!r}")
+    journey.expect(seen.get("agentAfterSubscribing")
+                   and not seen["agentAfterSubscribing"].startswith("host-away"),
+                   f"after the subscription the agent reads "
+                   f"{seen.get('agentAfterSubscribing')!r}")
+    journey.expect(not seen.get("homeLineAfterSubscribing"),
+                   f"after the subscription the home still says "
+                   f"{seen.get('homeLineAfterSubscribing')!r}")
+    journey.expect(seen.get("newAgentAfterSubscribing") is True,
+                   "after the subscription the home would not start an agent")
+    journey.say(f"amux.sh started saying the account is subscribed and the phone asked its own "
+                f"link to read that again: workstation became {subscribed.get('workstation')!r} "
+                f"and its agent {seen.get('agentAfterSubscribing')!r} at once, with nothing left "
+                f"above the list")
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs)))
+
+
+def signed_out(journey: Journey, udid: str, ready: dict) -> None:
+    """A phone nobody has signed in on, following its machine off the network
+    and back.
+
+    The same machine and the same protocol as the onramp journey, one step
+    later: this phone is already paired, and what it has to get right is what
+    it does when the machine it is paired with is no longer there. Keeping the
+    agents is the claim — the last thing this phone was told is still the last
+    thing that was true — and so is what it offers about it, which is an
+    account, once, and only while something is actually out of reach.
+    """
+    workstation = next(host for host in ready["daemons"] if host["name"] == "workstation")
+    helper = next(agent for agent in ready["agents"] if agent["name"] == "helper")
+
+    fresh(udid)
+    journey.say("workstation is on this network with one agent on it, and no account, no relay "
+                "and no subscription exist in this story")
+
+    pictures = ("signed-out-offline", "signed-out-reachable")
+    read = journey.directory / "signed-out.json"
+    photographs = {name: journey.directory / f"{name}.png" for name in pictures}
+    perform(
+        journey, udid, "AmuxUITests/SignedOutTests",
+        {"signed-out.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_CONTROL": ready["control"],
+            "AMUX_DOOR_PORT": str(free_port()),
+            "AMUX_HOST": "workstation",
+            "AMUX_AGENT": helper["agent_id"],
+            "AMUX_WORKSTATION": workstation["host_id"],
+        })
+    seen = json.loads(read.read_text())
+
+    journey.expect(seen.get("accounts") == 0 and seen.get("accountsWhenItCameBack") == 0,
+                   f"this phone knew {seen.get('accounts')} accounts and "
+                   f"{seen.get('accountsWhenItCameBack')} afterwards")
+    journey.expect((seen.get("agentWhenItLeft") or "").startswith("host-offline"),
+                   f"the machine left and its agent reads {seen.get('agentWhenItLeft')!r}")
+    journey.expect(helper["name"] in (seen.get("agentsWhenItLeft") or []),
+                   f"the machine left and the phone is holding "
+                   f"{seen.get('agentsWhenItLeft')}")
+    journey.expect(seen.get("machineWhenItLeft") == "offline",
+                   f"the machine that left reads {seen.get('machineWhenItLeft')!r}")
+    journey.expect(seen.get("homeLineWhenItLeft") == "Sign in to reach your agents from anywhere",
+                   f"the one line above the list reads {seen.get('homeLineWhenItLeft')!r}")
+    journey.say(f"the machine left the network and the phone kept what it was told — "
+                f"{seen.get('agentsWhenItLeft')}, with the agent reading "
+                f"{seen.get('agentSaysWhenItLeft')!r} — said the machine was offline, and offered "
+                f"the one thing that would reach it from here: "
+                f"{seen.get('homeLineWhenItLeft')!r}")
+
+    journey.expect(seen.get("agentWhenItCameBack")
+                   and not seen["agentWhenItCameBack"].startswith("host-offline"),
+                   f"the machine came back and its agent reads "
+                   f"{seen.get('agentWhenItCameBack')!r}")
+    journey.expect(not seen.get("homeLineWhenItCameBack"),
+                   f"a phone that can reach everything it owns is being told "
+                   f"{seen.get('homeLineWhenItCameBack')!r}")
+    journey.say("it announced itself again, the phone reached it with nobody pressing anything, "
+                "and the offer of an account went away with the thing it was for")
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs)))
+
+
+def profiles(journey: Journey, udid: str, ready: dict) -> None:
+    """One machine on this network and two accounts coming and going over it.
+
+    The desktop's profile rules, on a phone: the first account adopts the
+    profile the phone was already running — with its key, its trust and the
+    machine it paired with — signing out changes nothing about any of it, and a
+    second account is a second device that starts with nothing. The machine is
+    signed in to nobody, so nothing it does depends on either account and
+    everything that changes on screen is the phone's own doing.
+    """
+    workstation = next(host for host in ready["daemons"] if host["name"] == "workstation")
+    helper = next(agent for agent in ready["agents"] if agent["name"] == "helper")
+    tokens = {user["label"]: user["token"] for user in ready["users"]}
+
+    fresh(udid)
+    journey.say("workstation is on this network and signed in to nobody; the phone has never had "
+                "an account and the relay has two waiting")
+
+    pictures = ("profile-adopted", "signed-out-keeps-the-machine", "second-profile")
+    read = journey.directory / "profiles.json"
+    photographs = {name: journey.directory / f"{name}.png" for name in pictures}
+    perform(
+        journey, udid, "AmuxUITests/ProfilesTests",
+        {"profiles.json": read, **{f"{name}.png": path for name, path in photographs.items()}},
+        telling={
+            "AMUX_RELAY": f"http://{ready['relay']}",
+            "AMUX_TOKEN": tokens["personal"],
+            "AMUX_USER": "personal",
+            "AMUX_WORK_TOKEN": tokens["work"],
+            "AMUX_WORK_USER": "work",
+            "AMUX_CONTROL": ready["control"],
+            "AMUX_DOOR_PORT": str(free_port()),
+            "AMUX_HOST": "workstation",
+            "AMUX_AGENT": helper["agent_id"],
+            "AMUX_WORKSTATION": workstation["host_id"],
+        })
+    seen = json.loads(read.read_text())
+
+    def listed(what: str) -> list[str]:
+        return sorted(entry.get("id", "") for entry in seen.get(what) or [])
+
+    def signed_in(what: str) -> list[str]:
+        return sorted(entry.get("id", "") for entry in seen.get(what) or []
+                      if entry.get("signedIn"))
+
+    journey.expect(seen.get("accountsBeforeSigningIn") == []
+                   and seen.get("machineBeforeSigningIn") == "on-this-network",
+                   f"before any account the phone knew {seen.get('accountsBeforeSigningIn')} and "
+                   f"read its machine as {seen.get('machineBeforeSigningIn')!r}")
+    journey.expect(seen.get("machineAfterSigningIn") == "on-this-network",
+                   f"signing in left the machine reading "
+                   f"{seen.get('machineAfterSigningIn')!r}")
+    journey.expect(signed_in("accountsAfterSigningIn") == ["personal"],
+                   f"after signing in the phone has {signed_in('accountsAfterSigningIn')} "
+                   f"signed in")
+    journey.say("the phone paired with the machine on its network before it had an account, and "
+                "the first account to sign in took over that profile: same key, same trust, same "
+                "machine")
+
+    journey.expect(listed("accountsAfterSigningOut") == ["personal"]
+                   and signed_in("accountsAfterSigningOut") == [],
+                   f"after signing out the phone lists {listed('accountsAfterSigningOut')} with "
+                   f"{signed_in('accountsAfterSigningOut')} signed in")
+    journey.expect(seen.get("machineAfterSigningOut") == "on-this-network",
+                   f"signing out left the machine reading "
+                   f"{seen.get('machineAfterSigningOut')!r}")
+    journey.say("signing out kept the account listed with nobody signed in, and left the machine "
+                "exactly where it was: still on this network, still running its agent")
+
+    journey.expect(listed("accountsOnTheSecondAccount") == ["personal", "work"],
+                   f"the phone lists {listed('accountsOnTheSecondAccount')}")
+    journey.expect(signed_in("accountsOnTheSecondAccount") == ["work"],
+                   f"the phone has {signed_in('accountsOnTheSecondAccount')} signed in")
+    journey.expect(not seen.get("machineOnTheSecondAccount"),
+                   f"the second account can see the first one's machine: "
+                   f"{seen.get('machineOnTheSecondAccount')!r}")
+    journey.expect(seen.get("offeredOnTheSecondAccount") == "not paired",
+                   f"the machine on this network reads "
+                   f"{seen.get('offeredOnTheSecondAccount')!r} to the second account")
+    journey.say(f"a second account is a second device: it starts with no machines and no agents, "
+                f"and the machine on its own network is offered to it as something to pair with "
+                f"rather than as one of its own — with the first account still listed, "
+                f"{listed('accountsOnTheSecondAccount')}")
+
+    for name, written in photographs.items():
+        journey.expect(written.is_file() and written.stat().st_size > 0,
+                       f"{written} was not written")
+    journey.say("photographed " + ", ".join(sorted(photographs)))
 
 
 def home_coldstart(journey: Journey, udid: str, ready: dict) -> None:
@@ -3522,7 +3799,8 @@ def prepare_writing() -> None:
         {"parser.rs": PARSER_EDITED})
 
 
-JOURNEYS = {"onramp": onramp, "home-coldstart": home_coldstart, "home": home,
+JOURNEYS = {"onramp": onramp, "free-tier": free_tier, "signed-out": signed_out,
+            "profiles": profiles, "home-coldstart": home_coldstart, "home": home,
             "conversation": conversation, "asks": asks, "review": review,
             "writing": writing, "claude-sessions": claude_sessions, "hosts-lifecycle": hosts_lifecycle, "hosts": hosts,
             "production-startup": production_startup, "accounts": accounts, "reports": reports, "accessibility": accessibility}

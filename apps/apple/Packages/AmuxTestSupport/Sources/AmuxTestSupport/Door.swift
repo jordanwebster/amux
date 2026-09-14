@@ -36,6 +36,17 @@ public enum DoorRequest: Sendable, Equatable {
     /// every account this phone has been given and leaves the same one on
     /// screen. Which account is read is then the switcher's to change.
     case addAccount(user: String, token: String)
+    /// Ask the link to read again what the account on screen may do.
+    ///
+    /// What a purchase leaves behind, without the purchase. A subscription is
+    /// bought at the App Store, whose sheet belongs to another process and
+    /// cannot be pressed from here; what the app does the moment one goes
+    /// through is tell its own link to re-authenticate, because the relay
+    /// reads the tier off the credential the link holds and nothing on this
+    /// device knows the money moved until somebody asks. That is the half a
+    /// driver can perform, and it is the half a machine's reachability turns
+    /// on.
+    case refreshEntitlement
     /// Deliver again, under the name of the account it answered for, the last
     /// thing that account's connection produced.
     ///
@@ -44,8 +55,14 @@ public enum DoorRequest: Sendable, Equatable {
     /// moment the race would have lost — the same batch, from the same
     /// connection, still answering for the account it was about.
     case late(account: String)
-    /// Start the shared runtime against a relay with a credential.
-    case connect(relay: String, token: String, user: String)
+    /// Start the shared runtime against a relay with a credential, and
+    /// what that credential buys.
+    ///
+    /// The tier is said because nothing below can read one out of an
+    /// opaque bearer: the account service issues it beside a real
+    /// credential, and a driver handing one over stands in for that.
+    /// Paid unless a journey is about an account that has not paid.
+    case connect(relay: String, token: String, user: String, tier: Tier)
     /// Put an account on this phone from a session somebody signed in
     /// elsewhere, and reach whatever the account service says that account may
     /// reach.
@@ -581,7 +598,7 @@ extension DoorRequest: Codable {
         case attachment, name, mime, base64, host, pin
         case note, marks
         case motion, transparency
-        case hosts, permission
+        case hosts, permission, tier
     }
 
     public init(from decoder: any Decoder) throws {
@@ -602,13 +619,15 @@ extension DoorRequest: Codable {
             self = .addAccount(
                 user: try fields.decode(String.self, forKey: .user),
                 token: try fields.decode(String.self, forKey: .token))
+        case "refreshEntitlement": self = .refreshEntitlement
         case "late":
             self = .late(account: try fields.decode(String.self, forKey: .account))
         case "connect":
             self = .connect(
                 relay: try fields.decode(String.self, forKey: .relay),
                 token: try fields.decode(String.self, forKey: .token),
-                user: try fields.decode(String.self, forKey: .user))
+                user: try fields.decode(String.self, forKey: .user),
+                tier: try fields.decodeIfPresent(Tier.self, forKey: .tier) ?? .pro)
         case "restoreSession":
             self = .restoreSession(
                 account: try fields.decode(String.self, forKey: .account),
@@ -742,14 +761,17 @@ extension DoorRequest: Codable {
             try fields.encode("addAccount", forKey: .kind)
             try fields.encode(user, forKey: .user)
             try fields.encode(token, forKey: .token)
+        case .refreshEntitlement:
+            try fields.encode("refreshEntitlement", forKey: .kind)
         case .late(let account):
             try fields.encode("late", forKey: .kind)
             try fields.encode(account, forKey: .account)
-        case .connect(let relay, let token, let user):
+        case .connect(let relay, let token, let user, let tier):
             try fields.encode("connect", forKey: .kind)
             try fields.encode(relay, forKey: .relay)
             try fields.encode(token, forKey: .token)
             try fields.encode(user, forKey: .user)
+            try fields.encode(tier, forKey: .tier)
         case .restoreSession(let account, let refresh):
             try fields.encode("restoreSession", forKey: .kind)
             try fields.encode(account, forKey: .account)

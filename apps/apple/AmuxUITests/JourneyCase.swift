@@ -251,6 +251,10 @@ class JourneyCase: XCTestCase {
         var relay: String?
         var token: String?
         var user: String?
+        /// What the account that credential belongs to has paid for, which the
+        /// account service says beside a real one. Absent is paid, which is
+        /// what every journey but the one about a free account is.
+        var tier: String?
         var attachment: String?
         var name: String?
         var mime: String?
@@ -292,6 +296,7 @@ class JourneyCase: XCTestCase {
             if let relay { fields["relay"] = relay }
             if let token { fields["token"] = token }
             if let user { fields["user"] = user }
+            if let tier { fields["tier"] = tier }
             if let attachment { fields["attachment"] = attachment }
             if let name { fields["name"] = name }
             if let mime { fields["mime"] = mime }

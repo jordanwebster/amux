@@ -1,0 +1,11 @@
+{
+  "cloud_url": "https://amux.sh",
+  "users": ["personal", "work"],
+  "daemons": [
+    {"name": "workstation", "repository_roots": ["../.."], "lan": true}
+  ],
+  "paired": [],
+  "agents": [
+    {"name": "helper", "daemon": "workstation", "working_dir": "../..", "provider": {"Claude": {"script": "../scripts/idle.json"}}}
+  ]
+}

@@ -16,7 +16,7 @@ final class BridgeClientTests: XCTestCase {
             deviceName: "iPhone",
             relay: .init(url: "https://relay.example", tls: .system),
             accounts: [
-                .init(id: "personal", token: .fixed("bearer")),
+                .init(id: "personal", token: .fixed("bearer", tier: .pro)),
                 .init(id: "work", token: .callback),
             ],
             active: "work",
@@ -69,7 +69,7 @@ final class BridgeClientTests: XCTestCase {
             cacheDirectory: root.appendingPathComponent("cache"),
             deviceName: "unit-test",
             relay: .init(url: "https://127.0.0.1:1", tls: .system),
-            accounts: [.init(id: "unit-test", token: .fixed("unused"))],
+            accounts: [.init(id: "unit-test", token: .fixed("unused", tier: nil))],
             active: "unit-test",
             logPath: root.appendingPathComponent("amux.log")))
         defer { client.stop() }

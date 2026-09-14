@@ -425,13 +425,24 @@ public struct AgentsHome: View {
     /// that a machine is offline. A phone that can reach every machine it owns
     /// shows none of it and is never asked for an account.
     private var exceptions: (text: String, act: HomeAction)? {
-        if model.connection.state == .disconnected, let sentence = model.exceptions {
+        // A link that is down outranks everything — on a phone that has one.
+        // Nobody signed in means no relay was ever dialled, and a phone told
+        // it was offline would be told about the absence of something it never
+        // had; what is actually true about such a phone is said below, machine
+        // by machine.
+        if signedIn, model.connection.state == .disconnected, let sentence = model.exceptions {
             return (sentence, .openExceptions)
         }
         if let away = model.awayHost {
             return ("\(away) is away · subscribe to reach your agents from anywhere", .subscribe)
         }
-        if !signedIn, model.unreachableHost != nil { return (SignInCopy.caption, .signIn) }
+        // With nobody signed in there is one thing worth saying and one thing
+        // to do about it: a machine this phone cannot reach, and the account
+        // that would reach it from somewhere else. Everything else a link
+        // could report belongs to a phone that has one.
+        guard signedIn else {
+            return model.unreachableHost == nil ? nil : (SignInCopy.caption, .signIn)
+        }
         return model.exceptions.map { ($0, .openExceptions) }
     }
 

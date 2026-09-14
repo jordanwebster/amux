@@ -108,6 +108,11 @@ final class DoorHost {
     /// reaches it with, in the order they were signed in.
     @ObservationIgnored private var relayAddress: String?
     @ObservationIgnored private var credentials: [Credential] = []
+    /// What the accounts a driver signed in have paid for. Said by the driver
+    /// because the account service says it beside a real credential, and every
+    /// screen that groups machines by where they can be reached from reads it
+    /// off the link.
+    @ObservationIgnored private var connectedTier: Tier = .pro
     /// Which account's profile the runtime is reading. It follows the screen
     /// only once the runtime says it has switched.
     private var runtimeAccount: AccountId? { coordinator?.runtimeAccount }
@@ -217,12 +222,13 @@ final class DoorHost {
         case .calls:
             return .calls(cloud: cloud.calls.map(Self.said), store: store.calls.map(Self.said))
         case .accounts: return .accounts(accountsState())
-        case .connect(let relay, let token, let user):
-            return await connect(relay: relay, token: token, user: user)
+        case .connect(let relay, let token, let user, let tier):
+            return await connect(relay: relay, token: token, user: user, tier: tier)
         case .addAccount(let user, let token):
             return await addAccount(user: user, token: token)
         case .restoreSession(let account, let refresh):
             return await restoreSession(account: account, refresh: refresh)
+        case .refreshEntitlement: return refreshEntitlement()
         case .late(let account): return deliverLate(to: account)
         case .awaitReconciled(let seconds):
             return await awaitReconciled(within: seconds)
@@ -450,8 +456,11 @@ final class DoorHost {
         arrived(at: .screen(screen.rawValue))
     }
 
-    private func connect(relay: String, token: String, user: String) async -> DoorReply {
+    private func connect(
+        relay: String, token: String, user: String, tier: Tier
+    ) async -> DoorReply {
         credentials = [Credential(user: user, token: token)]
+        connectedTier = tier
         return await start(relay: relay, active: user)
     }
 
@@ -469,6 +478,23 @@ final class DoorHost {
         credentials.append(Credential(user: user, token: token))
         let onScreen = composed?.selected?.value ?? runtimeAccount?.value ?? user
         return await start(relay: relay, active: onScreen)
+    }
+
+    /// Tells this phone's link to read again what the account on screen may
+    /// do, which is what a purchase does the moment it goes through.
+    ///
+    /// The App Store's own sheet belongs to another process and nobody outside
+    /// it can press it, so a driver cannot buy a subscription. What it can do
+    /// is the step that follows one, and it is the step a machine's
+    /// reachability actually turns on: the relay decides what to carry from
+    /// the tier on the credential the link holds, so until the link
+    /// re-authenticates a subscription that has just started — or just ended —
+    /// has changed nothing here.
+    private func refreshEntitlement() -> DoorReply {
+        guard stores.refreshEntitlement() else {
+            return .error("there is no link to ask what this account may do")
+        }
+        return .ack
     }
 
     /// Puts an account on this phone from a session that was signed in outside
@@ -498,16 +524,22 @@ final class DoorHost {
         guard let url = URL(string: relay), url.host != nil,
               let composed, let coordinator else { return .error("no relay at \(relay)") }
         relayAddress = relay
+        // What the account bought and what its link may carry are one fact
+        // said twice: the You page reads the first and the machines are
+        // grouped by the second, and a driver that set them apart would be
+        // driving a phone no account service could produce.
+        let bought: Entitlement = connectedTier == .pro
+            ? .active(grant: .purchased(.appStore), renews: nil) : .none
         for credential in credentials
         where !composed.accounts.contains(where: { $0.id == AccountId(credential.user) }) {
             composed.add(
                 SignedInAccount(id: AccountId(credential.user),
                                 email: "\(credential.user)@example.com", displayName: credential.user),
-                entitlement: .active(grant: .purchased(.appStore), renews: nil))
+                entitlement: bought)
         }
         composed.select(AccountId(user))
         let tokens = Dictionary(uniqueKeysWithValues: credentials.map { ($0.user, $0.token) })
-        guard await coordinator.override(relay: url, tokens: tokens) else {
+        guard await coordinator.override(relay: url, tokens: tokens, tier: connectedTier) else {
             return .error("the runtime did not start")
         }
         return .ack
@@ -604,7 +636,11 @@ final class DoorHost {
         else { return }
         connectedAsLaunchAsked = true
         Task { @MainActor in
-            guard case .ack = await connect(relay: relay, token: token, user: user) else {
+            // Paid for: a launch handed a credential is a journey about a phone whose
+            // account works, and the one journey about an account that has bought
+            // nothing signs in through the account service instead.
+            guard case .ack = await connect(
+                relay: relay, token: token, user: user, tier: .pro) else {
                 fatalError("the launch was told to connect to \(relay) and could not")
             }
             guard let payload = Self.said(Door.pairArgument) else { return }

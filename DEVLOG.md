@@ -1,3 +1,37 @@
+2026-09-14 — **Three journeys for the account: a phone that has not paid, a
+phone with no account at all, and two accounts over one machine.** Each drives
+the real relay and the machines the runner is running, and each is about
+something an account is or is not for. The free-tier journey pairs on its own
+network — which is what an account with nothing bought is entitled to and all
+it needs — then follows the machines off that network: the one the relay can
+still see reads as away, keeps its agent on the list saying in words that
+nothing is arriving, and names it in the one line above the list; the machine
+signed in to nobody says that instead. Opening the away machine's agent shows
+the last thing it said with the offer where the composer would be, and six
+digits from a machine only the relay has ever seen authenticate and still do
+not pair, so the keypad answers with the same offer rather than calling a
+correct code wrong. The account service then starts saying the account is
+subscribed, the phone asks its own link to read that again, and the machine is
+through the relay and live at once. The signed-out journey follows one machine
+off the network and back with nobody signed in anywhere, and the profiles
+journey pairs before there is an account, signs one in that adopts what the
+phone already had, signs out without losing any of it, and adds a second
+account that starts with nothing while the first stays listed.
+
+Two things the fixtures had been hiding came out of driving this live. A
+phone's link reports what the account bought, and nothing below it can read
+that out of an opaque bearer — the account service says it in the same reply
+that mints the credential — but both test doubles dropped it, so every driven
+phone reported the free tier and every machine on the far side of the relay
+read as away. The fixed credential now carries the tier, the door's connect
+takes one and grants the entitlement that matches it, and the scripted account
+service issues it from what the account has bought, as amux.sh does. And the
+home's one line put a link that is down above everything: on a phone with
+nobody signed in there is no link, so it said a phone was offline from
+something it had never dialled. It now says what is true of such a phone
+machine by machine, and offers an account only while something is actually out
+of reach.
+
 2026-09-14 — **An away machine keeps its agents and asks for the relay where
 somebody is trying to use one; an empty phone is never asked to buy anything.**
 A machine the relay can see and this account may not tunnel to is a fourth
