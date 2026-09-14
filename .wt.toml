@@ -20,7 +20,7 @@ prevent_idle_sleep: false
 """
 
 [hooks]
-after_new = "python3 scripts/worktree-profile.py {{root()}}/.wt/amux {{name()}} && just build"
+after_new = "scripts/py scripts/worktree-profile.py {{root()}}/.wt/amux {{name()}} && just build"
 warm = "just warm"
 
 # This checkout's daemon. A resource: `wt remove` stops it.
@@ -42,10 +42,10 @@ destroy = "amux server stop"
 tied_to = "machine"
 count = 2
 name = "amux-iphone-{{index()}}"
-exists = 'python3 scripts/ios_simulators.py exists "$WT_SELF"'
-create = 'python3 scripts/ios_simulators.py create "$WT_SELF" golden'
+exists = 'scripts/py scripts/ios_simulators.py exists "$WT_SELF"'
+create = 'scripts/py scripts/ios_simulators.py create "$WT_SELF" golden'
 destroy = 'xcrun simctl delete "$WT_SELF"'
-acquire = 'python3 scripts/ios_simulators.py acquire "$WT_SELF"'
+acquire = 'scripts/py scripts/ios_simulators.py acquire "$WT_SELF"'
 keep = "2m"
 idle = "30m"
 wait = "45m"
@@ -54,10 +54,10 @@ wait = "45m"
 tied_to = "machine"
 count = 1
 name = "amux-small-{{index()}}"
-exists = 'python3 scripts/ios_simulators.py exists "$WT_SELF"'
-create = 'python3 scripts/ios_simulators.py create "$WT_SELF" small'
+exists = 'scripts/py scripts/ios_simulators.py exists "$WT_SELF"'
+create = 'scripts/py scripts/ios_simulators.py create "$WT_SELF" small'
 destroy = 'xcrun simctl delete "$WT_SELF"'
-acquire = 'python3 scripts/ios_simulators.py acquire "$WT_SELF"'
+acquire = 'scripts/py scripts/ios_simulators.py acquire "$WT_SELF"'
 keep = "2m"
 idle = "30m"
 wait = "45m"

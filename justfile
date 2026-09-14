@@ -118,7 +118,7 @@ tui-evidence *ARGS:
 
 # Enforce production and test-infrastructure dependency boundaries.
 dependency-policy:
-    {{bounded}} 60 python3 scripts/check-dependency-policy.py
+    {{bounded}} 60 scripts/py scripts/check-dependency-policy.py
 
 # Warm the product and ordinary test build graphs used by new worktrees.
 warm: build test-build

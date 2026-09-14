@@ -1,3 +1,13 @@
+2026-09-14 — **One place decides which Python runs a script.** The recipes
+already chose an interpreter rather than trusting whatever `python3` resolved
+to, because macOS still ships 3.9 and these scripts read TOML with a module
+that arrived in 3.11. The worktree manager's declared resources did not: they
+ran the simulator script under a bare path, found the system 3.9, and failed
+to lease a phone at all with a syntax error naming nothing about Python
+versions. The choice now lives in `scripts/py`, which the recipes and the
+resource commands both go through, and which also looks where the usual
+installers put a newer Python for callers whose path is bare.
+
 2026-09-14 — **Counted the golden screens the manifest actually owns.** The
 catalogue pins how many photographs it owes, so a screen cannot be added or
 dropped without someone saying so. A new screen — the home tab with nothing
