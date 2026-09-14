@@ -89,10 +89,16 @@ final class ProfilesTests: JourneyCase {
     private func theFirstAccountAdoptsWhatThePhoneHad() throws {
         try signIn(as: cast.personal, with: cast.personalToken)
         record["accountsAfterSigningIn"] = try accounts()
+        // Signing in restarts the runtime on the profile the phone was
+        // already on, so for a moment the machine is a name this phone has no
+        // live route to and reads offline. Where it settles is the promise —
+        // exactly where it was — and it is given the same room to get there
+        // as signing back out is given below.
+        XCTAssertTrue(waitUntil { (try? self.machineOnScreen()) == "on-this-network" },
+                      "signing in lost the machine this phone had paired with: it reads "
+                      + "\((try? machineOnScreen()) ?? "nothing")")
         let adopted = try machineOnScreen()
         record["machineAfterSigningIn"] = adopted
-        XCTAssertEqual(adopted, "on-this-network",
-                       "signing in lost the machine this phone had paired with: it reads \(adopted)")
         waitFor(app, "home.row.\(runner.agent)", "signing in lost what the machine is running")
         photograph(app, "profile-adopted")
     }

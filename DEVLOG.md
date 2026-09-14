@@ -1,3 +1,13 @@
+2026-09-14 — **The accounts journey gives signing in the same room it gives
+signing out.** Signing in for the first time restarts the phone's runtime on
+the profile it was already using, so the machine it had paired with is briefly
+a name with no live route and reads offline before its link is back up. The
+journey read that word once, the instant the account arrived, and so failed
+about one run in three on a phone that was behaving correctly. It now waits
+for the machine to settle, as the signing-out and second-account steps beside
+it already did. The promise asserted is unchanged: after signing in the
+machine is still on this network.
+
 2026-09-14 — **Four reference screens re-approved to the copy the phone now
 speaks.** The account page's first row is headed `Relay` and says how the
 subscription was bought, so the page the phone shows departed from the
