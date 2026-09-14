@@ -1,3 +1,19 @@
+2026-09-14 — **A machine both on this network and on the relay is paired with
+directly.** Which route a pairing takes decides what the machine reads as
+afterwards: a device that paired through the relay holds a relay link to a
+machine in the same room, and an account that has bought nothing is told that
+machine is away. So the rule is now written down where the protocol is
+exercised rather than only on a phone — a specification chapter stands up a
+machine that advertises on this network and is signed in to the same account,
+gives the device pairing with it a free link, and holds the relay's route open
+throughout, so choosing the direct address is a choice and not the only thing
+left. The code authenticates over the direct dial, trust is written against it,
+and the link that follows is direct. It passes as it stands, which says the
+fault behind a phone reading such a machine as away is not in how the node
+chooses a pairing route: with an address for the machine on this network it
+always prefers it, and a pairing that went through the relay had no such
+address at the moment the code was typed.
+
 2026-09-14 — **A remembered fleet is filed under the profile the phone is
 actually on.** A remembered fleet belongs to a profile, and a profile
 identifier is the installation's to make, so the home journey's seeded

@@ -735,3 +735,55 @@ async fn pairing_on_another_cloud_fails_at_the_same_route_boundary_for_pin_and_q
     net.shutdown().await;
     elsewhere.shutdown().await;
 }
+
+/// A machine in the same room is paired with on this network even when the
+/// relay can see it too — and on an account that has bought nothing, which is
+/// the only way that pairing can succeed at all.
+///
+/// Both routes are open at once here: the machine advertises on this network
+/// and is signed in to the same account as the device pairing with it, so the
+/// relay has a route to it before any code is typed. The route the pairing
+/// takes decides what the machine reads as afterwards — a device that paired
+/// through the relay holds a relay link to a machine in the same room, and a
+/// free account is told that machine is away — so the direct address must win
+/// wherever there is one. The relay would refuse this pairing anyway (see the
+/// entitlement chapter), which is the second half of the same rule: on a free
+/// account a pairing either goes direct or does not happen.
+#[tokio::test]
+async fn a_found_machine_the_relay_can_also_see_is_paired_with_directly_on_a_free_account() {
+    let net = TestNet::builder()
+        .cloud()
+        // On this network and on the relay: the default daemon keeps its
+        // direct transports, and one cloud account is shared.
+        .daemon("workstation")
+        .daemon("phone")
+        .cloud_tier(node::Tier::Free)
+        .start()
+        .await;
+    let [workstation, phone] = net.daemons(["workstation", "phone"]);
+    // The relay's route exists first, so choosing the direct address is a
+    // choice and not the only thing left.
+    phone.sees(&workstation).await;
+
+    let pin = workstation.start_pairing().await;
+    net.announce(&workstation);
+    phone.sees_found_address_for(&workstation).await;
+
+    let admin = phone.pairing_admin().await;
+    let pending = admin
+        .begin_pair_pin(workstation.host_id(), &pin, &[])
+        .await
+        .expect("a machine on this network authenticates a printed code");
+    assert_eq!(
+        pending.via,
+        node::PeerVia::Direct,
+        "the code was authenticated over {:?} with the machine on this network",
+        pending.via
+    );
+    admin.confirm_pair(pending).await.expect("trust is written");
+
+    phone.trusts(&workstation).await;
+    workstation.trusts(&phone).await;
+    phone.connects_to(&workstation).via_direct().await;
+    phone.can_call(&workstation).await;
+}
