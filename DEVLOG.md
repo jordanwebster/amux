@@ -1,3 +1,15 @@
+2026-09-14 — **A pairing link on a phone with no account is put to the machine
+at once.** The machines journey still described the world in which a link that
+arrived before anybody had signed in could only be held: it waited for the
+"Checking the invitation…" line and treated signing in as the gate that put the
+invitation to the machine. That has not been true since an invitation started
+carrying the machine's addresses on this network — there is no relay between
+two machines in one room, so an account buys nothing there — and the phone
+answers before the waiting line can be seen at all. The act now asserts what is
+promised instead of the spinner: with nobody signed in, the invitation is put
+to desktop, desktop answers with its own name and the whole of its key, and
+nothing is trusted until somebody agrees.
+
 2026-09-14 — **Tearing a test network down no longer waits for a network a
 test has broken.** Stopping a daemon waits until every other daemon has seen
 it go offline, which is what keeps a restart from coming back into an

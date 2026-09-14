@@ -408,25 +408,23 @@ final class HostsTests: JourneyCase {
 
     /// The app opened by a pairing link on a phone nobody has signed in on.
     ///
-    /// Nothing can be asked of the machine yet — there is no runtime and no
-    /// account — so the invitation is held rather than spent, and the screen
-    /// says nothing has been trusted. Signing in is what puts it to the
-    /// machine, and only then is there a name and a key to read.
+    /// The invitation carries the machine's addresses on this network, so
+    /// there is nothing to wait for: it is dialled straight away and the
+    /// machine answers with its own name and the whole of its key. An account
+    /// would only buy a relay, and no relay stands between these two. Nothing
+    /// is trusted by the answer — the key is there to be read before anybody
+    /// agrees to anything.
     private func aLinkThatArrivesBeforeAnybodyHasSignedIn() throws {
         let app = launch(runner, signedIn: false, link: cast.link)
         waitFor(app, "pair-confirm", "a launch opened by a pairing link showed no confirmation")
-        XCTAssertTrue(element(app, "pair-confirm.checking").exists,
-                      "a link on a signed-out phone claimed something about the machine")
-        let beforeSigningIn = try inventory("desktop").devices
-        record["desktopDevicesBeforeSigningIn"] = beforeSigningIn.count
-        XCTAssertTrue(beforeSigningIn.isEmpty,
-                      "a link that only arrived was already trusted by desktop")
-
-        // Signing in, which is the gate this launch stopped at.
-        try door(runner, .init(kind: "connect", relay: runner.relay, token: runner.token,
-                               user: runner.user))
         waitFor(app, "pair-confirm.trust",
-                "signing in never put the held invitation to the machine")
+                "an invitation carrying this network's addresses waited for an account")
+        record["linkAnsweredWithNoAccount"] = true
+        let beforeTrusting = try inventory("desktop").devices
+        record["desktopDevicesBeforeTrusting"] = beforeTrusting.count
+        XCTAssertTrue(beforeTrusting.isEmpty,
+                      "a link that was only answered was already trusted by desktop")
+
         let offered = try declared(runner)
         let name = said(offered, "pair-confirm.name")?.value ?? ""
         let key = said(offered, "pair-confirm.fingerprint")?.value ?? ""

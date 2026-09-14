@@ -2639,8 +2639,10 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
 
     def link_before_sign_in() -> None:
         """A link that landed before anybody had signed in."""
-        journey.expect(seen.get("desktopDevicesBeforeSigningIn") == 0,
-                       "a link that had only arrived was already trusted")
+        journey.expect(seen.get("linkAnsweredWithNoAccount") is True,
+                       "an invitation carrying this network's addresses waited for an account")
+        journey.expect(seen.get("desktopDevicesBeforeTrusting") == 0,
+                       "a link that had only been answered was already trusted")
         journey.expect(seen.get("linkOfferedMachine") == "desktop",
                        f"the invitation named {seen.get('linkOfferedMachine')!r}")
         journey.expect(seen.get("linkOfferedFingerprint", "").replace(" ", "")
@@ -2649,10 +2651,11 @@ def hosts(journey: Journey, udid: str, ready: dict) -> None:
                        f"holds {daemons['desktop']['fingerprint']}")
         journey.expect(seen.get("desktopDevicesAfterCancelling") == 0,
                        "a machine turned down on the confirmation was trusted anyway")
-        journey.say("a launch opened by a pairing link with nobody signed in trusted nothing and "
-                    "claimed nothing; signing in put the held invitation to desktop, which answered "
-                    "with its own name and the whole of its key; turned down, it still holds no key "
-                    "to this phone")
+        journey.say("a launch opened by a pairing link with nobody signed in put it to desktop at "
+                    "once, because the invitation carries desktop's addresses on this network and "
+                    "no account buys anything between two machines in one room; desktop answered "
+                    "with its own name and the whole of its key, trusting nothing by answering; "
+                    "turned down, it still holds no key to this phone")
 
     def link_agreed_second_time() -> None:
         """The invitation taken up the second time."""
