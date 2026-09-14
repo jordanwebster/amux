@@ -1,4 +1,5 @@
-# wt owns the tree, its environment and its daemon; `just --list` is the task list.
+# wt owns the tree, its environment, its daemon and the phone lease;
+# `just --list` is the task list.
 
 bin = ["target/debug"]
 commands = ["amux"]
@@ -18,31 +19,23 @@ keymaps_dir: {{root()}}/.wt/amux/keymaps
 prevent_idle_sleep: false
 """
 
-[task.profile-config]
-run = ["python3", "scripts/worktree-profile.py", "{{root()}}/.wt/amux", "{{name()}}"]
-exists = 'test -f "$AMUX_CONFIG"'
-
-[task.build]
-run = "just build"
-needs = ["profile-config"]
-
-[task.test]
-run = 'just test "$@"'
-
-[task.lint]
-run = "just lint"
-
-[task.fmt]
-run = "just fmt"
-
-[task.warm]
-run = "just warm"
+[hooks]
+after_new = "python3 scripts/worktree-profile.py {{root()}}/.wt/amux {{name()}} && just build"
+warm = "just warm"
 
 # This checkout's daemon. A resource: `wt remove` stops it.
-[task.daemon]
+[resource.daemon]
 tied_to = "tree"
 name = "{{name_short()}}"
-needs = ["build"]
 exists = 'test -S "{{root()}}/.wt/amux/amux.sock" && amux profiles >/dev/null 2>&1'
-run = "amux server start"
+create = "amux server start"
 destroy = "amux server stop"
+
+# The pinned phone is one device this Mac shares between every checkout, so
+# driving it is serialised: a recipe that touches it runs under
+# `scripts/with iphone` and waits for the lease. One slot, no instances of
+# its own, until the scripts can be pointed at a device per lease.
+[resource.iphone]
+tied_to = "machine"
+count = 1
+wait = "45m"

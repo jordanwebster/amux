@@ -1,6 +1,10 @@
 # The iPhone app's recipes. `just ios <recipe>` from anywhere in the checkout;
 # every recipe runs from the repository root so paths mean the same thing in
 # the scripts, the Xcode project and the Rust workspace.
+#
+# Recipes that touch a simulator run under `scripts/with iphone`: inside a wt
+# worktree that takes the machine's one phone lease, so two checkouts never
+# drive the pinned device at once; elsewhere it runs the command directly.
 
 set shell := ["sh", "-cu"]
 set positional-arguments
@@ -64,7 +68,7 @@ graph-check:
 # tight enough to fire first only reports that something took a while.
 # Create and boot the pinned simulators. Names one or both.
 simulator *NAMES:
-    {{bounded}} 3600 python3 -B scripts/ios_simulators.py {{NAMES}}
+    scripts/with iphone -- {{bounded}} 3600 python3 -B scripts/ios_simulators.py {{NAMES}}
 
 # Generates apps/apple/Amux.xcodeproj from apps/apple/project.yml, then builds the app for
 # the golden simulator. The bridge is an input, so `rust` runs first.
@@ -76,27 +80,27 @@ build: rust
 # selector picks the package that owns the named target.
 # Run the package and app-hosted unit suites on the golden simulator.
 unit *ARGS: rust
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1800 python3 -B scripts/ios-unit.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1800 python3 -B scripts/ios-unit.py "$@"
 
 # Launch the debug build, open a named state through the driving door, read
 # the screen back, photograph it, and connect its shared runtime to a test
 # relay. The tools that serve that relay are an input alongside the app.
 # Drive a launched debug app through its door and a served relay.
 door-smoke: build tools
-    {{bounded}} 1800 python3 -B scripts/ios-door-smoke.py
+    scripts/with iphone -- {{bounded}} 1800 python3 -B scripts/ios-door-smoke.py
 
 # Capture the manifest's screens in both appearances and compare each one
 # with its baseline. No arguments means the whole manifest, which fails on any
 # screen nobody has built yet rather than skipping it.
 # Capture every catalogued screen and compare it with its baseline.
 goldens *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2400 python3 -B scripts/ios-goldens.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2400 python3 -B scripts/ios-goldens.py "$@"
 
 # Move one design token and require the golden run to fail with a difference
 # image. What proves the golden check would notice a change.
 # Prove the golden comparison notices a moved design token.
 goldens-perturb *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 python3 -B scripts/ios-goldens-perturb.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1200 python3 -B scripts/ios-goldens-perturb.py "$@"
 
 # Pair every reference screen's baseline with the design's preserved capture.
 # A report and never a gate: a difference from the design is a conversation.
@@ -109,27 +113,27 @@ goldens-reference:
 # photograph the result. Nothing is connected and no recorded effect is run.
 # Redraw the screen a recorded phone report bundle was written with.
 replay *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1800 python3 -B scripts/ios-replay.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 1800 python3 -B scripts/ios-replay.py "$@"
 
 # The app driven the way a person drives it, against a real relay and real
 # daemons started from a committed topology. No arguments runs every journey
 # apps/apple/Journeys/manifest.json declares.
 # Drive the app like a person against real daemons and a real relay.
 journey *ARGS: build tools
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2400 python3 -B scripts/ios-journey.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2400 python3 -B scripts/ios-journey.py "$@"
 
 # Sweep every state this build draws and require each control on it to have a
 # name VoiceOver can read and at least 44 pt to hit. A UI test, because that is
 # the only accessibility client an app cannot be for itself.
 # Audit every drawn state for VoiceOver names and 44 pt targets.
 accessibility: build
-    {{bounded}} 2400 python3 -B scripts/ios-accessibility.py
+    scripts/with iphone -- {{bounded}} 2400 python3 -B scripts/ios-accessibility.py
 
 # Exercise small visual states that exist only after interaction, without
 # paying for the full verification suite.
 # Capture the small visual states that exist only after interaction.
 visual-interactions: build
-    {{bounded}} 600 python3 -B scripts/ios-visual-interactions.py
+    scripts/with iphone -- {{bounded}} 600 python3 -B scripts/ios-visual-interactions.py
 
 # The measured run: the pinned workloads against the budgets in
 # docs/IOS_PERFORMANCE.md, on a machine that document has a row for. The
@@ -137,7 +141,7 @@ visual-interactions: build
 # links the shipping package, so both are inputs.
 # Measure the pinned workloads against the performance budgets.
 perf *ARGS: rust package tools
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 2700 python3 -B scripts/ios-perf.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2700 python3 -B scripts/ios-perf.py "$@"
 
 # Link the driving bridge from a bare Swift executable, run it on the
 # simulator against a served test network and read the relay inventory back.
@@ -190,7 +194,7 @@ script-tests:
 # build preparation and screenshot latency can be measured independently.
 # Run opt-in timing and capture experiments.
 explore *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 12600 python3 -B scripts/ios-explore.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 12600 python3 -B scripts/ios-explore.py "$@"
 
 # Read-only toward the supplied design checkout; all experimental variants and
 # captures are generated in a fresh ignored output directory.
@@ -202,7 +206,7 @@ design-benchmark *ARGS:
 # then either captures a two/four-idea batch or matched source/production views.
 # Measure layout-idea iteration inside one debug app.
 native-design-benchmark *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 3600 python3 -B scripts/ios-native-design-benchmark.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 3600 python3 -B scripts/ios-native-design-benchmark.py "$@"
 
 # Version, tag, archive and export the iPhone app, and stop there: nothing in
 # this recipe uploads, submits or pushes. --preflight reports its inputs and
@@ -252,7 +256,7 @@ qa-sandbox-purchase *ARGS:
 # without it.
 # Run the whole product once against the real cloud (by hand only).
 qa-live-journey: build desktop
-    {{bounded}} 2100 python3 -B scripts/qa-live-journey.py
+    scripts/with iphone -- {{bounded}} 2100 python3 -B scripts/qa-live-journey.py
 
 # The desktop product, built through the root recipe so the phone recipes that
 # need a daemon beside them share its configuration.
