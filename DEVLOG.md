@@ -1,3 +1,229 @@
+2026-09-14 — **The phone pool's hooks run on a Python that can read them.**
+Creating, probing and preparing a simulator is done by hooks that ran a bare
+`python3`. A hook inherits whatever PATH started it, and on a Mac that is
+often the 3.9 the system ships, which cannot even parse these scripts: the
+pool then reports that a device does not exist, tries to create one, fails the
+same way, and the command that wanted a phone dies with a create failure. The
+hooks go through the same interpreter picker the recipes use.
+
+2026-09-14 — **The phone lease was being skipped by everything that needed it.**
+A device is leased so two checkouts never drive one simulator, and `scripts/with`
+asked for that lease only when `WT_TARGET` was in the environment. That variable
+is set when the worktree tool activates a shell, which nothing started outside
+one has — an agent, a runner, a plain terminal — so those commands silently
+dropped the pool and fell through to the fixed device name that every checkout
+shares. Two checkouts then drove one phone, and the one that prepared it second
+uninstalled the application the first was testing. What makes a checkout the
+tool's is the directory it keeps there, so that is what is asked now, and a
+command that drives a device without a lease in such a checkout is refused with
+the wrapper to run it under.
+
+2026-09-14 — **One command at a time on one simulator.**
+UI tests were dying intermittently with `Test crashed with signal kill`, at a
+different step each time and with no crash report, and a `simctl` call right
+after one of them once failed asking after an application that was not
+installed. The simulator's own log says what happened: the test runner was
+force-quit by a request from the Mac, in the same second as the application
+under test was uninstalled and a fresh build put in its place. That is what
+preparing a device does — every running app is terminated, the build is
+reinstalled — and it was being done to a device another command was in the
+middle of using. Two checkouts can mean the same device more easily than it
+looks: a phone is only leased when the worktree tool has activated the
+environment, and anything started outside that activation falls through to the
+same fixed device name in every checkout. Preparing a device now waits for
+whoever is driving it and keeps it until the command ends, so the second
+command queues instead of pulling the first one's application out from under
+it. A command that starts another command passes on what it holds, so a recipe
+that calls a recipe does not wait for itself.
+
+2026-09-14 — **The cached chat's relaunch is filmed, not just photographed.**
+A still cannot say that the rows a relaunch drew out of the cache are the rows
+that were already there, or that the turn the phone missed arrived under them
+without moving them. The cached-chat journey now films the simulator across
+exactly that stretch, with the camera the streaming conversation already used:
+the test writes a word into its own container and the Mac starts and stops the
+recorder on it. That recorder writes a frame only when the screen changes and
+holds the last one it has until another arrives, so the state a film ends on is
+never in it: the first films stopped on the reconnecting chat and never showed
+the turn they were taken for. The missed turn is now left up long enough to
+read and the phone is then put away, and that is the change which writes it.
+
+2026-09-14 — **The cached-chat journey relaunches without orphaning its test.**
+The simulator now force-quits a UI-test runner shortly after that runner sends
+a standalone termination request to its application. The application was gone,
+but so was the test before it could inspect the cold launch. The journey now
+puts the first launch in the background, takes the relay offline before the
+machine produces the missed turn, and asks XCUITest for one relaunch operation.
+That operation still replaces the application process and exercises the cache
+on disk, without exposing the runner to the broken intermediate lifecycle.
+
+2026-09-14 — **A machine you have not called is not a machine that is down.**
+The phone's fleet reported every remembered machine as unreachable until this
+session had heard from it. That reads as a fact about the machine, and the home
+screen treats it as one: a dark machine outranks every other reason a row might
+need attention, so a conversation remembered waiting on a person announced
+itself as an unreachable machine instead, for as long as the account link took
+to come up — and on a launch with no link at all, indefinitely.
+
+A first frame drawn from disk is a picture of what this device last saw, and it
+now says so about machines exactly as it already did about agents: each one is
+reported with the reachability it was written down with, marked as remembered,
+until this session actually hears otherwise. The moment a machine answers — or
+the account's paired list stops naming it — what it says replaces the memory.
+
+2026-09-14 — **A silent machine no longer erases the conversation you were
+reading.** A client's own node finishes its inventory snapshot the moment it is
+up, and while the account link is away it finishes with nothing at all from the
+machines it cannot reach. The reducer treated that completed snapshot as proof:
+every row read from the cache was dropped, along with its conversation and its
+place in the stream. On the phone that showed as a remembered chat opening with
+an empty transcript — the header knew the agent, and there was nothing under it.
+
+A snapshot this device completed on its own behalf is now only authority over
+this device. A row nobody has confirmed this session survives it, with its
+transcript and its cursor, as long as its machine is still one the account is
+paired with and that machine has not itself said what it is running. What does
+disprove such a row is unchanged and still immediate: the machine's own
+inventory arriving without it retires it there and then, an unpaired machine
+takes its rows with it, and a row on this very device is gone if the local
+daemon did not name it, because that daemon is authority over its own agents.
+
+The fleet screen already drew remembered rows by re-adding them on the way out;
+that rescue is now mostly redundant, and the one thing it still decides — is
+anything on screen only a memory — is read off the rows themselves.
+
+2026-09-14 — **A seeded phone reads what the client wrote.** The harness that
+gives an iPhone journey a phone with memories was writing a file nothing reads:
+it dated from before the cache moved to one directory per account, and it
+carried a fleet event rather than the fleet index the shared cache keeps. So
+the two home journeys seeded nothing and drew nothing.
+
+Rather than teach the harness the format a second time, one remembered account
+is now pinned beside the projection's own schema: a fleet index and a chat
+layer for each state a home row can be in — a request waiting for permission, a
+finished turn with its landed edits, work under way, a session idle — folded
+from a scripted Claude session and written through the cache the phone itself
+reads. A test re-folds them and fails on any drift. The harness copies those
+files and rewrites only what a run cannot know in advance: which machines are
+running, which agents are on them, and when each last did anything.
+
+Seeding a chat is not an extra: a remembered row's attention is not a field of
+the fleet index. The library reads it off that agent's own cached conversation,
+so a row remembered as needing permission has to be seeded with the chat in
+which it asked, and a row remembered in no state at all is seeded with no chat.
+
+2026-09-14 — **A failed journey keeps what it found.** A UI test that fails
+still writes its record and still leaves the app's own runtime log behind, and
+both used to be thrown away with the container: the run reported an assertion
+and nothing about the screen behind it. Whatever the test managed to leave is
+now collected either way, and a failing run keeps the app's log beside the test
+output, so the next reading of a failure starts from what the app was doing
+rather than from a second run.
+
+The first thing it says is that a remembered chat does not draw. With the relay
+down, the conversation journey's relaunch shows the fleet row it remembers and
+opening that row shows a chat with nothing in it at all — the header knows the
+agent and when it last moved, and the transcript is empty. Letting the relay
+back fills it, so only the cached open is wrong.
+
+2026-09-14 — **Leased phones, and three checks that came over red.** Two fixes
+to the same problem met in the iPhone recipes. Every recipe that touches a
+device now runs under a wt lease, so two checkouts never drive one simulator at
+once and a capture is no longer killed halfway by a sibling's install. And the
+interpreter those recipes run on is resolved rather than inherited, because a
+Mac's `python3` is frequently the system's 3.9, which cannot read the manifests
+these scripts parse. Both belong: the lease on the outside, the resolved
+interpreter on the inside.
+
+Three checks needed repair before the tree was green again. The golden manifest
+gained a screen for the two row states nothing had ever photographed, while the
+total that guards the catalogue still named the old count. The verification
+runner's sandbox fakes an interpreter on the path, so asking for one by
+repository path found nothing there; that path now stands in for the same stub.
+And a bridge counts as current only when its slices hold archives rather than
+merely existing as directories — a distinction a restored build cache makes
+real — which left the test that proves cargo goes unrun asserting it against an
+empty directory that no longer qualifies.
+
+2026-09-13 — **A remembered chat, proved on a phone.** The iPhone journeys now
+carry the whole story the cache exists for, against a machine the runner is
+really running. The phone pairs with it, reads a turn of one of its agents over
+a real relay, and is taken away; the machine runs a second turn while nobody is
+watching, and the relay is taken down before the phone comes back. The launch
+that follows can ask nobody anything, so everything it draws it kept: it opens
+on the fleet with the row it remembers, saying so on the row, and the chat
+draws its own rows the moment somebody opens it — the same rows, under the same
+identities, with nothing of the turn it missed. Letting the relay back appends
+that turn underneath, and every earlier row is still in its place under the
+identity it was drawn with.
+
+It is a UI test rather than a plan spoken through the app's door, for two
+reasons. Opening a chat is a tap, and only an accessibility client can press
+one; and the story is two launches of the same install with the app taken away
+between them, which only a test driving the app can do. The app is killed
+rather than asked to stop, exactly as a phone kills it, so what survives to the
+second launch is whatever the runtime's own short write window had already put
+on disk — the test waits for that window before taking the app away, because
+nothing flushes on the way out.
+
+Row identity is read through the door rather than off the screen. On screen a
+transcript row is named by its kind, which every row of that kind shares, so a
+claim that a row is the same row has to be made against the identity the row
+was drawn under: its layer and its own number within the window.
+
+2026-09-13 — **The suite that catches drift could not run.** Three of the
+iPhone package's test resources are symbolic links to files the Rust workspace
+owns — the pinned projection schema, the ask and queue fixtures, and the
+measurement document — so that changing the source fails the Swift suite
+rather than drifting past a stale copy. Moving the app one directory deeper
+left each of them pointing a level above the repository. They resolved to
+nothing, the two package suites that read them failed to build, and the check
+whose whole job is noticing a changed contract was the one that could not run.
+
+2026-09-13 — **A remembered chat opens on its own rows.** A phone that has a
+conversation in its cache now draws it the moment somebody opens it, before
+the relay is up and before the machine that owns it has said anything, and the
+stream that will refresh it is opened by that tap and by nothing earlier: a
+fleet on screen subscribes to no conversation at all. The stream then resumes
+after the sequence the cache kept, so a machine that can continue from there
+sends only what was said since — the rows already on screen keep their
+positions, the delta arrives underneath them with identifiers of its own, and
+nothing is rewritten. A machine that cannot continue says so, and the whole
+remembered window is dropped behind a boundary rather than spliced onto rows
+it may not follow.
+
+The indicator while that settles is the one the app already has: the
+conversation's foot, which says a session is replaying what it missed while
+the stream catches up, and names the machine as unreachable while the relay is
+still away. The remembered rows themselves are drawn exactly as live rows are.
+They are not dimmed, greyed or shimmered: they are the real conversation, they
+are what the person opened the chat to read, and animating text somebody is
+reading to say that more of it is coming would cost the reader more than it
+tells them.
+
+One thing the phone could not read. A cached conversation reports a stream
+phase no live session ever reports, and the app's decoder knew every phase but
+that one — so the first remembered chat anybody opened would have thrown its
+whole session away and left the screen with no gate, no provider and no way to
+send. The phone knows the phase now, and the pinned projection the app's suite
+decodes carries a remembered conversation, so a client that forgets it again
+fails there instead of on somebody's screen.
+
+2026-09-13 — **A silent machine keeps its remembered rows.** The phone decided
+what was worth writing to its cache from two facts that look decisive and are
+not: the relay was up and its own node had finished its snapshot. That node is
+no authority over another machine's agents. It completes as soon as it is up,
+with nothing at all from a machine that has not answered, and the reducer then
+drops every row that snapshot did not name. So a phone that reconnected while
+one paired machine stayed quiet went on drawing that machine's rows as
+awaiting — and wrote the blank behind them to disk, taking the fleet cards and
+the cached chats with it. The next cold start opened on nothing.
+
+The cache now records exactly what the screen calls reconciled: every paired
+machine has answered over a relay that is up, and no row on the fleet is still
+only a memory. It is the same verdict the fleet callback carries, so what the
+person sees and what the phone keeps can no longer disagree.
+
 2026-09-13 — **The phone recipes pick their own interpreter.** The scripts
 behind `just ios …` read Cargo manifests with tomllib, which arrived in Python
 3.11, while macOS still ships 3.9 as /usr/bin/python3. A shell whose PATH did

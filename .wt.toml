@@ -37,15 +37,18 @@ destroy = "amux server stop"
 # is deleted, and the next use pays the fifty-second create again. The
 # recipes name a kind, golden or small, and scripts/ios_simulators.py maps
 # the kind to the leased device. Count, keep, idle and wait are machine
-# facts: override under [resources.iphone] in ~/.wt/config.toml.
+# facts: override under [resources.iphone] in ~/.wt/config.toml. The hooks go
+# through scripts/python for the same reason the recipes do: a hook inherits
+# whatever PATH it was started with, and on a Mac a bare python3 is often the
+# 3.9 the system ships, which cannot read these scripts at all.
 [resource.iphone]
 tied_to = "machine"
 count = 2
 name = "amux-iphone-{{index()}}"
-exists = 'python3 scripts/ios_simulators.py exists "$WT_SELF"'
-create = 'python3 scripts/ios_simulators.py create "$WT_SELF" golden'
+exists = 'scripts/python scripts/ios_simulators.py exists "$WT_SELF"'
+create = 'scripts/python scripts/ios_simulators.py create "$WT_SELF" golden'
 destroy = 'xcrun simctl delete "$WT_SELF"'
-acquire = 'python3 scripts/ios_simulators.py acquire "$WT_SELF"'
+acquire = 'scripts/python scripts/ios_simulators.py acquire "$WT_SELF"'
 keep = "2m"
 idle = "30m"
 wait = "45m"
@@ -54,10 +57,10 @@ wait = "45m"
 tied_to = "machine"
 count = 1
 name = "amux-small-{{index()}}"
-exists = 'python3 scripts/ios_simulators.py exists "$WT_SELF"'
-create = 'python3 scripts/ios_simulators.py create "$WT_SELF" small'
+exists = 'scripts/python scripts/ios_simulators.py exists "$WT_SELF"'
+create = 'scripts/python scripts/ios_simulators.py create "$WT_SELF" small'
 destroy = 'xcrun simctl delete "$WT_SELF"'
-acquire = 'python3 scripts/ios_simulators.py acquire "$WT_SELF"'
+acquire = 'scripts/python scripts/ios_simulators.py acquire "$WT_SELF"'
 keep = "2m"
 idle = "30m"
 wait = "45m"
