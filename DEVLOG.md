@@ -1,3 +1,13 @@
+2026-09-14 — **A machine that comes back rejoins the conversation left open on
+it.** Agents outlive their host's link, so a machine that goes away keeps its
+agents as cached inventory and, on its return, re-states records identical to
+the ones already held — no per-agent event follows. A conversation whose stream
+the outage closed therefore stayed closed for good while the machine's row read
+online, and its agent stayed a memory. The phone now reads a host's inventory
+as the machine speaking again: every conversation held open on that host asks
+for its stream once more, and every agent the inventory still names is
+answering again.
+
 2026-09-14 — **The conversation journey says what it saw when the replay does
 not arrive.** After the machine comes back, the step that waits for the host's
 new transcript threw before anything was written down, so a failing run left

@@ -304,6 +304,84 @@ fn attached_remote_conversations_rejoin_after_an_outage() {
     }
 }
 
+/// A machine that comes back puts the conversation held open on it back on
+/// its transcript, on the strength of the inventory alone.
+///
+/// The records a returning machine re-states are byte-identical to the ones
+/// already cached, so no per-agent event follows its return. Only the
+/// inventory says the machine is speaking again — without reading it, a
+/// conversation closed by the outage stays closed while its machine reads
+/// online, and its agent stays a memory.
+#[test]
+fn a_returning_host_rejoins_the_conversation_left_open_on_it() {
+    use ui_state::{ServerMsg, StreamCloseReason, StreamMsg, update};
+
+    let remote = an_agent("open-chat", "hetzner");
+    let mut model = fold(seq([
+        base(),
+        vec![host_up(&a_host("hetzner")), agent_up(&remote)],
+    ]));
+    let requested = update(&mut model, Msg::UserAttached { agent: remote.id });
+    assert_eq!(requested.len(), 1);
+    update(
+        &mut model,
+        Msg::Stream {
+            agent: remote.id,
+            event: StreamMsg::Opened { truncated: false },
+        },
+    );
+
+    // The machine leaves: the link drops the stream and the host row goes
+    // offline, but the agent stays as cached inventory.
+    update(
+        &mut model,
+        Msg::Stream {
+            agent: remote.id,
+            event: StreamMsg::Closed {
+                reason: StreamCloseReason::TransportError {
+                    message: "relay lost".into(),
+                },
+            },
+        },
+    );
+    update(&mut model, host_up(&an_offline_host("hetzner")));
+    assert!(
+        !model.agent(remote.id).expect("cached card").live,
+        "an agent on a machine that left is a memory"
+    );
+
+    // It comes back. The host row alone is not enough…
+    assert!(update(&mut model, host_up(&a_host("hetzner"))).is_empty());
+    // …its inventory is.
+    assert_eq!(
+        update(
+            &mut model,
+            Msg::Server(ServerMsg::HostInventory {
+                host_id: remote.host_id,
+                agent_ids: vec![remote.id],
+            }),
+        ),
+        requested,
+        "the held-open conversation asks for its stream again"
+    );
+    assert!(
+        model.agent(remote.id).expect("card exists").live,
+        "and its agent is answering again"
+    );
+
+    // Saying it twice asks once: the stream is already opening.
+    assert!(
+        update(
+            &mut model,
+            Msg::Server(ServerMsg::HostInventory {
+                host_id: remote.host_id,
+                agent_ids: vec![remote.id],
+            }),
+        )
+        .is_empty()
+    );
+}
+
 /// Closing a conversation gives back the stream it asked for — and only that.
 ///
 /// The eager inventory policy keeps a stream open for every agent on this

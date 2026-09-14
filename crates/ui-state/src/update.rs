@@ -689,8 +689,29 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             model
                 .attached
                 .retain(|agent, host| *host != host_id || agent_ids.contains(agent));
-            model.remote_inventories.insert(host_id, agent_ids);
-            Vec::new()
+            model.remote_inventories.insert(host_id, agent_ids.clone());
+            // An inventory is how a machine says its subscription stands
+            // again. Agents outlive their host's link, so a machine that
+            // went away and came back re-states records identical to the
+            // cached ones and no per-agent event follows: this is the only
+            // moment that says the conversation held open across the outage
+            // can be rejoined, and that a cached agent is answering again.
+            if model.host_online(host_id) && !model.host_is_away(host_id) {
+                for card in model.agents.values_mut().filter(|card| {
+                    card.agent.host_id == host_id && agent_ids.contains(&card.agent.id)
+                }) {
+                    card.live = true;
+                }
+            }
+            model
+                .attached
+                .iter()
+                .filter(|(_, host)| **host == host_id)
+                .map(|(agent, _)| *agent)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .filter_map(|agent| ensure_stream(model, agent, StreamWanted::UserRequested))
+                .collect()
         }
         ServerMsg::AgentsSynchronized => {
             let Connection::Connected {
