@@ -1,3 +1,15 @@
+2026-09-14 — **Four reference screens re-approved to the copy the phone now
+speaks.** The account page's first row is headed `Relay` and says how the
+subscription was bought, so the page the phone shows departed from the
+approved drawings of the account page, the granted-access variant and the
+account-deletion sheet behind it. The signed-in first launch departed further:
+a phone with an account and nothing paired now reaches the same pairing-first
+empty screen as any other phone, because hosts on the network it is already on
+are free, where the drawing had put Subscribe in front of it. The baselines
+were re-recorded and each departure written down beside its screen, rather
+than the screens being bent back to drawings that no longer describe what the
+product promises.
+
 2026-09-14 — **The account journey reads the home and the account rows as
 they are now.** The first launch offers pairing first and an account second,
 an account that has bought nothing is offered the machine to pair with rather

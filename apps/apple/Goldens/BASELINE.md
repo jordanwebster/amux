@@ -268,7 +268,12 @@ parent screen.
 
 ## delete
 
-Reference-backed capture of `delete` using the `delete` fixture. No visual departure is accepted.
+Reference-backed capture of `delete` using the `delete` fixture.
+Re-approved 2026-09-14: the account page behind the sheet heads its
+subscription row `Relay` and says how the subscription was bought, where the
+approved drawing read `Subscription` and `Active · amux.sh`. The sheet itself
+— its question, its three consequences, the typed confirmation and the two
+buttons — is the approved one.
 
 ## delete-blocked
 
@@ -292,7 +297,13 @@ parent screen.
 
 ## first-run-paid
 
-Reference-backed capture of `first-run-paid` using the `first-run-paid` fixture. No visual departure is accepted.
+Reference-backed capture of `first-run-paid` using the `first-run-paid` fixture.
+Re-approved 2026-09-14: a signed-in phone with nothing paired reaches the same
+pairing-first empty screen as any other phone, where the approved drawing put
+Subscribe in front of it. Hosts on the network a phone is already on are free,
+so an empty list is never evidence that something has to be bought. With one
+account signed in there is no account question to answer, so the title carries
+no switcher and no avatar.
 
 ## paywall
 
@@ -316,11 +327,19 @@ Added state using the `sign-in-failed` fixture. A sign-in the cloud refuses. It 
 
 ## you
 
-Reference-backed capture of `you` using the `you` fixture. No visual departure is accepted.
+Reference-backed capture of `you` using the `you` fixture.
+Re-approved 2026-09-14: the account's first row is headed `Relay` and says
+how the subscription was bought, where the approved drawing headed it
+`Subscription` and said only that it was active. Naming the thing being paid
+for is what makes the row the one place a subscription is bought and read.
+The rest of the page is the approved drawing.
 
 ## you-granted
 
-Added state using the `you-granted` fixture. An account whose access was given rather than bought reads differently on this page, and the design catalogue only pictured a bought subscription. It follows the same visual system as its parent screen.
+Added state using the `you-granted` fixture. An account whose access was given
+rather than bought reads differently on this page, and the design catalogue only
+pictured a bought subscription. Its `Relay` row reads `Included with this
+account`. It follows the same visual system as its parent screen.
 
 ## dump
 
