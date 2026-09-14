@@ -466,6 +466,18 @@ final class ConversationTests: XCTestCase {
         record["restored"] = footSays(app)
         let recovered = app.staticTexts[Self.replayed].waitForExistence(timeout: waiting)
         _ = try door(runner, .init(kind: "report", agent: runner.agent, path: runner.report))
+        // Written before the assertion rather than after it: when the replay
+        // does not arrive this is the only account of what the feed held and
+        // what the runtime decided, and a run that threw first would leave
+        // neither behind.
+        record["feedAfterReconnect"] = transcriptRows(app)
+        let runtime = (try Lines(address: "127.0.0.1:\(runner.doorPort)")
+            .ask(["kind": "runtimeLog"])["log"] as? String) ?? ""
+        record["runtimeAfterReconnect"] = runtime.split(separator: "\n")
+            .suffix(60).joined(separator: "\n")
+        try? app.debugDescription.write(
+            to: Self.inContainer("conversation-reconnecting-tree.txt"), atomically: true,
+            encoding: .utf8)
         XCTAssertTrue(recovered,
                       "the open conversation never received the host's replay")
         guard recovered else { throw Lines.Failure("the host's replay did not arrive") }

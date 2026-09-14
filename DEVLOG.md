@@ -1,3 +1,10 @@
+2026-09-14 — **The conversation journey says what it saw when the replay does
+not arrive.** After the machine comes back, the step that waits for the host's
+new transcript threw before anything was written down, so a failing run left
+no account of what the feed held or what the runtime had decided. The feed's
+rows, the tail of the runtime's own log and the whole drawn tree are now
+recorded before the assertion rather than after it.
+
 2026-09-14 — **A subscription puts an away machine's agents back in reach at
 once.** Being away is a fact about the account rather than the machine: the
 relay declines to carry a free account's traffic and carries it the moment the
