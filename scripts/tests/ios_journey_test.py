@@ -72,5 +72,39 @@ class RunningTheTestAgain(unittest.TestCase):
         self.assertEqual(said, [])
 
 
+class WhereARememberedFleetIsFiled(unittest.TestCase):
+    """A seeded fleet has to land in the file this phone's runtime will open.
+
+    The profile a fleet is filed under is the installation's to make, so a
+    journey reads it back out of the record a run left. Filing under anything
+    else seeds a file nothing opens, and the phone starts every launch having
+    forgotten what it remembers.
+    """
+
+    def test_the_account_is_answered_with_its_own_profile(self):
+        self.assertEqual(
+            journeys.filed_under({"": "phone", "journey-phone": "signed-in"}, "journey-phone"),
+            "signed-in")
+
+    def test_an_account_nobody_recorded_falls_back_to_the_phone(self):
+        self.assertEqual(journeys.filed_under({"": "phone"}, "journey-phone"), "phone")
+
+    def test_a_record_of_nothing_is_nothing(self):
+        self.assertIsNone(journeys.filed_under({}, "journey-phone"))
+
+    def test_a_cache_no_run_has_written_is_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(journeys, "container", lambda _: Path(directory)):
+                self.assertIsNone(journeys.installed_profile("udid"))
+
+    def test_the_record_a_run_left_is_read_back(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fleet = Path(directory) / "Library/Caches/amux/fleet"
+            fleet.mkdir(parents=True)
+            (fleet / "profiles.json").write_text('{"": "p", "journey-phone": "q"}')
+            with patch.object(journeys, "container", lambda _: Path(directory)):
+                self.assertEqual(journeys.installed_profile("udid"), "q")
+
+
 if __name__ == "__main__":
     unittest.main()

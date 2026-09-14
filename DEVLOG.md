@@ -1,3 +1,20 @@
+2026-09-14 — **A remembered fleet is filed under the profile the phone is
+actually on.** A remembered fleet belongs to a profile, and a profile
+identifier is the installation's to make, so the home journey's seeded
+"previous run" invented one. The application's first frame found those rows —
+the seed also wrote the directory that resolves an account to its profile — but
+every runtime the launch started opened a different, empty file and told the
+screen it knew no agents. Past that the runtime learned the real agents from
+the relay one at a time, and a fleet naming a subset of the rows on screen
+dropped the rest out of the list's order and grouping, so the request waiting
+on an answer stopped being pinned and the confirmed list came back regrouped.
+A seeded fleet now reads back which profile this phone keeps its fleet under
+from the record a run left, so what is seeded is the file the runtime opens:
+the remembered rows go through the cache the way a real launch's do, every
+fleet after them names all of them, and confirming them moves nothing. The
+same journey's empty home now asserts the screen a signed-out phone actually
+gets, which offers pairing with a machine on this network ahead of signing in.
+
 2026-09-14 — **A launch that reaches nothing keeps the agents it remembers.**
 Opening the app away from home drew the remembered agents from the cache and
 then emptied the screen a moment later: the runtime starts, cannot get to the

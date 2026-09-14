@@ -152,16 +152,56 @@ def invented(name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"amux-journey/{name}"))
 
 
-def seed_cache(udid: str, fleet: dict) -> list[Path]:
+# The account a seeded remembered fleet belongs to. A remembered fleet is one
+# account's, so seeding one means seeding the account that saw it.
+REMEMBERED_ACCOUNT = "journey-phone"
+
+# The profile a seeded fleet is filed under where nothing on this phone has
+# made one yet, which is every workload that seeds a cache no runtime of its
+# own will ever read.
+INVENTED_PROFILE = "00000000-0000-4000-8000-00000000fee7"
+
+
+def filed_under(recorded: dict, account: str) -> str | None:
+    """Which profile an account's remembered fleet is filed under, out of the
+    record a run left behind, or nothing where that record names neither the
+    account nor the phone."""
+    return recorded.get(account) or recorded.get("") or None
+
+
+def installed_profile(udid: str, account: str = REMEMBERED_ACCOUNT) -> str | None:
+    """The profile this installation files a remembered fleet under.
+
+    A profile identifier is the installation's to make, never the seed's, and
+    the runtime that opened one writes down which account is on it. So a
+    journey that wants to seed what a previous run remembered reads the
+    identifier back rather than inventing one beside it: a fleet filed under an
+    invented profile is a file nothing will ever open, and the phone would
+    start every launch having forgotten everything.
+
+    Nothing where no runtime has run on this phone yet, or where its record has
+    been cleared. That record lives in the cache, so read it before forgetting.
+    """
+    path = container(udid) / "Library/Caches/amux/fleet/profiles.json"
+    try:
+        recorded = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return filed_under(recorded, account) if isinstance(recorded, dict) else None
+
+
+def seed_cache(udid: str, fleet: dict, profile: str | None = None) -> list[Path]:
     """Seed a declared remembered account and its fleet for the cold-start workloads.
 
     Live startup journeys do not use this helper: their first connection writes
-    the account and cache that the next launch reads.
+    the account and cache that the next launch reads. A journey whose phone has
+    already run a runtime says which profile that runtime is on, so what is
+    seeded is the file it will open; see ``installed_profile``.
     """
     data = container(udid)
     support = data / "Library/Application Support/amux"
     support.mkdir(parents=True, exist_ok=True)
-    account = "journey-phone"
+    account = REMEMBERED_ACCOUNT
     (support / "accounts.json").write_text(json.dumps({
         "accounts": [{"account": {"id": account, "email": "phone@example.com"},
                       "signedIn": True, "entitlement": {"active": {"grant": {"granted": {}}}}}],
@@ -173,7 +213,7 @@ def seed_cache(udid: str, fleet: dict) -> list[Path]:
     # identifier is made by the installation, so the library finds the file
     # through the directory the last run wrote. A seeded cache writes both:
     # the directory this account was on, and the fleet filed under it.
-    profile = "00000000-0000-4000-8000-00000000fee7"
+    profile = profile or INVENTED_PROFILE
     (cache / "profiles.json").write_text(json.dumps({"": profile, account: profile}))
     path = cache / f"{profile}.json"
     path.write_text(json.dumps(fleet))
@@ -1101,9 +1141,15 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
         by_id[running["trim-the-fixtures"]["agent_id"]],
         by_id[running["warm-the-cache"]["agent_id"]])]
 
+    # Which profile this phone's runtime files a remembered fleet under. It is
+    # the installation's to make, so it is only known once this phone has run
+    # one: read after the pairing below, and read once, because the act that
+    # clears the cache clears the record of it too.
+    profile: str | None = None
+
     def seed() -> None:
         forget_cache(udid)
-        seed_cache(udid, remembered_fleet(remembered, daemons))
+        seed_cache(udid, remembered_fleet(remembered, daemons), profile=profile)
 
     def placed(state: dict, complaint: str) -> list[str]:
         """The rows on screen, in the order the ordering put them."""
@@ -1141,6 +1187,10 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     journey.say(f"paired with {' and '.join(trusted)} by the codes they printed, each in the "
                 f"two phases the protocol has: the code authenticated against the machine that "
                 f"printed it, then the trust written against the attempt it answered with")
+    profile = installed_profile(udid)
+    journey.expect(profile is not None,
+                   "the phone's runtime left no record of which profile it keeps a remembered "
+                   "fleet under, so nothing seeded below would ever be read")
 
     # MARK: One — what a paired phone shows when it cannot reach anything.
     control(ready["control"], "CloudOffline")
@@ -1313,15 +1363,23 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
                                       f"rows")
     journey.expect((named(nothing, "home") or {}).get("value") == "signed-out",
                    "the unsigned empty-home launch retained a usable account")
-    for element in ("home.empty.title", "home.empty.explain", "home.empty.action"):
+    # A phone with nothing on it is offered the thing that works without an
+    # account first — pairing with a machine on this network — and signing in
+    # beside it, so the empty screen names both ways out of it.
+    for element in ("home.empty.firstRun", "home.empty.explain", "home.empty.pair",
+                    "home.empty.signIn"):
         journey.expect(named(nothing, element) is not None,
                        f"the empty home is missing {element}: "
                        f"{[e['identifier'] for e in nothing['elements']]}")
-    journey.expect(named(nothing, "home.empty.action").get("label") == "Sign In",
+    journey.expect(named(nothing, "home.empty.pair").get("label") == "Pair a Host",
+                   f"the unsigned empty home offers "
+                   f"{named(nothing, 'home.empty.pair').get('label')!r} rather than pairing")
+    journey.expect(named(nothing, "home.empty.signIn").get("label") == "Sign In",
                    "the unsigned empty home did not offer Sign In")
     journey.say(f"a phone that remembers nothing shows the home empty: "
-                f"{named(nothing, 'home.empty.title')['value']!r}, "
-                f"{named(nothing, 'home.empty.action')['label']!r}")
+                f"{named(nothing, 'home.empty.firstRun')['value']!r}, with "
+                f"{named(nothing, 'home.empty.pair')['label']!r} ahead of "
+                f"{named(nothing, 'home.empty.signIn')['label']!r}")
 
     # MARK: Five — the drawer, and coming back to the fleet.
     seed()
