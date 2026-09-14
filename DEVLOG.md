@@ -1,3 +1,20 @@
+2026-09-14 — **Let `--update` say what it changed.** It copied each capture
+over its baseline before comparing the two, so the comparison was a file
+against itself: a run with the flag always reported that nothing had changed,
+whatever it had just overwritten. Rewriting the eleven screens this branch
+moved rewrote thirty-nine, and there was nothing in the output to say so.
+
+The seventeen extra were harmless and worth naming, because they are what the
+flag was hiding. Three of them differ from their baseline by no pixels at all —
+the same image, re-encoded. One differs across thirteen thousand pixels by a
+largest per-channel delta of two, which is the tolerance exactly, and exactly
+the dithered-gradient noise the tolerance was written for.
+
+Now the capture is compared first and only a baseline that disagrees is
+replaced. The run marks each one `rewrote` with what it had disagreed about,
+and says how many it left alone. A replaced baseline is reported rather than
+counted as a failure, since replacing it is what was asked for.
+
 2026-09-14 — **Draw a control at rest exactly as it was written.** The
 captures caught three things the press work had done to every screen in the
 app, none of which was visible one screen at a time.

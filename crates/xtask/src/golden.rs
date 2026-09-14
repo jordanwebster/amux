@@ -467,6 +467,10 @@ pub struct GoldenOutcome {
     pub appearance: Appearance,
     pub flaky: Option<String>,
     pub verdict: GoldenVerdict,
+    /// `--update` wrote this capture over its baseline, because the two did
+    /// not agree. The verdict is what they disagreed about, kept rather than
+    /// swallowed so the run can say which screens it changed.
+    pub rewritten: bool,
 }
 
 /// Captures the named screens through the driving door and compares each one
@@ -582,16 +586,11 @@ pub fn run(
                     appearance,
                     flaky,
                     verdict: GoldenVerdict::CaptureFailed(message.clone()),
+                    rewritten: false,
                 });
                 continue;
             }
             let baseline = baselines.join(format!("{id}.{appearance}.png"));
-            if update {
-                if let Some(directory) = baseline.parent() {
-                    std::fs::create_dir_all(directory)?;
-                }
-                std::fs::copy(&taken, &baseline)?;
-            }
             let chrome = manifest
                 .screen(&id)
                 .map(|screen| manifest.system_chrome(screen))
@@ -604,11 +603,22 @@ pub fn run(
                 max_differing_pixels,
                 chrome,
             )?;
+            // Only a baseline that disagrees is replaced. Rewriting the ones
+            // that already agree costs a re-encoded PNG for every screen in
+            // the run, and buries the handful that actually moved among them.
+            let rewritten = update && !verdict.passed();
+            if rewritten {
+                if let Some(directory) = baseline.parent() {
+                    std::fs::create_dir_all(directory)?;
+                }
+                std::fs::copy(&taken, &baseline)?;
+            }
             outcomes.push(GoldenOutcome {
                 id,
                 appearance,
                 flaky,
                 verdict,
+                rewritten,
             });
         }
     }
@@ -624,6 +634,8 @@ pub struct GoldenReport {
     pub failed: Vec<String>,
     pub flaky: Vec<String>,
     pub unimplemented: Vec<String>,
+    /// Baselines `--update` replaced, and what each one had disagreed about.
+    pub rewritten: Vec<String>,
     pub total: usize,
 }
 
@@ -643,6 +655,7 @@ pub fn judge(outcomes: &[GoldenOutcome], built_only: bool) -> GoldenReport {
     let mut failed = Vec::new();
     let mut flaky = Vec::new();
     let mut unimplemented = Vec::new();
+    let mut rewritten = Vec::new();
     for outcome in outcomes {
         let name = format!("{}.{}", outcome.id, outcome.appearance);
         let unbuilt = matches!(
@@ -653,6 +666,10 @@ pub fn judge(outcomes: &[GoldenOutcome], built_only: bool) -> GoldenReport {
             && matches!(outcome.verdict, GoldenVerdict::Different { .. })
         {
             flaky.push(name);
+        } else if outcome.rewritten {
+            // Asked for, and done. A baseline the operator has just replaced
+            // is not a failure of the run that replaced it.
+            rewritten.push(name);
         } else if !outcome.verdict.passed() {
             failed.push(name);
         }
@@ -661,6 +678,7 @@ pub fn judge(outcomes: &[GoldenOutcome], built_only: bool) -> GoldenReport {
         failed,
         flaky,
         unimplemented,
+        rewritten,
         total: outcomes.len(),
     }
 }
@@ -762,7 +780,9 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let flaky: std::collections::BTreeSet<&String> = report.flaky.iter().collect();
     for outcome in &outcomes {
         let name = format!("{}.{}", outcome.id, outcome.appearance);
-        let mark = if outcome.verdict.passed() {
+        let mark = if outcome.rewritten {
+            "rewrote"
+        } else if outcome.verdict.passed() {
             "ok"
         } else if unimplemented.contains(&name) {
             "not built"
@@ -780,6 +800,13 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         report.flaky.len(),
         out.display()
     );
+    if !report.rewritten.is_empty() {
+        let count = report.rewritten.len();
+        println!(
+            "{count} baseline{} replaced; every other capture already agreed and was left alone",
+            if count == 1 { "" } else { "s" }
+        );
+    }
     let declared_flaky: Vec<_> = outcomes
         .iter()
         .filter_map(|outcome| {
@@ -991,7 +1018,42 @@ mod tests {
             appearance: Appearance::Light,
             flaky: None,
             verdict,
+            rewritten: false,
         }
+    }
+
+    fn rewritten_outcome(id: &str, verdict: GoldenVerdict) -> GoldenOutcome {
+        GoldenOutcome {
+            rewritten: true,
+            ..outcome(id, verdict)
+        }
+    }
+
+    #[test]
+    fn a_replaced_baseline_is_reported_rather_than_failed() {
+        let report = judge(
+            &[
+                outcome("probe", GoldenVerdict::Same),
+                rewritten_outcome(
+                    "home",
+                    GoldenVerdict::Different {
+                        pixels: 19_553,
+                        first: (119, 1380),
+                    },
+                ),
+                outcome(
+                    "drawer",
+                    GoldenVerdict::Different {
+                        pixels: 8_542,
+                        first: (107, 893),
+                    },
+                ),
+            ],
+            false,
+        );
+        assert_eq!(report.rewritten, ["home.light"]);
+        assert_eq!(report.failed, ["drawer.light"]);
+        assert_eq!(report.total, 3);
     }
 
     fn flaky_outcome(id: &str, verdict: GoldenVerdict) -> GoldenOutcome {
@@ -1000,6 +1062,7 @@ mod tests {
             appearance: Appearance::Light,
             flaky: Some("simulator text can settle two pixels apart".into()),
             verdict,
+            rewritten: false,
         }
     }
 
