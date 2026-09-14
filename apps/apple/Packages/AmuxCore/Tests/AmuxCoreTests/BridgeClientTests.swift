@@ -37,7 +37,8 @@ final class BridgeClientTests: XCTestCase {
         // buys sits beside it and only a driving fixture ever says it.
         let fixed = (accounts[0]["token"] as? [String: Any])?["Static"] as? [String: Any]
         XCTAssertEqual(fixed?["bearer"] as? String, "bearer")
-        XCTAssertEqual(fixed.map { Set($0.keys) }, ["bearer"])
+        XCTAssertEqual(fixed?["tier"] as? String, "pro")
+        XCTAssertEqual(fixed.map { Set($0.keys) }, ["bearer", "tier"])
         XCTAssertEqual(accounts[1]["token"] as? String, "Callback")
         XCTAssertEqual(json["active"] as? String, "work")
 

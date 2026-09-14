@@ -15,6 +15,10 @@
       {"literal": "\"probe-home\"", "context": "if name == \"probe-home\" {", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
+      {"literal": "\" error=\\($0)\"", "context": "let error = host.lastDialError.map { \" error=\\($0)\" } ?? \"\"", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 1},
+      {"literal": "\"\\(host.name) via=\\(host.via.rawValue) online=\\(host.online)\"", "context": "return \"\\(host.name) via=\\(host.via.rawValue) online=\\(host.online)\"", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 1},
+      {"literal": "\"unknown\"", "context": "+ \" signed_in=\\(host.signedIn.map(String.init(describing:)) ?? \"unknown\")\\(error)\"", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 1},
+      {"literal": "\" signed_in=\\(host.signedIn.map(String.init(describing:)) ?? \"unknown\")\\(error)\"", "context": "+ \" signed_in=\\(host.signedIn.map(String.init(describing:)) ?? \"unknown\")\\(error)\"", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 1},
       {"literal": "\"this app has no runtime of its own\"", "context": "guard let coordinator else { return .error(\"this app has no runtime of its own\") }", "reason": "Driving-only diagnostic for the debug door, never shown to anybody.", "count": 2},
       {"literal": "\"granted\"", "context": "case \"granted\": coordinator.localNetwork(.granted)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"denied\"", "context": "case \"denied\": coordinator.localNetwork(.denied)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},

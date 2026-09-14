@@ -25,6 +25,45 @@ final class FleetStoreTests: XCTestCase {
     /// still say it was reconciled, because it was — before it was put down.
     /// Only a count can say a fleet arrived since, so only a count can be
     /// timed.
+    /// A launch with no network starts a runtime that reaches nothing, and the
+    /// first thing such a runtime says is that it knows the machines and no
+    /// agents. Believing it would empty the list the cache had just filled,
+    /// which is every launch away from home.
+    func testARuntimeThatHasReachedNothingKeepsTheRowsTheCacheDrew() {
+        let store = FleetStore(now: now)
+        let remembered = [
+            Made.card(1, name: "alpha", attention: .working, minutesAgo: 2, now: now,
+                      awaiting: true),
+            Made.card(2, name: "beta", attention: .idle, minutesAgo: 20, now: now,
+                      awaiting: true),
+        ]
+        store.apply(Made.fleet(remembered, reconciled: false))
+
+        store.apply(Made.fleet([], hosts: [Made.hostEntry(Made.host, name: "studio",
+                                                          online: false)],
+                               reconciled: false))
+
+        XCTAssertEqual(store.rows.map(\.name), ["alpha", "beta"],
+                       "a runtime that has reached nothing threw away what the phone remembers")
+        XCTAssertEqual(store.rows.map(\.confirmed), [false, false])
+        // The machines it does know are taken, so the home can say what is
+        // wrong rather than pretending everything is reachable.
+        XCTAssertEqual(store.exceptions, "studio offline")
+    }
+
+    /// The far side really can have nothing on it, and a machine that has
+    /// answered is entitled to say so.
+    func testAConfirmedEmptyFleetEmptiesTheList() {
+        let store = FleetStore(now: now)
+        store.apply(Made.fleet(
+            [Made.card(1, name: "alpha", attention: .idle, minutesAgo: 2, now: now)],
+            reconciled: false))
+
+        store.apply(Made.fleet([], reconciled: true))
+
+        XCTAssertEqual(store.rows, [])
+    }
+
     func testEachConfirmedFleetMovesTheCountThatTheFlagCannot() {
         let store = FleetStore(now: now)
         let cards = [Made.card(1, name: "alpha", attention: .idle, minutesAgo: 2, now: now)]

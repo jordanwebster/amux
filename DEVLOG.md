@@ -1,3 +1,13 @@
+2026-09-14 — **A launch that reaches nothing keeps the agents it remembers.**
+Opening the app away from home drew the remembered agents from the cache and
+then emptied the screen a moment later: the runtime starts, cannot get to the
+relay, and says it knows the machines and no agents — which was taken as the
+truth about the account rather than as a runtime that has not heard anything
+yet. An unconfirmed fleet naming no agents no longer replaces rows that are
+already there; the machines it does name are still taken, so the home can say
+what is wrong. A fleet a machine has actually confirmed still empties the list,
+because a machine that has answered is entitled to say there is nothing on it.
+
 2026-09-14 — **A device says why each machine reads where it does.** A screen
 says a machine is away or offline without saying why, and the reason is never
 on the machine's own side: a dial that never landed leaves no trace there. So a

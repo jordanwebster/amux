@@ -83,14 +83,23 @@ public final class FleetStore {
     public func apply(_ event: Event) {
         switch event {
         case .fleet(let fleet):
+            // A fleet nobody has confirmed that names no agents is a runtime
+            // that has not reached anything yet, not a phone whose agents are
+            // gone. It happens on every launch that cannot get to the relay,
+            // and taking it at its word would empty the screen a moment after
+            // the cache had filled it. What such a runtime does know is which
+            // machines this device is paired with, so those are taken and the
+            // remembered rows are kept until something answers for them.
+            let unreached = !fleet.reconciled && fleet.agents.isEmpty && !cards.isEmpty
+            let agents = unreached ? Array(cards.values) : fleet.agents
             // Check the existing indexed content before allocating its
             // replacements. Confirmation of an unchanged cached fleet is the
             // common reconnect path, and dictionary construction was most of
             // its fixed cost.
             let visibleContentChanged = fleet.hosts.count != hosts.count
-                || fleet.agents.count != cards.count
+                || agents.count != cards.count
                 || fleet.hosts.contains { hosts[$0.id] != $0.entry }
-                || fleet.agents.contains { cards[$0.id] != $0 }
+                || agents.contains { cards[$0.id] != $0 }
             epoch = fleet.epoch
             let wasReconciled = reconciled
             reconciled = fleet.reconciled
@@ -102,8 +111,10 @@ public final class FleetStore {
             if visibleContentChanged {
                 hosts = Dictionary(
                     uniqueKeysWithValues: fleet.hosts.map { ($0.entry.id, $0.entry) })
-                cards = Dictionary(
-                    fleet.agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+                if !unreached {
+                    cards = Dictionary(
+                        fleet.agents.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+                }
                 reconcileOrder()
                 rebuild()
             }
