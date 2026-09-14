@@ -254,8 +254,14 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
         raise SystemExit(
             f"the debug build linked {before['build']}, not the library with the driving "
             f"tools; the debug configuration force-loads it (apps/apple/project.yml)")
-    if before["started"] or before["discovered"]:
-        raise SystemExit(f"the app had already connected before it was asked to: {before}")
+    # Signed-out startup now brings up the local runtime so nearby discovery
+    # works without an account or an explicit connect action. It must not use
+    # that startup to contact the account relay or inherit cloud hosts.
+    if (not before["started"] or before["relayAttempts"] != 0
+            or before["reconciled"] or before["discovered"]):
+        raise SystemExit(
+            "the local runtime did not start cleanly before the relay was requested: "
+            f"{before}")
     if after["connection"] != "connected" or not after["reconciled"]:
         raise SystemExit(f"the connection did not arrive: {after}")
     # Named machines rather than a count: this device is not paired with any
@@ -266,7 +272,7 @@ def check(plan: list[tuple[dict, str]], replies: list[dict], machines: set[str])
             f"the bridge saw {after['discovered']}, and the runner is running "
             f"{sorted(machines)}")
     print(
-        f"{before['build']} connected to the test relay and saw "
+        f"{before['build']} started locally, connected to the test relay, and saw "
         f"{', '.join(after['discovered'])}",
         flush=True,
     )

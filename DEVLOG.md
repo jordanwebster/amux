@@ -16819,3 +16819,10 @@ after the connection manager selected direct. The connection manager now
 re-publishes the host once direct activation completes, and likewise after an
 active direct link goes away, so a client holding one host subscription sees
 the settled route instead of depending on task scheduling.
+
+2026-09-15 — **The iOS door smoke recognizes autonomous local startup.** The
+signed-out app now starts its runtime on its own so it can discover nearby
+hosts, which made the older smoke mistake correct local startup for an early
+cloud connection. The boundary check now requires that startup while proving
+the app has neither attempted the account relay nor inherited cloud hosts
+before the explicit relay request.
