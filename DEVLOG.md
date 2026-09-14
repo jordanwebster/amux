@@ -16799,6 +16799,13 @@ cloud connection. The boundary check now requires that startup while proving
 the app has neither attempted the account relay nor inherited cloud hosts
 before the explicit relay request.
 
+2026-09-15 — **Review ranges stop moving when the comment sheet opens.** A
+held range used to scroll under the chrome as soon as its first selection
+update arrived. That moved the rows beneath a finger that was still down and
+could silently extend a one-line comment across adjacent lines. The page now
+waits for the gesture to end before revealing the selection, so the range the
+reader releases is the range sent back to the host.
+
 2026-09-15 — **Local-first connections and account-backed relay access land
 end to end.** A fresh phone can browse for an amux host on its network, pair by
 six-digit code or an address-bearing QR, and use the host while both devices are

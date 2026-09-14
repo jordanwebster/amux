@@ -108,7 +108,9 @@ public struct DiffPage: View {
                 }
                 .padding(.bottom, 120)
                 .coordinateSpace(.named(Self.space))
-                .gesture(holdAndDrag)
+                .gesture(holdAndDrag {
+                    reveal(with: scroller, animated: true)
+                })
             }
             .scrollIndicators(.hidden)
             .safeAreaInset(edge: .top, spacing: 0) { chrome }
@@ -121,11 +123,6 @@ public struct DiffPage: View {
                     withAnimation(Motion.quick) { scroller.scrollTo(path, anchor: .top) }
                 }
             }
-            // A range taken hold of is brought into view. The sheet covers the
-            // lower half of the screen, so a selection made near the bottom —
-            // or restored from somewhere else entirely — would otherwise be
-            // written about with nothing on screen to write about.
-            .onChange(of: model.selection) { _, _ in reveal(with: scroller, animated: true) }
             // A page opened on a review that already has a range held — coming
             // back to one, or a named state a screenshot is taken of — starts
             // looking at it, not at the top of the patch.
@@ -178,7 +175,7 @@ public struct DiffPage: View {
     /// cannot be it either, because a range needs two ends. Holding first is
     /// what tells the scroll view to let go, and it is the same gesture the
     /// system uses to start a text selection, so nobody has to be taught it.
-    private var holdAndDrag: some Gesture {
+    private func holdAndDrag(reveal: @escaping @MainActor () -> Void) -> some Gesture {
         LongPressGesture(minimumDuration: 0.3)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space)))
             .onChanged { value in
@@ -192,7 +189,14 @@ public struct DiffPage: View {
                 guard over.file == from.file else { return }
                 actions(.select(LineRange(file: from.file, from: from.row, to: over.row)))
             }
-            .onEnded { _ in anchorRow = nil }
+            .onEnded { _ in
+                anchorRow = nil
+                // Wait until the finger is up before moving the selection
+                // under the chrome. Moving the scroll view while the drag is
+                // still measured against it changes which row is under that
+                // stationary finger and silently grows the range.
+                reveal()
+            }
     }
 
     /// Puts the held range under the chrome, where the sheet is not covering
