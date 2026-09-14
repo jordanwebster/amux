@@ -92,7 +92,7 @@ final class PairingTests: XCTestCase {
     /// nobody holds, or an outright failure: one state and one empty entry.
     func testEveryFailureIsTheSameStateAndClearsTheDigits() {
         for outcome in [
-            OpOutcome.pairingRefused,
+            OpOutcome.pairingRefused(reason: .refused),
             .pairingLost,
             try! AmuxJSON.decoder.decode(
                 OpOutcome.self,
@@ -111,11 +111,29 @@ final class PairingTests: XCTestCase {
         }
     }
 
+    /// A machine only the relay has seen, on an account that may not open a
+    /// tunnel to it. The code was right, so this is not a refusal a person can
+    /// type their way out of: it is its own state, and the digits go because
+    /// there is nothing left to send them to.
+    func testASubscriptionRefusalIsItsOwnStateRatherThanABadCode() {
+        let (stores, sent) = bundle()
+        stores.pairing.open(machine: machine())
+        stores.pair(digits: "419723")
+
+        stores.apply([.opResult(OpResult(
+            op: sent.ops[0], outcome: .pairingRefused(reason: .subscriptionRequired)))])
+
+        XCTAssertEqual(stores.pairing.phase, .needsSubscription)
+        XCTAssertEqual(stores.pairing.digits, "")
+        XCTAssertFalse(stores.pairing.taking)
+    }
+
     func testTypingOverARefusalTakesItOffTheScreen() {
         let (stores, sent) = bundle()
         stores.pairing.open(machine: machine())
         stores.pair(digits: "419723")
-        stores.apply([.opResult(OpResult(op: sent.ops[0], outcome: .pairingRefused))])
+        stores.apply([.opResult(OpResult(
+            op: sent.ops[0], outcome: .pairingRefused(reason: .refused)))])
 
         stores.pair(digits: "5")
 
@@ -129,7 +147,8 @@ final class PairingTests: XCTestCase {
         stores.pairing.open(machine: machine())
         stores.pair(digits: "419723")
 
-        stores.apply([.opResult(OpResult(op: OpId(UUID()), outcome: .pairingRefused))])
+        stores.apply([.opResult(OpResult(
+            op: OpId(UUID()), outcome: .pairingRefused(reason: .refused)))])
         XCTAssertEqual(stores.pairing.phase, .checking)
 
         stores.apply([.opResult(OpResult(op: sent.ops[0], outcome: .pairingPending(offer())))])
@@ -251,7 +270,14 @@ final class PairingTests: XCTestCase {
             try read(#"{"outcome":"paired","host":"50000000-0000-0000-0000-000000000001","name":"homelab"}"#),
             .paired(host: homelab, name: "homelab"))
         XCTAssertEqual(try read(#"{"outcome":"pairing_abandoned"}"#), .pairingAbandoned)
-        XCTAssertEqual(try read(#"{"outcome":"pairing_refused"}"#), .pairingRefused)
+        // No reason at all reads as a plain refusal: a runtime that names
+        // nothing has not said a subscription is missing, and reading silence
+        // as one would offer to sell something to somebody who mistyped.
+        XCTAssertEqual(
+            try read(#"{"outcome":"pairing_refused"}"#), .pairingRefused(reason: .refused))
+        XCTAssertEqual(
+            try read(#"{"outcome":"pairing_refused","reason":"subscription_required"}"#),
+            .pairingRefused(reason: .subscriptionRequired))
         XCTAssertEqual(try read(#"{"outcome":"pairing_lost"}"#), .pairingLost)
     }
 

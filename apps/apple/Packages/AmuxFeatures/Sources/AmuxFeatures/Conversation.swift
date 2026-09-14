@@ -14,6 +14,10 @@ public enum ConversationAction: Equatable, Sendable {
     case overflow
     /// Reach the machine again now, rather than waiting for the next attempt.
     case retry
+    /// Buy the relay tunnel, asked for from the machine it would reach. Not a
+    /// retry: this machine will go on not answering until the account can open
+    /// a tunnel to it, and nothing on this screen can do that.
+    case subscribe
     /// What the person told the agent that was waiting on them.
     case answer(AskPanel, AskDecision)
     /// One of the agents this one started, asked for from the list of them.
@@ -105,6 +109,15 @@ public struct ConversationSubject: Equatable, Sendable {
     /// strength of not having heard yet is the same lie in the other
     /// direction.
     public let hostReachable: Bool
+    /// Whether the relay can see the machine that owns this agent and will not
+    /// carry anything to it on this account.
+    ///
+    /// Apart from `hostReachable` because they are opposite kinds of fact. A
+    /// machine that is not answering may answer in a minute and the screen
+    /// offers to ask again; a machine the relay can see will go on not
+    /// answering until somebody subscribes, and asking again would never
+    /// change it.
+    public let hostAway: Bool
     public let readable: Bool
     /// How long ago this agent last did anything, in the shortest true unit.
     /// Absent while the fleet that knows has not arrived.
@@ -137,7 +150,8 @@ public struct ConversationSubject: Equatable, Sendable {
 
     public init(
         name: String, host: String?, directory: String,
-        hostReachable: Bool = true, age: String? = nil, ended: Ended? = nil,
+        hostReachable: Bool = true, hostAway: Bool = false, age: String? = nil,
+        ended: Ended? = nil,
         finished: Bool = false, working: String? = nil, readable: Bool = true
     ) {
         self.name = name
@@ -145,6 +159,7 @@ public struct ConversationSubject: Equatable, Sendable {
         self.host = host
         self.directory = directory
         self.hostReachable = hostReachable
+        self.hostAway = hostAway
         self.age = age
         self.ended = ended
         self.finished = finished
@@ -166,6 +181,7 @@ public struct ConversationSubject: Equatable, Sendable {
             name: row.name, host: fleet.host(row.hostId)?.name,
             directory: row.workingDirectory,
             hostReachable: fleet.host(row.hostId)?.online ?? true,
+            hostAway: fleet.reach(ofHost: row.hostId) == .away,
             age: row.age(at: fleet.orderedAt),
             ended: ended,
             finished: row.attention == .needsYou(why: .finished),
@@ -184,6 +200,10 @@ public struct ConversationSubject: Equatable, Sendable {
         guard hostReachable else {
             return [host, "unreachable"].compactMap { $0 }.joined(separator: " · ")
         }
+        // The same substitution for the same reason: a directory on a machine
+        // nothing will reach is the least useful true thing on the screen, and
+        // this line is where a reader is already looking to find out why.
+        if hostAway { return [host, "away"].compactMap { $0 }.joined(separator: " · ") }
         return [host, directory].compactMap { $0 }.joined(separator: " · ")
     }
 }
@@ -561,7 +581,9 @@ private struct ConversationStanding: View {
                 AskPanelView(panel: panel) { actions(.answer(panel, $0)) }
             } else if let state = ConversationFootState(
                 gate: model.gate, refusal: model.refusal, subject: subject) {
-                ConversationFoot(state: state) { actions(.retry) }
+                ConversationFoot(
+                    state: state, retry: { actions(.retry) },
+                    subscribe: { actions(.subscribe) })
             } else if let composer = ComposerState(
                 gate: model.gate, tail: activityTail, elapsed: subject.working) {
                 ConversationComposerStanding(

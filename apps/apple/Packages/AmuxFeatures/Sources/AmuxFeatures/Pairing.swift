@@ -19,6 +19,9 @@ public enum PairingAction: Equatable, Sendable {
     /// Get an account, because the machine the invitation names can only be
     /// reached through the relay and there is no relay without one.
     case signIn
+    /// Buy the relay tunnel, because the machine authenticated and this
+    /// account may not open one to it.
+    case subscribe
 }
 
 /// A pairing invitation for a machine this phone cannot see.
@@ -227,6 +230,15 @@ public struct PairByCode: View {
     @ViewBuilder
     private var caption: some View {
         switch model.phase {
+        // The code was right. What is missing is the route: the machine is on
+        // the far side of the relay and this account may not open a tunnel to
+        // it, which no number typed here can change. So the offer stands where
+        // the expiry would, and the keypad above it goes quiet.
+        case .needsSubscription:
+            SubscribeCallToAction(
+                host: model.machine?.name, identifier: "pin.subscribe"
+            ) { actions(.subscribe) }
+                .padding(.top, 14)
         case .refused:
             // One sentence for a mistyped code, an expired code, a code
             // already used and a code nobody issued. Distinguishing them is
@@ -347,6 +359,7 @@ public struct PairConfirmation: View {
                 case .confirming(let peer): offer(peer)
                 case .trusted(let name): settled(name)
                 case .refused: refused
+                case .needsSubscription: needsSubscription
                 default: checking
                 }
             }
@@ -367,8 +380,26 @@ public struct PairConfirmation: View {
         case .confirming(let peer): peer.name
         case .trusted(let name): "trusted \(name)"
         case .refused: "refused"
+        case .needsSubscription: "needs subscription"
         default: "checking"
         }
+    }
+
+    /// The invitation was good and the machine is only on the far side of the
+    /// relay. Nothing about the invitation can be retried into working, so the
+    /// screen offers the one thing that would.
+    private var needsSubscription: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SubscribeCallToAction(
+                host: nil, identifier: "pair-confirm.subscribe"
+            ) { actions(.subscribe) }
+            Button { actions(.cancel) } label: {
+                ActionLabel("Not Now", kind: .outline, fill: true)
+            }
+            .buttonStyle(.amuxControl)
+            .identified("pair-confirm.notNow", label: "Not Now")
+        }
+        .padding(.top, 26)
     }
 
     private func offer(_ peer: PendingPeer) -> some View {

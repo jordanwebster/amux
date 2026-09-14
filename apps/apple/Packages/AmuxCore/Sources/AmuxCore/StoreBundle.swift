@@ -206,6 +206,19 @@ public final class StoreBundle {
         dispatch?(.retryNow) != nil
     }
 
+    /// Asks the relay what this account may now do.
+    ///
+    /// Sent after a purchase. The account service knowing about one changes
+    /// nothing on its own — the relay reads the tier off the credential the
+    /// link holds — so without this the machines somebody just bought a route
+    /// to stay away until the link's own re-check comes round minutes later.
+    ///
+    /// False means there was nothing to ask: no account, no runtime.
+    @discardableResult
+    public func refreshEntitlement() -> Bool {
+        dispatch?(.refreshEntitlement) != nil
+    }
+
     /// Stops trusting a machine.
     ///
     /// The one destructive thing this screen does, and it is not a request the

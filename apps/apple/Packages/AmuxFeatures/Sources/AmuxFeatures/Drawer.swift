@@ -105,7 +105,9 @@ public struct AgentsDrawer: View {
                 SectionHead(title: title)
                 VStack(spacing: 0) {
                     ForEach(rows) { row in
-                        let state = RowState(row: row, host: model.host(row.hostId))
+                        let state = RowState(
+                            row: row, host: model.host(row.hostId),
+                            reach: model.reach(ofHost: row.hostId))
                         let content = DrawerRow(
                             row: row,
                             state: state,

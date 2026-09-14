@@ -1,3 +1,37 @@
+2026-09-14 — **An away machine keeps its agents and asks for the relay where
+somebody is trying to use one; an empty phone is never asked to buy anything.**
+A machine the relay can see and this account may not tunnel to is a fourth
+thing, and its agents are now read as what they are: still listed, from the
+cache, with every row saying it is not live, because nothing is arriving.
+Opening one shows the cached transcript with the offer where the composer
+would be — a box that took a message nothing could deliver would be the worse
+lie — and that offer is worded as what it buys, reaching your agents from
+anywhere, rather than as a state of the account. The same offer answers a
+pairing code that authenticates against a machine only the relay has seen: the
+code was right, so it is its own state rather than a refusal somebody could
+type their way out of, and the app now carries the reason the runtime already
+sent. A machine that is simply switched off is offered none of it, on any
+account, because no subscription reaches a machine that is not there; a
+machine that says it never signed in says both facts, because the cause of
+that is on the machine and no money changes it.
+
+The home's account prompt follows the same precedence the desktop's banner
+does: a machine the relay can see first, then a machine nothing reaches on a
+phone with nobody signed in, and nothing at all when every machine is
+reachable. The empty home that told an account with nothing bought to
+"subscribe to pair one" is gone — pairing with a machine on this network has
+never needed a subscription, and a phone that was told otherwise would have
+paid to do something already free. So is the rule that hid New Agent behind a
+subscription: what decides that is whether any machine would run what was
+started. The You page's row about the relay now says what the relay will carry
+and where it was bought, or that nothing is subscribed and hosts on this
+network still work, with signing in offered under the account list when nobody
+is. After a purchase the app asks the link itself what the account may now do,
+because the relay reads the tier off the credential the link holds and the
+account service knowing about a purchase changes nothing on its own; the
+screen says the other devices follow within a few minutes, which is the wait
+rather than a fault.
+
 2026-09-14 — **The phone reads its machines by where they are, and an empty
 phone leads with pairing.** A host now carries the route this phone holds to
 it and whether it says it has an account, so the Hosts tab reads the machines

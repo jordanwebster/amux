@@ -1477,7 +1477,7 @@ mod tests {
                 .iter()
                 .map(|screen| screen.appearances.len())
                 .sum::<usize>(),
-            136
+            148
         );
         let mut flaky_captures: Vec<_> = manifest
             .screens

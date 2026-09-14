@@ -67,39 +67,12 @@ public final class HostsStore {
     public var online: [HostEntry] { hosts.filter(\.online) }
     public var offline: [HostEntry] { hosts.filter { !$0.online } }
 
-    /// Where this phone can reach a machine from, which is the only division
-    /// of the list worth drawing.
+    /// The four groups, under the name the whole app knows them by.
     ///
-    /// Not a degree of goodness. A machine on the same network and one on the
-    /// far side of the relay are both usable and feel nothing alike; a machine
-    /// the relay can see but this account may not tunnel to is not a slow
-    /// version of either, because nothing started on it will run; and a
-    /// machine no route reaches is a fourth thing again. Naming them apart is
-    /// what lets the screen say something true about each without putting a
-    /// caveat on every row.
-    public enum Reach: Sendable, Equatable {
-        case onThisNetwork
-        case throughTheRelay
-        /// The relay can see it; this phone may not tunnel to it.
-        case away
-        case offline
-
-        /// The group's own word, for an identifier a capture and a driver can
-        /// both name it by.
-        public var name: String {
-            switch self {
-            case .onThisNetwork: "on-this-network"
-            case .throughTheRelay: "through-the-relay"
-            case .away: "away"
-            case .offline: "offline"
-            }
-        }
-
-        /// The four, in the order a screen lists them: nearest first, then
-        /// what is reachable further away, then what is only visible, then
-        /// what is not there at all.
-        public static let all: [Reach] = [.onThisNetwork, .throughTheRelay, .away, .offline]
-    }
+    /// Spelled once outside this class because the home reads the same groups
+    /// off the same rule, and two enums that had to agree would eventually
+    /// not.
+    public typealias Reach = HostReach
 
     /// Which of the four a machine is in, paired or merely offered.
     ///
@@ -110,14 +83,7 @@ public final class HostsStore {
     /// never "away": the relay is not seeing it, so nothing about it is a
     /// question of money.
     public func reach(of host: HostEntry) -> Reach {
-        switch host.via {
-        case .direct: .onThisNetwork
-        case .relay where cloud.tier == .free && host.signedIn != false: .away
-        // A phone holds no SSH links; the arm is here so a machine is never
-        // dropped from a screen that claims to list them all.
-        case .relay, .ssh: .throughTheRelay
-        case .offline: .offline
-        }
+        host.reach(tier: cloud.tier)
     }
 
     public func hosts(_ reach: Reach) -> [HostEntry] {

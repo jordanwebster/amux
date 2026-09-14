@@ -92,6 +92,17 @@ public enum Scenario {
         return reachable
     }
 
+    /// A machine nothing can reach that has never had an account.
+    ///
+    /// Two different reasons a machine cannot be reached look identical from a
+    /// list: one is a subscription away and the other is not reachable from
+    /// anywhere but its own network whatever anybody buys. This is the second,
+    /// so the screens that tell them apart have something to tell apart.
+    public static let neverSignedIn = HostState(entry: HostEntry(
+        id: homelab, name: "homelab", online: false, version: "0.4.0",
+        lastDialError: "no route to host", platform: "Linux",
+        via: .offline, signedIn: false), epoch: 1)
+
     /// A machine found on this network, with the route that says so. What a
     /// browser hands over before any account exists.
     public static let foundNearby = HostEntry(

@@ -126,6 +126,12 @@ public enum Fixtures {
         Built(.hosts, "devices"),
         Built(.hosts, "hosts-groups"),
         Built(.hosts, "local-network-refused"),
+        Built(.hosts, "host-not-signed-in"),
+        Built(.home, "host-away"),
+        Built(.home, "home-signed-out-offline"),
+        Built(.home, "home-all-reachable"),
+        Built(.run, "chat-subscribe"),
+        Built(.offline, "host-offline"),
         Built(.pin, "pin"),
         Built(.pin, "code-entry"),
         Built(.pairConfirm, "pair-confirm"),
@@ -564,6 +570,62 @@ public enum Fixtures {
             States.linked(bundle, .connected(tier: .pro, carrier: .quic))
             States.offering(bundle, [Scenario.foundNearby])
             States.trusted(bundle)
+        },
+        // A machine nothing can reach that has never had an account. It is
+        // not a subscription away and never was: no relay is seeing it, so
+        // offering to sell one would be selling a fix that is not one. The row
+        // says both facts, which is the only way to tell it apart from a
+        // machine a subscription would reach.
+        Fixture(id: "host-not-signed-in", screen: .hosts) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts + [Scenario.neverSignedIn])
+            States.linked(bundle, .connected(tier: .pro, carrier: .quic))
+            States.trusted(bundle)
+        },
+        // An account with nothing bought, whose machines the relay can see.
+        // The agents are still listed — they exist, and the last thing this
+        // phone was told about them is still the last thing that was true —
+        // and every row says it is not live, because nothing is arriving. The
+        // line above the list names a machine and what would reach it.
+        Fixture(id: "host-away", screen: .home, cloud: .unsubscribed,
+                accounts: [Fixture.unsubscribed]) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.linked(bundle, .connected(tier: .free, carrier: .quic))
+        },
+        // A phone nobody is signed into that has lost sight of one of its
+        // machines. The agents on it stay listed and the machine is named; the
+        // account is offered under that, as the thing that would find it from
+        // somewhere else, and not as something that has gone wrong.
+        Fixture(id: "home-signed-out-offline", screen: .home, cloud: .firstRun,
+                accounts: []) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.lostHost(bundle, Scenario.air, minutesAgo: 8)
+        },
+        // Every machine reachable. Nothing is offered, nothing is sold and the
+        // top of the screen is the list — which is the ordinary morning, and
+        // the state that proves the two offers above are conditional rather
+        // than decorative.
+        Fixture(id: "home-all-reachable", screen: .home) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.linked(bundle, .connected(tier: .pro, carrier: .quic))
+        },
+        // Opening one of those agents. The transcript is the cache and stays
+        // readable; where the composer would be there is the one thing that
+        // would make this conversation live again, because a box that took a
+        // message nothing could deliver would be the worse lie.
+        Fixture(id: "chat-subscribe", screen: .run, cloud: .unsubscribed,
+                accounts: [Fixture.unsubscribed]) { bundle in
+            States.open(
+                bundle, hosts: Scenario.reachableHosts, entries: Transcript.codexTurn,
+                agent: Scenario.agentId("spec-suite"), session: Sessions.codex())
+            States.linked(bundle, .connected(tier: .free, carrier: .quic))
+        },
+        // The same account, and a machine that is simply not there. Nothing is
+        // sold here: no subscription reaches a machine that is switched off,
+        // and the screen offers the one thing that might — asking again.
+        Fixture(id: "host-offline", screen: .offline, cloud: .unsubscribed,
+                accounts: [Fixture.unsubscribed]) { bundle in
+            States.hostLost(bundle)
+            States.linked(bundle, .connected(tier: .free, carrier: .quic))
         },
         // A phone nobody let look at the network it is on. Indistinguishable
         // from an empty network by the list alone, which is why the screen

@@ -427,6 +427,8 @@
       {"literal": "\"plan_title\"", "context": "title: kind?[\"plan_title\"]?.stringValue,", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/BridgeClient.swift": [
+      {"literal": "\"refresh_entitlement\"", "context": "case \"refresh_entitlement\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"refresh_entitlement\"", "context": "try container.encode(\"refresh_entitlement\", forKey: .command)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"System\"", "context": "case system = \"System\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"PlainLoopback\"", "context": "case plainLoopback = \"PlainLoopback\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"Callback\"", "context": "if let text = try? decoder.singleValueContainer().decode(String.self), text == \"Callback\" {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -634,7 +636,7 @@
       {"literal": "\"pairing_pending\"", "context": "case \"pairing_pending\": self = .pairingPending(try PendingPeer(from: decoder))", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"paired\"", "context": "case \"paired\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"pairing_abandoned\"", "context": "case \"pairing_abandoned\": self = .pairingAbandoned", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"pairing_refused\"", "context": "case \"pairing_refused\": self = .pairingRefused", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"pairing_refused\"", "context": "case \"pairing_refused\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"pairing_lost\"", "context": "case \"pairing_lost\": self = .pairingLost", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"selected\"", "context": "case \"selected\":", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"retry_requested\"", "context": "case \"retry_requested\": self = .retryRequested", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -654,7 +656,7 @@
       {"literal": "\"unsubscribed\"", "context": "try container.encode(\"unsubscribed\", forKey: .outcome)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"paired\"", "context": "try container.encode(\"paired\", forKey: .outcome)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"pairing_abandoned\"", "context": "case .pairingAbandoned: try container.encode(\"pairing_abandoned\", forKey: .outcome)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"pairing_refused\"", "context": "case .pairingRefused: try container.encode(\"pairing_refused\", forKey: .outcome)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"pairing_refused\"", "context": "try container.encode(\"pairing_refused\", forKey: .outcome)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"pairing_lost\"", "context": "case .pairingLost: try container.encode(\"pairing_lost\", forKey: .outcome)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"selected\"", "context": "try container.encode(\"selected\", forKey: .outcome)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"retry_requested\"", "context": "case .retryRequested: try container.encode(\"retry_requested\", forKey: .outcome)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -667,7 +669,7 @@
       {"literal": "\"paired_at\"", "context": "case pairedAt = \"paired_at\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"expires_at\"", "context": "case expiresAt = \"expires_at\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"auth_required\"", "context": "case authRequired = \"auth_required\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"subscription_required\"", "context": "case subscriptionRequired = \"subscription_required\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"subscription_required\"", "context": "case subscriptionRequired = \"subscription_required\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
       {"literal": "\"hunk_starts\"", "context": "case hunkStarts = \"hunk_starts\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"merge_base\"", "context": "case mergeBase = \"merge_base\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"working_tree\"", "context": "case \"working_tree\": self = .workingTree", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1217,7 +1219,8 @@
       {"literal": "\"you.title\"", "context": ".identified(\"you.title\", value: \"You\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"you\"", "context": ".identified(\"you\", value: accounts.selectedAccount?.account.email ?? \"none\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"you.add\"", "context": ".identified(\"you.add\", label: \"Add Account\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"subscription\"", "context": "id: \"subscription\"", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"subscription\"", "context": "\"Relay\", value: entry.entitlement.summary, id: \"subscription\"", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"you.signIn\"", "context": "SignInCallToAction(identifier: \"you.signIn\") { actions(.add) }", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"signOut\"", "context": "action(\"Sign Out\", id: \"signOut\") { actions(.signOut(entry.id)) }", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"delete\"", "context": "action(\"Delete Account\", id: \"delete\", danger: true) {", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"identity\"", "context": "row(\"Identity\", value: identity, id: \"identity\", mono: true) { actions(.identity) }", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1249,10 +1252,10 @@
       {"literal": "\", \"", "context": "let names = section.rows.map(\\.name).joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 2},
       {"literal": "\"home.fold.\\(section.id)\"", "context": ".identified(\"home.fold.\\(section.id)\", label: \"\\(title), \\(names)\", value: names)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"wifi.slash\"", "context": "Image(systemName: accounts.gate == .ready ? \"wifi.slash\" : \"person.slash\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
-      {"literal": "\"person.slash\"", "context": "Image(systemName: accounts.gate == .ready ? \"wifi.slash\" : \"person.slash\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
+      {"literal": "\"person.slash\"", "context": "case .signIn, .subscribe: \"person.slash\"", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
+      {"literal": "\"wifi.slash\"", "context": "default: \"wifi.slash\"", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"home.exceptions\"", "context": ".identified(\"home.exceptions\", label: text, value: text)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"home.empty.explain\"", "context": ".identified(\"home.empty.explain\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 2},
+      {"literal": "\"home.empty.explain\"", "context": ".identified(\"home.empty.explain\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"ready\"", "context": "case .ready: \"ready\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"signed-out\"", "context": "case .signedOut: \"signed-out\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"unsubscribed\"", "context": "case .unsubscribed: \"unsubscribed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1264,10 +1267,7 @@
       {"literal": "\"home.empty.pair\"", "context": ".identified(\"home.empty.pair\", label: \"Pair a Host\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"home.pair.\\(host.id)\"", "context": ".identified(\"home.pair.\\(host.id)\", label: \"Pair with \\(host.name)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"home.offer.\\(host.id)\"", "context": ".identified(\"home.offer.\\(host.id)\", label: spokenOffer(host), value: \"found\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"home.empty.signIn\"", "context": ".identified(\"home.empty.signIn\", label: \"Sign In\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"home.empty.signIn.caption\"", "context": ".identified(\"home.empty.signIn.caption\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"home.empty.title\"", "context": ".identified(\"home.empty.title\", value: \"No hosts yet\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"home.empty.action\"", "context": ".identified(\"home.empty.action\", label: \"Subscribe\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.empty.signIn\"", "context": "SignInCallToAction(identifier: \"home.empty.signIn\") { actions(.signIn) }", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"home.empty.firstRun\"", "context": ".identified(\"home.empty.firstRun\", value: \"No agents yet\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift": [
@@ -1354,6 +1354,7 @@
       {"literal": "\"conversation.changes\"", "context": "\"conversation.changes\",", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/ConversationFoot.swift": [
+      {"literal": "\"conversation.subscribe\"", "context": "host: host, identifier: \"conversation.subscribe\", subscribe: subscribe)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\" · \"", "context": ".compactMap { $0 }.joined(separator: \" · \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"conversation.retry\"", "context": ".identified(\"conversation.retry\", label: \"Retry Now\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"conversation.foot\"", "context": ".identified(\"conversation.foot\", label: headline, value: detail)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1424,6 +1425,7 @@
       {"literal": "\"drawer.scrim\"", "context": ".identified(\"drawer.scrim\", label: \"Close Drawer\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift": [
+      {"literal": "\"host-away\"", "context": "case .hostAway: \"host-away\"", "reason": "Door and capture vocabulary a journey names a state by; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
       {"literal": "\"working\"", "context": "case .working: \"working\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
       {"literal": "\"host-offline\"", "context": "case .hostOffline: \"host-offline\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
       {"literal": "\"unheard\"", "context": "case .unheard: \"unheard\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
@@ -1548,6 +1550,10 @@
       {"literal": "\"agent-delete\"", "context": ".identified(\"agent-delete\", value: name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift": [
+      {"literal": "\"pin.subscribe\"", "context": "host: model.machine?.name, identifier: \"pin.subscribe\"", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"needs subscription\"", "context": "case .needsSubscription: \"needs subscription\"", "reason": "Door and capture vocabulary a journey names a state by; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
+      {"literal": "\"pair-confirm.subscribe\"", "context": "host: nil, identifier: \"pair-confirm.subscribe\"", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"pair-confirm.notNow\"", "context": ".identified(\"pair-confirm.notNow\", label: \"Not Now\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"pin\"", "context": ".identified(\"pin\", value: model.digits)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"pin.title\"", "context": ".identified(\"pin.title\", value: \"Enter the code\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"pin.instruction\"", "context": ".identified(\"pin.instruction\", value: instruction)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1936,6 +1942,19 @@
       {"literal": "\"Side project\"", "context": "id: AccountId(\"side\"), email: \"jw@fox.dev\", displayName: \"Side project\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift": [
+      {"literal": "\"host-not-signed-in\"", "context": "Built(.hosts, \"host-not-signed-in\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"host-away\"", "context": "Built(.home, \"host-away\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"home-signed-out-offline\"", "context": "Built(.home, \"home-signed-out-offline\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"home-all-reachable\"", "context": "Built(.home, \"home-all-reachable\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"chat-subscribe\"", "context": "Built(.run, \"chat-subscribe\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"host-offline\"", "context": "Built(.offline, \"host-offline\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"host-not-signed-in\"", "context": "Fixture(id: \"host-not-signed-in\", screen: .hosts) { bundle in", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"host-away\"", "context": "Fixture(id: \"host-away\", screen: .home, cloud: .unsubscribed,", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"home-signed-out-offline\"", "context": "Fixture(id: \"home-signed-out-offline\", screen: .home, cloud: .firstRun,", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"home-all-reachable\"", "context": "Fixture(id: \"home-all-reachable\", screen: .home) { bundle in", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"chat-subscribe\"", "context": "Fixture(id: \"chat-subscribe\", screen: .run, cloud: .unsubscribed,", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"spec-suite\"", "context": "agent: Scenario.agentId(\"spec-suite\"), session: Sessions.codex())", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
+      {"literal": "\"host-offline\"", "context": "Fixture(id: \"host-offline\", screen: .offline, cloud: .unsubscribed,", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
       {"literal": "\"home-offline\"", "context": "Built(.home, \"home-offline\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"home-offline\"", "context": "Fixture(id: \"home-offline\", screen: .home) { bundle in", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"dictation-listening\"", "context": "Built(.typing, \"dictation-listening\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
@@ -2177,6 +2196,9 @@
       {"literal": "\"daemon_absent_reason\"", "context": "split.daemonAbsent = report[\"daemon_absent_reason\"] as? String", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Scenario.swift": [
+      {"literal": "\"homelab\"", "context": "id: homelab, name: \"homelab\", online: false, version: \"0.4.0\",", "reason": "Stable fixture identity, not interface copy.", "count": 1},
+      {"literal": "\"0.4.0\"", "context": "id: homelab, name: \"homelab\", online: false, version: \"0.4.0\",", "reason": "Stable fixture identity, not interface copy.", "count": 1},
+      {"literal": "\"no route to host\"", "context": "lastDialError: \"no route to host\", platform: \"Linux\",", "reason": "Stable fixture identity, not interface copy.", "count": 1},
       {"literal": "\"ios-bridge\"", "context": "let wanted = [\"ios-bridge\", \"legacy-port\"]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"legacy-port\"", "context": "let wanted = [\"ios-bridge\", \"legacy-port\"]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"quiet-turn\"", "context": "\"quiet-turn\", host: studio, directory: \"~/src/amux-relay\", kind: claude,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2883,7 +2905,12 @@
       {"literal": "\"\\(address)\"", "context": "String(\"\\(address)\".prefix { $0 != \"%\" })", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
       {"literal": "\"%\"", "context": "String(\"\\(address)\".prefix { $0 != \"%\" })", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1}
     ],
-    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/HostsStore.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AccountCalls.swift": [
+      {"literal": "\"subscribe\"", "context": "host: String?, identifier: String = \"subscribe\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"\\(identifier).buy\"", "context": ".identified(\"\\(identifier).buy\", label: \"Subscribe\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"\\(identifier).caption\"", "context": ".identified(\"\\(identifier).caption\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/HostReach.swift": [
       {"literal": "\"on-this-network\"", "context": "case .onThisNetwork: \"on-this-network\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"through-the-relay\"", "context": "case .throughTheRelay: \"through-the-relay\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"away\"", "context": "case .away: \"away\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},

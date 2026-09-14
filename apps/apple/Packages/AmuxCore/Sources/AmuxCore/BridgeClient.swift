@@ -436,6 +436,11 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
     case selectAccount(String)
     /// Stop waiting out the reconnect backoff and dial the relay now.
     case retryNow
+    /// Ask the relay what this account may now do, without waiting for the
+    /// link's own re-check. Sent after a purchase, so the machines that were
+    /// away become reachable on the screen somebody bought them on rather than
+    /// minutes later.
+    case refreshEntitlement
     /// Stop trusting a machine, closing every link this phone holds to it.
     case revoke(host: HostId)
     /// Ask a machine what it has to offer as a working directory. The limit is
@@ -479,6 +484,9 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
                 return
             case "retry_now":
                 self = .retryNow
+                return
+            case "refresh_entitlement":
+                self = .refreshEntitlement
                 return
             case "revoke":
                 self = .revoke(host: try container.decode(HostId.self, forKey: .host))
@@ -536,6 +544,9 @@ public enum BridgeCommand: Sendable, Equatable, Codable {
         case .retryNow:
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("retry_now", forKey: .command)
+        case .refreshEntitlement:
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encode("refresh_entitlement", forKey: .command)
         case .revoke(let host):
             var container = encoder.container(keyedBy: Key.self)
             try container.encode("revoke", forKey: .command)

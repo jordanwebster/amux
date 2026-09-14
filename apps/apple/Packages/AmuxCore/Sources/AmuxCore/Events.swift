@@ -1214,6 +1214,25 @@ public struct OpResult: Codable, Sendable, Equatable {
     }
 }
 
+/// Why an attempt at pairing ended without a machine to trust.
+///
+/// Two cases and no more. Every way a secret can be wrong — mistyped, expired,
+/// already used, never issued — is one `refused`, because telling them apart is
+/// exactly what somebody guessing codes would want. The second is not about
+/// the secret at all: the machine is only on the far side of the relay and this
+/// account may not open a tunnel to it, which nothing about the code can fix.
+public enum PairingRefusal: String, Sendable, Equatable, Codable {
+    case refused
+    case subscriptionRequired = "subscription_required"
+
+    /// An unknown reason from a newer runtime is still a refusal; reading it as
+    /// a subscription would sell something to somebody who mistyped a code.
+    public init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = PairingRefusal(rawValue: raw) ?? .refused
+    }
+}
+
 /// How a dispatched operation ended. Outcomes the app acts on are named; the
 /// rest keep their tag and body so nothing is silently swallowed.
 public enum OpOutcome: Sendable, Equatable, Codable {
@@ -1234,10 +1253,11 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     case paired(host: HostId, name: String)
     /// Abandoned by the person. Nothing was written anywhere.
     case pairingAbandoned
-    /// The secret did not authenticate. Mistyped, already used, expired and
-    /// never issued all arrive here, in the same shape and with nothing else
-    /// said, because telling them apart is what guessing codes would need.
-    case pairingRefused
+    /// The attempt did not end in a machine to trust. Every way a secret can
+    /// be wrong arrives here in the same shape and with nothing else said,
+    /// because telling them apart is what guessing codes would need; the one
+    /// reason carried out is the one that is not about the secret at all.
+    case pairingRefused(reason: PairingRefusal)
     /// The attempt an answer names is not one the runtime is holding: it was
     /// answered already, or the app has been restarted since.
     case pairingLost
@@ -1268,7 +1288,7 @@ public enum OpOutcome: Sendable, Equatable, Codable {
     case other(outcome: String, body: JSONValue)
 
     private enum Key: String, CodingKey {
-        case outcome, agent, error, attachment, host, name, account
+        case outcome, agent, error, attachment, host, name, account, reason
         case recent, repositories, roots
     }
 
@@ -1291,7 +1311,10 @@ public enum OpOutcome: Sendable, Equatable, Codable {
                 host: try container.decode(HostId.self, forKey: .host),
                 name: try container.decode(String.self, forKey: .name))
         case "pairing_abandoned": self = .pairingAbandoned
-        case "pairing_refused": self = .pairingRefused
+        case "pairing_refused":
+            self = .pairingRefused(
+                reason: try container.decodeIfPresent(PairingRefusal.self, forKey: .reason)
+                    ?? .refused)
         case "pairing_lost": self = .pairingLost
         case "selected":
             self = .selected(account: try container.decode(String.self, forKey: .account))
@@ -1348,7 +1371,9 @@ public enum OpOutcome: Sendable, Equatable, Codable {
                 try container.encode(host, forKey: .host)
                 try container.encode(name, forKey: .name)
             case .pairingAbandoned: try container.encode("pairing_abandoned", forKey: .outcome)
-            case .pairingRefused: try container.encode("pairing_refused", forKey: .outcome)
+            case .pairingRefused(let reason):
+                try container.encode("pairing_refused", forKey: .outcome)
+                try container.encode(reason, forKey: .reason)
             case .pairingLost: try container.encode("pairing_lost", forKey: .outcome)
             case .selected(let account):
                 try container.encode("selected", forKey: .outcome)

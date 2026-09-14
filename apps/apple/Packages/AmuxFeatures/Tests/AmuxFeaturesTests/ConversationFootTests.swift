@@ -16,12 +16,12 @@ final class ConversationFootTests: XCTestCase {
     private let agent = AgentId(UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!)
 
     private func subject(
-        hostReachable: Bool = true, age: String? = "14m",
+        hostReachable: Bool = true, hostAway: Bool = false, age: String? = "14m",
         ended: ConversationSubject.Ended? = nil
     ) -> ConversationSubject {
         ConversationSubject(
             name: "refactor-auth", host: "Studio", directory: "~/src/amux",
-            hostReachable: hostReachable, age: age, ended: ended)
+            hostReachable: hostReachable, hostAway: hostAway, age: age, ended: ended)
     }
 
     private func failure(_ message: String) -> OpFailure {
@@ -221,5 +221,41 @@ final class ConversationFootTests: XCTestCase {
 
         XCTAssertFalse(subject.hostReachable)
         XCTAssertEqual(subject.age, "14m")
+    }
+
+    // MARK: - A machine the relay can see and will not carry to
+
+    /// The transcript stays readable and the composer's place holds the offer
+    /// rather than a fault. There is nothing wrong with this machine and
+    /// nothing being waited for, so nothing here reads as an error and nothing
+    /// offers to ask again.
+    func testAnAwayMachinePutsTheOfferWhereTheComposerWouldBe() {
+        let state = ConversationFootState(
+            gate: .claudePty(.ready), refusal: nil, subject: subject(hostAway: true))
+
+        XCTAssertEqual(state, .away(host: "Studio"))
+        XCTAssertEqual(state?.headline, SubscribeCopy.headline)
+        XCTAssertEqual(state?.detail, SubscribeCopy.detail(host: "Studio"))
+        XCTAssertTrue(state?.detail.contains("Studio") == true)
+    }
+
+    /// A machine that is not there is never sold a route to itself. No
+    /// subscription reaches a machine that is switched off, so the screen says
+    /// what it says about every unreachable machine and offers to ask again.
+    func testAMachineThatIsNotThereIsOfferedNothingToBuy() {
+        let state = ConversationFootState(
+            gate: .claudePty(.ready), refusal: nil,
+            subject: subject(hostReachable: false, hostAway: true))
+
+        XCTAssertEqual(state, .unreachable(host: "Studio", since: "14m"))
+        XCTAssertFalse(state?.headline.contains(SubscribeCopy.headline) == true)
+    }
+
+    /// A run that has ended offers nothing at all, away or not: it has already
+    /// said what happened, and buying a route to it would change nothing.
+    func testAnEndedRunOnAnAwayMachineStillOffersNothing() {
+        XCTAssertNil(ConversationFootState(
+            gate: .claudePty(.ready), refusal: nil,
+            subject: subject(hostAway: true, ended: .init(code: 0))))
     }
 }

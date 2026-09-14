@@ -388,3 +388,53 @@ Added state using the `dictation-denied` fixture. Composer speech recognition de
 ## dictation-unavailable
 
 Added state using the `dictation-unavailable` fixture. Composer speech recognition unavailable state. It follows the same visual system as its parent screen.
+
+## host-away
+
+Added state using the `host-away` fixture. An account with nothing bought whose
+machines the relay can see. The agents are still listed — they exist, and the
+last thing this phone was told about them is still the last thing that was true
+— and every row on a machine the relay will not carry to says it is not live,
+because nothing is arriving. The line above the list names one of those
+machines and what would reach it. It follows the same visual system as its
+parent screen.
+
+## home-signed-out-offline
+
+Added state using the `home-signed-out-offline` fixture. A phone nobody is
+signed into that has lost sight of one of its machines. The agents on it stay
+listed and the machine is named; an account is offered above them as the thing
+that would find it from somewhere else, drawn as an offer rather than as a
+fault. It follows the same visual system as its parent screen.
+
+## home-all-reachable
+
+Added state using the `home-all-reachable` fixture. Every machine reachable.
+Nothing is offered and the top of the screen is the list, which is the ordinary
+morning and what makes the two offers above it conditional rather than
+decorative. It follows the same visual system as its parent screen.
+
+## chat-subscribe
+
+Added state using the `chat-subscribe` fixture. A conversation on a machine the
+relay can see and will not carry agents to. The transcript is the cache and
+stays readable; the composer's place holds the one thing that would make the
+conversation live again, because a box that took a message nothing could
+deliver would be the worse lie. It follows the same visual system as its parent
+screen.
+
+## host-offline
+
+Added state using the `host-offline` fixture. The same unsubscribed account on a
+machine that is simply switched off. Nothing is sold here — no subscription
+reaches a machine that is not there — and what the composer's place offers is
+the one thing that might, which is asking again. It follows the same visual
+system as its parent screen.
+
+## host-not-signed-in
+
+Added state using the `host-not-signed-in` fixture. A machine nothing can reach
+that has never had an account. It is not a subscription away and never was: no
+relay is seeing it, so the row says both facts rather than leaving it looking
+like a machine money would fix. It follows the same visual system as its parent
+screen.

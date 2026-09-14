@@ -291,6 +291,12 @@ final class Composition {
         guard let accepted = accounts.accept(entitlement, for: id) else { return false }
         accounts.entitlement(accepted, for: id)
         paywall.entitled(accepted)
+        // And tell the link, which is what actually decides whether a machine
+        // can be reached. The account service knowing about a purchase changes
+        // nothing on its own: the relay reads the tier off the credential the
+        // link holds, and without this the machines bought a moment ago stay
+        // away until the link's own re-check comes round minutes later.
+        accounts.stores?.refreshEntitlement()
         return true
     }
 

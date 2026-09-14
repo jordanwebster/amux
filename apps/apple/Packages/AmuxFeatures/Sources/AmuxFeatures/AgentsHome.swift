@@ -78,14 +78,15 @@ public struct AgentsHome: View {
             Ground()
             VStack(alignment: .leading, spacing: 0) {
                 header
-                // An account problem is only the whole screen when there is
-                // nothing else on it. A phone that is signed out but still
-                // remembers agents has a list worth reading; what it cannot do
-                // is refresh it, and that belongs on the exceptions line.
-                if accounts.gate == .ready || !model.rows.isEmpty {
-                    fleet
+                // The list whenever there is one. An account is never what
+                // decides this: a phone that is signed out and paired with a
+                // machine on its own network has a fleet worth reading, and a
+                // phone that remembers agents it cannot refresh has one too.
+                // What it cannot do is said on the exceptions line.
+                if model.rows.isEmpty {
+                    nothingPairedYet
                 } else {
-                    gated
+                    fleet
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -102,9 +103,24 @@ public struct AgentsHome: View {
 
     // MARK: - Header
 
+    /// Whether anybody is signed in on this phone. An account listed with Sign
+    /// In beside it is remembered, not signed in.
+    private var signedIn: Bool { accounts.accounts.contains(where: \.signedIn) }
+
+    /// Whether there is an account question on this phone worth putting under
+    /// the title: another account to read, or nobody signed in at all.
+    private var switchable: Bool {
+        accounts.accounts.count > 1 || !signedIn
+    }
+
+    /// Whether any machine would actually run something started now.
+    private var canStartAnAgent: Bool {
+        model.hosts.values.contains { model.reach(of: $0).live }
+    }
+
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            if accounts.accounts.count > 1 || accounts.gate != .ready { accountDisc }
+            if switchable { accountDisc }
             VStack(alignment: .leading, spacing: 1) {
                 title
                 Text(subtitle)
@@ -113,12 +129,12 @@ public struct AgentsHome: View {
                     .identified("home.subtitle", value: subtitle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Starting an agent needs a host, a host needs pairing, and
-            // pairing needs an account that may reach one. Until that is true
-            // the button would open onto a screen with nothing on it, so the
-            // header leaves it out and the screen keeps the one action that
-            // does lead somewhere.
-            if accounts.gate == .ready {
+            // Starting an agent needs a machine something can be started on.
+            // Not an account — a phone paired with a host on its own network
+            // has one — and not a subscription, which buys the route to a
+            // machine rather than the right to use it. Without one the button
+            // would open onto a screen with nothing on it.
+            if canStartAnAgent {
                 HStack(spacing: 8) {
                     if !switcherOpen {
                         Button { choosingFilter = true } label: {
@@ -159,7 +175,7 @@ public struct AgentsHome: View {
     /// title and the account lives under You.
     @ViewBuilder
     private var title: some View {
-        if accounts.accounts.count > 1 || accounts.gate != .ready {
+        if switchable {
             Button { switcherOpen.toggle() } label: {
                 HStack(spacing: 5) {
                     Text("Agents")
@@ -254,13 +270,12 @@ public struct AgentsHome: View {
                 ? "\(entry.name) · nothing needs you"
                 : "\(entry.name) · \(waiting) need you"
         }
-        if accounts.gate == .ready || !model.rows.isEmpty { return model.subtitle }
-        // Not "Not signed in". A phone with no agents and no account is a
-        // phone at the start rather than a phone with something wrong with it;
-        // what is true about it is that it has paired with nothing yet. An
-        // account that has not bought anything really is missing something,
-        // and that one still says so.
-        return accounts.gate == .unsubscribed ? "Not subscribed" : "Nothing paired yet"
+        if !model.rows.isEmpty { return model.subtitle }
+        // Not "Not signed in" and not "Not subscribed". A phone with no agents
+        // is a phone that has paired with nothing, whatever its account is
+        // doing: amux is free on the network this phone is already on, so an
+        // empty list is never evidence that something has to be bought.
+        return "Nothing paired yet"
     }
 
     // MARK: - The list
@@ -282,7 +297,7 @@ public struct AgentsHome: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let exceptions {
-                    exceptionsLine(exceptions)
+                    exceptionsLine(exceptions.text, exceptions.act)
                 }
                 ForEach(sections) { section in
                     VStack(alignment: .leading, spacing: 8) {
@@ -320,7 +335,7 @@ public struct AgentsHome: View {
     @ViewBuilder
     private func agentRow(_ row: AgentRow) -> some View {
         let host = model.host(row.hostId)
-        let state = RowState(row: row, host: host)
+        let state = RowState(row: row, host: host, reach: model.reach(ofHost: row.hostId))
         let content = AgentRowView(
             row: row, state: state, host: host?.name, now: model.orderedAt)
         // An agent run by a provider this build has no case for is listed and
@@ -402,27 +417,31 @@ public struct AgentsHome: View {
     /// fills itself with counts nobody asked for. It is an exceptions line: it
     /// appears only when something is actually wrong, it takes one row when it
     /// does, and when everything is fine the top of the screen is the list.
-    private var exceptions: String? {
-        switch accounts.gate {
-        case .ready: model.exceptions
-        // Said once, where the one thing that is wrong goes. The rows below it
-        // are real; they are just not going to change until this is fixed.
-        case .signedOut: "Not signed in · nothing is live"
-        case .unsubscribed: "Not subscribed · nothing is live"
+    ///
+    /// The order is the one the desktop's banner follows, and for the same
+    /// reason: a connection that is down outranks everything, then a machine
+    /// the relay can see and this account may not reach, then a machine
+    /// nothing can reach on a phone with no account, and last the plain fact
+    /// that a machine is offline. A phone that can reach every machine it owns
+    /// shows none of it and is never asked for an account.
+    private var exceptions: (text: String, act: HomeAction)? {
+        if model.connection.state == .disconnected, let sentence = model.exceptions {
+            return (sentence, .openExceptions)
         }
+        if let away = model.awayHost {
+            return ("\(away) is away · subscribe to reach your agents from anywhere", .subscribe)
+        }
+        if !signedIn, model.unreachableHost != nil { return (SignInCopy.caption, .signIn) }
+        return model.exceptions.map { ($0, .openExceptions) }
     }
 
-    private func exceptionsLine(_ text: String) -> some View {
+    private func exceptionsLine(_ text: String, _ act: HomeAction) -> some View {
         Button {
-            switch accounts.gate {
-            case .ready: actions(.openExceptions)
-            case .signedOut: actions(.signIn)
-            case .unsubscribed: actions(.subscribe)
-            }
+            actions(act)
         } label: {
             Surface {
                 HStack(spacing: 11) {
-                    Image(systemName: accounts.gate == .ready ? "wifi.slash" : "person.slash")
+                    Image(systemName: glyph(for: act))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(design.inkMuted.color)
                         .frame(width: 18)
@@ -451,6 +470,15 @@ public struct AgentsHome: View {
         .identified("home.exceptions", label: text, value: text)
     }
 
+    /// What the line is about: a link that is down, or an account that would
+    /// open one.
+    private func glyph(for act: HomeAction) -> String {
+        switch act {
+        case .signIn, .subscribe: "person.slash"
+        default: "wifi.slash"
+        }
+    }
+
     // MARK: - Nothing to reach yet
 
     /// Not a splash: the real home screen, empty.
@@ -462,40 +490,12 @@ public struct AgentsHome: View {
     /// phone that has already found something on this network leads with that
     /// — there is nothing to type and nothing to sign into, and the machine is
     /// right there.
-    @ViewBuilder
-    private var gated: some View {
-        // An account that has not bought anything is a separate question and
-        // a later one: what it is missing is the relay, not a machine, and the
-        // screen that says so is the subscription's own.
-        if accounts.gate == .unsubscribed {
-            unsubscribed
-        } else {
-            nothingPairedYet
-        }
-    }
-
-    /// A signed-in account with nothing bought and nothing on screen.
-    private var unsubscribed: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("No hosts yet")
-                    .designFont(.screenTitle, design)
-                    .foregroundStyle(design.ink.color)
-                    .identified("home.empty.title", value: "No hosts yet")
-                Explain("Subscribe to pair one.")
-                    .identified("home.empty.explain")
-            }
-            Button { actions(.subscribe) } label: {
-                ActionLabel("Subscribe", kind: .primary, fill: true)
-            }
-            .buttonStyle(.amuxControl)
-            .accessibilityLabel("Subscribe")
-            .identified("home.empty.action", label: "Subscribe")
-        }
-        .padding(.horizontal, design.metrics.gutter)
-        .padding(.top, 40)
-    }
-
+    ///
+    /// There is one of these and not two. The screen that used to stand here
+    /// for an account with nothing bought said "Subscribe to pair one", which
+    /// was not true: pairing with a machine on this network has never needed a
+    /// subscription, and an empty phone that was told otherwise would have
+    /// paid to do something already free.
     private var nothingPairedYet: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -514,7 +514,9 @@ public struct AgentsHome: View {
                 .buttonStyle(.amuxControl)
                 .accessibilityLabel("Pair a Host")
                 .identified("home.empty.pair", label: "Pair a Host")
-                if accounts.gate == .signedOut { signInCallToAction }
+                if !signedIn {
+                    SignInCallToAction(identifier: "home.empty.signIn") { actions(.signIn) }
+                }
             }
             .padding(.horizontal, design.metrics.gutter)
             .padding(.top, 30)
@@ -577,24 +579,6 @@ public struct AgentsHome: View {
         return parts.joined(separator: ", ")
     }
 
-    /// The account, offered as the thing it actually buys.
-    ///
-    /// Under the pairing button and drawn as the quieter of the two, because
-    /// it is the second step and not the first: amux works on this network
-    /// without it, and a screen that led with signing in would teach that it
-    /// does not.
-    private var signInCallToAction: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button { actions(.signIn) } label: {
-                ActionLabel("Sign In", kind: .outline, fill: true)
-            }
-            .buttonStyle(.amuxControl)
-            .accessibilityLabel("Sign In")
-            .identified("home.empty.signIn", label: "Sign In")
-            Explain("Sign in to reach your agents from anywhere")
-                .identified("home.empty.signIn.caption")
-        }
-    }
 }
 
 private enum HomeFilter: String, CaseIterable, Identifiable {

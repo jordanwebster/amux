@@ -388,9 +388,10 @@ public struct AccountsState: Codable, Sendable, Equatable {
         public let id: String
         public let email: String
         public let signedIn: Bool
-        /// What this account may do and where that came from, in the words the
-        /// subscription row says it: *Active · App Store*, *Ended · amux.sh*,
-        /// *None*.
+        /// What the relay will carry for this account and where that was
+        /// bought, in the words the You page's relay row says it: *Subscribed
+        /// through the App Store*, *Included with this account*, *Not
+        /// subscribed · hosts on this network still work*.
         public let entitlement: String
         /// How many machines this account reached, where a connection has
         /// counted them.

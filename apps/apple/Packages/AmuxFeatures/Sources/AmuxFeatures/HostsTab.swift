@@ -426,6 +426,13 @@ public struct HostsTab: View {
         case .offline:
             if model.foundButUnreachable.contains(host.id) {
                 parts.append("found, not answering")
+            // Said because it settles which of two very different things is
+            // wrong. A machine that never signed in cannot be reached from
+            // anywhere but its own network whatever anybody buys, so the one
+            // thing to do about it is on the machine — and offering a
+            // subscription for it would be selling a fix that is not one.
+            } else if host.neverSignedIn {
+                parts.append("offline, not signed in")
             } else if let gone = model.wentOffline(host.id) {
                 parts.append("offline for \(since(gone))")
             } else {
@@ -457,6 +464,8 @@ public struct HostsTab: View {
         case .offline:
             if model.foundButUnreachable.contains(host.id) {
                 parts.append("found on this network and not answering")
+            } else if host.neverSignedIn {
+                parts.append("offline and never signed in")
             } else if let gone = model.wentOffline(host.id) {
                 parts.append("offline for \(since(gone))")
             } else {

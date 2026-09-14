@@ -1,162 +1,6 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "%@ is offline": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ is offline"
-          }
-        }
-      }
-    },
-    "%@, update amux to open it": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@, update amux to open it"
-          }
-        }
-      }
-    },
-    "A report includes a screenshot and available session and host records.": {
-      "comment": "Caption under the debug reporting actions on the You screen. Used in Accounts.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A report includes a screenshot and available session and host records."
-          }
-        }
-      }
-    },
-    "Agents on an offline host report their state as unknown.": {
-      "comment": "Explanation below the offline hosts group. Used in HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agents on an offline host report their state as unknown."
-          }
-        }
-      }
-    },
-    "Outside the working tree": {
-      "comment": "English app copy. Used in TranscriptRows.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Outside the working tree"
-          }
-        }
-      }
-    },
-    "Show Agents": {
-      "comment": "English app copy. Used in AgentsHome.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show Agents"
-          }
-        }
-      }
-    },
-    "STARTED": {
-      "comment": "English app copy. Used in Facts.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "STARTED"
-          }
-        }
-      }
-    },
-    "Turn on Local Network for amux in Settings to find hosts here.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Turn on Local Network for amux in Settings to find hosts here."
-          }
-        }
-      }
-    },
-    "amux cannot see this network": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "amux cannot see this network"
-          }
-        }
-      }
-    },
-    "in this session": {
-      "comment": "English app copy. Used in Facts.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "in this session"
-          }
-        }
-      }
-    },
-    "running": {
-      "comment": "English app copy. Used in Facts.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "running"
-          }
-        }
-      }
-    },
-    "in provider": {
-      "comment": "English app copy. Used in Facts.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "in provider"
-          }
-        }
-      }
-    },
-    "The mobile runtime stopped": {
-      "comment": "Fallback diagnostic for a stopped runtime that supplied no detail. Used by reports and the driving door.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The mobile runtime stopped"
-          }
-        }
-      }
-    },
     " ago": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
       "extractionState": "manual",
@@ -225,6 +69,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ agents started"
+          }
+        }
+      }
+    },
+    "%@ away": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ away"
           }
         }
       }
@@ -361,6 +217,42 @@
         }
       }
     },
+    "%@ is away · subscribe to reach your agents from anywhere": {
+      "comment": "English app copy. Substituted values appear as %@. The one line above the agents list when a host the relay can see cannot be reached. Used in AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is away · subscribe to reach your agents from anywhere"
+          }
+        }
+      }
+    },
+    "%@ is away, not live": {
+      "comment": "English app copy. Substituted values appear as %@. The same state read aloud on an agent row. Used in RowState.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is away, not live"
+          }
+        }
+      }
+    },
+    "%@ is offline": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is offline"
+          }
+        }
+      }
+    },
     "%@ is paired": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
       "extractionState": "manual",
@@ -381,6 +273,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ is unreachable"
+          }
+        }
+      }
+    },
+    "%@ line%@ in": {
+      "comment": "Prefix describing the selected line range in the review comment sheet.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ line%@ in"
           }
         }
       }
@@ -529,6 +433,30 @@
         }
       }
     },
+    "%@ · %@ need you": {
+      "comment": "Accessibility summary for an account and its number of agents waiting for attention.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@ need you"
+          }
+        }
+      }
+    },
+    "%@ · nothing needs you": {
+      "comment": "Accessibility summary for an account with no agents waiting for attention.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · nothing needs you"
+          }
+        }
+      }
+    },
     "%@ · turn ended": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift.",
       "extractionState": "manual",
@@ -585,6 +513,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@, remembered"
+          }
+        }
+      }
+    },
+    "%@, update amux to open it": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, update amux to open it"
           }
         }
       }
@@ -817,6 +757,18 @@
         }
       }
     },
+    "A host": {
+      "comment": "Stands in for a machine's name in the away line when no machine has been named. Used in AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A host"
+          }
+        }
+      }
+    },
     "A question this build cannot answer": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
       "extractionState": "manual",
@@ -825,6 +777,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "A question this build cannot answer"
+          }
+        }
+      }
+    },
+    "A report includes a screenshot and available session and host records.": {
+      "comment": "Caption under the debug reporting actions on the You screen. Used in Accounts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A report includes a screenshot and available session and host records."
+          }
+        }
+      }
+    },
+    "A subscription connects this phone to your hosts. Without one, nothing is reachable.": {
+      "comment": "Explanation on the subscription paywall.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A subscription connects this phone to your hosts. Without one, nothing is reachable."
           }
         }
       }
@@ -973,6 +949,30 @@
         }
       }
     },
+    "Agents on an offline host report their state as unknown.": {
+      "comment": "Explanation below the offline hosts group. Used in HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents on an offline host report their state as unknown."
+          }
+        }
+      }
+    },
+    "Agents on an offline host report their state as unknown. A host found here that will not answer may be on a network that blocks amux.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents on an offline host report their state as unknown. A host found here that will not answer may be on a network that blocks amux."
+          }
+        }
+      }
+    },
     "Agents, switch account": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
       "extractionState": "manual",
@@ -981,6 +981,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Agents, switch account"
+          }
+        }
+      }
+    },
+    "All Agents": {
+      "comment": "Agents home filter option that includes every agent.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All Agents"
           }
         }
       }
@@ -1008,6 +1020,18 @@
           }
         }
       }
+    },
+    "Allow microphone and speech access to dictate. Your draft stays here.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow microphone and speech access to dictate. Your draft stays here."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
     },
     "Always allow access": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/AskPanels.swift.",
@@ -1153,6 +1177,18 @@
         }
       }
     },
+    "Away": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Away"
+          }
+        }
+      }
+    },
     "Back to %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DiffPage.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
       "extractionState": "manual",
@@ -1285,14 +1321,14 @@
         }
       }
     },
-    "Match this fingerprint with the one printed by the host.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
+    "Check the parser before the wire format.": {
+      "comment": "Example draft in dictation state captures.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Match this fingerprint with the one printed by the host."
+            "value": "Check the parser before the wire format."
           }
         }
       }
@@ -1633,6 +1669,42 @@
         }
       }
     },
+    "Dictate messages with speech recognition on this iPhone.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dictate messages with speech recognition on this iPhone."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Dictation isn’t available right now. You can keep typing.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dictation isn’t available right now. You can keep typing."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
+    "Dictation needs microphone and speech access. You can allow them in Settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dictation needs microphone and speech access. You can allow them in Settings."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
     "Directory": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
       "extractionState": "manual",
@@ -1777,6 +1849,18 @@
         }
       }
     },
+    "Filter Agents": {
+      "comment": "Accessibility label for the Agents home filter button.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filter Agents"
+          }
+        }
+      }
+    },
     "Fingerprint": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
       "extractionState": "manual",
@@ -1849,6 +1933,18 @@
         }
       }
     },
+    "Getting ready to listen. Your draft stays here.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Getting ready to listen. Your draft stays here."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
     "Has a question": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift.",
       "extractionState": "manual",
@@ -1893,6 +1989,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Host"
+          }
+        }
+      }
+    },
+    "Host Default": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host Default"
           }
         }
       }
@@ -1945,6 +2053,18 @@
         }
       }
     },
+    "Included with this account": {
+      "comment": "What the relay will carry for an account that was given its access rather than buying it, on the You screen. Used in Store.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Included with this account"
+          }
+        }
+      }
+    },
     "Interrupted": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift.",
       "extractionState": "manual",
@@ -1977,6 +2097,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Its edits stay. Nothing is reverted."
+          }
+        }
+      }
+    },
+    "Its invitation names no address here, so it can only be reached through the relay. Sign in and this phone can take it up.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its invitation names no address here, so it can only be reached through the relay. Sign in and this phone can take it up."
           }
         }
       }
@@ -2041,6 +2173,18 @@
         }
       }
     },
+    "Listening. Tap Stop Dictation when you’re done.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listening. Tap Stop Dictation when you’re done."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
     "Manage your subscription in the App Store.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift.",
       "extractionState": "manual",
@@ -2061,6 +2205,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Manage your subscription on amux.sh."
+          }
+        }
+      }
+    },
+    "Match this fingerprint with the one printed by the host.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Match this fingerprint with the one printed by the host."
           }
         }
       }
@@ -2161,6 +2317,18 @@
         }
       }
     },
+    "Needs You": {
+      "comment": "Agents home filter option that includes agents waiting for attention.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs You"
+          }
+        }
+      }
+    },
     "Needs permission": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Components.swift.",
       "extractionState": "manual",
@@ -2193,6 +2361,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "New Agent"
+          }
+        }
+      }
+    },
+    "No agents yet": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No agents yet"
           }
         }
       }
@@ -2241,6 +2421,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "No repositories under %@."
+          }
+        }
+      }
+    },
+    "Nobody let amux look at the network this phone is on, so no host on it can be found. Turn on Local Network for amux in Settings.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nobody let amux look at the network this phone is on, so no host on it can be found. Turn on Local Network for amux in Settings."
           }
         }
       }
@@ -2329,6 +2521,18 @@
         }
       }
     },
+    "Not subscribed · hosts on this network still work": {
+      "comment": "What the relay will carry for an account that has bought nothing, said with what still works, on the You screen. Used in Store.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not subscribed · hosts on this network still work"
+          }
+        }
+      }
+    },
     "Not subscribed · nothing is live": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
       "extractionState": "manual",
@@ -2377,6 +2581,18 @@
         }
       }
     },
+    "Nothing paired yet": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing paired yet"
+          }
+        }
+      }
+    },
     "Nothing was deleted": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DeleteAccount.swift.",
       "extractionState": "manual",
@@ -2401,6 +2617,18 @@
         }
       }
     },
+    "Offline · amux could not start": {
+      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/Events.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline · amux could not start"
+          }
+        }
+      }
+    },
     "Offline · check your connection": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/Events.swift.",
       "extractionState": "manual",
@@ -2421,18 +2649,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Offline · reconnecting"
-          }
-        }
-      }
-    },
-    "Offline · amux could not start": {
-      "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/Events.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Offline · amux could not start"
           }
         }
       }
@@ -2473,6 +2689,30 @@
         }
       }
     },
+    "On this network": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "On this network"
+          }
+        }
+      }
+    },
+    "Open Settings": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Settings"
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
     "Opening %@…": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
       "extractionState": "manual",
@@ -2509,6 +2749,18 @@
         }
       }
     },
+    "Outside the working tree": {
+      "comment": "English app copy. Used in TranscriptRows.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Outside the working tree"
+          }
+        }
+      }
+    },
     "Outside what it may touch": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/TranscriptRows.swift.",
       "extractionState": "manual",
@@ -2517,6 +2769,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Outside what it may touch"
+          }
+        }
+      }
+    },
+    "Over SSH": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Over SSH"
           }
         }
       }
@@ -2577,6 +2841,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pair with %@?"
+          }
+        }
+      }
+    },
+    "Pair with a host and its agents appear here.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pair with a host and its agents appear here."
           }
         }
       }
@@ -2797,6 +3073,18 @@
         }
       }
     },
+    "Reach your agents\nanywhere": {
+      "comment": "Two-line heading on the subscription paywall.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reach your agents\nanywhere"
+          }
+        }
+      }
+    },
     "Reach your agents anywhere": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift.",
       "extractionState": "manual",
@@ -2805,6 +3093,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Reach your agents anywhere"
+          }
+        }
+      }
+    },
+    "Reach your agents from anywhere": {
+      "comment": "Headline of the offer to subscribe, wherever a host the relay can see cannot be reached. Used in AccountCalls.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reach your agents from anywhere"
           }
         }
       }
@@ -2889,6 +3189,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Reconnecting"
+          }
+        }
+      }
+    },
+    "Relay": {
+      "comment": "Label of the row on the You screen that says what the relay will carry for this account. Used in Accounts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relay"
           }
         }
       }
@@ -3133,6 +3445,18 @@
         }
       }
     },
+    "Run amux on a computer on this network and it appears here. Pair with a host by the code it prints.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run amux on a computer on this network and it appears here. Pair with a host by the code it prints."
+          }
+        }
+      }
+    },
     "Run amux pair on %@ to get one.": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
       "extractionState": "manual",
@@ -3141,6 +3465,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Run amux pair on %@ to get one."
+          }
+        }
+      }
+    },
+    "Run amux pair on one of these and enter the code it prints.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run amux pair on one of these and enter the code it prints."
           }
         }
       }
@@ -3165,6 +3501,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Running"
+          }
+        }
+      }
+    },
+    "STARTED": {
+      "comment": "English app copy. Used in Facts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "STARTED"
           }
         }
       }
@@ -3217,6 +3565,30 @@
         }
       }
     },
+    "Show": {
+      "comment": "Accessibility title for the Agents home filter picker.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show"
+          }
+        }
+      }
+    },
+    "Show Agents": {
+      "comment": "English app copy. Used in AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Agents"
+          }
+        }
+      }
+    },
     "Show Tasks": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Facts.swift.",
       "extractionState": "manual",
@@ -3253,6 +3625,30 @@
         }
       }
     },
+    "Sign in": {
+      "comment": "Heading on the sign-in screen.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in"
+          }
+        }
+      }
+    },
+    "Sign in on %@": {
+      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in on %@"
+          }
+        }
+      }
+    },
     "Sign in to pair one.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
       "extractionState": "manual",
@@ -3261,6 +3657,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sign in to pair one."
+          }
+        }
+      }
+    },
+    "Sign in to reach your agents from anywhere": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to reach your agents from anywhere"
           }
         }
       }
@@ -3289,14 +3697,14 @@
         }
       }
     },
-    "Sign in on %@": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
+    "Signed in on %@": {
+      "comment": "Sign-in explainer naming the website host.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sign in on %@"
+            "value": "Signed in on %@"
           }
         }
       }
@@ -3385,6 +3793,18 @@
         }
       }
     },
+    "Stop Dictation": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop Dictation"
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
+    },
     "Studio": {
       "comment": "English app copy. Used in ios/Packages/AmuxDesign/Sources/AmuxDesign/Design.swift.",
       "extractionState": "manual",
@@ -3469,6 +3889,30 @@
         }
       }
     },
+    "Subscribed on the web": {
+      "comment": "What the relay will carry for an account whose subscription was bought on amux.sh, on the You screen. Used in Store.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Subscribed on the web"
+          }
+        }
+      }
+    },
+    "Subscribed through the App Store": {
+      "comment": "What the relay will carry for an account whose subscription was bought in the App Store, on the You screen. Used in Store.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Subscribed through the App Store"
+          }
+        }
+      }
+    },
     "Subscription": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/Store.swift.",
       "extractionState": "manual",
@@ -3513,6 +3957,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "That did not go through"
+          }
+        }
+      }
+    },
+    "That host is not on this network": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That host is not on this network"
           }
         }
       }
@@ -3577,6 +4033,18 @@
         }
       }
     },
+    "The invitation is kept until then.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The invitation is kept until then."
+          }
+        }
+      }
+    },
     "The last message has not been acknowledged yet.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/ConversationFoot.swift.",
       "extractionState": "manual",
@@ -3585,6 +4053,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "The last message has not been acknowledged yet."
+          }
+        }
+      }
+    },
+    "The mobile runtime stopped": {
+      "comment": "Fallback diagnostic for a stopped runtime that supplied no detail. Used by reports and the driving door.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The mobile runtime stopped"
           }
         }
       }
@@ -3612,6 +4092,54 @@
           }
         }
       }
+    },
+    "The relay can see %@ and cannot carry its agents to this phone. A subscription opens the tunnel. Hosts on this network never need one.": {
+      "comment": "English app copy. Substituted values appear as %@. Why a named host cannot be reached and what would reach it. Used in AccountCalls.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The relay can see %@ and cannot carry its agents to this phone. A subscription opens the tunnel. Hosts on this network never need one."
+          }
+        }
+      }
+    },
+    "The relay can see these. Reaching them from anywhere needs a subscription.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The relay can see these. Reaching them from anywhere needs a subscription."
+          }
+        }
+      }
+    },
+    "The relay can see this host and cannot carry agents to it on this account. A subscription opens the tunnel. Hosts on this network never need one.": {
+      "comment": "Why a host cannot be reached and what would reach it, where the host is not named. Used in AccountCalls.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The relay can see this host and cannot carry agents to it on this account. A subscription opens the tunnel. Hosts on this network never need one."
+          }
+        }
+      }
+    },
+    "The relay has no address": {
+      "comment": "Sign-in persistence or runtime connection failure.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The relay has no address"
+          }
+        }
+      },
+      "extractionState": "manual"
     },
     "These agents’ state is unknown until the host returns.": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
@@ -3769,6 +4297,30 @@
         }
       }
     },
+    "This phone could not forget the sign-in": {
+      "comment": "Sign-in persistence or runtime connection failure.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone could not forget the sign-in"
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "This phone could not remember the sign-in. Please try again.": {
+      "comment": "Sign-in persistence or runtime connection failure.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This phone could not remember the sign-in. Please try again."
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
     "This phone has no connection to start an agent on.": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/NewAgentStore.swift.",
       "extractionState": "manual",
@@ -3829,6 +4381,18 @@
         }
       }
     },
+    "Through the relay": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Through the relay"
+          }
+        }
+      }
+    },
     "Try Again": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
       "extractionState": "manual",
@@ -3841,6 +4405,18 @@
         }
       }
     },
+    "Turn on Local Network for amux in Settings to find hosts here.": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on Local Network for amux in Settings to find hosts here."
+          }
+        }
+      }
+    },
     "Type %@ to confirm": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DeleteAccount.swift.",
       "extractionState": "manual",
@@ -3849,6 +4425,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Type %@ to confirm"
+          }
+        }
+      }
+    },
+    "Type your email to confirm": {
+      "comment": "Instruction above the account deletion confirmation field.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type your email to confirm"
           }
         }
       }
@@ -3912,6 +4500,18 @@
           }
         }
       }
+    },
+    "Use the microphone to dictate into your message.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the microphone to dictate into your message."
+          }
+        }
+      },
+      "comment": "Composer dictation state, control, or system permission explanation.",
+      "extractionState": "manual"
     },
     "Waiting for approval": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift.",
@@ -4225,6 +4825,30 @@
         }
       }
     },
+    "Your hosts could not be reached. Try again when you’re connected.": {
+      "comment": "Sign-in persistence or runtime connection failure.",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your hosts could not be reached. Try again when you’re connected."
+          }
+        }
+      },
+      "extractionState": "manual"
+    },
+    "Your other devices follow within a few minutes.": {
+      "comment": "What happens on devices other than this one after a purchase, on the subscription screen. Used in Paywall.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your other devices follow within a few minutes."
+          }
+        }
+      }
+    },
     "Your purchase is not confirmed yet": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift.",
       "extractionState": "manual",
@@ -4257,6 +4881,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "Your purchase is saved, but amux.sh could not confirm it: %@"
+          }
+        }
+      }
+    },
+    "Your subscription is still switching on": {
+      "comment": "Paywall heading while an accepted purchase is waiting for subscription access.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your subscription is still switching on"
           }
         }
       }
@@ -4453,6 +5089,18 @@
         }
       }
     },
+    "amux cannot see this network": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "amux cannot see this network"
+          }
+        }
+      }
+    },
     "amux.sh answered in a shape this app does not know": {
       "comment": "English app copy. Used in ios/Packages/AmuxCore/Sources/AmuxCore/AmuxCloud.swift.",
       "extractionState": "manual",
@@ -4485,6 +5133,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "amux.sh did not recognise this sign-in"
+          }
+        }
+      }
+    },
+    "amux.sh has your purchase and is still turning your subscription on. Tap Retry in a moment to check again.": {
+      "comment": "Paywall explanation and retry guidance while an accepted purchase is waiting for subscription access.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "amux.sh has your purchase and is still turning your subscription on. Tap Retry in a moment to check again."
           }
         }
       }
@@ -4633,6 +5293,18 @@
         }
       }
     },
+    "away": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "away"
+          }
+        }
+      }
+    },
     "blocked by %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DeleteAccount.swift.",
       "extractionState": "manual",
@@ -4701,6 +5373,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "current"
+          }
+        }
+      }
+    },
+    "direct": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "direct"
           }
         }
       }
@@ -4801,6 +5485,54 @@
         }
       }
     },
+    "found": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "found"
+          }
+        }
+      }
+    },
+    "found on this network and not answering": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "found on this network and not answering"
+          }
+        }
+      }
+    },
+    "found, not answering": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "found, not answering"
+          }
+        }
+      }
+    },
+    "found, not paired": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "found, not paired"
+          }
+        }
+      }
+    },
     "handing off": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/SignIn.swift.",
       "extractionState": "manual",
@@ -4821,18 +5553,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "has a question"
-          }
-        }
-      }
-    },
-    "Host Default": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Host Default"
           }
         }
       }
@@ -4869,6 +5589,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "in progress"
+          }
+        }
+      }
+    },
+    "in provider": {
+      "comment": "English app copy. Used in Facts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in provider"
+          }
+        }
+      }
+    },
+    "in this session": {
+      "comment": "English app copy. Used in Facts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "in this session"
           }
         }
       }
@@ -5029,6 +5773,18 @@
         }
       }
     },
+    "not live": {
+      "comment": "What an agent row says about a machine the relay can see and will not carry to. Used in RowState.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not live"
+          }
+        }
+      }
+    },
     "not paired": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
       "extractionState": "manual",
@@ -5077,6 +5833,18 @@
         }
       }
     },
+    "offline and never signed in": {
+      "comment": "The same fact read aloud on a host row. Used in HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "offline and never signed in"
+          }
+        }
+      }
+    },
     "offline for %@": {
       "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
       "extractionState": "manual",
@@ -5097,6 +5865,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "offline, cannot start here"
+          }
+        }
+      }
+    },
+    "offline, not signed in": {
+      "comment": "What a host row says when nothing can reach a machine that has never had an account. Used in HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "offline, not signed in"
           }
         }
       }
@@ -5161,6 +5941,30 @@
         }
       }
     },
+    "reachable on this network": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "reachable on this network"
+          }
+        }
+      }
+    },
+    "reachable through the relay": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "reachable through the relay"
+          }
+        }
+      }
+    },
     "reachable via relay": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/NewAgent.swift.",
       "extractionState": "manual",
@@ -5197,6 +6001,18 @@
         }
       }
     },
+    "running": {
+      "comment": "English app copy. Used in Facts.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "running"
+          }
+        }
+      }
+    },
     "s": {
       "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/DiffPage.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Transcript.swift.",
       "extractionState": "manual",
@@ -5205,6 +6021,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "s"
+          }
+        }
+      }
+    },
+    "seen by the relay and not reachable from here": {
+      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "seen by the relay and not reachable from here"
           }
         }
       }
@@ -5289,6 +6117,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "starting"
+          }
+        }
+      }
+    },
+    "switching on": {
+      "comment": "Subscription access state, also exposed to accessibility and the driving door.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "switching on"
           }
         }
       }
@@ -5649,666 +6489,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "withheld"
-          }
-        }
-      }
-    },
-    "The relay has no address": {
-      "comment": "Sign-in persistence or runtime connection failure.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The relay has no address"
-          }
-        }
-      },
-      "extractionState": "manual"
-    },
-    "This phone could not forget the sign-in": {
-      "comment": "Sign-in persistence or runtime connection failure.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This phone could not forget the sign-in"
-          }
-        }
-      },
-      "extractionState": "manual"
-    },
-    "This phone could not remember the sign-in. Please try again.": {
-      "comment": "Sign-in persistence or runtime connection failure.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This phone could not remember the sign-in. Please try again."
-          }
-        }
-      },
-      "extractionState": "manual"
-    },
-    "Your hosts could not be reached. Try again when you’re connected.": {
-      "comment": "Sign-in persistence or runtime connection failure.",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Your hosts could not be reached. Try again when you’re connected."
-          }
-        }
-      },
-      "extractionState": "manual"
-    },
-    "Allow microphone and speech access to dictate. Your draft stays here.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Allow microphone and speech access to dictate. Your draft stays here."
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Dictate messages with speech recognition on this iPhone.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dictate messages with speech recognition on this iPhone."
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Dictation isn’t available right now. You can keep typing.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dictation isn’t available right now. You can keep typing."
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Dictation needs microphone and speech access. You can allow them in Settings.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dictation needs microphone and speech access. You can allow them in Settings."
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Getting ready to listen. Your draft stays here.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Getting ready to listen. Your draft stays here."
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Listening. Tap Stop Dictation when you’re done.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Listening. Tap Stop Dictation when you’re done."
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Open Settings": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open Settings"
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Stop Dictation": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stop Dictation"
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Use the microphone to dictate into your message.": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Use the microphone to dictate into your message."
-          }
-        }
-      },
-      "comment": "Composer dictation state, control, or system permission explanation.",
-      "extractionState": "manual"
-    },
-    "Check the parser before the wire format.": {
-      "comment": "Example draft in dictation state captures.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Check the parser before the wire format."
-          }
-        }
-      }
-    },
-    "switching on": {
-      "comment": "Subscription access state, also exposed to accessibility and the driving door.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "switching on"
-          }
-        }
-      }
-    },
-    "Your subscription is still switching on": {
-      "comment": "Paywall heading while an accepted purchase is waiting for subscription access.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Your subscription is still switching on"
-          }
-        }
-      }
-    },
-    "amux.sh has your purchase and is still turning your subscription on. Tap Retry in a moment to check again.": {
-      "comment": "Paywall explanation and retry guidance while an accepted purchase is waiting for subscription access.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "amux.sh has your purchase and is still turning your subscription on. Tap Retry in a moment to check again."
-          }
-        }
-      }
-    },
-    "Show": {
-      "comment": "Accessibility title for the Agents home filter picker.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show"
-          }
-        }
-      }
-    },
-    "Filter Agents": {
-      "comment": "Accessibility label for the Agents home filter button.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Filter Agents"
-          }
-        }
-      }
-    },
-    "%@ · nothing needs you": {
-      "comment": "Accessibility summary for an account with no agents waiting for attention.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ · nothing needs you"
-          }
-        }
-      }
-    },
-    "%@ · %@ need you": {
-      "comment": "Accessibility summary for an account and its number of agents waiting for attention.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ · %@ need you"
-          }
-        }
-      }
-    },
-    "All Agents": {
-      "comment": "Agents home filter option that includes every agent.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "All Agents"
-          }
-        }
-      }
-    },
-    "Needs You": {
-      "comment": "Agents home filter option that includes agents waiting for attention.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Needs You"
-          }
-        }
-      }
-    },
-    "Type your email to confirm": {
-      "comment": "Instruction above the account deletion confirmation field.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Type your email to confirm"
-          }
-        }
-      }
-    },
-    "%@ line%@ in": {
-      "comment": "Prefix describing the selected line range in the review comment sheet.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ line%@ in"
-          }
-        }
-      }
-    },
-    "Reach your agents\nanywhere": {
-      "comment": "Two-line heading on the subscription paywall.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reach your agents\nanywhere"
-          }
-        }
-      }
-    },
-    "A subscription connects this phone to your hosts. Without one, nothing is reachable.": {
-      "comment": "Explanation on the subscription paywall.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "A subscription connects this phone to your hosts. Without one, nothing is reachable."
-          }
-        }
-      }
-    },
-    "Sign in": {
-      "comment": "Heading on the sign-in screen.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sign in"
-          }
-        }
-      }
-    },
-    "Signed in on %@": {
-      "comment": "Sign-in explainer naming the website host.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Signed in on %@"
-          }
-        }
-      }
-    },
-    "%@ away": {
-      "comment": "English app copy. Substituted values appear as %@. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ away"
-          }
-        }
-      }
-    },
-    "Agents on an offline host report their state as unknown. A host found here that will not answer may be on a network that blocks amux.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agents on an offline host report their state as unknown. A host found here that will not answer may be on a network that blocks amux."
-          }
-        }
-      }
-    },
-    "Away": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Away"
-          }
-        }
-      }
-    },
-    "Its invitation names no address here, so it can only be reached through the relay. Sign in and this phone can take it up.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Its invitation names no address here, so it can only be reached through the relay. Sign in and this phone can take it up."
-          }
-        }
-      }
-    },
-    "No agents yet": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No agents yet"
-          }
-        }
-      }
-    },
-    "Nobody let amux look at the network this phone is on, so no host on it can be found. Turn on Local Network for amux in Settings.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nobody let amux look at the network this phone is on, so no host on it can be found. Turn on Local Network for amux in Settings."
-          }
-        }
-      }
-    },
-    "Nothing paired yet": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nothing paired yet"
-          }
-        }
-      }
-    },
-    "On this network": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "On this network"
-          }
-        }
-      }
-    },
-    "Over SSH": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Over SSH"
-          }
-        }
-      }
-    },
-    "Pair with a host and its agents appear here.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pair with a host and its agents appear here."
-          }
-        }
-      }
-    },
-    "Run amux on a computer on this network and it appears here. Pair with a host by the code it prints.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Run amux on a computer on this network and it appears here. Pair with a host by the code it prints."
-          }
-        }
-      }
-    },
-    "Sign in to reach your agents from anywhere": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sign in to reach your agents from anywhere"
-          }
-        }
-      }
-    },
-    "That host is not on this network": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "That host is not on this network"
-          }
-        }
-      }
-    },
-    "The invitation is kept until then.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The invitation is kept until then."
-          }
-        }
-      }
-    },
-    "The relay can see these. Reaching them from anywhere needs a subscription.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The relay can see these. Reaching them from anywhere needs a subscription."
-          }
-        }
-      }
-    },
-    "Through the relay": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/Pairing.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Through the relay"
-          }
-        }
-      }
-    },
-    "away": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "away"
-          }
-        }
-      }
-    },
-    "direct": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "direct"
-          }
-        }
-      }
-    },
-    "found": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "found"
-          }
-        }
-      }
-    },
-    "found on this network and not answering": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "found on this network and not answering"
-          }
-        }
-      }
-    },
-    "found, not answering": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "found, not answering"
-          }
-        }
-      }
-    },
-    "found, not paired": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/AgentsHome.swift, ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "found, not paired"
-          }
-        }
-      }
-    },
-    "reachable on this network": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "reachable on this network"
-          }
-        }
-      }
-    },
-    "reachable through the relay": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "reachable through the relay"
-          }
-        }
-      }
-    },
-    "seen by the relay and not reachable from here": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "seen by the relay and not reachable from here"
-          }
-        }
-      }
-    },
-    "Run amux pair on one of these and enter the code it prints.": {
-      "comment": "English app copy. Used in ios/Packages/AmuxFeatures/Sources/AmuxFeatures/HostsTab.swift.",
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Run amux pair on one of these and enter the code it prints."
           }
         }
       }

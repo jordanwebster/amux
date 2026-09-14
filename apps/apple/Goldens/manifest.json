@@ -928,6 +928,84 @@
         "light",
         "dark"
       ]
+    },
+    {
+      "id": "host-away",
+      "stage": 10,
+      "screen": "home",
+      "fixture": "host-away",
+      "origin": "added_state",
+      "reason": "an account with nothing bought whose machines the relay can see: the agents stay listed from the cache and every row says it is not live, with the one thing that would change that named above them",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "home-signed-out-offline",
+      "stage": 10,
+      "screen": "home",
+      "fixture": "home-signed-out-offline",
+      "origin": "added_state",
+      "reason": "a phone nobody is signed into that has lost sight of one of its machines: the agents stay, the machine is named, and an account is offered as what would find it from elsewhere",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "home-all-reachable",
+      "stage": 10,
+      "screen": "home",
+      "fixture": "home-all-reachable",
+      "origin": "added_state",
+      "reason": "every machine reachable and nothing offered, which is what makes the other two conditional rather than decorative",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "chat-subscribe",
+      "stage": 10,
+      "screen": "run",
+      "fixture": "chat-subscribe",
+      "origin": "added_state",
+      "reason": "a conversation on a machine the relay can see and will not carry to: the transcript is the cache and the composer's place holds the one thing that would make it live",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "host-offline",
+      "stage": 10,
+      "screen": "offline",
+      "fixture": "host-offline",
+      "origin": "added_state",
+      "reason": "the same unsubscribed account on a machine that is switched off, which is never sold anything: no subscription reaches a machine that is not there",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "host-not-signed-in",
+      "stage": 10,
+      "screen": "hosts",
+      "fixture": "host-not-signed-in",
+      "origin": "added_state",
+      "reason": "a machine nothing can reach that has never had an account, which no subscription would reach either",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
     }
   ]
 }

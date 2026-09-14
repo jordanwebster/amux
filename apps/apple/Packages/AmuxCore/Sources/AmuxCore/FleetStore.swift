@@ -27,6 +27,14 @@ public final class FleetStore {
     public private(set) var epoch: UInt64 = 0
     public private(set) var hosts: [HostId: HostEntry] = [:]
     public private(set) var connection = ConnectionUpdate(state: .connecting)
+    /// Whether anybody is signed in and what the relay will carry for them, as
+    /// the link itself reports it.
+    ///
+    /// The home reads it for one question only: whether an account is worth
+    /// offering. Read from the link rather than asked of the account service,
+    /// because what decides whether a machine can be used is the credential
+    /// the relay holds.
+    public private(set) var cloud: CloudState = .signedOut
 
     /// "3 need you · 12 agents", or the quiet form.
     public var subtitle: String {
@@ -108,8 +116,10 @@ public final class FleetStore {
             let wasConnected = connection.state == .connected
             connection = update
             if !wasConnected && update.state == .connected { Signposts.emit(.streamConnected) }
+        case .cloudState(let state):
+            cloud = state
         case .feed, .session, .opResult, .diff, .discovered, .tokenRequest, .invariant, .devices,
-             .attention, .cloudState:
+             .attention:
             break
         }
     }
@@ -149,6 +159,32 @@ public final class FleetStore {
     }
 
     public func host(_ id: HostId) -> HostEntry? { hosts[id] }
+
+    /// Where a machine is, under the rule the Hosts tab groups by.
+    public func reach(of host: HostEntry) -> HostReach { host.reach(tier: cloud.tier) }
+
+    /// Where the machine an agent runs on is, or nothing where the fleet has
+    /// not named that machine yet.
+    public func reach(ofHost id: HostId?) -> HostReach? {
+        guard let id, let host = hosts[id] else { return nil }
+        return reach(of: host)
+    }
+
+    /// The machine the relay can see and this account may not tunnel to, or
+    /// nothing where there is none.
+    ///
+    /// Named rather than counted: the one line a home is allowed above the
+    /// list says which machine, and a count would leave a reader looking for
+    /// it. Alphabetical where there are several, so two runs say the same
+    /// thing.
+    public var awayHost: String? {
+        hosts.values.filter { reach(of: $0) == .away }.map(\.name).sorted().first
+    }
+
+    /// The machine no route reaches, on the same terms.
+    public var unreachableHost: String? {
+        hosts.values.filter { reach(of: $0) == .offline }.map(\.name).sorted().first
+    }
 
     /// What this agent is called, for a screen that has an identity and needs
     /// a name.

@@ -275,7 +275,7 @@ final class OnrampTests: JourneyCase {
         try handOverWhatIsOnTheNetwork()
         let back = waitUntil(within: 120) {
             (try? self.said(self.declared(self.runner, settling: false),
-                            "hosts.row.\(self.cast.workstation)")?.value) == "reachable"
+                            "hosts.row.\(self.cast.workstation)")?.value) == "on-this-network"
         }
         record["afterItCameBack"] = said(try declared(runner), "hosts.row.\(cast.workstation)")?.value ?? ""
         record["accountsWhenItCameBack"] = try accountsOnThisPhone()

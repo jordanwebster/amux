@@ -183,13 +183,14 @@ public struct Shell: View {
         switch route {
         case .conversation(let agent):
             ConversationPage(
-                agent: agent, router: router, stores: stores, recording: recording)
+                agent: agent, router: router, stores: stores, recording: recording,
+                actions: actions)
         case .changes(let agent):
             ChangesPage(agent: agent, router: router, stores: stores)
         case .newAgent:
             NewAgentPage(router: router, stores: stores)
         case .pairByCode(let host):
-            PairByCodePage(host: host, router: router, stores: stores)
+            PairByCodePage(host: host, router: router, stores: stores, actions: actions)
         case .pairConfirmation(let invitation):
             PairConfirmationPage(
                 invitation: invitation, router: router, stores: stores, actions: actions)
@@ -252,6 +253,10 @@ private struct ConversationPage: View {
     /// Where a report of this conversation is recorded, and where a replay of
     /// one left what it is to be put back showing. Nothing in the shipping app.
     let recording: ConversationRecording?
+    /// What leaves this page and the shell entirely — buying the relay tunnel
+    /// to the machine this conversation runs on, which is nothing a
+    /// conversation or a router can do.
+    let actions: @MainActor (ShellAction) -> Void
     /// Whose screen this is while it is out: view state, because a drawer is
     /// something this page is doing and not somewhere the app has gone.
     ///
@@ -268,11 +273,16 @@ private struct ConversationPage: View {
     @State private var pickingPhoto = false
     @State private var pickingFile = false
     @State private var picked: PhotosPickerItem?
-    init(agent: AgentId, router: Router, stores: StoreBundle, recording: ConversationRecording?) {
+    init(
+        agent: AgentId, router: Router, stores: StoreBundle,
+        recording: ConversationRecording?,
+        actions: @escaping @MainActor (ShellAction) -> Void
+    ) {
         self.agent = agent
         self.router = router
         self.stores = stores
         self.recording = recording
+        self.actions = actions
         _open = State(initialValue: recording?.showing[agent] == ConversationRecording.drawer)
     }
 
@@ -303,6 +313,11 @@ private struct ConversationPage: View {
                 // the wait the connection is already in and nothing more, so
                 // pressing it repeatedly is one attempt.
                 case .retry: stores.retryNow()
+                // Not a retry. The machine is answering the relay perfectly
+                // well and the relay will not carry anything to it on this
+                // account, so what is offered is the subscription and the
+                // page that sells it is the one every other offer opens.
+                case .subscribe: actions(.subscribe)
                 // Answering is the one thing on this screen that leaves the
                 // phone. The panel spells the command, because only it knows
                 // which ask this is and which layer raised it; the bundle
@@ -694,6 +709,9 @@ private struct PairByCodePage: View {
     let host: HostId?
     let router: Router
     let stores: StoreBundle
+    /// Buying the relay tunnel, for the one refusal a code cannot be typed out
+    /// of: the machine answered and this account may not open one to it.
+    let actions: @MainActor (ShellAction) -> Void
 
     var body: some View {
         page
@@ -706,7 +724,7 @@ private struct PairByCodePage: View {
         switch stores.pairing.phase {
         // A refusal belongs to the digits: it is the code that did not work,
         // and the next thing to do is type another one.
-        case .entering, .checking, .refused: digits
+        case .entering, .checking, .refused, .needsSubscription: digits
         case .confirming, .trusted: decision
         }
     }
@@ -718,6 +736,7 @@ private struct PairByCodePage: View {
             // A code cannot reach any of these — nothing on the keypad
             // authenticates, and an account is not what a typed code needs.
             case .confirm, .abandon, .signIn: break
+            case .subscribe: actions(.subscribe)
             case .cancel: router.pop()
             }
         }
@@ -734,7 +753,7 @@ private struct PairByCodePage: View {
             // refusing a machine is try the code for the right one.
             case .abandon(let peer): stores.abandonPairing(peer)
             case .cancel: router.pop()
-            case .digits, .signIn: break
+            case .digits, .signIn, .subscribe: break
             }
         }
     }
@@ -777,7 +796,7 @@ private struct PairConfirmationPage: View {
                 switch action {
                 case .signIn: actions(.signIn)
                 case .cancel: router.pop()
-                case .confirm, .abandon, .digits: break
+                case .confirm, .abandon, .digits, .subscribe: break
                 }
             }
         } else {
@@ -803,6 +822,7 @@ private struct PairConfirmationPage: View {
                 router.pop()
             case .cancel: router.pop()
             case .digits, .signIn: break
+            case .subscribe: actions(.subscribe)
             }
         }
     }

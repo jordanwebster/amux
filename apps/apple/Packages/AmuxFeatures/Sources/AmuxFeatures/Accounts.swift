@@ -253,6 +253,14 @@ public struct YouScreen: View {
                         .padding(.top, 8)
                         .identified("you.title", value: "You")
                     accountList
+                    // Offered here and nowhere above it. A phone with nobody
+                    // signed in is not a broken phone — it pairs and it runs
+                    // agents on this network — so the account is put where
+                    // somebody has come looking for one, said as the thing it
+                    // adds rather than as something missing.
+                    if !signedIn {
+                        SignInCallToAction(identifier: "you.signIn") { actions(.add) }
+                    }
                     if let entry = accounts.selectedAccount { account(entry) }
                     phone
                     help
@@ -266,6 +274,10 @@ public struct YouScreen: View {
         .accessibilityElement(children: .contain)
         .identified("you", value: accounts.selectedAccount?.account.email ?? "none")
     }
+
+    /// Whether any account on this phone is signed in. An account listed with
+    /// Sign In beside it is remembered, not signed in.
+    private var signedIn: Bool { accounts.accounts.contains(where: \.signedIn) }
 
     private var accountList: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -302,9 +314,13 @@ public struct YouScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHead(title: entry.name)
             VStack(spacing: 0) {
+                // Headed by what it buys rather than by what it is called.
+                // A subscription is the only thing anybody pays amux for and
+                // the relay is the only thing it carries, so the row that
+                // reports one says which: an account with nothing bought is
+                // not an account with nothing working.
                 row(
-                    entry.entitlement.noun, value: entry.entitlement.summary,
-                    id: "subscription"
+                    "Relay", value: entry.entitlement.summary, id: "subscription"
                 ) {
                     actions(.subscription)
                 }

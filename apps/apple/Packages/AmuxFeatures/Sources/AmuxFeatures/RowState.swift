@@ -22,6 +22,10 @@ enum RowState: Equatable {
     case working
     /// The machine that owns this agent is not answering.
     case hostOffline(String)
+    /// The relay can see the machine that owns this agent and will not carry
+    /// anything to it on this account. The row is the cache, and it stays on
+    /// the list: the agent exists, it is simply not being watched.
+    case hostAway(String)
     /// Amux no longer trusts its own guess that a turn is running, and says
     /// nothing rather than guessing again. See `word`.
     case unheard
@@ -41,13 +45,21 @@ enum RowState: Equatable {
     /// offline host's agents to `unknown` whatever they last wanted. Reading
     /// the host directly rather than only through the attention is what also
     /// catches a remembered row, which keeps the attention it was cached with.
-    init(row: AgentRow, host: HostEntry?) {
+    init(row: AgentRow, host: HostEntry?, reach: HostReach? = nil) {
         if case .unknown(let provider) = row.card.agent.kind {
             self = .unsupported(provider)
             return
         }
-        if let host, !host.online {
+        if let host, !host.online || reach == .offline {
             self = .hostOffline(host.name)
+            return
+        }
+        // Listed and not live. Nothing here is stale — the last thing this
+        // phone was told is still the last thing that was true — but nothing
+        // is arriving either, and a row that said "Working" about an agent no
+        // stream is reaching would be this phone guessing.
+        if let host, reach == .away {
+            self = .hostAway(host.name)
             return
         }
         switch row.attention {
@@ -81,6 +93,7 @@ enum RowState: Equatable {
         case .needsYou, .unheard: nil
         case .working: "Working"
         case .hostOffline(let machine): "\(machine) offline"
+        case .hostAway(let machine): "\(machine) away"
         case .unsupported(let provider): provider
         case .finished: "Finished"
         case .idle: "Idle"
@@ -95,6 +108,9 @@ enum RowState: Equatable {
         // said "Cannot be read", which named this app's own limitation and
         // left a reader with nothing to do and no idea what the agent was.
         case .unsupported: "update amux to open it"
+        // The one thing a reader needs from this row: what it says happened
+        // is remembered rather than watched.
+        case .hostAway: "not live"
         // Whatever the turn changed. An agent that has gone quiet since
         // finishing changed exactly what it changed, and the numbers are the
         // readable part; an absent count is not a zero and is never drawn as
@@ -107,8 +123,10 @@ enum RowState: Equatable {
     /// Whether the word has already named the machine, so the row does not
     /// print it again on its trailing edge.
     var namesTheHost: Bool {
-        if case .hostOffline = self { return true }
-        return false
+        switch self {
+        case .hostOffline, .hostAway: true
+        default: false
+        }
     }
 
     /// The mark, as the vocabulary the mark view speaks. Only a demand draws
@@ -126,6 +144,7 @@ enum RowState: Equatable {
         case .needsYou(let why): why.spoken
         case .working: "Working"
         case .hostOffline(let machine): "\(machine) is offline"
+        case .hostAway(let machine): "\(machine) is away, not live"
         case .unheard: nil
         case .unsupported(let provider): "\(provider), update amux to open it"
         case .finished: "Finished"
@@ -141,6 +160,7 @@ enum RowState: Equatable {
         case .needsYou(let why): why.spoken
         case .working: "working"
         case .hostOffline: "host-offline"
+        case .hostAway: "host-away"
         case .unheard: "unheard"
         case .unsupported: "unsupported"
         case .finished: "finished"

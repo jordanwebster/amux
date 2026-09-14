@@ -170,6 +170,45 @@ final class RowStateTests: XCTestCase {
         XCTAssertEqual(unheardOf, .working)
     }
 
+    // MARK: - A machine the relay can see and will not carry to
+
+    /// An agent on an away machine stays on the list and says it is not being
+    /// watched. Deleting the row would claim the agent had stopped existing
+    /// because somebody has not paid, and leaving it saying "Working" would be
+    /// the phone asserting something no stream is telling it.
+    func testAnAwayMachineLeavesTheRowListedAndNotLive() {
+        let away = RowState(
+            row: row(attention: .working), host: host(online: true), reach: .away)
+
+        XCTAssertEqual(away, .hostAway("Studio"))
+        XCTAssertEqual(away.word, "Studio away")
+        XCTAssertEqual(away.elaboration, "not live")
+        XCTAssertEqual(away.spoken, "Studio is away, not live")
+        XCTAssertEqual(away.name, "host-away")
+    }
+
+    /// A machine that is not there outranks one the relay can see: the row
+    /// says the machine is offline, and nothing anywhere near it offers to
+    /// sell a route to a machine that is switched off.
+    func testAMachineThatIsNotThereIsNeverCalledAway() {
+        XCTAssertEqual(
+            RowState(row: row(attention: .working), host: host(online: false), reach: .offline),
+            .hostOffline("Studio"))
+    }
+
+    /// A machine on this network or across a relay this account may use is
+    /// live, and the row says whatever the agent is doing.
+    func testAReachableMachineLetsTheAgentSpeakForItself() {
+        XCTAssertEqual(
+            RowState(row: row(attention: .working), host: host(online: true),
+                     reach: .onThisNetwork),
+            .working)
+        XCTAssertEqual(
+            RowState(row: row(attention: .working), host: host(online: true),
+                     reach: .throughTheRelay),
+            .working)
+    }
+
     // MARK: - The vocabulary a driver reads
 
     /// Kept apart from what is drawn, so a screen's wording can change without

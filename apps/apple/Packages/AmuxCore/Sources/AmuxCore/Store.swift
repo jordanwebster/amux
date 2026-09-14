@@ -412,24 +412,19 @@ extension Grant {
 }
 
 extension Entitlement {
-    /// The one line a settings row shows: what this account has and where it
-    /// came from. *Active · App Store*, *Ended · amux.sh*, *Active ·
-    /// Included*, *None*.
-    /// What a row showing this calls it. Access that was given is not a
-    /// subscription: a row headed *Subscription* would name something the
-    /// person could go looking for and never find.
-    public var noun: String {
-        switch self {
-        case .active(.granted, _), .lapsed(.granted, _): "Pro"
-        case .active, .lapsed, .none: "Subscription"
-        }
-    }
-
+    /// What the relay will carry, and where that was bought.
+    ///
+    /// Written as what it does rather than as a status word, because the whole
+    /// question a person has here is whether their machines can be reached
+    /// from anywhere. The unsubscribed line says the other half in the same
+    /// breath: amux is free on the network a phone is already on, and an
+    /// account that has bought nothing has lost nothing there.
     public var summary: String {
         switch self {
-        case .none: "None"
-        case .active(let grant, _): "Active · \(grant.named)"
-        case .lapsed(let grant, _): "Ended · \(grant.named)"
+        case .active(.purchased(.appStore), _): "Subscribed through the App Store"
+        case .active(.purchased(.web), _): "Subscribed on the web"
+        case .active(.granted, _): "Included with this account"
+        case .none, .lapsed: "Not subscribed · hosts on this network still work"
         }
     }
 }

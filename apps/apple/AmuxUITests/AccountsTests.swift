@@ -212,21 +212,24 @@ final class AccountsTests: JourneyCase {
         try signIn(as: Who.personal, entitlement: "none")
         waitFor(app, "home", "signing in did not come back to the home")
         record["gateAfterSigningIn"] = try waitForValue(runner, "home", "unsubscribed")
-        record["homeOffersAfterSigningIn"] = try called("home.empty.action")
+        // Pairing, not subscribing. An account with nothing bought has lost
+        // nothing on the network this phone is on, so the empty home offers
+        // the machine it would pair with and never a purchase.
+        record["homeOffersAfterSigningIn"] = try called("home.empty.pair")
         record["homeNewAgentAfterSigningIn"] = element(app, "home.newAgent").exists
         XCTAssertFalse(element(app, "home.newAgent").exists,
-                       "the home offered New Agent to an account with nothing bought")
+                       "the home offered New Agent with no machine to start one on")
         record["accountsAfterSigningIn"] = try accountsKnown()
     }
 
     /// Buying the subscription: what it costs, the three ways it does not go
     /// through, and the one that does.
     private func buyingTheSubscription() throws {
-        // The paywall is reached from the home, which is where the one thing
-        // left to do is drawn.
-        pressTab(app, "Agents")
-        press(app, "home.empty.action")
-        waitFor(app, "paywall", "Subscribe did not lead to the paywall")
+        // The paywall is reached from the row that says what the relay will
+        // carry for this account, which is the one place the subscription is
+        // named as a thing somebody owns rather than as a thing in the way.
+        openTheRelayRow()
+        waitFor(app, "paywall", "the relay row did not lead to the paywall")
         let offered = try declared(runner)
         record["paywallOffers"] = ["paywall.monthly", "paywall.yearly"].compactMap { id in
             said(offered, id).map { "\($0.label) \($0.value)" }
@@ -346,9 +349,8 @@ final class AccountsTests: JourneyCase {
         // nothing is bought; the App Store says otherwise; and putting it back
         // goes through the account service rather than around it.
         try signIn(as: Who.personal, entitlement: "none")
-        pressTab(app, "Agents")
-        press(app, "home.empty.action")
-        waitFor(app, "paywall", "Subscribe did not lead to the paywall")
+        openTheRelayRow()
+        waitFor(app, "paywall", "the relay row did not lead to the paywall")
         try scriptStore(["restore": "bought"])
         try scriptCloud([
             "recordPurchase": "accepted", "entitlement": "active", "source": "appStore",
@@ -606,15 +608,23 @@ final class AccountsTests: JourneyCase {
     /// Buys the subscription with none of the outcomes the act it stands in
     /// for exists to show.
     private func subscribeTheShortWay() throws {
-        pressTab(app, "Agents")
-        press(app, "home.empty.action")
-        waitFor(app, "paywall", "Subscribe did not lead to the paywall")
+        openTheRelayRow()
+        waitFor(app, "paywall", "the relay row did not lead to the paywall")
         try scriptStore(["purchase": "bought"])
         try scriptCloud(["entitlement": "active", "source": "appStore"])
         press(app, "paywall.buy")
         waitFor(app, "paywall.subscribed", "the purchase did not go through")
         press(app, "paywall.buy")
         _ = try waitForValue(runner, "home", "ready")
+    }
+
+    /// Opens the subscription from the You page's relay row, which is where
+    /// this account's standing with the relay is reported and the only place
+    /// in the app that offers to buy one without a machine prompting it.
+    private func openTheRelayRow() {
+        pressTab(app, "You")
+        waitFor(app, "you", "the You page never appeared")
+        press(app, "you.subscription")
     }
 
     /// Puts an account on screen, from wherever the app is.
