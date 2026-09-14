@@ -25,6 +25,36 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(invitation.secret, Array(UInt8(1)...UInt8(32)))
     }
 
+    /// A machine with no account names no address in its invitation, and one
+    /// found on a shared network names them: that difference is the whole of
+    /// what a phone needs to know before it decides whether an account is
+    /// required to take the invitation up.
+    private let nearby = URL(string: """
+        amux://pair?payload=eyJob3N0X2lkIjoiM2ExZjlkMmMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAxIiwic2VjcmV0IjpbMSwy\
+        LDMsNCw1LDYsNyw4LDksMTAsMTEsMTIsMTMsMTQsMTUsMTYsMTcsMTgsMTksMjAsMjEsMjIsMjMsMjQsMjUs\
+        MjYsMjcsMjgsMjksMzAsMzEsMzJdLCJhZGRycyI6WyIxOTIuMC4yLjQ6OTAwMSJdfQ
+        """)!
+
+    func testAnInvitationWithAnAddressNeedsNoAccount() throws {
+        guard case .pair(let invitation)? = DeepLink(nearby) else {
+            return XCTFail("expected a pairing invitation")
+        }
+        XCTAssertEqual(invitation.addrs, ["192.0.2.4:9001"])
+        XCTAssertNil(invitation.cloudURL)
+        XCTAssertFalse(invitation.needsAnAccount)
+    }
+
+    /// The relay-only invitation: a machine the relay has seen and this
+    /// network has not. There is nothing here to dial, so there is nothing to
+    /// do about it without an account.
+    func testAnInvitationWithNoAddressNeedsAnAccount() throws {
+        guard case .pair(let invitation)? = DeepLink(link) else {
+            return XCTFail("expected a pairing invitation")
+        }
+        XCTAssertEqual(invitation.addrs, [])
+        XCTAssertTrue(invitation.needsAnAccount)
+    }
+
     func testAPairingLinkPairsWithNobodyAndAsksInstead() throws {
         let router = Router()
         let parsed = try XCTUnwrap(router.open(link))

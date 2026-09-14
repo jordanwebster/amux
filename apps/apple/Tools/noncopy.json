@@ -688,7 +688,8 @@
       {"literal": "\"connecting\"", "context": "case .connecting: try fields.encode(\"connecting\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"connected\"", "context": "try fields.encode(\"connected\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"retrying\"", "context": "case .retrying: try fields.encode(\"retrying\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"auth_required\"", "context": "case .authRequired: try fields.encode(\"auth_required\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
+      {"literal": "\"auth_required\"", "context": "case .authRequired: try fields.encode(\"auth_required\", forKey: .cloud)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"signed_in\"", "context": "case signedIn = \"signed_in\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/FleetStore.swift": [
       {"literal": "\"s\"", "context": "return \"\\(waiting) need you · \\(rows.count) agent\\(rows.count == 1 ? \"\" : \"s\")\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
@@ -1244,16 +1245,14 @@
       {"literal": "\"home.row.\\(row.id)\"", "context": "\"home.row.\\(row.id)\", label: spoken(row, state),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"home.row.\\(row.id)\"", "context": ".identified(\"home.row.\\(row.id)\", label: spoken(row, state), value: state.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\", \"", "context": ".compactMap { $0 }.joined(separator: \", \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 2},
       {"literal": "\", \"", "context": "let names = section.rows.map(\\.name).joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 2},
       {"literal": "\"home.fold.\\(section.id)\"", "context": ".identified(\"home.fold.\\(section.id)\", label: \"\\(title), \\(names)\", value: names)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"wifi.slash\"", "context": "Image(systemName: accounts.gate == .ready ? \"wifi.slash\" : \"person.slash\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"person.slash\"", "context": "Image(systemName: accounts.gate == .ready ? \"wifi.slash\" : \"person.slash\")", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"home.exceptions\"", "context": ".identified(\"home.exceptions\", label: text, value: text)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"home.empty.title\"", "context": ".identified(\"home.empty.title\", value: \"No hosts yet\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"home.empty.explain\"", "context": ".identified(\"home.empty.explain\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"home.empty.action\"", "context": ".identified(\"home.empty.action\", label: gateActionTitle)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.empty.explain\"", "context": ".identified(\"home.empty.explain\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 2},
       {"literal": "\"ready\"", "context": "case .ready: \"ready\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"signed-out\"", "context": "case .signedOut: \"signed-out\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"unsubscribed\"", "context": "case .unsubscribed: \"unsubscribed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1261,7 +1260,15 @@
       {"literal": "\"·\"", "context": "Text(\"·\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\" · \"", "context": "return [host, row.workingDirectory].compactMap { $0 }.joined(separator: \" · \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"line.3.horizontal.decrease\"", "context": "GlassIcon(glyph: \"line.3.horizontal.decrease\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
-      {"literal": "\"home.filter\"", "context": ".identified(\"home.filter\", label: \"Filter Agents\", value: filter.rawValue)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+      {"literal": "\"home.filter\"", "context": ".identified(\"home.filter\", label: \"Filter Agents\", value: filter.rawValue)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.empty.pair\"", "context": ".identified(\"home.empty.pair\", label: \"Pair a Host\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.pair.\\(host.id)\"", "context": ".identified(\"home.pair.\\(host.id)\", label: \"Pair with \\(host.name)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.offer.\\(host.id)\"", "context": ".identified(\"home.offer.\\(host.id)\", label: spokenOffer(host), value: \"found\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.empty.signIn\"", "context": ".identified(\"home.empty.signIn\", label: \"Sign In\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.empty.signIn.caption\"", "context": ".identified(\"home.empty.signIn.caption\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.empty.title\"", "context": ".identified(\"home.empty.title\", value: \"No hosts yet\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.empty.action\"", "context": ".identified(\"home.empty.action\", label: \"Subscribe\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.empty.firstRun\"", "context": ".identified(\"home.empty.firstRun\", value: \"No agents yet\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/AskPanelView.swift": [
       {"literal": "\"conversation.ask\"", "context": ".identified(\"conversation.ask\", value: panel.id)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1455,16 +1462,13 @@
       {"literal": "\"hosts.subtitle\"", "context": ".identified(\"hosts.subtitle\", value: subtitle)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"plus\"", "context": "GlassIcon(glyph: \"plus\", prominent: true)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"hosts.pair\"", "context": ".identified(\"hosts.pair\", label: \"Pair a Host\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"hosts.caption.unpaired\"", "context": ".identified(\"hosts.caption.unpaired\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.pair.\\(host.id)\"", "context": ".identified(\"hosts.pair.\\(host.id)\", label: \"Pair with \\(host.name)\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.offer.\\(host.id)\"", "context": ".identified(\"hosts.offer.\\(host.id)\", label: spokenOffer(host), value: \"not paired\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.caption.devices\"", "context": ".identified(\"hosts.caption.devices\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"\\(roster.devices.count)\"", "context": "label: \"Paired Devices\", value: \"\\(roster.devices.count)\", mono: false,", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"hosts.caption.\\(title.lowercased())\"", "context": ".identified(\"hosts.caption.\\(title.lowercased())\", value: caption)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.empty.pair\"", "context": ".identified(\"hosts.empty.pair\", label: \"Pair a Host\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"hosts.empty\"", "context": ".identified(\"hosts.empty\", value: \"No hosts yet\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"chevron.right\"", "context": "Image(systemName: \"chevron.right\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
-      {"literal": "\"hosts.row.\\(host.id)\"", "context": "\"hosts.row.\\(host.id)\", label: spoken(host),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"server.rack\"", "context": "case \"Linux\": \"server.rack\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"pc\"", "context": "case \"Windows\": \"pc\"", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
       {"literal": "\"desktopcomputer\"", "context": "default: \"desktopcomputer\"", "reason": "View metadata, driving state or asset identifier, not displayed copy.", "count": 1},
@@ -1482,7 +1486,9 @@
       {"literal": "\"Mac mini\"", "context": "case \"Mac mini\": \"macmini\"", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
       {"literal": "\"macmini\"", "context": "case \"Mac mini\": \"macmini\"", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
       {"literal": "\"MacBook Air\"", "context": "case \"MacBook Air\": \"laptopcomputer\"", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
-      {"literal": "\"laptopcomputer\"", "context": "case \"MacBook Air\": \"laptopcomputer\"", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
+      {"literal": "\"laptopcomputer\"", "context": "case \"MacBook Air\": \"laptopcomputer\"", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
+      {"literal": "\"hosts.caption.\\(reach.name)\"", "context": ".identified(\"hosts.caption.\\(reach.name)\", value: caption)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"hosts.row.\\(host.id)\"", "context": "\"hosts.row.\\(host.id)\", label: spoken(host, reach), value: reach.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Leaves/TokenTextField.swift": [
       {"literal": "\"amuxToken\"", "context": "static let amuxToken = NSAttributedString.Key(\"amuxToken\")", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
@@ -1569,7 +1575,13 @@
       {"literal": "\"pair-confirm.back\"", "context": ".identified(\"pair-confirm.back\", label: \"Back to Hosts\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"pair-confirm.trusted\"", "context": ".identified(\"pair-confirm.trusted\", value: name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"pair-confirm.done\"", "context": ".identified(\"pair-confirm.done\", label: \"Done\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"pin.back\"", "context": "BackLink(\"Hosts\", identifier: \"pin.back\") { actions(.cancel) }", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1}
+      {"literal": "\"pin.back\"", "context": "BackLink(\"Hosts\", identifier: \"pin.back\") { actions(.cancel) }", "reason": "Protocol field, accessibility identifier, model value or SF Symbol; not interface copy.", "count": 1},
+      {"literal": "\"pair-needs-account.title\"", "context": "\"pair-needs-account.title\",", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"pair-needs-account.signIn\"", "context": ".identified(\"pair-needs-account.signIn\", label: \"Sign In\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"pair-needs-account.cancel\"", "context": ".identified(\"pair-needs-account.cancel\", label: \"Not Now\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"pair-needs-account\"", "context": ".identified(\"pair-needs-account\", value: \"not on this network\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"not on this network\"", "context": ".identified(\"pair-needs-account\", value: \"not on this network\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"pin.route\"", "context": ".identified(\"pin.route\", value: route)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Paywall.swift": [
       {"literal": "\"paywall\"", "context": ".identified(\"paywall\", value: state)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -2027,7 +2039,7 @@
       {"literal": "\"hosts\"", "context": "Fixture(id: \"hosts\", screen: .hosts) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"devices\"", "context": "Fixture(id: \"devices\", screen: .hosts) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"pin\"", "context": "Fixture(id: \"pin\", screen: .pin) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"419\"", "context": "bundle.pairing.enter(\"419\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"419\"", "context": "bundle.pairing.enter(\"419\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"new-agent\"", "context": "Fixture(id: \"new-agent\", screen: .newAgent) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"exited\"", "context": "Fixture(id: \"exited\", screen: .exited) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"reason\"", "context": "reason: .object([\"reason\": .string(\"agent_exited\")]))))", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2079,7 +2091,17 @@
       {"literal": "\"Check the reconnect path before you squash it.\"", "context": "\"Check the reconnect path before you squash it.\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"\"\"\n            {\"error\":\"general\",\"message\":\"the session is replaying history\",\\\n            \"auth_required\":false,\"subscription_required\":false}\n            \"\"\"", "context": "let json = Data(\"\"\"\n            {\"error\":\"general\",\"message\":\"the session is replaying history\",\\\n            \"auth_required\":false,\"subscription_required\":false}\n            \"\"\".utf8)", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"thinking\"", "context": "gate: .working, phase: \"thinking\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
-      {"literal": "\"spec-suite\"", "context": "agent: Scenario.agentId(\"spec-suite\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+      {"literal": "\"spec-suite\"", "context": "agent: Scenario.agentId(\"spec-suite\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"hosts-groups\"", "context": "Built(.hosts, \"hosts-groups\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"local-network-refused\"", "context": "Built(.hosts, \"local-network-refused\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"code-entry\"", "context": "Built(.pin, \"code-entry\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"pair-confirmation\"", "context": "Built(.pairConfirm, \"pair-confirmation\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"found-host\"", "context": "Built(.firstRun, \"found-host\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"found-host\"", "context": "Fixture(id: \"found-host\", screen: .firstRun, cloud: .firstRun, accounts: []) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"pair-confirmation\"", "context": "Fixture(id: \"pair-confirmation\", screen: .pairConfirm, cloud: .firstRun,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"code-entry\"", "context": "Fixture(id: \"code-entry\", screen: .pin, cloud: .firstRun, accounts: []) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"hosts-groups\"", "context": "Fixture(id: \"hosts-groups\", screen: .hosts) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"local-network-refused\"", "context": "Fixture(id: \"local-network-refused\", screen: .hosts, cloud: .firstRun,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift": [
       {"literal": "\"ladybug\"", "context": "Image(systemName: \"ladybug\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -2170,7 +2192,7 @@
       {"literal": "\"0.4.0\"", "context": "id: mini, name: \"mini\", online: true, version: \"0.4.0\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"air\"", "context": "id: air, name: \"air\", online: false, version: \"0.4.0\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"0.4.0\"", "context": "id: air, name: \"air\", online: false, version: \"0.4.0\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"homelab\"", "context": "id: homelab, name: \"homelab\", online: true, trustStatus: .untrustedButOnline,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"homelab\"", "context": "id: homelab, name: \"homelab\", online: true, trustStatus: .untrustedButOnline,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"iPhone\"", "context": "host: phone, name: \"iPhone\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"4f2a91c05b7e8d3a6c14f0928be5d7a3419c60fe2d8b7a05c31e94f2ab7d69c1\"", "context": "fingerprint: \"4f2a91c05b7e8d3a6c14f0928be5d7a3419c60fe2d8b7a05c31e94f2ab7d69c1\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"air\"", "context": "host: air, name: \"air\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2265,12 +2287,12 @@
       {"literal": "\"relay-cleanup\"", "context": "let unseen: Set<String> = [\"refactor-auth\", \"docs-pass\", \"relay-cleanup\", \"pairing-copy\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"pairing-copy\"", "context": "let unseen: Set<String> = [\"refactor-auth\", \"docs-pass\", \"relay-cleanup\", \"pairing-copy\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"flake-hunt\"", "context": "\"flake-hunt\"]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"Mac Studio\"", "context": "platform: \"Mac Studio\"), epoch: 1),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"Mac mini\"", "context": "platform: \"Mac mini\"), epoch: 1),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"no route to host\"", "context": "lastDialError: \"no route to host\", platform: \"MacBook Air\"), epoch: 1),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"MacBook Air\"", "context": "lastDialError: \"no route to host\", platform: \"MacBook Air\"), epoch: 1),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"homelab\"", "context": "id: homelab, name: \"homelab\", online: true, version: \"0.4.0\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"0.4.0\"", "context": "id: homelab, name: \"homelab\", online: true, version: \"0.4.0\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+      {"literal": "\"0.4.0\"", "context": "id: homelab, name: \"homelab\", online: true, version: \"0.4.0\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"Mac Studio\"", "context": "platform: \"Mac Studio\", via: .direct, signedIn: true), epoch: 1),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"Mac mini\"", "context": "platform: \"Mac mini\", via: .relay, signedIn: true), epoch: 1),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"no route to host\"", "context": "lastDialError: \"no route to host\", platform: \"MacBook Air\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"MacBook Air\"", "context": "lastDialError: \"no route to host\", platform: \"MacBook Air\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ScriptedCloud.swift": [
       {"literal": "\"scripted-connect-token\"", "context": "token: String? = \"scripted-connect-token\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2860,6 +2882,12 @@
       {"literal": "\"[\\(unscoped(address))]:\\(port.rawValue)\"", "context": "return \"[\\(unscoped(address))]:\\(port.rawValue)\"", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
       {"literal": "\"\\(address)\"", "context": "String(\"\\(address)\".prefix { $0 != \"%\" })", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1},
       {"literal": "\"%\"", "context": "String(\"\\(address)\".prefix { $0 != \"%\" })", "reason": "Advertisement record field, service type or dialable address syntax; preserve its exact spelling.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/HostsStore.swift": [
+      {"literal": "\"on-this-network\"", "context": "case .onThisNetwork: \"on-this-network\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"through-the-relay\"", "context": "case .throughTheRelay: \"through-the-relay\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"away\"", "context": "case .away: \"away\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"offline\"", "context": "case .offline: \"offline\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ]
   }
 }

@@ -161,8 +161,9 @@ final class AccountsTests: JourneyCase {
     private func aPhoneNobodyHasSignedInOn() throws {
         waitFor(app, "home", "the home never appeared")
         record["gateAtLaunch"] = try says("home")
-        record["homeOffersAtLaunch"] = try called("home.empty.action")
-        record["homeSaysAtLaunch"] = try says("home.empty.title")
+        record["homeOffersAtLaunch"] = try called("home.empty.pair")
+        record["homeOffersAccountAtLaunch"] = try called("home.empty.signIn")
+        record["homeSaysAtLaunch"] = try says("home.empty.firstRun")
         // One action, because there is one thing to do. New Agent needs a
         // host, a host needs pairing and pairing needs an account, so the
         // header does not draw it until the gate in front of it is open —
@@ -185,7 +186,7 @@ final class AccountsTests: JourneyCase {
 
     /// Signing in, and the two ways it does not finish.
     private func signingInAndTheTwoWaysItDoesNot() throws {
-        press(app, "home.empty.action")
+        press(app, "home.empty.signIn")
         waitFor(app, "sign-in", "Sign In did not lead to the sign-in page")
         record["signInOpens"] = try says("sign-in.opens")
         record["signInOffers"] = try called("sign-in.continue")
@@ -586,7 +587,7 @@ final class AccountsTests: JourneyCase {
     ) throws {
         if !element(app, "sign-in").exists {
             pressTab(app, "You")
-            press(app, element(app, "you.add").exists ? "you.add" : "home.empty.action")
+            press(app, element(app, "you.add").exists ? "you.add" : "home.empty.signIn")
         }
         waitFor(app, "sign-in", "there was no sign-in page to sign in on")
         try scriptCloud([

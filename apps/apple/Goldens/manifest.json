@@ -449,6 +449,32 @@
       ]
     },
     {
+      "id": "hosts-groups",
+      "stage": 9,
+      "screen": "hosts",
+      "fixture": "hosts-groups",
+      "origin": "added_state",
+      "reason": "the four groups the machines are read in: one on this network, one across the relay, one nowhere, and one more found here and not paired with",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "local-network-refused",
+      "stage": 9,
+      "screen": "hosts",
+      "fixture": "local-network-refused",
+      "origin": "added_state",
+      "reason": "a phone nobody let look at the network it is on, which is indistinguishable from an empty network by the list alone",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "exited",
       "stage": 9,
       "screen": "exited",
@@ -514,6 +540,32 @@
       ]
     },
     {
+      "id": "code-entry",
+      "stage": 9,
+      "screen": "pin",
+      "fixture": "code-entry",
+      "origin": "added_state",
+      "reason": "the code screen on a phone with no account, naming the machine it found on this network and the route the code takes",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "pair-confirmation",
+      "stage": 9,
+      "screen": "pair-confirm",
+      "fixture": "pair-confirmation",
+      "origin": "added_state",
+      "reason": "the confirmation a scanned code lands on with no account signed in at all, which is what pairing on your own network means",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "pin",
       "stage": 9,
       "screen": "pin",
@@ -559,6 +611,19 @@
       "fixture": "first-run",
       "origin": "reference",
       "capture": "first-run",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
+      "id": "found-host",
+      "stage": 10,
+      "screen": "first-run",
+      "fixture": "found-host",
+      "origin": "added_state",
+      "reason": "first launch on a network that already has a host running on it: the machine is offered before anybody has typed or signed in anything",
       "simulator": "golden",
       "appearances": [
         "light",

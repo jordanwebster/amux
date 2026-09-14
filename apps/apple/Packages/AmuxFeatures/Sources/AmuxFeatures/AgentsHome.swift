@@ -12,6 +12,9 @@ public enum HomeAction: Equatable, Sendable {
     case addAccount
     case signIn
     case subscribe
+    /// Pair with a machine — the named one where the home is offering it, or
+    /// whichever one this phone has found where it is not.
+    case pair(HostId?)
     case openExceptions
     /// The list was pulled, or the screen came back into view. Only then may
     /// the ordering regroup.
@@ -33,6 +36,10 @@ public struct AgentsHome: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     private let model: FleetStore
     private let accounts: AccountRegistry
+    /// The machines, for the one thing this screen says about them: a phone
+    /// with no agents yet is a phone that has not paired, and what it has
+    /// found on its network is the shortest way out of that.
+    private let hosts: HostsStore
     private let actions: @MainActor (HomeAction) -> Void
     /// The fold is view state, not fleet state: opening it is a thing this
     /// screen is doing, and coming back to the screen starts it closed again.
@@ -47,11 +54,13 @@ public struct AgentsHome: View {
     public init(
         model: FleetStore,
         accounts: AccountRegistry,
+        hosts: HostsStore,
         accountsOpen: Bool = false,
         actions: @escaping @MainActor (HomeAction) -> Void
     ) {
         self.model = model
         self.accounts = accounts
+        self.hosts = hosts
         self.actions = actions
         _switcherOpen = State(initialValue: accountsOpen)
     }
@@ -246,11 +255,12 @@ public struct AgentsHome: View {
                 : "\(entry.name) · \(waiting) need you"
         }
         if accounts.gate == .ready || !model.rows.isEmpty { return model.subtitle }
-        switch accounts.gate {
-        case .ready: return model.subtitle
-        case .signedOut: return "Not signed in"
-        case .unsubscribed: return "Not subscribed"
-        }
+        // Not "Not signed in". A phone with no agents and no account is a
+        // phone at the start rather than a phone with something wrong with it;
+        // what is true about it is that it has paired with nothing yet. An
+        // account that has not bought anything really is missing something,
+        // and that one still says so.
+        return accounts.gate == .unsubscribed ? "Not subscribed" : "Nothing paired yet"
     }
 
     // MARK: - The list
@@ -446,35 +456,144 @@ public struct AgentsHome: View {
     /// Not a splash: the real home screen, empty.
     ///
     /// A splash would teach that this is a service you subscribe to; an empty
-    /// list teaches that it is a client for hosts you own. There is one action
-    /// because there is one thing to do, and the headline is still the list
-    /// being empty, because that is what the screen is.
+    /// list teaches that it is a client for machines you own. So the one
+    /// action is pairing, and an account is offered under it as what pairing
+    /// is not: reaching those machines when you are not on their network. A
+    /// phone that has already found something on this network leads with that
+    /// — there is nothing to type and nothing to sign into, and the machine is
+    /// right there.
+    @ViewBuilder
     private var gated: some View {
+        // An account that has not bought anything is a separate question and
+        // a later one: what it is missing is the relay, not a machine, and the
+        // screen that says so is the subscription's own.
+        if accounts.gate == .unsubscribed {
+            unsubscribed
+        } else {
+            nothingPairedYet
+        }
+    }
+
+    /// A signed-in account with nothing bought and nothing on screen.
+    private var unsubscribed: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("No hosts yet")
                     .designFont(.screenTitle, design)
                     .foregroundStyle(design.ink.color)
                     .identified("home.empty.title", value: "No hosts yet")
-                Explain(accounts.gate == .signedOut
-                    ? "Sign in to pair one." : "Subscribe to pair one.")
+                Explain("Subscribe to pair one.")
                     .identified("home.empty.explain")
             }
-            Button {
-                actions(accounts.gate == .signedOut ? .signIn : .subscribe)
-            } label: {
-                ActionLabel(gateActionTitle, kind: .primary, fill: true)
+            Button { actions(.subscribe) } label: {
+                ActionLabel("Subscribe", kind: .primary, fill: true)
             }
             .buttonStyle(.amuxControl)
-            .accessibilityLabel(gateActionTitle)
-            .identified("home.empty.action", label: gateActionTitle)
+            .accessibilityLabel("Subscribe")
+            .identified("home.empty.action", label: "Subscribe")
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.top, 40)
     }
 
-    private var gateActionTitle: String {
-        accounts.gate == .signedOut ? "Sign In" : "Subscribe"
+    private var nothingPairedYet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No agents yet")
+                        .designFont(.screenTitle, design)
+                        .foregroundStyle(design.ink.color)
+                        .identified("home.empty.firstRun", value: "No agents yet")
+                    Explain("Pair with a host and its agents appear here.")
+                        .identified("home.empty.explain")
+                }
+                if !found.isEmpty { offers }
+                Button { actions(.pair(found.count == 1 ? found[0].id : nil)) } label: {
+                    ActionLabel("Pair a Host", kind: .primary, fill: true)
+                }
+                .buttonStyle(.amuxControl)
+                .accessibilityLabel("Pair a Host")
+                .identified("home.empty.pair", label: "Pair a Host")
+                if accounts.gate == .signedOut { signInCallToAction }
+            }
+            .padding(.horizontal, design.metrics.gutter)
+            .padding(.top, 30)
+            .padding(.bottom, 120)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    /// The machines on this network this phone has found and not paired with.
+    ///
+    /// Offered here and not only on the Hosts tab because this is where
+    /// somebody is standing when they have nothing: the shortest true sentence
+    /// about an empty phone on a network with a host on it is that the host is
+    /// right there.
+    private var found: [HostEntry] { hosts.candidates(.onThisNetwork) }
+
+    private var offers: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHead(title: "On this network")
+            RowGroup(items: found) { host in offer(host) }
+        }
+    }
+
+    private func offer(_ host: HostEntry) -> some View {
+        HStack(spacing: 11) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(host.name)
+                    .designFont(.identifier, design)
+                    .foregroundStyle(design.ink.color)
+                Text(offered(host))
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
+            }
+            Spacer(minLength: 6)
+            Button { actions(.pair(host.id)) } label: {
+                ActionLabel("Pair", kind: .outline)
+            }
+            .buttonStyle(.amuxRow)
+            .accessibilityLabel("Pair with \(host.name)")
+            .identified("home.pair.\(host.id)", label: "Pair with \(host.name)")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .contain)
+        .identified("home.offer.\(host.id)", label: spokenOffer(host), value: "found")
+    }
+
+    private func offered(_ host: HostEntry) -> String {
+        var parts: [String] = []
+        if let platform = host.platform { parts.append(platform) }
+        parts.append("found")
+        return parts.joined(separator: " · ")
+    }
+
+    private func spokenOffer(_ host: HostEntry) -> String {
+        var parts = [host.name]
+        if let platform = host.platform { parts.append(platform) }
+        parts.append("found, not paired")
+        return parts.joined(separator: ", ")
+    }
+
+    /// The account, offered as the thing it actually buys.
+    ///
+    /// Under the pairing button and drawn as the quieter of the two, because
+    /// it is the second step and not the first: amux works on this network
+    /// without it, and a screen that led with signing in would teach that it
+    /// does not.
+    private var signInCallToAction: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { actions(.signIn) } label: {
+                ActionLabel("Sign In", kind: .outline, fill: true)
+            }
+            .buttonStyle(.amuxControl)
+            .accessibilityLabel("Sign In")
+            .identified("home.empty.signIn", label: "Sign In")
+            Explain("Sign in to reach your agents from anywhere")
+                .identified("home.empty.signIn.caption")
+        }
     }
 }
 

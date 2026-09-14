@@ -43,7 +43,7 @@ enum DoorScreens {
         case .profiles:
             AgentsHome(
                 model: host.stores.fleet, accounts: host.accounts,
-                accountsOpen: true) { _ in }
+                hosts: host.stores.hosts, accountsOpen: true) { _ in }
         // You. The accounts this phone knows, what the one on screen has, and
         // what belongs to the phone rather than to any account.
         case .you:

@@ -124,8 +124,13 @@ public enum Fixtures {
         Built(.paywall, "paywall-unconfirmed"),
         Built(.hosts, "hosts"),
         Built(.hosts, "devices"),
+        Built(.hosts, "hosts-groups"),
+        Built(.hosts, "local-network-refused"),
         Built(.pin, "pin"),
+        Built(.pin, "code-entry"),
         Built(.pairConfirm, "pair-confirm"),
+        Built(.pairConfirm, "pair-confirmation"),
+        Built(.firstRun, "found-host"),
         Built(.newAgent, "new-agent"),
         Built(.offline, "offline"),
         Built(.shake, "shake"),
@@ -435,6 +440,12 @@ public enum Fixtures {
             States.trusted(bundle)
         },
         Fixture(id: "first-run", screen: .firstRun, cloud: .firstRun, accounts: []),
+        // The same first launch on a network with a host already running on
+        // it. Nothing has been typed and nobody has signed in: the machine is
+        // simply there, with the one thing there is to do with it.
+        Fixture(id: "found-host", screen: .firstRun, cloud: .firstRun, accounts: []) { bundle in
+            States.offering(bundle, [Scenario.foundNearby])
+        },
         Fixture(id: "sign-in", screen: .signIn, cloud: .firstRun, accounts: []),
         Fixture(id: "first-run-paid", screen: .firstRunPaid, cloud: .unsubscribed,
                 accounts: [Fixture.unsubscribed]),
@@ -525,6 +536,41 @@ public enum Fixtures {
             States.open(bundle)
             States.offering(bundle)
             States.offered(bundle)
+        },
+        // The same landing on a phone with no account at all, reached by
+        // scanning a machine's code across the room. The invitation carried
+        // the machine's addresses, so nothing about this needed an account —
+        // which is the whole claim, and the screen has to be able to show it.
+        Fixture(id: "pair-confirmation", screen: .pairConfirm, cloud: .firstRun,
+                accounts: []) { bundle in
+            States.offering(bundle, [Scenario.foundNearby])
+            States.offered(bundle)
+        },
+        // Half a code typed on a phone nobody has signed into, against the
+        // machine it found on this network. The route is named because it is
+        // what makes this code workable with no account behind it.
+        Fixture(id: "code-entry", screen: .pin, cloud: .firstRun, accounts: []) { bundle in
+            States.offering(bundle, [Scenario.foundNearby])
+            bundle.pairing.open(machine: Scenario.foundNearby)
+            bundle.pairing.enter("419")
+        },
+        // The machines in the groups that decide what can be done with them:
+        // one on the same network, one across the relay, one nowhere, and one
+        // more found here and not paired with. The link is on a paid tier, so
+        // a machine the relay can see is a machine this phone can use.
+        Fixture(id: "hosts-groups", screen: .hosts) { bundle in
+            States.open(bundle, hosts: Scenario.reachableHosts)
+            States.lostHost(bundle, Scenario.air, minutesAgo: 8)
+            States.linked(bundle, .connected(tier: .pro, carrier: .quic))
+            States.offering(bundle, [Scenario.foundNearby])
+            States.trusted(bundle)
+        },
+        // A phone nobody let look at the network it is on. Indistinguishable
+        // from an empty network by the list alone, which is why the screen
+        // says which it is and where the answer can be changed.
+        Fixture(id: "local-network-refused", screen: .hosts, cloud: .firstRun,
+                accounts: []) { bundle in
+            States.localNetwork(bundle, .denied)
         },
         // The host went away mid-turn. The feed stays readable and says so.
         // The same state the `offline` screen is photographed in: one is the

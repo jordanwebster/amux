@@ -191,7 +191,8 @@ public struct Shell: View {
         case .pairByCode(let host):
             PairByCodePage(host: host, router: router, stores: stores)
         case .pairConfirmation(let invitation):
-            PairConfirmationPage(invitation: invitation, router: router, stores: stores)
+            PairConfirmationPage(
+                invitation: invitation, router: router, stores: stores, actions: actions)
         case .signIn(let from):
             SignInPage(from: from, router: router, model: signIn, actions: actions)
         case .paywall(let from):
@@ -533,7 +534,7 @@ private struct AgentsTab: View {
     let actions: @MainActor (ShellAction) -> Void
 
     var body: some View {
-        AgentsHome(model: stores.fleet, accounts: accounts) { action in
+        AgentsHome(model: stores.fleet, accounts: accounts, hosts: stores.hosts) { action in
             switch action {
             case .open(let agent):
                 stores.fleet.opened(agent)
@@ -544,6 +545,12 @@ private struct AgentsTab: View {
             case .addAccount: actions(.addAccount)
             case .signIn: actions(.signIn)
             case .subscribe: actions(.subscribe)
+            // Pairing lives under Hosts wherever it is started from: the page
+            // it opens is that tab's, and going back from it belongs there
+            // rather than on a list of agents that has none.
+            case .pair(let host):
+                router.select(.hosts)
+                router.open(.pairByCode(host))
             // The one place the list is allowed to regroup. Data arriving
             // never reorders what a thumb is already travelling towards.
             case .refresh: stores.fleet.refreshOrder(now: stores.now())
@@ -708,9 +715,9 @@ private struct PairByCodePage: View {
         PairByCode(model: stores.pairing) { action in
             switch action {
             case .digits(let typed): stores.pair(digits: typed)
-            // A code cannot reach either of these — nothing on the keypad
-            // authenticates, so there is never an attempt there to answer.
-            case .confirm, .abandon: break
+            // A code cannot reach any of these — nothing on the keypad
+            // authenticates, and an account is not what a typed code needs.
+            case .confirm, .abandon, .signIn: break
             case .cancel: router.pop()
             }
         }
@@ -727,7 +734,7 @@ private struct PairByCodePage: View {
             // refusing a machine is try the code for the right one.
             case .abandon(let peer): stores.abandonPairing(peer)
             case .cancel: router.pop()
-            case .digits: break
+            case .digits, .signIn: break
             }
         }
     }
@@ -748,9 +755,43 @@ private struct PairConfirmationPage: View {
     let invitation: PairingInvitation
     let router: Router
     let stores: StoreBundle
+    let actions: @MainActor (ShellAction) -> Void
     @State private var asked = LinkAsked()
 
     var body: some View {
+        page
+            .toolbar(.hidden, for: .navigationBar)
+            .onAppear { ask() }
+            .onChange(of: stores.account) { _, _ in ask() }
+            .onChange(of: stores.fleet.connection.state) { _, _ in ask() }
+    }
+
+    /// A machine only the relay has seen, reached by a phone with no relay, is
+    /// one missing piece rather than a failed invitation. The invitation is
+    /// kept — this page is still the route, and signing in makes it ask — so
+    /// nothing is spent by saying so.
+    @ViewBuilder
+    private var page: some View {
+        if unreachable {
+            PairNeedsAnAccount { action in
+                switch action {
+                case .signIn: actions(.signIn)
+                case .cancel: router.pop()
+                case .confirm, .abandon, .digits: break
+                }
+            }
+        } else {
+            confirmation
+        }
+    }
+
+    /// Whether this invitation has nothing this phone can act on: no address
+    /// to dial and no account to reach a relay with.
+    private var unreachable: Bool {
+        invitation.needsAnAccount && stores.hosts.cloud == .signedOut
+    }
+
+    private var confirmation: some View {
         PairConfirmation(model: stores.pairing) { action in
             switch action {
             case .confirm(let peer): stores.confirmPairing(peer)
@@ -761,13 +802,9 @@ private struct PairConfirmationPage: View {
                 stores.abandonPairing(peer)
                 router.pop()
             case .cancel: router.pop()
-            case .digits: break
+            case .digits, .signIn: break
             }
         }
-        .toolbar(.hidden, for: .navigationBar)
-        .onAppear { ask() }
-        .onChange(of: stores.account) { _, _ in ask() }
-        .onChange(of: stores.fleet.connection.state) { _, _ in ask() }
     }
 
     /// Puts the invitation to the machine, once there is anything to put it
@@ -781,7 +818,12 @@ private struct PairConfirmationPage: View {
     /// being made would send somebody back to a machine that is fine to ask it
     /// for another code.
     private func ask() {
-        guard stores.fleet.connection.state == .connected,
+        // An invitation carrying addresses is dialled on the network this
+        // phone is already on: there is no relay in the way of it, so waiting
+        // for one would strand a machine standing on the same desk behind an
+        // account nobody needs.
+        guard !invitation.needsAnAccount || stores.fleet.connection.state == .connected,
+              !unreachable,
               asked.shouldAsk(stores.account)
         else { return }
         stores.pairing.open()

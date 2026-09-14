@@ -76,6 +76,7 @@ public enum States {
             var lost = host
             lost.entry.online = false
             lost.entry.lastDialError = "no route to host"
+            lost.entry.via = .offline
             return lost
         }
         Scenario.reading = Scenario.now.addingTimeInterval(-60 * minutesAgo)
@@ -93,6 +94,23 @@ public enum States {
     @MainActor
     public static func offering(_ bundle: StoreBundle, _ hosts: [HostEntry] = [Scenario.unpaired]) {
         bundle.apply([.discovered(hosts)])
+    }
+
+    /// What the link says about the account behind it: whether anybody is
+    /// signed in, and what their tier lets the relay carry.
+    @MainActor
+    public static func linked(_ bundle: StoreBundle, _ state: CloudState) {
+        bundle.apply([.cloudState(state)])
+    }
+
+    /// What the system answered about looking at this network.
+    ///
+    /// Set on the store rather than applied as an event, because it is not
+    /// one: the answer comes from the browser this phone runs, which is the
+    /// same route the app itself takes.
+    @MainActor
+    public static func localNetwork(_ bundle: StoreBundle, _ permission: LocalNetworkPermission) {
+        bundle.hosts.sawLocalNetwork(permission)
     }
 
     /// An invitation the machine has answered: authenticated, waiting on a
@@ -143,6 +161,7 @@ public enum States {
         var lost = Scenario.hosts
         lost[0].entry.online = false
         lost[0].entry.lastDialError = "connection reset"
+        lost[0].entry.via = .offline
         open(
             bundle, hosts: lost, entries: Transcript.pairingCopy,
             session: Sessions.claude(gate: .unknown, stream: .closed(

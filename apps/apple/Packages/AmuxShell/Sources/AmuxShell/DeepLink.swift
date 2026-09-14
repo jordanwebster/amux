@@ -9,7 +9,14 @@ import Foundation
 /// and says yes.
 public struct PairingInvitation: Hashable, Sendable, CustomStringConvertible {
     public let host: HostId
-    public let cloudURL: String
+    /// The relay the machine names, or nothing where it names none. A machine
+    /// with no account still issues invitations; its addresses are the whole
+    /// of what they carry.
+    public let cloudURL: String?
+    /// Where the machine says it can be dialled directly. Empty for one only
+    /// the relay can see — which is the difference between an invitation this
+    /// phone can take up on its own and one that needs an account.
+    public let addrs: [String]
     public let secret: [UInt8]
     /// The offer the machine wrote, whole, as the link carried it once the
     /// URL's own encoding is undone.
@@ -21,12 +28,22 @@ public struct PairingInvitation: Hashable, Sendable, CustomStringConvertible {
     /// screen.
     public let payload: String
 
-    public init(host: HostId, cloudURL: String, secret: [UInt8], payload: String) {
+    public init(
+        host: HostId, cloudURL: String?, addrs: [String], secret: [UInt8], payload: String
+    ) {
         self.host = host
         self.cloudURL = cloudURL
+        self.addrs = addrs
         self.secret = secret
         self.payload = payload
     }
+
+    /// Whether taking this invitation up needs an account.
+    ///
+    /// An invitation carrying addresses is dialled on the network this phone
+    /// is on and needs nothing else. One carrying none names a machine only
+    /// the relay has seen, and there is no relay without an account.
+    public var needsAnAccount: Bool { addrs.isEmpty }
 
     /// The invitation is a secret, so it prints as the machine it came from
     /// and no more; a description that carried the secret would put it into
@@ -80,17 +97,23 @@ extension PairingInvitation {
         // The base64 is the URL's, not the machine's: what the machine wrote
         // and what the runtime parses is the JSON inside it.
         self.init(
-            host: host, cloudURL: wire.cloudURL, secret: wire.secret, payload: offer)
+            host: host, cloudURL: wire.cloudURL, addrs: wire.addrs ?? [],
+            secret: wire.secret, payload: offer)
     }
 
     private struct Wire: Decodable {
         let hostID: String
-        let cloudURL: String
+        /// Absent where the machine has no account to name one with.
+        let cloudURL: String?
+        /// Absent in an invitation written before machines put their addresses
+        /// in one, which is the same as naming none.
+        let addrs: [String]?
         let secret: [UInt8]
 
         enum CodingKeys: String, CodingKey {
             case hostID = "host_id"
             case cloudURL = "cloud_url"
+            case addrs
             case secret
         }
     }

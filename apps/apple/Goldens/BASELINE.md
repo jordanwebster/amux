@@ -206,7 +206,29 @@ Reference-backed capture of `exited` using the `exited` fixture. No visual depar
 
 ## hosts
 
-Reference-backed capture of `hosts` using the `hosts` fixture. No visual departure is accepted.
+Reference-backed capture of `hosts` using the `hosts` fixture. Re-approved
+2026-09-14: the machines are read in the groups that decide what can be done
+with them — on this network, through the relay, away and offline — where the
+approved drawing had connected and offline. The grouping is the product's own
+vocabulary rather than a presentation choice: a machine on the same network and
+one across the relay are different things to use, and the words are the ones
+the command line and the desktop already print. The layout, typography,
+surfaces and row hierarchy are the approved ones.
+
+## hosts-groups
+
+Added state using the `hosts-groups` fixture. The four groups the machines are
+read in, filled: one on this network, one across the relay, one nowhere, and
+one more found here and not paired with. It follows the same visual system as
+its parent screen.
+
+## local-network-refused
+
+Added state using the `local-network-refused` fixture. A phone nobody let look
+at the network it is on. By the list alone this is indistinguishable from an
+empty network, and only one of the two can be fixed, so the screen says which
+it is and where the answer is changed. It follows the same visual system as its
+parent screen.
 
 ## new-agent
 
@@ -220,9 +242,29 @@ Reference-backed capture of `offline` using the `offline` fixture. No visual dep
 
 Added state using the `pair-confirm` fixture. The confirmation an amux://pair link arrives at, which never pairs on arrival. It follows the same visual system as its parent screen.
 
+## pair-confirmation
+
+Added state using the `pair-confirmation` fixture. The same confirmation on a
+phone with no account at all, reached by scanning a machine's code across the
+room. The invitation carried the machine's addresses, so nothing about reaching
+this screen went through a relay or an account. It follows the same visual
+system as its parent screen.
+
 ## pin
 
-Reference-backed capture of `pin` using the `pin` fixture. No visual departure is accepted.
+Reference-backed capture of `pin` using the `pin` fixture. Re-approved
+2026-09-14: the screen now names the route the code takes under the machine it
+names, because a code for a machine on this network and one for a machine only
+the relay has seen are different promises. The layout, typography and keypad
+are the approved ones.
+
+## code-entry
+
+Added state using the `code-entry` fixture. The code screen on a phone nobody
+has signed into, against the machine it found on this network. It is the state
+the free on-ramp actually runs through, and the route line is what makes the
+code legible without an account. It follows the same visual system as its
+parent screen.
 
 ## delete
 
@@ -234,7 +276,19 @@ Added state using the `delete-blocked` fixture. Account deletion blocked by live
 
 ## first-run
 
-Reference-backed capture of `first-run` using the `first-run` fixture. No visual departure is accepted.
+Reference-backed capture of `first-run` using the `first-run` fixture.
+Re-approved 2026-09-14: the empty home leads with pairing and offers an account
+under it, where the approved drawing led with signing in. amux is free on the
+network a phone is already on, and a first screen that asked for an account
+first would teach the opposite. The headline, the layout and the control
+hierarchy — one filled primary, one outlined secondary — are the approved ones.
+
+## found-host
+
+Added state using the `found-host` fixture. The same first launch on a network
+that already has a machine running on it: it is offered by name before anybody
+has typed or signed into anything. It follows the same visual system as its
+parent screen.
 
 ## first-run-paid
 

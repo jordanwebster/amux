@@ -1,3 +1,20 @@
+2026-09-14 — **The phone reads its machines by where they are, and an empty
+phone leads with pairing.** A host now carries the route this phone holds to
+it and whether it says it has an account, so the Hosts tab reads the machines
+in the four groups that decide what can be done with one — on this network,
+through the relay, away and offline — rather than as connected and not. A
+machine found on the network and not paired with sits in the group it is
+actually in, signed in or not, with the one thing there is to do with an
+offer. An empty first launch is the real Agents home: it names what it has
+found nearby, leads with pairing, and offers an account under it as what
+pairing is not, captioned to say so. The code screen names the route the code
+takes, because a code for a machine on this network and one for a machine only
+the relay has seen are different promises. A pairing link carrying addresses
+is now dialled without waiting for a relay that a signed-out phone will never
+have, and one carrying none says the machine is not on this network and offers
+to sign in, keeping the invitation. A refused local network explains itself
+and points at the one place the answer can be changed.
+
 2026-09-14 — **A test runner the simulator force-quit is run again, not
 reported as a verdict.** The simulator's bridge occasionally kills the UI test
 runner process — sometimes before the first test starts, sometimes partway

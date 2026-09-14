@@ -452,17 +452,35 @@ public struct HostEntry: Codable, Sendable, Equatable, Identifiable {
     /// daemon announced in the handshake. Absent for a host nothing has been
     /// adjacent to, and for one running a build from before hosts said so.
     public var platform: String?
+    /// The route a call to this machine would take right now.
+    ///
+    /// Reported rather than guessed: the phone holds several ways to reach a
+    /// machine and the one in use decides what the screen may promise. A
+    /// machine on the same network answers as fast as a local process; one on
+    /// the far side of the relay does not; and one no route reaches at all is
+    /// not a slower version of either.
+    public var via: HostVia
+    /// Whether that machine says it has an account, or nothing where it has
+    /// not said.
+    ///
+    /// It is the difference between a machine nobody can reach because the
+    /// subscription does not carry it and one nobody can reach because it
+    /// never signed in — and only one of those is worth asking anybody for
+    /// money about.
+    public var signedIn: Bool?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, online, version, capabilities, platform
+        case id, name, online, version, capabilities, platform, via
         case trustStatus = "trust_status"
         case lastDialError = "last_dial_error"
+        case signedIn = "signed_in"
     }
 
     public init(
         id: HostId, name: String, online: Bool, version: String? = nil,
         capabilities: JSONValue? = nil, trustStatus: HostTrustStatus = .trusted,
-        lastDialError: String? = nil, platform: String? = nil
+        lastDialError: String? = nil, platform: String? = nil,
+        via: HostVia = .offline, signedIn: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -472,7 +490,36 @@ public struct HostEntry: Codable, Sendable, Equatable, Identifiable {
         self.trustStatus = trustStatus
         self.lastDialError = lastDialError
         self.platform = platform
+        self.via = via
+        self.signedIn = signedIn
     }
+
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        id = try fields.decode(HostId.self, forKey: .id)
+        name = try fields.decode(String.self, forKey: .name)
+        online = try fields.decode(Bool.self, forKey: .online)
+        version = try fields.decodeIfPresent(String.self, forKey: .version)
+        capabilities = try fields.decodeIfPresent(JSONValue.self, forKey: .capabilities)
+        trustStatus = try fields.decode(HostTrustStatus.self, forKey: .trustStatus)
+        lastDialError = try fields.decodeIfPresent(String.self, forKey: .lastDialError)
+        platform = try fields.decodeIfPresent(String.self, forKey: .platform)
+        // Absent means no route claimed, which is what an older record and a
+        // machine nothing has reached both mean. Reading it as anything else
+        // would invent reachability out of silence.
+        via = try fields.decodeIfPresent(HostVia.self, forKey: .via) ?? .offline
+        signedIn = try fields.decodeIfPresent(Bool.self, forKey: .signedIn)
+    }
+}
+
+/// How this phone would reach a machine.
+public enum HostVia: String, Codable, Sendable, Equatable {
+    /// On the same network, with nothing in between.
+    case direct
+    case relay
+    case ssh
+    /// No route at all — which is also what a record naming no route means.
+    case offline
 }
 
 public enum HostTrustStatus: String, Codable, Sendable, Equatable {

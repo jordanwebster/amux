@@ -1388,6 +1388,11 @@ mod tests {
             "strip",
             "tokens",
             "devices",
+            "hosts-groups",
+            "local-network-refused",
+            "code-entry",
+            "pair-confirmation",
+            "found-host",
             "pair-confirm",
             "delete-blocked",
             "paywall-unconfirmed",
@@ -1472,7 +1477,7 @@ mod tests {
                 .iter()
                 .map(|screen| screen.appearances.len())
                 .sum::<usize>(),
-            126
+            136
         );
         let mut flaky_captures: Vec<_> = manifest
             .screens

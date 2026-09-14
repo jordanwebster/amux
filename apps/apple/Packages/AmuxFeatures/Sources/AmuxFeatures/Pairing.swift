@@ -16,6 +16,66 @@ public enum PairingAction: Equatable, Sendable {
     case abandon(PendingPeer)
     /// Left without an attempt in flight.
     case cancel
+    /// Get an account, because the machine the invitation names can only be
+    /// reached through the relay and there is no relay without one.
+    case signIn
+}
+
+/// A pairing invitation for a machine this phone cannot see.
+///
+/// An invitation carrying addresses is dialled on the network this phone is
+/// already on and needs nothing else. One carrying none names a machine only
+/// the relay has ever seen, and there is no relay without an account — so this
+/// is not a refusal and not a failure of the invitation: it is the one missing
+/// piece, said plainly, with the invitation kept where it was.
+public struct PairNeedsAnAccount: View {
+    @Environment(\.design) private var design
+    private let actions: @MainActor (PairingAction) -> Void
+
+    public init(actions: @escaping @MainActor (PairingAction) -> Void) {
+        self.actions = actions
+    }
+
+    public var body: some View {
+        ZStack {
+            Ground()
+            VStack(alignment: .leading, spacing: 0) {
+                Text("That host is not on this network")
+                    .designFont(.screenTitle, design)
+                    .foregroundStyle(design.ink.color)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 26)
+                    .identified(
+                        "pair-needs-account.title",
+                        value: "That host is not on this network")
+                Explain("""
+                    Its invitation names no address here, so it can only be reached through \
+                    the relay. Sign in and this phone can take it up.
+                    """)
+                    .padding(.top, 8)
+                Spacer(minLength: 22)
+                VStack(spacing: 10) {
+                    Button { actions(.signIn) } label: {
+                        ActionLabel("Sign In", kind: .primary, fill: true)
+                    }
+                    .buttonStyle(.amuxControl)
+                    .identified("pair-needs-account.signIn", label: "Sign In")
+                    Button { actions(.cancel) } label: {
+                        ActionLabel("Not Now", kind: .outline, fill: true)
+                    }
+                    .buttonStyle(.amuxControl)
+                    .identified("pair-needs-account.cancel", label: "Not Now")
+                }
+                Explain("The invitation is kept until then.")
+                    .padding(.top, 12)
+                    .padding(.bottom, 34)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, design.metrics.gutter)
+        }
+        .accessibilityElement(children: .contain)
+        .identified("pair-needs-account", value: "not on this network")
+    }
 }
 
 /// Adding a machine by the six-digit code it printed.
@@ -82,6 +142,12 @@ public struct PairByCode: View {
                 .foregroundStyle(design.inkMuted.color)
                 .fixedSize(horizontal: false, vertical: true)
                 .identified("pin.instruction", value: instruction)
+            if let route {
+                Text(route)
+                    .designFont(.monoSmall, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .identified("pin.route", value: route)
+            }
         }
         .padding(.top, 8)
         .padding(.bottom, 22)
@@ -97,6 +163,22 @@ public struct PairByCode: View {
     private var instruction: String {
         guard let machine = model.machine else { return "Run amux pair on the host to get one." }
         return "Run amux pair on \(machine.name) to get one."
+    }
+
+    /// Where the machine this code is for was found.
+    ///
+    /// Said because it is the difference between a code that will work with no
+    /// account at all and one that is being carried across the relay: two
+    /// machines with the same name on two different routes are otherwise one
+    /// name on this screen. Nothing where no machine has been pointed at,
+    /// which is a code typed before anything was found.
+    private var route: String? {
+        switch model.machine?.via {
+        case .direct: "On this network"
+        case .relay: "Through the relay"
+        case .ssh: "Over SSH"
+        case .offline, nil: nil
+        }
     }
 
     private var boxes: some View {

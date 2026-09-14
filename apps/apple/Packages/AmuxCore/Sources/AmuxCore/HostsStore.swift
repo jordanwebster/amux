@@ -67,6 +67,84 @@ public final class HostsStore {
     public var online: [HostEntry] { hosts.filter(\.online) }
     public var offline: [HostEntry] { hosts.filter { !$0.online } }
 
+    /// Where this phone can reach a machine from, which is the only division
+    /// of the list worth drawing.
+    ///
+    /// Not a degree of goodness. A machine on the same network and one on the
+    /// far side of the relay are both usable and feel nothing alike; a machine
+    /// the relay can see but this account may not tunnel to is not a slow
+    /// version of either, because nothing started on it will run; and a
+    /// machine no route reaches is a fourth thing again. Naming them apart is
+    /// what lets the screen say something true about each without putting a
+    /// caveat on every row.
+    public enum Reach: Sendable, Equatable {
+        case onThisNetwork
+        case throughTheRelay
+        /// The relay can see it; this phone may not tunnel to it.
+        case away
+        case offline
+
+        /// The group's own word, for an identifier a capture and a driver can
+        /// both name it by.
+        public var name: String {
+            switch self {
+            case .onThisNetwork: "on-this-network"
+            case .throughTheRelay: "through-the-relay"
+            case .away: "away"
+            case .offline: "offline"
+            }
+        }
+
+        /// The four, in the order a screen lists them: nearest first, then
+        /// what is reachable further away, then what is only visible, then
+        /// what is not there at all.
+        public static let all: [Reach] = [.onThisNetwork, .throughTheRelay, .away, .offline]
+    }
+
+    /// Which of the four a machine is in, paired or merely offered.
+    ///
+    /// The tier is asked of the link rather than of the account service: what
+    /// decides whether a tunnel opens is the credential the relay holds, and a
+    /// screen that grouped by a separately fetched entitlement could promise a
+    /// machine the link will refuse. A host that says it is not signed in is
+    /// never "away": the relay is not seeing it, so nothing about it is a
+    /// question of money.
+    public func reach(of host: HostEntry) -> Reach {
+        switch host.via {
+        case .direct: .onThisNetwork
+        case .relay where cloud.tier == .free && host.signedIn != false: .away
+        // A phone holds no SSH links; the arm is here so a machine is never
+        // dropped from a screen that claims to list them all.
+        case .relay, .ssh: .throughTheRelay
+        case .offline: .offline
+        }
+    }
+
+    public func hosts(_ reach: Reach) -> [HostEntry] {
+        hosts.filter { self.reach(of: $0) == reach }
+    }
+
+    /// The machines this phone has not paired with, in the same four groups.
+    /// A browser answers with machines on this network and the relay answers
+    /// with the rest, so an offer belongs where a paired machine on the same
+    /// route belongs.
+    public func candidates(_ reach: Reach) -> [HostEntry] {
+        discovered.filter { self.reach(of: $0) == reach }
+    }
+
+    /// Machines this phone can see advertising themselves on this network and
+    /// cannot open a link to.
+    ///
+    /// Two facts at once, and both are known: the browser resolved the
+    /// advertisement, and no route stands. It is worth saying because the
+    /// cause is almost never the machine — a network that passes Bonjour and
+    /// blocks the transport looks exactly like this — and a machine that is
+    /// simply switched off looks nothing like it.
+    public var foundButUnreachable: Set<HostId> {
+        let seen = Set(discovered.map(\.id))
+        return Set(hosts.filter { reach(of: $0) == .offline && seen.contains($0.id) }.map(\.id))
+    }
+
     /// When this phone saw that host go, or nothing where it never saw it.
     public func wentOffline(_ id: HostId) -> Date? { departures[id] }
 
