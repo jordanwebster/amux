@@ -2962,16 +2962,19 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         """A phone nobody has signed in on."""
         journey.expect(seen.get("gateAtLaunch") == "signed-out",
                        f"a phone nobody had signed in on drew {seen.get('gateAtLaunch')!r}")
-        journey.expect(seen.get("homeSaysAtLaunch") == "No hosts yet"
-                       and seen.get("homeOffersAtLaunch") == "Sign In",
+        journey.expect(seen.get("homeSaysAtLaunch") == "No agents yet"
+                       and seen.get("homeOffersAtLaunch") == "Pair a Host"
+                       and seen.get("homeOffersAccountAtLaunch") == "Sign In",
                        f"the first launch says {seen.get('homeSaysAtLaunch')!r} and offers "
-                       f"{seen.get('homeOffersAtLaunch')!r}")
+                       f"{seen.get('homeOffersAtLaunch')!r} and "
+                       f"{seen.get('homeOffersAccountAtLaunch')!r}")
         journey.expect(seen.get("accountsAtLaunch") == []
                        and seen.get("accountRowsAtLaunch") == [],
                        f"a phone with no account listed {seen.get('accountsAtLaunch')} and "
                        f"{seen.get('accountRowsAtLaunch')}")
-        journey.say("the first launch is the real home, empty, with one thing to do: no "
-                    "splash, no account, and nothing to subscribe to or sign out of")
+        journey.say("the first launch is the real home, empty, offering to pair with a machine "
+                    "first and an account second: no splash, no account, and nothing to "
+                    "subscribe to or sign out of")
 
     def sign_in() -> None:
         """Signing in, and the two ways it does not finish."""
@@ -2984,17 +2987,17 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("afterCancelling") == "ready",
                        f"cancelling left the page at {seen.get('afterCancelling')!r}")
         journey.expect(seen.get("gateAfterSigningIn") == "unsubscribed"
-                       and seen.get("homeOffersAfterSigningIn") == "Subscribe",
+                       and seen.get("homeOffersAfterSigningIn") == "Pair a Host",
                        f"an account with nothing bought drew {seen.get('gateAfterSigningIn')!r} "
                        f"offering {seen.get('homeOffersAfterSigningIn')!r}")
         journey.expect(seen.get("accountsAfterSigningIn")
-                       == ["ada@example.com: signed in, None"],
+                       == ["ada@example.com: signed in, Not subscribed · hosts on this network still work"],
                        f"this phone knows {seen.get('accountsAfterSigningIn')}")
         journey.say(f"the hand-off names where it is sending you and never asks for a password: "
                     f"refused it says the account service's own words "
                     f"({seen.get('refusalSaid')!r}), cancelled it leaves nothing to dismiss, and "
                     f"finished it puts the account on the phone with nothing bought — the same "
-                    f"empty home with the other thing to do")
+                    f"empty home, still offering the machine to pair with rather than a purchase")
 
     def subscribe() -> None:
         """Buying it, and the three ways it does not go through."""
@@ -3068,7 +3071,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("gateAfterBuying") == "ready",
                        f"a subscribed phone drew {seen.get('gateAfterBuying')!r}")
         journey.expect(seen.get("entitlementAfterBuying")
-                       == ["ada@example.com: signed in, Active · App Store"],
+                       == ["ada@example.com: signed in, Subscribed through the App Store"],
                        f"after buying, this phone knows {seen.get('entitlementAfterBuying')}")
         bought = [call for call in seen.get("storeCalls") or [] if call.startswith("buy")]
         journey.expect("buy amux_pro_yearly" in bought and "buy amux_pro_monthly" in bought,
@@ -3125,13 +3128,13 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
     def second_account() -> None:
         """A second account, subscribed somewhere else."""
         journey.expect(seen.get("accountsAfterAdding") == [
-            "ada@example.com: signed in, Active · App Store",
-            "team@acme.example: signed in, Active · amux.sh"],
+            "ada@example.com: signed in, Subscribed through the App Store",
+            "team@acme.example: signed in, Subscribed on the web"],
             f"this phone knows {seen.get('accountsAfterAdding')}")
         journey.expect(seen.get("selectedAfterAdding") == "personal",
                        f"signing a second account in moved the phone to "
                        f"{seen.get('selectedAfterAdding')!r}")
-        journey.expect(seen.get("workSubscriptionRow") == "Active · amux.sh",
+        journey.expect(seen.get("workSubscriptionRow") == "Subscribed on the web",
                        f"the second account's subscription reads "
                        f"{seen.get('workSubscriptionRow')!r}")
         journey.expect(seen.get("workPaywallSource") == "amux.sh"
@@ -3180,18 +3183,19 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                        and len(seen.get("accountsAfterSigningOut") or []) == 2,
                        f"after signing out this phone knows "
                        f"{seen.get('accountsAfterSigningOut')}")
-        journey.expect("team@acme.example: signed out, None"
+        journey.expect("team@acme.example: signed out, Not subscribed · hosts on this network still work"
                        in (seen.get("accountsAfterSigningOut") or []),
                        f"the account signed out of reads "
                        f"{seen.get('accountsAfterSigningOut')}")
-        journey.expect(seen.get("lapsedSubscriptionRow") == "Ended · amux.sh",
+        journey.expect(seen.get("lapsedSubscriptionRow")
+                       == "Not subscribed · hosts on this network still work",
                        f"a subscription that has run out reads "
                        f"{seen.get('lapsedSubscriptionRow')!r}")
         journey.say("signing out of one account leaves it listed with Sign In beside it — the "
                     "address is the one thing anybody recognises, and forgetting it would make "
                     "signing back in look like adding a stranger. Signing back in finds a "
-                    "subscription that has since ended, and the row says when it ended rather "
-                    "than that there never was one")
+                    "subscription that has since ended, and the row reads as not subscribed, "
+                    "saying in the same breath that hosts on this network still work")
 
     def delete() -> None:
         """An account given up for good."""
@@ -3210,7 +3214,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
                        f"coming back from the billing found {seen.get('typedAfterComingBack')!r} "
                        f"typed")
         journey.expect(seen.get("accountsAfterDeleting")
-                       == ["ada@example.com: signed in, Active · App Store"],
+                       == ["ada@example.com: signed in, Subscribed through the App Store"],
                        f"after the deletion this phone knows "
                        f"{seen.get('accountsAfterDeleting')}")
         journey.expect(seen.get("selectedAfterDeleting") == "personal",

@@ -164,10 +164,9 @@ final class AccountsTests: JourneyCase {
         record["homeOffersAtLaunch"] = try called("home.empty.pair")
         record["homeOffersAccountAtLaunch"] = try called("home.empty.signIn")
         record["homeSaysAtLaunch"] = try says("home.empty.firstRun")
-        // One action, because there is one thing to do. New Agent needs a
-        // host, a host needs pairing and pairing needs an account, so the
-        // header does not draw it until the gate in front of it is open —
-        // offering it here would be offering a door that opens onto nothing.
+        // New Agent needs a machine to start one on, and this phone has not
+        // paired with any, so the header does not draw it — offering it here
+        // would be offering a door that opens onto nothing.
         record["homeNewAgentAtLaunch"] = element(app, "home.newAgent").exists
         XCTAssertFalse(element(app, "home.newAgent").exists,
                        "the signed-out home offered New Agent beside Sign In")

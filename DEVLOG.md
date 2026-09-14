@@ -1,3 +1,15 @@
+2026-09-14 — **The account journey reads the home and the account rows as
+they are now.** The first launch offers pairing first and an account second,
+an account that has bought nothing is offered the machine to pair with rather
+than a purchase, and the subscription row says what the relay will carry and
+where it was bought — "Subscribed through the App Store", "Subscribed on the
+web", or "Not subscribed · hosts on this network still work" — in place of the
+old status words. The journey asserted the screens it replaced, so it failed
+on a phone that behaves correctly. One promise genuinely narrowed: a
+subscription that has run out now reads as not subscribed rather than naming
+the month it ended, because what a person needs from that row is whether their
+machines can be reached from away.
+
 2026-09-14 — **A pairing link on a phone with no account is put to the machine
 at once.** The machines journey still described the world in which a link that
 arrived before anybody had signed in could only be held: it waited for the
