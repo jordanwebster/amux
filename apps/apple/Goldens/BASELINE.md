@@ -307,6 +307,10 @@ Added state using the `home-accessibility` fixture. The home screen at an access
 
 Added state using the `home-unreadable` fixture. An agent run by a provider this build has no case for: listed under the host's name for it, said to be unreadable and the one row on the home that cannot be opened. It follows the same visual system as its parent screen.
 
+## home-offline
+
+Added state using the `home-offline` fixture. The two row states an ordinary fleet keeps below the fold: an agent whose machine is not answering, which names the machine in words instead of drawing a mark, and one whose working inference has expired, which is the only row in the app that draws neither a mark nor a state word. It follows the same visual system as its parent screen.
+
 ## small-home
 
 Added state using the `home` fixture. The home screen on the narrowest supported display. It follows the same visual system as its parent screen.

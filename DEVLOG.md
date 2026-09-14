@@ -1,3 +1,31 @@
+2026-09-14 — **Pinned what a fleet row says, and photographed the two states
+that had never been drawn.** `RowState` reads four independent facts in one
+order and that order is the whole of the design, so it now has tests rather
+than only a comment claiming it. The order is what a later change breaks
+silently: an offline machine that stopped outranking a permission request would
+hide the request rather than the machine, and every row involved would still
+look perfectly reasonable. Mutating that precedence fails six of the twelve.
+
+The words are pinned there too, because a capture exercises one path through
+seven cases and these exercise all of them — including the door's own
+vocabulary, which is deliberately not the screen's, so that wording can change
+without rewriting the journeys that drive the app. This commit's wording change
+left those alone, which is the point of keeping them apart.
+
+One new golden, `home-offline`, for the two things a unit test cannot judge. An
+offline machine names itself in the word slot and is then suppressed from the
+row's trailing edge, which is a layout interaction and not a string. And an
+expired working inference draws neither a mark nor a state word — the only row
+in the app that draws neither — which was a deliberate decision and therefore
+one worth being able to look at. It reads as an agent last heard from
+twenty-two minutes ago, which is what it is.
+
+The fixture is the home screen's own agents cut to three rather than a second
+set of cards saying the same things, with the dark machine's row brought
+forward to a few minutes ago: a laptop that sleeps shortly after its agent was
+last heard from is the ordinary way an agent ends up on a host that is not
+answering, and it keeps the row out of the fold where nobody could look at it.
+
 2026-09-14 — **Let `--update` say what it changed.** It copied each capture
 over its baseline before comparing the two, so the comparison was a file
 against itself: a run with the flag always reported that nothing had changed,

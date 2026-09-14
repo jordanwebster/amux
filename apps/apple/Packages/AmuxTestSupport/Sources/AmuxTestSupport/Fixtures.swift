@@ -74,6 +74,7 @@ public enum Fixtures {
         Built(.run, "run-reduced"),
         Built(.typing, "composer-accessibility"),
         Built(.home, "home-unreadable"),
+        Built(.home, "home-offline"),
         Built(.homeQuiet, "home-quiet"),
         Built(.drawer, "drawer"),
         Built(.run, "run"),
@@ -619,6 +620,15 @@ public enum Fixtures {
         // only row on the screen that cannot be opened.
         Fixture(id: "home-unreadable", screen: .home) { bundle in
             States.open(bundle, agents: [Scenario.unreadableAgent] + Scenario.agents)
+        },
+        // The two rows an ordinary morning keeps below the fold: one whose
+        // machine is not answering, and one whose machine is answering and
+        // which has gone quiet for longer than the working inference is
+        // allowed to stand. The second is the only row in the app that draws
+        // neither a mark nor a state word, which is a decision worth being
+        // able to look at rather than only read about.
+        Fixture(id: "home-offline", screen: .home) { bundle in
+            States.open(bundle, agents: Scenario.darkMachine)
         },
         // Nothing yet: one action, and no list pretending to be loading.
         Fixture(id: "home-empty", screen: .home) { bundle in

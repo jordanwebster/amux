@@ -774,6 +774,19 @@
       ]
     },
     {
+      "id": "home-offline",
+      "stage": 12,
+      "screen": "home",
+      "fixture": "home-offline",
+      "origin": "added_state",
+      "reason": "the two row states an ordinary fleet keeps below the fold: an agent whose machine is not answering, which names the machine instead of drawing a mark, and one whose working inference has expired, which is the only row in the app that draws neither a mark nor a state word",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "small-home",
       "stage": 12,
       "screen": "home",
