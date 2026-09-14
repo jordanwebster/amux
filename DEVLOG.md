@@ -26,6 +26,10 @@ forward to a few minutes ago: a laptop that sleeps shortly after its agent was
 last heard from is the ordinary way an agent ends up on a host that is not
 answering, and it keeps the row out of the fold where nobody could look at it.
 
+The catalogue's own size is asserted in Rust, and a screen added to it moves
+that number — which is the point, and which the phone's recipes cannot tell
+you, because they do not run the workspace suite. It said 124 and now says 126.
+
 2026-09-14 — **Let `--update` say what it changed.** It copied each capture
 over its baseline before comparing the two, so the comparison was a file
 against itself: a run with the flag always reported that nothing had changed,

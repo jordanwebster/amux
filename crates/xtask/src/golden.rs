@@ -1466,13 +1466,16 @@ mod tests {
                 assert!(!reason.is_empty(), "{} says why it is owed", screen.id);
             }
         }
+        // Every screen in both appearances. Adding one to the catalogue moves
+        // this, which is the point: a screen joins the sweep deliberately and
+        // in the same commit as its baselines.
         assert_eq!(
             manifest
                 .screens
                 .iter()
                 .map(|screen| screen.appearances.len())
                 .sum::<usize>(),
-            124
+            126
         );
         let mut flaky_captures: Vec<_> = manifest
             .screens
