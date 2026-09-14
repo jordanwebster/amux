@@ -1,0 +1,36 @@
+#!/bin/sh
+# Run a command holding wt leases: `with POOL [POOL...] -- COMMAND [ARGS...]`.
+#
+# Inside a wt worktree this is `wt with POOL... -- COMMAND`, which waits for
+# one instance of each named pool, exports WT_LEASE_<POOL> naming it, runs the
+# command, and releases on exit. Outside a worktree, or on a machine without
+# wt (CI), the pools are dropped and the command runs directly: there is
+# nothing to coordinate with. A pool whose lease is already in the
+# environment is dropped too, so a recipe that leases the phone may call
+# another that does without waiting on itself.
+
+set -eu
+
+pools=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --) shift; break ;;
+        *)
+            var="WT_LEASE_$(printf '%s' "$1" | tr 'a-z-' 'A-Z_')"
+            if [ -z "$(eval "printf '%s' \"\${$var:-}\"")" ]; then
+                pools="$pools $1"
+            fi
+            shift ;;
+    esac
+done
+
+if [ "$#" -eq 0 ]; then
+    echo "usage: $0 POOL [POOL...] -- COMMAND [ARGS...]" >&2
+    exit 64
+fi
+
+if [ -n "$pools" ] && [ -n "${WT_TARGET:-}" ] && command -v wt >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    exec wt with $pools -- "$@"
+fi
+exec "$@"
