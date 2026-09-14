@@ -1,3 +1,40 @@
+2026-09-14 — **Draw a control at rest exactly as it was written.** The
+captures caught three things the press work had done to every screen in the
+app, none of which was visible one screen at a time.
+
+`scaleEffect` resamples what it wraps even at a scale of one. The control style
+applied it unconditionally and read the press off its value, so every glyph in
+the app came back a hair softer and a fraction smaller — ninety-four captures
+differed, most of them by a few hundred pixels nobody would have queried
+individually. The press is a branch now, and a control that is not being
+pressed has no modifier over it at all. The cost is that the scale no longer
+animates in, which for an acknowledgement is not a cost.
+
+`.plain` halves a disabled button, and a custom `ButtonStyle` inherits none of
+it. The quiet send button stopped looking quiet. Solving for it against the
+captures put it at 0.5 exactly, which is what the screens were drawn against,
+so the styles do it themselves now.
+
+A `.scale` transition leaves its transform on the view it settled, and a card
+stays open far longer than the quarter second it arrives in. On the permissions
+card, whose rows wrap, that was enough to round its height differently and
+shift everything under it. Both the cards and the overflow now grow through a
+modifier whose resting state wraps nothing.
+
+The same sentence covers all three: whatever is drawn while a surface is
+arriving or being pressed must not be wrapped around it while it is sitting
+still.
+
+With that fixed, eleven screens change and they are the eleven the marks and
+the wording were always going to change — the two fleet lists, the drawer, the
+task strip, the unreadable-provider row, and the five surfaces whose scrim was
+one of six slightly different dims. Their baselines are re-recorded here.
+
+Two things the captures do not cover, worth knowing rather than discovering
+later. No fixture puts an agent whose host is offline on a list, so
+`studio offline` ships unphotographed; and nothing draws the state where the
+working inference has expired, which is the one that deliberately says nothing.
+
 2026-09-13 — **Made the working line elastic, and let the composer grow into
 a turn.** The line under the activity was a rigid capsule of fixed width
 sliding to and fro. The rule above it had already gone trackless, on the

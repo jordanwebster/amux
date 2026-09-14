@@ -7,8 +7,8 @@ import SwiftUI
 /// itself from the ground, and none of those answers how long a drawer takes
 /// to open. Nothing about a palette implies a duration.
 ///
-/// Two curves and one tempo, because a design that moves at four unrelated
-/// speeds reads as four apps. Everything that changes state uses `standard`;
+/// Two curves and one tempo, because a design that moves at three unrelated
+/// speeds reads as three apps. Everything that changes state uses `standard`;
 /// everything that follows a reader's own scroll uses `quick`, which is
 /// shorter because the content is already where the eye is; the one thing
 /// that moves continuously rather than between states uses `breath`.
@@ -19,11 +19,6 @@ public enum Motion {
     /// Following a reader somewhere they already asked to go — a scroll to a
     /// row they pressed. Shorter than `standard`: the destination is not news.
     public static let quick: Animation = .easeOut(duration: 0.18)
-
-    /// A control answering a thumb. Far shorter than `standard`, because this
-    /// is not a thing arriving — it is the app saying it felt the press, and
-    /// an acknowledgement that takes a quarter of a second has not.
-    public static let press: Animation = .snappy(duration: 0.12)
 
     /// One leg of the working line's travel. Not a transition: this is the
     /// tempo of the only thing in the app that moves while nothing is

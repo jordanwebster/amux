@@ -31,23 +31,35 @@ public struct AmuxRowButtonStyle: ButtonStyle {
     /// style was declared rather than where the button is drawn.
     private struct Lit: View {
         @Environment(\.design) private var design
+        @Environment(\.isEnabled) private var isEnabled
         let configuration: Configuration
         let cornerRadius: CGFloat
 
+        // Nothing is wrapped around a row that is not being pressed. Even an
+        // overlay drawn at zero opacity changes how the row's frame rounds to
+        // the device's pixels, which moved one card's rows two thirds of a
+        // point and the captures caught it.
+        @ViewBuilder
         var body: some View {
-            configuration.label
-                // Over the label rather than behind it. Several of these rows
-                // draw their own opaque plate, and a tint behind one of those
-                // is a tint nobody sees.
-                .overlay {
-                    // Ink rather than a fixed grey, so one token lightens a
-                    // dark row and darkens a light one: a highlight means
-                    // "nearer the foreground", not "darker".
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(design.ink.color)
-                        .opacity(configuration.isPressed ? 0.07 : 0)
-                        .allowsHitTesting(false)
-                }
+            if configuration.isPressed {
+                configuration.label
+                    // Over the label rather than behind it. Several of these
+                    // rows draw their own opaque plate, and a tint behind one
+                    // of those is a tint nobody sees.
+                    .overlay {
+                        // Ink rather than a fixed grey, so one token lightens
+                        // a dark row and darkens a light one: a highlight
+                        // means "nearer the foreground", not "darker".
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(design.ink.color)
+                            .opacity(0.07)
+                            .allowsHitTesting(false)
+                    }
+            } else if isEnabled {
+                configuration.label
+            } else {
+                configuration.label.opacity(0.5)
+            }
         }
     }
 }
@@ -61,18 +73,30 @@ public struct AmuxControlButtonStyle: ButtonStyle {
 
     private struct Giving: View {
         @Environment(\.reducesMotion) private var reduceMotion
+        @Environment(\.isEnabled) private var isEnabled
         let configuration: Configuration
 
+        // A control at rest is drawn exactly as it was written, with no
+        // modifier over it at all. `scaleEffect` resamples what it wraps even
+        // at a scale of one: every glyph in the app came back a hair softer
+        // and a fraction smaller, on every screen, which the captures caught.
+        // So the press is a branch rather than a value, and the cost of that
+        // is the transition being instant — which for an acknowledgement is
+        // not a cost. Opacity rather than a tint because a control's shape is
+        // its own business, and a plate drawn over a circle shows corners it
+        // does not have.
         var body: some View {
-            configuration.label
-                // A reader who asked for less motion still gets an answer,
-                // just not a moving one. Opacity rather than a tint because a
-                // control's shape is its own business — circles, capsules and
-                // rounded tiles all use this — and a plate drawn over one
-                // would show corners it does not have.
-                .scaleEffect(reduceMotion || !configuration.isPressed ? 1 : 0.96)
-                .opacity(reduceMotion && configuration.isPressed ? 0.55 : 1)
-                .animation(Motion.press, value: configuration.isPressed)
+            if configuration.isPressed {
+                if reduceMotion {
+                    configuration.label.opacity(0.55)
+                } else {
+                    configuration.label.scaleEffect(0.96)
+                }
+            } else if isEnabled {
+                configuration.label
+            } else {
+                configuration.label.opacity(0.5)
+            }
         }
     }
 }

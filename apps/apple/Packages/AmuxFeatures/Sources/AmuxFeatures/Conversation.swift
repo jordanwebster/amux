@@ -284,8 +284,7 @@ public struct Conversation: View {
                 // Out of the control that opened it. The ellipsis does not
                 // move while this arrives, which is what makes it read as
                 // hanging from the button rather than replacing it.
-                .transition(.scale(scale: 0.94, anchor: .topTrailing)
-                    .combined(with: .opacity))
+                .transition(.growing(from: .topTrailing))
             }
         }
         .moving(value: showing)
@@ -657,8 +656,12 @@ private struct ConversationComposerStanding: View {
     /// both are. The card still takes its row above the composer — it must
     /// not cover the field it is about to be used with — but it grows from
     /// the control rather than appearing at arm's length from it.
-    private static let growingFromTheFooter: AnyTransition =
-        .scale(scale: 0.94, anchor: .bottomLeading).combined(with: .opacity)
+    /// Built from a modifier whose resting state wraps nothing, rather than
+    /// from `.scale`. A scale transition leaves its transform on the view it
+    /// settled, and a card sits on screen far longer than the quarter second
+    /// it takes to arrive: on the permissions card, whose rows wrap, that was
+    /// enough to round its height differently and shift everything under it.
+    private static let growingFromTheFooter: AnyTransition = .growing(from: .bottomLeading)
 
     private func leaving(_ action: ConversationAction) {
         Keyboard.putDown()
@@ -792,5 +795,35 @@ struct ChangesChip: View {
             "conversation.changes",
             label: "Review \(changes.insertions) added, \(changes.deletions) removed",
             value: "\(insertions) \(deletions)")
+    }
+}
+
+/// The scale half of a surface's arrival, applied only while it is arriving.
+///
+/// `.scale` would be the obvious way to write this, and it leaves its
+/// transform on the view it settled — which for anything that stays open is
+/// almost all of the time it is on screen. Here the resting state wraps
+/// nothing at all.
+struct Growing: ViewModifier {
+    let growing: Bool
+    let anchor: UnitPoint
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if growing {
+            content.scaleEffect(0.94, anchor: anchor)
+        } else {
+            content
+        }
+    }
+}
+
+extension AnyTransition {
+    /// Out of the control that opened it.
+    static func growing(from anchor: UnitPoint) -> AnyTransition {
+        .modifier(
+            active: Growing(growing: true, anchor: anchor),
+            identity: Growing(growing: false, anchor: anchor)
+        ).combined(with: .opacity)
     }
 }
