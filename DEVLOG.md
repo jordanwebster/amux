@@ -122,6 +122,192 @@ a row is equatable over its whole card, so keying on the sections would set the
 list moving every time an agent aged by a minute. Safe because regrouping only
 happens on a refresh, which is something the reader did. The task strip's fold
 stops snapping between two corner radii.
+2026-09-14 — **Nothing in the golden catalogue is quarantined any more.** The
+three captures that had been marked flaky varied for two reasons, both in
+the transcript rather than in the camera, and both measured to the number
+before anything was changed. On a cold launch the strip could open a few
+hundred points above its latest row, in about half of launches: the tall
+space the unfolded strip reserves under the feed arrives as a bottom content
+inset after the one scroll to the tail has fired, and the scroll view does
+not count an inset as a change of size, so the bottom anchor never retried.
+That one a person could see. The feed now watches that single number and
+asks to be taken back to its tail whenever it changes, up to eight times,
+until the reader moves it; the observer reads one scalar, so it runs when
+the reserved space changes and not while the feed is measuring itself. And
+a lazy feed guesses at the height of the rows it has not built, settling on
+one of a few guesses at first layout and never revising it, which moved
+every row it did build a third of a point and rewrote every glyph; nobody
+can see that, and no scroll command changes it, so the two fixtures behind
+those captures now carry only the end of their conversation, which is all
+either picture shows. The accessibility composer's dark capture matched its
+old baseline with the trimmed fixture, which is the proof the visible
+picture did not move; the other three re-approved onto the resting place
+the fix now always lands on. Sixteen warm mounts and eight cold launches
+of each screen in each appearance draw one picture. The measured run's
+cold first frame on the cached fleet grazed its budget once after an hour
+of captures and passed on a rerun; no budget moved.
+
+2026-09-14 — **The golden catalogue is green on a GitHub runner.** It had been
+red on every runner and green on every Mac since it existed, and the reason
+was the home indicator: 116 of 124 captures differed by exactly its rectangle
+and nothing else, and every capture on the home-button phone passed.
+SpringBoard draws the bar when an app launches and withdraws it once
+backboardd's attention-awareness timer reports that nobody is touching the
+screen, which on a Mac takes about 1.5 seconds for any app. With both pinned
+devices booted on a runner, backboardd delivers that attention-lost event to
+a stale client identifier, so the live indicator never hears it and the bar
+stays for the whole run. A single booted device on the same runner hides it,
+which is why every earlier probe was clean. Nothing reproduces it on a Mac:
+headless, freshly created, two devices booted, all fade. Asking the app to
+hide persistent overlays rides the same timer and changed nothing.
+
+So the comparison, not the photograph, looks past it. The manifest declares
+each pinned simulator and the chrome SpringBoard draws over every app, and
+`xtask golden` counts no pixel under it, washing the excluded rectangles blue
+in the difference image. The first full catalogue under that rule finished
+on a runner with the bar out of every verdict and six captures failing on
+the status bar instead: its clock and indicators drawn in the previous
+appearance's colour, because SpringBoard applies a change of style late
+enough on a loaded runner to be photographed after the screen has settled.
+Those are chrome too now, on both phones. Against the runner's own captures,
+every screen outside the quarantine then matches its committed baseline with
+no differing pixels.
+
+Two more things a capture could vary on are pinned. The `comment` baseline
+had been approved on a Mac with Simulator.app's hardware keyboard connected,
+the one state in which no software keyboard rises, so every headless capture
+failed it over two thirds of the screen; the keyboard is pinned off per
+device and the sheet re-approved with its keyboard, as the design's own
+capture has it. And an app launched over another carries that app's name in
+the status bar as a way back, so every app on the device is terminated before
+the capture app launches — except SpringBoard's own Spotlight, which does not
+answer a terminate on a runner. A command spawned inside a device just after
+boot can also hang past its timeout on a runner; it is asked three times now.
+The nightly schedule is back, running the golden catalogue alone.
+
+The three quarantined transcript flakes were measured to their cause and
+stay quarantined. The feed's lazy stack latches an estimate for the rows
+above the viewport at first layout, at one of a few values that never
+converge — the scroll view's content height differs by 66 points between
+the strip's two pictures — and that lands the rows it does build a fraction
+of a device pixel apart, so every glyph rasterises differently and no
+integer shift reconciles the two. Extra settling never converges it; an
+eager stack removes it entirely but measures every row of a long
+conversation on the main thread and rewraps the composer's prose, so it is
+not the fix. On a cold launch the strip can also open a few hundred points
+above its tail when its tall bottom inset lands after the one scroll to the
+tail, which the size-change anchor does not retry. That is the transcript's
+to fix. A pre-existing script test for the Rust bridge build fails on
+Python 3.14 independently of this work.
+2026-09-14 — **Every recipe names a kind of phone, and wt hands it a device of its own.**
+Several checkouts had been driving the one pinned simulator at once and
+corrupting each other's captures. The recipes, the golden manifest and the
+Rust driving tools now name a *kind* of device, `golden` or `small`, never a
+device. Which device a kind means is decided in one place each for Python
+(`scripts/ios_simulators.py`) and Rust (`crates/xtask/src/simulator.rs`), by
+the same rule: inside a wt worktree it is the device wt leased for this
+command, named in `WT_LEASE_IPHONE` or `WT_LEASE_IPHONE_SMALL`, and a recipe
+that reaches a device inside a worktree without a lease is refused rather
+than allowed to drive a device another checkout may be using; outside a
+worktree, which is CI, it is `amux-iphone-1` or `amux-small-1`, created and
+pinned by the same code path, so the only difference between CI and a
+worktree is whether anything coordinates. `.wt.toml` declares the two pools:
+two golden devices and one small, created on demand by the script's
+`create` subcommand, cleaned at the start of every lease by `acquire`
+(uninstall the app, VoiceOver off, status bar re-pinned), kept for the tree
+for two minutes between consecutive recipes, and deleted after half an hour
+without a lease. Every recipe that touches a device runs under
+`scripts/with iphone`, and the ones that may need the narrow device under
+`scripts/with iphone iphone-small`; the shim runs the command directly where
+there is no wt, and drops a pool whose lease is already in the environment,
+so a recipe that leases the phone may call another that does. The app build
+no longer needs a device at all: it builds for the generic simulator
+destination, so `just ios build` holds no lease and never waits for one. The
+linkage smoke inside `just ios package` takes the lease for its own short
+run rather than the whole package build holding it. Measured on this Mac: a
+first lease creates and pins a device in 47 s, the next lease from the same
+checkout takes it in 5 s, a second checkout queues behind a running recipe
+and takes the device the moment it is released, and `just ios door-smoke`
+passes end to end on a leased device. The `amux-golden` and `amux-small`
+devices are no longer named anywhere; the report fixtures keep the host
+name `amux-golden` because it is a daemon's name rendered on screen, not a
+device.
+
+2026-09-13 — **Made the bridge's currency check look for the library.** The
+gate went red on a build that could not resolve the app's binary target:
+`AmuxApp.xcframework does not contain a binary artifact`, immediately after
+the bridge recipe announced that sources were unchanged and cargo had not run.
+Both were true. The build cache restores an xcframework's shape without the
+archives inside it — they are the large part — and the currency check asked
+only whether the directory existed, so a hollow framework read as current and
+nothing rebuilt it.
+
+It asks each slice for its library now, the way it already asked the driving
+framework for the one the debug configuration links. The failure it replaces
+named neither the cache nor the check, and surfaced two stages after the one
+that could have caught it.
+
+Detecting it was only half the repair, which the next red run made plain. The
+stamp was correctly invalidated and cargo ran, but the line that fills in the
+shipping framework asked whether the directory was absent — and a hollow one
+is present — so nothing put a library in it and the build failed exactly as
+before. Both halves ask the same question now. Reproduced by deleting the
+archives from a real xcframework and leaving its shape, which is what a
+restored cache hands you.
+
+2026-09-13 — **Took the shipping bundle off the push path.** The first green
+run of the split gate gave `ios package` a number for the first time: ten
+minutes of a thirty-four minute job, the largest stage in it, and one that had
+never executed in continuous integration before because the old job always
+died earlier. It builds every shipping slice under the size-optimised profile
+and links the result, and `ios scope-audit` then inspects that bundle; between
+them they were thirteen of the thirty-four minutes.
+
+Neither answers a question an ordinary change can change. What decides whether
+a provider, an agent host or a test crate can reach the phone is the device
+and simulator graphs, and the gate still checks those on every push. So both
+move to a third phase, `just ios shipping`, and `just ios verify` still runs
+them for whoever wants the whole thing. `just ios release` already depended on
+both, so a release cannot be cut without them — there is now a test that fails
+if that dependency is ever removed, because it is the only thing left holding
+them.
+
+The gate should land near twenty-one minutes. For the record, where the rest
+of it goes: `ios unit` is six separate `xcodebuild test` invocations, one per
+Swift package, whose actual test execution is fractions of a second in five of
+them — three hundred and twenty-two tests in under a second in one case — so
+almost all of its eight minutes is six cold starts and six compilations. One
+UI test, `DoorClearTests`, accounts for eighty-eight seconds on its own. And
+`ios simulator` boots the device twice, because the pinned region has to be
+written to a booted device and SpringBoard only reads it at startup.
+
+2026-09-13 — **Split iPhone verification into a gate and a capture half.** The
+one iPhone job in continuous integration was the developer's whole
+one-command check, which begins by running the Rust workspace — formatting,
+lint, tests and the specification suites. Three other jobs already run all of
+that, on three operating systems, so it was paying fourteen minutes a push for
+a second opinion it already had. It also booted both pinned simulators when
+the suites it was about to run need one, and it never once finished: the job
+has never reached journeys, accessibility or the measured run on any branch.
+
+So `xtask ios-verify` now takes `--gate` or `--captures`, and `just ios verify`
+still means everything, in the same order, for whoever is running it before
+they push. The gate is what a build can settle — the device and simulator
+graphs, the bridge, the app, the packaged framework, the unit suites and the
+shipped-scope audit — and nothing in it compares a photograph, so it says the
+same thing on any machine. That is what gates a push now, on one simulator.
+
+The capture half drives a running app and judges what it drew. It has its own
+workflow, and that workflow is deliberately not scheduled. On a GitHub runner
+117 of the 124 captures fail and on a developer's Mac they pass, and after a
+day of it nobody can say why. A nightly that is red every night for a reason
+nobody can act on only teaches people to stop reading it.
+
+What the day did establish is written down where it will be found: the settle
+rule in `door.rs` claimed a margin it never had, the capture cadence belongs
+to the machine rather than to us, and neither rebooting a simulator nor
+erasing it to factory state changes the failure. Two mechanisms proposed and
+both refuted by a runner, which is cheaper than shipping either.
 
 2026-09-13 — **Made the simulator recipe's bound a backstop again.** Creating
 and booting the two pinned simulators from nothing takes a cold runner most of

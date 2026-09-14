@@ -46,7 +46,7 @@ PANELS = [
 # Where the app is asked to write its report bundle. The two recordings in it
 # are what `just ios replay` rebuilds a screen from.
 BUNDLE = OUTPUT / "bundle"
-SIMULATOR = "amux-golden"
+SIMULATOR = "golden"
 BUNDLE_ID = "sh.amux.app"
 TOPOLOGY = "e2e-tests/topologies/two-hosts.json"
 # What the bridge built with the driving tools answers when asked what it is.
@@ -379,8 +379,7 @@ def runner():
 
 
 def main() -> None:
-    udid = ios_simulators.ensure(SIMULATOR)
-    ios_simulators.pin(udid)
+    udid = ios_simulators.ready(SIMULATOR)
     forget_pairings(udid)
     with runner() as ready:
         token, = [user["token"] for user in ready["users"] if user["label"] == "personal"]

@@ -25,14 +25,20 @@ the baseline enrols it with no further edit. `AMUX_PERF_MACHINE` names the
 row deliberately; the GitHub runner sets it because no hardware row identifies
 it.
 
-Three of the 124 simulator captures are explicitly marked flaky in the golden
-manifest: `strip.light`, `strip.dark`, and `ax-composer.dark`. They remain in
-every golden run, are compared at the unchanged tolerance, print their verdict,
-and retain expected, actual, and difference images in the uploaded CI artifact.
-Only a pixel-difference verdict is non-gating for those exact captures. A failed
-capture, missing baseline, or size change still fails. The manifest records the
-known two-physical-pixel transcript settling variation so the quarantine stays
-visible and can be removed when the simulator behavior is fixed.
+The nightly `iOS captures` workflow compares the golden catalogue on a GitHub
+runner with both pinned devices booted; dispatching it by hand runs every
+capture suite. A runner's captures match a developer's Mac pixel for pixel
+except under the home indicator, which the comparison is told to look past
+(see [the goldens section](IOS.md#goldens-and-baseline-changes)).
+
+No capture is quarantined: all 124 gate on their pixel difference. Three of
+them — `strip.light`, `strip.dark` and `ax-composer.dark` — were, until the
+transcript that drew them was fixed on 2026-09-14, and
+`apps/apple/Goldens/BASELINE.md` says what was wrong with it. The manifest can
+still mark a capture flaky, which keeps it in every run and prints its verdict
+while making only the pixel difference non-gating; a failed capture, a missing
+baseline or a size change fails either way. Marking one is an argument to be
+made in the open and nothing carries the mark today.
 
 ## The bridge
 

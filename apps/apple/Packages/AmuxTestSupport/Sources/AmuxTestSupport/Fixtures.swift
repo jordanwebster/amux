@@ -550,7 +550,7 @@ public enum Fixtures {
         // answer.
         Fixture(id: "strip", screen: .run, overlay: .tasks) { bundle in
             States.open(
-                bundle, agents: Scenario.startedWork, entries: Transcript.live,
+                bundle, agents: Scenario.startedWork, entries: Transcript.liveTail,
                 session: Sessions.claude(
                     gate: .working, phase: "running",
                     provider: Sessions.claudeProvider(running: Sessions.todos),
@@ -654,7 +654,7 @@ public enum Fixtures {
         // composer is the one surface that grows under the reader's thumb, so
         // it is photographed separately from the conversation behind it.
         Fixture(id: "composer-accessibility", screen: .typing, typeSize: "accessibility5") { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            States.open(bundle, entries: Transcript.conversationTail, session: Sessions.claude())
             bundle.conversation(Scenario.focus).draft.body =
                 "Check the reconnect path before you squash it."
         },

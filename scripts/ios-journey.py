@@ -53,7 +53,7 @@ MANIFEST = Path("apps/apple/Journeys/manifest.json")
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
 OUTPUT = Path("target/ios/journeys")
-SIMULATOR = "amux-golden"
+SIMULATOR = "golden"
 BUNDLE_ID = "sh.amux.app"
 # One Fleet event the bridge itself produced, kept beside the projection it
 # came from. A remembered fleet is written by copying its card, so the shape a
@@ -3396,8 +3396,7 @@ def main() -> None:
         # gets to choose the position of.
         acts = [name for name in declares if name in acts]
 
-    udid = ios_simulators.ensure(SIMULATOR)
-    ios_simulators.pin(udid)
+    udid = ios_simulators.ready(SIMULATOR)
     for plan in chosen:
         # An act's run leaves its findings somewhere of its own: the journey's
         # evidence is what a whole run wrote, and a partial one must not be

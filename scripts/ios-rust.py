@@ -20,14 +20,28 @@ import ios_bridge as bridge
 STAMP = bridge.OUTPUT / "rust-stamp.json"
 
 
+def packaged(framework: Path) -> bool:
+    """Whether an xcframework holds the library every slice of it should."""
+    slices = [entry for entry in framework.glob("*") if entry.is_dir()]
+    return bool(slices) and all(
+        (entry / bridge.LIBRARY).is_file() for entry in slices
+    )
+
+
 def main() -> None:
     bridge.OUTPUT.mkdir(parents=True, exist_ok=True)
     driving = bridge.OUTPUT / bridge.DRIVING_FRAMEWORK
     shipping = bridge.OUTPUT / bridge.FRAMEWORK
     linked = driving / bridge.DRIVING_SLICE / bridge.LIBRARY
     fingerprint = bridge.source_fingerprint()
+    # Both frameworks are asked for a library, not for a directory. A build
+    # cache can restore an xcframework's shape without the archives inside it
+    # -- they are the large part -- and a stamp alone would then call the
+    # bridge current and leave xcodebuild to report `does not contain a binary
+    # artifact` two stages later, which names neither the cache nor this
+    # check. What was actually built is the only thing worth trusting.
     if (STAMP.is_file() and STAMP.read_text().strip() == fingerprint
-            and linked.is_file() and shipping.is_dir()):
+            and linked.is_file() and packaged(shipping)):
         print("Rust sources unchanged; the bridge is current and cargo was not run", flush=True)
         return
     STAMP.unlink(missing_ok=True)
@@ -50,10 +64,13 @@ def main() -> None:
     # the debug configurations force-load the driving library first, so which
     # archive sits here does not change what they link. `ios package` replaces
     # it with the real one, and the shipping recipes depend on that.
-    if not shipping.is_dir():
+    # Whether it is there at all, and whether what is there holds a library:
+    # a restored build cache can leave the second false while the first is
+    # true, and a shape with no archive in it resolves no better than nothing.
+    if not packaged(shipping):
         bridge.package(shipping, [staging / bridge.SIMULATOR_TRIPLE])
         (bridge.OUTPUT / "framework.sha256").unlink(missing_ok=True)
-        print(f"{shipping.name} did not exist; staged the development slice as a stand-in "
+        print(f"{shipping.name} held no library; staged the development slice as a stand-in "
               "until `just ios package` builds the shipping library", flush=True)
 
     profile = tomllib.loads(Path("Cargo.toml").read_text())["profile"].get("dev", {})

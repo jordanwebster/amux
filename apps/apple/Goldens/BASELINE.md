@@ -13,23 +13,37 @@ Run `just ios goldens` to compare every state. Run
 `just ios goldens-reference` to place the 33 reference-backed screens beside
 the preserved designs.
 
-## Known flaky captures
+## Nothing is quarantined
 
-Three of the 124 captures are quarantined individually: `strip.light`,
-`strip.dark`, and `ax-composer.dark`. On the pinned simulator, their
-bottom-anchored transcript text can settle two physical pixels apart between
-launches even though UIKit reports identical scroll geometry. They are still
-captured and compared, and their triplets remain available for diagnosis. Only
-their pixel-difference result is non-gating; capture failures, missing
-baselines, and size changes still fail. The global tolerance remains two per
-channel with at most 64 differing pixels.
+Every one of the 124 captures gates. `strip.light`, `strip.dark` and
+`ax-composer.dark` were quarantined until 2026-09-14 and are not any more.
+
+They varied for two reasons, both in the transcript rather than in the camera.
+A feed that opens at its latest row could be left a few hundred points short of
+it on a cold launch, because the tall space the strip of work reserves under
+the feed arrives as a content inset and the scroll view does not count an inset
+as a change of size; the feed now asks to be taken back to its latest row
+whenever that reserved space changes. And a lazy feed guesses the height of the
+rows it has not built, settling on a different guess from one opening to the
+next, which moved every row it did build a fraction of a device pixel and
+rewrote every glyph; the two fixtures behind these captures now carry only the
+end of their conversation, which is all either picture shows, so there is
+nothing left to guess at. The strip's own feed and the accessibility composer's
+show exactly what they showed before.
+
+The global tolerance remains two per channel with at most 64 differing pixels.
 
 ## Departures every screen shares
 
 The app images are photographs of the pinned iOS simulator after rendering has
 settled. They include the simulator's status bar and Dynamic Island. The design
-captures use drawn system chrome and include a home indicator, while settled
-simulator captures omit that indicator.
+captures use drawn system chrome and include a home indicator. A simulator
+capture may or may not: SpringBoard withdraws the bar on a timer that a loaded
+runner never fires, and it can draw the status bar's clock and indicators in
+the previous appearance's colour for a while after a switch. The manifest
+declares those rectangles per phone and no pixel under them is compared. The
+committed baselines were photographed without the bar and with the status bar
+in the right colour.
 
 Names, agent output, model lists, host inventories, timestamps, counts, prices,
 and patch contents come from executable fixtures and may differ from the
@@ -104,6 +118,11 @@ Added state using the `ask-permission-codex` fixture. The same ask in Codex's vo
 ## comment
 
 Reference-backed capture of `comment` using the `comment` fixture. No visual departure is accepted.
+The sheet's field takes the keyboard as it arrives, so the software keyboard is
+part of the picture, as it is in the design's own capture. Re-approved
+2026-09-14 from a device with Simulator.app's hardware keyboard pinned off: the
+earlier baseline had been photographed with the Mac's keyboard connected, which
+is the one state in which no keyboard rises.
 
 ## diff
 
@@ -156,6 +175,14 @@ Reference-backed capture of `slash-typing` using the `slash-typing` fixture. No 
 ## strip
 
 Added state using the `strip` fixture. The facts strip under a conversation. It follows the same visual system as its parent screen.
+
+Re-approved on 2026-09-14. The picture is of the strip and the few lines of feed
+beside it, and those are unchanged; what changed is that the feed no longer
+carries a long history nobody can see behind them. A lazy feed guesses at rows
+it has not built and guessed differently each time it opened, which moved every
+visible glyph a fraction of a pixel and left this capture unable to match
+itself. With nothing hidden left to guess at, the text rasterises one way, and
+that one way is the baseline.
 
 ## tokens
 
@@ -260,6 +287,13 @@ Added state using the `run-accessibility` fixture. A conversation at an accessib
 ## ax-composer
 
 Added state using the `composer-accessibility` fixture. The composer with a message half-written in it, at an accessibility text size. It follows the same visual system as its parent screen.
+
+Re-approved on 2026-09-14 for the same reason the strip was, and with the same
+words on screen. At this text size the last message of the conversation is
+already taller than the band left visible above the box, so the earlier turns
+the fixture used to carry were never drawn; they only gave the lazy feed
+something to guess the height of, and the guess moved the drawn text between
+openings.
 
 ## reduced-glass
 

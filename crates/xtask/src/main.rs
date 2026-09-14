@@ -5,6 +5,7 @@ mod door;
 mod golden;
 use xtask::ios_verify;
 mod replay;
+mod simulator;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match std::env::args().nth(1).as_deref() {

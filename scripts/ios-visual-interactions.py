@@ -17,8 +17,7 @@ RUNNER = "sh.amux.AmuxUITests.xctrunner"
 
 
 def main() -> int:
-    udid = ios_simulators.ensure("amux-golden")
-    ios_simulators.pin(udid)
+    udid = ios_simulators.ready("golden")
     ios_simulators.run("xcrun", "simctl", "install", udid, str(APPLICATION), timeout=300)
     OUTPUT.mkdir(parents=True, exist_ok=True)
     log = OUTPUT / "test.log"
