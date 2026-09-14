@@ -1,3 +1,14 @@
+2026-09-14 — **A test runner the simulator force-quit is run again, not
+reported as a verdict.** The simulator's bridge occasionally kills the UI test
+runner process — sometimes before the first test starts, sometimes partway
+through one — and the run then reports two things: the runner died of SIGKILL,
+and whatever step was in flight found the app gone. Nothing about the app was
+measured in that case, so the phone journeys stopped reading a verdict out of
+it: a run carrying that pair is performed once more, and only a second killed
+runner is reported. A refused expectation carries neither phrase, is never
+repeated, and still stands as the answer. Reading the failure details moved out
+of the log-writing path so the decision can see them.
+
 2026-09-14 — **Signing out leaves a working phone even when somebody else is
 still signed in.** A phone with nobody on screen reaches no relay, and the
 connection it starts is refused outright if it names an account anyway: an

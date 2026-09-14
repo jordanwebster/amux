@@ -333,31 +333,23 @@ def film(process: subprocess.Popen, udid: str, name: str, destination: Path) -> 
             marker.unlink(missing_ok=True)
 
 
-def perform(
-    journey: Journey, udid: str, test: str, collecting: dict[str, Path],
-    telling: dict[str, str] | None = None,
-    filming: Path | None = None,
-) -> None:
-    """Runs one UI test against the app on the pinned simulator.
+# A test runner that never got to run is not a result. The simulator's bridge
+# occasionally force-quits the runner process — before the first test starts, or
+# partway through one — and the run reports these two things: the runner died of
+# SIGKILL, and whatever step was in flight found the app gone. Nothing about the
+# app was measured, so there is nothing to read from it; the honest response is
+# to run it again. A failed assertion carries neither phrase and always stands.
+RUNNER_WAS_KILLED = ("crashed with signal kill", "Early unexpected exit")
 
-    A journey drives what it can through the door, which reads the same names
-    VoiceOver reads. Pressing a control is the one thing it cannot do —
-    SwiftUI builds an accessibility tree only for an attached accessibility
-    client, and an app is not one from inside its own process — so the steps
-    that are taps are a UI test, which is that client. What the test
-    photographs is left in its own container and collected here.
-    """
-    journey.directory.mkdir(parents=True, exist_ok=True)
-    log = journey.directory / f"{test.split('/')[-1]}.log"
-    result = journey.directory / f"{test.replace('/', '-')}.xcresult"
+
+def run_once(
+    udid: str, test: str, log: Path, result: Path,
+    environment: dict[str, str], filming: Path | None,
+) -> tuple[int, str]:
+    """Runs the test once, returning its exit status and what the bundle says."""
     # xcodebuild refuses to replace a result bundle. A repeated diagnosis is
     # about this run, so an earlier bundle cannot survive under its name.
     shutil.rmtree(result, ignore_errors=True)
-    # xcodebuild passes TEST_RUNNER_X through to the test process as X, which
-    # is the only way to tell a UI test anything: it is launched by the system,
-    # not by this script.
-    environment = os.environ | {f"TEST_RUNNER_{key}": value
-                                for key, value in (telling or {}).items()}
     # Written straight to the log rather than through a pipe: the camera below
     # runs while xcodebuild does, and a pipe nobody is draining would stop it.
     with log.open("w") as sink:
@@ -380,22 +372,54 @@ def perform(
             if started.poll() is None:
                 started.kill()
                 started.wait(timeout=30)
-    if returned != 0 and result.is_dir():
-        # Keep passing output quiet, but make a failed assertion readable in
-        # the plain log as well as in the retained result bundle. The test
-        # tree includes XCTest's complaint and source location.
-        with log.open("a") as sink:
-            sink.write(f"\nFailure details from {result}:\n")
-            sink.flush()
-            details = subprocess.run([
-                "xcrun", "xcresulttool", "get", "test-results", "tests",
-                "--path", str(result.resolve()),
-            ], text=True, stdout=sink, stderr=subprocess.STDOUT, timeout=120)
-            if details.returncode != 0:
-                sink.write(
-                    f"xcresulttool could not read the test details "
-                    f"(exit {details.returncode})\n")
-    elif returned == 0:
+    if returned == 0 or not result.is_dir():
+        return returned, ""
+    # Keep passing output quiet, but make a failed assertion readable in the
+    # plain log as well as in the retained result bundle. The test tree includes
+    # XCTest's complaint and source location.
+    read = subprocess.run([
+        "xcrun", "xcresulttool", "get", "test-results", "tests",
+        "--path", str(result.resolve()),
+    ], text=True, capture_output=True, timeout=120)
+    details = read.stdout if read.returncode == 0 else (
+        f"xcresulttool could not read the test details (exit {read.returncode})\n"
+        f"{read.stdout}{read.stderr}")
+    with log.open("a") as sink:
+        sink.write(f"\nFailure details from {result}:\n{details}")
+    return returned, details
+
+
+def perform(
+    journey: Journey, udid: str, test: str, collecting: dict[str, Path],
+    telling: dict[str, str] | None = None,
+    filming: Path | None = None,
+) -> None:
+    """Runs one UI test against the app on the pinned simulator.
+
+    A journey drives what it can through the door, which reads the same names
+    VoiceOver reads. Pressing a control is the one thing it cannot do —
+    SwiftUI builds an accessibility tree only for an attached accessibility
+    client, and an app is not one from inside its own process — so the steps
+    that are taps are a UI test, which is that client. What the test
+    photographs is left in its own container and collected here.
+    """
+    journey.directory.mkdir(parents=True, exist_ok=True)
+    log = journey.directory / f"{test.split('/')[-1]}.log"
+    result = journey.directory / f"{test.replace('/', '-')}.xcresult"
+    # xcodebuild passes TEST_RUNNER_X through to the test process as X, which
+    # is the only way to tell a UI test anything: it is launched by the system,
+    # not by this script.
+    environment = os.environ | {f"TEST_RUNNER_{key}": value
+                                for key, value in (telling or {}).items()}
+    for runs_left in (1, 0):
+        returned, details = run_once(udid, test, log, result, environment, filming)
+        if returned == 0 or runs_left == 0:
+            break
+        if not any(phrase in details for phrase in RUNNER_WAS_KILLED):
+            break
+        journey.say(f"the simulator force-quit the test runner before "
+                    f"{test} could finish; running it again")
+    if returned == 0:
         # Passing journeys need neither the sizeable bundle nor its build
         # chatter; the ordinary journey record is their evidence.
         shutil.rmtree(result, ignore_errors=True)
