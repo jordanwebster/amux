@@ -125,7 +125,7 @@ def test(package: str, udid: str, arguments: list[str]) -> None:
 
 def main() -> None:
     packages, arguments = selected(sys.argv[1:])
-    udid = ios_simulators.ensure("amux-golden")
+    udid = ios_simulators.ready("golden")
     with forwarded(udid, requested_updates()):
         for package in packages:
             test(package, udid, arguments)

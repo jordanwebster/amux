@@ -709,7 +709,7 @@ fn value(arguments: &[String], name: &str) -> Option<String> {
 }
 
 fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let simulator = value(arguments, "--simulator").unwrap_or_else(|| "amux-golden".into());
+    let simulator = value(arguments, "--simulator").unwrap_or_else(|| "golden".into());
     let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.app".into());
     let update = arguments.iter().any(|argument| argument == "--update");
     let built_only = arguments.iter().any(|argument| argument == "--built");
@@ -817,7 +817,7 @@ fn run_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 /// screens are captured the same way, and this command fails unless every one
 /// of them came back different with a difference image beside it.
 fn perturb_command(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let simulator = value(arguments, "--simulator").unwrap_or_else(|| "amux-golden".into());
+    let simulator = value(arguments, "--simulator").unwrap_or_else(|| "golden".into());
     let bundle_id = value(arguments, "--bundle-id").unwrap_or_else(|| "sh.amux.app".into());
     let token = value(arguments, "--token").unwrap_or_else(|| PERTURBED_TOKEN.into());
     let mut ids: Vec<String> = Vec::new();
@@ -1253,7 +1253,7 @@ mod tests {
             &path,
             r#"{"simulators": {}, "screens": [{"id": "probe", "stage": 4, "screen": "probe",
                 "fixture": "probe", "origin": "added_state", "reason": "r",
-                "simulator": "amux-golden", "appearances": ["light"]}]}"#,
+                "simulator": "golden", "appearances": ["light"]}]}"#,
         )
         .expect("a manifest");
         let error = GoldenManifest::read(&path).expect_err("an undeclared simulator");
@@ -1395,7 +1395,7 @@ mod tests {
                 );
             }
             assert!(
-                screen.simulator == "amux-golden" || screen.simulator == "amux-small",
+                screen.simulator == "golden" || screen.simulator == "small",
                 "{} names an unpinned simulator",
                 screen.id
             );
@@ -1432,10 +1432,7 @@ mod tests {
 
         // Every pinned device is declared with the chrome the comparison
         // must look past; only the Face ID phone has a home indicator.
-        let golden = manifest
-            .simulators
-            .get("amux-golden")
-            .expect("the golden phone");
+        let golden = manifest.simulators.get("golden").expect("the golden phone");
         let named: Vec<&str> = golden
             .system_chrome
             .iter()
@@ -1451,10 +1448,7 @@ mod tests {
         );
         let bar = &golden.system_chrome[2];
         assert_eq!((bar.x, bar.y, bar.width, bar.height), (384, 2580, 438, 21));
-        let small = manifest
-            .simulators
-            .get("amux-small")
-            .expect("the small phone");
+        let small = manifest.simulators.get("small").expect("the small phone");
         assert_eq!(
             small.system_chrome.len(),
             2,

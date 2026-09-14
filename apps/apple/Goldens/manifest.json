@@ -1,6 +1,6 @@
 {
   "simulators": {
-    "amux-golden": {
+    "golden": {
       "system_chrome": [
         {
           "what": "status bar clock: SpringBoard draws 9:41 in the style the app's scene asks for, and applies a change of style late enough on a loaded runner to be photographed in the old colour",
@@ -25,7 +25,7 @@
         }
       ]
     },
-    "amux-small": {
+    "small": {
       "system_chrome": [
         {
           "what": "status bar clock, as on the golden phone",
@@ -52,7 +52,7 @@
       "fixture": "probe",
       "origin": "added_state",
       "reason": "the harness's own target: a screen made of the design's tokens, so a capture, a diff and a token change can be proven before any real screen exists",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -65,7 +65,7 @@
       "fixture": "drawer",
       "origin": "added_state",
       "reason": "the drawer is a state of the home screen the design has no capture of",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -78,7 +78,7 @@
       "fixture": "home",
       "origin": "reference",
       "capture": "home",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -91,7 +91,7 @@
       "fixture": "home-quiet",
       "origin": "reference",
       "capture": "home-quiet",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -104,7 +104,7 @@
       "fixture": "review-cta",
       "origin": "reference",
       "capture": "review-cta",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -117,7 +117,7 @@
       "fixture": "finished",
       "origin": "added_state",
       "reason": "a finished turn nobody has read, with its review chip and the ordinary composer still available",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -130,7 +130,7 @@
       "fixture": "run",
       "origin": "reference",
       "capture": "run",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -143,7 +143,7 @@
       "fixture": "run-live",
       "origin": "reference",
       "capture": "run-live",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -156,7 +156,7 @@
       "fixture": "host-lost",
       "origin": "added_state",
       "reason": "a conversation whose host has gone away, which the design does not picture",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -169,7 +169,7 @@
       "fixture": "voices",
       "origin": "reference",
       "capture": "voices",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -182,7 +182,7 @@
       "fixture": "ask-permission",
       "origin": "reference",
       "capture": "ask-permission",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -195,7 +195,7 @@
       "fixture": "ask-question",
       "origin": "reference",
       "capture": "ask-question",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -208,7 +208,7 @@
       "fixture": "ask-permission-codex",
       "origin": "added_state",
       "reason": "the same ask in Codex's vocabulary rather than Claude's",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -221,7 +221,7 @@
       "fixture": "comment",
       "origin": "reference",
       "capture": "comment",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -234,7 +234,7 @@
       "fixture": "diff",
       "origin": "reference",
       "capture": "diff",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -247,7 +247,7 @@
       "fixture": "plan",
       "origin": "reference",
       "capture": "plan",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -260,7 +260,7 @@
       "fixture": "rename",
       "origin": "added_state",
       "reason": "the design names the row that renames an agent but not the card it opens; a name is typed into it, so it is owed a capture of its own",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -273,7 +273,7 @@
       "fixture": "agent-delete",
       "origin": "reference",
       "capture": "agent-delete",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -286,7 +286,7 @@
       "fixture": "overflow",
       "origin": "reference",
       "capture": "overflow",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -299,7 +299,7 @@
       "fixture": "permissions-claude",
       "origin": "added_state",
       "reason": "the permissions sheet in Claude's vocabulary",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -312,7 +312,7 @@
       "fixture": "permissions-codex",
       "origin": "added_state",
       "reason": "the permissions sheet in Codex's vocabulary",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -325,7 +325,7 @@
       "fixture": "plus",
       "origin": "reference",
       "capture": "plus",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -338,7 +338,7 @@
       "fixture": "queued",
       "origin": "reference",
       "capture": "queued",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -351,7 +351,7 @@
       "fixture": "send-refused",
       "origin": "added_state",
       "reason": "a send the gate refuses, which the design does not picture",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -364,7 +364,7 @@
       "fixture": "settings",
       "origin": "reference",
       "capture": "settings",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -377,7 +377,7 @@
       "fixture": "slash-typing",
       "origin": "reference",
       "capture": "slash-typing",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -390,7 +390,7 @@
       "fixture": "strip",
       "origin": "added_state",
       "reason": "the facts strip under a conversation",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -403,7 +403,7 @@
       "fixture": "tokens",
       "origin": "added_state",
       "reason": "a draft carrying attachment tokens",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -416,7 +416,7 @@
       "fixture": "typing",
       "origin": "reference",
       "capture": "typing",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -429,7 +429,7 @@
       "fixture": "working",
       "origin": "reference",
       "capture": "working",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -442,7 +442,7 @@
       "fixture": "devices",
       "origin": "added_state",
       "reason": "this phone's identity and the devices paired with it",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -455,7 +455,7 @@
       "fixture": "exited",
       "origin": "reference",
       "capture": "exited",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -468,7 +468,7 @@
       "fixture": "hosts",
       "origin": "reference",
       "capture": "hosts",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -481,7 +481,7 @@
       "fixture": "new-agent",
       "origin": "reference",
       "capture": "new-agent",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -494,7 +494,7 @@
       "fixture": "offline",
       "origin": "reference",
       "capture": "offline",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -507,7 +507,7 @@
       "fixture": "pair-confirm",
       "origin": "added_state",
       "reason": "the confirmation an amux://pair link arrives at, which never pairs on arrival",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -520,7 +520,7 @@
       "fixture": "pin",
       "origin": "reference",
       "capture": "pin",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -533,7 +533,7 @@
       "fixture": "delete",
       "origin": "reference",
       "capture": "delete",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -546,7 +546,7 @@
       "fixture": "delete-blocked",
       "origin": "added_state",
       "reason": "account deletion blocked by live billing",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -559,7 +559,7 @@
       "fixture": "first-run",
       "origin": "reference",
       "capture": "first-run",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -572,7 +572,7 @@
       "fixture": "first-run-paid",
       "origin": "reference",
       "capture": "first-run-paid",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -585,7 +585,7 @@
       "fixture": "paywall",
       "origin": "reference",
       "capture": "paywall",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -598,7 +598,7 @@
       "fixture": "paywall-unconfirmed",
       "origin": "added_state",
       "reason": "a purchase the App Store took and amux.sh has not confirmed: the design has no capture of it, and it is the one paywall state that keeps a purchase without granting a subscription",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -611,7 +611,7 @@
       "fixture": "profiles",
       "origin": "reference",
       "capture": "profiles",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -624,7 +624,7 @@
       "fixture": "sign-in",
       "origin": "reference",
       "capture": "sign-in",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -637,7 +637,7 @@
       "fixture": "sign-in-failed",
       "origin": "added_state",
       "reason": "a sign-in the cloud refuses",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -650,7 +650,7 @@
       "fixture": "you",
       "origin": "reference",
       "capture": "you",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -663,7 +663,7 @@
       "fixture": "you-granted",
       "origin": "added_state",
       "reason": "an account whose access was given rather than bought reads differently on this page, and the design catalogue only pictured a bought subscription",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -676,7 +676,7 @@
       "fixture": "dump",
       "origin": "reference",
       "capture": "dump",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -689,7 +689,7 @@
       "fixture": "shake",
       "origin": "reference",
       "capture": "shake",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -702,7 +702,7 @@
       "fixture": "upload-failed",
       "origin": "added_state",
       "reason": "a report the cloud would not take",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -715,7 +715,7 @@
       "fixture": "run-accessibility",
       "origin": "added_state",
       "reason": "a conversation at an accessibility text size",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -728,7 +728,7 @@
       "fixture": "composer-accessibility",
       "origin": "added_state",
       "reason": "the composer with a message half-written in it, at an accessibility text size",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -741,7 +741,7 @@
       "fixture": "run-reduced",
       "origin": "added_state",
       "reason": "the conversation for a reader who has asked for less transparency and less motion",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -754,7 +754,7 @@
       "fixture": "home-accessibility",
       "origin": "added_state",
       "reason": "the home screen at an accessibility text size",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -767,7 +767,7 @@
       "fixture": "home-unreadable",
       "origin": "added_state",
       "reason": "an agent run by a provider this build has no case for: listed under the host's name for it, said to be unreadable and the one row on the home that cannot be opened",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -780,7 +780,7 @@
       "fixture": "home",
       "origin": "added_state",
       "reason": "the home screen on the narrowest supported display",
-      "simulator": "amux-small",
+      "simulator": "small",
       "appearances": [
         "light",
         "dark"
@@ -793,7 +793,7 @@
       "fixture": "run",
       "origin": "added_state",
       "reason": "a conversation on the narrowest supported display",
-      "simulator": "amux-small",
+      "simulator": "small",
       "appearances": [
         "light",
         "dark"
@@ -806,7 +806,7 @@
       "fixture": "dictation-listening",
       "origin": "added_state",
       "reason": "composer speech recognition listening state",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -819,7 +819,7 @@
       "fixture": "dictation-permission",
       "origin": "added_state",
       "reason": "composer speech recognition permission state",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -832,7 +832,7 @@
       "fixture": "dictation-denied",
       "origin": "added_state",
       "reason": "composer speech recognition denied state",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"
@@ -845,7 +845,7 @@
       "fixture": "dictation-unavailable",
       "origin": "added_state",
       "reason": "composer speech recognition unavailable state",
-      "simulator": "amux-golden",
+      "simulator": "golden",
       "appearances": [
         "light",
         "dark"

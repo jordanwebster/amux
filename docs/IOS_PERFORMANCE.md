@@ -86,7 +86,7 @@ recipe measures and which the physical-phone checklist holds.
 | Item | Pinned value |
 | --- | --- |
 | Mac | MacBook Pro Mac14,6, Apple M2 Max, 32 GB, macOS 26.5.2, Xcode 26.6 (17F113); the perf recipe refuses an unknown machine |
-| Simulator | amux-golden: iPhone 17 Pro, iOS 26.5, 3× scale, en_US, 9:41 status bar, full battery; reports 60 Hz, so every frame-rate figure from it is a proxy |
+| Simulator | the `golden` kind, an iPhone 17 Pro, iOS 26.5, 3× scale, en_US, 9:41 status bar, full battery; reports 60 Hz, so every frame-rate figure from it is a proxy |
 | CI runner | GitHub-hosted `macos-26` (Xcode 26.6 default, iOS 26.5 simulator runtime, iPhone 17 Pro device type), Xcode selected explicitly in the workflow |
 | Build | The `Measured` configuration: optimised the way a shipped build is, with the driving door, the fixtures and the workload generator still compiled in and testability on, and coverage and sanitizers off. One image: the packages are linked statically into the app, as they are in a shipped build, and the bridge inside it is the single copy built with the driving tools — the recipe asks the running app which bridge it has and refuses a build that answers with the shipping one. Every verdict names the configuration and says whether the code that took the numbers was optimised |
 | Fleet workload | 40 cached agents over 3 hosts: 6 needing you, 4 finished, 3 unknown, 5 day-old, the rest running or idle; seed 1 |

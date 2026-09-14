@@ -525,8 +525,7 @@ def main() -> None:
                 "relay to be sent to")
 
     daemon_is_up(journal)
-    udid = journeys.ios_simulators.ensure(journeys.SIMULATOR)
-    journeys.ios_simulators.pin(udid)
+    udid = journeys.ios_simulators.ready(journeys.SIMULATOR)
 
     named = f"qa-live-{uuid.uuid4().hex[:8]}"
     profile = make_profile(journal, named)
