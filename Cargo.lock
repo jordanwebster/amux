@@ -4245,6 +4245,7 @@ dependencies = [
  "tonic-prost",
  "tower",
  "tracing",
+ "tracing-subscriber",
  "ui-runtime",
  "ui-state",
  "uuid",

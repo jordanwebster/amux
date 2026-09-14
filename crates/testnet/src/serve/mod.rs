@@ -1058,6 +1058,16 @@ pub fn run(command: Command) -> Result<()> {
             Ok(())
         }
         Command::Serve { topology } => {
+            // A served network's daemons are ordinary runtimes with ordinary
+            // tracing, and a driver outside this process has no other way to
+            // watch them decide. Silent unless RUST_LOG asks, so an ordinary
+            // run stays quiet and a diagnosis costs one environment variable.
+            if std::env::var_os("RUST_LOG").is_some() {
+                let _ = tracing_subscriber::fmt()
+                    .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                    .with_writer(std::io::stderr)
+                    .try_init();
+            }
             let topology = Topology::load(&topology)?;
             // Drop the executor before returning: detached transport tasks cannot
             // retain listeners or outlive a successfully terminated runner.

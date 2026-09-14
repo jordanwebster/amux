@@ -1,3 +1,22 @@
+2026-09-14 — **A device with no listener of its own pairs directly with a
+machine the relay can also see.** A phone signed in to an account that has
+bought nothing was reading a machine in the same room as away, and the two
+places that could be at fault were the protocol and the phone. So the
+protocol's account of it is now written down in the shape the phone actually
+has: a device that browses and dials but is never dialled, an embedded
+installation with no listener, signed in to an account whose relay already
+holds a route to the machine it is about to pair with. It types the code the
+machine printed, authenticates over the direct address the browser resolved,
+writes the trust against that, and ends with a direct link — and so does the
+second machine on the same network that no relay has ever seen. It passes as
+it stands, which places the fault above the protocol: with an address on this
+network the node always prefers it, and the trust the phone wrote in the
+failing run records exactly that direct address. Watching a served network
+decide is now possible from outside it as well: its daemons are ordinary
+runtimes and were silent because nothing ever installed a tracing subscriber,
+so `testnet serve` installs one when RUST_LOG asks and writes it to standard
+error.
+
 2026-09-14 — **A machine both on this network and on the relay is paired with
 directly.** Which route a pairing takes decides what the machine reads as
 afterwards: a device that paired through the relay holds a relay link to a

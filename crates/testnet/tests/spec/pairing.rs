@@ -787,3 +787,50 @@ async fn a_found_machine_the_relay_can_also_see_is_paired_with_directly_on_a_fre
     phone.connects_to(&workstation).via_direct().await;
     phone.can_call(&workstation).await;
 }
+
+
+/// The phone's own shape: an embedded installation with no listener, pairing
+/// on its own network with a machine the relay can also see.
+#[tokio::test]
+async fn an_embedded_device_pairs_directly_with_a_machine_the_relay_can_also_see() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_user("personal")
+        .daemon("spare")
+        .no_cloud()
+        .installation("phone")
+        .embedded()
+        .profile("main")
+        .cloud_user("personal")
+        .cloud_only()
+        .start()
+        .await;
+    let phone = net.installation("phone").profile("main");
+    let [workstation, spare] = net.daemons(["workstation", "spare"]);
+    phone.sees(&workstation).await;
+
+    net.announce(&workstation);
+    net.announce(&spare);
+    phone.sees_found_address_for(&workstation).await;
+    phone.sees_found_address_for(&spare).await;
+
+    let admin = phone.pairing_admin().await;
+    for machine in [&workstation, &spare] {
+        let pin = machine.start_pairing().await;
+        let pending = admin
+            .begin_pair_pin(machine.host_id(), &pin, &[])
+            .await
+            .expect("a machine on this network authenticates a printed code");
+        assert_eq!(
+            pending.via,
+            node::PeerVia::Direct,
+            "{} paired over the relay",
+            machine.name()
+        );
+        admin.confirm_pair(pending).await.expect("trust is written");
+    }
+
+    phone.connects_to(&workstation).via_direct().await;
+    phone.connects_to(&spare).via_direct().await;
+}

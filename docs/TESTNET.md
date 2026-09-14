@@ -27,6 +27,15 @@ with a topology file:
 target/debug/testnet serve --topology e2e-tests/topologies/two-hosts.json
 ```
 
+The daemons are ordinary runtimes and say nothing unless asked. Setting
+`RUST_LOG` turns their tracing on and writes it to standard error, which is
+how a driver outside this process watches them decide:
+
+```sh
+RUST_LOG=warn,node::services::reachability=debug target/debug/testnet serve \
+  --topology e2e-tests/topologies/two-hosts.json
+```
+
 A topology is a JSON object with a `cloud_url` and four required lists, plus
 an optional `tiers`.
 Omitting `cloud_url` uses the installation default, `https://amux.sh`. For example,
