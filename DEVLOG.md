@@ -1,3 +1,13 @@
+2026-09-14 — **Tearing a test network down no longer waits for a network a
+test has broken.** Stopping a daemon waits until every other daemon has seen
+it go offline, which is what keeps a restart from coming back into an
+unsettled network. Shutting the whole network down borrowed that wait and had
+no use for it: nothing restarts, and a network whose UDP a test has
+deliberately been dropping has no way to deliver the news, so the wait timed
+out and took the served network's shutdown reply with it — a run whose every
+assertion had passed still exited non-zero. Teardown now stops the runtimes
+and returns; the restart path keeps the wait.
+
 2026-09-14 — **A machine that becomes directly linked says so to whoever is
 already listening.** A phone on the same network as a machine its account's
 relay can also see kept calling that machine away, while a second machine on

@@ -1161,6 +1161,18 @@ impl Daemon {
     /// `wait_until_peers_see_us_down` would deadlock the failure dump,
     /// which queries this daemon's host table through the same lock.
     pub async fn stop(&self) {
+        self.stop_runtime().await;
+        self.wait_until_peers_see_us_down().await;
+    }
+
+    /// Stops the runtime and returns, without waiting for the rest of the
+    /// network to notice.
+    ///
+    /// Tearing a network down does not need it to settle first, and a network
+    /// a test has deliberately broken — a machine whose UDP is being dropped,
+    /// say — may have no way to deliver the news at all. Waiting for that
+    /// would turn every such teardown into a timeout.
+    pub(crate) async fn stop_runtime(&self) {
         assert!(
             self.inner.installation.is_none(),
             "stop profiles through their installation"
@@ -1169,7 +1181,6 @@ impl Daemon {
         if let Some(runtime) = runtime {
             runtime.stop().await;
         }
-        self.wait_until_peers_see_us_down().await;
     }
 
     /// Simulates an abrupt direct-transport outage without a graceful link close.

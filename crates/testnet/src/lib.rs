@@ -262,7 +262,7 @@ impl TestNet {
     /// Stops every daemon and the relay before releasing their data directories.
     pub async fn shutdown(self) {
         for daemon in &self.inner.daemons {
-            daemon.stop().await;
+            daemon.stop_runtime().await;
         }
         if let Some(cloud) = &self.inner.cloud {
             cloud.relay.go_offline().await;
