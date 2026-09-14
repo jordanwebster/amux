@@ -190,11 +190,13 @@ mod tests {
                     role: LinkRole::Peer,
                     admission,
                     carrier: LinkCarrier::Direct,
+                    direct_order: None,
                 },
                 &[],
                 carrier,
             )
-            .await;
+            .await
+            .expect("piper test links are unique");
         link
     }
 

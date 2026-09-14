@@ -398,7 +398,9 @@ impl ProfileAdmin {
         .await
         .map_err(status_to_client_error)?;
         audit::pairing_success(method, peer.host_id);
-        self.service.publish_host_status_update(peer.host_id).await;
+        self.service
+            .publish_host_status_update(peer.host_id, false)
+            .await;
         if let Some(reachability) = link_reachability {
             self.service
                 .reachability_links

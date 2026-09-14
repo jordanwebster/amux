@@ -9,6 +9,15 @@ agent streams, while direct, SSH and self-hosted relay links never consult a
 tier. The architecture, product explanation, client model, iPhone lifecycle,
 copy terms and test guide now use the same account, route and carrier rules.
 
+2026-09-14 — **A direct pair converges on one bidirectional link.** Discovery
+can make both daemons dial while the first inbound handshake is still becoming
+a route. The dial guard now recognizes that registered inbound link, and a
+stable host-id ordering resolves any crossed handshakes that still race: both
+ends keep the same physical connection and close the other. Replacing the link
+also reopens the remote inventory stream on the selected route, so cached agent
+state does not fall behind. Whole-daemon routing and testnet control assertions
+now require exactly one direct peer link.
+
 2026-09-14 — **The review journey reads the sheet the finger left behind.** A
 range taken hold of is scrolled out from under the comment sheet while the
 finger is still down, so the rows under it move and the range goes on growing;

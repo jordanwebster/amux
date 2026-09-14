@@ -502,11 +502,16 @@ fn is_trusted(trust_store: &SharedTrustStore, peer: HostId) -> bool {
 
 async fn has_direct_route(context: &ReachabilityLinkContext, peer: HostId) -> bool {
     context
-        .routing
-        .routes_to(peer)
+        .channels
+        .link_registry()
+        .has_direct_peer_link_to(peer)
         .await
-        .iter()
-        .any(|route| matches!(route, Route::Direct(_)))
+        || context
+            .routing
+            .routes_to(peer)
+            .await
+            .iter()
+            .any(|route| matches!(route, Route::Direct(_)))
 }
 
 async fn establish_reachability_link(

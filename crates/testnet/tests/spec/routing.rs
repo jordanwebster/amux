@@ -34,6 +34,25 @@ async fn direct_beats_cloud_when_both_are_available() {
     desktop.can_call(&laptop).await;
 }
 
+/// A direct pair uses one bidirectional link. Both peers may discover one
+/// another while the first dial is still settling, but crossed dials converge
+/// instead of leaving two permanent links between the same hosts.
+#[tokio::test]
+async fn a_direct_pair_holds_exactly_one_link_to_each_peer() {
+    let net = TestNet::builder()
+        .daemon("laptop")
+        .daemon("desktop")
+        .paired("laptop", "desktop", Via::Direct)
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    laptop.can_call(&desktop).await;
+    desktop.can_call(&laptop).await;
+    assert_eq!(laptop.links_to(&desktop).await, 1);
+    assert_eq!(desktop.links_to(&laptop).await, 1);
+}
+
 /// Cloud-only peers communicate through an end-to-end encrypted tunnel the
 /// relay merely forwards: calls flow both ways via the relay, yet the relay
 /// itself — which carries every byte — cannot complete a call into either

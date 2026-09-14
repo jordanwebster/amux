@@ -1178,16 +1178,17 @@ mod tests {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             }
-            // Counted against what this pair actually holds rather than a
-            // fixed number: each verb's claim is about which links it takes
-            // or restores, not about how many a direct pair happens to open.
             let linked = count(&mut second, "b").await;
+            assert_eq!(
+                linked, 2,
+                "a directly paired daemon holds one peer link and one relay link"
+            );
             control.ack(json!("CloudOffline")).await;
             settles(
                 &mut second,
                 "b",
-                |seen| seen == linked - 1,
-                "going offline takes the relay link and leaves the direct ones",
+                |seen| seen == 1,
+                "going offline takes the relay link and leaves one direct link",
             )
             .await;
             assert!(TcpStream::connect(relay).await.is_err());
@@ -1227,7 +1228,7 @@ mod tests {
                 "severing the direct path leaves only the relay link",
             )
             .await;
-            assert!(b.lists_agents_on(&a).await.is_ok());
+            b.can_call(&a).await;
 
             // The delay is injected into the relay's TCP chunks, and a relay
             // link prefers QUIC, so a routed call is not slowed here. What
@@ -1241,16 +1242,11 @@ mod tests {
             control
                 .ack(json!({"EstablishDirect":{"a":"a","b":"b"}}))
                 .await;
-            // The verb dials one direct link. Whether the peer's own
-            // reachability loop has redialled the other direction by now is
-            // that loop's business and not this verb's claim, so what is
-            // required is a direct link beside the relay rather than every
-            // link the pair happened to hold before it was severed.
             settles(
                 &mut second,
                 "b",
-                |seen| seen > 1,
-                "establishing the direct path links the pair directly again",
+                |seen| seen == 2,
+                "establishing the direct path restores exactly one direct link beside the relay",
             )
             .await;
             let stream = b.open_event_stream_to(&a).await;

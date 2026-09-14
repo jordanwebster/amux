@@ -169,6 +169,20 @@ impl Daemon {
             .unwrap_or_default()
     }
 
+    /// How many live links this daemon holds to one peer.
+    pub async fn links_to(&self, other: &Daemon) -> usize {
+        let peer = other.host_id().to_string();
+        self.debug_dump(false).await["links"]
+            .as_array()
+            .map(|links| {
+                links
+                    .iter()
+                    .filter(|link| link["peer"].as_str() == Some(peer.as_str()))
+                    .count()
+            })
+            .unwrap_or_default()
+    }
+
     /// What this daemon says it is holding: every agent on it, as it
     /// recorded them, and every device it trusts.
     pub async fn inventory(&self) -> Result<(Vec<Agent>, Vec<client::PeerEntry>), anyhow::Error> {

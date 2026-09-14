@@ -18,6 +18,7 @@ use tokio::sync::{Notify, RwLock, mpsc};
 use wire::pb;
 
 use crate::link::LinkCarrier as NativeLinkCarrier;
+use crate::routing::ConnectRole;
 use crate::routing::types::LinkId;
 use crate::routing::wire::{neighbor_down_message, neighbor_up_message};
 use crate::{HostId, Tier, audit};
@@ -63,6 +64,27 @@ pub(crate) struct LinkProperties {
     pub(crate) role: LinkRole,
     pub(crate) admission: LinkAdmission,
     pub(crate) carrier: LinkCarrier,
+    pub(crate) direct_order: Option<DirectLinkOrder>,
+}
+
+/// Stable ordering for crossed direct dials. A fallback remains valid when it
+/// is the only connection; when both directions connect, both peers retain the
+/// same preferred physical link.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum DirectLinkOrder {
+    Preferred,
+    Fallback,
+}
+
+impl DirectLinkOrder {
+    pub(crate) fn for_hosts(local: HostId, peer: HostId, role: ConnectRole) -> Self {
+        let local_opens_preferred = local < peer;
+        if local_opens_preferred == (role == ConnectRole::Connector) {
+            Self::Preferred
+        } else {
+            Self::Fallback
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -74,6 +96,7 @@ struct LinkWriter {
     role: LinkRole,
     admission: LinkAdmission,
     carrier: LinkCarrier,
+    direct_order: Option<DirectLinkOrder>,
     native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
 }
 
@@ -83,6 +106,7 @@ struct LinkWriter {
 pub(crate) enum LinkCloseRequest {
     OutgoingQueueFull,
     TrustReplaced,
+    Superseded,
 }
 
 impl LinkRegistry {
@@ -129,11 +153,13 @@ impl LinkRegistry {
                 role,
                 admission: LinkAdmission::PinnedKey,
                 carrier: LinkCarrier::Direct,
+                direct_order: None,
             },
             advertised_snapshot,
             None,
         )
         .await
+        .expect("test registration has no ordered direct duplicate")
     }
 
     #[cfg(test)]
@@ -154,11 +180,13 @@ impl LinkRegistry {
                 role,
                 admission,
                 carrier: LinkCarrier::Direct,
+                direct_order: None,
             },
             advertised_snapshot,
             None,
         )
         .await
+        .expect("test registration has no ordered direct duplicate")
     }
 
     pub(crate) async fn register_with_details(
@@ -169,11 +197,12 @@ impl LinkRegistry {
         properties: LinkProperties,
         advertised_snapshot: &[HostId],
         native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
-    ) -> mpsc::Receiver<LinkCloseRequest> {
+    ) -> Option<mpsc::Receiver<LinkCloseRequest>> {
         let LinkProperties {
             role,
             admission,
             carrier,
+            direct_order,
         } = properties;
         let (close_tx, close_rx) = mpsc::channel(1);
         let closed = Arc::new(Notify::new());
@@ -183,6 +212,34 @@ impl LinkRegistry {
             .values()
             .any(|writer| writer.host.id == host.id);
 
+        let mut displaced = Vec::new();
+        if role == LinkRole::Peer
+            && carrier == LinkCarrier::Direct
+            && let Some(order) = direct_order
+        {
+            let duplicates = state
+                .writers
+                .iter()
+                .filter(|(_, writer)| {
+                    writer.host.id == host.id
+                        && writer.role == LinkRole::Peer
+                        && writer.carrier == LinkCarrier::Direct
+                        && writer.direct_order.is_some()
+                })
+                .map(|(id, writer)| (*id, writer.direct_order.unwrap()))
+                .collect::<Vec<_>>();
+            if duplicates
+                .iter()
+                .any(|(_, existing)| *existing == DirectLinkOrder::Preferred || *existing == order)
+            {
+                return None;
+            }
+            for (id, _) in duplicates {
+                if let Some(writer) = state.writers.remove(&id) {
+                    displaced.push((id, writer));
+                }
+            }
+        }
         // Reconcile the new link's view: the handshake snapshot plus this
         // diff equals the registry's neighbor set at this instant.
         let advertised: HashSet<HostId> = advertised_snapshot.iter().copied().collect();
@@ -220,16 +277,22 @@ impl LinkRegistry {
                 role,
                 admission,
                 carrier,
+                direct_order,
                 native_carrier,
             },
         );
         drop(state);
+        for (id, writer) in displaced {
+            let _ = writer.close_tx.try_send(LinkCloseRequest::Superseded);
+            writer.closed.notify_waiters();
+            audit::link_down(writer.host.id, &id, "superseded");
+        }
         if let Some(old) = old {
             old.closed.notify_waiters();
             audit::link_down(old.host.id, &link, "replaced");
         }
         audit::link_up(host.id, &link, role);
-        close_rx
+        Some(close_rx)
     }
 
     /// Removes a link; if it was the last link to its peer, other links
@@ -418,6 +481,19 @@ impl LinkRegistry {
             .iter()
             .find(|(_, writer)| writer.host.id == peer)
             .map(|(link, writer)| (*link, writer.tx.clone()))
+    }
+
+    /// Whether a live network link already serves this peer directly.
+    ///
+    /// Link registration precedes routing-table publication. Discovery can
+    /// arrive in that interval, so a dial guard that consults routes alone can
+    /// open a second connection back to the peer that just connected.
+    pub(crate) async fn has_direct_peer_link_to(&self, peer: HostId) -> bool {
+        self.state.read().await.writers.values().any(|writer| {
+            writer.host.id == peer
+                && writer.role == LinkRole::Peer
+                && writer.carrier == LinkCarrier::Direct
+        })
     }
 
     pub(crate) async fn link_role(&self, link: &LinkId) -> Option<LinkRole> {
@@ -664,6 +740,81 @@ mod tests {
         assert_eq!(
             neighbor_down_host_id(&recv_message(&mut observer_rx).await),
             Uuid::from_u128(2).as_bytes()
+        );
+    }
+
+    #[tokio::test]
+    async fn crossed_direct_dials_converge_on_the_same_physical_link() {
+        let registry = LinkRegistry::default();
+        let peer = host(2);
+        let fallback = link(2, 1);
+        let preferred = link(2, 2);
+
+        let (fallback_tx, _) = mpsc::channel(8);
+        let mut fallback_close = registry
+            .register_with_details(
+                fallback,
+                peer.clone(),
+                fallback_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: LinkCarrier::Direct,
+                    direct_order: Some(DirectLinkOrder::Fallback),
+                },
+                &[],
+                None,
+            )
+            .await
+            .expect("a lone fallback link is usable");
+
+        let (preferred_tx, _) = mpsc::channel(8);
+        assert!(
+            registry
+                .register_with_details(
+                    preferred,
+                    peer.clone(),
+                    preferred_tx,
+                    LinkProperties {
+                        role: LinkRole::Peer,
+                        admission: LinkAdmission::PinnedKey,
+                        carrier: LinkCarrier::Direct,
+                        direct_order: Some(DirectLinkOrder::Preferred),
+                    },
+                    &[],
+                    None,
+                )
+                .await
+                .is_some()
+        );
+        assert_eq!(
+            fallback_close.recv().await,
+            Some(LinkCloseRequest::Superseded)
+        );
+        assert_eq!(registry.links_per_peer().await, vec![(peer.id, 1)]);
+
+        let (late_fallback_tx, _) = mpsc::channel(8);
+        assert!(
+            registry
+                .register_with_details(
+                    link(2, 3),
+                    peer,
+                    late_fallback_tx,
+                    LinkProperties {
+                        role: LinkRole::Peer,
+                        admission: LinkAdmission::PinnedKey,
+                        carrier: LinkCarrier::Direct,
+                        direct_order: Some(DirectLinkOrder::Fallback),
+                    },
+                    &[],
+                    None,
+                )
+                .await
+                .is_none()
+        );
+        assert_eq!(
+            registry.links_per_peer().await,
+            vec![(Uuid::from_u128(2), 1)]
         );
     }
 

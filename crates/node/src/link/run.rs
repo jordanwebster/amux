@@ -17,11 +17,11 @@ use wire::{self, PROTOCOL_VERSION, protocol_error_from_status_details, protocol_
 
 use super::{LinkCarrier as Carrier, read_message, write_message};
 use crate::routing::{
-    ConnectHandshake, ConnectHandshakeEvent, Host, LinkAdmission, LinkCarrier as RoutingCarrier,
-    LinkCloseRequest, LinkId, LinkProperties, LinkRegistry, LinkRole, LiveLocalHost,
-    RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire, inbound_host_from_wire,
-    neighbor_down_from_wire, neighbor_up_from_wire, protocol_error_hello_ack,
-    protocol_error_link_close, validate_remote_host,
+    ConnectHandshake, ConnectHandshakeEvent, DirectLinkOrder, Host, LinkAdmission,
+    LinkCarrier as RoutingCarrier, LinkCloseRequest, LinkId, LinkProperties, LinkRegistry,
+    LinkRole, LiveLocalHost, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,
+    inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
+    protocol_error_hello_ack, protocol_error_link_close, validate_remote_host,
 };
 use crate::{HostId, audit};
 
@@ -449,7 +449,7 @@ pub async fn run_link(
         sink,
         source,
         handshake,
-        (peer_host, peer_neighbors),
+        (peer_host, peer_neighbors, role),
         snapshot.into_iter().map(|host| host.id).collect(),
     )
     .await
@@ -491,11 +491,11 @@ async fn run_established(
     mut sink: super::ControlSink,
     mut source: super::ControlSource,
     mut handshake: ConnectHandshake,
-    peer: (Host, Vec<Host>),
+    peer: (Host, Vec<Host>, crate::routing::ConnectRole),
     sent_snapshot: Vec<HostId>,
 ) -> Result<(), LinkError> {
     debug_assert!(handshake.is_established());
-    let (peer_host, peer_neighbors) = peer;
+    let (peer_host, peer_neighbors, connect_role) = peer;
     if ctx
         .shutdown_rx
         .as_ref()
@@ -524,7 +524,7 @@ async fn run_established(
         _ => ctx.routing_carrier,
     };
     let (out_tx, mut out_rx) = mpsc::channel(256);
-    let mut link_close_rx = ctx
+    let link_close_rx = ctx
         .links
         .register_with_details(
             link,
@@ -534,11 +534,21 @@ async fn run_established(
                 role: link_role,
                 admission,
                 carrier: carrier_tag,
+                direct_order: (link_role == LinkRole::Peer
+                    && carrier_tag == RoutingCarrier::Direct)
+                    .then(|| {
+                        DirectLinkOrder::for_hosts(ctx.local_host.id(), peer_host.id, connect_role)
+                    }),
             },
             &sent_snapshot,
             Some(carrier.clone()),
         )
         .await;
+    let Some(mut link_close_rx) = link_close_rx else {
+        signal_establishment(ctx.take_established_tx(), Ok(peer_host));
+        carrier.close(wire::pb::LinkCloseReason::UserShutdown);
+        return Ok(());
+    };
 
     for neighbor in peer_neighbors {
         if neighbor.id != ctx.local_host.id() && neighbor.id != peer_host.id {
@@ -675,6 +685,7 @@ async fn run_established(
                 close_status = Some(match request {
                     Some(LinkCloseRequest::OutgoingQueueFull) => tonic::Status::resource_exhausted("link outgoing queue full"),
                     Some(LinkCloseRequest::TrustReplaced) => tonic::Status::permission_denied("peer trust was replaced"),
+                    Some(LinkCloseRequest::Superseded) => tonic::Status::unavailable("direct link superseded"),
                     None => tonic::Status::unavailable("link closed"),
                 });
                 break;
@@ -1576,6 +1587,7 @@ mod tests {
                     role: LinkRole::Peer,
                     admission: LinkAdmission::PinnedKey,
                     carrier: RoutingCarrier::Direct,
+                    direct_order: None,
                 },
                 &[],
                 Some(destination_carrier.clone()),

@@ -334,7 +334,10 @@ impl ClientService {
             HostReachabilityEvent::Added { host } => self.add_host(host).await,
             HostReachabilityEvent::Removed { host_id } => self.remove_host(host_id).await,
             HostReachabilityEvent::RouteChanged { host_id } => {
-                self.publish_host_status_update(host_id).await;
+                // A direct-link replacement can preserve presence while ending
+                // every stream on the retired carrier. Reopen the inventory
+                // subscription immediately on the route that replaced it.
+                self.publish_host_status_update(host_id, true).await;
                 HostEventOutcome::Republished
             }
         }
@@ -775,7 +778,7 @@ impl ClientService {
 
     /// Re-publishes `host_id`'s entry to host subscribers after a local
     /// trust transition (pairing) changes how it should be presented.
-    async fn publish_host_status_update(&self, host_id: Uuid) {
+    async fn publish_host_status_update(&self, host_id: Uuid, restart_subscription: bool) {
         let online_host = self.state.read().await.hosts_model.get(&host_id).cloned();
         let should_subscribe_remote = online_host.as_ref().is_some_and(|host| {
             !self.is_local_host(host_id)
@@ -793,6 +796,9 @@ impl ClientService {
             }
         };
         let mut state = self.state.write().await;
+        if restart_subscription && let Some(existing) = state.remote_agent_subs.remove(&host_id) {
+            existing.abort();
+        }
         if should_subscribe_remote && !state.remote_agent_subs.contains_key(&host_id) {
             state.remote_agent_subs.insert(
                 host_id,
@@ -3087,6 +3093,7 @@ mod tests {
                     role: LinkRole::Peer,
                     admission: LinkAdmission::PinnedKey,
                     carrier: crate::routing::LinkCarrier::Direct,
+                    direct_order: None,
                 },
                 &[],
                 Some(local_carrier),
@@ -3102,6 +3109,7 @@ mod tests {
                     role: LinkRole::Peer,
                     admission: LinkAdmission::PinnedKey,
                     carrier: crate::routing::LinkCarrier::Direct,
+                    direct_order: None,
                 },
                 &[],
                 Some(relay_from_local.clone()),
@@ -3117,6 +3125,7 @@ mod tests {
                     role: LinkRole::Peer,
                     admission: LinkAdmission::PinnedKey,
                     carrier: crate::routing::LinkCarrier::Direct,
+                    direct_order: None,
                 },
                 &[],
                 Some(relay_to_remote_carrier),
@@ -4453,7 +4462,7 @@ mod tests {
                     if updated.host.as_ref().is_some_and(|host| host.host_id == trusted.as_bytes() && host.online)));
             // Revoking an online peer removes the entry already delivered to this subscriber.
             trust_store.write().unwrap().remove(trusted);
-            service.publish_host_status_update(trusted).await;
+            service.publish_host_status_update(trusted, false).await;
             assert!(matches!(stream.next().await.unwrap().unwrap().event,
                 Some(wire::subscribe_hosts_response::Event::HostRemoved(removed)) if removed.host_id == trusted.as_bytes()));
             service
@@ -4491,7 +4500,7 @@ mod tests {
             .write()
             .unwrap()
             .insert_for_test(peer.id, trust_entry("trusted-peer", 2));
-        service.publish_host_status_update(peer.id).await;
+        service.publish_host_status_update(peer.id, false).await;
 
         assert!(matches!(
             rx.recv().await,
