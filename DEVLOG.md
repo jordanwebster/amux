@@ -16783,7 +16783,23 @@ TUI configuration. The spec inventory remains 412 tests (320 reducer and 92
 whole-daemon), all local documentation links resolve, the retired-token grep is
 empty outside this log, and the complete local CI recipe passes.
 
-2026-09-14 — **Local-first connections and account-backed relay access land
+2026-09-15 — **Host-route updates settle after the active channel does.** A
+direct link entering the routing table notifies the connection manager and the
+client model independently. Under load, the client model could publish its
+update first, still describe the active relay channel, and never publish again
+after the connection manager selected direct. The connection manager now
+re-publishes the host once direct activation completes, and likewise after an
+active direct link goes away, so a client holding one host subscription sees
+the settled route instead of depending on task scheduling.
+
+2026-09-15 — **The iOS door smoke recognizes autonomous local startup.** The
+signed-out app now starts its runtime on its own so it can discover nearby
+hosts, which made the older smoke mistake correct local startup for an early
+cloud connection. The boundary check now requires that startup while proving
+the app has neither attempted the account relay nor inherited cloud hosts
+before the explicit relay request.
+
+2026-09-15 — **Local-first connections and account-backed relay access land
 end to end.** A fresh phone can browse for an amux host on its network, pair by
 six-digit code or an address-bearing QR, and use the host while both devices are
 signed out. Direct device links now use pinned mutual-TLS QUIC exclusively.
@@ -16810,19 +16826,3 @@ File these independent follow-ups:
 - An Android discovery adapter.
 - Per-peer scopes.
 - Faster entitlement reconciliation.
-
-2026-09-15 — **Host-route updates settle after the active channel does.** A
-direct link entering the routing table notifies the connection manager and the
-client model independently. Under load, the client model could publish its
-update first, still describe the active relay channel, and never publish again
-after the connection manager selected direct. The connection manager now
-re-publishes the host once direct activation completes, and likewise after an
-active direct link goes away, so a client holding one host subscription sees
-the settled route instead of depending on task scheduling.
-
-2026-09-15 — **The iOS door smoke recognizes autonomous local startup.** The
-signed-out app now starts its runtime on its own so it can discover nearby
-hosts, which made the older smoke mistake correct local startup for an early
-cloud connection. The boundary check now requires that startup while proving
-the app has neither attempted the account relay nor inherited cloud hosts
-before the explicit relay request.
