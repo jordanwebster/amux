@@ -31,11 +31,18 @@ struct ComposerBox: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let activity = state.activity {
-                WorkingLine(activity: activity)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 11)
-                    .padding(.bottom, 9)
-                MovingSegment()
+                VStack(alignment: .leading, spacing: 0) {
+                    WorkingLine(activity: activity)
+                        .padding(.horizontal, 14)
+                        .padding(.top, 11)
+                        .padding(.bottom, 9)
+                    MovingSegment()
+                }
+                // Grown into and settled out of, rather than appearing and
+                // vanishing: the box getting taller *is* the turn starting,
+                // and a jump there is the composer moving under a thumb that
+                // is about to write in it.
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             field
                 .padding(.horizontal, 14)
@@ -66,6 +73,7 @@ struct ComposerBox: View {
                 .padding(.bottom, 9)
                 .padding(.top, 3)
         }
+        .moving(value: state.activity != nil)
         .frosted(RoundedRectangle(cornerRadius: design.metrics.floatRadius, style: .continuous))
         .accessibilityElement(children: .contain)
         .identified("composer", label: placeholder, value: spoken)
@@ -105,7 +113,7 @@ struct ComposerBox: View {
                         .frame(width: 28, height: 28)
                         .thumbTarget(x: 9, y: 9)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .accessibilityLabel("Clear")
                 .identified("composer.clear", label: "Clear")
                 .reclaimingThumbTarget(x: 9, y: 9)
@@ -150,7 +158,7 @@ struct ComposerBox: View {
                     .thumbTarget(x: 7, y: 7)
                     .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Attach")
             .identified("composer.attach", label: "Attach")
             .reclaimingThumbTarget(x: 7, y: 7)
@@ -167,7 +175,7 @@ struct ComposerBox: View {
                     .thumbTarget(x: 7, y: 7)
                     .contentShape(Circle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel(dictation.active ? "Stop Dictation" : "Dictate")
             .identified("composer.dictate", label: dictation.active ? "Stop Dictation" : "Dictate")
             .reclaimingThumbTarget(x: 7, y: 7)
@@ -191,14 +199,14 @@ struct ComposerBox: View {
             Button { actions(.interrupt) } label: {
                 RoundButton(glyph: "stop.fill", filled: true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Stop")
             .identified("composer.interrupt", label: "Stop")
         } else {
             Button { actions(.send) } label: {
                 RoundButton(glyph: "arrow.up", filled: written)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .disabled(!written)
             .accessibilityLabel(state.busy ? "Queue" : "Send")
             .identified(
@@ -272,36 +280,106 @@ private struct WorkingLine: View {
     }
 }
 
-/// A short line that travels across the space it is given.
+/// A short line that stretches and recoils across the space it is given.
+///
+/// Two ends, not one block. Each crosses the same stretch of the row; they
+/// differ only in when they set off. The leading end leaves first and the
+/// trailing end follows a beat later, so the line pulls long as it departs and
+/// gathers up as it arrives. Set the lag to zero and the rigid shuttle this
+/// used to be comes back.
+///
+/// Why elastic at all: a fixed-width block sliding to and fro reads as a
+/// shuttle on a track, and a track is the shape of a thing with a known end.
+/// The rule above it already went trackless for that reason. A length that
+/// will not hold still finishes the thought — nothing here is being measured.
+///
+/// Expressed as keyframes rather than as a formula sampled off a clock, so
+/// SwiftUI owns the timing: it stops when the view leaves the hierarchy, and
+/// the phase lag is two keyframe durations rather than arithmetic anybody has
+/// to reason about.
 ///
 /// Under Reduce Motion, and in front of a camera, it holds at one position:
 /// the capture keeps the last of many photographs when no run of them agree,
-/// so anything sweeping on a timer of its own makes a baseline a coin toss.
-/// Held at the middle of its travel rather than at either end, because a
-/// segment pinned to the left edge reads as a bar that has not started.
+/// so anything moving on a clock of its own makes a baseline a coin toss. Held
+/// at the middle of its crossing, which is both where the line is at its
+/// longest and where it already held before it could stretch — so the still
+/// frame is unchanged.
 private struct MovingSegment: View {
     @Environment(\.design) private var design
     @Environment(\.photographed) private var photographed
     @Environment(\.reducesMotion) private var reduceMotion
-    @State private var travelled = false
 
-    private static let width = 0.42
-    private static let resting = 0.5
+    /// Where the two ends are, as fractions of the row's width.
+    private struct Ends {
+        var left = Self.leftNear
+        var right = Self.rightNear
+
+        static let leftNear = 0.025
+        static let leftFar = 0.87
+        static let rightNear = 0.13
+        static let rightFar = 0.975
+    }
+
+    /// How much of a crossing each end waits out before it sets off. The gap
+    /// between the two is the whole effect.
+    private static let lead = 0.04
+    private static let follow = 0.22
+    private static let cross = 0.74
+
+    /// Where a held frame sits: the middle of a crossing, at the length the
+    /// line is longest. A segment pinned to an edge reads as a bar that has
+    /// not started, and a hairline reads as nothing at all.
+    private static let heldLeft = 0.29
+    private static let heldRight = 0.71
 
     var body: some View {
         GeometryReader { frame in
-            let travel = frame.size.width * (1 - Self.width)
-            Capsule()
-                .fill(design.inkFaint.color)
-                .frame(width: frame.size.width * Self.width, height: 1)
-                .offset(x: still ? travel * Self.resting : (travelled ? travel : 0))
-                .animation(
-                    still ? nil : .easeInOut(duration: 1.1).repeatForever(autoreverses: true),
-                    value: travelled)
+            let width = frame.size.width
+            if still {
+                line(width, Self.heldLeft, Self.heldRight)
+            } else {
+                KeyframeAnimator(initialValue: Ends(), repeating: true) { ends in
+                    line(width, ends.left, ends.right)
+                } keyframes: { _ in
+                    // Outbound the right end leads and on the way back the
+                    // left one does, which is why these are the same shape
+                    // with their waits swapped rather than one reversed.
+                    KeyframeTrack(\.left) {
+                        hold(Ends.leftNear, Self.follow)
+                        travel(to: Ends.leftFar)
+                        hold(Ends.leftFar, 2 * Self.lead)
+                        travel(to: Ends.leftNear)
+                        hold(Ends.leftNear, Self.follow)
+                    }
+                    KeyframeTrack(\.right) {
+                        hold(Ends.rightNear, Self.lead)
+                        travel(to: Ends.rightFar)
+                        hold(Ends.rightFar, 2 * Self.follow)
+                        travel(to: Ends.rightNear)
+                        hold(Ends.rightNear, Self.lead)
+                    }
+                }
+            }
         }
         .frame(height: 1)
         .allowsHitTesting(false)
-        .onAppear { travelled = true }
+    }
+
+    private func line(_ width: CGFloat, _ left: Double, _ right: Double) -> some View {
+        Capsule()
+            .fill(design.inkFaint.color)
+            .frame(width: width * (right - left), height: 1)
+            .offset(x: width * left)
+    }
+
+    /// Both tracks run two crossings and come back to where they began, so the
+    /// loop closes without anybody counting legs.
+    private func hold(_ value: Double, _ share: Double) -> LinearKeyframe<Double> {
+        LinearKeyframe(value, duration: share * Motion.breath)
+    }
+
+    private func travel(to value: Double) -> LinearKeyframe<Double> {
+        LinearKeyframe(value, duration: Self.cross * Motion.breath, timingCurve: .easeInOut)
     }
 
     private var still: Bool { photographed || reduceMotion }

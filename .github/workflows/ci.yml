@@ -132,11 +132,12 @@ jobs:
       - name: Check iOS device and simulator graphs
         run: just mobile-check
 
-  ios-verify:
-    name: iOS verification
+  ios-gate:
+    name: iOS gate
     runs-on: macos-26
-    # Leave time for setup, reference pairing and uploads after verification times out.
-    timeout-minutes: 270
+    # The gate builds the app and runs the suites one simulator can answer.
+    # The capture suites are not here: see `just ios captures`.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode 26.6
@@ -151,41 +152,17 @@ jobs:
         with:
           components: clippy
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2026-08-30
-          components: rustfmt
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
       - name: Install build tools
         run: brew install xcodegen
-      - name: Run iOS verification
-        # The runner uses its own recorded baseline when one is committed.
-        # Without one, verification records that performance was not measured.
-        env:
-          AMUX_PERF_MACHINE: macos-26
-        run: just ios verify
-      - name: Pair preserved design references
-        if: always()
-        run: just ios goldens-reference
-      - name: Upload performance results and limits
+      - name: Run the iOS gate
+        run: just ios gate
+      - name: Upload the shipped-scope audit
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-performance
-          path: |
-            target/ios/perf
-            apps/apple/Perf/baselines
-          if-no-files-found: warn
-          retention-days: 7
-      - name: Upload golden triplets, reference pairs and journeys
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-verification-captures
-          path: |
-            target/ios/goldens
-            target/ios/journeys
-            target/ios/scope-audit
+          name: ios-scope-audit
+          path: target/ios/scope-audit
           if-no-files-found: warn
           retention-days: 7

@@ -374,6 +374,26 @@ public enum Transcript {
         ]
     }
 
+    /// The end of the live run, for a picture of the strip of work rather than
+    /// of the conversation under it.
+    ///
+    /// A lazy feed guesses the height of the rows it has not built, and the
+    /// guess it settles on as it first lays out differs from one opening to the
+    /// next. That lands every row it does build a fraction of a device pixel
+    /// from where the last opening put it, so every glyph rasterises
+    /// differently and a photograph of the screen never matches the one before
+    /// it. Where almost the whole feed is covered by what floats over it, the
+    /// hidden history shows nobody anything and costs exactly that, so this
+    /// carries only as much of it as is drawn: the rows behind the strip, and
+    /// enough above them that the topmost visible row still has its neighbour.
+    public static var liveTail: [FeedEntry] { Array(live.suffix(4)) }
+
+    /// The end of the shared conversation, for a picture of the composer at an
+    /// accessibility text size, where the feed's own words are already taller
+    /// than the band left visible above the box. Short for the same reason
+    /// `liveTail` is.
+    public static let conversationTail: [FeedEntry] = Array(conversation.suffix(3))
+
     /// A compact exchange with another agent, with enough work around both
     /// directions to show that their voices remain part of the same rail.
     public static var peerExchange: [FeedEntry] {

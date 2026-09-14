@@ -12,7 +12,7 @@ import sys
 import tempfile
 import threading
 
-from linkage_smoke import compile_swift, run, simulator
+from linkage_smoke import DEVICE_NAME, compile_swift, run, simulator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import ios_bridge as bridge
@@ -115,7 +115,7 @@ def main() -> None:
         if not already_booted:
             run("xcrun", "simctl", "boot", device)
         run("xcrun", "simctl", "bootstatus", device, "-b", timeout=180)
-        text = f"amux-golden: iPhone 17 Pro, iOS 26.5 ({device})\n" + round_trip(executable, device)
+        text = f"{DEVICE_NAME}: iPhone 17 Pro, iOS 26.5 ({device})\n" + round_trip(executable, device)
     finally:
         if not already_booted:
             run("xcrun", "simctl", "shutdown", device)

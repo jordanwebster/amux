@@ -1241,8 +1241,8 @@
       {"literal": "\"person\"", "context": "Image(systemName: \"person\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"?\"", "context": "return letters.isEmpty ? \"?\" : String(letters).uppercased()", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"\\(section.rows.count)\"", "context": "? \"\\(section.rows.count)\" : nil)", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
-      {"literal": "\"home.row.\\(row.id)\"", "context": "\"home.row.\\(row.id)\", label: spoken(row),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"home.row.\\(row.id)\"", "context": ".identified(\"home.row.\\(row.id)\", label: spoken(row), value: \"cannot be read\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"home.row.\\(row.id)\"", "context": "\"home.row.\\(row.id)\", label: spoken(row, state),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
+      {"literal": "\"home.row.\\(row.id)\"", "context": ".identified(\"home.row.\\(row.id)\", label: spoken(row, state), value: state.name)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\", \"", "context": ".compactMap { $0 }.joined(separator: \", \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\", \"", "context": "let names = section.rows.map(\\.name).joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
@@ -1257,7 +1257,7 @@
       {"literal": "\"ready\"", "context": "case .ready: \"ready\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"signed-out\"", "context": "case .signedOut: \"signed-out\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"unsubscribed\"", "context": "case .unsubscribed: \"unsubscribed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\" · \"", "context": "Text([stateWord, detail].compactMap { $0 }.joined(separator: \" · \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\" · \"", "context": "Text([state.word, detail].compactMap { $0 }.joined(separator: \" · \"))", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"·\"", "context": "Text(\"·\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\" · \"", "context": "return [host, row.workingDirectory].compactMap { $0 }.joined(separator: \" · \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"line.3.horizontal.decrease\"", "context": "GlassIcon(glyph: \"line.3.horizontal.decrease\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -1407,7 +1407,7 @@
       {"literal": "\"drawer.title\"", "context": ".identified(\"drawer.title\", value: \"amux\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"plus\"", "context": "GlassIcon(glyph: \"plus\", prominent: true, size: 30)", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"drawer.newAgent\"", "context": ".identified(\"drawer.newAgent\", label: \"New Agent\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"drawer.row.\\(row.id)\"", "context": "\"drawer.row.\\(row.id)\", label: spoken(row),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
+      {"literal": "\"drawer.row.\\(row.id)\"", "context": "\"drawer.row.\\(row.id)\", label: spoken(row, state),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
       {"literal": "\", \"", "context": "return parts.joined(separator: \", \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"externaldrive.connected.to.line.below\"", "context": "footLink(\"externaldrive.connected.to.line.below\", \"Hosts\", \"drawer.hosts\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"drawer.hosts\"", "context": "footLink(\"externaldrive.connected.to.line.below\", \"Hosts\", \"drawer.hosts\") {", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -1415,6 +1415,12 @@
       {"literal": "\"drawer.you\"", "context": "footLink(\"person.crop.circle\", \"You\", \"drawer.you\") { actions(.you) }", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"drawer.online\"", "context": ".identified(\"drawer.online\", value: online)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"drawer.scrim\"", "context": ".identified(\"drawer.scrim\", label: \"Close Drawer\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/RowState.swift": [
+      {"literal": "\"working\"", "context": "case .working: \"working\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
+      {"literal": "\"host-offline\"", "context": "case .hostOffline: \"host-offline\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
+      {"literal": "\"unheard\"", "context": "case .unheard: \"unheard\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1},
+      {"literal": "\"unsupported\"", "context": "case .unsupported: \"unsupported\"", "reason": "Door and capture vocabulary for a row's state; a screen's wording may change without rewriting the journeys that drive it.", "count": 1}
     ],
     "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Facts.swift": [
       {"literal": "\"facts\"", "context": ".identified(\"facts\", value: open ? \"open\" : \"folded\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
@@ -1918,6 +1924,8 @@
       {"literal": "\"Side project\"", "context": "id: AccountId(\"side\"), email: \"jw@fox.dev\", displayName: \"Side project\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Fixtures.swift": [
+      {"literal": "\"home-offline\"", "context": "Built(.home, \"home-offline\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
+      {"literal": "\"home-offline\"", "context": "Fixture(id: \"home-offline\", screen: .home) { bundle in", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
       {"literal": "\"dictation-listening\"", "context": "Built(.typing, \"dictation-listening\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
       {"literal": "\"dictation-permission\"", "context": "Built(.typing, \"dictation-permission\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
       {"literal": "\"dictation-denied\"", "context": "Built(.typing, \"dictation-denied\"),", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
@@ -2147,6 +2155,11 @@
       {"literal": "\"daemon_absent_reason\"", "context": "split.daemonAbsent = report[\"daemon_absent_reason\"] as? String", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Scenario.swift": [
+      {"literal": "\"ios-bridge\"", "context": "let wanted = [\"ios-bridge\", \"legacy-port\"]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"legacy-port\"", "context": "let wanted = [\"ios-bridge\", \"legacy-port\"]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"quiet-turn\"", "context": "\"quiet-turn\", host: studio, directory: \"~/src/amux-relay\", kind: claude,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"~/src/amux-relay\"", "context": "\"quiet-turn\", host: studio, directory: \"~/src/amux-relay\", kind: claude,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"Waiting on a long build\"", "context": "headline: \"Waiting on a long build\"))", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"studio\"", "context": "public static let studio = hostId(\"studio\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"mini\"", "context": "public static let mini = hostId(\"mini\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"air\"", "context": "public static let air = hostId(\"air\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},

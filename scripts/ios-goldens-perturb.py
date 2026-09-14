@@ -16,12 +16,11 @@ import ios_simulators
 
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
-SIMULATOR = "amux-golden"
+SIMULATOR = "golden"
 
 
 def main() -> None:
-    udid = ios_simulators.ensure(SIMULATOR)
-    ios_simulators.pin(udid)
+    udid = ios_simulators.ready(SIMULATOR)
     subprocess.run(
         ["xcrun", "simctl", "install", udid, str(APPLICATION)], check=True, timeout=600)
     print(f"{SIMULATOR}: {APPLICATION} installed", flush=True)

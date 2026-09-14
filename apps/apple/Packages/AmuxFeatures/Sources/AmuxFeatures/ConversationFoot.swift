@@ -133,7 +133,7 @@ struct ConversationFoot: View {
                 Button(action: retry) {
                     ActionLabel("Retry Now", kind: .outline, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .padding(.top, 12)
                 .accessibilityLabel("Retry Now")
                 .identified("conversation.retry", label: "Retry Now")
@@ -148,11 +148,21 @@ struct ConversationFoot: View {
     /// A hollow mark for a machine whose state is genuinely unknown, and the
     /// accent on the glyph alone for a refusal — the same rule the transcript
     /// follows, where a denied row is coloured on its mark and nowhere else.
+    ///
+    /// Drawn here rather than taken from the row vocabulary, which no longer
+    /// has a mark for it: on a list a hollow circle had to carry the meaning
+    /// alone and could not, and the rows say it in words instead. Here the
+    /// sentence beside it already names the machine and says it is
+    /// unreachable, so the mark only has to agree with it.
     @ViewBuilder
     private var mark: some View {
         switch state {
         case .unreachable:
-            AttentionMark(attention: .unknown, size: 18)
+            Circle()
+                .strokeBorder(
+                    design.inkFaint.color,
+                    style: StrokeStyle(lineWidth: 1.5, dash: [2.2, 2.6]))
+                .frame(width: 18, height: 18)
         case .refused:
             Image(systemName: "exclamationmark.circle")
                 .font(.system(size: 15, weight: .semibold))

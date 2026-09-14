@@ -37,8 +37,7 @@ def selected(arguments: list[str]) -> list[dict]:
 def main() -> None:
     arguments = sys.argv[1:]
     for name in sorted({screen["simulator"] for screen in selected(arguments)}):
-        udid = ios_simulators.ensure(name)
-        ios_simulators.pin(udid)
+        udid = ios_simulators.ready(name)
         subprocess.run(
             ["xcrun", "simctl", "install", udid, str(APPLICATION)],
             check=True, timeout=600)

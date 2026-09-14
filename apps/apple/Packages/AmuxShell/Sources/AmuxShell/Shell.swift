@@ -226,7 +226,7 @@ private struct ShellTabBar: View {
                     TabLabel(item.title, glyph: item.symbol, selected: isSelected)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel(item.title)
                 .accessibilityAddTraits(isSelected ? .isSelected : [])

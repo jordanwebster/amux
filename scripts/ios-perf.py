@@ -35,7 +35,7 @@ PRODUCTS = DERIVED_DATA / f"Build/Products/{CONFIGURATION}-iphonesimulator"
 OUTPUT = Path("target/ios/perf")
 BUILD_RESULT = OUTPUT / "build-for-testing.xcresult"
 RELEASE_RESULT = OUTPUT / "release-build.xcresult"
-SIMULATOR = "amux-golden"
+SIMULATOR = "golden"
 BUNDLE_ID = "sh.amux.app"
 # The definitions pin five samples per metric with the state reset between
 # them; a cold start is reset by terminating the app and launching it again.
@@ -252,7 +252,7 @@ def inputs(udid: str, row: dict, only: str | None, record_baseline: bool = False
     clear_previous(perf, OUTPUT)
     (perf / "inputs.json").write_text(json.dumps({
         "machine": row["name"],
-        "simulator": SIMULATOR,
+        "simulator": ios_simulators.device_name(SIMULATOR),
         "measurements": DOCUMENT.read_text(),
         "baselines": json.loads(baseline.read_text()) if baseline.is_file() else {},
         "only": only,
@@ -889,8 +889,7 @@ def main() -> None:
             f"{row['name']} has no recorded baseline; this run enrols it, judged against "
             "the pinned budgets alone",
             flush=True)
-    udid = ios_simulators.ensure(SIMULATOR)
-    ios_simulators.pin(udid)
+    udid = ios_simulators.ready(SIMULATOR)
     build(udid)
     perf = inputs(udid, row, only, record_baseline)
     if only:

@@ -4,23 +4,29 @@ import SwiftUI
 
 /// The status mark.
 ///
-/// Three marks, and only three, because a glyph nobody can read is worse than
-/// no glyph: it occupies the place a reader looks for meaning and returns
-/// nothing. So the vocabulary is the states that are worth distinguishing and
-/// that the app can honestly know.
+/// One mark, because a glyph nobody can read is worse than no glyph: it
+/// occupies the place a reader looks for meaning and returns nothing. There
+/// used to be three, and two of them did exactly that.
 ///
-/// - **needs you** — the agent has stopped and cannot continue without you.
-///   The only thing on the screen allowed to be the accent colour.
-/// - **working** — achromatic and moving, because work in progress is
-///   information rather than a demand.
-/// - **unknown** — hollow, because a filled mark would claim knowledge the app
-///   does not have.
+/// A sweep ring stood for "working" and never swept — the angle was fixed for
+/// the sake of a capture, so a working agent showed a frozen ring on a real
+/// phone. Setting it turning was the wrong repair. The mark answers "is this
+/// worth opening", and working is the state where the answer is no; drawn at
+/// the same size and weight as a demand, it made the least actionable rows the
+/// most eye-catching, and a fleet of a dozen agents a screen of pinwheels.
 ///
-/// Idle draws nothing. A finished turn draws nothing either and says
-/// "Finished · 4 files · +118 −40" on the row instead, which is more precise
-/// than a tick and readable without having learnt a vocabulary first.
+/// A dashed circle stood for "unknown", hollow so that it would not claim
+/// knowledge the app lacks. Good instinct, wired to almost nothing: the phone
+/// is sent an attention the core has already degraded, and it degrades to
+/// unknown when the machine is offline or when a Claude turn's working
+/// inference has expired. So the circle meant "your machine is offline" and
+/// declined to say so.
+///
+/// What is left is the demand, in the one colour this app reserves for it.
+/// Every other state is a word on the row — `Idle`, `Working`,
+/// `Finished · 4 files · +118 −40`, `studio offline` — which is more precise
+/// than a glyph and readable without having learnt a vocabulary first.
 public struct AttentionMark: View {
-    @Environment(\.design) private var design
     private let attention: Attention
     private let size: CGFloat
 
@@ -30,17 +36,11 @@ public struct AttentionMark: View {
     }
 
     public var body: some View {
+        // The space is held whatever the state, so a row with nothing to
+        // demand lines its name up with the rows that do.
         switch attention {
-        case .idle:
+        case .idle, .working, .unknown:
             Color.clear.frame(width: size, height: size)
-        case .working:
-            WorkingMark(size: size)
-        case .unknown:
-            Circle()
-                .strokeBorder(
-                    design.inkFaint.color,
-                    style: StrokeStyle(lineWidth: 1.5, dash: [2.2, 2.6]))
-                .frame(width: size, height: size)
         case .needsYou(let why):
             if why == .finished {
                 Color.clear.frame(width: size, height: size)
@@ -79,27 +79,6 @@ public struct NeedsYouMark: View {
     }
 }
 
-/// A ring that sweeps. Achromatic on purpose: work in progress is information,
-/// not a demand.
-private struct WorkingMark: View {
-    @Environment(\.design) private var design
-    let size: CGFloat
-    /// A capture is a still frame, so the sweep is drawn at a fixed angle that
-    /// reads as motion rather than relying on an animation nobody will see.
-    private let sweep = 0.68
-
-    var body: some View {
-        ZStack {
-            Circle().strokeBorder(design.inkFaint.color.opacity(0.35), lineWidth: 2)
-            Circle()
-                .trim(from: 0, to: sweep)
-                .stroke(design.inkMuted.color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .frame(width: size, height: size)
-    }
-}
-
 extension Why {
     public var glyph: String {
         switch self {
@@ -116,18 +95,6 @@ extension Why {
         case .permission: "Needs permission"
         case .question: "Has a question"
         case .finished: "Finished"
-        }
-    }
-}
-
-extension Attention {
-    /// The row's state in a word, for a reader who cannot see the mark.
-    public var spoken: String {
-        switch self {
-        case .idle: "Idle"
-        case .working: "Working"
-        case .unknown: "State unknown"
-        case .needsYou(let why): why.spoken
         }
     }
 }
@@ -371,7 +338,7 @@ public struct BackLink: View {
             .foregroundStyle(design.accent.color)
             .thumbTarget(x: 1, y: 13)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .accessibilityLabel(spokenLabel)
         .identified(identifier, label: spokenLabel)
         .reclaimingThumbTarget(x: 1, y: 13)

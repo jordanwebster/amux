@@ -37,7 +37,7 @@ const MAX_DIFFERING_PIXELS: u64 = 64;
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments: Vec<String> = std::env::args().skip(2).collect();
-    let mut simulator = "amux-golden".to_string();
+    let mut simulator = "golden".to_string();
     let mut bundle_id = "sh.amux.app".to_string();
     let mut install: Option<PathBuf> = None;
     let mut update = false;
@@ -124,6 +124,9 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
         &out.join("frame"),
         TOLERANCE,
         MAX_DIFFERING_PIXELS,
+        // A frozen frame is drawn by the app itself, with no system chrome
+        // over it, so every pixel of it is the app's to compare.
+        &[],
     )?;
     println!("{}: {verdict}", screen.display());
     match verdict {

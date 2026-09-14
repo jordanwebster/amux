@@ -541,6 +541,422 @@ goodbye, explicit queries replace the standing browser, and a monotonic pause
 over thirty seconds triggers a fresh query after wake. Focused discovery tests
 cover TXT round trips, fan-out, address replacement and wake detection; workspace
 lint passes.
+2026-09-14 — **Pinned what a fleet row says, and photographed the two states
+that had never been drawn.** `RowState` reads four independent facts in one
+order and that order is the whole of the design, so it now has tests rather
+than only a comment claiming it. The order is what a later change breaks
+silently: an offline machine that stopped outranking a permission request would
+hide the request rather than the machine, and every row involved would still
+look perfectly reasonable. Mutating that precedence fails six of the twelve.
+
+The words are pinned there too, because a capture exercises one path through
+seven cases and these exercise all of them — including the door's own
+vocabulary, which is deliberately not the screen's, so that wording can change
+without rewriting the journeys that drive the app. This commit's wording change
+left those alone, which is the point of keeping them apart.
+
+One new golden, `home-offline`, for the two things a unit test cannot judge. An
+offline machine names itself in the word slot and is then suppressed from the
+row's trailing edge, which is a layout interaction and not a string. And an
+expired working inference draws neither a mark nor a state word — the only row
+in the app that draws neither — which was a deliberate decision and therefore
+one worth being able to look at. It reads as an agent last heard from
+twenty-two minutes ago, which is what it is.
+
+The fixture is the home screen's own agents cut to three rather than a second
+set of cards saying the same things, with the dark machine's row brought
+forward to a few minutes ago: a laptop that sleeps shortly after its agent was
+last heard from is the ordinary way an agent ends up on a host that is not
+answering, and it keeps the row out of the fold where nobody could look at it.
+
+2026-09-14 — **Let `--update` say what it changed.** It copied each capture
+over its baseline before comparing the two, so the comparison was a file
+against itself: a run with the flag always reported that nothing had changed,
+whatever it had just overwritten. Rewriting the eleven screens this branch
+moved rewrote thirty-nine, and there was nothing in the output to say so.
+
+The seventeen extra were harmless and worth naming, because they are what the
+flag was hiding. Three of them differ from their baseline by no pixels at all —
+the same image, re-encoded. One differs across thirteen thousand pixels by a
+largest per-channel delta of two, which is the tolerance exactly, and exactly
+the dithered-gradient noise the tolerance was written for.
+
+Now the capture is compared first and only a baseline that disagrees is
+replaced. The run marks each one `rewrote` with what it had disagreed about,
+and says how many it left alone. A replaced baseline is reported rather than
+counted as a failure, since replacing it is what was asked for.
+
+2026-09-14 — **Draw a control at rest exactly as it was written.** The
+captures caught three things the press work had done to every screen in the
+app, none of which was visible one screen at a time.
+
+`scaleEffect` resamples what it wraps even at a scale of one. The control style
+applied it unconditionally and read the press off its value, so every glyph in
+the app came back a hair softer and a fraction smaller — ninety-four captures
+differed, most of them by a few hundred pixels nobody would have queried
+individually. The press is a branch now, and a control that is not being
+pressed has no modifier over it at all. The cost is that the scale no longer
+animates in, which for an acknowledgement is not a cost.
+
+`.plain` halves a disabled button, and a custom `ButtonStyle` inherits none of
+it. The quiet send button stopped looking quiet. Solving for it against the
+captures put it at 0.5 exactly, which is what the screens were drawn against,
+so the styles do it themselves now.
+
+A `.scale` transition leaves its transform on the view it settled, and a card
+stays open far longer than the quarter second it arrives in. On the permissions
+card, whose rows wrap, that was enough to round its height differently and
+shift everything under it. Both the cards and the overflow now grow through a
+modifier whose resting state wraps nothing.
+
+The same sentence covers all three: whatever is drawn while a surface is
+arriving or being pressed must not be wrapped around it while it is sitting
+still.
+
+With that fixed, eleven screens change and they are the eleven the marks and
+the wording were always going to change — the two fleet lists, the drawer, the
+task strip, the unreadable-provider row, and the five surfaces whose scrim was
+one of six slightly different dims. Their baselines are re-recorded here.
+
+Two things the captures do not cover, worth knowing rather than discovering
+later. No fixture puts an agent whose host is offline on a list, so
+`studio offline` ships unphotographed; and nothing draws the state where the
+working inference has expired, which is the one that deliberately says nothing.
+
+2026-09-13 — **Made the working line elastic, and let the composer grow into
+a turn.** The line under the activity was a rigid capsule of fixed width
+sliding to and fro. The rule above it had already gone trackless, on the
+grounds that a track is the shape of a thing with a known end and nothing here
+knows when a turn will finish — but a fixed-width block sliding between two
+walls still reads as a shuttle on a track. A length that will not hold still
+finishes the thought.
+
+It is two ends now rather than one block. Each crosses the same stretch of the
+row and they differ only in when they set off: the leading end leaves first,
+the trailing end follows a beat later, so the line pulls long as it departs and
+gathers up as it arrives. Set the lag to zero and the shuttle comes back.
+
+Written as keyframes rather than as a formula sampled off a clock. A design
+prototype derived the positions from a capture clock with floor-and-parity
+arithmetic, which is right for filming a deterministic movie and wrong for a
+phone: it needs a clock ticking whether or not anyone is looking, and the leg
+mirroring has to be reasoned about by hand. Two keyframe tracks over one
+timeline is what the thing actually is, and the phase lag is two durations.
+SwiftUI owns the clock and stops it when the view goes away.
+
+The held frame does not move. The segment breathes between a tenth of the row
+and a little under half, at its longest exactly mid-crossing — which is where
+it already held for captures and for Reduce Motion, so no baseline churns.
+
+And the composer grows into the working state instead of jumping into it. The
+activity and its line were inserted into the box with no transition, so the box
+got taller between two frames the moment a turn started and shorter when it
+ended — under a thumb that is usually about to write in it.
+
+2026-09-13 — **Took two marks out of the fleet's vocabulary and said what
+they meant instead.** The sweep ring stood for "working" and never swept: its
+angle was fixed for the sake of a capture, so a working agent showed a frozen
+ring on a real phone. Setting it turning would have been the wrong repair. The
+mark answers "is this worth opening", and working is the state where the answer
+is no — drawn at the weight of a demand it made the least actionable rows the
+most eye-catching, and a fleet of a dozen agents a screen of pinwheels.
+
+The dashed circle stood for "unknown", hollow so as not to claim knowledge the
+app lacks. Good instinct, wired to almost nothing. The phone is sent an
+attention the core has already derived, and that derivation degrades to unknown
+in two places: when the machine is offline, and when a Claude turn's working
+inference has expired. So the circle has meant "your machine is offline" all
+along and declined to say so.
+
+Both are gone. What is left is the accent disc, for the one state that is
+waiting on a person, and every other state is a word on the third line where
+`Idle` and `Finished · 4 files · +118 −40` already were.
+
+`Unknown`, `Remembered` and `Cannot be read` all named this app's own
+epistemic state rather than anything about the world, and nobody opens an app
+to find out what the app knows. An offline machine says `studio offline`, which
+is the fact and the thing that can be fixed. An agent run by a provider this
+build has no case for says `gemini · update amux to open it`, naming what it is
+and what to do, where before it said only that it could not be read.
+
+An expired working inference says nothing at all, deliberately. By then the
+core knows only that it no longer trusts its own guess: the agent could be
+part-way through a long build and not writing transcript rows, could have
+finished with the delivery lost, could be wedged, could be fine behind a wedged
+stream. Nothing distinguishes those, so a word would be a diagnosis the app
+cannot support — and `Working` doubly so, since the core deliberately stopped
+asserting it and the phone re-asserting it is a second opinion about something
+only the host knows. The row already carries the honest fact in the age in its
+corner.
+
+The four sources that decided all this — the attention, whether the provider is
+readable, whether the owning machine has answered, whether it is online at all
+— are read once now, in one order, into `RowState`. The list row, the drawer
+row and the sentence VoiceOver reads each used to recombine a different subset
+by hand, which is how two marks came to mean nothing without anyone noticing.
+An offline machine outranks a demand, which is not a new decision: the core
+already makes it inside `effective_attention`. Reading the host directly rather
+than only through the attention is what also catches a remembered row, which
+keeps whatever attention it was cached with.
+
+2026-09-13 — **Gave the app a motion axis, and a press something to answer
+with.** The design system defined colour, type, metrics and surfaces as values
+and said nothing about time, so every moving thing in the app was a literal
+invented where it stood: 0.28 in the drawer, 1.1 in the composer, 0.18 three
+times in the diff page. Across twenty-seven view files the whole inventory of
+motion was one drawer animation, three scroll easings, three sheet transitions
+that never fired, and the composer's travelling segment. The stillness is
+deliberate and stays; what was wrong is that every state change was a cut.
+
+`Motion` names two curves and one tempo, beside `Glass` rather than on `Design`
+for the same reason `Glass` is there: a skin decides colour and type, and
+nothing about a palette implies a duration. Everything that changes state goes
+through `moving(_:value:)`, which holds still in front of a camera and for a
+reader who asked for less motion, so the two reasons to stop moving are decided
+once instead of remembered at each call site.
+
+The three sheets that declared `.transition(.move(edge: .bottom))` and hard cut
+now slide. Nothing set their gates inside an animation and no container carried
+one, so the transition had never run: the directory chooser, the device list
+and the comment sheet all appeared between two frames. The intent was in the
+source and only the wiring was missing.
+
+Six surfaces dimmed their backdrop by six slightly different amounts, which
+nobody chose. One number now, and the scrim fades rather than cutting — a whole
+screen changing brightness in a single frame is the one thing in a set of menus
+that reads as a fault. The reason it used to cut, that a fade is a clock and
+these screens are photographed, is answered by holding it still in front of a
+camera instead of never moving at all.
+
+The plus and the model chip sit on the composer's footer row, and their cards
+appeared a row above them, shoving the control the thumb had just pressed
+downward on the way in. They grow out of that corner now. The overflow already
+hung correctly from its ellipsis and was the model for it.
+
+And the press. `.plain` draws a custom label exactly as written and adds no
+pressed state at all, so every button in the app — ninety of them in the
+screens, and the tab bar in the shell — absorbed a touch and showed nothing
+until the screen changed, which reads as a dropped press, and the reader
+presses again. Rows light, because shrinking one would pull it away
+from the rows either side; controls give, because a discrete object takes a
+press the way a key does. Under Reduce Motion a control dims rather than
+scaling, so the answer survives without the movement.
+
+The fleet reorders on a curve, keyed on which rows are where and nothing else —
+a row is equatable over its whole card, so keying on the sections would set the
+list moving every time an agent aged by a minute. Safe because regrouping only
+happens on a refresh, which is something the reader did. The task strip's fold
+stops snapping between two corner radii.
+2026-09-14 — **Nothing in the golden catalogue is quarantined any more.** The
+three captures that had been marked flaky varied for two reasons, both in
+the transcript rather than in the camera, and both measured to the number
+before anything was changed. On a cold launch the strip could open a few
+hundred points above its latest row, in about half of launches: the tall
+space the unfolded strip reserves under the feed arrives as a bottom content
+inset after the one scroll to the tail has fired, and the scroll view does
+not count an inset as a change of size, so the bottom anchor never retried.
+That one a person could see. The feed now watches that single number and
+asks to be taken back to its tail whenever it changes, up to eight times,
+until the reader moves it; the observer reads one scalar, so it runs when
+the reserved space changes and not while the feed is measuring itself. And
+a lazy feed guesses at the height of the rows it has not built, settling on
+one of a few guesses at first layout and never revising it, which moved
+every row it did build a third of a point and rewrote every glyph; nobody
+can see that, and no scroll command changes it, so the two fixtures behind
+those captures now carry only the end of their conversation, which is all
+either picture shows. The accessibility composer's dark capture matched its
+old baseline with the trimmed fixture, which is the proof the visible
+picture did not move; the other three re-approved onto the resting place
+the fix now always lands on. Sixteen warm mounts and eight cold launches
+of each screen in each appearance draw one picture. The measured run's
+cold first frame on the cached fleet grazed its budget once after an hour
+of captures and passed on a rerun; no budget moved.
+
+2026-09-14 — **The golden catalogue is green on a GitHub runner.** It had been
+red on every runner and green on every Mac since it existed, and the reason
+was the home indicator: 116 of 124 captures differed by exactly its rectangle
+and nothing else, and every capture on the home-button phone passed.
+SpringBoard draws the bar when an app launches and withdraws it once
+backboardd's attention-awareness timer reports that nobody is touching the
+screen, which on a Mac takes about 1.5 seconds for any app. With both pinned
+devices booted on a runner, backboardd delivers that attention-lost event to
+a stale client identifier, so the live indicator never hears it and the bar
+stays for the whole run. A single booted device on the same runner hides it,
+which is why every earlier probe was clean. Nothing reproduces it on a Mac:
+headless, freshly created, two devices booted, all fade. Asking the app to
+hide persistent overlays rides the same timer and changed nothing.
+
+So the comparison, not the photograph, looks past it. The manifest declares
+each pinned simulator and the chrome SpringBoard draws over every app, and
+`xtask golden` counts no pixel under it, washing the excluded rectangles blue
+in the difference image. The first full catalogue under that rule finished
+on a runner with the bar out of every verdict and six captures failing on
+the status bar instead: its clock and indicators drawn in the previous
+appearance's colour, because SpringBoard applies a change of style late
+enough on a loaded runner to be photographed after the screen has settled.
+Those are chrome too now, on both phones. Against the runner's own captures,
+every screen outside the quarantine then matches its committed baseline with
+no differing pixels.
+
+Two more things a capture could vary on are pinned. The `comment` baseline
+had been approved on a Mac with Simulator.app's hardware keyboard connected,
+the one state in which no software keyboard rises, so every headless capture
+failed it over two thirds of the screen; the keyboard is pinned off per
+device and the sheet re-approved with its keyboard, as the design's own
+capture has it. And an app launched over another carries that app's name in
+the status bar as a way back, so every app on the device is terminated before
+the capture app launches — except SpringBoard's own Spotlight, which does not
+answer a terminate on a runner. A command spawned inside a device just after
+boot can also hang past its timeout on a runner; it is asked three times now.
+The nightly schedule is back, running the golden catalogue alone.
+
+The three quarantined transcript flakes were measured to their cause and
+stay quarantined. The feed's lazy stack latches an estimate for the rows
+above the viewport at first layout, at one of a few values that never
+converge — the scroll view's content height differs by 66 points between
+the strip's two pictures — and that lands the rows it does build a fraction
+of a device pixel apart, so every glyph rasterises differently and no
+integer shift reconciles the two. Extra settling never converges it; an
+eager stack removes it entirely but measures every row of a long
+conversation on the main thread and rewraps the composer's prose, so it is
+not the fix. On a cold launch the strip can also open a few hundred points
+above its tail when its tall bottom inset lands after the one scroll to the
+tail, which the size-change anchor does not retry. That is the transcript's
+to fix. A pre-existing script test for the Rust bridge build fails on
+Python 3.14 independently of this work.
+2026-09-14 — **Every recipe names a kind of phone, and wt hands it a device of its own.**
+Several checkouts had been driving the one pinned simulator at once and
+corrupting each other's captures. The recipes, the golden manifest and the
+Rust driving tools now name a *kind* of device, `golden` or `small`, never a
+device. Which device a kind means is decided in one place each for Python
+(`scripts/ios_simulators.py`) and Rust (`crates/xtask/src/simulator.rs`), by
+the same rule: inside a wt worktree it is the device wt leased for this
+command, named in `WT_LEASE_IPHONE` or `WT_LEASE_IPHONE_SMALL`, and a recipe
+that reaches a device inside a worktree without a lease is refused rather
+than allowed to drive a device another checkout may be using; outside a
+worktree, which is CI, it is `amux-iphone-1` or `amux-small-1`, created and
+pinned by the same code path, so the only difference between CI and a
+worktree is whether anything coordinates. `.wt.toml` declares the two pools:
+two golden devices and one small, created on demand by the script's
+`create` subcommand, cleaned at the start of every lease by `acquire`
+(uninstall the app, VoiceOver off, status bar re-pinned), kept for the tree
+for two minutes between consecutive recipes, and deleted after half an hour
+without a lease. Every recipe that touches a device runs under
+`scripts/with iphone`, and the ones that may need the narrow device under
+`scripts/with iphone iphone-small`; the shim runs the command directly where
+there is no wt, and drops a pool whose lease is already in the environment,
+so a recipe that leases the phone may call another that does. The app build
+no longer needs a device at all: it builds for the generic simulator
+destination, so `just ios build` holds no lease and never waits for one. The
+linkage smoke inside `just ios package` takes the lease for its own short
+run rather than the whole package build holding it. Measured on this Mac: a
+first lease creates and pins a device in 47 s, the next lease from the same
+checkout takes it in 5 s, a second checkout queues behind a running recipe
+and takes the device the moment it is released, and `just ios door-smoke`
+passes end to end on a leased device. The `amux-golden` and `amux-small`
+devices are no longer named anywhere; the report fixtures keep the host
+name `amux-golden` because it is a daemon's name rendered on screen, not a
+device.
+
+2026-09-13 — **Made the bridge's currency check look for the library.** The
+gate went red on a build that could not resolve the app's binary target:
+`AmuxApp.xcframework does not contain a binary artifact`, immediately after
+the bridge recipe announced that sources were unchanged and cargo had not run.
+Both were true. The build cache restores an xcframework's shape without the
+archives inside it — they are the large part — and the currency check asked
+only whether the directory existed, so a hollow framework read as current and
+nothing rebuilt it.
+
+It asks each slice for its library now, the way it already asked the driving
+framework for the one the debug configuration links. The failure it replaces
+named neither the cache nor the check, and surfaced two stages after the one
+that could have caught it.
+
+Detecting it was only half the repair, which the next red run made plain. The
+stamp was correctly invalidated and cargo ran, but the line that fills in the
+shipping framework asked whether the directory was absent — and a hollow one
+is present — so nothing put a library in it and the build failed exactly as
+before. Both halves ask the same question now. Reproduced by deleting the
+archives from a real xcframework and leaving its shape, which is what a
+restored cache hands you.
+
+2026-09-13 — **Took the shipping bundle off the push path.** The first green
+run of the split gate gave `ios package` a number for the first time: ten
+minutes of a thirty-four minute job, the largest stage in it, and one that had
+never executed in continuous integration before because the old job always
+died earlier. It builds every shipping slice under the size-optimised profile
+and links the result, and `ios scope-audit` then inspects that bundle; between
+them they were thirteen of the thirty-four minutes.
+
+Neither answers a question an ordinary change can change. What decides whether
+a provider, an agent host or a test crate can reach the phone is the device
+and simulator graphs, and the gate still checks those on every push. So both
+move to a third phase, `just ios shipping`, and `just ios verify` still runs
+them for whoever wants the whole thing. `just ios release` already depended on
+both, so a release cannot be cut without them — there is now a test that fails
+if that dependency is ever removed, because it is the only thing left holding
+them.
+
+The gate should land near twenty-one minutes. For the record, where the rest
+of it goes: `ios unit` is six separate `xcodebuild test` invocations, one per
+Swift package, whose actual test execution is fractions of a second in five of
+them — three hundred and twenty-two tests in under a second in one case — so
+almost all of its eight minutes is six cold starts and six compilations. One
+UI test, `DoorClearTests`, accounts for eighty-eight seconds on its own. And
+`ios simulator` boots the device twice, because the pinned region has to be
+written to a booted device and SpringBoard only reads it at startup.
+
+2026-09-13 — **Split iPhone verification into a gate and a capture half.** The
+one iPhone job in continuous integration was the developer's whole
+one-command check, which begins by running the Rust workspace — formatting,
+lint, tests and the specification suites. Three other jobs already run all of
+that, on three operating systems, so it was paying fourteen minutes a push for
+a second opinion it already had. It also booted both pinned simulators when
+the suites it was about to run need one, and it never once finished: the job
+has never reached journeys, accessibility or the measured run on any branch.
+
+So `xtask ios-verify` now takes `--gate` or `--captures`, and `just ios verify`
+still means everything, in the same order, for whoever is running it before
+they push. The gate is what a build can settle — the device and simulator
+graphs, the bridge, the app, the packaged framework, the unit suites and the
+shipped-scope audit — and nothing in it compares a photograph, so it says the
+same thing on any machine. That is what gates a push now, on one simulator.
+
+The capture half drives a running app and judges what it drew. It has its own
+workflow, and that workflow is deliberately not scheduled. On a GitHub runner
+117 of the 124 captures fail and on a developer's Mac they pass, and after a
+day of it nobody can say why. A nightly that is red every night for a reason
+nobody can act on only teaches people to stop reading it.
+
+What the day did establish is written down where it will be found: the settle
+rule in `door.rs` claimed a margin it never had, the capture cadence belongs
+to the machine rather than to us, and neither rebooting a simulator nor
+erasing it to factory state changes the failure. Two mechanisms proposed and
+both refuted by a runner, which is cheaper than shipping either.
+
+2026-09-13 — **Made the simulator recipe's bound a backstop again.** Creating
+and booting the two pinned simulators from nothing takes a cold runner most of
+the twelve minutes the recipe allowed it: 687 seconds on the run that passed,
+779 on the next one, and on one unlucky machine the second device did not
+finish at all. The script's own per-boot timeouts allow far longer than the
+recipe did, so the outer bound was firing first and reporting only that
+something had taken a while. It is 3600 seconds now. What still catches a
+simulator that is genuinely stuck is the timeout around each boot, which names
+the device and the step.
+
+2026-09-13 — **Reconnected the app's test resources to the files they mirror.**
+Four of the iPhone tests' resources are symlinks into the repository — the
+performance budget the instrumentation suite reads, and the three pinned
+projection schemas the core suite checks its decoding against — so a budget or
+a DTO changed at the source changes the suite rather than drifting past a
+stale copy. Their targets are relative, and moving the app one directory
+deeper left every one of them pointing a level short. Git moves a symlink by
+its contents, so nothing complained until Xcode went looking for the files.
+
+The iPhone verification job was the only thing that would notice, and it was
+already failing for the formatting that same move broke, so the second reason
+only surfaced once the first was fixed.
+
 2026-09-13 — **Moved the Retry Now contract off the network.** The burst test
 failed on Windows again, and for the reason the first attempt had already
 named without following far enough: a press must be listened to within a

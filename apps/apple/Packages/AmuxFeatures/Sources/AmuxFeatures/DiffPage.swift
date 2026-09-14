@@ -72,7 +72,7 @@ public struct DiffPage: View {
             Ground()
             scroll
             if let range = model.selection {
-                Color.black.opacity(0.3)
+                Color.black.opacity(Glass.scrim)
                     .ignoresSafeArea()
                     .accessibilityHidden(true)
                 CommentSheet(
@@ -84,6 +84,7 @@ public struct DiffPage: View {
                 attach
             }
         }
+        .moving(value: model.selection != nil)
         .accessibilityElement(children: .contain)
         .identified("review", value: model.diff.description)
     }
@@ -117,7 +118,7 @@ public struct DiffPage: View {
                     initiallyOn: wheel.flatMap { path in model.files.firstIndex { $0.path == path } }
                 ) { path in
                     actions(.scrubTo(path))
-                    withAnimation(.easeOut(duration: 0.18)) { scroller.scrollTo(path, anchor: .top) }
+                    withAnimation(Motion.quick) { scroller.scrollTo(path, anchor: .top) }
                 }
             }
             // A range taken hold of is brought into view. The sheet covers the
@@ -133,7 +134,7 @@ public struct DiffPage: View {
                 FileList(files: model.files, comments: commentCounts) { path in
                     listing = false
                     actions(.scrubTo(path))
-                    withAnimation(.easeOut(duration: 0.18)) { scroller.scrollTo(path, anchor: .top) }
+                    withAnimation(Motion.quick) { scroller.scrollTo(path, anchor: .top) }
                 }
             }
         }
@@ -200,7 +201,7 @@ public struct DiffPage: View {
         guard let range = model.selection else { return }
         let row = RowRef(file: range.file, row: range.from)
         guard animated else { return scroller.scrollTo(row, anchor: .top) }
-        withAnimation(.easeOut(duration: 0.18)) { scroller.scrollTo(row, anchor: .top) }
+        withAnimation(Motion.quick) { scroller.scrollTo(row, anchor: .top) }
     }
 
     private func row(at point: CGPoint) -> RowRef? {
@@ -268,7 +269,7 @@ public struct DiffPage: View {
         } label: {
             ActionLabel(attachTitle, kind: .primary, fill: true)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .modifier(ReviewBottomAction())
         .accessibilityLabel(attachTitle)
         .identified("review.attach", label: attachTitle)
@@ -317,7 +318,7 @@ private struct FileHeading: View {
                 }
                 .thumbTarget(y: 14)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .accessibilityLabel(file.path)
             .identified(
                 "review.file", label: file.path,
@@ -329,7 +330,7 @@ private struct FileHeading: View {
                     .foregroundStyle(design.inkFaint.color)
                     .thumbTarget(x: 18, y: 17)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("All Files")
             .identified("review.files", label: "All Files")
             .reclaimingThumbTarget(x: 18, y: 17)
@@ -559,14 +560,14 @@ private struct CommentSheet: View {
                     Button { done { add(model.draft) } } label: {
                         ActionLabel("Add to Review", kind: .primary, fill: true)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityLabel("Add to Review")
                     .identified("review.addComment", label: "Add to Review")
                     Button { done(cancel) } label: {
                         ActionLabel("Cancel", kind: .outline, fill: true)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .accessibilityLabel("Cancel")
                     .identified("review.cancelComment", label: "Cancel")
                 }
@@ -759,7 +760,7 @@ private struct FileList: View {
                             .frame(minHeight: 44)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.amuxRow)
                     }
                 }
                 .padding(.vertical, 8)

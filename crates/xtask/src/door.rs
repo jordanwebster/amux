@@ -97,7 +97,11 @@ struct Devices {
 /// The udid of the pinned simulator with this name. `just ios simulator`
 /// creates it; this never does, so a run cannot silently measure a device
 /// nobody pinned.
-pub fn simulator_udid(name: &str) -> Result<String, DoorError> {
+/// The udid of the device a simulator kind or name means. A kind resolves
+/// through `simulator::resolve` first, so every caller sees the leased device.
+pub fn simulator_udid(simulator: &str) -> Result<String, DoorError> {
+    let name = crate::simulator::resolve(simulator)?;
+    let name = name.as_str();
     let listed = simctl(&["list", "devices", "available", "-j"])?;
     let devices: Devices =
         serde_json::from_str(&listed).map_err(|error| DoorError::Unreadable(error.to_string()))?;
@@ -266,18 +270,19 @@ fn converse(
 /// has stopped moving.
 ///
 /// Rest means a run of identical photographs rather than a pair of them,
-/// because one thing on the display holds still and then moves anyway: the
-/// home indicator is drawn when an app launches and takes itself away about a
-/// second later. A pair of photographs half a second apart can both catch it,
-/// so the first screen of a run kept a bar the twentieth screen did not, and
-/// which screen was first decided what the picture said. A run long enough to
-/// outlast that cannot be fooled by it.
+/// because a pair half a second apart can both catch something that is about
+/// to move, and the first screen of a run then says something the twentieth
+/// does not.
 ///
 /// The app is the only thing running on the device and the door has already
 /// said the screen is built, so what is photographed is the screen under test
-/// with nothing over it. The frame includes the system's own status bar,
-/// pinned to 9:41 with a full battery, which the design's own references draw
-/// too.
+/// with the system's own chrome over it. The status bar is pinned to 9:41
+/// with a full battery, which the design's own references draw too. The home
+/// indicator cannot be pinned: SpringBoard draws it at launch and withdraws it
+/// when backboardd's attention timer fires, and on a loaded GitHub runner that
+/// event reaches a stale client and the bar stays for the whole run. So the
+/// comparison, not the photograph, is what looks past it: the manifest names
+/// the bar's rectangle for the device and no pixel under it is compared.
 fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
     if let Some(directory) = destination.parent() {
         std::fs::create_dir_all(directory)?;
@@ -319,13 +324,23 @@ fn display(udid: &str, destination: &Path) -> Result<(), DoorError> {
 }
 
 /// How many photographs of one screen are taken while waiting for a run of
-/// them to agree. Each costs about a quarter of a second.
+/// them to agree.
+///
+/// What one costs is the machine's, not ours: measured at 0.13s on a
+/// developer's Mac and 0.7s on a continuous-integration runner, so this
+/// ceiling is worth between three and seventeen seconds depending on who is
+/// holding the camera.
 const STEADY_SHOTS: usize = 24;
 
 /// How many photographs in a row have to be the same file before the display
-/// counts as still. Eight of them span about two seconds, which is longer than
-/// the home indicator stays on screen after a launch, so a capture cannot lock
-/// onto a frame that still has it.
+/// counts as still.
+///
+/// This says the display has stopped changing. It cannot say the display is
+/// showing the right thing, and the two are not the same: a run of identical
+/// frames is equally consistent with a screen that has come to rest and with
+/// one holding something that should have gone away. So a capture that comes
+/// back wrong is not evidence against this number until somebody has watched
+/// the frames and seen the screen still moving when it was taken.
 const STEADY_RUN: usize = 8;
 
 /// A PNG's width and height, read from the header rather than decoded.
@@ -477,7 +492,7 @@ fn wait_for_port(ready: &Path, timeout: Duration) -> Result<u16, DoorError> {
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(2);
-    let mut simulator = "amux-golden".to_string();
+    let mut simulator = "golden".to_string();
     let mut bundle_id = "sh.amux.app".to_string();
     let mut timeout = Duration::from_secs(120);
     let mut install_from: Option<PathBuf> = None;

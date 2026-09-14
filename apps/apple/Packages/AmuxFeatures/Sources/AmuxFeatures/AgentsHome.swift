@@ -116,7 +116,7 @@ public struct AgentsHome: View {
                             GlassIcon(glyph: "line.3.horizontal.decrease")
                                 .thumbTarget(x: 5, y: 5)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.amuxControl)
                         .accessibilityLabel("Filter Agents")
                         .identified("home.filter", label: "Filter Agents", value: filter.rawValue)
                         .reclaimingThumbTarget(x: 5, y: 5)
@@ -133,7 +133,7 @@ public struct AgentsHome: View {
                         GlassIcon(glyph: "plus", prominent: true)
                             .thumbTarget(x: 5, y: 5)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .accessibilityLabel("New Agent")
                     .identified("home.newAgent", label: "New Agent")
                     .reclaimingThumbTarget(x: 5, y: 5)
@@ -162,7 +162,7 @@ public struct AgentsHome: View {
                 }
                 .thumbTarget(y: 7)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Agents, switch account")
             .identified(
                 "home.title", label: "Agents, switch account",
@@ -295,6 +295,13 @@ public struct AgentsHome: View {
             .padding(.horizontal, design.metrics.gutter)
             .padding(.top, 6)
             .padding(.bottom, 120)
+            // Keyed on which rows are where and nothing else. A row is
+            // equatable over its whole card, so animating on the sections
+            // themselves would set the list moving every time an agent
+            // changed its headline or aged by a minute. Safe because
+            // regrouping only happens on a refresh, which is something the
+            // reader did.
+            .moving(value: sections.map { $0.rows.map(\.id) })
         }
         .scrollIndicators(.hidden)
         .refreshable { actions(.refresh) }
@@ -302,38 +309,39 @@ public struct AgentsHome: View {
 
     @ViewBuilder
     private func agentRow(_ row: AgentRow) -> some View {
+        let host = model.host(row.hostId)
+        let state = RowState(row: row, host: host)
         let content = AgentRowView(
-            row: row, host: model.host(row.hostId)?.name, now: model.orderedAt)
+            row: row, state: state, host: host?.name, now: model.orderedAt)
         // An agent run by a provider this build has no case for is listed and
         // not offered to open. A button that led to a conversation of which
         // not one row could be read would be a worse answer than the row
         // saying so where it stands.
         if row.readable {
             Button { actions(.open(row.id)) } label: { content }
-                .buttonStyle(.plain)
-                .accessibilityLabel(spoken(row))
+                .buttonStyle(.amuxRow)
+                .accessibilityLabel(spoken(row, state))
                 .identified(
-                    "home.row.\(row.id)", label: spoken(row),
-                    value: row.confirmed ? row.attention.spoken : "\(row.attention.spoken), remembered")
+                    "home.row.\(row.id)", label: spoken(row, state),
+                    value: row.confirmed ? state.name : "\(state.name), remembered")
         } else {
             content
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(spoken(row))
-                .identified("home.row.\(row.id)", label: spoken(row), value: "cannot be read")
+                .accessibilityLabel(spoken(row, state))
+                .identified("home.row.\(row.id)", label: spoken(row, state), value: state.name)
         }
     }
 
     /// What a row says to somebody who cannot see it, in the order the row
     /// says it: who, what, where, how long, and what it needs.
-    private func spoken(_ row: AgentRow) -> String {
+    private func spoken(_ row: AgentRow, _ state: RowState) -> String {
         var parts = [row.name]
         if let headline = row.headline { parts.append(headline) }
-        parts.append(row.attention.spoken)
-        if row.why == .finished, let outcome = row.outcome { parts.append(outcome.arithmetic) }
+        if let said = state.spoken { parts.append(said) }
+        if case .finished(let outcome) = state, let outcome { parts.append(outcome.arithmetic) }
         parts.append([model.host(row.hostId)?.name, row.workingDirectory]
             .compactMap { $0 }.joined(separator: ", "))
         parts.append(row.age(at: model.orderedAt) + " ago")
-        if !row.readable { parts.append("this build cannot read it") }
         if row.unread { parts.append("unread") }
         // Said aloud too: a row nobody has confirmed yet looks different and
         // must sound different, or VoiceOver reports a memory as a fact.
@@ -373,7 +381,7 @@ public struct AgentsHome: View {
                 .frame(minHeight: 44)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow(cornerRadius: design.metrics.cardRadius))
         .accessibilityLabel("\(title), \(names)")
         .identified("home.fold.\(section.id)", label: "\(title), \(names)", value: names)
     }
@@ -428,7 +436,7 @@ public struct AgentsHome: View {
                 .frame(minHeight: 44)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow(cornerRadius: design.metrics.cardRadius))
         .accessibilityLabel(text)
         .identified("home.exceptions", label: text, value: text)
     }
@@ -457,7 +465,7 @@ public struct AgentsHome: View {
             } label: {
                 ActionLabel(gateActionTitle, kind: .primary, fill: true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel(gateActionTitle)
             .identified("home.empty.action", label: gateActionTitle)
         }
@@ -506,12 +514,13 @@ struct AgentRowView: View {
     @Environment(\.design) private var design
     @Environment(\.dynamicTypeSize) private var typeSize
     let row: AgentRow
+    let state: RowState
     let host: String?
     let now: Date
 
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
-            AttentionMark(attention: row.attention)
+            AttentionMark(attention: state.attentionMark)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -551,19 +560,19 @@ struct AgentRowView: View {
                 // "Fini… · 1 fi… mini" says less than nothing. The same words
                 // stacked and allowed to wrap still say what happened.
                 VStack(alignment: .leading, spacing: 2) {
-                    Text([stateWord, detail].compactMap { $0 }.joined(separator: " · "))
-                    if stateWord != nil, let host { Text(host) }
+                    Text([state.word, detail].compactMap { $0 }.joined(separator: " · "))
+                    if let host, showsHost { Text(host) }
                 }
                 .fixedSize(horizontal: false, vertical: true)
             } else {
                 HStack(spacing: 6) {
-                    if let word = stateWord {
+                    if let word = state.word {
                         Text(word)
                         Text("·")
                     }
                     Text(detail)
                     Spacer(minLength: 0)
-                    if stateWord != nil, let host { Text(host) }
+                    if let host, showsHost { Text(host) }
                 }
                 .lineLimit(1)
             }
@@ -574,26 +583,17 @@ struct AgentRowView: View {
         .padding(.top, 1)
     }
 
-    private var stateWord: String? {
-        // Said in words rather than left to the mark. There is no glyph for
-        // "this build has no case for what runs here", and an agent that
-        // cannot be read is not idle.
-        guard row.readable else { return "Cannot be read" }
-        switch row.attention {
-        case .needsYou(why: .finished): return "Finished"
-        case .idle: return "Idle"
-        default: return nil
-        }
+    /// The machine goes on the trailing edge beside a state word, and into
+    /// the detail without one — except where the word has already named it,
+    /// which is what an offline machine's word is.
+    private var showsHost: Bool {
+        state.word != nil && !state.namesTheHost
     }
 
     private var detail: String {
-        if stateWord != nil {
-            // Whatever the turn changed, wherever the row has room to say it.
-            // An agent that has gone quiet since finishing changed exactly
-            // what it changed, and the numbers are the readable part.
-            if let outcome = row.outcome { return outcome.arithmetic }
-            return row.workingDirectory
+        guard state.word != nil else {
+            return [host, row.workingDirectory].compactMap { $0 }.joined(separator: " · ")
         }
-        return [host, row.workingDirectory].compactMap { $0 }.joined(separator: " · ")
+        return state.elaboration ?? row.workingDirectory
     }
 }

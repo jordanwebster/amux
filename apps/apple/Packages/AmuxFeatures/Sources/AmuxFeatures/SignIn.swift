@@ -145,7 +145,7 @@ public struct SignIn: View {
                     Button { actions(model.finished ? .done : .start) } label: {
                         ActionLabel(title, kind: .primary, fill: true)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .disabled(model.working)
                     .opacity(model.working ? 0.5 : 1)
                     .identified(

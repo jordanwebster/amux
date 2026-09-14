@@ -66,7 +66,7 @@ struct PlusCard: View {
             .contentShape(RoundedRectangle(
                 cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .accessibilityLabel(label)
         .identified("plus.\(label.lowercased())", label: label)
     }
@@ -101,7 +101,7 @@ struct PlusCard: View {
             .contentShape(RoundedRectangle(
                 cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow(cornerRadius: 16))
         .accessibilityLabel(
             ["Permissions", permission.current].compactMap { $0 }.joined(separator: ", "))
         .identified("plus.permissions", label: "Permissions", value: permission.current ?? "")

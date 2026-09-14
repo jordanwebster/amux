@@ -74,6 +74,7 @@ public enum Fixtures {
         Built(.run, "run-reduced"),
         Built(.typing, "composer-accessibility"),
         Built(.home, "home-unreadable"),
+        Built(.home, "home-offline"),
         Built(.homeQuiet, "home-quiet"),
         Built(.drawer, "drawer"),
         Built(.run, "run"),
@@ -550,7 +551,7 @@ public enum Fixtures {
         // answer.
         Fixture(id: "strip", screen: .run, overlay: .tasks) { bundle in
             States.open(
-                bundle, agents: Scenario.startedWork, entries: Transcript.live,
+                bundle, agents: Scenario.startedWork, entries: Transcript.liveTail,
                 session: Sessions.claude(
                     gate: .working, phase: "running",
                     provider: Sessions.claudeProvider(running: Sessions.todos),
@@ -620,6 +621,15 @@ public enum Fixtures {
         Fixture(id: "home-unreadable", screen: .home) { bundle in
             States.open(bundle, agents: [Scenario.unreadableAgent] + Scenario.agents)
         },
+        // The two rows an ordinary morning keeps below the fold: one whose
+        // machine is not answering, and one whose machine is answering and
+        // which has gone quiet for longer than the working inference is
+        // allowed to stand. The second is the only row in the app that draws
+        // neither a mark nor a state word, which is a decision worth being
+        // able to look at rather than only read about.
+        Fixture(id: "home-offline", screen: .home) { bundle in
+            States.open(bundle, agents: Scenario.darkMachine)
+        },
         // Nothing yet: one action, and no list pretending to be loading.
         Fixture(id: "home-empty", screen: .home) { bundle in
             States.open(bundle, agents: [], hosts: [], unread: UnreadWeights())
@@ -654,7 +664,7 @@ public enum Fixtures {
         // composer is the one surface that grows under the reader's thumb, so
         // it is photographed separately from the conversation behind it.
         Fixture(id: "composer-accessibility", screen: .typing, typeSize: "accessibility5") { bundle in
-            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
+            States.open(bundle, entries: Transcript.conversationTail, session: Sessions.claude())
             bundle.conversation(Scenario.focus).draft.body =
                 "Check the reconnect path before you squash it."
         },

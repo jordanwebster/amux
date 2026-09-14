@@ -158,6 +158,18 @@ extension EnvironmentValues {
 /// and the safe-area insets arrive. Keep the opening tail attached to those
 /// layout changes until the reader takes control. Waiting for every lazy row
 /// to report that it finished measuring can wait forever on an offscreen row.
+///
+/// Two of those late changes need separate answers. A feed that grows taller is
+/// a change of size, and the bottom anchor follows it. The space reserved under
+/// the feed for whatever floats over it — the composer, and the strip of work
+/// above it when it is unfolded — arrives instead as a bottom content inset,
+/// which is not a change of size and which the anchor therefore ignores: an
+/// inset several hundred points tall landing after the feed had already reached
+/// its tail leaves the reader that far short of it, looking at the middle of the
+/// conversation with the newest row hidden below. So the inset is watched too,
+/// and reaching the tail is asked for again whenever it changes, up to a small
+/// number of times so that an inset that never stops moving cannot scroll
+/// forever.
 struct TranscriptContainer<Content: View>: View {
     /// Where a recording left the reader, to be put back instead of the tail.
     /// Nothing is the ordinary case and the one the app itself always passes:
@@ -209,6 +221,21 @@ struct TranscriptContainer<Content: View>: View {
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .initialOffset)
         .defaultScrollAnchor(resting == nil ? .bottom : .top, for: .sizeChanges)
         .defaultScrollAnchor(.bottom, for: .alignment)
+        // The one place the bottom anchor cannot reach on its own. The space
+        // the composer and the strip reserve under the feed arrives as a
+        // bottom inset, which the scroll view does not count as a change of
+        // size, so a feed already resting on its tail is left that inset's
+        // height above it. Only the one number is read, so this runs when the
+        // reserved space changes and not while the feed is measuring itself.
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.contentInsets.bottom
+        } action: { _, _ in
+            guard resting == nil, !readerMoved,
+                  page.tailScrolls < TranscriptPage.tailScrolls
+            else { return }
+            page.tailScrolls += 1
+            Task { @MainActor in position.scrollTo(edge: .bottom) }
+        }
         .scrollPosition($position))
         .onChange(of: tail, initial: true) { _, tail in
             guard resting == nil, !readerMoved, !openedAtTail, tail != nil else { return }
@@ -311,6 +338,16 @@ private final class TranscriptPage {
     /// where it is. Generous, because the first several are spent asking for
     /// an entry that has not been laid out yet and buy no movement at all.
     static let corrections = 64
+
+    /// How many times a feed opening at its tail may be sent back to it after
+    /// the space reserved under it changes. A handful covers the composer and
+    /// the strip of work each reserving their own space; a ceiling at all is
+    /// what stops two insets that keep answering each other from scrolling the
+    /// feed for as long as the screen is open.
+    static let tailScrolls = 8
+
+    /// How many of those have been spent.
+    var tailScrolls = 0
 
     /// Where the readable top of the page is: below the chrome that floats
     /// over it, in the same measure the entries answer in.
@@ -876,7 +913,7 @@ private struct ExplorationRow: View {
                 }
                 .thumbTarget(y: 13)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .accessibilityLabel("\(counts), \(anchor)")
             .identified(
                 "transcript.exploration", label: "\(counts), \(anchor)",
@@ -950,7 +987,7 @@ private struct PlanVerdictRow: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .disabled(verdict.markdown == nil)
             if open, let markdown = verdict.markdown {
                 Prose(markdown: markdown, open: false)
@@ -1121,7 +1158,7 @@ private struct AgentMessageRow: View {
                 }
                 .thumbTarget(y: 13)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxRow)
             .accessibilityLabel("\(from): \(text)")
             .identified(
                 "transcript.agent-message", label: "\(from): \(text)",

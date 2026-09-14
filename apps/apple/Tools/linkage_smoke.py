@@ -7,9 +7,12 @@ import plistlib
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import ios_simulators
+
 RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
-DEVICE_NAME = "amux-golden"
+DEVICE_NAME = ios_simulators.device_name("golden")
 
 
 def run(*command: str, timeout: int = 60) -> str:

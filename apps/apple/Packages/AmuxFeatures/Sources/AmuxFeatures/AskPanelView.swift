@@ -121,13 +121,13 @@ private struct PermissionAsk: View {
                 Button { answer(.allowOnce) } label: {
                     ActionLabel("Allow", kind: .primary, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .accessibilityLabel("Allow")
                 .identified("ask.allow", label: "Allow")
                 Button { answer(.deny(feedback: nil)) } label: {
                     ActionLabel("Deny", kind: .outline)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .accessibilityLabel("Deny")
                 .identified("ask.deny", label: "Deny")
             }
@@ -181,7 +181,7 @@ private struct ScopeRow: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityLabel(spoken)
         .identified("ask.scope", label: spoken, value: scope.directory)
     }
@@ -242,7 +242,7 @@ private struct PlanAsk: View {
                 .frame(maxWidth: .infinity, minHeight: 4)
                 .thumbTarget(y: 20)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .accessibilityLabel(open ? "Fold Plan" : "Read Whole Plan")
         .identified("ask.plan.more", label: open ? "Fold Plan" : "Read Whole Plan")
         .reclaimingThumbTarget(y: 20)
@@ -250,13 +250,13 @@ private struct PlanAsk: View {
             Button { answer(.approvePlan) } label: {
                 ActionLabel("Approve", kind: .primary, fill: true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Approve")
             .identified("ask.approve", label: "Approve")
             Button { feedback = "" } label: {
                 ActionLabel("Send Back", kind: .outline, fill: true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Send Back")
             .identified("ask.sendback", label: "Send Back")
         }
@@ -311,13 +311,13 @@ struct FeedbackSheet: View {
                 Button { send(text) } label: {
                     ActionLabel("Send", kind: .primary, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .identified(
                     "ask.feedback.send", label: "Send",
                     enabled: !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button(action: cancel) { ActionLabel("Cancel", kind: .outline) }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .identified("ask.feedback.cancel", label: "Cancel")
             }
             Spacer(minLength: 0)
@@ -377,7 +377,7 @@ private struct QuestionAsk: View {
             Button { answer(.answered(draft.replies(for: questions))) } label: {
                 ActionLabel("Send", kind: .primary, fill: true)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .disabled(!draft.isComplete(for: questions))
             .accessibilityLabel("Send")
             .identified(
@@ -432,7 +432,7 @@ private struct OptionButton: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow(cornerRadius: design.metrics.controlRadius))
         .accessibilityLabel(option.label)
         .accessibilityValue(picked ? "Chosen" : "")
         .identified(
@@ -475,7 +475,7 @@ private struct ApprovalAsk: View {
                     ActionLabel(
                         choice.label, kind: choice.id == 0 ? .primary : .outline, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .disabled(choice.decision == nil)
                 .opacity(choice.decision == nil ? 0.45 : 1)
                 .accessibilityLabel(choice.label)

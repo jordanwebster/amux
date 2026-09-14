@@ -63,6 +63,7 @@ public struct NewAgent: View {
                     .transition(.move(edge: .bottom))
             }
         }
+        .moving(value: model.browsing)
         // A screen is a container of the things on it, not a name for all of
         // them. Without this the system spreads this identifier over every
         // element underneath — the title, the buttons, the rows — so
@@ -152,7 +153,7 @@ public struct NewAgent: View {
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .disabled(!host.online)
         .accessibilityLabel(spoken(host))
         .accessibilityAddTraits(model.machine == host.id ? [.isSelected] : [])
@@ -211,7 +212,7 @@ public struct NewAgent: View {
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxRow)
                 .disabled(model.machine == nil)
                 .accessibilityLabel("Directory")
                 .identified(
@@ -253,7 +254,7 @@ public struct NewAgent: View {
                             }
                             .thumbTarget(y: 8)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.amuxControl)
                     .accessibilityLabel("Start in \(project.name)")
                     .identified(
                         "new-agent.recent.\(project.name)", label: "Start in \(project.name)",
@@ -320,7 +321,7 @@ public struct NewAgent: View {
                     ActionLabel(
                         model.starting ? "Starting…" : "Start on \(machineName)", fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .disabled(!model.ready)
                 .opacity(model.ready ? 1 : 0.4)
                 .identified(
@@ -402,7 +403,7 @@ private struct LayerCard: View {
                 }
                 .thumbTarget(y: 15)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .accessibilityLabel("Model for \(provider.title)")
             .identified(
                 "new-agent.model.\(provider.rawValue)",
@@ -478,7 +479,7 @@ private struct DirectorySheet: View {
             panel
         }
         .background(alignment: .top) {
-            Color.black.opacity(0.28)
+            Color.black.opacity(Glass.scrim)
                 .ignoresSafeArea()
                 .onTapGesture { model.browsing = false }
         }
@@ -498,7 +499,7 @@ private struct DirectorySheet: View {
                 Button { model.browsing = false } label: {
                     ActionLabel("Done", kind: .plain)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .identified("new-agent.browse.done", label: "Done")
             }
             search
@@ -619,7 +620,7 @@ private struct DirectorySheet: View {
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxRow)
         .accessibilityLabel(project.path)
         .identified(
             "new-agent.project.\(project.name)", label: project.path,
@@ -654,7 +655,7 @@ private struct DirectorySheet: View {
                 } label: {
                     ActionLabel("Use", kind: .outline)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .disabled(model.typedPath.isEmpty)
                 .identified(
                     "new-agent.typed.use", label: "Use This Path",

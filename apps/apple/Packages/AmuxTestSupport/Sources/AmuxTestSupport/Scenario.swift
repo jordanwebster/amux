@@ -247,6 +247,34 @@ public enum Scenario {
              headline: "Waiting on you since Monday"),
     ]
 
+    /// The two states a row can be in that an ordinary morning keeps below
+    /// the fold of a fleet this size.
+    ///
+    /// The same agents the home screen already has, cut to three so that both
+    /// are on screen at once beside an ordinary row to be read against, rather
+    /// than a second set of cards saying the same things. `legacy-port` runs
+    /// on the machine that is not answering, and the row says so instead of
+    /// drawing a mark nobody could read. `quiet-turn` is on a machine that is
+    /// answering and has simply gone quiet: it said it was working and no
+    /// dated evidence has arrived for longer than that inference is allowed to
+    /// stand, so the core withdraws it and the row deliberately says nothing
+    /// at all — the age in its corner is everything anybody honestly knows.
+    public static let darkMachine: [AgentCard] = {
+        let wanted = ["ios-bridge", "legacy-port"]
+        var rows = agents.filter { wanted.contains($0.displayName) }
+        // A machine that went to sleep a few minutes after its agent was last
+        // heard from is the ordinary way an agent ends up on a dark host, and
+        // it keeps the row out of the fold where nobody could look at it.
+        for index in rows.indices where rows[index].agent.hostId == air {
+            rows[index].lastActivity = now.addingTimeInterval(-60 * 12)
+        }
+        rows.append(card(
+            "quiet-turn", host: studio, directory: "~/src/amux-relay", kind: claude,
+            attention: .unknown, minutesAgo: 22,
+            headline: "Waiting on a long build"))
+        return rows
+    }()
+
     /// An agent run by a provider this build has no case for.
     ///
     /// One machine on an account can run a newer amux than the phone, and what

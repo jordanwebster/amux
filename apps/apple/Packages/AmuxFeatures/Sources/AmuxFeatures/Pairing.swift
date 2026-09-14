@@ -211,7 +211,7 @@ private struct Keypad: View {
                         .frame(height: 52)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .disabled(!enabled)
                 .accessibilityLabel("Delete")
                 .identified("pin.delete", label: "Delete", enabled: enabled)
@@ -232,7 +232,7 @@ private struct Keypad: View {
                         RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.amuxControl)
         .disabled(!enabled)
         .accessibilityLabel("\(digit)")
         .identified("pin.key.\(digit)", label: "\(digit)", enabled: enabled)
@@ -326,12 +326,12 @@ public struct PairConfirmation: View {
                 Button { actions(.confirm(peer)) } label: {
                     ActionLabel("Pair", kind: .primary, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .identified("pair-confirm.trust", label: "Pair")
                 Button { actions(.abandon(peer)) } label: {
                     ActionLabel("Not Now", kind: .outline, fill: true)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.amuxControl)
                 .identified("pair-confirm.abandon", label: "Not Now")
             }
             .padding(.bottom, 34)
@@ -382,7 +382,7 @@ public struct PairConfirmation: View {
             Button { actions(.cancel) } label: {
                 ActionLabel("Back to Hosts", kind: .outline)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .identified("pair-confirm.back", label: "Back to Hosts")
         }
         .padding(.top, 26)
@@ -401,7 +401,7 @@ public struct PairConfirmation: View {
             Button { actions(.cancel) } label: {
                 ActionLabel("Done", kind: .outline)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.amuxControl)
             .identified("pair-confirm.done", label: "Done")
         }
         .padding(.top, 26)

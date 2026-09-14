@@ -257,8 +257,7 @@ def capture(record, args):
                   "shell-conversation": dict(id="shell-conversation", fixture="conversation"),
                   "focus-probe": dict(id="focus-probe", screen="typing", fixture="typing")})
     screens = [known[name] for name in args.screens]
-    udid = ios_simulators.ensure(args.simulator)
-    ios_simulators.pin(udid)
+    udid = ios_simulators.ready(args.simulator)
     started = time.monotonic()
     command("xcrun", "simctl", "install", udid, str(APP))
     record.emit("install", seconds=time.monotonic() - started,
@@ -350,7 +349,7 @@ def main():
     for name in ("capture", "cycle"):
         shots = commands.add_parser(name)
         shots.add_argument("--rounds", type=int, default=3)
-        shots.add_argument("--simulator", default="amux-golden", choices=ios_simulators.DEVICES)
+        shots.add_argument("--simulator", default="golden", choices=ios_simulators.DEVICES)
         shots.add_argument("--appearances", nargs="+", choices=["light", "dark"], default=["light", "dark"])
         shots.add_argument("--methods", nargs="+", choices=["current", "window", "display-once", "display-pair", "display-guarded"],
                            default=["current", "window", "display-once"])
