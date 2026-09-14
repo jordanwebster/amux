@@ -1424,10 +1424,11 @@ mod tests {
             })
             .collect();
         flaky_captures.sort();
-        assert_eq!(
-            flaky_captures,
-            ["ax-composer.dark", "strip.dark", "strip.light"]
-        );
+        // Nothing is quarantined. A capture that will not repeat itself is a
+        // bug in what it photographs, and the three that used to stand here
+        // were fixed rather than excused; a new entry has to make that same
+        // argument again in the open.
+        assert_eq!(flaky_captures, Vec::<String>::new());
 
         // Every pinned device is declared with the chrome the comparison
         // must look past; only the Face ID phone has a home indicator.

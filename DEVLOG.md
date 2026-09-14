@@ -1,3 +1,28 @@
+2026-09-14 — **Nothing in the golden catalogue is quarantined any more.** The
+three captures that had been marked flaky varied for two reasons, both in
+the transcript rather than in the camera, and both measured to the number
+before anything was changed. On a cold launch the strip could open a few
+hundred points above its latest row, in about half of launches: the tall
+space the unfolded strip reserves under the feed arrives as a bottom content
+inset after the one scroll to the tail has fired, and the scroll view does
+not count an inset as a change of size, so the bottom anchor never retried.
+That one a person could see. The feed now watches that single number and
+asks to be taken back to its tail whenever it changes, up to eight times,
+until the reader moves it; the observer reads one scalar, so it runs when
+the reserved space changes and not while the feed is measuring itself. And
+a lazy feed guesses at the height of the rows it has not built, settling on
+one of a few guesses at first layout and never revising it, which moved
+every row it did build a third of a point and rewrote every glyph; nobody
+can see that, and no scroll command changes it, so the two fixtures behind
+those captures now carry only the end of their conversation, which is all
+either picture shows. The accessibility composer's dark capture matched its
+old baseline with the trimmed fixture, which is the proof the visible
+picture did not move; the other three re-approved onto the resting place
+the fix now always lands on. Sixteen warm mounts and eight cold launches
+of each screen in each appearance draw one picture. The measured run's
+cold first frame on the cached fleet grazed its budget once after an hour
+of captures and passed on a rerun; no budget moved.
+
 2026-09-14 — **The golden catalogue is green on a GitHub runner.** It had been
 red on every runner and green on every Mac since it existed, and the reason
 was the home indicator: 116 of 124 captures differed by exactly its rectangle

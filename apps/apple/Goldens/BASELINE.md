@@ -13,23 +13,25 @@ Run `just ios goldens` to compare every state. Run
 `just ios goldens-reference` to place the 33 reference-backed screens beside
 the preserved designs.
 
-## Known flaky captures
+## Nothing is quarantined
 
-Three of the 124 captures are quarantined individually: `strip.light`,
-`strip.dark`, and `ax-composer.dark`. Their transcript feed is a lazy stack
-whose estimate for the rows above the viewport is latched at first layout at
-one of a few values and never revised, so the rows it does build land a
-fraction of a device pixel apart from one mount to the next and every glyph
-rasterises differently; the scroll view's content height differs between the
-two pictures by 66 points on the strip. On a cold launch the strip can also
-open a few hundred points above its tail, because its tall bottom inset can
-arrive after the one scroll to the tail and an inset change is not a size
-change. Both are the transcript's to fix, not the harness's: extra settling
-never converges them. They are still captured and compared, and their
-triplets remain available for diagnosis. Only
-their pixel-difference result is non-gating; capture failures, missing
-baselines, and size changes still fail. The global tolerance remains two per
-channel with at most 64 differing pixels.
+Every one of the 124 captures gates. `strip.light`, `strip.dark` and
+`ax-composer.dark` were quarantined until 2026-09-14 and are not any more.
+
+They varied for two reasons, both in the transcript rather than in the camera.
+A feed that opens at its latest row could be left a few hundred points short of
+it on a cold launch, because the tall space the strip of work reserves under
+the feed arrives as a content inset and the scroll view does not count an inset
+as a change of size; the feed now asks to be taken back to its latest row
+whenever that reserved space changes. And a lazy feed guesses the height of the
+rows it has not built, settling on a different guess from one opening to the
+next, which moved every row it did build a fraction of a device pixel and
+rewrote every glyph; the two fixtures behind these captures now carry only the
+end of their conversation, which is all either picture shows, so there is
+nothing left to guess at. The strip's own feed and the accessibility composer's
+show exactly what they showed before.
+
+The global tolerance remains two per channel with at most 64 differing pixels.
 
 ## Departures every screen shares
 
@@ -174,6 +176,14 @@ Reference-backed capture of `slash-typing` using the `slash-typing` fixture. No 
 
 Added state using the `strip` fixture. The facts strip under a conversation. It follows the same visual system as its parent screen.
 
+Re-approved on 2026-09-14. The picture is of the strip and the few lines of feed
+beside it, and those are unchanged; what changed is that the feed no longer
+carries a long history nobody can see behind them. A lazy feed guesses at rows
+it has not built and guessed differently each time it opened, which moved every
+visible glyph a fraction of a pixel and left this capture unable to match
+itself. With nothing hidden left to guess at, the text rasterises one way, and
+that one way is the baseline.
+
 ## tokens
 
 Added state using the `tokens` fixture. A draft carrying attachment tokens. It follows the same visual system as its parent screen.
@@ -277,6 +287,13 @@ Added state using the `run-accessibility` fixture. A conversation at an accessib
 ## ax-composer
 
 Added state using the `composer-accessibility` fixture. The composer with a message half-written in it, at an accessibility text size. It follows the same visual system as its parent screen.
+
+Re-approved on 2026-09-14 for the same reason the strip was, and with the same
+words on screen. At this text size the last message of the conversation is
+already taller than the band left visible above the box, so the earlier turns
+the fixture used to carry were never drawn; they only gave the lazy feed
+something to guess the height of, and the guess moved the drawn text between
+openings.
 
 ## reduced-glass
 

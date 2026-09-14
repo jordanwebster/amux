@@ -390,13 +390,6 @@
       "fixture": "strip",
       "origin": "added_state",
       "reason": "the facts strip under a conversation",
-      "flaky": {
-        "appearances": [
-          "light",
-          "dark"
-        ],
-        "reason": "the lazy transcript stack latches an estimated height for the rows above the viewport at first layout, at one of a few values that never converge, which lands the rows it does build a fraction of a device pixel apart between mounts; on a cold launch the strip can also open a few hundred points above its tail when its tall bottom inset lands after the one scroll to the tail"
-      },
       "simulator": "amux-golden",
       "appearances": [
         "light",
@@ -735,12 +728,6 @@
       "fixture": "composer-accessibility",
       "origin": "added_state",
       "reason": "the composer with a message half-written in it, at an accessibility text size",
-      "flaky": {
-        "appearances": [
-          "dark"
-        ],
-        "reason": "the lazy transcript stack latches an estimated height for the rows above the viewport at first layout, at one of a few values that never converge, which lands the rows it does build a fraction of a device pixel apart between mounts; on a cold launch the strip can also open a few hundred points above its tail when its tall bottom inset lands after the one scroll to the tail"
-      },
       "simulator": "amux-golden",
       "appearances": [
         "light",
