@@ -1,3 +1,37 @@
+2026-09-14 — **Every recipe names a kind of phone, and wt hands it a device of its own.**
+Several checkouts had been driving the one pinned simulator at once and
+corrupting each other's captures. The recipes, the golden manifest and the
+Rust driving tools now name a *kind* of device, `golden` or `small`, never a
+device. Which device a kind means is decided in one place each for Python
+(`scripts/ios_simulators.py`) and Rust (`crates/xtask/src/simulator.rs`), by
+the same rule: inside a wt worktree it is the device wt leased for this
+command, named in `WT_LEASE_IPHONE` or `WT_LEASE_IPHONE_SMALL`, and a recipe
+that reaches a device inside a worktree without a lease is refused rather
+than allowed to drive a device another checkout may be using; outside a
+worktree, which is CI, it is `amux-iphone-1` or `amux-small-1`, created and
+pinned by the same code path, so the only difference between CI and a
+worktree is whether anything coordinates. `.wt.toml` declares the two pools:
+two golden devices and one small, created on demand by the script's
+`create` subcommand, cleaned at the start of every lease by `acquire`
+(uninstall the app, VoiceOver off, status bar re-pinned), kept for the tree
+for two minutes between consecutive recipes, and deleted after half an hour
+without a lease. Every recipe that touches a device runs under
+`scripts/with iphone`, and the ones that may need the narrow device under
+`scripts/with iphone iphone-small`; the shim runs the command directly where
+there is no wt, and drops a pool whose lease is already in the environment,
+so a recipe that leases the phone may call another that does. The app build
+no longer needs a device at all: it builds for the generic simulator
+destination, so `just ios build` holds no lease and never waits for one. The
+linkage smoke inside `just ios package` takes the lease for its own short
+run rather than the whole package build holding it. Measured on this Mac: a
+first lease creates and pins a device in 47 s, the next lease from the same
+checkout takes it in 5 s, a second checkout queues behind a running recipe
+and takes the device the moment it is released, and `just ios door-smoke`
+passes end to end on a leased device. The `amux-golden` and `amux-small`
+devices are no longer named anywhere; the report fixtures keep the host
+name `amux-golden` because it is a daemon's name rendered on screen, not a
+device.
+
 2026-09-13 — **Made the bridge's currency check look for the library.** The
 gate went red on a build that could not resolve the app's binary target:
 `AmuxApp.xcframework does not contain a binary artifact`, immediately after

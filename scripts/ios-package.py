@@ -43,7 +43,10 @@ def main() -> None:
     text = bridge.write_size_report(lines, {"name": "mobile", **profile})
     print(text, end="", flush=True)
     if not linkage.is_file():
-        subprocess.run([sys.executable, str(LINKAGE_SMOKE), str(framework)], check=True, timeout=600)
+        # The smoke runs on a device, so it takes the phone lease for its own
+        # short run rather than the whole package build holding one.
+        subprocess.run(["scripts/with", "iphone", "--", sys.executable, str(LINKAGE_SMOKE), str(framework)],
+                       check=True, timeout=600)
 
 
 if __name__ == "__main__":

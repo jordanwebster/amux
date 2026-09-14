@@ -1,18 +1,66 @@
 #!/usr/bin/env python3
-"""Create or reuse the pinned simulators and pin what a screenshot can see."""
+"""The pinned simulators: which device a recipe drives, and how it is pinned.
+
+Every capture and measurement names a *kind* of device, ``golden`` or
+``small``, never a device. Which device a kind means is decided here, once:
+
+- Inside a wt worktree the device is the one wt leased for this command,
+  named in ``WT_LEASE_IPHONE`` or ``WT_LEASE_IPHONE_SMALL``. A recipe that
+  reaches this module inside a worktree without a lease is refused, because
+  driving a device another checkout may be using is exactly the corruption
+  the lease exists to prevent.
+- Outside a worktree, which is CI or a bare checkout, the device is the first
+  of the same naming scheme, so the only difference between the two
+  environments is whether anything coordinates.
+
+wt calls the subcommands at the bottom to create, probe and prepare a device;
+the recipes call ``ready`` to get the udid of the device their kind means.
+"""
 
 import json
+import os
 import subprocess
 import sys
 
 RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
-# Every capture and every measurement names one of these two devices. The
-# golden device is the one all budgets and baselines are pinned to; the small
-# one exists so the design is checked at the narrowest supported width.
-DEVICES = {
-    "amux-golden": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
-    "amux-small": "com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation",
+BUNDLE_ID = "sh.amux.app"
+
+# The golden device is the one all budgets and baselines are pinned to; the
+# small one exists so the design is checked at the narrowest supported width.
+KINDS = {
+    "golden": {
+        "device_type": "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+        "lease": "WT_LEASE_IPHONE",
+        "fallback": "amux-iphone-1",
+    },
+    "small": {
+        "device_type": "com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation",
+        "lease": "WT_LEASE_IPHONE_SMALL",
+        "fallback": "amux-small-1",
+    },
 }
+DEVICES = tuple(KINDS)
+
+# The names the kinds went by before the lease existed. A branch that predates
+# it still asks for these, and gets the device its kind means today.
+LEGACY_NAMES = {"amux-golden": "golden", "amux-small": "small"}
+
+
+def device_name(kind: str) -> str:
+    """The device this kind means for this process."""
+    if kind not in KINDS:
+        raise SystemExit(f"no pinned simulator kind named {kind}; one of {', '.join(KINDS)}")
+    entry = KINDS[kind]
+    leased = os.environ.get(entry["lease"])
+    if leased:
+        return leased
+    if os.environ.get("WT_TARGET"):
+        pool = "iphone" if kind == "golden" else "iphone-small"
+        raise SystemExit(
+            f"no {kind} simulator is leased for this command: run it under "
+            f"`scripts/with {pool} -- ...` so wt hands it a device of its own"
+        )
+    return entry["fallback"]
 
 
 def run(*command: str, timeout: int = 120) -> str:
@@ -39,18 +87,32 @@ def device_inventory(attempts: int = 3) -> dict:
                 raise
 
 
-def ensure(name: str) -> str:
-    """Return the udid of the named pinned simulator, creating it when absent."""
-    device_type = DEVICES[name]
-    inventory = device_inventory()
+def find(name: str) -> dict | None:
+    """The named device on the pinned runtime, or None."""
     matching = [
-        device for device in inventory["devices"].get(RUNTIME, [])
+        device for device in device_inventory()["devices"].get(RUNTIME, [])
         if device["name"] == name
     ]
     if len(matching) > 1:
         raise RuntimeError(f"Multiple {name} simulators on {RUNTIME}")
-    if matching:
-        device = matching[0]
+    return matching[0] if matching else None
+
+
+def ensure(kind_or_name: str, device_type: str | None = None) -> str:
+    """Return the udid of the device a kind means, creating it when absent.
+
+    Given a kind, the device is the one ``device_name`` resolves and its type
+    is the kind's. Given a device name, ``device_type`` says what to create.
+    """
+    kind = LEGACY_NAMES.get(kind_or_name, kind_or_name)
+    if kind in KINDS:
+        name, device_type = device_name(kind), KINDS[kind]["device_type"]
+    else:
+        name = kind_or_name
+        if device_type is None:
+            raise SystemExit(f"{name} is not a simulator kind; say what to create")
+    device = find(name)
+    if device:
         if device["deviceTypeIdentifier"] != device_type:
             raise RuntimeError(f"{name} must be a {device_type.rsplit('.', 1)[-1]}")
         return device["udid"]
@@ -137,19 +199,56 @@ def voice_over(udid: str, running: bool) -> None:
         run("xcrun", "simctl", "spawn", udid, "notifyutil", "-p", cache)
 
 
+def clean(udid: str) -> None:
+    """Remove what a previous use could leave behind for the next one.
+
+    Device state bleeds between recipes even inside one checkout: the
+    accessibility audit turns VoiceOver on, the unit suites type into fields,
+    and every driving recipe leaves the app and its pairings installed. Each
+    lease starts from none of that.
+    """
+    subprocess.run(["xcrun", "simctl", "uninstall", udid, BUNDLE_ID],
+                   capture_output=True, timeout=300)
+    try:
+        voice_over(udid, False)
+    except subprocess.CalledProcessError:
+        pass
+
+
+def ready(kind: str) -> str:
+    """The udid of the device this kind means, present, booted and pinned."""
+    udid = ensure(kind)
+    pin(udid)
+    return udid
+
+
 def main() -> None:
-    # Named devices, or both. Booting one takes minutes, and the suites that
-    # need only the golden device should not wait for the small one: it exists
-    # so the design is checked at the narrowest supported width, which is a
-    # question only the capture suites ask.
-    wanted = sys.argv[1:] or list(DEVICES)
-    unknown = [name for name in wanted if name not in DEVICES]
-    if unknown:
-        raise SystemExit(f"no pinned simulator named {', '.join(unknown)}")
-    for name in wanted:
-        udid = ensure(name)
+    arguments = sys.argv[1:]
+    # The subcommands wt's pool recipes call, each about one named device.
+    if arguments[:1] == ["exists"]:
+        raise SystemExit(0 if find(arguments[1]) else 1)
+    if arguments[:1] == ["create"]:
+        name, kind = arguments[1], arguments[2]
+        udid = ensure(name, KINDS[kind]["device_type"])
         pin(udid)
         print(f"{name}: {udid} (iOS 26.5, booted, en_US, 9:41, light)", flush=True)
+        return
+    if arguments[:1] == ["acquire"]:
+        udid = find(arguments[1])["udid"]
+        pin(udid)
+        clean(udid)
+        return
+    # Named kinds, or both: create and boot the devices they mean. Booting one
+    # takes minutes, and the suites that need only the golden device should
+    # not wait for the small one.
+    wanted = arguments or list(KINDS)
+    unknown = [kind for kind in wanted if kind not in KINDS]
+    if unknown:
+        raise SystemExit(f"no pinned simulator kind named {', '.join(unknown)}")
+    for kind in wanted:
+        udid = ready(kind)
+        print(f"{kind} ({device_name(kind)}): {udid} (iOS 26.5, booted, en_US, 9:41, light)",
+              flush=True)
 
 
 if __name__ == "__main__":

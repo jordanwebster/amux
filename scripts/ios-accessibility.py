@@ -26,15 +26,14 @@ import ios_simulators
 DERIVED_DATA = Path("target/ios/DerivedData")
 APPLICATION = DERIVED_DATA / "Build/Products/Debug-iphonesimulator/Amux.app"
 OUTPUT = Path("target/ios/accessibility")
-SIMULATOR = "amux-golden"
+SIMULATOR = "golden"
 TEST = "AmuxUITests/AccessibilityAuditTests"
 RECORD = "accessibility-audit.json"
 UI_TESTS = "sh.amux.AmuxUITests.xctrunner"
 
 
 def main() -> int:
-    udid = ios_simulators.ensure(SIMULATOR)
-    ios_simulators.pin(udid)
+    udid = ios_simulators.ready(SIMULATOR)
     ios_simulators.run("xcrun", "simctl", "install", udid, str(APPLICATION), timeout=300)
     OUTPUT.mkdir(parents=True, exist_ok=True)
     log = OUTPUT / "audit.log"

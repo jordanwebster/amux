@@ -97,7 +97,11 @@ struct Devices {
 /// The udid of the pinned simulator with this name. `just ios simulator`
 /// creates it; this never does, so a run cannot silently measure a device
 /// nobody pinned.
-pub fn simulator_udid(name: &str) -> Result<String, DoorError> {
+/// The udid of the device a simulator kind or name means. A kind resolves
+/// through `simulator::resolve` first, so every caller sees the leased device.
+pub fn simulator_udid(simulator: &str) -> Result<String, DoorError> {
+    let name = crate::simulator::resolve(simulator)?;
+    let name = name.as_str();
     let listed = simctl(&["list", "devices", "available", "-j"])?;
     let devices: Devices =
         serde_json::from_str(&listed).map_err(|error| DoorError::Unreadable(error.to_string()))?;
@@ -487,7 +491,7 @@ fn wait_for_port(ready: &Path, timeout: Duration) -> Result<u16, DoorError> {
 
 pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(2);
-    let mut simulator = "amux-golden".to_string();
+    let mut simulator = "golden".to_string();
     let mut bundle_id = "sh.amux.app".to_string();
     let mut timeout = Duration::from_secs(120);
     let mut install_from: Option<PathBuf> = None;

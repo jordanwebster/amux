@@ -2,9 +2,11 @@
 # every recipe runs from the repository root so paths mean the same thing in
 # the scripts, the Xcode project and the Rust workspace.
 #
-# Recipes that touch a simulator run under `scripts/with iphone`: inside a wt
-# worktree that takes the machine's one phone lease, so two checkouts never
-# drive the pinned device at once; elsewhere it runs the command directly.
+# Recipes that touch a device run under `scripts/with iphone`, and those that
+# may need the small one under `scripts/with iphone iphone-small`: inside a
+# wt worktree that leases a device of each kind for the command, so two
+# checkouts never drive one device at once; elsewhere it runs the command
+# directly and the scripts use the first device of the same names.
 
 set shell := ["sh", "-cu"]
 set positional-arguments
@@ -66,9 +68,9 @@ graph-check:
 # catches a simulator that is genuinely stuck is the per-boot timeout inside
 # the script, which names the device and the step it hung on; an outer bound
 # tight enough to fire first only reports that something took a while.
-# Create and boot the pinned simulators. Names one or both.
+# Create and boot the pinned simulators. Names one or both kinds: golden, small.
 simulator *NAMES:
-    scripts/with iphone -- {{bounded}} 3600 python3 -B scripts/ios_simulators.py {{NAMES}}
+    scripts/with iphone iphone-small -- {{bounded}} 3600 python3 -B scripts/ios_simulators.py {{NAMES}}
 
 # Generates apps/apple/Amux.xcodeproj from apps/apple/project.yml, then builds the app for
 # the golden simulator. The bridge is an input, so `rust` runs first.
@@ -94,7 +96,7 @@ door-smoke: build tools
 # screen nobody has built yet rather than skipping it.
 # Capture every catalogued screen and compare it with its baseline.
 goldens *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 2400 python3 -B scripts/ios-goldens.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone iphone-small -- {{bounded}} 2400 python3 -B scripts/ios-goldens.py "$@"
 
 # Move one design token and require the golden run to fail with a difference
 # image. What proves the golden check would notice a change.
@@ -147,7 +149,7 @@ perf *ARGS: rust package tools
 # simulator against a served test network and read the relay inventory back.
 # Link the driving bridge from bare Swift and read a served relay back.
 loopback-smoke: tools
-    {{bounded}} 1800 python3 -B apps/apple/Tools/loopback_smoke.py
+    scripts/with iphone -- {{bounded}} 1800 python3 -B apps/apple/Tools/loopback_smoke.py
 
 # Inspect the release bundle for excluded platforms and debug-only surfaces.
 # Release links the shipping library, so the package is its input.
@@ -194,7 +196,7 @@ script-tests:
 # build preparation and screenshot latency can be measured independently.
 # Run opt-in timing and capture experiments.
 explore *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 12600 python3 -B scripts/ios-explore.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone iphone-small -- {{bounded}} 12600 python3 -B scripts/ios-explore.py "$@"
 
 # Read-only toward the supplied design checkout; all experimental variants and
 # captures are generated in a fresh ignored output directory.
@@ -206,7 +208,7 @@ design-benchmark *ARGS:
 # then either captures a two/four-idea batch or matched source/production views.
 # Measure layout-idea iteration inside one debug app.
 native-design-benchmark *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone -- {{bounded}} 3600 python3 -B scripts/ios-native-design-benchmark.py "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/with iphone iphone-small -- {{bounded}} 3600 python3 -B scripts/ios-native-design-benchmark.py "$@"
 
 # Version, tag, archive and export the iPhone app, and stop there: nothing in
 # this recipe uploads, submits or pushes. --preflight reports its inputs and

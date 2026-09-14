@@ -85,7 +85,7 @@ final class GoldenManifestTests: XCTestCase {
             XCTAssertTrue(
                 (4...13).contains(entry.stage), "\(entry.id) has no milestone")
             XCTAssertTrue(
-                ["amux-golden", "amux-small"].contains(entry.simulator),
+                ["golden", "small"].contains(entry.simulator),
                 "\(entry.id) names an unpinned simulator")
             XCTAssertEqual(entry.appearances, ["light", "dark"])
             if entry.origin == "reference" {

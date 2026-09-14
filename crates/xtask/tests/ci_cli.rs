@@ -456,7 +456,7 @@ fn ios_verify_cli_runs_full_checks_bare_and_stops_on_failure_or_skipped_journey(
         if success {
             assert_eq!(
                 calls,
-                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios graph-check\nios rust\nios simulator amux-golden\nios build\nios loopback-smoke\nios unit\nios door-smoke\nios goldens\nios journey\nios accessibility\nios perf\nios package\nios scope-audit\n"
+                "fmt-check\nlint\ntest\nspec\nmobile-check\nios lint\nios graph-check\nios rust\nios simulator golden\nios build\nios loopback-smoke\nios unit\nios door-smoke\nios goldens\nios journey\nios accessibility\nios perf\nios package\nios scope-audit\n"
             );
         }
         if !skip.is_empty() {

@@ -29,7 +29,7 @@ const GATE: &[&str] = &[
     "ios lint",
     "ios graph-check",
     "ios rust",
-    "ios simulator amux-golden",
+    "ios simulator golden",
     "ios build",
     "ios loopback-smoke",
     "ios unit",

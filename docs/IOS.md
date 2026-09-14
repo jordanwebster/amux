@@ -79,8 +79,13 @@ Xcode places simulator grants in the executable’s `__TEXT,__entitlements`
 section; `codesign -d --entitlements` reads the separate signature dictionary,
 which is empty for these simulator builds.
 
-The default simulator is `amux-golden`, an iPhone 17 Pro on iOS 26.5 at 3×.
-`amux-small` is the iPhone SE (3rd generation) on the same runtime. The recipes
+Recipes name a kind of device, never a device. `golden` is an iPhone 17 Pro
+on iOS 26.5 at 3×, the device every budget and baseline is pinned to; `small`
+is the iPhone SE (3rd generation) on the same runtime. Which device a kind
+means is decided in `scripts/ios_simulators.py`: inside a wt worktree it is the
+one wt leased for the command (`scripts/with iphone -- ...`), so checkouts
+never drive the same device at once; elsewhere, including CI, it is
+`amux-iphone-1` or `amux-small-1`. The recipes
 pin en_US, a 12-hour clock, 9:41, full battery and the requested appearance.
 Small-display captures test layout width; they do not qualify that physical
 phone for the app's OS minimum. Simulator changes require reviewed baseline
@@ -93,7 +98,7 @@ state, composited capture and the real loopback relay connection. For a single
 screen after building the workspace with `just build`:
 
 ```sh
-timeout 120 target/debug/xtask door --simulator amux-golden \
+timeout 120 target/debug/xtask door --simulator golden \
   --install target/ios/DerivedData/Build/Products/Debug-iphonesimulator/Amux.app \
   '{"kind":"open","screen":"home"}' \
   '{"kind":"appearance","appearance":"dark"}' \
@@ -193,7 +198,7 @@ approved goldens. Inspect both later-display and repeated-state comparisons.
 `--screens` selects manifest IDs; `shell-home` and `shell-conversation` replay
 committed reports through the actual app shell. `focus-probe` requests composer
 focus but does not assert software-keyboard visibility. Use `--appearances light`
-or `dark` to investigate without alternating themes, and `--simulator amux-small`
+or `dark` to investigate without alternating themes, and `--simulator small`
 for the narrow test device. The command terminates this app on the selected
 simulator. Do not overlap it with other simulator checks, or run capture/image
 comparison work alongside performance measurements.

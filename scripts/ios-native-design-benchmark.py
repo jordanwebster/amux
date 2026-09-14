@@ -436,7 +436,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["batch", "review", "detection"])
     parser.add_argument("--ideas", type=int, choices=VARIANTS, default=4)
-    parser.add_argument("--simulator", choices=ios_simulators.DEVICES, default="amux-golden")
+    parser.add_argument("--simulator", choices=ios_simulators.DEVICES, default="golden")
     parser.add_argument("--appearances", nargs="+", choices=["light", "dark"],
                         default=["light", "dark"])
     parser.add_argument("--design-source", type=Path,
@@ -470,8 +470,7 @@ def main():
     if not APP.is_dir():
         raise FileNotFoundError(f"Debug app does not exist: {APP}")
 
-    udid = ios_simulators.ensure(args.simulator)
-    ios_simulators.pin(udid)
+    udid = ios_simulators.ready(args.simulator)
     install_started = time.monotonic()
     command("xcrun", "simctl", "install", udid, str(APP))
     install_seconds = time.monotonic() - install_started
