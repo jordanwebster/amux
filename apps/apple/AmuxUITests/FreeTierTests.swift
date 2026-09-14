@@ -319,11 +319,13 @@ final class FreeTierTests: JourneyCase {
         photograph(app, "subscribed")
 
         pressTab(app, "Agents")
-        XCTAssertTrue(waitUntil(within: 180) {
-            (try? self.said(self.declared(self.runner, settling: false),
-                            "home.row.\(self.cast.agent)")?.value)?
-                .hasPrefix("host-away") == false
-        }, "the agent still reads as not live after the subscription")
+        // Live, not merely no longer away. A row that has stopped saying the
+        // machine is away and still says "remembered" is the cache the away
+        // act already showed; what the subscription bought is the machine
+        // answering for its own agent again, which is the only thing that
+        // takes that word off the row.
+        XCTAssertTrue(waitUntil(within: 180) { self.agentIsLive() },
+                      "after the subscription the agent reads \(agentRow())")
         let home = try declared(runner)
         record["agentAfterSubscribing"] = said(home, "home.row.\(cast.agent)")?.value ?? ""
         record["homeLineAfterSubscribing"] = said(home, "home.exceptions")?.value ?? ""
@@ -336,6 +338,21 @@ final class FreeTierTests: JourneyCase {
         XCTAssertFalse(line.contains("subscribe") || line.contains("workstation"),
                        "the home still offers a subscription after one was bought: \(line)")
         record["newAgentAfterSubscribing"] = element(app, "home.newAgent").exists
+    }
+
+    /// What the home's row for workstation's agent says right now, without
+    /// waiting for the screen to settle.
+    private func agentRow() -> String {
+        guard let screen = try? declared(runner, settling: false) else { return "" }
+        return said(screen, "home.row.\(cast.agent)")?.value ?? ""
+    }
+
+    /// The row is the machine's own answer rather than this phone's memory of
+    /// it: the machine is not away and nothing on the row says it is
+    /// remembered.
+    private func agentIsLive() -> Bool {
+        let value = agentRow()
+        return !value.isEmpty && !value.hasPrefix("host-away") && !value.contains("remembered")
     }
 
     // MARK: - What each side says

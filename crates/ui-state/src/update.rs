@@ -509,18 +509,44 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             Vec::new()
         }
         ServerMsg::CloudState(state) => {
-            model.cloud_state = state;
-            let away_hosts = model
+            // Being away is a fact about the account, not about the machine:
+            // the relay refuses to carry a free account's traffic and carries
+            // it the moment the account pays. So a tier change moves machines
+            // in and out of reach in both directions, and nothing on those
+            // machines sends its inventory again to say so. Taking liveness
+            // away without ever giving it back would leave an agent on a
+            // machine that is answering reading as a memory for good.
+            let was_away = model
                 .hosts
                 .values()
                 .filter_map(|host| model.host_is_away(host.entry.id).then_some(host.entry.id))
                 .collect::<std::collections::BTreeSet<_>>();
-            for card in model
-                .agents
-                .values_mut()
-                .filter(|card| away_hosts.contains(&card.agent.host_id))
-            {
-                card.live = false;
+            model.cloud_state = state;
+            let now_away = model
+                .hosts
+                .values()
+                .filter_map(|host| model.host_is_away(host.entry.id).then_some(host.entry.id))
+                .collect::<std::collections::BTreeSet<_>>();
+            let back = was_away
+                .iter()
+                .copied()
+                .filter(|id| !now_away.contains(id) && model.host_online(*id))
+                .collect::<std::collections::BTreeSet<_>>();
+            for card in model.agents.values_mut() {
+                let host = card.agent.host_id;
+                if now_away.contains(&host) {
+                    card.live = false;
+                } else if back.contains(&host)
+                    // Coming back in reach is no evidence the agent is still
+                    // there: one the machine said was gone while it was out of
+                    // reach stays the memory it became.
+                    && model
+                        .remote_inventories
+                        .get(&host)
+                        .is_none_or(|ids| ids.contains(&card.agent.id))
+                {
+                    card.live = true;
+                }
             }
             Vec::new()
         }

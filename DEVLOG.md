@@ -1,3 +1,16 @@
+2026-09-14 — **A subscription puts an away machine's agents back in reach at
+once.** Being away is a fact about the account rather than the machine: the
+relay declines to carry a free account's traffic and carries it the moment the
+account pays for the tunnel. The client took liveness away from every agent on
+an away machine when the tier said so and never gave it back, and no machine
+sends its inventory again merely because somebody subscribed — so an agent on
+a machine that was answering went on reading as this phone's memory of it. A
+tier change now moves agents in both directions, restoring only machines that
+stopped being away and are online, and leaving alone any agent the machine had
+already said was gone. The free-tier journey asserted only that the row had
+stopped saying the machine was away, which the cached row satisfied; it now
+requires the row the machine itself confirmed.
+
 2026-09-14 — **The accounts journey gives signing in the same room it gives
 signing out.** Signing in for the first time restarts the phone's runtime on
 the profile it was already using, so the machine it had paired with is briefly

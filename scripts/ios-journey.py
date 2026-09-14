@@ -779,10 +779,12 @@ def free_tier(journey: Journey, udid: str, ready: dict) -> None:
     subscribed = seen.get("afterSubscribing", {})
     journey.expect(subscribed.get("workstation") == "through-the-relay",
                    f"after the subscription workstation reads {subscribed.get('workstation')!r}")
-    journey.expect(seen.get("agentAfterSubscribing")
-                   and not seen["agentAfterSubscribing"].startswith("host-away"),
-                   f"after the subscription the agent reads "
-                   f"{seen.get('agentAfterSubscribing')!r}")
+    agent = seen.get("agentAfterSubscribing") or ""
+    # Live, not merely no longer away: a row still saying "remembered" is this
+    # phone's memory of the machine, which is what the away act already showed.
+    journey.expect(agent and not agent.startswith("host-away")
+                   and "remembered" not in agent,
+                   f"after the subscription the agent reads {agent!r}")
     line = seen.get("homeLineAfterSubscribing") or ""
     journey.expect("subscribe" not in line and "workstation" not in line,
                    f"after the subscription the home still says {line!r}")
@@ -790,7 +792,7 @@ def free_tier(journey: Journey, udid: str, ready: dict) -> None:
                    "after the subscription the home would not start an agent")
     journey.say(f"amux.sh started saying the account is subscribed and the phone asked its own "
                 f"link to read that again: workstation became {subscribed.get('workstation')!r} "
-                f"and its agent {seen.get('agentAfterSubscribing')!r} at once, with the offer of "
+                f"and its agent confirmed live as {agent!r} at once, with the offer of "
                 f"a tunnel gone from the line above the list, which now reads {line!r}")
 
     for name, written in photographs.items():

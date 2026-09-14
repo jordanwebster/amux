@@ -188,6 +188,52 @@ fn cloud_state_agent_inventory_survives_offline_and_returns_live_after_reconcili
     assert!(model.agent(agent_id("work")).is_none());
 }
 
+/// The tier changing is a reachability change in both directions: what the
+/// relay refuses to carry for a free account it carries the moment the
+/// account pays for it, and no machine sends its inventory again to say so.
+fn paid_for_sequence() -> Vec<Msg> {
+    let direct = a_host("workstation");
+    let away = relay_host("workstation");
+    seq([
+        vec![
+            connected("phone"),
+            cloud(CloudState::Connected {
+                tier: Tier::Free,
+                carrier: RelayCarrier::Quic,
+            }),
+            host_up(&direct),
+            agent_up(&an_agent("helper", "workstation")),
+        ],
+        synced(),
+        vec![
+            host_up(&away),
+            cloud(CloudState::Connected {
+                tier: Tier::Pro,
+                carrier: RelayCarrier::Quic,
+            }),
+        ],
+    ])
+}
+
+#[test]
+fn cloud_state_a_paid_tier_puts_an_away_machines_agents_back_in_reach() {
+    let away = paid_for_sequence().into_iter().take(7).collect::<Vec<_>>();
+    let model = fold(away);
+    assert!(
+        !model.agent(agent_id("helper")).expect("away agent").live,
+        "a free account's relay-only machine carries nothing, so its agent is not live"
+    );
+
+    let model = fold(paid_for_sequence());
+    assert!(
+        model.agent(agent_id("helper")).expect("paid agent").live,
+        "the subscription put the machine back in reach and its agent is still a memory"
+    );
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
-    vec![("cloud_state::retained_agent", retained_agent_sequence())]
+    vec![
+        ("cloud_state::retained_agent", retained_agent_sequence()),
+        ("cloud_state::paid_for", paid_for_sequence()),
+    ]
 }
