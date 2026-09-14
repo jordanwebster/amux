@@ -1,3 +1,14 @@
+2026-09-14 — **A device's runtime writes down what it decided.** The runtime
+a phone runs had no tracing sink of any kind: everything it wrote about which
+address it dialled and what came of it was discarded as it was written, and
+every report's log tail was empty although a report has always looked for one
+at a path the application passes in. So the build with the driving tools now
+writes its tracing there, and the debug door answers with the end of it, which
+is how a journey records the runtime's own account of a machine beside the
+word a screen used for it. The shipping build writes nothing and links
+nothing: the subscriber is an optional dependency behind the driving feature,
+and the shipped graph is unchanged.
+
 2026-09-14 — **A device with no listener of its own pairs directly with a
 machine the relay can also see.** A phone signed in to an account that has
 bought nothing was reading a machine in the same room as away, and the two

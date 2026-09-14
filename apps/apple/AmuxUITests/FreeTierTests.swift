@@ -147,6 +147,13 @@ final class FreeTierTests: JourneyCase {
         record["atHome"] = try reaches()
         let carriers = ((try? bridge())?["reach"] as? [String]) ?? []
         record["carriersAtHome"] = carriers
+        // What the runtime itself did about these two machines. The screen's
+        // word for a machine is the end of a chain of decisions no screen
+        // shows, and when it is the wrong word this is the only account of
+        // which address was dialled and what came of it.
+        record["runtimeAtHome"] = try runtimeLog(runner).split(separator: "\n")
+            .filter { $0.contains("Link") || $0.contains("route") || $0.contains("direct") }
+            .suffix(80).joined(separator: "\n")
         XCTAssertTrue(athome,
                       "workstation is on this network and the phone reads it as "
                       + "\((try? reach(of: cast.workstation)) ?? "nothing"), over \(carriers)")

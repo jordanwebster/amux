@@ -278,8 +278,16 @@ public final class RuntimeCoordinator {
             // and the machines it paired with stay where they were rather than
             // the app emptying itself the moment somebody signs out.
             active: (account ?? registry.selected)?.value,
-            logPath: support.appendingPathComponent("runtime.log"))
+            logPath: runtimeLogPath)
     }
+
+    /// Where a runtime of this device writes what it decided.
+    ///
+    /// One file for the whole installation rather than one per profile: what
+    /// is worth reading here is the order things happened in across every
+    /// runtime a launch started. Only a build with the driving tools writes
+    /// anything to it.
+    public var runtimeLogPath: URL { support.appendingPathComponent("runtime.log") }
 
     private func wireSelected(to client: any AppRuntime) {
         guard let stores = visible else { return }

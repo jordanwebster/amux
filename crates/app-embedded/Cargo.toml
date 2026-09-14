@@ -8,9 +8,10 @@ publish = false
 [features]
 default = []
 # Driving affordances a test harness needs and a shipping build must not
-# carry: a plaintext loopback relay, and the served test network as a
-# development dependency of this crate's own suite.
-debug-tools = []
+# carry: a plaintext loopback relay, this runtime's tracing written to the
+# log a report reads, and the served test network as a development
+# dependency of this crate's own suite.
+debug-tools = ["dep:tracing-subscriber"]
 
 [dependencies]
 app-runtime = { workspace = true }
@@ -21,6 +22,8 @@ futures-util = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 app-embedded = { path = ".", features = ["debug-tools"] }

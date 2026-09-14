@@ -280,6 +280,9 @@ class JourneyCase: XCTestCase {
         /// What the system answered when this app asked to look at that
         /// network: `granted` or `denied`.
         var permission: String?
+        /// How much of the end of the runtime's own account of itself to
+        /// read back.
+        var bytes: Int?
 
         var body: [String: Any] {
             var fields: [String: Any] = ["kind": kind]
@@ -310,8 +313,19 @@ class JourneyCase: XCTestCase {
             if let size { fields["size"] = size }
             if let hosts { fields["hosts"] = hosts }
             if let permission { fields["permission"] = permission }
+            if let bytes { fields["bytes"] = bytes }
             return fields
         }
+    }
+
+    /// The end of what this launch's runtime wrote about what it decided.
+    ///
+    /// A build with the driving tools writes its Rust tracing to a file in
+    /// the app's own container, which is the only account of a dial that
+    /// nothing on a screen can show — which address was tried, and why a link
+    /// did not come up. Empty in a build that writes none.
+    func runtimeLog(_ runner: Runner, lastBytes: Int = 200_000) throws -> String {
+        try door(runner, .init(kind: "runtimeLog", bytes: lastBytes))["log"] as? String ?? ""
     }
 
     /// Opens the door, says one thing, and closes it. One connection at a time

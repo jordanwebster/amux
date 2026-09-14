@@ -546,6 +546,44 @@ fn refusal(error: client::PairingError) -> Refusal {
 }
 
 /// The installation this process created, and the sessions it opened on it.
+/// Writes what this runtime decides to the log a report reads.
+///
+/// A device's runtime had no tracing sink of any kind, so the only account of
+/// what it did — which address it dialled, why a link never came up — was
+/// discarded as it was written, and every report's log tail was empty. Only
+/// the build with the driving tools does this: on a device nobody is
+/// debugging, a file that grows for the life of an installation buys nothing,
+/// and the report is written from a recording rather than from prose.
+///
+/// Once per process, and the file starts empty: a driver reads this run.
+#[cfg(feature = "debug-tools")]
+fn write_tracing_to(log_path: &std::path::Path) {
+    use tracing_subscriber::EnvFilter;
+
+    static INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    let mut installed = false;
+    INSTALLED.get_or_init(|| installed = true);
+    if !installed {
+        return;
+    }
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let Ok(file) = std::fs::File::create(log_path) else {
+        return;
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("warn,node=debug,app_runtime=debug,app_embedded=debug")
+        }))
+        .with_writer(move || file.try_clone().expect("clone the runtime log handle"))
+        .try_init();
+}
+
+#[cfg(not(feature = "debug-tools"))]
+fn write_tracing_to(_log_path: &std::path::Path) {}
+
 pub struct Embedded {
     pub sessions: Sessions,
     installation: Option<Arc<Installation>>,
@@ -594,6 +632,7 @@ impl Embedded {
         requests: mpsc::Sender<TokenRequest>,
     ) -> Result<Self, String> {
         let endpoint = config.endpoint()?;
+        write_tracing_to(&config.log_path);
         let next_id = Arc::new(AtomicU64::new(1));
         // What this device has found is whatever the application last handed
         // over, so the browser is the app's and every profile reads it.

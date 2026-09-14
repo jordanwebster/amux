@@ -181,6 +181,8 @@ dependencies = [
  "tempfile",
  "testnet",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "ui-runtime",
  "ui-state",
  "uuid",

@@ -88,6 +88,9 @@ public enum DoorRequest: Sendable, Equatable {
     case awaitOffline(seconds: Double)
     /// What library this app linked and what its connection has arrived at.
     case bridge
+    /// The end of what this launch's runtime wrote about what it decided.
+    /// Only a build with the driving tools writes it at all.
+    case runtimeLog(bytes: Int)
     /// Read the production conversation's projection, including its native layer.
     case conversation(agent: String)
     /// Attempt the same typed model change as the settings sheet, including
@@ -296,6 +299,9 @@ public enum DoorReply: Sendable, Equatable {
     case ack
     case state(VisibleState)
     case bridge(BridgeState)
+    /// What the runtime wrote, ending at the moment this was asked, and
+    /// empty in a build that writes none.
+    case runtimeLog(String)
     case conversation(ConversationReading)
     case signposts([SignpostMark])
     case captured(path: String, width: Int, height: Int, scale: Int)
@@ -608,6 +614,7 @@ extension DoorRequest: Codable {
         case note, marks
         case motion, transparency
         case hosts, permission, tier
+        case bytes
     }
 
     public init(from decoder: any Decoder) throws {
@@ -651,6 +658,9 @@ extension DoorRequest: Codable {
             self = .setModel(agent: try fields.decode(String.self, forKey: .agent),
                              name: try fields.decode(String.self, forKey: .name))
         case "bridge": self = .bridge
+        case "runtimeLog":
+            self = .runtimeLog(
+                bytes: try fields.decodeIfPresent(Int.self, forKey: .bytes) ?? 64_000)
         case "signposts": self = .signposts
         case "appearance":
             self = .appearance(try fields.decode(Appearance.self, forKey: .appearance))
@@ -800,6 +810,9 @@ extension DoorRequest: Codable {
             try fields.encode(name, forKey: .name)
         case .bridge:
             try fields.encode("bridge", forKey: .kind)
+        case .runtimeLog(let bytes):
+            try fields.encode("runtimeLog", forKey: .kind)
+            try fields.encode(bytes, forKey: .bytes)
         case .signposts:
             try fields.encode("signposts", forKey: .kind)
         case .appearance(let appearance):
@@ -920,6 +933,7 @@ extension DoorReply: Codable {
     private enum Key: String, CodingKey {
         case kind, state, bridge, path, width, height, scale, message, parts, replayed, marks
         case host, delivered, reason, cloud, store, known, states, conversation, reportJSON
+        case log
     }
 
     public init(from decoder: any Decoder) throws {
@@ -933,6 +947,8 @@ extension DoorReply: Codable {
             self = .state(try fields.decode(VisibleState.self, forKey: .state))
         case "bridge":
             self = .bridge(try fields.decode(BridgeState.self, forKey: .bridge))
+        case "runtimeLog":
+            self = .runtimeLog(try fields.decode(String.self, forKey: .log))
         case "signposts":
             self = .signposts(try fields.decode([SignpostMark].self, forKey: .marks))
         case "captured":
@@ -984,6 +1000,9 @@ extension DoorReply: Codable {
         case .bridge(let state):
             try fields.encode("bridge", forKey: .kind)
             try fields.encode(state, forKey: .bridge)
+        case .runtimeLog(let log):
+            try fields.encode("runtimeLog", forKey: .kind)
+            try fields.encode(log, forKey: .log)
         case .signposts(let marks):
             try fields.encode("signposts", forKey: .kind)
             try fields.encode(marks, forKey: .marks)

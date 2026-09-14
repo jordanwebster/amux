@@ -235,6 +235,7 @@ final class DoorHost {
         case .awaitOffline(let seconds):
             return await awaitOffline(within: seconds)
         case .bridge: return .bridge(bridgeState())
+        case .runtimeLog(let bytes): return runtimeLog(lastBytes: bytes)
         case .conversation(let agent):
             guard let identity = AgentId(agent), let conversation = stores.conversations[identity]
             else { return .error("no conversation is open with \(agent)") }
@@ -960,6 +961,24 @@ final class DoorHost {
         }
         return .error(
             "the connection was still \(stores.fleet.connection.state.rawValue) after \(seconds)s")
+    }
+
+    /// The end of what this launch's runtime wrote about what it decided.
+    ///
+    /// Read from the file rather than held in memory: the runtime writes it
+    /// from Rust, where nothing this actor holds can see it, and a driver
+    /// wants the last of it rather than all of it. A build that writes none
+    /// answers with nothing, which is what a shipping build does.
+    private func runtimeLog(lastBytes: Int) -> DoorReply {
+        guard let coordinator else { return .error("nothing has been connected") }
+        let path = coordinator.runtimeLogPath
+        guard let handle = try? FileHandle(forReadingFrom: path) else { return .runtimeLog("") }
+        defer { try? handle.close() }
+        let end = (try? handle.seekToEnd()) ?? 0
+        let from = end > UInt64(max(lastBytes, 0)) ? end - UInt64(max(lastBytes, 0)) : 0
+        try? handle.seek(toOffset: from)
+        let read = (try? handle.readToEnd()) ?? Data()
+        return .runtimeLog(String(decoding: read, as: UTF8.self))
     }
 
     private func bridgeState() -> BridgeState {
