@@ -1,3 +1,10 @@
+2026-09-14 — **Counted the golden screens the manifest actually owns.** The
+catalogue pins how many photographs it owes, so a screen cannot be added or
+dropped without someone saying so. A new screen — the home tab with nothing
+reachable — was added to the manifest and the pin was left where it was, so the
+count said 124 against a manifest holding 126. The pin now matches what the
+manifest declares.
+
 2026-09-14 — **A bridge that is all shape and no archive is rebuilt, and the
 test that said otherwise now agrees.** Asking whether the frameworks are current
 by looking for the libraries inside them, rather than for the directories that
