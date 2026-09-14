@@ -74,7 +74,12 @@ pub(crate) enum AgentRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostEventOutcome {
     Added,
-    Removed { removed_agents: usize },
+    Removed {
+        removed_agents: usize,
+    },
+    /// The host was already listed; its entry was described again because
+    /// something a subscriber was told about it is no longer true.
+    Republished,
     IgnoredRelayOrUnknown,
 }
 
@@ -328,6 +333,10 @@ impl ClientService {
         match event {
             HostReachabilityEvent::Added { host } => self.add_host(host).await,
             HostReachabilityEvent::Removed { host_id } => self.remove_host(host_id).await,
+            HostReachabilityEvent::RouteChanged { host_id } => {
+                self.publish_host_status_update(host_id).await;
+                HostEventOutcome::Republished
+            }
         }
     }
 

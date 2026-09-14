@@ -28,8 +28,23 @@ pub enum RoutingEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]
 pub enum HostReachabilityEvent {
-    Added { host: Host },
-    Removed { host_id: HostId },
+    Added {
+        host: Host,
+    },
+    Removed {
+        host_id: HostId,
+    },
+    /// A host that was already present is now reached a different way — a
+    /// direct link came up beside a relay's claim, or the last one went away.
+    ///
+    /// Presence did not change, so nothing was added or removed, but how the
+    /// host is described did. A client that subscribed once and stays
+    /// subscribed learns only what it is sent, so without this it would keep
+    /// describing a machine by the route it was first reached over for the
+    /// life of its connection.
+    RouteChanged {
+        host_id: HostId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

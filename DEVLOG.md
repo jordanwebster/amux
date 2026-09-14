@@ -1,3 +1,21 @@
+2026-09-14 — **A machine that becomes directly linked says so to whoever is
+already listening.** A phone on the same network as a machine its account's
+relay can also see kept calling that machine away, while a second machine on
+the same network — one no relay had ever heard of — read correctly as on this
+network. The routes were right the whole time: the pairing ran over the direct
+address, the direct link came up and stayed up, and asking the installation
+for its host list always answered "direct". What was wrong is that nobody was
+told. A machine first reached through a relay is announced as present once,
+and presence never changed again when the direct link arrived beside the
+claim, so a client that subscribes once and holds that subscription for its
+whole session — which is what a phone does — kept describing the machine by
+the first route it was ever reached over, and by whatever was known about its
+account binding at that moment. Gaining or losing a route while staying
+present is now its own announcement, and the installation answers it by
+describing the host again. The gap was invisible from every existing
+assertion because they all re-read the host list; the spec now holds a live
+subscription open across a pairing and asserts what it was actually told.
+
 2026-09-14 — **A device's runtime writes down what it decided.** The runtime
 a phone runs had no tracing sink of any kind: everything it wrote about which
 address it dialled and what came of it was discarded as it was written, and

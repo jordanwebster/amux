@@ -1403,6 +1403,47 @@ impl Daemon {
         .await;
     }
 
+    /// Opens a long-lived host subscription and folds it into a view, the way
+    /// a client that connects once and stays connected holds its host list.
+    ///
+    /// Distinct from [`Daemon::sees_host_status`], which asks again and so
+    /// always sees a freshly computed answer. A subscriber only ever learns
+    /// what it was sent, so a fact that changes without an update being
+    /// published stays wrong on its screen for as long as it stays connected.
+    pub async fn watch_hosts(&self) -> HostWatch {
+        let parts = self
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let (snapshot, mut rx) = parts.client.subscribe_hosts_with_snapshot().await;
+        let hosts = Arc::new(StdMutex::new(
+            snapshot
+                .into_iter()
+                .map(|host| (host.id, host))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        ));
+        let folded = hosts.clone();
+        let task = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                let mut hosts = folded.lock().expect("testnet host watch poisoned");
+                match event {
+                    node::HostEvent::HostUpdated { host } => {
+                        hosts.insert(host.id, host);
+                    }
+                    node::HostEvent::HostRemoved { id } => {
+                        hosts.remove(&id);
+                    }
+                    node::HostEvent::SnapshotComplete => {}
+                }
+            }
+        });
+        HostWatch {
+            name: self.name().to_string(),
+            hosts,
+            task,
+        }
+    }
+
     /// Opens the production link protocol over an in-memory stream standing
     /// in for SSH stdio.
     pub async fn connect_via_ssh_fixture(&self, other: &Daemon) {
@@ -1883,6 +1924,67 @@ impl LinkConnectorTokenRefresher for RegistryTokenRefresher {
             expires_at,
             tier,
         })
+    }
+}
+
+/// The host list as one long-lived subscriber holds it.
+///
+/// Folds the snapshot the subscription opened with and every update it was
+/// sent afterwards, so an assertion against it is an assertion about what a
+/// connected client actually knows rather than what the daemon would answer
+/// if asked again.
+pub struct HostWatch {
+    name: String,
+    hosts: Arc<StdMutex<std::collections::BTreeMap<HostId, HostEntry>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl HostWatch {
+    /// Waits until this subscriber has been told that `other` is reached the
+    /// given way and carries the given account-binding fact.
+    pub async fn sees_host_status(&self, other: &Daemon, via: HostVia, signed_in: Option<bool>) {
+        let assertion = format!(
+            "'{}' has been told '{}' is via {via:?} with signed_in={signed_in:?}",
+            self.name,
+            other.name()
+        );
+        let other_id = other.host_id();
+        eventually(
+            &assertion,
+            async || {
+                self.entry(other_id)
+                    .is_some_and(|host| host.via == via && host.signed_in == signed_in)
+            },
+            async { self.dump() },
+        )
+        .await;
+    }
+
+    fn entry(&self, host_id: HostId) -> Option<HostEntry> {
+        self.hosts
+            .lock()
+            .expect("testnet host watch poisoned")
+            .get(&host_id)
+            .cloned()
+    }
+
+    fn dump(&self) -> String {
+        let hosts = self.hosts.lock().expect("testnet host watch poisoned");
+        let mut out = format!("=== host subscription held by '{}' ===\n", self.name);
+        for host in hosts.values() {
+            let _ = writeln!(
+                out,
+                "{} ({}): via={:?} online={} signed_in={:?} trust={:?}",
+                host.name, host.id, host.via, host.online, host.signed_in, host.trust_status
+            );
+        }
+        out
+    }
+}
+
+impl Drop for HostWatch {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 

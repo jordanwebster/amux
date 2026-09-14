@@ -788,7 +788,6 @@ async fn a_found_machine_the_relay_can_also_see_is_paired_with_directly_on_a_fre
     phone.can_call(&workstation).await;
 }
 
-
 /// The phone's own shape: an embedded installation with no listener, pairing
 /// on its own network with a machine the relay can also see.
 #[tokio::test]
@@ -833,4 +832,56 @@ async fn an_embedded_device_pairs_directly_with_a_machine_the_relay_can_also_see
 
     phone.connects_to(&workstation).via_direct().await;
     phone.connects_to(&spare).via_direct().await;
+}
+
+/// A machine the relay can also see is first known through the relay, and a
+/// connected client is told so. When pairing then puts a direct link up, that
+/// client must be told again: it holds one subscription for the whole session
+/// and never asks a second time, so a route change that is not published
+/// leaves a machine on the same network reading as away for as long as the
+/// client stays connected.
+#[tokio::test]
+async fn a_connected_client_is_told_when_a_relay_seen_machine_becomes_directly_linked() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("workstation")
+        .cloud_user("personal")
+        .installation("phone")
+        .embedded()
+        .profile("main")
+        .cloud_user("personal")
+        .cloud_only()
+        .start()
+        .await;
+    let phone = net.installation("phone").profile("main");
+    let workstation = net.daemon("workstation");
+
+    // The relay's word arrives first, and the client subscribes while that is
+    // all anybody knows — the order a phone that signs in before it is near
+    // its machines actually lives through.
+    phone.sees(&workstation).await;
+    let watch = phone.watch_hosts().await;
+    watch
+        .sees_host_status(&workstation, node::HostVia::Relay, None)
+        .await;
+
+    net.announce(&workstation);
+    phone.sees_found_address_for(&workstation).await;
+    let pin = workstation.start_pairing().await;
+    let admin = phone.pairing_admin().await;
+    let pending = admin
+        .begin_pair_pin(workstation.host_id(), &pin, &[])
+        .await
+        .expect("a machine on this network authenticates a printed code");
+    admin.confirm_pair(pending).await.expect("trust is written");
+
+    phone.connects_to(&workstation).via_direct().await;
+    // Asking again has always answered correctly, which is exactly why this
+    // was invisible from any surface that re-reads the host list.
+    phone
+        .sees_host_status(&workstation, node::HostVia::Direct, Some(true))
+        .await;
+    watch
+        .sees_host_status(&workstation, node::HostVia::Direct, Some(true))
+        .await;
 }
