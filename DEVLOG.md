@@ -25,6 +25,16 @@ verb also holds the named peer path down until establish releases it, preventing
 the automatic dialer from silently undoing the fault. The served control suite
 therefore proves a fresh RPC over the QUIC relay waits for the injected bytes.
 
+2026-09-14 — **Real-process relay scenarios begin after QUIC is ready.** The
+E2E identity fixture previously assigned a relay while its foreground process
+was still starting. TCP bound before QUIC's first retransmission, so the
+fallback correctly won a scenario intended to exercise the normal carrier.
+Connection details now remain temporarily unavailable until the relay's UDP
+socket is bound. E2E terminal termination also sends Ctrl-C and waits before a
+relay restart, allowing live QUIC links to close instead of surviving against a
+new process on the same address. Cloud pairing and free-tier transitions now
+settle on the QUIC carrier they assert.
+
 2026-09-14 — **The review journey reads the sheet the finger left behind.** A
 range taken hold of is scrolled out from under the comment sheet while the
 finger is still down, so the rows under it move and the range goes on growing;

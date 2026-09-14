@@ -304,7 +304,37 @@ impl TestTerminal {
     }
 
     pub fn terminate(&mut self) -> Result<(), TerminalError> {
-        Ok(self.child.kill()?)
+        #[cfg(unix)]
+        if let Some(pid) = self.child.process_id() {
+            // A PTY termination models Ctrl-C first. Servers then close their
+            // live QUIC connections before releasing the port, so a successor
+            // cannot strand clients on connections owned by the old process.
+            // SAFETY: `pid` is the still-owned PTY child and SIGINT does not
+            // access memory in this process.
+            if unsafe { libc::kill(pid as i32, libc::SIGINT) } == -1 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(error.into());
+                }
+            }
+        } else {
+            self.child.kill()?;
+        }
+        #[cfg(not(unix))]
+        self.child.kill()?;
+
+        let start = std::time::Instant::now();
+        loop {
+            if self.child.try_wait()?.is_some() {
+                return Ok(());
+            }
+            if start.elapsed() >= Duration::from_secs(5) {
+                self.child.kill()?;
+                self.child.wait()?;
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Send input to the terminal (with newline)

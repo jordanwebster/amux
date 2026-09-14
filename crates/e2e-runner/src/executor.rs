@@ -895,6 +895,15 @@ fn handle_cloud_request(
     let form = url::form_urlencoded::parse(&request[headers_end..headers_end + content_length])
         .into_owned()
         .collect();
+    if path == "/api/connect" && !relay_quic_is_listening(routing_port) {
+        let body = serde_json::json!({"error": "relay_starting"}).to_string();
+        let response = format!(
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        return;
+    }
     let (status, body) = identity.respond(path, &form, bearer, routing_host, routing_port);
     let body = body.to_string();
     let response = format!(
@@ -902,6 +911,19 @@ fn handle_cloud_request(
         body.len()
     );
     let _ = stream.write_all(response.as_bytes());
+}
+
+/// The fixture models a control plane assigning only a relay that is ready to
+/// receive both preferred QUIC and fallback TCP traffic. Binding the relay's
+/// UDP address is the last startup step relevant to a device dial.
+fn relay_quic_is_listening(port: u16) -> bool {
+    match UdpSocket::bind((Ipv4Addr::LOCALHOST, port)) {
+        Ok(socket) => {
+            drop(socket);
+            false
+        }
+        Err(error) => error.kind() == std::io::ErrorKind::AddrInUse,
+    }
 }
 
 fn routing_token(
@@ -2045,6 +2067,15 @@ mod tests {
         received.unwrap();
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
         assert!(response.contains("device_code"), "{response}");
+    }
+
+    #[test]
+    fn cloud_fixture_assigns_the_relay_only_after_its_quic_socket_is_bound() {
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        assert!(relay_quic_is_listening(port));
+        drop(socket);
+        assert!(!relay_quic_is_listening(port));
     }
 
     #[test]
