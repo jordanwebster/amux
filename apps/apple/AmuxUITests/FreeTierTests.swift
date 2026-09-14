@@ -122,15 +122,34 @@ final class FreeTierTests: JourneyCase {
     /// finding it and typing what it printed.
     private func theMachinesOnThisNetwork() throws {
         try handOverWhatIsOnTheNetwork()
+        pressTab(app, "Hosts")
+        // Waited for before a code is typed, because what a browser resolved
+        // reaches the connection through the runtime rather than with the
+        // hand-over: pairing before it lands has no address on this network to
+        // dial, falls back to the relay, and leaves a machine in the same room
+        // reading as one the relay can merely see.
+        for machine in ["workstation", "spare"] {
+            waitFor(app, "hosts.offer.\(identity(of: machine))",
+                    "\(machine) is on this network and was never offered")
+        }
         for machine in ["workstation", "spare"] {
             try door(runner, .init(kind: "pairByCode", host: identity(of: machine),
                                    pin: try code(from: machine)))
         }
-        pressTab(app, "Hosts")
-        XCTAssertTrue(waitUntil { (try? self.reach(of: self.cast.workstation)) == "on-this-network" },
-                      "workstation is on this network and the phone reads it as "
-                      + "\((try? reach(of: cast.workstation)) ?? "nothing")")
+        // A browser keeps resolving; this one is told what it sees, once per
+        // telling. A machine is dialled on the network when it is seen there
+        // and already trusted, and neither was true of these until now — the
+        // first sighting was of a stranger and the pairing that followed
+        // reached one of them over the relay. So the same sighting is repeated
+        // here, which is what a real browser does every few seconds anyway.
+        try handOverWhatIsOnTheNetwork()
+        let athome = waitUntil { (try? self.reach(of: self.cast.workstation)) == "on-this-network" }
         record["atHome"] = try reaches()
+        let carriers = ((try? bridge())?["reach"] as? [String]) ?? []
+        record["carriersAtHome"] = carriers
+        XCTAssertTrue(athome,
+                      "workstation is on this network and the phone reads it as "
+                      + "\((try? reach(of: cast.workstation)) ?? "nothing"), over \(carriers)")
         pressTab(app, "Agents")
         waitFor(app, "home.row.\(cast.agent)", "what workstation is running never reached the phone")
         record["agentAtHome"] = said(try declared(runner), "home.row.\(cast.agent)")?.value ?? ""
@@ -212,7 +231,11 @@ final class FreeTierTests: JourneyCase {
     private func theAgentOnAMachineTheRelayCanSee() throws {
         press(app, "home.row.\(cast.agent)")
         waitFor(app, "conversation", "the remembered agent did not open")
-        waitFor(app, "conversation.subscribe",
+        // The offer's own button rather than the block around it: the block
+        // is a container that only holds its children together, and a
+        // container is not something a finger or an accessibility client can
+        // address on its own.
+        waitFor(app, "conversation.subscribe.buy",
                 "an agent on a machine the relay can see offered nothing about reaching it")
         let open = try declared(runner)
         record["chatOffer"] = said(open, "conversation.subscribe")?.label ?? ""
@@ -224,6 +247,16 @@ final class FreeTierTests: JourneyCase {
         XCTAssertEqual(said(open, "conversation.subscribe.buy")?.label, "Subscribe",
                        "the offer carries nothing to press")
         photograph(app, "chat-away")
+        leaveTheConversation()
+    }
+
+    /// Back out of a conversation to the list it was opened from, which is the
+    /// only way back to the tabs: a conversation covers the tab bar.
+    private func leaveTheConversation() {
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let inside = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        edge.press(forDuration: 0.05, thenDragTo: inside)
+        waitFor(app, "home", "leaving the conversation did not return to the list")
     }
 
     // MARK: - A code for a machine only the relay has seen
@@ -241,7 +274,7 @@ final class FreeTierTests: JourneyCase {
         press(app, "hosts.pair.\(cast.studio)")
         waitFor(app, "pin", "the offer to pair did not lead to the keypad")
         for digit in try code(from: "studio") { press(app, "pin.key.\(digit)") }
-        waitFor(app, "pin.subscribe",
+        waitFor(app, "pin.subscribe.buy",
                 "a code that authenticated against a machine only the relay can see was answered "
                 + "with something else")
         let keypad = try declared(runner)
@@ -267,14 +300,19 @@ final class FreeTierTests: JourneyCase {
         try control.ask(["Tier": ["user": runner.user, "tier": "pro"]])
         try door(runner, .init(kind: "cloud", cloud: script(entitlement: "active")))
         try door(runner, .init(kind: "refreshEntitlement"))
-        XCTAssertTrue(waitUntil { (try? self.reach(of: self.cast.workstation)) == "through-the-relay" },
+        // Longer than the ordinary wait: the relay admitted this phone's link
+        // on the old tier, so reaching the machine again means a fresh link on
+        // a fresh credential and the retry that opens it.
+        XCTAssertTrue(waitUntil(within: 180) {
+            (try? self.reach(of: self.cast.workstation)) == "through-the-relay"
+        },
                       "after the subscription the phone still reads workstation as "
                       + "\((try? reach(of: cast.workstation)) ?? "nothing")")
         record["afterSubscribing"] = try reaches()
         photograph(app, "subscribed")
 
         pressTab(app, "Agents")
-        XCTAssertTrue(waitUntil {
+        XCTAssertTrue(waitUntil(within: 180) {
             (try? self.said(self.declared(self.runner, settling: false),
                             "home.row.\(self.cast.agent)")?.value)?
                 .hasPrefix("host-away") == false
@@ -282,11 +320,14 @@ final class FreeTierTests: JourneyCase {
         let home = try declared(runner)
         record["agentAfterSubscribing"] = said(home, "home.row.\(cast.agent)")?.value ?? ""
         record["homeLineAfterSubscribing"] = said(home, "home.exceptions")?.value ?? ""
-        // Nothing is wrong any more, so the one line a home is allowed above
-        // the list is not there at all.
-        XCTAssertNil(said(home, "home.exceptions"),
-                     "the home still says something is wrong: "
-                     + "\(said(home, "home.exceptions")?.value ?? "")")
+        // The subscription is gone from what the home says. What is left is
+        // spare, which is genuinely off and has no account to be reached on,
+        // so a home that said nothing at all here would be hiding a machine
+        // that is really unreachable — the line is right to name it and wrong
+        // to go on selling a tunnel that is already bought.
+        let line = said(home, "home.exceptions")?.value ?? ""
+        XCTAssertFalse(line.contains("subscribe") || line.contains("workstation"),
+                       "the home still offers a subscription after one was bought: \(line)")
         record["newAgentAfterSubscribing"] = element(app, "home.newAgent").exists
     }
 

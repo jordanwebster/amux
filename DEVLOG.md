@@ -1,3 +1,13 @@
+2026-09-14 — **A device says why each machine reads where it does.** A screen
+says a machine is away or offline without saying why, and the reason is never
+on the machine's own side: a dial that never landed leaves no trace there. So a
+debug build now reports, for every machine it knows, the carrier its link is
+riding, whether the machine is answering, whether it is signed in and the last
+reason a dial at it failed — read off the device that tried. The free-tier
+journey reads it when it disagrees with the screen, which is how it can say
+that a machine in the same room was reached over the relay rather than merely
+that it read as away.
+
 2026-09-14 — **Three journeys for the account: a phone that has not paid, a
 phone with no account at all, and two accounts over one machine.** Each drives
 the real relay and the machines the runner is running, and each is about

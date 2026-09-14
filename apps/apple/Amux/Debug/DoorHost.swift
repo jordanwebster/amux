@@ -976,7 +976,18 @@ final class DoorHost {
             discovered: discovered(),
             watching: watching(),
             releasedStreams: unsubscribed.map(\.description).sorted(),
+            reach: reach(),
             failure: coordinator?.failure)
+    }
+
+    /// Why each machine reads where it does, in the words the connection uses
+    /// for it rather than the words a screen does.
+    private func reach() -> [String] {
+        stores.hosts.hosts.sorted { $0.name < $1.name }.map { host in
+            let error = host.lastDialError.map { " error=\($0)" } ?? ""
+            return "\(host.name) via=\(host.via.rawValue) online=\(host.online)"
+                + " signed_in=\(host.signedIn.map(String.init(describing:)) ?? "unknown")\(error)"
+        }
     }
 
     /// The agents the runtime is holding a stream for, read off its own model

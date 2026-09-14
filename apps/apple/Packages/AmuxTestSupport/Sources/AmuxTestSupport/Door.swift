@@ -532,12 +532,20 @@ public struct BridgeState: Codable, Sendable, Equatable {
     /// this is the app's: together they say whether a stream still open is
     /// one nobody let go of or one the runtime kept anyway.
     public let releasedStreams: [String]
+    /// Why each machine this device knows of reads where it does: the carrier
+    /// its link is riding, whether it is answering, and the last reason a dial
+    /// at it failed. One line per machine, by name.
+    ///
+    /// A screen says a machine is away or offline without saying why, and the
+    /// reason is never on the machine's own side: a dial that never landed
+    /// leaves no trace there. So it is read off the device that tried.
+    public let reach: [String]
 
     public init(
         build: String, started: Bool, connection: String, reconciled: Bool,
         reconciliations: Int = 0, hosts: [String], agents: [String], relayAttempts: UInt64,
         relayRetries: UInt64, discovered: [String], watching: [String] = [],
-        releasedStreams: [String] = [], failure: String? = nil
+        releasedStreams: [String] = [], reach: [String] = [], failure: String? = nil
     ) {
         self.build = build
         self.started = started
@@ -552,6 +560,7 @@ public struct BridgeState: Codable, Sendable, Equatable {
         self.discovered = discovered
         self.watching = watching
         self.releasedStreams = releasedStreams
+        self.reach = reach
     }
 }
 
