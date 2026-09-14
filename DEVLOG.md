@@ -1,3 +1,11 @@
+2026-09-14 — **The review journey reads the sheet the finger left behind.** A
+range taken hold of is scrolled out from under the comment sheet while the
+finger is still down, so the rows under it move and the range goes on growing;
+the sheet says so as it happens. The test read that sentence once, sometimes
+catching a range nobody ended up with, and then held it against a message
+describing the range that was really sent. It now reads the sheet until it says
+the same thing twice before recording it.
+
 2026-09-14 — **A machine that comes back rejoins the conversation left open on
 it.** Agents outlive their host's link, so a machine that goes away keeps its
 agents as cached inventory and, on its return, re-states records identical to

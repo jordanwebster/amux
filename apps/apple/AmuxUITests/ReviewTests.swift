@@ -155,7 +155,19 @@ final class ReviewTests: JourneyCase {
         }
         rows[offset].press(forDuration: 0.6, thenDragTo: rows[offset + span])
         waitFor(app, "review.commentSheet", "holding a range of lines opened no sheet")
-        let sheet = said(try declared(runner), "review.commentSheet")
+        // The sheet opens as soon as the range has two ends and grows with the
+        // finger, and a range taken hold of is scrolled out from under the
+        // sheet, which moves the rows the finger is still over. A reading
+        // taken while that is going on is a range nobody ended up with, so the
+        // sheet is read until it says the same thing twice: that is the range
+        // the remark is finally about, and the range the host must be told.
+        var sheet = said(try declared(runner), "review.commentSheet")
+        for _ in 0..<8 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+            let again = said(try declared(runner), "review.commentSheet")
+            if again?.label == sheet?.label && again?.value == sheet?.value { break }
+            sheet = again
+        }
         // "6 lines in parser.rs": how much was taken hold of, and where. The
         // file is pulled out of it because that is what a comment is finally
         // addressed by, and the sentence is kept as the sheet said it.
