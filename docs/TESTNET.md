@@ -155,18 +155,18 @@ sentence, and adding a verb means adding the method first.
 | --- | --- |
 | `"CloudOffline"` | Stop the relay and sever its accepted sockets; wait for daemons to lose their relay links. |
 | `"CloudOnline"` | Rebind the same relay address and wait for daemon attachment. Already online is a no-op. |
-| `{"SeverDirect":{"a":"laptop","b":"desktop"}}` | Close both ends of the direct link; routes through the relay remain available. |
-| `{"EstablishDirect":{"a":"laptop","b":"desktop"}}` | Restore the direct link using stored TCP reachability. Both hosts must still trust each other. |
+| `{"SeverDirect":{"a":"laptop","b":"desktop"}}` | Close both ends of the direct link and hold that pair's direct UDP path down; routes through the relay remain available. |
+| `{"EstablishDirect":{"a":"laptop","b":"desktop"}}` | Release the held direct path and restore its QUIC link using stored reachability. Both hosts must still trust each other. |
 | `{"RestartDaemon":{"name":"laptop"}}` | Stop and restart the daemon, preserving its identity, trust and listening address; wait for reachable peers to see it again. Provider processes end with the old runtime. |
 | `{"Unpair":{"daemon":"laptop","peer":"desktop"}}` | Revoke the peer through the daemon's normal local administration API. |
 | `{"StartPinPairing":{"daemon":"desktop","ttl_secs":30}}` | Start PIN pairing with a TTL of 1–3,600 seconds; return the six-digit `pin`. |
 | `{"StartQrPairing":{"daemon":"desktop"}}` | Start QR pairing; return `qr` in the existing JSON pairing-payload format, naming the configured cloud identity. |
-| `{"Latency":{"millis":100}}` | Delay each newly received TCP chunk entering the relay by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
+| `{"Latency":{"millis":100}}` | Delay relay traffic on its QUIC and TCP carriers by 0–1,000 ms. Applies to existing and future connections; direct links and the control socket are unaffected. |
 | `{"Announce":{"daemon":"workstation"}}` | Put the machine on this network, as an advertisement a browsing device resolves, and return that advertisement in `found` as `{"host","name","version","addrs"}`. Nothing is trusted by it: what a browser gets is a name, an identity claim and addresses to try. A device that cannot browse this network itself — a simulator, whose browser looks at the machine's real network — is told what is on it from `found`. |
 | `{"Withdraw":{"daemon":"workstation"}}` | Take it off again, the way a machine going away says goodbye. |
 | `{"Tier":{"user":"personal","tier":"pro"}}` | Change what a declared account buys, from the next token it is issued. Links already up keep the tier they were admitted on until they re-authenticate, which is what makes the change observable rather than instantaneous. |
 | `{"UdpBlocked":{"daemon":"phone","blocked":true}}` | Eat or restore every direct UDP datagram involving the machine — the network a phone on a hotel connection is on. |
-| `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. RPC tunnels are not additional links. |
+| `{"Connections":{"daemon":"desktop"}}` | Return the number of live daemon links in `connections`, including its relay link. Routed RPCs are not additional links. |
 | `{"Inventory":{"daemon":"desktop"}}` | Return the daemon's agents with their UUID, kind and driver, plus the devices it trusts. |
 | `"Shutdown"` | Stop daemons and relay, remove temporary state, acknowledge and exit. SIGTERM also cleans up. |
 

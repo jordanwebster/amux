@@ -1229,14 +1229,19 @@ mod tests {
             )
             .await;
             b.can_call(&a).await;
+            b.connects_to(&a).via_cloud().await;
+            b.uses_quic_relay().await;
 
-            // The delay is injected into the relay's TCP chunks, and a relay
-            // link prefers QUIC, so a routed call is not slowed here. What
-            // this verb can still show is that it is accepted and leaves the
-            // route working; proving the delay needs the link pinned to the
-            // carrier the injection reaches.
             control.ack(json!({"Latency":{"millis":100}})).await;
-            assert!(b.lists_agents_on(&a).await.is_ok());
+            let start = tokio::time::Instant::now();
+            let delayed_stream = b.open_event_stream_to(&a).await;
+            let elapsed = start.elapsed();
+            assert!(
+                elapsed >= Duration::from_millis(100),
+                "real routed call must traverse delayed relay bytes; completed in {elapsed:?}"
+            );
+            eprintln!("routed call with 100 ms relay latency: {elapsed:?}");
+            drop(delayed_stream);
             control.ack(json!({"Latency":{"millis":0}})).await;
             assert!(b.lists_agents_on(&a).await.is_ok());
             control

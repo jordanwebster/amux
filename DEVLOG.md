@@ -18,6 +18,13 @@ also reopens the remote inventory stream on the selected route, so cached agent
 state does not fall behind. Whole-daemon routing and testnet control assertions
 now require exactly one direct peer link.
 
+2026-09-14 — **Relay latency reaches both of its carriers.** The testnet's
+relay delay now controls incoming TCP chunks and both directions of the relay's
+QUIC datagram route without slowing direct device traffic. Its direct-sever
+verb also holds the named peer path down until establish releases it, preventing
+the automatic dialer from silently undoing the fault. The served control suite
+therefore proves a fresh RPC over the QUIC relay waits for the injected bytes.
+
 2026-09-14 — **The review journey reads the sheet the finger left behind.** A
 range taken hold of is scrolled out from under the comment sheet while the
 finger is still down, so the rows under it move and the range goes on growing;

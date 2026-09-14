@@ -51,6 +51,7 @@ struct Controls {
     loss_percent: AtomicU8,
     packet_number: AtomicU64,
     blocked: RwLock<HashSet<HostId>>,
+    blocked_pairs: RwLock<HashSet<(HostId, HostId)>>,
 }
 
 pub(crate) struct UdpProxyBinding {
@@ -111,9 +112,14 @@ impl UdpProxy {
         socket
     }
 
-    /// Returns a loopback address that forwards to an ordinary UDP endpoint
-    /// while applying this test network's per-daemon controls.
-    pub(crate) fn route_to(&self, destination: SocketAddr) -> SocketAddr {
+    /// Returns a loopback route to an ordinary UDP endpoint with an additional
+    /// delay owned by that endpoint. This lets the relay's latency control
+    /// affect its QUIC packets without slowing direct device traffic.
+    pub(crate) fn route_to_with_latency(
+        &self,
+        destination: SocketAddr,
+        latency_ms: Arc<AtomicU64>,
+    ) -> SocketAddr {
         let public_socket = Arc::new(bind_tokio_udp());
         let public_addr = public_socket.local_addr().unwrap();
         spawn_external_forwarder(
@@ -121,6 +127,7 @@ impl UdpProxy {
             destination,
             self.inner.peers.clone(),
             self.inner.controls.clone(),
+            latency_ms,
             self.inner.cancel.clone(),
         );
         public_addr
@@ -147,6 +154,16 @@ impl UdpProxy {
             peers.insert(id);
         } else {
             peers.remove(&id);
+        }
+    }
+
+    pub(crate) fn direct_pair_blocked(&self, a: HostId, b: HostId, blocked: bool) {
+        let pair = ordered_pair(a, b);
+        let mut pairs = self.inner.controls.blocked_pairs.write().unwrap();
+        if blocked {
+            pairs.insert(pair);
+        } else {
+            pairs.remove(&pair);
         }
     }
 }
@@ -242,6 +259,7 @@ fn spawn_external_forwarder(
     destination: SocketAddr,
     peers: Arc<RwLock<PeerTable>>,
     controls: Arc<Controls>,
+    latency_ms: Arc<AtomicU64>,
     cancel: CancellationToken,
 ) {
     tokio::spawn(async move {
@@ -277,11 +295,12 @@ fn spawn_external_forwarder(
                 flows.clone(),
                 peers.clone(),
                 controls.clone(),
+                latency_ms.clone(),
                 cancel.clone(),
             )
             .await;
             let payload = buffer[..len].to_vec();
-            let latency = controls.latency();
+            let latency = controls.latency_with(&latency_ms);
             if latency.is_zero() {
                 let _ = flow.send_to(&payload, destination).await;
             } else {
@@ -294,6 +313,7 @@ fn spawn_external_forwarder(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn get_or_create_external_flow(
     source: Option<HostId>,
     source_addr: SocketAddr,
@@ -301,6 +321,7 @@ async fn get_or_create_external_flow(
     flows: Arc<tokio::sync::Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>>,
     peers: Arc<RwLock<PeerTable>>,
     controls: Arc<Controls>,
+    latency_ms: Arc<AtomicU64>,
     cancel: CancellationToken,
 ) -> Arc<UdpSocket> {
     let mut flows_guard = flows.lock().await;
@@ -333,7 +354,7 @@ async fn get_or_create_external_flow(
                 .and_then(|id| peers.read().unwrap().by_id.get(&id).map(|p| p.private_addr))
                 .unwrap_or(source_addr);
             let payload = buffer[..len].to_vec();
-            let latency = controls.latency();
+            let latency = controls.latency_with(&latency_ms);
             if latency.is_zero() {
                 let _ = public_socket.send_to(&payload, destination).await;
             } else {
@@ -409,6 +430,14 @@ impl Controls {
         Duration::from_millis(self.latency_ms.load(Ordering::SeqCst))
     }
 
+    fn latency_with(&self, additional: &AtomicU64) -> Duration {
+        Duration::from_millis(
+            self.latency_ms
+                .load(Ordering::SeqCst)
+                .saturating_add(additional.load(Ordering::SeqCst)),
+        )
+    }
+
     fn should_drop(&self, source: Option<HostId>, target: Option<HostId>) -> bool {
         let blocked = self.blocked.read().unwrap();
         if source.is_some_and(|id| blocked.contains(&id))
@@ -417,9 +446,22 @@ impl Controls {
             return true;
         }
         drop(blocked);
+        if let (Some(source), Some(target)) = (source, target)
+            && self
+                .blocked_pairs
+                .read()
+                .unwrap()
+                .contains(&ordered_pair(source, target))
+        {
+            return true;
+        }
         let loss = u64::from(self.loss_percent.load(Ordering::SeqCst));
         loss > 0 && self.packet_number.fetch_add(1, Ordering::SeqCst) % 100 < loss
     }
+}
+
+fn ordered_pair(a: HostId, b: HostId) -> (HostId, HostId) {
+    if a < b { (a, b) } else { (b, a) }
 }
 
 #[cfg(test)]
@@ -493,6 +535,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn routed_endpoint_latency_delays_both_directions() {
+        let proxy = UdpProxy::new();
+        let client = proxy.register(HostId::from_u128(1));
+        let client_socket = socket(&client);
+        let endpoint = bind_tokio_udp();
+        let latency = Arc::new(AtomicU64::new(40));
+        let routed_addr = proxy.route_to_with_latency(endpoint.local_addr().unwrap(), latency);
+
+        let started = tokio::time::Instant::now();
+        client_socket
+            .send_to(b"request", routed_addr)
+            .await
+            .unwrap();
+        let mut request = [0_u8; 16];
+        let (len, reply_addr) = endpoint.recv_from(&mut request).await.unwrap();
+        assert_eq!(&request[..len], b"request");
+        assert!(started.elapsed() >= Duration::from_millis(35));
+
+        let started = tokio::time::Instant::now();
+        endpoint.send_to(b"reply", reply_addr).await.unwrap();
+        let mut reply = [0_u8; 16];
+        let (len, source) = client_socket.recv_from(&mut reply).await.unwrap();
+        assert_eq!(&reply[..len], b"reply");
+        assert_eq!(source, routed_addr);
+        assert!(started.elapsed() >= Duration::from_millis(35));
+    }
+
+    #[tokio::test]
     async fn udp_blocked_drops_everything_for_the_named_daemon() {
         let proxy = UdpProxy::new();
         let a_id = HostId::from_u128(1);
@@ -520,5 +590,34 @@ mod tests {
             .await
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn direct_pair_block_does_not_block_the_external_relay_route() {
+        let proxy = UdpProxy::new();
+        let a_id = HostId::from_u128(1);
+        let b_id = HostId::from_u128(2);
+        let a = proxy.register(a_id);
+        let b = proxy.register(b_id);
+        let a_socket = socket(&a);
+        let b_socket = socket(&b);
+        let relay = bind_tokio_udp();
+        let relay_route = proxy.route_to_with_latency(relay.local_addr().unwrap(), Arc::default());
+        proxy.direct_pair_blocked(a_id, b_id, true);
+
+        a_socket.send_to(b"direct", b.public_addr).await.unwrap();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                b_socket.recv_from(&mut [0_u8; 16])
+            )
+            .await
+            .is_err()
+        );
+
+        a_socket.send_to(b"relay", relay_route).await.unwrap();
+        let mut received = [0_u8; 16];
+        let (len, _) = relay.recv_from(&mut received).await.unwrap();
+        assert_eq!(&received[..len], b"relay");
     }
 }

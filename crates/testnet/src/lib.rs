@@ -192,9 +192,9 @@ impl TestNet {
         self.inner.identity.as_ref().map(|identity| identity.url())
     }
 
-    /// Delay each inbound relay TCP chunk by `millis`, including on
-    /// already-open sockets. Direct device links and local admin calls remain
-    /// unaffected.
+    /// Delay relay traffic by `millis` on both TCP and QUIC carriers,
+    /// including existing connections. Direct device links and local admin
+    /// calls remain unaffected.
     pub fn relay_latency(&self, millis: u64) {
         self.cloud().relay.set_latency(millis);
     }
@@ -349,8 +349,8 @@ impl TestNet {
         }
     }
 
-    /// Applies symmetric latency to every direct QUIC datagram. The relay's
-    /// own TCP path has its own delay: see `relay_latency`.
+    /// Applies symmetric latency to every QUIC datagram on the test LAN. The
+    /// relay's own carrier-specific delay is controlled by `relay_latency`.
     pub fn direct_latency(&self, millis: u64) {
         self.inner.udp_proxy.latency(millis);
     }
@@ -433,9 +433,12 @@ impl TestNet {
         }
     }
 
-    /// Cuts the direct link between `a` and `b` by closing every link either
-    /// side holds to the other. Routes through relays are unaffected.
+    /// Cuts the direct link between `a` and `b`, holds their pairwise UDP path
+    /// down against automatic redial, and leaves relay routes unaffected.
     pub async fn sever_direct(&self, a: &Daemon, b: &Daemon) {
+        self.inner
+            .udp_proxy
+            .direct_pair_blocked(a.host_id(), b.host_id(), true);
         for (from, to) in [(a, b), (b, a)] {
             if let Some(parts) = from.try_parts().await {
                 parts
@@ -481,6 +484,9 @@ impl TestNet {
                 "daemons are not mutually paired"
             );
         }
+        self.inner
+            .udp_proxy
+            .direct_pair_blocked(a.host_id(), b.host_id(), false);
         let mut attempt = None;
         if let Some(reachability) = a.direct_reachability_to(b.host_id()).await {
             attempt = Some((a, b, reachability));
@@ -942,9 +948,9 @@ impl TestNetBuilder {
         } else {
             None
         };
-        let cloud_quic_addr = cloud
-            .as_ref()
-            .map(|cloud| udp_proxy.route_to(cloud.relay_addr()));
+        let cloud_quic_addr = cloud.as_ref().map(|cloud| {
+            udp_proxy.route_to_with_latency(cloud.relay_addr(), cloud.latency_control())
+        });
 
         let identity = if self.installations.is_empty() && !self.identity {
             None

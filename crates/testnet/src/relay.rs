@@ -188,6 +188,10 @@ impl CloudRelay {
         self.relay.quic_client_config.clone()
     }
 
+    pub(crate) fn latency_control(&self) -> Arc<AtomicU64> {
+        self.relay.latency_millis.clone()
+    }
+
     /// Registers or returns the relay account identified by `label`.
     pub fn register_user(&self, label: &str) -> RelayUser {
         let (user_id, token) = self.credentials_for_user(label);
