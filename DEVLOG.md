@@ -16782,3 +16782,31 @@ one configuration for every core crate and the allowed fixture-enabled second
 TUI configuration. The spec inventory remains 412 tests (320 reducer and 92
 whole-daemon), all local documentation links resolve, the retired-token grep is
 empty outside this log, and the complete local CI recipe passes.
+
+2026-09-14 — **Local-first connections and account-backed relay access land
+end to end.** A fresh phone can browse for an amux host on its network, pair by
+six-digit code or an address-bearing QR, and use the host while both devices are
+signed out. Direct device links now use pinned mutual-TLS QUIC exclusively.
+Signed-in devices use the same stream-oriented link protocol through the cloud
+relay, preferring QUIC and falling back to multiplexed TLS over TCP when UDP is
+blocked. Free accounts receive relay presence but cannot open relayed streams;
+subscribed accounts can. One cloud-link manager reports entitlement and carrier
+state to the CLI, TUI, and phone, whose signed-out profiles, nearby-host groups,
+away and offline states, cached agents, pairing flows, and subscription prompts
+now reflect those rules. The protocol, architecture, iOS, UI, testing, and
+user-facing explanations document the resulting system.
+
+Two operator acts remain before the production QUIC relay path is verified:
+
+1. Apply the `relay-udp` infrastructure branch and deploy the relay.
+2. Smoke production after the deployment, confirming both QUIC and the TCP
+   fallback.
+
+File these independent follow-ups:
+
+- Device-flow approval from a paired phone.
+- Push notifications.
+- NAT traversal.
+- An Android discovery adapter.
+- Per-peer scopes.
+- Faster entitlement reconciliation.
