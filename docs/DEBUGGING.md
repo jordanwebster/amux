@@ -111,7 +111,7 @@ A full user capture contains these files:
 | `frame.styles` | One theme-class character per captured cell |
 | `trace.jsonl` | Starting Model/view/theme snapshot, then ordered chrome events |
 | `msgs.jsonl` | Recorder checkpoint and retained daemon messages |
-| `daemon.json` | Selected profile's hosts, routes, links, tunnels and session diagnostics |
+| `daemon.json` | Selected profile's hosts, routes, links and channels |
 | `log.txt` | Installation-wide log tail, line-aligned and capped at 64 KiB |
 
 The text and style map are the screenshot. A report contains no OS screenshot

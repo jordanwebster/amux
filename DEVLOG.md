@@ -16841,8 +16841,8 @@ blocked. Free accounts receive relay presence but cannot open relayed streams;
 subscribed accounts can. One cloud-link manager reports entitlement and carrier
 state to the CLI, TUI, and phone, whose signed-out profiles, nearby-host groups,
 away and offline states, cached agents, pairing flows, and subscription prompts
-now reflect those rules. The protocol, architecture, iOS, UI, testing, and
-user-facing explanations document the resulting system.
+now reflect those rules. The protocol, architecture, debugging, agent messaging,
+iOS, UI, testing, and user-facing explanations document the resulting system.
 
 Two operator acts remain before the production QUIC relay path is verified:
 

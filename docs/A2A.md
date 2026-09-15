@@ -2,8 +2,9 @@
 
 **Status**: implemented for Claude PTY, Claude SDK and Codex. This document owns
 amux's agent-to-agent message envelope, provider carriers, model-facing tools, and
-parent/child lifecycle. [`PROTOCOL.md`](./PROTOCOL.md) owns the links and
-tunnels that carry remote calls; [`ARCHITECTURE.md`](./ARCHITECTURE.md) owns
+parent/child lifecycle. [`PROTOCOL.md`](./PROTOCOL.md) owns the carriers,
+links, streams and channels that carry remote calls;
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) owns
 the daemon service boundaries; [`UI.md`](./UI.md) and [`CHAT.md`](./CHAT.md)
 own client derivation and presentation. Provider-specific row details remain
 in [`CODEX.md`](./CODEX.md), [`CLAUDE_SDK.md`](./CLAUDE_SDK.md) and
@@ -242,10 +243,10 @@ delivery evidence.
 A local `ClientService.SendMessage` resolves the recipient and sender. Local
 delivery calls the backend directly; remote delivery forwards the complete
 daemon-authored envelope to `AgentService.SendMessage` on the recipient's
-owning host through the existing paired tunnel. `SetAgentStatus`, child
-creation, and cascade deletion use the same local-or-remote service split.
-Agent messaging adds no link frames, routing rules, protocol version, or new
-authorization boundary.
+owning host through a channel on the existing paired link. `SetAgentStatus`,
+child creation, and cascade deletion use the same local-or-remote service split.
+Agent messaging does not add to the carrier/link/stream/channel protocol and
+adds no routing rules, protocol version, or new authorization boundary.
 
 Pairing remains the trust boundary: any agent inside the paired trust domain
 may list, message, or spawn agents, while the parent edge limits only `stop`
