@@ -1,3 +1,20 @@
+2026-09-16 — **Recorded what this Mac measures today.** The baseline the drift
+checks compare against was taken before the phone gained local discovery, the
+rewritten home and Hosts screens, and everything the connections work put into
+its runtime, so every drift reading since has been against an app that no
+longer exists. It is recorded again from a whole run on the pinned simulator.
+
+Two numbers moved for reasons worth naming. Reconciliation after a phone is
+picked up reads 256 ms where the old baseline said 242 and a run before the
+route-announcement fix said 298: describing a host again ends its inventory
+subscription and opens a fresh one, and that was happening twice per pickup.
+The cold first frame reads 448 ms against a 460 ms gate, but it has read 463
+and 470 on this same machine within the hour, so the app is sitting on that
+gate rather than under it. The gate is unchanged: it was set at the launch
+floor plus about double the app's own code deliberately, to fail if launch
+work grew, and launch work has grown. Finding where is filed as a follow-up
+rather than answered by moving the line.
+
 2026-09-16 — **A host is described again when what a client was told has
 moved.** Comparing a host's description across the handling of one routing
 event missed two things. An outgoing call opens a channel on whatever route
