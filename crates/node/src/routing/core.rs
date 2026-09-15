@@ -543,6 +543,14 @@ impl RoutingCore {
 }
 
 impl RoutingCore {
+    /// The account-binding fact recorded for `host_id`, as a client listing
+    /// hosts would read it.
+    pub(crate) fn signed_in_for(&self, host_id: HostId) -> Option<bool> {
+        let trust_store = self.trust_store.as_ref()?;
+        let trust_store = trust_store.read().ok()?;
+        trust_store.entry(host_id).and_then(|entry| entry.signed_in)
+    }
+
     fn remember_signed_in(&self, host: &Host) {
         let Some(trust_store) = &self.trust_store else {
             return;

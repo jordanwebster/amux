@@ -1,3 +1,19 @@
+2026-09-16 — **A host is described again when what a client was told has
+moved.** Comparing a host's description across the handling of one routing
+event missed two things. An outgoing call opens a channel on whatever route
+the table prefers, so a direct link can already be carrying traffic before its
+own event arrives: read as a difference across the handler that looks like
+nothing happening, and a client would sit on the relay's description forever.
+And the description carries the peer's account-binding fact, which a link can
+change while the route stays exactly where it was.
+
+The comparison is now against what that host was last described as, which is
+both simpler and right in those cases, and the account fact is part of the
+description rather than beside it. A host nobody has described yet takes the
+state at the moment the event was queued as its starting point, because the
+presence announcement the client just received carried exactly that — without
+it, a machine arriving would be described twice for one appearance.
+
 2026-09-16 — **The route a machine is reached over is announced by whatever
 carries it.** Describing a host again is not free: a client acts on it by
 ending the inventory subscription it is holding and opening a fresh one, which

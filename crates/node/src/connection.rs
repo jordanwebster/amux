@@ -25,7 +25,18 @@ pub struct ConnectionManager {
 struct ConnectionState {
     active: HashMap<HostId, Route>,
     reachability_errors: HashMap<HostId, String>,
+    /// What each host was last described as, so a description is sent when
+    /// the answer has moved and not merely when something happened.
+    announced: HashMap<HostId, HostDescription>,
 }
+
+/// What a client would be told about a host: the route carrying its traffic,
+/// how that reads, and the account-binding fact recorded for it.
+///
+/// The route's identity belongs here beside the way it reads, because one
+/// direct link replacing another reads the same both times and still ends
+/// every stream on the carrier that went away.
+type HostDescription = (Option<Route>, HostVia, Option<bool>);
 
 impl ConnectionManager {
     pub(crate) fn new(routing: Arc<RoutingCore>, channels: Arc<ChannelPool>) -> Self {
@@ -190,33 +201,51 @@ impl ConnectionManager {
         self.trusted_connections.finish_host_replacement(peer);
     }
 
-    /// Applies one routing event, then announces the host's route if what a
-    /// client would be told about it changed.
+    /// Applies one routing event, then describes the host again if what a
+    /// client would be told about it has moved.
     ///
     /// The routing table knows where a host can be reached; this manager knows
     /// which of those routes is carrying traffic, and it is the second that a
-    /// client is shown and that its inventory subscription rides on. Deciding
-    /// here, after the event has been applied, is what keeps a link that
-    /// changed nothing from costing every watcher a fresh subscription, and
-    /// what keeps a watcher from being told about a route mid-replacement.
+    /// client is shown and that its inventory subscription rides on.
+    ///
+    /// The comparison is against what was last announced rather than against
+    /// the moment before this event, because the active route is not only
+    /// settled here: an outgoing call opens a channel on whatever the routing
+    /// table prefers, so a direct link can already be carrying traffic by the
+    /// time its own event arrives. Read as a difference across the handler,
+    /// that would look like nothing happening; read against what a client was
+    /// last told, it is exactly the change the client is waiting for.
     async fn handle_event(&self, event: RoutingEvent) {
         let host_id = event.host_id();
-        let before = self.route_fingerprint(host_id).await;
+        // A host nobody has described yet was just announced as present by the
+        // routing table, and that announcement carried whatever was true as
+        // this event was queued. That is the client's starting point, so it is
+        // this one's: a first link that changes nothing after it is applied
+        // leaves the host correctly described and says nothing further.
+        let known = self.state.read().await.announced.get(&host_id).copied();
+        let baseline = match known {
+            Some(description) => description,
+            None => self.host_description(host_id).await,
+        };
         self.apply_event(event).await;
-        if self.route_fingerprint(host_id).await != before {
+        let description = self.host_description(host_id).await;
+        self.state
+            .write()
+            .await
+            .announced
+            .insert(host_id, description);
+        if description != baseline {
             self.routing.announce_route(host_id).await;
         }
     }
 
-    /// What a client would be told about how this host is reached: the live
-    /// route, and the description drawn from it.
-    ///
-    /// The description alone is not enough. One direct link replacing another
-    /// reads the same both times, and still ends every stream on the carrier
-    /// that went away — so the route's own identity is half of the answer.
-    async fn route_fingerprint(&self, host_id: HostId) -> (Option<Route>, HostVia) {
+    async fn host_description(&self, host_id: HostId) -> HostDescription {
         let active = self.state.read().await.active.get(&host_id).copied();
-        (active, self.via_for(host_id).await)
+        (
+            active,
+            self.via_for(host_id).await,
+            self.routing.signed_in_for(host_id),
+        )
     }
 
     async fn apply_event(&self, event: RoutingEvent) {
@@ -308,7 +337,11 @@ impl ConnectionManager {
     }
 
     async fn remove_host_runtime_state(&self, peer: HostId) {
-        self.state.write().await.active.remove(&peer);
+        let mut state = self.state.write().await;
+        state.active.remove(&peer);
+        // A host that is gone is described afresh if it ever comes back.
+        state.announced.remove(&peer);
+        drop(state);
         self.channels.drop_host(peer);
     }
 
