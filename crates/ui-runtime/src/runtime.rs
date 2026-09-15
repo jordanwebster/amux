@@ -1985,7 +1985,7 @@ async fn flush_stream_batch(
 
 fn structured_stream_args(protocol: StructuredProtocol, tail: u64) -> Option<Vec<u8>> {
     match protocol {
-        StructuredProtocol::Claude => {
+        StructuredProtocol::ClaudePtyTranscript => {
             client::encode_claude_pty_args(model::ClaudePtyTranscriptV1Args {
                 terminal_size: None,
                 replay_query: Some(model::ClaudePtyTranscriptV1ReplayQuery::Tail { count: tail }),
@@ -2005,7 +2005,7 @@ fn decode_structured_entry(
     payload: &[u8],
 ) -> Result<StreamEntry, StreamCloseReason> {
     let output = match protocol {
-        StructuredProtocol::Claude => client::decode_claude_pty_output(payload),
+        StructuredProtocol::ClaudePtyTranscript => client::decode_claude_pty_output(payload),
         StructuredProtocol::ClaudeSdk => {
             let output = client::decode_claude_sdk_output(payload).map_err(|error| {
                 StreamCloseReason::InternalError {

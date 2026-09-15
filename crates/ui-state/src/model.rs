@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use model::{Agent, AgentId, AgentParent, HostEntry, HostId, WorkingOn};
+pub use model::{AgentPhase, Attention, StructuredProtocol, Why};
 use serde::{Deserialize, Serialize};
 
 use crate::claude::{ClaudeLayer, ClaudeViolation};
@@ -22,37 +23,6 @@ use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
 /// old outcomes age out, pending obligations never do — they live in
 /// `pending_ops` until resolved).
 pub(crate) const FINISHED_OPS_RETAINED: usize = 64;
-
-/// Kernel attention vocabulary: "does this agent need you". Derived from
-/// the per-agent layer fold at observation time (E2); unsubscribed or
-/// truncated-history agents stay `Unknown` — degradation is always to
-/// `Unknown`, never to a wrong badge.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "attention", rename_all = "snake_case")]
-pub enum Attention {
-    Unknown,
-    Idle,
-    Working,
-    NeedsYou { why: Why },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Why {
-    Permission,
-    Question,
-    Finished,
-}
-
-/// Lifecycle phase observed from session-stream facts. Inventory removal is
-/// the authority for "gone"; this only records what a stream close reported
-/// while the agent is still listed.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case")]
-pub enum AgentPhase {
-    Running,
-    Exited { exit_code: Option<i32> },
-}
 
 /// Connection state of the daemon link, epoch-scoped. `Connected` starts in
 /// catch-up; the two synchronized flags flip as each snapshot completes, so
@@ -68,28 +38,6 @@ pub enum Connection {
     Disconnected {
         reason: DisconnectReason,
     },
-}
-
-/// The structured protocol each native layer speaks. This enum is carried
-/// through stream dispatch so every known protocol boundary is exhaustive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StructuredProtocol {
-    #[serde(rename = "claude_pty_transcript_v1")]
-    Claude,
-    #[serde(rename = "claude_sdk_v1")]
-    ClaudeSdk,
-    #[serde(rename = "codex_sdk_v1")]
-    Codex,
-}
-
-impl StructuredProtocol {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Claude => crate::claude::PROTOCOL,
-            Self::ClaudeSdk => crate::claude::SDK_PROTOCOL,
-            Self::Codex => crate::codex::PROTOCOL,
-        }
-    }
 }
 
 /// Typed per-agent state. Exhaustive dispatch is deliberate: a new agent
@@ -120,7 +68,7 @@ impl AgentLayer {
 
     pub(crate) fn protocol(&self) -> StructuredProtocol {
         match self {
-            Self::Claude(_) => StructuredProtocol::Claude,
+            Self::Claude(_) => StructuredProtocol::ClaudePtyTranscript,
             Self::ClaudeSdk(_) => StructuredProtocol::ClaudeSdk,
             Self::Codex(_) => StructuredProtocol::Codex,
         }

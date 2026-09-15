@@ -100,7 +100,7 @@ impl Harness {
 
 fn protocols() -> [StructuredProtocol; 3] {
     [
-        StructuredProtocol::Claude,
+        StructuredProtocol::ClaudePtyTranscript,
         StructuredProtocol::Codex,
         StructuredProtocol::ClaudeSdk,
     ]

@@ -1,3 +1,11 @@
+2026-09-16 — **Structured observations have one vocabulary below every client.**
+The daemon, shared store and UI reducers now meet on sequence, protocol,
+attention, lifecycle and summary types owned by `model`; `ui-state` re-exports
+the existing UI-facing names while keeping its richer local task list. Empty
+`fold` and `store` crates establish the dependency direction before provider
+code moves, and SQLite bundling is an explicit desktop build choice so iOS can
+continue linking its qualified system library.
+
 2026-09-14 — **The phone pool's hooks run on a Python that can read them.**
 Creating, probing and preparing a simulator is done by hooks that ran a bare
 `python3`. A hook inherits whatever PATH started it, and on a Mac that is

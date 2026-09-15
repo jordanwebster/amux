@@ -83,7 +83,7 @@ pub(crate) fn can_open(model: &Model, parent: AgentId, child: AgentId) -> bool {
         return false;
     }
     match card.structured_protocol() {
-        Some(StructuredProtocol::Claude) => model
+        Some(StructuredProtocol::ClaudePtyTranscript) => model
             .claude(child)
             .and_then(|layer| layer.ask_head())
             .is_some(),
@@ -110,7 +110,7 @@ fn bottom_is_taken(model: &Model, parent: AgentId) -> bool {
         return true;
     }
     match card.structured_protocol() {
-        Some(StructuredProtocol::Claude) => model
+        Some(StructuredProtocol::ClaudePtyTranscript) => model
             .claude(parent)
             .and_then(|layer| layer.ask_head())
             .is_some(),
@@ -134,7 +134,7 @@ impl InlineAsk {
     /// and answering it with nothing is the right outcome.
     pub(crate) fn open(model: &Model, child: AgentId) -> Option<Self> {
         let ui = match model.agent(child)?.structured_protocol()? {
-            StructuredProtocol::Claude => Ui::Claude(AskUi::for_ask(&shared_ask(
+            StructuredProtocol::ClaudePtyTranscript => Ui::Claude(AskUi::for_ask(&shared_ask(
                 model.claude(child)?.ask_head()?,
             ))),
             StructuredProtocol::Codex => {

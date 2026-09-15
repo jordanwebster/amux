@@ -6,6 +6,7 @@ description = "Pure reducer state and effects for amux UIs"
 publish = false
 
 [dependencies]
+fold = { workspace = true }
 model = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

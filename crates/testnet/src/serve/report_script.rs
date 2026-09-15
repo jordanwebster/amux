@@ -95,7 +95,7 @@ pub fn script_from_report(snapshot: &RecorderSnapshot) -> Result<Script, Convers
                 let card = model
                     .agent(*agent)
                     .ok_or(ConversionRefusal::PartialSession)?;
-                if card.structured_protocol() != Some(StructuredProtocol::Claude) {
+                if card.structured_protocol() != Some(StructuredProtocol::ClaudePtyTranscript) {
                     return Err(ConversionRefusal::UnsupportedLayer(format!(
                         "{:?}",
                         card.agent.kind

@@ -1,0 +1,9 @@
+[package]
+name = "fold"
+version = "0.1.0"
+edition.workspace = true
+description = "Pure structured-agent observation and transcript folds"
+publish = false
+
+[dependencies]
+model = { workspace = true }

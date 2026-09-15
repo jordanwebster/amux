@@ -7,6 +7,7 @@ mod agent;
 mod agent_kind;
 mod artifact;
 pub mod envelope;
+mod observation;
 mod profile;
 mod provider;
 mod relay;
@@ -21,6 +22,10 @@ pub use agent::{
 };
 pub use agent_kind::{AgentKind, ClaudeDriver, Protocol};
 pub use artifact::{ARTIFACT_SIZE_CAP, ArtifactId, ArtifactKind, InvalidArtifactId, id_of};
+pub use observation::{
+    AgentPhase, Attention, HostRevision, Progress, Seq, StructuredProtocol, Summary,
+    SummaryEnvelope, SummaryField, TodoProgress, Why,
+};
 pub use profile::ProfileId;
 pub use provider::{
     AGENT_TOOL_NAMES, AGENT_TOOL_SERVER_NAME, ApprovalPolicy, AskAnswer, CLAUDE_PTY_TRANSCRIPT_V1,

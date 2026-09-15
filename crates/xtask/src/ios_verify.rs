@@ -245,7 +245,13 @@ fn recipe_command(program: &str) -> Command {
 /// answer; nothing here reads the measurement document.
 fn perf_machine() -> Result<PerfMachine, String> {
     let output = recipe_command(crate::BOUNDED)
-        .args(["120", "scripts/python", "-B", "scripts/ios-perf.py", "--machine"])
+        .args([
+            "120",
+            "scripts/python",
+            "-B",
+            "scripts/ios-perf.py",
+            "--machine",
+        ])
         .output()
         .map_err(|error| error.to_string())?;
     if !output.status.success() {

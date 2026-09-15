@@ -674,7 +674,7 @@ impl Projection {
                     state.project(
                         *agent,
                         (
-                            StructuredProtocol::Claude,
+                            StructuredProtocol::ClaudePtyTranscript,
                             layer.session_id().map(str::to_owned),
                         ),
                         layer.evicted_entries(),
@@ -738,7 +738,7 @@ fn keeps_its_rows(model: &Model, agent: AgentId, host: Option<model::HostId>) ->
         Some(card) => matches!(
             card.structured_protocol(),
             Some(
-                StructuredProtocol::Claude
+                StructuredProtocol::ClaudePtyTranscript
                     | StructuredProtocol::ClaudeSdk
                     | StructuredProtocol::Codex
             )
@@ -754,7 +754,7 @@ fn session(model: &Model, agent: AgentId) -> SessionDto {
         .agent(agent)
         .and_then(|card| card.structured_protocol());
     let (gate, phase, asks, facts) = match protocol {
-        Some(StructuredProtocol::Claude) => (
+        Some(StructuredProtocol::ClaudePtyTranscript) => (
             GateDto::ClaudePty(claude::send_gate(model, agent)),
             PhaseDto::ClaudePty(claude::phase(model, agent)),
             model

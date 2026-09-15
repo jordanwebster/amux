@@ -1,0 +1,15 @@
+[package]
+name = "store"
+version = "0.1.0"
+edition.workspace = true
+description = "Shared SQLite cache for amux clients"
+publish = false
+
+[features]
+default = []
+bundled = ["rusqlite/bundled"]
+
+[dependencies]
+fold = { workspace = true }
+model = { workspace = true }
+rusqlite = { workspace = true }

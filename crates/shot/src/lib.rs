@@ -673,7 +673,7 @@ fn update_scroll_event_log(out: &Path, recording: ScrollRecording) -> Result<(),
 
 fn protocol_name(protocol: StructuredProtocol) -> &'static str {
     match protocol {
-        StructuredProtocol::Claude => "claude",
+        StructuredProtocol::ClaudePtyTranscript => "claude",
         StructuredProtocol::ClaudeSdk => "claude-sdk",
         StructuredProtocol::Codex => "codex",
     }
@@ -1270,7 +1270,7 @@ mod tests {
     fn scroll_gif_has_one_initial_frame_plus_every_event_and_resumes_following() {
         let directory = tempdir().unwrap();
         let recording = record_scroll(
-            StructuredProtocol::Claude,
+            StructuredProtocol::ClaudePtyTranscript,
             Theme::dark(ColorMode::TrueColor),
             directory.path(),
         )

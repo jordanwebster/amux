@@ -6,6 +6,7 @@ export AMUX_GIT_SHA := `git rev-parse HEAD`
 
 # Wall-clock bound for every recipe; portable where GNU timeout is absent.
 bounded := "scripts/bounded"
+desktop_features := "--features store/bundled"
 
 # List the available repository tasks.
 default:
@@ -16,27 +17,27 @@ mod ios 'apps/apple/justfile'
 
 # Build the desktop product binaries.
 build:
-    {{bounded}} 900 cargo build --locked -p amux --bins
+    {{bounded}} 900 cargo build --locked -p amux --bins {{desktop_features}}
 
 # Check every workspace library and binary.
 check:
-    {{bounded}} 900 cargo check --locked --workspace --lib --bins
+    {{bounded}} 900 cargo check --locked --workspace --lib --bins {{desktop_features}}
 
 # Run workspace tests, preserving explicit Cargo target selections.
 test *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; scripts/workspace-test.sh "$@"
+    if [ "${1-}" = -- ]; then shift; fi; scripts/workspace-test.sh {{desktop_features}} "$@"
 
 # Run tests for one named workspace crate.
 test-crate CRATE *ARGS:
-    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p "$crate" "$@"
+    crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if cargo tree --locked -p "$crate" -e normal --prefix none --format '{p}' | grep -q '^store v'; then feature='{{desktop_features}}'; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
 
 # Compile every ordinary workspace test target without running it.
 test-build:
-    {{bounded}} 1200 cargo test --locked --workspace --lib --tests --no-run
+    {{bounded}} 1200 cargo test --locked --workspace --lib --tests --no-run {{desktop_features}}
 
 # Run all workspace documentation tests.
 doctest:
-    {{bounded}} 600 cargo test --locked --workspace --doc
+    {{bounded}} 600 cargo test --locked --workspace --doc {{desktop_features}}
 
 # Run the whole-daemon and UI-state specification suites.
 spec *ARGS:
@@ -44,7 +45,7 @@ spec *ARGS:
 
 # Lint every workspace target with warnings denied.
 lint:
-    {{bounded}} 1200 cargo clippy --locked --workspace --all-targets -- -D warnings
+    {{bounded}} 1200 cargo clippy --locked --workspace --all-targets {{desktop_features}} -- -D warnings
 
 # Format all Rust sources with the pinned nightly toolchain.
 fmt:
@@ -68,20 +69,20 @@ e2e *ARGS: e2e-build
 
 # Build the binaries used by end-to-end scenarios.
 e2e-build:
-    {{bounded}} 900 cargo build --locked -p amux -p e2e-runner -p test-agent --bins
+    {{bounded}} 900 cargo build --locked -p amux -p e2e-runner -p test-agent --bins {{desktop_features}}
 
 # Build the shipping binary and enforce the release dependency policy.
 release-check *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p amux --bins --no-default-features "$@"
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo build --locked --release -p amux --bins --no-default-features {{desktop_features}} "$@"
     if [ "${1-}" = -- ]; then shift; fi; scripts/release-policy-check.sh "$@"
 
 # Check the provider-free graph used by embedded clients.
 embedded-check:
-    {{bounded}} 900 cargo check --locked -p node -p client -p ui-state -p ui-runtime
+    {{bounded}} 900 cargo check --locked -p node -p client -p ui-state -p ui-runtime {{desktop_features}}
 
 # Exercise the public embedded owner and client boundary.
 embedded-test:
-    {{bounded}} 900 cargo test --locked -p testnet --test embedding
+    {{bounded}} 900 cargo test --locked -p testnet --test embedding {{desktop_features}}
 
 # Check the provider-free graph for iOS devices and simulators.
 mobile-check:
@@ -90,27 +91,27 @@ mobile-check:
 
 # Run workspace tests with isolated user configuration and no external network.
 offline-test:
-    {{bounded}} 1200 scripts/offline-check.sh cargo test --locked --workspace --lib --tests
+    {{bounded}} 1200 scripts/offline-check.sh cargo test --locked --workspace --lib --tests {{desktop_features}}
 
 # Build the product with the full-debug profile.
 full-debug:
-    {{bounded}} 900 cargo build --locked -p amux --bins --profile full-debug
+    {{bounded}} 900 cargo build --locked -p amux --bins --profile full-debug {{desktop_features}}
 
 # Run selected live Codex scenarios.
 codex-live *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p testnet --test codex_live -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p testnet --test codex_live {{desktop_features}} -- "$@"
 
 # Run selected live Claude PTY scenarios.
 claude-pty-live *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p testnet --test claude_pty_live -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p testnet --test claude_pty_live {{desktop_features}} -- "$@"
 
 # Run selected live Claude SDK scenarios.
 claude-sdk-live *ARGS: build
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p testnet --test claude_sdk_live -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 900 cargo test --locked -p testnet --test claude_sdk_live {{desktop_features}} -- "$@"
 
 # Render or inspect deterministic TUI evidence.
 shot *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot -- "$@"
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 600 cargo run --locked --quiet -p shot --bin amux-shot {{desktop_features}} -- "$@"
 
 # Generate and verify the complete TUI evidence bundle.
 tui-evidence *ARGS:

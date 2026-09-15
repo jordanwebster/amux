@@ -85,7 +85,10 @@ fn kind_without_a_structured_layer_still_renders_a_card() {
 #[test]
 fn known_agents_open_streams_with_typed_protocols() {
     for (agent, expected) in [
-        (an_agent("claude-agent", "nova"), StructuredProtocol::Claude),
+        (
+            an_agent("claude-agent", "nova"),
+            StructuredProtocol::ClaudePtyTranscript,
+        ),
         (
             a_codex_agent("codex-agent", "nova"),
             StructuredProtocol::Codex,

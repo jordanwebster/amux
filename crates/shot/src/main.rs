@@ -90,7 +90,7 @@ enum AgentArg {
 impl From<AgentArg> for StructuredProtocol {
     fn from(value: AgentArg) -> Self {
         match value {
-            AgentArg::Claude => Self::Claude,
+            AgentArg::Claude => Self::ClaudePtyTranscript,
             AgentArg::ClaudeSdk => Self::ClaudeSdk,
             AgentArg::Codex => Self::Codex,
         }

@@ -12,6 +12,7 @@ async-trait = { workspace = true }
 base64 = "0.22"
 chrono = { workspace = true }
 claude = { workspace = true, features = ["pty"] }
+fold = { workspace = true }
 futures-util = { workspace = true }
 host-api = { workspace = true }
 libc = { workspace = true }

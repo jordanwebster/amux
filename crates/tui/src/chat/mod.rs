@@ -149,7 +149,7 @@ impl ChatView {
     pub fn open(model: &Model, agent: AgentId, leader: char, kitty: bool) -> Option<Self> {
         let protocol = model.agent(agent)?.structured_protocol()?;
         let inner = match protocol {
-            StructuredProtocol::Claude => {
+            StructuredProtocol::ClaudePtyTranscript => {
                 AgentChatView::Claude(claude::View::open(agent, leader, kitty))
             }
             StructuredProtocol::Codex => {
@@ -857,7 +857,7 @@ impl FamilyBanner {
 /// chat only decides that it is shown at all.
 fn ask_detail(model: &Model, need: &FamilyNeed<'_>) -> Option<String> {
     match need.layer()? {
-        StructuredProtocol::Claude => claude::ask_detail(model, need.agent()),
+        StructuredProtocol::ClaudePtyTranscript => claude::ask_detail(model, need.agent()),
         StructuredProtocol::Codex => codex::ask_detail(model, need.agent()),
         StructuredProtocol::ClaudeSdk => claude_sdk::ask_detail(model, need.agent()),
     }
@@ -952,7 +952,7 @@ pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
         .agent(agent)
         .and_then(ui_state::AgentCard::structured_protocol)
     {
-        Some(StructuredProtocol::Claude) => claude::entry_watermark(model, agent),
+        Some(StructuredProtocol::ClaudePtyTranscript) => claude::entry_watermark(model, agent),
         Some(StructuredProtocol::Codex) => model.codex(agent).map_or(0, |layer| {
             layer.evicted_entries() + layer.entry_count() as u64
         }),
@@ -1304,7 +1304,10 @@ mod tests {
 
     #[test]
     fn both_agents_route_paging_and_endpoints_through_the_shared_viewport() {
-        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+        for protocol in [
+            StructuredProtocol::ClaudePtyTranscript,
+            StructuredProtocol::Codex,
+        ] {
             let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
@@ -1394,7 +1397,10 @@ mod tests {
 
     #[test]
     fn focus_chords_move_blocks_and_keep_them_visible_in_both_chats() {
-        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+        for protocol in [
+            StructuredProtocol::ClaudePtyTranscript,
+            StructuredProtocol::Codex,
+        ] {
             let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
@@ -1435,7 +1441,10 @@ mod tests {
 
     #[test]
     fn native_help_overlays_take_shared_focus_keys_in_both_chats() {
-        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+        for protocol in [
+            StructuredProtocol::ClaudePtyTranscript,
+            StructuredProtocol::Codex,
+        ] {
             let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
@@ -1486,7 +1495,10 @@ mod tests {
 
     #[test]
     fn focus_copy_uses_the_focused_block_or_the_newest_block_in_both_chats() {
-        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+        for protocol in [
+            StructuredProtocol::ClaudePtyTranscript,
+            StructuredProtocol::Codex,
+        ] {
             let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
@@ -1537,7 +1549,7 @@ mod tests {
     /// nothing about the program.
     #[test]
     fn mouse_wheel_scrolls_the_open_review_page_without_moving_its_cursor() {
-        let (model, agent) = model_with_protocol(StructuredProtocol::Claude.as_str());
+        let (model, agent) = model_with_protocol(StructuredProtocol::ClaudePtyTranscript.as_str());
         let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");
         let AgentChatView::Claude(view) = &mut chat.inner else {
             panic!("a Claude chat");
@@ -1598,7 +1610,10 @@ mod tests {
 
     #[test]
     fn mouse_wheel_routes_three_rows_through_both_chat_viewports() {
-        for protocol in [StructuredProtocol::Claude, StructuredProtocol::Codex] {
+        for protocol in [
+            StructuredProtocol::ClaudePtyTranscript,
+            StructuredProtocol::Codex,
+        ] {
             let wire = protocol.as_str();
             let (model, agent) = model_with_protocol(wire);
             let mut chat = ChatView::open(&model, agent, 'a', false).expect("chat opens");

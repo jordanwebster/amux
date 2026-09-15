@@ -133,9 +133,9 @@ pub fn fixture(state: NamedState) -> Fixture {
         NamedState::A2aSdkFamily => sdk_family_fixture(),
         NamedState::ProfileSwitcher => profile_switcher_fixture(),
         NamedState::FleetSwitched => switched_fleet_fixture(),
-        NamedState::ClaudeLongFeed => long_feed(StructuredProtocol::Claude, 1_000),
+        NamedState::ClaudeLongFeed => long_feed(StructuredProtocol::ClaudePtyTranscript, 1_000),
         NamedState::CodexLongFeed => long_feed(StructuredProtocol::Codex, 1_000),
-        NamedState::ClaudeScrolledBack => scrolled_back(StructuredProtocol::Claude),
+        NamedState::ClaudeScrolledBack => scrolled_back(StructuredProtocol::ClaudePtyTranscript),
         NamedState::CodexScrolledBack => scrolled_back(StructuredProtocol::Codex),
         NamedState::ComponentGallery => claude_fixture(gallery::gallery_rows()),
         NamedState::ComponentGalleryCodex => codex_fixture(gallery::codex_gallery_rows()),
@@ -412,7 +412,7 @@ pub fn recording_start() -> Fixture {
 /// The daemon's answer to the review chord, delivered the way the runtime
 /// delivers it: the dispatched command, then its outcome, then a reconcile.
 fn deliver_frozen_diff(fixture: &mut Fixture, base: ui_state::DiffBase) {
-    let agent = agent_id(StructuredProtocol::Claude);
+    let agent = agent_id(StructuredProtocol::ClaudePtyTranscript);
     let command = ui_state::Command::RequestDiff {
         agent,
         base: base.clone(),
@@ -646,17 +646,17 @@ fn claude_attachment_rows() -> Vec<Value> {
 pub fn long_feed(protocol: StructuredProtocol, entries: usize) -> Fixture {
     let mut rows = Vec::with_capacity(entries + 1);
     rows.push(match protocol {
-        StructuredProtocol::Claude => claude_ready(),
+        StructuredProtocol::ClaudePtyTranscript => claude_ready(),
         StructuredProtocol::Codex => codex_ready(),
         StructuredProtocol::ClaudeSdk => sdk_ready(),
     });
     match protocol {
-        StructuredProtocol::Claude => rows.extend((0..entries).map(claude_long_row)),
+        StructuredProtocol::ClaudePtyTranscript => rows.extend((0..entries).map(claude_long_row)),
         StructuredProtocol::Codex => rows.extend((0..entries).map(codex_long_row)),
         StructuredProtocol::ClaudeSdk => rows.extend((0..entries).map(sdk_long_row)),
     }
     match protocol {
-        StructuredProtocol::Claude => claude_fixture(rows),
+        StructuredProtocol::ClaudePtyTranscript => claude_fixture(rows),
         StructuredProtocol::Codex => codex_fixture(rows),
         StructuredProtocol::ClaudeSdk => sdk_fixture(rows),
     }
@@ -706,7 +706,7 @@ fn host_id() -> HostId {
 
 fn agent_id(protocol: StructuredProtocol) -> AgentId {
     match protocol {
-        StructuredProtocol::Claude => AgentId::from_u128(7),
+        StructuredProtocol::ClaudePtyTranscript => AgentId::from_u128(7),
         StructuredProtocol::ClaudeSdk => AgentId::from_u128(9),
         StructuredProtocol::Codex => AgentId::from_u128(8),
     }
@@ -714,7 +714,7 @@ fn agent_id(protocol: StructuredProtocol) -> AgentId {
 
 fn agent(protocol: StructuredProtocol, name: &str) -> Agent {
     let (command, kind) = match protocol {
-        StructuredProtocol::Claude => (
+        StructuredProtocol::ClaudePtyTranscript => (
             "claude",
             ui_state::AgentKind::Claude {
                 driver: ui_state::ClaudeDriver::Pty,
@@ -830,7 +830,7 @@ fn chat_fixture(protocol: StructuredProtocol, name: &str, rows: Vec<Value>) -> F
 }
 
 fn claude_fixture(rows: Vec<Value>) -> Fixture {
-    chat_fixture(StructuredProtocol::Claude, "fix-auth", rows)
+    chat_fixture(StructuredProtocol::ClaudePtyTranscript, "fix-auth", rows)
 }
 
 fn codex_fixture(rows: Vec<Value>) -> Fixture {
@@ -847,7 +847,7 @@ fn fleet_fixture(empty: bool) -> Fixture {
     if !empty {
         messages.extend([
             Msg::Server(ServerMsg::AgentUpserted {
-                agent: agent(StructuredProtocol::Claude, "fix-auth"),
+                agent: agent(StructuredProtocol::ClaudePtyTranscript, "fix-auth"),
             }),
             Msg::Server(ServerMsg::AgentUpserted {
                 agent: agent(StructuredProtocol::Codex, "codex-retry"),
@@ -881,7 +881,7 @@ fn mixed_fleet_fixture() -> Fixture {
     ];
     let members = [
         (
-            StructuredProtocol::Claude,
+            StructuredProtocol::ClaudePtyTranscript,
             "fix-auth",
             vec![
                 claude_ready(),
@@ -980,7 +980,7 @@ fn switched_fleet_fixture() -> Fixture {
         Msg::Server(ServerMsg::HostUpserted { host }),
         Msg::Server(ServerMsg::AgentUpserted {
             agent: work_agent(
-                StructuredProtocol::Claude,
+                StructuredProtocol::ClaudePtyTranscript,
                 AgentId::from_u128(21),
                 "ship-invoices",
             ),
@@ -2107,7 +2107,7 @@ mod tests {
 
     #[test]
     fn long_feeds_retain_exactly_the_requested_entries() {
-        let claude = long_feed(StructuredProtocol::Claude, 1_000);
+        let claude = long_feed(StructuredProtocol::ClaudePtyTranscript, 1_000);
         let claude_layer = claude
             .model
             .agents()

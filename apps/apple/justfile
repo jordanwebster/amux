@@ -26,7 +26,7 @@ default:
 # client, and the served test network the journeys connect a simulator to.
 # Build the Rust tools the phone recipes drive.
 tools:
-    {{bounded}} 900 cargo build --locked -p xtask -p testnet --bins
+    {{bounded}} 900 cargo build --locked -p xtask -p testnet --bins --features store/bundled
 
 # The rules the screens package is written to: SwiftUI only outside a
 # registered leaf, no platform conditionals, no spinners. Pure text, so it runs

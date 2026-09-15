@@ -260,7 +260,7 @@ fn a2a_family_needs_addresses_the_child_not_its_ask() {
     assert_eq!(claude_child.agent(), agent_id("tester"));
     assert_eq!(
         claude_child.layer(),
-        Some(ui_state::StructuredProtocol::Claude)
+        Some(ui_state::StructuredProtocol::ClaudePtyTranscript)
     );
     assert!(
         model

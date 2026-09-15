@@ -18,12 +18,14 @@ members = [
     "crates/codex-specs",
     "crates/client",
     "crates/e2e-runner",
+    "crates/fold",
     "crates/host-api",
     "crates/model",
     "crates/pty-host",
     "crates/redaction",
     "crates/replay-support",
     "crates/settings",
+    "crates/store",
     "crates/test-agent",
     "crates/testnet",
     "crates/wire",
@@ -43,7 +45,9 @@ node = { path = "crates/node" }
 testnet = { path = "crates/testnet" }
 client = { path = "crates/client" }
 host-api = { path = "crates/host-api" }
+fold = { path = "crates/fold" }
 model = { path = "crates/model" }
+store = { path = "crates/store" }
 wire = { path = "crates/wire" }
 settings = { path = "crates/settings" }
 artifacts = { path = "crates/artifacts" }
@@ -118,6 +122,7 @@ bytes = "1"
 similar = "3"
 qrcode = { version = "0.14", default-features = false }
 nix = { version = "0.31", features = ["process", "signal"] }
+rusqlite = { version = "0.40.2", default-features = false }
 
 # Cargo defaults macOS debug profiles to split-debuginfo = "unpacked", which
 # keeps every codegen unit's object file under target/<profile>/deps for the

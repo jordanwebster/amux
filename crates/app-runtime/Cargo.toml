@@ -9,6 +9,7 @@ publish = false
 artifacts = { workspace = true }
 client = { workspace = true }
 model = { workspace = true }
+store = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
 chrono = { workspace = true }

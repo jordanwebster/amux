@@ -19,6 +19,7 @@ claude = { workspace = true }
 clap = { workspace = true }
 client = { workspace = true }
 codex = { path = "../codex" }
+fold = { workspace = true }
 futures-util = { workspace = true }
 host-api = { workspace = true }
 hyper-util = { workspace = true }
@@ -33,6 +34,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 sha2 = { workspace = true }
+store = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
