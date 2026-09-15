@@ -16834,10 +16834,11 @@ against it.
 2026-09-15 — **Finishing review removes stale test scaffolding.** Test helpers
 now describe graceful peer-link closure accurately and point abrupt-outage
 coverage at the UDP-blocked chapter. The relay's self-destination guard explains
-why a device still accepts streams arriving through its own cloud link. Duplicate
-LAN PIN entry points, unused PIN-pairing arguments, and uncalled testnet helpers
-are gone. Golden fixture notes now describe the captures they actually hold and
-locate the paired-devices capture beside its regrouped Hosts parent.
+why a daemon-configured cloud link still delivers streams addressed to that
+daemon while relay contexts forward them. Duplicate LAN PIN entry points, unused
+PIN-pairing arguments, and uncalled testnet helpers are gone. Golden fixture
+notes now describe the captures they actually hold and locate the paired-devices
+capture beside its regrouped Hosts parent.
 
 2026-09-15 — **Local-first connections and account-backed relay access land
 end to end.** A fresh phone can browse for an amux host on its network, pair by

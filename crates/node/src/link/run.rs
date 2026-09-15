@@ -725,10 +725,12 @@ fn spawn_inbound_dispatch(
 ) {
     tokio::spawn(async move {
         let destination = HostId::from_slice(&preface.dst).ok();
-        // `link_role` is CloudRelay only on the relay's accepting context. A
-        // device's own cloud link registers as CloudRelay through its local
-        // binding, so relayed streams addressed to that device still arrive
-        // at its inbound dispatcher.
+        // `link_role` is CloudRelay on a relay's accepting context and on an
+        // embedder's attached relay connector, so those contexts forward even
+        // streams addressed to their own host. A daemon-configured cloud
+        // connector keeps the Peer role from `link_connector_ctx`; its local
+        // binding is registered as CloudRelay separately, so streams addressed
+        // to that daemon over the relay still arrive at its inbound dispatcher.
         if destination == Some(ctx.local_host.id()) && ctx.link_role != LinkRole::CloudRelay {
             if let Some(sender) = &ctx.incoming_streams_tx {
                 if let Err(error) = sender.send((peer, stream)).await {
