@@ -44,10 +44,10 @@ session streams all traverse the same controllable datagram path.
 Use `TestNet::direct_latency` and `TestNet::loss` to shape direct traffic in both directions,
 `TestNet::udp_blocked` to isolate one named daemon, and
 `TestNet::rebind_client` to move its endpoint behind the stable advertised
-address. The daemon helpers `connects_to_via_direct_quic`, `sees_away`, and
-`open_session_stream_to` assert the user-visible route and session behavior
-without sleeps. Keep discovery changes on `ScriptedDiscovery`; do not rely on
-the machine's multicast DNS state in a spec.
+address. The daemon helper `connects_to_via_direct_quic` asserts the
+user-visible direct-QUIC route without sleeps. Keep discovery changes on
+`ScriptedDiscovery`; do not rely on the machine's multicast DNS state in a
+spec.
 
 ## 3. Cross-crate integration tests
 

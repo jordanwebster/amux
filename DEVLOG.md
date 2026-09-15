@@ -16838,7 +16838,9 @@ why a daemon-configured cloud link still delivers streams addressed to that
 daemon while relay contexts forward them. Duplicate LAN PIN entry points, unused
 PIN-pairing arguments, and uncalled testnet helpers are gone. Golden fixture
 notes now describe the captures they actually hold and locate the paired-devices
-capture beside its regrouped Hosts parent.
+capture beside its regrouped Hosts parent. The spec-harness guide names the
+remaining direct-QUIC route assertion instead of helpers removed with the
+scaffolding.
 
 2026-09-15 — **Local-first connections and account-backed relay access land
 end to end.** A fresh phone can browse for an amux host on its network, pair by
