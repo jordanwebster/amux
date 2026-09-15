@@ -16842,6 +16842,18 @@ capture beside its regrouped Hosts parent. The spec-harness guide names the
 remaining direct-QUIC route assertion instead of helpers removed with the
 scaffolding.
 
+2026-09-15 — **The review journey takes hold of a range only once the page has
+stopped moving.** Adding a remark puts a thread under the range it was about
+and scrolls that range under the chrome, both with animation, and the next hold
+was aimed at rows whose frames that animation had already invalidated: the drag
+landed a row short, or the sheet was read while the rest of it was still on its
+way to the app. Either way the journey recorded a range smaller than the one
+the finger finished on, then failed because the host had been told the range
+the reader actually held. The host's copy was right in every run; the reading
+beside it was not. The test now waits for the rows to stop moving before it
+takes hold, reads the sheet until its sentence repeats, and takes the hold
+again when it covers fewer rows than the drag crossed.
+
 2026-09-15 — **Local-first connections and account-backed relay access land
 end to end.** A fresh phone can browse for an amux host on its network, pair by
 six-digit code or an address-bearing QR, and use the host while both devices are
