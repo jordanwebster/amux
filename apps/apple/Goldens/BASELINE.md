@@ -258,13 +258,25 @@ names, because a code for a machine on this network and one for a machine only
 the relay has seen are different promises. The layout, typography and keypad
 are the approved ones.
 
+Re-approved again on 2026-09-15 in the light appearance, where each key's shadow
+is now a single even one. The keys sit ten points apart and their shadows are
+wider than that, so ten separate pieces of glass laid their shadows over each
+other and the plates picked up a doubled bottom edge the design's own picture
+does not have; the keypad is now declared as one group, which draws each shadow
+once. That also settles a capture that would not repeat itself: composited
+separately, the overlap came out heavier on one key than the run before, over
+the whole ring around it and by up to eleven parts in 255, on a screen where
+nothing had changed. The keys, their spacing, their type and their corners are
+untouched, and the dark appearance is pixel for pixel what it was.
+
 ## code-entry
 
 Added state using the `code-entry` fixture. The code screen on a phone nobody
 has signed into, against the machine it found on this network. It is the state
 the free on-ramp actually runs through, and the route line is what makes the
 code legible without an account. It follows the same visual system as its
-parent screen.
+parent screen, including the single even key shadows re-approved with it on
+2026-09-15.
 
 ## delete
 

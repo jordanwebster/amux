@@ -16816,6 +16816,21 @@ ownership while the budget query remains a machine-only check. The door-smoke
 script fixture also models the signed-out runtime's autonomous local startup,
 keeping its focused tests aligned with the boundary the full smoke verifies.
 
+2026-09-15 — **The pairing keypad's keys are one piece of glass.** Each of the
+ten keys carried its own material, and since the keys sit closer together than
+their shadows are wide, every plate's shadow fell across its neighbours. The
+render server composited those overlaps in an order it did not repeat: a
+capture of the code screen came back with a heavier halo around one key than
+the run before — over the whole ring, by up to eleven parts in 255 — on a
+screen nothing had changed. The keypad is now declared as a single glass group,
+so each shadow is drawn once, which is also what the design asks for: one even
+shadow under each key instead of the doubled bottom edge stacking produced. The
+material now sits on the key rather than behind it, because a separate surface
+behind the label let the group draw the plate over its own digit. Keys,
+spacing, type and corners are unchanged, the dark appearance is untouched, and
+the light captures of the code screen and the code-entry state are re-approved
+against it.
+
 2026-09-15 — **Local-first connections and account-backed relay access land
 end to end.** A fresh phone can browse for an amux host on its network, pair by
 six-digit code or an address-bearing QR, and use the host while both devices are

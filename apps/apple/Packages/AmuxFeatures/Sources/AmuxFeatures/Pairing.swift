@@ -289,31 +289,46 @@ private struct Keypad: View {
     let type: (Int) -> Void
     let backspace: () -> Void
 
+    // The keys are one piece of glass with holes in it, not ten pieces sitting
+    // near each other. Ten points apart, each plate's shadow falls across its
+    // neighbours, and when every plate is its own surface the render server
+    // composites those overlaps in an order it does not repeat: one key came
+    // back with a heavier halo than the run before, over the whole ring around
+    // it, on a screen where nothing had changed. Declaring the group is what
+    // settles it, and it is also what the keypad was drawn as — the design's
+    // own picture has one even shadow under each key rather than the doubled
+    // edge that stacking produced. No spacing, because these keys never join.
     var body: some View {
-        VStack(spacing: 10) {
-            ForEach([[1, 2, 3], [4, 5, 6], [7, 8, 9]], id: \.self) { row in
-                HStack(spacing: 10) { ForEach(row, id: \.self) { key($0) } }
-            }
-            HStack(spacing: 10) {
-                Color.clear.frame(maxWidth: .infinity).frame(height: 52)
-                key(0)
-                Button(action: backspace) {
-                    Image(systemName: "delete.backward")
-                        .font(.system(size: 22, weight: .regular))
-                        .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .contentShape(Rectangle())
+        GlassEffectContainer(spacing: 0) {
+            VStack(spacing: 10) {
+                ForEach([[1, 2, 3], [4, 5, 6], [7, 8, 9]], id: \.self) { row in
+                    HStack(spacing: 10) { ForEach(row, id: \.self) { key($0) } }
                 }
-                .buttonStyle(.amuxControl)
-                .disabled(!enabled)
-                .accessibilityLabel("Delete")
-                .identified("pin.delete", label: "Delete", enabled: enabled)
+                HStack(spacing: 10) {
+                    Color.clear.frame(maxWidth: .infinity).frame(height: 52)
+                    key(0)
+                    Button(action: backspace) {
+                        Image(systemName: "delete.backward")
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.amuxControl)
+                    .disabled(!enabled)
+                    .accessibilityLabel("Delete")
+                    .identified("pin.delete", label: "Delete", enabled: enabled)
+                }
             }
         }
         .padding(.bottom, 12)
     }
 
+    // The material goes on the key rather than behind it. Put behind, as a
+    // background of something clear, it is a surface of its own that the group
+    // above is free to draw after the digit, and the digit disappears under
+    // its own key.
     private func key(_ digit: Int) -> some View {
         Button { type(digit) } label: {
             Text("\(digit)")
@@ -321,10 +336,7 @@ private struct Keypad: View {
                 .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
-                .background {
-                    Color.clear.frosted(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
+                .frosted(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.amuxControl)
         .disabled(!enabled)
