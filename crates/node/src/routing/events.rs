@@ -25,6 +25,16 @@ pub enum RoutingEvent {
     ClaimDown { relay: HostId, host_id: HostId },
 }
 
+impl RoutingEvent {
+    /// The host this event is about.
+    pub(crate) fn host_id(&self) -> HostId {
+        match self {
+            Self::NeighborUp { host, .. } | Self::ClaimUp { host, .. } => host.id,
+            Self::NeighborDown { host_id, .. } | Self::ClaimDown { host_id, .. } => *host_id,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[doc(hidden)]
 pub enum HostReachabilityEvent {
@@ -42,6 +52,11 @@ pub enum HostReachabilityEvent {
     /// subscribed learns only what it is sent, so without this it would keep
     /// describing a machine by the route it was first reached over for the
     /// life of its connection.
+    ///
+    /// Sent by whatever owns the live route rather than by the routing table,
+    /// which records where a host could be reached and not which of those
+    /// routes is carrying traffic. Acting on one costs a host its inventory
+    /// subscription, so it is worth sending only when the answer moved.
     RouteChanged {
         host_id: HostId,
     },

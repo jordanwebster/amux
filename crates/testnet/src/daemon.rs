@@ -1393,11 +1393,23 @@ impl Daemon {
                 .collect::<std::collections::BTreeMap<_, _>>(),
         ));
         let folded = hosts.clone();
+        // What a subscriber was told, not just what it ended up believing.
+        // Describing a host again costs it its inventory subscription, so a
+        // chapter may care how many times it was described and not only how.
+        let updates = Arc::new(StdMutex::new(
+            std::collections::BTreeMap::<HostId, usize>::new(),
+        ));
+        let counted = updates.clone();
         let task = tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
                 let mut hosts = folded.lock().expect("testnet host watch poisoned");
                 match event {
                     node::HostEvent::HostUpdated { host } => {
+                        *counted
+                            .lock()
+                            .expect("testnet host watch poisoned")
+                            .entry(host.id)
+                            .or_default() += 1;
                         hosts.insert(host.id, host);
                     }
                     node::HostEvent::HostRemoved { id } => {
@@ -1410,6 +1422,7 @@ impl Daemon {
         HostWatch {
             name: self.name().to_string(),
             hosts,
+            updates,
             task,
         }
     }
@@ -1906,10 +1919,21 @@ impl LinkConnectorTokenRefresher for RegistryTokenRefresher {
 pub struct HostWatch {
     name: String,
     hosts: Arc<StdMutex<std::collections::BTreeMap<HostId, HostEntry>>>,
+    updates: Arc<StdMutex<std::collections::BTreeMap<HostId, usize>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl HostWatch {
+    /// How many times this subscriber has been told about `other`.
+    pub fn updates_about(&self, other: &Daemon) -> usize {
+        self.updates
+            .lock()
+            .expect("testnet host watch poisoned")
+            .get(&other.host_id())
+            .copied()
+            .unwrap_or_default()
+    }
+
     /// Waits until this subscriber has been told that `other` is reached the
     /// given way and carries the given account-binding fact.
     pub async fn sees_host_status(&self, other: &Daemon, via: HostVia, signed_in: Option<bool>) {

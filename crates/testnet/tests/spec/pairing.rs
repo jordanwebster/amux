@@ -884,4 +884,13 @@ async fn a_connected_client_is_told_when_a_relay_seen_machine_becomes_directly_l
     watch
         .sees_host_status(&workstation, node::HostVia::Direct, Some(true))
         .await;
+    // Twice, and only twice: reached over the relay, then reached directly.
+    // Being described again is not free — it ends the inventory subscription
+    // the client is holding and opens a fresh one — so a link that arrives and
+    // changes nothing about how the machine is reached must cost nothing.
+    assert_eq!(
+        watch.updates_about(&workstation),
+        2,
+        "the machine was described once per route it was actually reached over"
+    );
 }

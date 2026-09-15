@@ -304,8 +304,6 @@ impl RoutingCore {
             state
                 .host_events
                 .emit(HostReachabilityEvent::Added { host });
-        } else {
-            emit_route_change(&mut state, host_id);
         }
         RouteUpdateOutcome::Inserted
     }
@@ -331,7 +329,7 @@ impl RoutingCore {
             link,
             last_link,
         });
-        emit_removed_or_route_change(&mut state, host_id);
+        emit_removed_if_gone(&mut state, host_id);
     }
 
     /// Records a neighbor's adjacency claim: `relay` says it has a direct
@@ -377,8 +375,6 @@ impl RoutingCore {
             state
                 .host_events
                 .emit(HostReachabilityEvent::Added { host });
-        } else {
-            emit_route_change(&mut state, host_id);
         }
         RouteUpdateOutcome::Inserted
     }
@@ -387,7 +383,7 @@ impl RoutingCore {
     pub(crate) async fn apply_claim_down(&self, relay: HostId, host_id: HostId) {
         let mut state = self.state.write().await;
         remove_claim(&mut state, relay, host_id);
-        emit_removed_or_route_change(&mut state, host_id);
+        emit_removed_if_gone(&mut state, host_id);
     }
 
     /// Withdraws every claim made by `relay` (its last link went down).
@@ -400,7 +396,7 @@ impl RoutingCore {
             .collect::<Vec<_>>();
         for host_id in claimed {
             remove_claim(&mut state, relay, host_id);
-            emit_removed_or_route_change(&mut state, host_id);
+            emit_removed_if_gone(&mut state, host_id);
         }
     }
 
@@ -450,7 +446,7 @@ impl RoutingCore {
             }
         }
         if was_direct {
-            emit_removed_or_route_change(&mut state, host_id);
+            emit_removed_if_gone(&mut state, host_id);
         }
     }
 
@@ -511,16 +507,17 @@ impl RoutingCore {
         self.state.write().await.host_events.subscribe()
     }
 
-    /// Announces the settled route after a connection consumer has applied a
-    /// routing event.
+    /// Announces how a host is reached now.
     ///
-    /// Routing and host subscribers run independently. A direct link can
-    /// therefore enter the routing table before the connection manager has
-    /// activated its channel, causing the first route-change description to
-    /// reflect the route that is being replaced. The consumer calls this once
-    /// its own state agrees with the routing table so long-lived host watchers
-    /// receive the final description too.
-    pub(crate) async fn republish_settled_route(&self, host_id: HostId) {
+    /// The routing table records where a host could be reached; which of those
+    /// routes is live is the connection manager's own state, and it applies
+    /// routing events on its own schedule. So a route announced from inside
+    /// the table would describe a link that has entered it but is not yet
+    /// carrying anything, and a watcher would be told about a route that is
+    /// being replaced. The manager calls this once its state has settled, and
+    /// only when what a client would be told has actually moved — acting on
+    /// one of these costs the host its inventory subscription.
+    pub(crate) async fn announce_route(&self, host_id: HostId) {
         let mut state = self.state.write().await;
         if state.is_present(host_id) {
             emit_route_change(&mut state, host_id);
@@ -592,11 +589,14 @@ fn remove_claim(state: &mut RoutingState, relay: HostId, host_id: HostId) {
         .emit(RoutingEvent::ClaimDown { relay, host_id });
 }
 
-/// Announces the loss of one route: the host has gone if that was its last,
-/// and is otherwise still here but reached some other way now.
-fn emit_removed_or_route_change(state: &mut RoutingState, host_id: HostId) {
+/// Announces a host that has no routes left at all.
+///
+/// A host that still has one is not announced here: losing a route it was not
+/// being reached over changes nothing anybody is told, and losing the one it
+/// was is announced by whatever was carrying it, once it knows what replaced
+/// it.
+fn emit_removed_if_gone(state: &mut RoutingState, host_id: HostId) {
     if state.is_present(host_id) {
-        emit_route_change(state, host_id);
         return;
     }
     state.client_visible_activity.remove(&host_id);
@@ -813,11 +813,9 @@ mod tests {
         assert!(
             matches!(host_rx.recv().await, Some(HostReachabilityEvent::Added { host }) if host.id == peer)
         );
-        // Presence is announced once. The direct link that arrived beside the
-        // claim is a change of route, not of presence, and says so.
-        assert!(
-            matches!(host_rx.recv().await, Some(HostReachabilityEvent::RouteChanged { host_id }) if host_id == peer)
-        );
+        // Presence is announced once, and the direct link that arrived beside
+        // the claim is not presence. Which route is being used is settled by
+        // whatever carries it, so the table says nothing about it here.
         assert!(host_rx.try_recv().is_err(), "presence is emitted once");
     }
 
@@ -836,16 +834,11 @@ mod tests {
             Some(HostReachabilityEvent::Added { .. })
         ));
 
-        assert!(
-            matches!(host_rx.recv().await, Some(HostReachabilityEvent::RouteChanged { host_id }) if host_id == peer),
-            "the claim arriving beside the direct link is a route change"
-        );
-
         core.apply_direct_down(direct).await;
         assert_eq!(core.route_to(peer).await, Some(Route::Via(relay)));
         assert!(
-            matches!(host_rx.recv().await, Some(HostReachabilityEvent::RouteChanged { host_id }) if host_id == peer),
-            "still present via the claim, but no longer reached directly"
+            host_rx.try_recv().is_err(),
+            "still present via the claim, so nothing about presence changed"
         );
 
         core.apply_claim_down(relay, peer).await;
@@ -923,11 +916,6 @@ mod tests {
             Some(HostReachabilityEvent::Added { .. })
         ));
 
-        assert!(matches!(
-            host_rx.recv().await,
-            Some(HostReachabilityEvent::RouteChanged { .. })
-        ));
-
         core.remove_host(peer).await;
 
         assert_eq!(core.route_to(peer).await, None);
@@ -949,20 +937,14 @@ mod tests {
             Some(HostReachabilityEvent::Added { .. })
         ));
 
-        assert!(matches!(
-            host_rx.recv().await,
-            Some(HostReachabilityEvent::RouteChanged { .. })
-        ));
-
         core.remove_direct_links(peer).await;
 
         assert_eq!(core.route_to(peer).await, Some(Route::Via(relay)));
         assert!(core.host_entry(peer).await.is_some());
         assert!(
-            matches!(host_rx.recv().await, Some(HostReachabilityEvent::RouteChanged { host_id }) if host_id == peer),
-            "the host is still here, reached through the relay now"
+            host_rx.try_recv().is_err(),
+            "the host is still here, so presence has nothing to say"
         );
-        assert!(host_rx.try_recv().is_err());
     }
 
     #[tokio::test]

@@ -1,3 +1,27 @@
+2026-09-16 — **The route a machine is reached over is announced by whatever
+carries it.** Describing a host again is not free: a client acts on it by
+ending the inventory subscription it is holding and opening a fresh one, which
+is a round trip to the machine. The routing table was announcing a route the
+moment a link entered it, and the connection manager announced again once it
+had actually activated that link — so a phone picked up out of a pocket paid
+for two descriptions where one route had changed, and a second link to a
+machine already reached directly paid for one where nothing had.
+
+The table now speaks only about presence, which is its own: a host arrived, a
+host has no routes left. Which of a host's routes is carrying traffic is the
+connection manager's state, so the announcement is its to make. It takes the
+route and the description before and after applying each routing event and
+announces only when that pair moved. The pair matters rather than the
+description alone, because one direct link replacing another reads the same
+both times and still ends every stream on the carrier that went away.
+
+Two things fell out of putting the decision in one place. A relay claim that
+was activated used to be announced by nobody, and now is announced like any
+other route. And the routing unit tests that asserted an announcement on
+insert were asserting it at the layer it has left; the chapter that holds a
+subscription open across a pairing now also counts what that subscriber was
+told, and requires exactly one description per route actually used.
+
 2026-09-14 — **The documentation now describes local-first discovery and the
 finished link stack.** A host advertises its default QUIC listener without
 turning discovery into trust, desktops maintain direct links for their daemon's

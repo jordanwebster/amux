@@ -190,7 +190,36 @@ impl ConnectionManager {
         self.trusted_connections.finish_host_replacement(peer);
     }
 
+    /// Applies one routing event, then announces the host's route if what a
+    /// client would be told about it changed.
+    ///
+    /// The routing table knows where a host can be reached; this manager knows
+    /// which of those routes is carrying traffic, and it is the second that a
+    /// client is shown and that its inventory subscription rides on. Deciding
+    /// here, after the event has been applied, is what keeps a link that
+    /// changed nothing from costing every watcher a fresh subscription, and
+    /// what keeps a watcher from being told about a route mid-replacement.
     async fn handle_event(&self, event: RoutingEvent) {
+        let host_id = event.host_id();
+        let before = self.route_fingerprint(host_id).await;
+        self.apply_event(event).await;
+        if self.route_fingerprint(host_id).await != before {
+            self.routing.announce_route(host_id).await;
+        }
+    }
+
+    /// What a client would be told about how this host is reached: the live
+    /// route, and the description drawn from it.
+    ///
+    /// The description alone is not enough. One direct link replacing another
+    /// reads the same both times, and still ends every stream on the carrier
+    /// that went away — so the route's own identity is half of the answer.
+    async fn route_fingerprint(&self, host_id: HostId) -> (Option<Route>, HostVia) {
+        let active = self.state.read().await.active.get(&host_id).copied();
+        (active, self.via_for(host_id).await)
+    }
+
+    async fn apply_event(&self, event: RoutingEvent) {
         match event {
             RoutingEvent::NeighborUp { host, link } => {
                 self.clear_reachability_error(host.id).await;
@@ -201,31 +230,19 @@ impl ConnectionManager {
                     self.state.read().await.active.get(&host.id),
                     Some(Route::Direct(_))
                 );
-                if !already_direct {
-                    match self
+                if !already_direct
+                    && let Err(error) = self
                         .activate_route(host.id, Route::Direct(link), ChannelClass::Calls)
                         .await
-                    {
-                        Ok(_) => self.routing.republish_settled_route(host.id).await,
-                        Err(error) => {
-                            tracing::warn!(peer = %host.id, error = %error, "failed to activate direct route");
-                        }
-                    }
+                {
+                    tracing::warn!(peer = %host.id, error = %error, "failed to activate direct route");
                 }
             }
             RoutingEvent::NeighborDown { host_id, link, .. } => {
                 self.channels.drop_link(link);
-                let removed_active = {
-                    let mut state = self.state.write().await;
-                    if state.active.get(&host_id) == Some(&Route::Direct(link)) {
-                        state.active.remove(&host_id);
-                        true
-                    } else {
-                        false
-                    }
-                };
-                if removed_active {
-                    self.routing.republish_settled_route(host_id).await;
+                let mut state = self.state.write().await;
+                if state.active.get(&host_id) == Some(&Route::Direct(link)) {
+                    state.active.remove(&host_id);
                 }
             }
             RoutingEvent::ClaimUp { relay, host } => {
