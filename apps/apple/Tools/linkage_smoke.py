@@ -12,7 +12,11 @@ import ios_simulators
 
 RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
-DEVICE_NAME = ios_simulators.device_name("golden")
+
+
+def device_name() -> str:
+    """Resolve the leased device only when a smoke actually needs it."""
+    return ios_simulators.device_name("golden")
 
 
 def run(*command: str, timeout: int = 60) -> str:
@@ -38,19 +42,20 @@ def device_inventory(attempts: int = 3) -> dict:
 
 
 def simulator() -> tuple[str, bool]:
+    name = device_name()
     inventory = device_inventory()
     matching = [
         device for device in inventory["devices"].get(RUNTIME, [])
-        if device["name"] == DEVICE_NAME
+        if device["name"] == name
     ]
     if len(matching) > 1:
-        raise RuntimeError(f"Multiple {DEVICE_NAME} simulators on {RUNTIME}")
+        raise RuntimeError(f"Multiple {name} simulators on {RUNTIME}")
     if matching:
         device = matching[0]
         if device["deviceTypeIdentifier"] != DEVICE_TYPE:
-            raise RuntimeError(f"{DEVICE_NAME} must be an iPhone 17 Pro")
+            raise RuntimeError(f"{name} must be an iPhone 17 Pro")
         return device["udid"], device["state"] == "Booted"
-    device_id = run("xcrun", "simctl", "create", DEVICE_NAME, DEVICE_TYPE, RUNTIME)
+    device_id = run("xcrun", "simctl", "create", name, DEVICE_TYPE, RUNTIME)
     return device_id, False
 
 
@@ -67,6 +72,7 @@ def compile_swift(directory: Path, headers: Path, source: Path, executable: Path
 
 
 def main() -> None:
+    name = device_name()
     framework = Path(sys.argv[1]).resolve()
     output = framework.parent
     result = output / "simulator-linkage.txt"
@@ -93,7 +99,7 @@ def main() -> None:
                 or "System configuration accepted" not in version
                 or "PlainLoopback rejected" not in version):
             raise RuntimeError(f"Unexpected simulator output: {version!r}")
-        text = f"{DEVICE_NAME}: iPhone 17 Pro, iOS 26.5 ({device_id})\n{version}\n"
+        text = f"{name}: iPhone 17 Pro, iOS 26.5 ({device_id})\n{version}\n"
         result.write_text(text)
         print(text, end="", flush=True)
     finally:

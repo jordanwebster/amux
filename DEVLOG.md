@@ -16806,6 +16806,16 @@ could silently extend a one-line comment across adjacent lines. The page now
 waits for the gesture to end before revealing the selection, so the range the
 reader releases is the range sent back to the host.
 
+2026-09-15 — **The iOS performance probe stays independent of simulator
+ownership.** The verification driver asks which performance budget applies
+before it decides whether to run the measured workload. Importing that probe
+used to resolve the linkage smoke's simulator immediately and fail because the
+probe deliberately holds no device lease. The linkage smoke now resolves its
+device only when it runs, so measurement still requires exclusive simulator
+ownership while the budget query remains a machine-only check. The door-smoke
+script fixture also models the signed-out runtime's autonomous local startup,
+keeping its focused tests aligned with the boundary the full smoke verifies.
+
 2026-09-15 — **Local-first connections and account-backed relay access land
 end to end.** A fresh phone can browse for an amux host on its network, pair by
 six-digit code or an address-bearing QR, and use the host while both devices are

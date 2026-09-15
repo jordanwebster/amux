@@ -49,8 +49,10 @@ class FixturePanels(unittest.TestCase):
             elif kind == "bridge":
                 reply["bridge"] = {
                     "build": "1.0" + smoke.DRIVING_MARKER,
-                    "started": connected, "discovered": ["host"] if connected else [],
-                    "connection": "connected", "reconciled": connected,
+                    "started": True, "discovered": ["host"] if connected else [],
+                    "connection": "connected" if connected else "connecting",
+                    "reconciled": connected,
+                    "relayAttempts": 1 if connected else 0,
                 }
                 connected = True
             replies.append(reply)
