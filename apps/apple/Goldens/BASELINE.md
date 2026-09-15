@@ -198,7 +198,9 @@ Reference-backed capture of `working` using the `working` fixture. No visual dep
 
 ## devices
 
-Added state using the `devices` fixture. This phone's identity and the devices paired with it. It follows the same visual system as its parent screen.
+Added state using the `devices` fixture. This phone's identity and the devices
+paired with it. The capture moved with the Hosts regrouping; see the
+[hosts](#hosts) entry beside it for the parent screen's re-approval.
 
 ## exited
 

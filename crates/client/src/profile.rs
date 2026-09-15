@@ -244,11 +244,6 @@ impl ProfileAdminClient {
         .await
     }
 
-    pub async fn start_lan_pin_pairing(&self) -> Result<PairingStart, ClientError> {
-        self.start_pairing(wire::start_pairing_request::Mode::Pin, None, None)
-            .await
-    }
-
     pub async fn start_qr_pairing(&self) -> Result<PairingStart, ClientError> {
         self.start_pairing(wire::start_pairing_request::Mode::Qr, None, None)
             .await

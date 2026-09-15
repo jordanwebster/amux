@@ -790,8 +790,6 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             }
             let pairing = if qr {
                 client.start_qr_pairing().await?
-            } else if listen {
-                client.start_lan_pin_pairing().await?
             } else {
                 client.start_pin_pairing().await?
             };

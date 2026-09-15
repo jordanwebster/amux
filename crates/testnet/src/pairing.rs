@@ -240,14 +240,7 @@ impl PairAttempt<'_> {
             )
         });
         let client = self.from.pairing_admin().await;
-        pair_via_pin_direct_quic(
-            &self.from.inner.data_dir,
-            self.from.name(),
-            addr,
-            pin,
-            &client,
-        )
-        .await?;
+        pair_via_pin_direct_quic(addr, pin, &client).await?;
         Ok(())
     }
 

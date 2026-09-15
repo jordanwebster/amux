@@ -545,7 +545,7 @@
       "screen": "pin",
       "fixture": "code-entry",
       "origin": "added_state",
-      "reason": "the code screen on a phone with no account, naming the machine it found on this network and the route the code takes",
+      "reason": "the six-digit code entry screen on a phone with no account, including the destination machine and its direct route",
       "simulator": "golden",
       "appearances": [
         "light",

@@ -16831,6 +16831,14 @@ spacing, type and corners are unchanged, the dark appearance is untouched, and
 the light captures of the code screen and the code-entry state are re-approved
 against it.
 
+2026-09-15 — **Finishing review removes stale test scaffolding.** Test helpers
+now describe graceful peer-link closure accurately and point abrupt-outage
+coverage at the UDP-blocked chapter. The relay's self-destination guard explains
+why a device still accepts streams arriving through its own cloud link. Duplicate
+LAN PIN entry points, unused PIN-pairing arguments, and uncalled testnet helpers
+are gone. Golden fixture notes now describe the captures they actually hold and
+locate the paired-devices capture beside its regrouped Hosts parent.
+
 2026-09-15 — **Local-first connections and account-backed relay access land
 end to end.** A fresh phone can browse for an amux host on its network, pair by
 six-digit code or an address-bearing QR, and use the host while both devices are

@@ -1760,8 +1760,6 @@ mod tests {
         );
 
         let paired_peer = crate::pair_via_pin_direct_quic(
-            initiator_dir.path(),
-            "initiator",
             addr,
             "123456",
             &crate::installation::ProfileAdmin::for_test(initiator.client.clone()),

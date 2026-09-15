@@ -640,27 +640,6 @@ impl Daemon {
         .await;
     }
 
-    /// Presence reached through another host rather than this LAN's direct link.
-    pub async fn sees_away(&self, other: &Daemon) {
-        let assertion = format!(
-            "'{}' sees '{}' online through a relay",
-            self.name(),
-            other.name()
-        );
-        let other_id = other.host_id();
-        eventually(
-            &assertion,
-            async || {
-                self.host_table()
-                    .await
-                    .iter()
-                    .any(|host| host.id == other_id && host.online && host.via == HostVia::Relay)
-            },
-            self.failure_dump(),
-        )
-        .await;
-    }
-
     /// Presence negation: `other` is absent or offline on this daemon's
     /// host-listing surface.
     pub async fn cannot_see(&self, other: &Daemon) {
@@ -760,29 +739,6 @@ impl Daemon {
             self.failure_dump(),
         )
         .await;
-    }
-
-    /// Opens the public session stream through this daemon's route to `peer`.
-    pub async fn open_session_stream_to(
-        &self,
-        peer: &Daemon,
-        agent: model::AgentId,
-    ) -> client::SessionStream {
-        self.routed_admin_client_to(peer)
-            .await
-            .subscribe_session(model::SubscribeSessionRequest {
-                agent: agent.into(),
-                io_protocol: agent_runtime::test_support::TEST_ECHO_V1.to_string(),
-                args: None,
-            })
-            .await
-            .unwrap_or_else(|error| {
-                panic!(
-                    "'{}' could not open a session stream to '{}': {error}",
-                    self.name(),
-                    peer.name()
-                )
-            })
     }
 
     /// Trust-store check: this daemon holds a trust entry for `other`.
@@ -1183,7 +1139,10 @@ impl Daemon {
         }
     }
 
-    /// Simulates an abrupt direct-transport outage without a graceful link close.
+    /// Closes every peer link through the production close path.
+    ///
+    /// Abrupt direct-transport outage coverage lives in the `udp_blocked`
+    /// chapter, where datagrams disappear without a graceful link close.
     pub async fn sever_direct_connections(&self) {
         if let Some(parts) = self.try_parts().await {
             parts.channels.link_registry().close_peer_links().await;
