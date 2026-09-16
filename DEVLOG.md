@@ -1,3 +1,10 @@
+2026-09-16 — **Trust removal withdraws the peer's fleet inventory.**
+Unpairing a host now removes every agent learned from that host, emits their
+withdrawals and forgets the host's inventory watermark so a later pairing can
+start from a lower fresh cut. Ordinary route loss continues to retain the last
+authoritative inventory. Local and remote delete calls also reconcile from the
+host's locked inventory cut before returning, preventing stale client entries.
+
 2026-09-16 — **Structured row provenance is fixed when the row is published.**
 Provider activity timestamps and historical provenance now live in each retained
 structured row, so live delivery and later replay expose identical facts for the

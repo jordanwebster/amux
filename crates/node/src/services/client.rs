@@ -711,7 +711,29 @@ impl ClientService {
     }
 
     async fn remove_peer_from_client_model(&self, host_id: Uuid) {
-        self.state.write().await.remote_inventories.remove(&host_id);
+        {
+            let mut state = self.state.write().await;
+            state.remote_inventories.remove(&host_id);
+            let inventory_revision = state
+                .remote_inventory_revisions
+                .remove(&host_id)
+                .unwrap_or(0);
+            let mut removed_agents = state
+                .agents_model
+                .values()
+                .filter(|agent| agent.host_id == host_id)
+                .map(|agent| agent.id)
+                .collect::<Vec<_>>();
+            removed_agents.sort_unstable();
+            for agent_id in removed_agents {
+                state.agents_model.remove(&agent_id);
+                state.agent_events.emit(AgentEvent::AgentDown {
+                    host_id,
+                    agent_id,
+                    inventory_revision,
+                });
+            }
+        }
         if !matches!(
             self.remove_host(host_id).await,
             HostEventOutcome::IgnoredRelayOrUnknown
@@ -1906,6 +1928,30 @@ impl ClientService {
             .delete(agent.id)
             .await
             .map_err(protocol_status)?;
+        let (snapshot, _events) = self
+            .local_agent_service()
+            .subscribe_agent_events_with_snapshot()
+            .await
+            .map_err(protocol_status)?;
+        let through_revision = snapshot
+            .into_iter()
+            .find_map(|event| match event {
+                AgentEvent::HostInventory {
+                    host_id,
+                    through_revision,
+                    ..
+                } if host_id == agent.host_id => Some(through_revision),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                tonic::Status::internal("local agent inventory snapshot omitted its host")
+            })?;
+        self.apply_agent_event(AgentEvent::AgentDown {
+            host_id: agent.host_id,
+            agent_id: agent.id,
+            inventory_revision: through_revision,
+        })
+        .await;
         Ok(())
     }
 
@@ -2170,7 +2216,26 @@ impl ClientService {
             .remote_agent_client("ClientService.DeleteAgent", host_id)
             .await?;
         let response = client.delete_agent(request).await?.into_inner();
-        let _ = agent_id;
+        let mut inventory = client
+            .subscribe_agent_events(wire::SubscribeAgentEventsRequest::default())
+            .await?
+            .into_inner();
+        let event = inventory
+            .next()
+            .await
+            .ok_or_else(|| tonic::Status::internal("remote inventory snapshot ended early"))??;
+        let event = crate::agents::agent_event_from_wire(event).map_err(decode_remote_status)?;
+        if !matches!(event, AgentEvent::HostInventory { .. }) {
+            return Err(tonic::Status::internal(
+                "remote inventory snapshot did not begin with HostInventory",
+            ));
+        }
+        self.apply_remote_agent_event(host_id, event).await;
+        if self.state.read().await.agents_model.contains_key(&agent_id) {
+            return Err(tonic::Status::internal(
+                "remote inventory still contains the deleted agent",
+            ));
+        }
         Ok(tonic::Response::new(response))
     }
 
@@ -4277,6 +4342,10 @@ mod tests {
             .into_inner();
         assert!(matches!(
             agent_stream.next().await.unwrap().unwrap().event,
+            Some(wire::subscribe_agents_response::Event::AgentUp(_))
+        ));
+        assert!(matches!(
+            agent_stream.next().await.unwrap().unwrap().event,
             Some(wire::subscribe_agents_response::Event::SnapshotComplete(_))
         ));
 
@@ -5208,7 +5277,8 @@ mod tests {
         .unwrap();
         assert!(matches!(
             events.recv().await,
-            Some(AgentEvent::AgentDown { agent_id: down_id, .. }) if down_id == agent_id
+            Some(AgentEvent::HostInventory { host_id, agents, .. })
+                if host_id == remote_host_id && agents.is_empty()
         ));
         let closed = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
@@ -5926,6 +5996,28 @@ mod tests {
                 .await,
             vec![crate::routing::Route::Direct(link)]
         );
+        let remote_agent = agent(42, 2, "remote");
+        service
+            .apply_remote_agent_event(
+                peer.host_id,
+                AgentEvent::HostInventory {
+                    host_id: peer.host_id,
+                    agents: vec![remote_agent.clone()],
+                    through_revision: 7,
+                },
+            )
+            .await;
+        assert_eq!(service.list_agents().await, vec![remote_agent.clone()]);
+        let (snapshot, _) = service.subscribe_agents_with_snapshot().await;
+        assert_eq!(
+            snapshot,
+            vec![AgentEvent::HostInventory {
+                host_id: peer.host_id,
+                agents: vec![remote_agent.clone()],
+                through_revision: 7,
+            }]
+        );
+        let mut agent_events = service.subscribe_agents().await;
 
         let response = ProfileAdmin::rpc_unpair(
             &ProfileAdmin::for_test(service.clone()),
@@ -5965,6 +6057,24 @@ mod tests {
         );
         assert!(routing.route_to(peer.host_id).await.is_none());
         assert_eq!(service.remote_agent_connections.pool().len().await, 0);
+        assert_eq!(
+            recv_agent_event(&mut agent_events).await,
+            AgentEvent::AgentDown {
+                host_id: peer.host_id,
+                agent_id: remote_agent.id,
+                inventory_revision: 7,
+            }
+        );
+        assert!(service.list_agents().await.is_empty());
+        assert!(service.subscribe_agents_with_snapshot().await.0.is_empty());
+        assert!(
+            !service
+                .state
+                .read()
+                .await
+                .remote_inventory_revisions
+                .contains_key(&peer.host_id)
+        );
     }
 
     #[tokio::test]
