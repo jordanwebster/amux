@@ -4,9 +4,10 @@ The app ships from this repository, built by Xcode from the generated
 project — there is no Expo, no EAS and no hosted build service in the path.
 One command, `just ios release`, takes a clean checkout to a signed `.ipa` that
 Apple has validated, and delivers it to App Store Connect, where TestFlight
-shows it once Apple has processed it. It stops there: **nothing here submits
-anything for review, and nothing pushes.** A rehearsal and `--no-upload` stop
-before the delivery; see [Where it stops](#where-it-stops).
+shows it once Apple has processed it; the commit and its tag are pushed after
+that. It stops there: **nothing here submits anything for review.** A
+rehearsal, `--no-upload` and `--no-push` each stop short; see
+[Where it stops](#where-it-stops).
 
 The app is the next version of the listing already on the App Store, not a
 new one. Its bundle identifier, `sh.amux.app`, is what signing and the App
@@ -291,8 +292,9 @@ build, and is visible to nobody.
 
 ```
 just ios release              # bump, archive, export, validate, upload,
-                               # commit, tag
+                               # commit, tag, push
 just ios release --no-upload   # all of that except the upload
+just ios release --no-push     # all of that except the push
 just ios release --preflight   # check every input, do nothing
 just ios release --rehearse    # archive, export and validate with the
                                 # would-be numbers; write nothing, tag nothing
@@ -362,8 +364,7 @@ gets issued twice.
 
 ## Where it stops
 
-The recipe ends at the upload. It does not submit for review, and it does not
-push the commit or the tag.
+The recipe ends at the push. It does not submit for review.
 
 Uploading is the one step here that cannot be taken back. The build number is
 spent permanently whether or not anything is ever submitted, and the build is
@@ -373,10 +374,18 @@ it runs after the validation, on the same package Apple has just accepted, and
 before the commit and the tag: a build Apple would refuse never reaches the
 upload, and the tag records a build that actually arrived.
 
-Two ways to stop short of it. A rehearsal never delivers — that is what makes
-it free to run as often as you like, since validation spends no build number.
-And `--no-upload` runs a full release, tag and all, stopping where every run
-stopped before delivery was part of it.
+The commit and the tag are pushed after it, because the tag is the ledger. A
+build number is spent permanently the moment the upload lands, and the next
+release counts from the tags — so a tag left in the tree that cut it is a
+record of a spent number that disappears with that tree, and the release after
+it would refuse to guess and send somebody back to App Store Connect to look
+up what this run already knew.
+
+Three ways to stop short. A rehearsal never delivers — that is what makes it
+free to run as often as you like, since validation spends no build number.
+`--no-upload` runs a full release, tag and push and all, stopping before the
+delivery. `--no-push` keeps the commit and tag at home, which leaves the
+ledger unreadable to every other checkout.
 
 Submitting for review stays a person's act in App Store Connect, with the
 screenshots, the notes and the reviewers already decided.

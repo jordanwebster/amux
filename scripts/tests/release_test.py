@@ -460,6 +460,7 @@ class TheOrderOfARelease(unittest.TestCase):
                 "validate": step("validate"),
                 "upload": step("upload"),
                 "commit_and_tag": step("commit_and_tag"),
+                "publish": step("publish"),
             }
             if not real_numbers:
                 patches["numbers"] = lambda *_: ("1.0.32", 41)
@@ -482,7 +483,7 @@ class TheOrderOfARelease(unittest.TestCase):
         code, called = self.drive()
         self.assertEqual(0, code)
         self.assertEqual(["write_numbers", "archive", "export", "validate",
-                          "upload", "commit_and_tag"], called)
+                          "upload", "commit_and_tag", "publish"], called)
 
     def test_an_upload_failure_leaves_no_commit_and_no_tag(self):
         # The build number is spent either way, but the tree should not claim
@@ -496,6 +497,12 @@ class TheOrderOfARelease(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertNotIn("upload", called)
         self.assertIn("commit_and_tag", called)
+
+    def test_no_push_keeps_the_ledger_at_home(self):
+        code, called = self.drive(argv=("release.py", "--no-push"))
+        self.assertEqual(0, code)
+        self.assertIn("commit_and_tag", called)
+        self.assertNotIn("publish", called)
 
     def test_a_validation_failure_leaves_no_commit_and_no_tag(self):
         # The state this ordering exists for: the numbers are in the working
@@ -529,13 +536,15 @@ class TheOrderOfARelease(unittest.TestCase):
 
 
 class WhatItNeverDoes(unittest.TestCase):
-    def test_the_recipe_still_pushes_nothing(self):
-        # Uploading is now part of a release; pushing a commit or a tag is
-        # not, and neither is submitting anything for review.
+    def test_the_recipe_never_submits_for_review(self):
+        # Uploading and pushing are both part of a release now. Submitting is
+        # not: that is a person's act in App Store Connect, with the
+        # screenshots, the notes and the reviewers already decided. These are
+        # the names the two ways of doing it go by.
         source = (SCRIPTS / "release.py").read_text()
-        self.assertNotIn("git push", source)
-        self.assertNotIn('"push"', source)
         self.assertNotIn("--notarize-app", source)
+        self.assertNotIn("appStoreVersionSubmissions", source)
+        self.assertNotIn("betaAppReviewSubmissions", source)
 
 
 if __name__ == "__main__":
