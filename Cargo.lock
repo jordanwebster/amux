@@ -4042,6 +4042,13 @@ dependencies = [
  "model",
  "postcard",
  "rusqlite",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

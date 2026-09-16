@@ -37,6 +37,10 @@ test-crate CRATE *ARGS:
 test-fold *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; if [ "${2-}" = --nocapture ]; then filter=$1; shift 2; {{bounded}} 1200 cargo test --locked -p fold "$filter" -- --nocapture "$@"; else {{bounded}} 1200 cargo test --locked -p fold "$@"; fi
 
+# Exercise the shared SQLite lifecycle and materialisation contract.
+test-store *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"
+
 # Compile every ordinary workspace test target without running it.
 test-build:
     {{bounded}} 1200 cargo test --locked --workspace --lib --tests --no-run {{desktop_features}}

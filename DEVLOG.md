@@ -1,3 +1,14 @@
+2026-09-16 — **The shared store opens through a fenced SQLite lifecycle.**
+Each profile store now holds a shared sidecar lease on its dedicated worker,
+qualifies and configures SQLite before reading schema state, verifies the
+durable migration ledger, and rebuilds mismatched derived families by
+generation without scanning their rows. Bounded maintenance retires old
+tables, checks integrity, checkpoints WAL and incrementally vacuums under an
+interrupt deadline. Structural corruption closes the process's handle and
+leaves a durable request; a later exclusive-lease open idempotently quarantines
+the database, WAL and shared-memory files and records unresolved durable state
+in the fresh store.
+
 2026-09-16 — **SDK resume restores block-form human prompts.**
 Historical user rows containing text and images now retain their provider
 message unchanged and enter the shared fold as replayed prompts. Canonical
