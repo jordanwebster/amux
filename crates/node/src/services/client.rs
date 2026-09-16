@@ -1572,7 +1572,7 @@ fn subscribe_agents_snapshot_complete() -> wire::SubscribeAgentsResponse {
     wire::SubscribeAgentsResponse {
         event: Some(wire::subscribe_agents_response::Event::SnapshotComplete(
             wire::SnapshotComplete {
-                host_id: Vec::new(),
+                host_id: Uuid::nil().as_bytes().to_vec(),
                 through_revision: 0,
             },
         )),

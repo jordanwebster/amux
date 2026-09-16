@@ -1083,7 +1083,9 @@ mod tests {
         let first = stream.next().await.unwrap().unwrap();
         assert!(matches!(
             first.event,
-            Some(wire::subscribe_agent_events_response::Event::HostInventory(_))
+            Some(wire::subscribe_agent_events_response::Event::HostInventory(
+                _
+            ))
         ));
         let complete = stream.next().await.unwrap().unwrap();
         assert!(matches!(
