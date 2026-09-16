@@ -1133,11 +1133,11 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
         agent["host"] = identity["daemon"]
         agent["directory"] = here
     by_id = {agent["id"]: agent for agent in remembered}
-    # An agent unable to continue comes first. Finished and other work share
-    # one recency list below it.
+    # One recency list: an agent unable to continue is not pinned, it sits
+    # where its last activity puts it and says on its row what it wants.
     expected = [f"home.row.{agent['id']}" for agent in (
-        by_id[running["fix-login"]["agent_id"]],
         by_id[running["port-the-parser"]["agent_id"]],
+        by_id[running["fix-login"]["agent_id"]],
         by_id[running["chase-the-flake"]["agent_id"]],
         by_id[running["release-notes"]["agent_id"]],
         by_id[running["trim-the-fixtures"]["agent_id"]],
@@ -1236,11 +1236,12 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
         """What the row says out loud about how long ago it last did anything."""
         return next((part for part in (row["label"] or "").split(", ")
                      if part.endswith(" ago")), "never said")
-    # The request that cannot continue on its own is pinned above the recency
-    # list; a finished result stays with the rest of the completed work.
-    waiting = [(row["value"], age(row)) for row in rows(before)[:1]]
+    # The request that cannot continue on its own takes its place by recency
+    # and says what it is; a finished result stays with the completed work.
+    waiting = [(row["value"], age(row)) for row in rows(before)
+               if row["identifier"] == expected[1]]
     journey.expect(waiting == [("Needs permission, remembered", "6m ago")],
-                   f"the blocked request is not pinned at the top: {waiting}")
+                   f"the blocked request does not say what it is where it stands: {waiting}")
     day_old = next(row for row in rows(before) if row["identifier"] == expected[5])
     journey.expect(age(day_old) == "1d ago",
                    f"the agent that has not moved in a day reads {age(day_old)!r}")
@@ -1252,7 +1253,7 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
     journey.expect(first_frame is not None,
                    f"no first frame was marked: {[mark['signpost'] for mark in marks]}")
     journey.say(f"before reaching anything: {len(rows(before))} remembered rows, "
-                f"{waiting[0][1]} at the top, {subtitle!r}, "
+                f"the blocked one {waiting[0][1]}, {subtitle!r}, "
                 f"nothing spinning, first frame "
                 f"{first_frame['sinceProcessStart'] * 1000:.0f} ms after the process started")
 
@@ -1365,23 +1366,22 @@ def home(journey: Journey, udid: str, ready: dict) -> None:
                                       f"rows")
     journey.expect((named(nothing, "home") or {}).get("value") == "signed-out",
                    "the unsigned empty-home launch retained a usable account")
-    # A phone with nothing on it is offered the thing that works without an
-    # account first — pairing with a machine on this network — and signing in
-    # beside it, so the empty screen names both ways out of it.
-    for element in ("home.empty.firstRun", "home.empty.explain", "home.empty.pair",
+    # A phone with nothing on it says how pairing is done — a code typed for a
+    # machine this phone has found, or one scanned — rather than offering a
+    # button for no machine, and offers signing in beside it.
+    for element in ("home.empty.firstRun", "home.empty.explain", "home.empty.howToPair",
                     "home.empty.signIn"):
         journey.expect(named(nothing, element) is not None,
                        f"the empty home is missing {element}: "
                        f"{[e['identifier'] for e in nothing['elements']]}")
-    journey.expect(named(nothing, "home.empty.pair").get("label") == "Pair a Host",
-                   f"the unsigned empty home offers "
-                   f"{named(nothing, 'home.empty.pair').get('label')!r} rather than pairing")
-    journey.expect(named(nothing, "home.empty.signIn").get("label") == "Sign In",
+    journey.expect(named(nothing, "home.empty.pair") is None,
+                   "the unsigned empty home offers a Pair button for no machine")
+    journey.expect((named(nothing, "home.empty.signIn") or {}).get("label") == "Sign In",
                    "the unsigned empty home did not offer Sign In")
     journey.say(f"a phone that remembers nothing shows the home empty: "
-                f"{named(nothing, 'home.empty.firstRun')['value']!r}, with "
-                f"{named(nothing, 'home.empty.pair')['label']!r} ahead of "
-                f"{named(nothing, 'home.empty.signIn')['label']!r}")
+                f"{(named(nothing, 'home.empty.firstRun') or {}).get('value')!r}, saying how "
+                f"to pair ahead of "
+                f"{(named(nothing, 'home.empty.signIn') or {}).get('label')!r}")
 
     # MARK: Five — the drawer, and coming back to the fleet.
     seed()

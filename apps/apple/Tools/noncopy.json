@@ -528,7 +528,7 @@
       {"literal": "\"Devices\"", "context": "case devices = \"Devices\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"an event is one tagged variant, got \\(container.allKeys)\"", "context": "debugDescription: \"an event is one tagged variant, got \\(container.allKeys)\"))", "reason": "Decoder or invariant diagnostic retained for debugging; not displayed by a view.", "count": 1},
       {"literal": "\"display_name\"", "context": "case displayName = \"display_name\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
-      {"literal": "\"last_activity\"", "context": "case lastActivity = \"last_activity\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
+      {"literal": "\"last_activity\"", "context": "case lastActivity = \"last_activity\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"s\"", "context": "var parts = [\"\\(files) file\\(files == 1 ? \"\" : \"s\")\", \"+\\(insertions) \\u{2212}\\(deletions)\"]", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\" · \"", "context": "return parts.joined(separator: \" · \")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"host_id\"", "context": "case hostId = \"host_id\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 2},
@@ -1748,8 +1748,7 @@
       {"literal": "\"failed\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"interrupted\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"provider-error\"", "context": "let warning = [\"denied\", \"failed\", \"interrupted\", \"provider-error\"].contains(kind)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"transcript.exploration\"", "context": "\"transcript.exploration\", label: \"\\(counts), \\(anchor)\",", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1},
-      {"literal": "\"transcript.prompt.sending\"", "context": ".identified(\"transcript.prompt.sending\", value: \"Sending\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
+      {"literal": "\"transcript.exploration\"", "context": "\"transcript.exploration\", label: \"\\(counts), \\(anchor)\",", "reason": "Protocol field, enum tag, resource path or stable driving identifier; preserve its exact spelling.", "count": 1}
     ],
     "apps/apple/Packages/AmuxShell/Sources/AmuxShell/ConversationRecording.swift": [
       {"literal": "\"drawer\"", "context": "public static let drawer = \"drawer\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}

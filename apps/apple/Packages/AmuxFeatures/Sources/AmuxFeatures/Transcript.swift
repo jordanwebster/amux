@@ -89,20 +89,44 @@ struct PendingTranscriptFeed: View {
 
     var body: some View {
         ForEach(model.unacknowledged) { pending in
-            VStack(alignment: .trailing, spacing: 4) {
-                PromptSurface(text: pending.text)
-                // The one thing a pending prompt says that a confirmed one
-                // does not, in the quietest words there are. The composer
-                // under it keeps its keyboard and holds its button, so this
-                // line is where the wait is stated.
-                Text("Sending")
-                    .designFont(.caption, design)
-                    .foregroundStyle(design.inkFaint.color)
-                    .identified("transcript.prompt.sending", value: "Sending")
-            }
-            .padding(.bottom, 15)
-            .padding(.horizontal, design.metrics.gutter)
+            PendingPrompt(text: pending.text)
+                .padding(.bottom, 15)
+                .padding(.horizontal, design.metrics.gutter)
         }
+    }
+}
+
+/// A prompt this phone has sent and the host has not echoed yet.
+///
+/// It is the same bubble as the confirmed prompt. What it adds is a quiet
+/// "Sending" under it, and only once the wait is long enough to notice: most
+/// echoes arrive within a few frames, and a caption that flashed on and off
+/// for those would draw the eye to nothing. The caption is drawn over the gap
+/// under the bubble rather than laid out beside it, so it neither moves the
+/// feed when it appears nor costs the frame the message is first drawn in.
+private struct PendingPrompt: View {
+    @Environment(\.design) private var design
+    let text: String
+    @State private var waited = false
+
+    /// How long a send has to be on its way before it says so.
+    private static let patience = Duration.milliseconds(600)
+
+    var body: some View {
+        PromptSurface(text: text)
+            .overlay(alignment: .bottomTrailing) {
+                if waited {
+                    Text("Sending")
+                        .designFont(.caption, design)
+                        .foregroundStyle(design.inkFaint.color)
+                        .alignmentGuide(.bottom) { $0[.top] - 2 }
+                        .transition(.opacity)
+                }
+            }
+            .task {
+                try? await Task.sleep(for: Self.patience)
+                waited = true
+            }
     }
 }
 

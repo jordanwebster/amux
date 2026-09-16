@@ -751,9 +751,17 @@ private struct ConversationComposerBox: View {
         ComposerBox(
             state: state, agent: agent, provider: model.provider,
             draft: Bindable(model).draft, dictation: model.dictation) { action in
+                // A card opened from the footer grows above the box, and with
+                // the keyboard still up from the last message there is no
+                // conversation left to see or to press to put it away. The
+                // keyboard comes back with the next tap in the field.
                 switch action {
-                case .attach: showing = showing == .plus ? nil : .plus
-                case .openSettings: showing = showing == .settings ? nil : .settings
+                case .attach:
+                    if showing != .plus { Keyboard.putDown() }
+                    showing = showing == .plus ? nil : .plus
+                case .openSettings:
+                    if showing != .settings { Keyboard.putDown() }
+                    showing = showing == .settings ? nil : .settings
                 default: break
                 }
                 actions(action)

@@ -320,12 +320,10 @@ public struct Agent: Codable, Sendable, Equatable, Identifiable {
     public var readonly: Bool
     public var args: [String]
     public var createdAt: Date
-    /// When the machine last saw this agent do anything, by its own clock.
-    ///
-    /// The host dates activity as it happens, so this is true for an agent
-    /// this phone has never opened, and neither opening one nor replaying its
-    /// history moves it.
-    public var lastActivity: Date
+    // The record's `last_activity` is deliberately not read here. The card
+    // around it carries the same fact as `AgentCard.lastActivity`, already
+    // reconciled with the live stream, and every timestamp decoded is a
+    // measurable share of confirming a fleet.
     public var parent: AgentParent?
     public var workingOn: WorkingOn?
 
@@ -339,17 +337,14 @@ public struct Agent: Codable, Sendable, Equatable, Identifiable {
         case readonly
         case args
         case createdAt = "created_at"
-        case lastActivity = "last_activity"
         case parent
         case workingOn = "working_on"
     }
 
-    /// A missing `lastActivity` is the creation time: an agent nobody has seen
-    /// do anything was last active when it started.
     public init(
         id: AgentId, hostId: HostId, name: String?, command: String, workingDir: String,
         kind: AgentKind, readonly: Bool = false, args: [String] = [], createdAt: Date,
-        lastActivity: Date? = nil, parent: AgentParent? = nil, workingOn: WorkingOn? = nil
+        parent: AgentParent? = nil, workingOn: WorkingOn? = nil
     ) {
         self.id = id
         self.hostId = hostId
@@ -360,7 +355,6 @@ public struct Agent: Codable, Sendable, Equatable, Identifiable {
         self.readonly = readonly
         self.args = args
         self.createdAt = createdAt
-        self.lastActivity = lastActivity ?? createdAt
         self.parent = parent
         self.workingOn = workingOn
     }

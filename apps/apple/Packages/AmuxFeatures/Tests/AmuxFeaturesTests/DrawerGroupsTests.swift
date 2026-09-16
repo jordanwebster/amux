@@ -17,8 +17,7 @@ final class DrawerGroupsTests: XCTestCase {
                 id: AgentId(UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d",
                                                     number))!),
                 hostId: host, name: name, command: "provider", workingDir: "/work/\(name)",
-                kind: .claude(driver: .pty), createdAt: now.addingTimeInterval(-86_400 * 7),
-                lastActivity: now.addingTimeInterval(-60 * minutesAgo)),
+                kind: .claude(driver: .pty), createdAt: now.addingTimeInterval(-86_400 * 7)),
             displayName: name, attention: attention, phase: .running,
             lastActivity: now.addingTimeInterval(-60 * minutesAgo))
     }

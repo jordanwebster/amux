@@ -164,7 +164,7 @@ public final class FleetStore {
         guard cards[agent.id] == nil else { return }
         cards[agent.id] = AgentCard(
             agent: agent, displayName: agent.name ?? agent.command,
-            attention: .idle, phase: .running, lastActivity: agent.lastActivity)
+            attention: .idle, phase: .running, lastActivity: agent.createdAt)
         reconcileOrder()
         rebuild()
     }

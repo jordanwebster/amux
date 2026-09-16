@@ -1,3 +1,15 @@
+2026-09-16 — **Settling the papercut pass against the journeys and the perf
+budget.** The home journey expected the pinned "Needs you" row first. It now
+expects the single recency list, and the empty home to say how to pair instead
+of showing a Pair button. Because the composer now keeps its keyboard through a
+send, a card opened from its footer (plus, model and effort) covered the whole
+conversation. Opening one now puts the keyboard down. The echo measurement found
+the "Sending" line added about a third of a millisecond to the frame a sent
+message first appears in. That line now appears only after 0.6 s, drawn over the
+gap under the bubble so it does not move the feed. Swift also stopped decoding
+the agent record's new `last_activity`: the card already carries the reconciled
+time, and one more timestamp per agent was measurable when confirming a fleet.
+
 2026-09-16 — **A pass over the phone's papercuts.** A batch of small iPhone
 fixes from using the app day to day. The Agents home is one list ordered by last
 activity, with no "Needs you" section. A row that needs you has an accent dot
@@ -17,7 +29,8 @@ header, agent rows and drawer write where an agent runs the same way: the
 shortened path first (`~/s/amux`), then the host without `.local`. Tapping the
 header shows the full host, path and address. A send no longer swaps the composer
 for a "Cannot send" card while the message is in flight. The composer stays, with
-its keyboard up, and holds its button, and the pending prompt says "Sending".
+its keyboard up, and holds its button. A prompt that waits more than 0.6 s
+for the host shows "Sending".
 When the host sends a pending prompt back, it is replaced in the same frame. The
 transcript no longer scrolls to the bottom when the latest row is already
 visible. Glass is now only on small controls. Composer, cards, menus and home
