@@ -9,7 +9,7 @@ use model::{
 };
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
-use crate::db::map_sqlite_error;
+use crate::db::{admit_growth, map_sqlite_error};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FleetChange {
@@ -44,9 +44,16 @@ pub(crate) fn apply(
     delta: FleetDelta,
     now: DateTime<Utc>,
 ) -> Result<FleetChange, StoreError> {
+    let growth = postcard::to_allocvec(&delta)
+        .map_err(|_| StoreError::Io)?
+        .len();
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_sqlite_error)?;
+    admit_growth(
+        &transaction,
+        u64::try_from(growth).map_err(|_| StoreError::DiskFull)?,
+    )?;
     check_generation(&transaction, generations)?;
     let changed = match delta {
         FleetDelta::Host { host, revision } => apply_host(&transaction, &host, revision, now)?,

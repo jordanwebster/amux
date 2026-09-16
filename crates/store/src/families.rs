@@ -1,7 +1,7 @@
 use fold::ProviderFold;
 
 pub const FLEET_SHAPE: u32 = 2;
-pub const CHAT_SHAPE: u32 = 2;
+pub const CHAT_SHAPE: u32 = 3;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Migration {
@@ -192,7 +192,8 @@ CREATE TABLE chat_state (
     content_revision INTEGER NOT NULL,
     segment_high_water INTEGER NOT NULL,
     previous_through INTEGER,
-    needs_baseline INTEGER NOT NULL
+    needs_baseline INTEGER NOT NULL,
+    retiring INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE chat_head (
     agent_id TEXT PRIMARY KEY,

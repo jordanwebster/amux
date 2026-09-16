@@ -1,3 +1,13 @@
+2026-09-16 — **The shared store enforces its cache and disk budgets.**
+Bounded maintenance now evicts old transcript pages behind a monotonic,
+positioned boundary, collapses excess empty segments, and reports when durable
+or pinned data prevents the store returning to its target size. Alias or
+tombstone overflow atomically retires the affected cache without resetting its
+fence. All writes preflight physical growth near the disk reserve; durable view
+state uses FULL synchronization and quarantine gating, while data-version
+polling and readable transcript dumps expose changes and stored history to
+clients and diagnostics.
+
 2026-09-16 — **Chats resume from canonical SQLite windows.**
 The shared store now loads one bounded transcript window with its continuation
 head, fleet standing, progress, redirects, positioned gap markers and paging

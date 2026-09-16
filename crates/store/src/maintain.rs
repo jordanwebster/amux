@@ -5,7 +5,10 @@ use std::time::{Duration, Instant};
 use fold::StoreError;
 use rusqlite::Connection;
 
-use crate::db::{is_interrupted, map_sqlite_error, quote_identifier};
+use crate::chat;
+use crate::db::{
+    STORE_TARGET_BYTES, is_interrupted, map_sqlite_error, quote_identifier, store_bytes,
+};
 use crate::families::REGISTRY;
 
 const ABSENT_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
@@ -28,6 +31,10 @@ impl Default for Budget {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MaintenanceReport {
     pub absent_agents_deleted: usize,
+    pub entries_evicted: usize,
+    pub empty_segments_collapsed: usize,
+    pub retirement_rows_deleted: usize,
+    pub retirements_completed: usize,
     pub retired_rows_deleted: usize,
     pub retired_tables_dropped: usize,
     pub quick_check_complete: bool,
@@ -70,6 +77,20 @@ fn run_inner(
     started: Instant,
 ) -> Result<MaintenanceReport, StoreError> {
     let mut report = MaintenanceReport::default();
+    match chat::maintain(connection) {
+        Ok(chat) => {
+            report.entries_evicted = chat.entries_evicted;
+            report.empty_segments_collapsed = chat.empty_segments_collapsed;
+            report.retirement_rows_deleted = chat.retirement_rows_deleted;
+            report.retirements_completed = chat.retirements_completed;
+        }
+        Err(StoreError::Io) if expired(started, deadline) => {
+            report.deadline_reached = true;
+            return Ok(report);
+        }
+        Err(StoreError::Busy) => return Err(StoreError::Busy),
+        Err(error) => return Err(error),
+    }
     if budget.retired_rows_per_table > 0 {
         match sweep_absent_agents(connection, budget.retired_rows_per_table) {
             Ok(deleted) => report.absent_agents_deleted = deleted,
@@ -172,6 +193,9 @@ fn run_inner(
             }
             Err(error) => return Err(map_sqlite_error(error)),
         }
+    }
+    if store_bytes(connection)? > STORE_TARGET_BYTES {
+        return Err(StoreError::OverBudget);
     }
     Ok(report)
 }

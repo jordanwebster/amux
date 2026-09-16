@@ -12,6 +12,16 @@ use crate::quarantine::PendingQuarantine;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const JOURNAL_SIZE_LIMIT: i64 = 16 * 1024 * 1024;
 
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub(crate) const STORE_TARGET_BYTES: u64 = 200 * 1024 * 1024;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+pub(crate) const STORE_TARGET_BYTES: u64 = 500 * 1024 * 1024;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub(crate) const STORE_CEILING_BYTES: u64 = 250 * 1024 * 1024;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+pub(crate) const STORE_CEILING_BYTES: u64 = 600 * 1024 * 1024;
+pub(crate) const STORE_RESERVE_BYTES: u64 = 32 * 1024 * 1024;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LibraryReport {
     pub version: String,
@@ -199,7 +209,7 @@ fn initialize_once(
     Ok(generations)
 }
 
-fn set_synchronous(connection: &Connection, value: &str) -> Result<(), StoreError> {
+pub(crate) fn set_synchronous(connection: &Connection, value: &str) -> Result<(), StoreError> {
     connection
         .execute_batch(&format!("PRAGMA synchronous={value}"))
         .map_err(map_sqlite_error)?;
@@ -211,6 +221,40 @@ fn set_synchronous(connection: &Connection, value: &str) -> Result<(), StoreErro
         return Err(StoreError::UnsupportedFormat);
     }
     Ok(())
+}
+
+pub(crate) fn store_bytes(connection: &Connection) -> Result<u64, StoreError> {
+    let mut statement = connection
+        .prepare("PRAGMA database_list")
+        .map_err(map_sqlite_error)?;
+    let paths = statement
+        .query_map([], |row| row.get::<_, String>(2))
+        .map_err(map_sqlite_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sqlite_error)?;
+    let mut total = 0u64;
+    for path in paths.into_iter().filter(|path| !path.is_empty()) {
+        for candidate in [path.clone(), format!("{path}-wal"), format!("{path}-shm")] {
+            match std::fs::metadata(candidate) {
+                Ok(metadata) => total = total.saturating_add(metadata.len()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    return Err(StoreError::Permission);
+                }
+                Err(_) => return Err(StoreError::Io),
+            }
+        }
+    }
+    Ok(total)
+}
+
+pub(crate) fn admit_growth(connection: &Connection, growth: u64) -> Result<(), StoreError> {
+    let admission = STORE_CEILING_BYTES.saturating_sub(STORE_RESERVE_BYTES);
+    if store_bytes(connection)?.saturating_add(growth) >= admission {
+        Err(StoreError::DiskFull)
+    } else {
+        Ok(())
+    }
 }
 
 fn bootstrap_meta(transaction: &Transaction<'_>) -> Result<(), StoreError> {

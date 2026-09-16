@@ -11,7 +11,7 @@ use fold::{
 use model::{AgentId, Progress, StructuredProtocol, Summary, SummaryEnvelope};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 
-use crate::db::map_sqlite_error;
+use crate::db::{admit_growth, map_sqlite_error};
 use crate::families::{CHAT_SHAPE, CLAUDE_PTY, CLAUDE_SDK, CODEX, FLEET_SHAPE};
 
 #[derive(Clone, Copy)]
@@ -66,6 +66,7 @@ struct ChatState {
     segment_high_water: SegmentId,
     previous_through: Option<u64>,
     needs_baseline: Option<BaselineReason>,
+    retiring: bool,
 }
 
 #[derive(Clone)]
@@ -79,6 +80,336 @@ struct HeadMeta {
     entry_version: u32,
     observed_at: DateTime<Utc>,
     summary: Vec<u8>,
+}
+
+const METADATA_BUDGET_BYTES: u64 = 256 * 1024;
+pub(crate) const ENTRIES_PER_CHAT: usize = 50_000;
+const EVICTION_ROWS: usize = 1_000;
+const EVICTION_BYTES: u64 = 8 * 1024 * 1024;
+pub(crate) const EMPTY_SEGMENTS_PER_CHAT: usize = 64;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Maintenance {
+    pub entries_evicted: usize,
+    pub empty_segments_collapsed: usize,
+    pub retirement_rows_deleted: usize,
+    pub retirements_completed: usize,
+}
+
+pub(crate) fn maintain(connection: &Connection) -> Result<Maintenance, StoreError> {
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_sqlite_error)?;
+    let mut report = Maintenance::default();
+    let mut budget = EvictionBudget {
+        rows: EVICTION_ROWS,
+        bytes: EVICTION_BYTES,
+    };
+    let retirement = reclaim_retiring_chats(&transaction, &mut budget)?;
+    report.retirement_rows_deleted = retirement.0;
+    report.retirements_completed = retirement.1;
+    for tables in [
+        ProviderTables::for_fold::<fold::claude_pty::ClaudeFold>(),
+        ProviderTables::for_fold::<fold::claude_sdk::ClaudeSdkFold>(),
+        ProviderTables::for_fold::<fold::codex::CodexFold>(),
+    ] {
+        report.entries_evicted += evict_provider_pages(&transaction, tables, &mut budget)?;
+        if budget.rows == 0 || budget.bytes == 0 {
+            break;
+        }
+    }
+    report.empty_segments_collapsed = collapse_empty_segments(&transaction)?;
+    transaction.commit().map_err(map_sqlite_error)?;
+    Ok(report)
+}
+
+struct EvictionBudget {
+    rows: usize,
+    bytes: u64,
+}
+
+fn reclaim_retiring_chats(
+    transaction: &Transaction<'_>,
+    budget: &mut EvictionBudget,
+) -> Result<(usize, usize), StoreError> {
+    let mut statement = transaction
+        .prepare("SELECT agent_id FROM chat_state WHERE retiring=1 ORDER BY agent_id")
+        .map_err(map_sqlite_error)?;
+    let agents = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(map_sqlite_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sqlite_error)?;
+    let mut deleted = 0usize;
+    let mut completed = 0usize;
+    for agent in agents {
+        for tables in [
+            ProviderTables::for_fold::<fold::claude_pty::ClaudeFold>(),
+            ProviderTables::for_fold::<fold::claude_sdk::ClaudeSdkFold>(),
+            ProviderTables::for_fold::<fold::codex::CodexFold>(),
+        ] {
+            for (table, size) in [
+                (tables.entry, "bytes"),
+                (tables.alias, "length(from_key)+length(to_key)+32"),
+                (tables.tombstone, "length(key)+24"),
+            ] {
+                deleted += delete_retirement_rows(transaction, table, size, &agent, budget)?;
+                if budget.rows == 0 || budget.bytes == 0 {
+                    break;
+                }
+            }
+            if budget.rows == 0 || budget.bytes == 0 {
+                break;
+            }
+        }
+        let pending = [
+            "claude_pty_entry",
+            "claude_pty_alias",
+            "claude_pty_tombstone",
+            "claude_sdk_entry",
+            "claude_sdk_alias",
+            "claude_sdk_tombstone",
+            "codex_entry",
+            "codex_alias",
+            "codex_tombstone",
+        ]
+        .into_iter()
+        .try_fold(false, |present, table| {
+            if present {
+                return Ok(true);
+            }
+            transaction
+                .query_row(
+                    &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE agent_id=?1)"),
+                    [&agent],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(map_sqlite_error)
+        })?;
+        if !pending {
+            transaction
+                .execute(
+                    "UPDATE chat_state SET retiring=0 WHERE agent_id=?1",
+                    [&agent],
+                )
+                .map_err(map_sqlite_error)?;
+            completed += 1;
+        }
+        if budget.rows == 0 || budget.bytes == 0 {
+            break;
+        }
+    }
+    Ok((deleted, completed))
+}
+
+fn delete_retirement_rows(
+    transaction: &Transaction<'_>,
+    table: &str,
+    size_expression: &str,
+    agent: &str,
+    budget: &mut EvictionBudget,
+) -> Result<usize, StoreError> {
+    if budget.rows == 0 || budget.bytes == 0 {
+        return Ok(0);
+    }
+    let mut statement = transaction
+        .prepare(&format!(
+            "SELECT rowid,{size_expression} FROM {table} WHERE agent_id=?1 ORDER BY rowid LIMIT ?2"
+        ))
+        .map_err(map_sqlite_error)?;
+    let candidates = statement
+        .query_map(
+            params![agent, i64::try_from(budget.rows).unwrap_or(i64::MAX)],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .map_err(map_sqlite_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sqlite_error)?;
+    let mut selected = Vec::new();
+    let mut bytes = 0u64;
+    for (rowid, size) in candidates {
+        let size = u64::try_from(size).map_err(|_| StoreError::Corrupt)?;
+        if !selected.is_empty() && bytes.saturating_add(size) > budget.bytes {
+            break;
+        }
+        bytes = bytes.saturating_add(size);
+        selected.push(rowid);
+    }
+    for rowid in &selected {
+        transaction
+            .execute(&format!("DELETE FROM {table} WHERE rowid=?1"), [rowid])
+            .map_err(map_sqlite_error)?;
+    }
+    budget.rows = budget.rows.saturating_sub(selected.len());
+    budget.bytes = budget.bytes.saturating_sub(bytes);
+    Ok(selected.len())
+}
+
+fn evict_provider_pages(
+    transaction: &Transaction<'_>,
+    tables: ProviderTables,
+    budget: &mut EvictionBudget,
+) -> Result<usize, StoreError> {
+    let mut counts = transaction
+        .prepare(&format!(
+            "SELECT agent_id,COUNT(*) FROM {} GROUP BY agent_id HAVING COUNT(*)>?1 ORDER BY agent_id",
+            tables.entry
+        ))
+        .map_err(map_sqlite_error)?;
+    let over = counts
+        .query_map([ENTRIES_PER_CHAT as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(map_sqlite_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sqlite_error)?;
+    let mut total = 0usize;
+    for (agent, count) in over {
+        if budget.rows == 0 || budget.bytes == 0 {
+            break;
+        }
+        let excess = usize::try_from(count)
+            .map_err(|_| StoreError::Corrupt)?
+            .saturating_sub(ENTRIES_PER_CHAT)
+            .min(budget.rows);
+        let mut oldest = transaction
+            .prepare(&format!(
+                "SELECT key,segment,order_seq,order_slot,bytes FROM {} WHERE agent_id=?1
+                 ORDER BY segment,order_seq,order_slot,key LIMIT ?2",
+                tables.entry
+            ))
+            .map_err(map_sqlite_error)?;
+        let candidates = oldest
+            .query_map(
+                params![agent, i64::try_from(excess).unwrap_or(i64::MAX)],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .map_err(map_sqlite_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sqlite_error)?;
+        let mut selected = Vec::new();
+        let mut bytes = 0u64;
+        for candidate in candidates {
+            let row_bytes = u64::try_from(candidate.4).map_err(|_| StoreError::Corrupt)?;
+            if !selected.is_empty() && bytes.saturating_add(row_bytes) > budget.bytes {
+                break;
+            }
+            bytes = bytes.saturating_add(row_bytes);
+            selected.push(candidate);
+        }
+        let Some(frontier) = selected.last().cloned() else {
+            continue;
+        };
+        for (key, _, _, _, _) in &selected {
+            transaction
+                .execute(
+                    &format!("DELETE FROM {} WHERE agent_id=?1 AND key=?2", tables.entry),
+                    params![agent, key],
+                )
+                .map_err(map_sqlite_error)?;
+            transaction
+                .execute(
+                    &format!(
+                        "DELETE FROM {} WHERE agent_id=?1 AND (from_key=?2 OR to_key=?2)",
+                        tables.alias
+                    ),
+                    params![agent, key],
+                )
+                .map_err(map_sqlite_error)?;
+        }
+        transaction
+            .execute(
+                "INSERT INTO eviction_frontier(agent_id,segment,order_seq,order_slot,key)
+                 VALUES (?1,?2,?3,?4,?5)
+                 ON CONFLICT(agent_id) DO UPDATE SET segment=excluded.segment,
+                    order_seq=excluded.order_seq,order_slot=excluded.order_slot,key=excluded.key
+                 WHERE (excluded.segment,excluded.order_seq,excluded.order_slot,excluded.key) >
+                       (eviction_frontier.segment,eviction_frontier.order_seq,
+                        eviction_frontier.order_slot,eviction_frontier.key)",
+                params![agent, frontier.1, frontier.2, frontier.3, frontier.0],
+            )
+            .map_err(map_sqlite_error)?;
+        transaction
+            .execute(
+                "UPDATE chat_state SET content_revision=content_revision+1 WHERE agent_id=?1",
+                [&agent],
+            )
+            .map_err(map_sqlite_error)?;
+        total += selected.len();
+        budget.rows = budget.rows.saturating_sub(selected.len());
+        budget.bytes = budget.bytes.saturating_sub(bytes);
+    }
+    Ok(total)
+}
+
+fn collapse_empty_segments(transaction: &Transaction<'_>) -> Result<usize, StoreError> {
+    let mut agents = transaction
+        .prepare(
+            "SELECT agent_id,COUNT(*) FROM segment
+             WHERE first_seq IS NULL AND last_seq IS NOT NULL
+             GROUP BY agent_id HAVING COUNT(*)>?1 ORDER BY agent_id",
+        )
+        .map_err(map_sqlite_error)?;
+    let over = agents
+        .query_map([EMPTY_SEGMENTS_PER_CHAT as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(map_sqlite_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sqlite_error)?;
+    let mut collapsed = 0usize;
+    for (agent, count) in over {
+        let remove = usize::try_from(count)
+            .map_err(|_| StoreError::Corrupt)?
+            .saturating_sub(EMPTY_SEGMENTS_PER_CHAT);
+        let mut statement = transaction
+            .prepare(
+                "SELECT id FROM segment WHERE agent_id=?1 AND first_seq IS NULL AND last_seq IS NOT NULL
+                 ORDER BY id LIMIT ?2",
+            )
+            .map_err(map_sqlite_error)?;
+        let ids = statement
+            .query_map(
+                params![agent, i64::try_from(remove).unwrap_or(i64::MAX)],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sqlite_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_sqlite_error)?;
+        for id in &ids {
+            transaction
+                .execute(
+                    "DELETE FROM segment WHERE agent_id=?1 AND id=?2",
+                    params![agent, id],
+                )
+                .map_err(map_sqlite_error)?;
+        }
+        if !ids.is_empty() {
+            transaction
+                .execute(
+                    "UPDATE segment SET baseline_kind=4,baseline_seq=NULL,predecessor=NULL
+                     WHERE agent_id=?1 AND id=(SELECT MIN(id) FROM segment WHERE agent_id=?1)",
+                    [&agent],
+                )
+                .map_err(map_sqlite_error)?;
+            transaction
+                .execute(
+                    "UPDATE chat_state SET content_revision=content_revision+1 WHERE agent_id=?1",
+                    [&agent],
+                )
+                .map_err(map_sqlite_error)?;
+        }
+        collapsed += ids.len();
+    }
+    Ok(collapsed)
 }
 
 pub(crate) fn load<F: ProviderFold>(
@@ -105,6 +436,9 @@ pub(crate) fn page<F: ProviderFold>(
         return Err(StoreError::GenerationMoved);
     }
     let state = load_state(&transaction, agent)?;
+    if state.retiring {
+        return Err(StoreError::OverBudget);
+    }
     if state.content_revision != token.content_revision {
         return Err(StoreError::GenerationMoved);
     }
@@ -183,15 +517,36 @@ fn commit_inner<F: ProviderFold>(
     mutations: Vec<Mutation<F::Entry>>,
     interest: WindowInterest,
 ) -> Result<CommitOutcome<F>, StoreError> {
+    let estimated_growth = postcard::to_allocvec(&mutations)
+        .map_err(|_| StoreError::Io)?
+        .len()
+        .saturating_add(
+            postcard::to_allocvec(&head.tip)
+                .map_err(|_| StoreError::Io)?
+                .len(),
+        )
+        .saturating_add(
+            postcard::to_allocvec(&head.summary)
+                .map_err(|_| StoreError::Io)?
+                .len(),
+        );
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_sqlite_error)?;
+    admit_growth(
+        &transaction,
+        u64::try_from(estimated_growth).map_err(|_| StoreError::DiskFull)?,
+    )?;
     let tables = ProviderTables::for_fold::<F>();
     let current_generations = checked_generations(&transaction, tables)?;
     if current_generations != generations {
         return Err(StoreError::GenerationMoved);
     }
     let state = load_state(&transaction, agent)?;
+    if state.retiring {
+        transaction.commit().map_err(map_sqlite_error)?;
+        return Ok(CommitOutcome::Refused(StoreError::OverBudget));
+    }
     let present = load_head_meta(&transaction, agent)?;
     refuse_newer_head::<F>(present.as_ref(), tables)?;
     let matches_expected = expected_matches(
@@ -245,6 +600,23 @@ fn commit_inner<F: ProviderFold>(
         .transpose()?
         .into_iter()
         .collect();
+
+    if metadata_bytes(&transaction, tables, agent)? > METADATA_BUDGET_BYTES {
+        retire_chat(
+            &transaction,
+            tables,
+            agent,
+            state,
+            transition
+                .as_ref()
+                .map_or(state.segment_high_water.max(head.segment), |value| {
+                    value.successor
+                }),
+            head.through,
+        )?;
+        transaction.commit().map_err(map_sqlite_error)?;
+        return Ok(CommitOutcome::Refused(StoreError::OverBudget));
+    }
 
     let tip = encode(&head.tip)?;
     let summary = encode(&head.summary)?;
@@ -316,6 +688,7 @@ fn commit_inner<F: ProviderFold>(
             segment_high_water: high_water,
             previous_through: Some(head.through),
             needs_baseline: None,
+            retiring: false,
         },
     )?;
     transaction.commit().map_err(map_sqlite_error)?;
@@ -362,6 +735,10 @@ fn invalidate_inner<F: ProviderFold>(
         return Err(StoreError::GenerationMoved);
     }
     let state = load_state(&transaction, agent)?;
+    if state.retiring {
+        transaction.commit().map_err(map_sqlite_error)?;
+        return Ok(CommitOutcome::Refused(StoreError::OverBudget));
+    }
     let present = load_head_meta(&transaction, agent)?;
     refuse_newer_head::<F>(present.as_ref(), tables)?;
     if state.needs_baseline.is_some()
@@ -438,6 +815,7 @@ fn invalidate_inner<F: ProviderFold>(
             segment_high_water: state.segment_high_water,
             previous_through: Some(head.through),
             needs_baseline: Some(reason),
+            retiring: false,
         },
     )?;
     let boundary_at = BoundaryAt {
@@ -476,13 +854,17 @@ fn load_in_transaction<F: ProviderFold>(
             None => HeadState::None,
         },
     };
-    let mut window_entries = load_newest_entries::<F::Entry>(
-        transaction,
-        tables,
-        agent,
-        window.max_entries,
-        window.max_bytes,
-    )?;
+    let mut window_entries = if state.retiring {
+        Vec::new()
+    } else {
+        load_newest_entries::<F::Entry>(
+            transaction,
+            tables,
+            agent,
+            window.max_entries,
+            window.max_bytes,
+        )?
+    };
     window_entries.sort_by_key(position);
     let first_page = window_entries
         .first()
@@ -539,11 +921,15 @@ fn load_in_transaction<F: ProviderFold>(
         .iter()
         .map(|entry| entry.key.clone())
         .collect::<BTreeSet<_>>();
-    let aliases = load_redirects(transaction, tables, agent)?
-        .into_values()
-        .filter(|redirect| window_keys.contains(&redirect.to))
-        .map(|redirect| (redirect.from, redirect.to))
-        .collect();
+    let aliases = if state.retiring {
+        Vec::new()
+    } else {
+        load_redirects(transaction, tables, agent)?
+            .into_values()
+            .filter(|redirect| window_keys.contains(&redirect.to))
+            .map(|redirect| (redirect.from, redirect.to))
+            .collect()
+    };
     let host = load_host_summary(transaction, agent)?;
     let progress = load_progress(transaction, agent)?;
 
@@ -669,7 +1055,7 @@ fn checked_generations(
 fn load_state(transaction: &Transaction<'_>, agent: AgentId) -> Result<ChatState, StoreError> {
     transaction
         .query_row(
-            "SELECT revision,content_revision,segment_high_water,previous_through,needs_baseline
+            "SELECT revision,content_revision,segment_high_water,previous_through,needs_baseline,retiring
              FROM chat_state WHERE agent_id=?1",
             [agent.to_string()],
             |row| {
@@ -679,18 +1065,20 @@ fn load_state(transaction: &Transaction<'_>, agent: AgentId) -> Result<ChatState
                     row.get::<_, i64>(2)?,
                     row.get::<_, Option<i64>>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             },
         )
         .optional()
         .map_err(map_sqlite_error)?
-        .map(|(fence, content, high_water, previous, reason)| {
+        .map(|(fence, content, high_water, previous, reason, retiring)| {
             Ok(ChatState {
                 fence: from_i64(fence)?,
                 content_revision: from_i64(content)?,
                 segment_high_water: u32::try_from(high_water).map_err(|_| StoreError::Corrupt)?,
                 previous_through: previous.map(from_i64).transpose()?,
                 needs_baseline: decode_reason(reason)?,
+                retiring: retiring != 0,
             })
         })
         .transpose()
@@ -761,13 +1149,13 @@ fn write_state(
     transaction
         .execute(
             "INSERT INTO chat_state(
-                agent_id,revision,content_revision,segment_high_water,previous_through,needs_baseline)
-             VALUES (?1,?2,?3,?4,?5,?6)
+                agent_id,revision,content_revision,segment_high_water,previous_through,needs_baseline,retiring)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)
              ON CONFLICT(agent_id) DO UPDATE SET
                 revision=excluded.revision,content_revision=excluded.content_revision,
                 segment_high_water=excluded.segment_high_water,
                 previous_through=excluded.previous_through,
-                needs_baseline=excluded.needs_baseline",
+                needs_baseline=excluded.needs_baseline,retiring=excluded.retiring",
             params![
                 agent.to_string(),
                 to_i64(state.fence)?,
@@ -775,6 +1163,7 @@ fn write_state(
                 i64::from(state.segment_high_water),
                 state.previous_through.map(to_i64).transpose()?,
                 encode_reason(state.needs_baseline),
+                i64::from(state.retiring),
             ],
         )
         .map_err(map_sqlite_error)?;
@@ -962,17 +1351,98 @@ fn load_boundaries(
         let segment = u32::try_from(segment).map_err(|_| StoreError::Corrupt)?;
         match kind {
             0 => {}
-            1..=3 => boundaries.push(boundary_for_segment(
+            1..=4 => boundaries.push(boundary_for_segment(
                 transaction,
                 tables,
                 agent,
                 segment,
-                baseline_kind_boundary(kind).expect("validated boundary kind"),
+                if kind == 4 {
+                    Boundary::Evicted
+                } else {
+                    baseline_kind_boundary(kind).expect("validated boundary kind")
+                },
             )?),
             _ => return Err(StoreError::Corrupt),
         }
     }
+    if let Some(evicted) = eviction_boundary(transaction, tables, agent)?
+        && evicted.segment >= first_segment
+        && evicted.segment <= last_segment
+        && !boundaries.contains(&evicted)
+    {
+        boundaries.push(evicted);
+        boundaries.sort_by(|left, right| {
+            (left.segment, &left.before).cmp(&(right.segment, &right.before))
+        });
+    }
     Ok(boundaries)
+}
+
+fn eviction_boundary(
+    transaction: &Transaction<'_>,
+    tables: ProviderTables,
+    agent: AgentId,
+) -> Result<Option<BoundaryAt>, StoreError> {
+    let frontier = transaction
+        .query_row(
+            "SELECT segment,order_seq,order_slot,key FROM eviction_frontier WHERE agent_id=?1",
+            [agent.to_string()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sqlite_error)?;
+    let Some((segment, seq, slot, key)) = frontier else {
+        return Ok(None);
+    };
+    let segment = u32::try_from(segment).map_err(|_| StoreError::Corrupt)?;
+    let next = transaction
+        .query_row(
+            &format!(
+                "SELECT segment,order_seq,order_slot,key FROM {} WHERE agent_id=?1 AND
+                 (segment > ?2 OR (segment=?2 AND order_seq>?3) OR
+                  (segment=?2 AND order_seq=?3 AND order_slot>?4) OR
+                  (segment=?2 AND order_seq=?3 AND order_slot=?4 AND key>?5))
+                 ORDER BY segment,order_seq,order_slot,key LIMIT 1",
+                tables.entry
+            ),
+            params![agent.to_string(), i64::from(segment), seq, slot, key],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sqlite_error)?;
+    let (boundary_segment, before) = match next {
+        Some((next_segment, next_seq, next_slot, next_key)) => (
+            u32::try_from(next_segment).map_err(|_| StoreError::Corrupt)?,
+            Some((
+                Order::new(
+                    from_i64(next_seq)?,
+                    u16::try_from(next_slot).map_err(|_| StoreError::Corrupt)?,
+                )
+                .map_err(|_| StoreError::Corrupt)?,
+                EntryKey::new(next_key).map_err(|_| StoreError::Corrupt)?,
+            )),
+        ),
+        None => (segment, None),
+    };
+    Ok(Some(BoundaryAt {
+        segment: boundary_segment,
+        before,
+        boundary: Boundary::Evicted,
+    }))
 }
 
 fn boundary_for_segment(
@@ -1616,6 +2086,88 @@ impl<'a, E: Entry> Materializer<'a, E> {
         }
         Ok(false)
     }
+}
+
+fn metadata_bytes(
+    transaction: &Transaction<'_>,
+    tables: ProviderTables,
+    agent: AgentId,
+) -> Result<u64, StoreError> {
+    let alias_sql = format!(
+        "SELECT COALESCE(SUM(length(from_key)+length(to_key)+32),0) FROM {} WHERE agent_id=?1",
+        tables.alias
+    );
+    let tombstone_sql = format!(
+        "SELECT COALESCE(SUM(length(key)+24),0) FROM {} WHERE agent_id=?1",
+        tables.tombstone
+    );
+    let alias: i64 = transaction
+        .query_row(&alias_sql, [agent.to_string()], |row| row.get(0))
+        .map_err(map_sqlite_error)?;
+    let tombstone: i64 = transaction
+        .query_row(&tombstone_sql, [agent.to_string()], |row| row.get(0))
+        .map_err(map_sqlite_error)?;
+    u64::try_from(alias.saturating_add(tombstone)).map_err(|_| StoreError::Corrupt)
+}
+
+fn retire_chat(
+    transaction: &Transaction<'_>,
+    tables: ProviderTables,
+    agent: AgentId,
+    state: ChatState,
+    high_water: SegmentId,
+    through: u64,
+) -> Result<(), StoreError> {
+    let agent_id = agent;
+    let agent = agent.to_string();
+    transaction
+        .execute(
+            &format!("DELETE FROM {} WHERE agent_id=?1", tables.tip),
+            [&agent],
+        )
+        .map_err(map_sqlite_error)?;
+    transaction
+        .execute("DELETE FROM chat_head WHERE agent_id=?1", [&agent])
+        .map_err(map_sqlite_error)?;
+    transaction
+        .execute("DELETE FROM segment WHERE agent_id=?1", [&agent])
+        .map_err(map_sqlite_error)?;
+    transaction
+        .execute("DELETE FROM eviction_frontier WHERE agent_id=?1", [&agent])
+        .map_err(map_sqlite_error)?;
+    if high_water > 0 {
+        transaction
+            .execute(
+                "INSERT INTO segment(agent_id,id,predecessor,baseline_kind,baseline_seq,
+                    first_seq,last_seq,closed_by,opened_at)
+                 VALUES (?1,?2,NULL,4,NULL,NULL,?3,4,?4)",
+                params![
+                    &agent,
+                    i64::from(high_water),
+                    to_i64(through)?,
+                    Utc::now().timestamp_millis()
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+    }
+    write_state(
+        transaction,
+        agent_id,
+        ChatState {
+            fence: state
+                .fence
+                .checked_add(1)
+                .ok_or(StoreError::UnsupportedFormat)?,
+            content_revision: state
+                .content_revision
+                .checked_add(1)
+                .ok_or(StoreError::UnsupportedFormat)?,
+            segment_high_water: high_water,
+            previous_through: Some(through),
+            needs_baseline: Some(BaselineReason::Corrupt),
+            retiring: true,
+        },
+    )
 }
 
 fn interested<E>(interest: &WindowInterest, stored: &Stored<E>) -> bool {

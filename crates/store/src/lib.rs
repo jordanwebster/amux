@@ -8,10 +8,12 @@
 
 mod chat;
 mod db;
+mod dump;
 mod families;
 mod fleet;
 mod maintain;
 mod quarantine;
+mod view;
 
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -226,6 +228,58 @@ impl Store {
         reply_receiver
             .recv()
             .unwrap_or(CommitOutcome::Refused(StoreError::Corrupt))
+    }
+
+    pub async fn view_get(&self, kind: &str, key: &str) -> Result<Option<String>, StoreError> {
+        let kind = kind.to_owned();
+        let key = key.to_owned();
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.send_run(move |connection| {
+            let result = view::get(connection, &kind, &key);
+            let corrupt = matches!(result, Err(StoreError::Corrupt));
+            let _ = reply_sender.send(result);
+            corrupt
+        })?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
+    pub async fn view_set(&self, kind: &str, key: &str, value: &str) -> Result<(), StoreError> {
+        let kind = kind.to_owned();
+        let key = key.to_owned();
+        let value = value.to_owned();
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.send_run(move |connection| {
+            let result = view::set(connection, &kind, &key, &value);
+            let corrupt = matches!(result, Err(StoreError::Corrupt));
+            let _ = reply_sender.send(result);
+            corrupt
+        })?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
+    pub async fn data_version(&self) -> Result<u64, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.send_run(move |connection| {
+            let result = connection
+                .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+                .map_err(db::map_sqlite_error)
+                .and_then(|value| u64::try_from(value).map_err(|_| StoreError::Corrupt));
+            let corrupt = matches!(result, Err(StoreError::Corrupt));
+            let _ = reply_sender.send(result);
+            corrupt
+        })?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
+    pub async fn dump(&self, agent: AgentId) -> Result<String, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.send_run(move |connection| {
+            let result = dump::render(connection, agent);
+            let corrupt = matches!(result, Err(StoreError::Corrupt));
+            let _ = reply_sender.send(result);
+            corrupt
+        })?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
     }
 
     fn send_run(
