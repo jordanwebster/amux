@@ -1,3 +1,11 @@
+2026-09-16 — **The delivery-key allowance is proved by folded rows.**
+The identity gate now materializes representative creating forms and every
+recorded provider corpus, classifies each delivery-keyed entry from its folded
+shape, and rejects any fallback outside the published list. Claude PTY rows
+missing identities required by their typed form, plus SDK results and agent
+messages missing their required ids, now use the existing unrecognized class;
+they can no longer masquerade as valid provider entries.
+
 2026-09-16 — **Claude SDK rows assign every emitted entry a unique slot.**
 Prompts assembled from content arrays now use the first text or image block's
 slot, so earlier unknown blocks cannot collide with them when the row has no

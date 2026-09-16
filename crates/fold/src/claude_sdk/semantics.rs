@@ -1312,10 +1312,13 @@ impl ClaudeSdkFold {
         row: &Value,
         mutations: &mut Vec<Mutation<ClaudeSdkEntry>>,
     ) {
-        let uuid = id(row, "uuid");
-        let key = namespaced_or_delivery("turn", uuid.as_deref(), seq, 0);
+        let Some(uuid) = id(row, "uuid") else {
+            mutations.push(unrecognized(seq, 0, revision, "result", "missing uuid"));
+            return;
+        };
+        let key = namespaced_or_delivery("turn", Some(&uuid), seq, 0);
         let body = ClaudeSdkBody::Turn {
-            uuid: uuid.map(bounded_id),
+            uuid: Some(bounded_id(uuid)),
             outcome: string(row, "subtype").unwrap_or_else(|| "unknown".into()),
             is_error: row.get("is_error").and_then(Value::as_bool) == Some(true),
             stop_reason: string(row, "stop_reason"),
@@ -1469,11 +1472,17 @@ impl ClaudeSdkFold {
             ));
             return;
         };
-        let envelope_id = id(envelope, "id");
-        let key = envelope_id
-            .as_deref()
-            .map(|id| namespaced_key("env", id, seq, 0))
-            .unwrap_or_else(|| delivery_key(seq, 0));
+        let Some(envelope_id) = id(envelope, "id") else {
+            mutations.push(unrecognized(
+                seq,
+                0,
+                revision,
+                "amux.claude_sdk.message",
+                "missing envelope id",
+            ));
+            return;
+        };
+        let key = namespaced_key("env", &envelope_id, seq, 0);
         let from = envelope.get("from").unwrap_or(&Value::Null);
         let sender = if from.get("type").and_then(Value::as_str) == Some("human") {
             "human".into()
@@ -1484,7 +1493,7 @@ impl ClaudeSdkFold {
                 .unwrap_or_else(|| "unknown".into())
         };
         let body = ClaudeSdkBody::AgentMessage {
-            id: envelope_id.map(bounded_id),
+            id: Some(bounded_id(envelope_id)),
             context: id(envelope, "context").map(bounded_id),
             from: sender,
             kind: AgentMessageKind::read(envelope.get("kind").and_then(Value::as_str)),

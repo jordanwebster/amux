@@ -1205,11 +1205,15 @@ impl PostcardSafe for CodexFold {}
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use chrono::TimeZone;
     use serde_json::json;
 
     use super::*;
-    use crate::MutationOracle;
+    use crate::claude_pty::{ClaudeEntryKind, ClaudeFold};
+    use crate::claude_sdk::{ClaudeSdkEntryKind, ClaudeSdkFold};
+    use crate::{Entry, MutationOracle};
 
     const CORPORA: &[(&str, &str)] = &[
         (
@@ -1271,6 +1275,128 @@ mod tests {
             .into_iter()
             .map(|entry| entry.key.into_string())
             .collect()
+    }
+
+    fn fold_pty_delivery_variants(input: &[Vec<u8>], observed: &mut BTreeSet<&'static str>) {
+        let mut fold = ClaudeFold::default();
+        fold.begin(1, Baseline::Start);
+        let mut oracle = MutationOracle::default();
+        for (index, payload) in input.iter().enumerate() {
+            let seq = index as u64 + 1;
+            let changes = fold.apply(Input::Row {
+                seq,
+                published_at: at(seq),
+                activity_at: Some(at(seq)),
+                historical: false,
+                payload,
+            });
+            oracle.apply_changes(&changes).unwrap();
+        }
+        for stored in oracle
+            .entries()
+            .into_iter()
+            .filter(|stored| stored.key.as_str().starts_with("d:"))
+        {
+            let variant = match stored.entry.entry_kind() {
+                Some(ClaudeEntryKind::Message) => "claude_pty.message_without_message_id",
+                Some(ClaudeEntryKind::Unrecognized) => "claude_pty.unrecognized_without_uuid",
+                other => panic!(
+                    "unnamed Claude PTY delivery-key fallback {:?} at {}",
+                    other, stored.key
+                ),
+            };
+            observed.insert(variant);
+        }
+    }
+
+    fn fold_sdk_delivery_variants(input: &[Vec<u8>], observed: &mut BTreeSet<&'static str>) {
+        let mut fold = ClaudeSdkFold::default();
+        fold.begin(1, Baseline::Start);
+        let mut oracle = MutationOracle::default();
+        for (index, payload) in input.iter().enumerate() {
+            let seq = index as u64 + 1;
+            let changes = fold.apply(Input::Row {
+                seq,
+                published_at: at(seq),
+                activity_at: Some(at(seq)),
+                historical: false,
+                payload,
+            });
+            oracle.apply_changes(&changes).unwrap();
+        }
+        for stored in oracle
+            .entries()
+            .into_iter()
+            .filter(|stored| stored.key.as_str().starts_with("d:"))
+        {
+            let variant = match stored.entry.entry_kind() {
+                Some(ClaudeSdkEntryKind::Prompt) => "claude_sdk.prompt_without_uuid",
+                Some(ClaudeSdkEntryKind::Message | ClaudeSdkEntryKind::Thinking)
+                    if stored.entry.is_incomplete() =>
+                {
+                    "claude_sdk.stream_block_without_message_start"
+                }
+                Some(
+                    ClaudeSdkEntryKind::Compaction
+                    | ClaudeSdkEntryKind::AgentMessage
+                    | ClaudeSdkEntryKind::Status
+                    | ClaudeSdkEntryKind::Boundary
+                    | ClaudeSdkEntryKind::Unrecognized,
+                ) => "claude_sdk.occurrence_without_uuid",
+                other => panic!(
+                    "unnamed Claude SDK delivery-key fallback {:?} at {}",
+                    other, stored.key
+                ),
+            };
+            observed.insert(variant);
+        }
+    }
+
+    fn fold_codex_delivery_variants(input: &[Vec<u8>], observed: &mut BTreeSet<&'static str>) {
+        let (_, oracle) = fold_rows(input);
+        for stored in oracle
+            .entries()
+            .into_iter()
+            .filter(|stored| stored.key.as_str().starts_with("d:"))
+        {
+            let variant = match (stored.entry.entry_kind(), stored.entry.body()) {
+                (Some(CodexEntryKind::Work), Some(CodexBody::Snapshot { turn_id: None, .. })) => {
+                    "codex.turn_snapshot_without_turn_id"
+                }
+                (Some(CodexEntryKind::Work), Some(CodexBody::Item { item_id, item_type }))
+                    if item_id.is_empty() && item_type.ends_with("requestUserInput") =>
+                {
+                    "codex.user_input_without_item_id"
+                }
+                (Some(CodexEntryKind::McpStartup), _) => "codex.mcp_startup",
+                (
+                    Some(CodexEntryKind::AgentMessage),
+                    Some(CodexBody::AgentMessage { id: None, .. }),
+                ) => "codex.agent_message_without_envelope_id",
+                (Some(CodexEntryKind::Boundary), Some(CodexBody::Boundary { kind }))
+                    if kind == "resumed" =>
+                {
+                    "codex.resumed_boundary"
+                }
+                (Some(CodexEntryKind::Boundary), Some(CodexBody::Boundary { kind }))
+                    if kind == "ready" =>
+                {
+                    "codex.ready_boundary"
+                }
+                (Some(CodexEntryKind::Boundary), Some(CodexBody::Boundary { kind }))
+                    if kind == "gap" =>
+                {
+                    "codex.gap_boundary"
+                }
+                (Some(CodexEntryKind::Error), _) => "codex.error",
+                (Some(CodexEntryKind::Unrecognized), _) => "codex.unrecognized",
+                other => panic!(
+                    "unnamed Codex delivery-key fallback {:?} at {}",
+                    other, stored.key
+                ),
+            };
+            observed.insert(variant);
+        }
     }
 
     #[test]
@@ -1453,31 +1579,151 @@ mod tests {
 
     #[test]
     fn delivery_keyed_variant_list_is_complete() {
-        let complete = [
+        let declared = [
             crate::claude_pty::DELIVERY_KEYED_VARIANTS,
             crate::claude_sdk::DELIVERY_KEYED_VARIANTS,
             DELIVERY_KEYED_VARIANTS,
         ]
         .concat();
-        println!("delivery-keyed variants:\n{}", complete.join("\n"));
-        assert_eq!(
-            complete,
-            [
-                "claude_pty.message_without_message_id",
-                "claude_pty.unrecognized_without_uuid",
-                "claude_sdk.prompt_without_uuid",
-                "claude_sdk.stream_block_without_message_start",
-                "claude_sdk.occurrence_without_uuid",
-                "codex.turn_snapshot_without_turn_id",
-                "codex.user_input_without_item_id",
-                "codex.mcp_startup",
-                "codex.agent_message_without_envelope_id",
-                "codex.resumed_boundary",
-                "codex.ready_boundary",
-                "codex.gap_boundary",
-                "codex.error",
-                "codex.unrecognized",
-            ]
+        let mut observed = BTreeSet::new();
+
+        let pty_cases = [
+            vec![
+                json!({"type":"assistant","uuid":"a","message":{"content":[{"type":"text","text":"hello"}]}}),
+            ],
+            vec![json!({"type":"future"})],
+            vec![
+                json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{}}]}}),
+            ],
+            vec![json!({"type":"system","subtype":"turn_duration","durationMs":1})],
+            vec![json!({"type":"system","subtype":"compact_boundary"})],
+            vec![json!({"type":"assistant","isApiErrorMessage":true,"message":{"content":[]}})],
+            vec![json!({"type":"user","message":{"content":"hello"}})],
+            vec![
+                json!({"type":"assistant","message":{"content":[{"type":"thinking","thinking":"why"}]}}),
+            ],
+            vec![
+                json!({"type":"user","uuid":"u","message":{"content":"hello"}}),
+                json!({"type":"assistant","uuid":"a","message":{"id":"m","content":[{"type":"text","text":"answer"},{"type":"thinking","thinking":"why"},{"type":"tool_use","id":"t","name":"Read","input":{}}]}}),
+                json!({"type":"user","uuid":"result","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}),
+                json!({"type":"user","uuid":"interrupt","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}),
+                json!({"type":"system","uuid":"turn","subtype":"turn_duration","durationMs":1}),
+                json!({"type":"system","uuid":"compact","subtype":"compact_boundary"}),
+                json!({"type":"user","uuid":"summary","isCompactSummary":true,"message":{"content":"summary"}}),
+                json!({"type":"user","uuid":"task","origin":{"kind":"task-notification"},"message":{"content":"done"}}),
+                json!({"type":"user","uuid":"agent","message":{"content":"<agent-message from=\"worker/local\" kind=\"message\">hello</agent-message>"}}),
+                json!({"type":"assistant","uuid":"error","isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"bad"}]}}),
+                json!({"type":"future","uuid":"raw"}),
+            ],
+        ];
+        for rows in pty_cases {
+            let rows = rows
+                .into_iter()
+                .map(|row| serde_json::to_vec(&row).unwrap())
+                .collect::<Vec<_>>();
+            fold_pty_delivery_variants(&rows, &mut observed);
+        }
+        for (_, corpus) in [
+            (
+                "pong",
+                include_str!("../../../claude-specs/fixtures/claude-pty/pong.rows.jsonl"),
+            ),
+            (
+                "tools",
+                include_str!("../../../claude-specs/fixtures/claude-pty/tools.rows.jsonl"),
+            ),
+            (
+                "interrupt",
+                include_str!("../../../claude-specs/fixtures/claude-pty/interrupt.rows.jsonl"),
+            ),
+            (
+                "compact",
+                include_str!("../../../claude-specs/fixtures/claude-pty/compact.rows.jsonl"),
+            ),
+        ] {
+            fold_pty_delivery_variants(&rows(corpus), &mut observed);
+        }
+
+        let sdk_cases = [
+            vec![json!({"type":"user","message":{"content":"hello"}})],
+            vec![
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"hello"}}}),
+            ],
+            vec![json!({"type":"future"})],
+            vec![json!({"type":"result","subtype":"success","result":"done"})],
+            vec![
+                json!({"type":"amux.claude_sdk.message","envelope":{"from":{"type":"human"},"text":"hello"}}),
+            ],
+            vec![
+                json!({"type":"user","uuid":"u","message":{"content":"hello"}}),
+                json!({"type":"stream_event","event":{"type":"message_start","message":{"id":"m"}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"answer"}}}),
+                json!({"type":"assistant","uuid":"a","message":{"id":"m","content":[{"type":"text","text":"answer"},{"type":"thinking","thinking":"why"},{"type":"tool_use","id":"t","name":"Read","input":{}}]}}),
+                json!({"type":"user","uuid":"tool-result","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"ok"}]}}),
+                json!({"type":"system","subtype":"task_started","task_id":"task","status":"running"}),
+                json!({"type":"result","uuid":"r","subtype":"success","result":"done"}),
+                json!({"type":"amux.claude_sdk.message","envelope":{"id":"e","from":{"type":"human"},"text":"hello"}}),
+                json!({"type":"user","uuid":"agent-user","message":{"content":"<agent-message from=\"worker/local\" kind=\"message\">hello</agent-message>"}}),
+                json!({"type":"system","subtype":"compact_boundary","uuid":"compact","compact_metadata":{}}),
+                json!({"type":"system","subtype":"status","status":"compacting","uuid":"status"}),
+                json!({"type":"amux.claude_sdk.ready","uuid":"ready","session_id":"session"}),
+                json!({"type":"future","uuid":"raw"}),
+            ],
+        ];
+        for rows in sdk_cases {
+            let rows = rows
+                .into_iter()
+                .map(|row| serde_json::to_vec(&row).unwrap())
+                .collect::<Vec<_>>();
+            fold_sdk_delivery_variants(&rows, &mut observed);
+        }
+        fold_sdk_delivery_variants(
+            &rows(include_str!(
+                "../../../ui-state/tests/spec/fixtures/claude_sdk/converse.rows.jsonl"
+            )),
+            &mut observed,
         );
+
+        let codex_cases = [
+            vec![json!({"type":"turn/diff/updated","diff":"x"})],
+            vec![json!({"type":"item/tool/requestUserInput","questions":[]})],
+            vec![json!({"type":"mcpServer/startupStatus/updated","name":"x","status":"ready"})],
+            vec![json!({"type":"amux.codex_message","envelope":{"from":"human","text":"hello"}})],
+            vec![json!({"type":"amux.codex_ready","resumed":true})],
+            vec![
+                json!({"type":"amux.codex_ready"}),
+                json!({"type":"amux.codex_ready"}),
+            ],
+            vec![json!({"type":"amux.codex_gap","reason":"gap"})],
+            vec![json!({"type":"error","message":"failed"})],
+            vec![json!({"type":"future"})],
+            vec![
+                json!({"type":"item/completed","item":{"id":"u","type":"userMessage","content":[{"type":"text","text":"hello"}]}}),
+                json!({"type":"item/completed","item":{"id":"m","type":"agentMessage","text":"answer"}}),
+                json!({"type":"item/completed","item":{"id":"reason","type":"reasoning","text":"why"}}),
+                json!({"type":"item/completed","item":{"id":"compact","type":"contextCompaction"}}),
+                json!({"type":"turn/plan/updated","turnId":"turn","plan":[]}),
+                json!({"type":"item/tool/call","callId":"tool","tool":"send","arguments":{}}),
+                json!({"type":"amux.codex_approval_required","item_id":"tool","request_id":"request"}),
+                json!({"type":"amux.codex_approval_resolved","item_id":"tool","request_id":"request","resolution":"answered"}),
+                json!({"type":"amux.input_result","input_id":[1,2,3],"ok":{"text":"steer"}}),
+                json!({"type":"turn/completed","turn":{"id":"turn","status":"completed"}}),
+                json!({"type":"amux.codex_message","envelope":{"id":"env","from":"human","text":"hello"}}),
+            ],
+        ];
+        for rows in codex_cases {
+            let rows = rows
+                .into_iter()
+                .map(|row| serde_json::to_vec(&row).unwrap())
+                .collect::<Vec<_>>();
+            fold_codex_delivery_variants(&rows, &mut observed);
+        }
+        for (_, corpus) in CORPORA {
+            fold_codex_delivery_variants(&rows(corpus), &mut observed);
+        }
+
+        let declared_set = declared.iter().copied().collect::<BTreeSet<_>>();
+        assert_eq!(observed, declared_set);
+        println!("delivery-keyed variants:\n{}", declared.join("\n"));
     }
 }

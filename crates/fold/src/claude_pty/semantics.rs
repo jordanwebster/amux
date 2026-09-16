@@ -446,8 +446,12 @@ impl ClaudeFold {
         let uuid = string(row, "uuid");
         let content = row.pointer("/message/content");
         if let Some(text) = content.and_then(Value::as_str) {
+            let Some(uuid) = uuid.as_deref() else {
+                mutations.push(unrecognized(row, seq, 0, revision, "user", "missing uuid"));
+                return;
+            };
             if let Some(message) = facts::inbound_message(text) {
-                let key = namespaced_or_delivery("user", uuid.as_deref(), seq, 0);
+                let key = namespaced_or_delivery("user", Some(uuid), seq, 0);
                 let body = ClaudeBody::AgentMessage {
                     id: message.id,
                     context: message.context,
@@ -492,7 +496,7 @@ impl ClaudeFold {
                     },
                 )
             };
-            let key = namespaced_or_delivery("user", uuid.as_deref(), seq, 0);
+            let key = namespaced_or_delivery("user", Some(uuid), seq, 0);
             mutations.push(upsert(
                 key,
                 seq,
@@ -544,7 +548,18 @@ impl ClaudeFold {
                         )
                     ) =>
                 {
-                    let key = namespaced_or_delivery("user", uuid.as_deref(), seq, slot);
+                    let Some(uuid) = uuid.as_deref() else {
+                        mutations.push(unrecognized(
+                            row,
+                            seq,
+                            slot,
+                            revision,
+                            "user",
+                            "interruption without uuid",
+                        ));
+                        continue;
+                    };
+                    let key = namespaced_or_delivery("user", Some(uuid), seq, slot);
                     mutations.push(upsert(
                         key,
                         seq,
@@ -557,8 +572,8 @@ impl ClaudeFold {
                             revision,
                         ),
                     ));
-                    if let Some(id) = uuid.as_deref() {
-                        let turn = namespaced_or_delivery("turn", Some(id), seq, slot);
+                    {
+                        let turn = namespaced_or_delivery("turn", Some(uuid), seq, slot);
                         let ms = match (self.prompt_at, activity_at) {
                             (Some(start), Some(end)) => (end - start).num_milliseconds().max(0),
                             _ => 0,
@@ -634,7 +649,18 @@ impl ClaudeFold {
     ) {
         let uuid = string(row, "uuid");
         if row.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true) {
-            let key = namespaced_or_delivery("err", uuid.as_deref(), seq, 0);
+            let Some(uuid) = uuid.as_deref() else {
+                mutations.push(unrecognized(
+                    row,
+                    seq,
+                    0,
+                    revision,
+                    "assistant",
+                    "api error without uuid",
+                ));
+                return;
+            };
+            let key = namespaced_or_delivery("err", Some(uuid), seq, 0);
             let text = row
                 .pointer("/message/content")
                 .and_then(Value::as_array)
@@ -730,7 +756,18 @@ impl ClaudeFold {
                     }
                 }
                 Some("thinking" | "redacted_thinking") => {
-                    let key = namespaced_slot_or_delivery("think", uuid.as_deref(), seq, slot);
+                    let Some(uuid) = uuid.as_deref() else {
+                        mutations.push(unrecognized(
+                            row,
+                            seq,
+                            slot,
+                            revision,
+                            "assistant",
+                            "thinking block without uuid",
+                        ));
+                        continue;
+                    };
+                    let key = namespaced_slot_or_delivery("think", Some(uuid), seq, slot);
                     let duration_ms = match (self.previous_row_at, activity_at) {
                         (Some(previous), Some(at)) => {
                             Some((at - previous).num_milliseconds().max(0))
@@ -754,6 +791,7 @@ impl ClaudeFold {
                     seq,
                     slot,
                     revision,
+                    row,
                     (message_id.as_deref(), stop.is_some()),
                     block,
                     mutations,
@@ -825,6 +863,7 @@ impl ClaudeFold {
         seq: u64,
         slot: u16,
         revision: Revision,
+        row: &Value,
         message: (Option<&str>, bool),
         block: &Value,
         mutations: &mut Vec<Mutation<ClaudeEntry>>,
@@ -832,8 +871,19 @@ impl ClaudeFold {
         let id = string(block, "id");
         let name = string(block, "name");
         let input = block.get("input").unwrap_or(&Value::Null);
+        let Some(id) = id else {
+            mutations.push(unrecognized(
+                row,
+                seq,
+                slot,
+                revision,
+                "assistant",
+                "tool_use without id",
+            ));
+            return;
+        };
         if name.as_deref() == Some("TodoWrite")
-            && let (Some(id), Some(progress)) = (id.clone(), todo_progress(input))
+            && let Some(progress) = todo_progress(input)
         {
             if let Some(pending) = self
                 .pending_todos
@@ -849,11 +899,11 @@ impl ClaudeFold {
             }
             return;
         }
-        let key = namespaced_or_delivery("tool", id.as_deref(), seq, slot);
+        let key = namespaced_or_delivery("tool", Some(&id), seq, slot);
         let mut patch = partial(
             ClaudeEntryKind::Tool,
             ClaudeBody::Tool {
-                tool_use_id: id.clone().unwrap_or_default(),
+                tool_use_id: id.clone(),
             },
             None,
             revision,
@@ -865,18 +915,16 @@ impl ClaudeFold {
         patch.tool_input = Patch::set(JsonBytes(bounded_json(input, 64 * 1024)), revision);
         patch.message_final = Patch::set(message.1, revision);
         mutations.push(upsert(key.clone(), seq, slot, revision, patch));
-        if let Some(id) = id {
-            if let Some(tool) = self
-                .open_tools
-                .iter_mut()
-                .find(|(present, _, _)| present == &id)
-            {
-                tool.1 = key.clone();
-                tool.2 = message.0.map(str::to_owned);
-            } else {
-                self.open_tools
-                    .push((id, key.clone(), message.0.map(str::to_owned)));
-            }
+        if let Some(tool) = self
+            .open_tools
+            .iter_mut()
+            .find(|(present, _, _)| present == &id)
+        {
+            tool.1 = key.clone();
+            tool.2 = message.0.map(str::to_owned);
+        } else {
+            self.open_tools
+                .push((id, key.clone(), message.0.map(str::to_owned)));
         }
     }
 
@@ -957,7 +1005,18 @@ impl ClaudeFold {
         let uuid = string(row, "uuid");
         match row.get("subtype").and_then(Value::as_str) {
             Some("turn_duration") if row.get("durationMs").and_then(Value::as_u64).is_some() => {
-                let key = namespaced_or_delivery("turn", uuid.as_deref(), seq, 0);
+                let Some(uuid) = uuid.as_deref() else {
+                    mutations.push(unrecognized(
+                        row,
+                        seq,
+                        0,
+                        revision,
+                        "system",
+                        "turn_duration without uuid",
+                    ));
+                    return;
+                };
+                let key = namespaced_or_delivery("turn", Some(uuid), seq, 0);
                 let body = ClaudeBody::Turn {
                     duration_ms: row.get("durationMs").and_then(Value::as_u64).unwrap_or(0) as i64,
                     inferred: false,
@@ -990,7 +1049,18 @@ impl ClaudeFold {
                 self.prompt_at = None;
             }
             Some("compact_boundary") => {
-                let key = namespaced_or_delivery("sys", uuid.as_deref(), seq, 0);
+                let Some(uuid) = uuid.as_deref() else {
+                    mutations.push(unrecognized(
+                        row,
+                        seq,
+                        0,
+                        revision,
+                        "system",
+                        "compact_boundary without uuid",
+                    ));
+                    return;
+                };
+                let key = namespaced_or_delivery("sys", Some(uuid), seq, 0);
                 let meta = row.get("compactMetadata").unwrap_or(&Value::Null);
                 let body = ClaudeBody::Compaction {
                     trigger: string(meta, "trigger"),
@@ -1308,6 +1378,31 @@ fn upsert(
 
 fn delivery_key(seq: u64, slot: u16) -> EntryKey {
     EntryKey::new(format!("d:{seq}:{slot}")).expect("delivery key is bounded")
+}
+
+fn unrecognized(
+    row: &Value,
+    seq: u64,
+    slot: u16,
+    revision: Revision,
+    row_type: &str,
+    detail: &str,
+) -> Mutation<ClaudeEntry> {
+    upsert(
+        raw_key(row, seq, slot),
+        seq,
+        slot,
+        revision,
+        partial(
+            ClaudeEntryKind::Unrecognized,
+            ClaudeBody::Unrecognized {
+                row_type: Some(row_type.into()),
+                detail: Some(detail.into()),
+            },
+            None,
+            revision,
+        ),
+    )
 }
 
 fn namespaced_or_delivery(namespace: &str, id: Option<&str>, seq: u64, slot: u16) -> EntryKey {
