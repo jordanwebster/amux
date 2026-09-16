@@ -258,6 +258,31 @@ final class NewAgentTests: XCTestCase {
             .createAgent(host: studio, directory: "~/src/amux", name: "amux-3", agent: .claude))
     }
 
+    /// An agent the machine has just started holds its name before the
+    /// inventory lists it, and still holds it once the inventory does.
+    func testAJustStartedAgentsNameIsTakenBeforeTheFleetListsIt() throws {
+        let (stores, sent) = bundle()
+        let project = Project(path: "~/src/amux", name: "amux")
+        stores.startNewAgent(on: studio)
+        deliver(stores, sent, .repositories(
+            host: studio, recent: [project], repositories: [], roots: ["~/src"]))
+        XCTAssertTrue(stores.startAgent())
+        let started = Agent(
+            id: AgentId(UUID()), hostId: studio, name: "amux", command: "claude",
+            workingDir: "~/src/amux", kind: .claude(driver: .sdk),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        deliver(stores, sent, .agentCreated(started))
+
+        stores.startNewAgent(on: studio)
+        deliver(stores, sent, .repositories(
+            host: studio, recent: [project], repositories: [], roots: ["~/src"]))
+        XCTAssertEqual(stores.newAgent.name, "amux-2", "the name the machine just took was offered")
+
+        // A fleet that does not list it yet does not give the name back.
+        stores.apply([running(["atlas"], on: studio)])
+        XCTAssertEqual(stores.newAgent.name, "amux-2")
+    }
+
     /// Names are per machine: another machine's agents take nothing here.
     func testAnotherMachinesNamesAreNotTaken() {
         let (stores, sent) = bundle()

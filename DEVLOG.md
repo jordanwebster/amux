@@ -1,3 +1,10 @@
+2026-09-16 — **New Agent reserves a name as soon as the host accepts it.**
+New Agent suggested names by skipping those in the latest fleet. An agent the
+host had just started was not in that fleet until the next inventory update, so
+reopening New Agent on the same host suggested the same name, and the host
+refused it. A name the host accepts now counts as taken straight away. It stays
+taken even if a fleet update arrives that does not list the new agent yet.
+
 2026-09-16 — **A Codex resume no longer counts as activity.** When a Codex
 thread is resumed, after a daemon restart or when its link comes back, the
 app-server replays the thread's history before answering the resume. Those

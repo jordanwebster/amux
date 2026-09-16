@@ -103,6 +103,11 @@ public final class NewAgentStore {
     /// machine refuses a second agent under a name it already has, so the
     /// suggestion steps around them rather than walking into the refusal.
     private var taken: [HostId: Set<String>] = [:]
+    /// Agents this store started that the fleet has not listed yet. The
+    /// machine has the name the moment it answers, while the inventory that
+    /// says so can arrive later; a second agent started in between must not be
+    /// offered the same name.
+    private var startedUnlisted: [AgentId: Agent] = [:]
     /// A request is with the machine.
     public private(set) var starting = false
     /// What the machine said when it would not start the agent. One sentence,
@@ -271,8 +276,11 @@ public final class NewAgentStore {
             if result.op == awaitingListing { listed(result.outcome) }
             if result.op == awaitingCreate { started(result.outcome) }
         case .fleet(let fleet):
+            let listed = Set(fleet.agents.map(\.id))
+            startedUnlisted = startedUnlisted.filter { !listed.contains($0.key) }
             taken = Dictionary(grouping: fleet.agents, by: \.agent.hostId)
                 .mapValues { Set($0.map { $0.agent.name ?? $0.displayName }) }
+            for agent in startedUnlisted.values { remember(agent) }
         case .feed, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices,
              .attention, .cloudState, .unreadable:
             break
@@ -302,12 +310,19 @@ public final class NewAgentStore {
         }
     }
 
+    /// Holds an agent's name as taken on its machine.
+    private func remember(_ agent: Agent) {
+        taken[agent.hostId, default: []].insert(agent.name ?? agent.command)
+    }
+
     private func started(_ outcome: OpOutcome) {
         awaitingCreate = nil
         starting = false
         switch outcome {
         case .agentCreated(let agent):
             created = agent
+            startedUnlisted[agent.id] = agent
+            remember(agent)
         case .failed(let refusal):
             // The machine's own sentence where it wrote one, and the error it
             // named where it did not. A path a machine rejected is a fact only
