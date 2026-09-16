@@ -565,9 +565,17 @@ fn commit_inner<F: ProviderFold>(
         transaction.commit().map_err(map_sqlite_error)?;
         return Ok(CommitOutcome::Conflict(loaded));
     }
+    if !derivation_matches(state, present.as_ref(), &head, transition.as_ref()) {
+        let loaded = load_in_transaction::<F>(
+            &transaction,
+            agent,
+            WindowBudget::desktop(interest.view_epoch),
+        )?;
+        transaction.commit().map_err(map_sqlite_error)?;
+        return Ok(CommitOutcome::Conflict(loaded));
+    }
     validate_head::<F>(&head, tables)?;
     validate_mutations(&mutations, head.through)?;
-    validate_derivation(state, present.as_ref(), &head, transition.as_ref())?;
 
     apply_transition(
         &transaction,
@@ -757,13 +765,21 @@ fn invalidate_inner<F: ProviderFold>(
         transaction.commit().map_err(map_sqlite_error)?;
         return Ok(CommitOutcome::Committed(result));
     }
-    if !expected_matches(
-        expected,
-        state,
-        present.as_ref(),
-        F::TIP_VERSION,
-        F::ENTRY_VERSION,
-    ) {
+    let absent_matches_unusable = matches!(expected, ExpectedHead::Absent { fence } if fence == state.fence)
+        && present
+            .as_ref()
+            .map(|meta| load_head::<F>(&transaction, tables, agent, meta))
+            .transpose()?
+            .is_some_and(|head| matches!(head, HeadState::NeedsBaseline { .. }));
+    if !absent_matches_unusable
+        && !expected_matches(
+            expected,
+            state,
+            present.as_ref(),
+            F::TIP_VERSION,
+            F::ENTRY_VERSION,
+        )
+    {
         let loaded = load_in_transaction::<F>(&transaction, agent, WindowBudget::desktop(0))?;
         transaction.commit().map_err(map_sqlite_error)?;
         return Ok(CommitOutcome::Conflict(loaded));
@@ -1740,7 +1756,7 @@ impl<'a, E: Entry> Materializer<'a, E> {
         promote: Option<Promotion>,
     ) -> Result<(), StoreError> {
         if from == to {
-            return Err(StoreError::Corrupt);
+            return Err(StoreError::Invalid);
         }
         if let Some(present) = self.redirects.get(from).cloned() {
             if revision < present.revision {
@@ -1752,7 +1768,7 @@ impl<'a, E: Entry> Materializer<'a, E> {
                     self.touched.insert(self.resolve(to)?);
                     return Ok(());
                 }
-                return Err(StoreError::Corrupt);
+                return Err(StoreError::Invalid);
             }
             if present.to == *to {
                 let target = self.resolve(to)?;
@@ -1771,7 +1787,7 @@ impl<'a, E: Entry> Materializer<'a, E> {
         let source = self.resolve(from)?;
         let target = self.resolve(to)?;
         if source == target || self.path_contains(&target, &source)? {
-            return Err(StoreError::Corrupt);
+            return Err(StoreError::Invalid);
         }
         let source_entry = self.load_entry(&source)?;
         let target_entry = self.load_entry(&target)?;
@@ -2065,7 +2081,7 @@ impl<'a, E: Entry> Materializer<'a, E> {
         let mut seen = BTreeSet::new();
         while let Some(redirect) = self.redirects.get(&current) {
             if !seen.insert(current.clone()) {
-                return Err(StoreError::Corrupt);
+                return Err(StoreError::Invalid);
             }
             current.clone_from(&redirect.to);
         }
@@ -2077,7 +2093,7 @@ impl<'a, E: Entry> Materializer<'a, E> {
         let mut seen = BTreeSet::new();
         while let Some(redirect) = self.redirects.get(&current) {
             if !seen.insert(current.clone()) {
-                return Err(StoreError::Corrupt);
+                return Err(StoreError::Invalid);
             }
             if redirect.to == *wanted {
                 return Ok(true);
@@ -2236,7 +2252,7 @@ fn validate_mutations<E: Entry>(mutations: &[Mutation<E>], through: u64) -> Resu
     if valid {
         Ok(())
     } else {
-        Err(StoreError::Corrupt)
+        Err(StoreError::Invalid)
     }
 }
 
@@ -2259,27 +2275,23 @@ fn validate_head<F: ProviderFold>(
         return Err(StoreError::OverBudget);
     }
     if head.summary != head.tip.summary() {
-        return Err(StoreError::Corrupt);
+        return Err(StoreError::Invalid);
     }
     Ok(())
 }
 
-fn validate_derivation<F: ProviderFold>(
+fn derivation_matches<F: ProviderFold>(
     state: ChatState,
     present: Option<&HeadMeta>,
     head: &Head<F>,
     transition: Option<&SegmentTransition>,
-) -> Result<(), StoreError> {
+) -> bool {
     match transition {
-        None => {
-            let stored = present.ok_or(StoreError::Corrupt)?;
-            if head.segment != stored.segment
-                || head.baseline != stored.baseline
-                || head.through < stored.through
-            {
-                return Err(StoreError::Corrupt);
-            }
-        }
+        None => present.is_some_and(|stored| {
+            head.segment == stored.segment
+                && head.baseline == stored.baseline
+                && head.through >= stored.through
+        }),
         Some(transition) => {
             let expected_predecessor = present
                 .map(|stored| stored.segment)
@@ -2299,7 +2311,7 @@ fn validate_derivation<F: ProviderFold>(
                     .selected_from
                     .is_some_and(|first| first > transition.replay_through)
             {
-                return Err(StoreError::Corrupt);
+                return false;
             }
             let baseline_matches_cut = match transition.baseline {
                 Baseline::Start => {
@@ -2331,12 +2343,9 @@ fn validate_derivation<F: ProviderFold>(
                 }
                 None => true,
             };
-            if !baseline_matches_cut || !invalidation_matches {
-                return Err(StoreError::Corrupt);
-            }
+            baseline_matches_cut && invalidation_matches
         }
     }
-    Ok(())
 }
 
 fn apply_transition(
@@ -2365,7 +2374,7 @@ fn apply_transition(
             )
             .map_err(map_sqlite_error)?;
     } else if present.is_some() || state.segment_high_water != 0 {
-        return Err(StoreError::Corrupt);
+        return Err(StoreError::Invalid);
     }
     let (kind, sequence) = encode_baseline(transition.baseline)?;
     transaction
@@ -2493,7 +2502,7 @@ fn decode_promotion(value: Option<i64>) -> Result<Option<Promotion>, StoreError>
 fn merge_error(error: fold::MergeDefect) -> StoreError {
     match error {
         fold::MergeDefect::EntryOverBudget { .. } => StoreError::OverBudget,
-        _ => StoreError::Corrupt,
+        _ => StoreError::Invalid,
     }
 }
 
@@ -2506,7 +2515,7 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
 }
 
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, StoreError> {
-    postcard::from_bytes(bytes).map_err(|_| StoreError::Corrupt)
+    postcard::from_bytes(bytes).map_err(|_| StoreError::UnsupportedFormat)
 }
 
 fn to_i64(value: u64) -> Result<i64, StoreError> {

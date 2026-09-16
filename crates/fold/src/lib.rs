@@ -799,6 +799,7 @@ pub enum StoreError {
     DiskFull,
     Permission,
     Io,
+    Invalid,
     Corrupt,
     UnsupportedFormat,
     GenerationMoved,
@@ -813,6 +814,7 @@ impl fmt::Display for StoreError {
             Self::DiskFull => "store is full",
             Self::Permission => "store permission denied",
             Self::Io => "store I/O failed",
+            Self::Invalid => "store operation is invalid",
             Self::Corrupt => "store is corrupt",
             Self::UnsupportedFormat => "store format is newer or unsupported",
             Self::GenerationMoved => "store generation moved",
@@ -968,6 +970,7 @@ fieldless_enum_safe!(StoreError, value => match value {
     | StoreError::DiskFull
     | StoreError::Permission
     | StoreError::Io
+    | StoreError::Invalid
     | StoreError::Corrupt
     | StoreError::UnsupportedFormat
     | StoreError::GenerationMoved
@@ -2035,6 +2038,7 @@ mod tests {
             StoreError::DiskFull,
             StoreError::Permission,
             StoreError::Io,
+            StoreError::Invalid,
             StoreError::Corrupt,
             StoreError::UnsupportedFormat,
             StoreError::GenerationMoved,

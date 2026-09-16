@@ -946,7 +946,7 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {
 }
 
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, StoreError> {
-    postcard::from_bytes(bytes).map_err(|_| StoreError::Corrupt)
+    postcard::from_bytes(bytes).map_err(|_| StoreError::UnsupportedFormat)
 }
 
 fn to_i64(value: u64) -> Result<i64, StoreError> {

@@ -1,3 +1,12 @@
+2026-09-16 — **Recoverable store data no longer triggers quarantine.**
+Unreadable derived fleet rows now report an incompatible cache format while
+leaving durable views available, and unreadable chat tips or summaries enter a
+baseline-recovery state that can invalidate and open a successor segment.
+Stale derivations return a fresh conflict load, while invalid caller mutations
+and fold disagreements are refused distinctly from physical SQLite corruption.
+Actual corruption during commit or invalidation now stops the worker, releases
+its lease and requests quarantine like every read path.
+
 2026-09-16 — **Store leases and linkage checks cover Windows.**
 The shared store now uses the standard library's cross-platform file locks for
 its shared lifetime lease and exclusive quarantine pass, preserving the bounded

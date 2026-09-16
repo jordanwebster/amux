@@ -184,8 +184,9 @@ impl Store {
                 mutations,
                 interest,
             );
+            let corrupt = matches!(result, CommitOutcome::Refused(StoreError::Corrupt));
             let _ = reply_sender.send(result);
-            false
+            corrupt
         }) {
             return CommitOutcome::Refused(error);
         }
@@ -228,8 +229,9 @@ impl Store {
         let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
         if let Err(error) = self.send_run(move |connection| {
             let result = chat::invalidate::<F>(connection, agent, generations, expected, reason);
+            let corrupt = matches!(result, CommitOutcome::Refused(StoreError::Corrupt));
             let _ = reply_sender.send(result);
-            false
+            corrupt
         }) {
             return CommitOutcome::Refused(error);
         }

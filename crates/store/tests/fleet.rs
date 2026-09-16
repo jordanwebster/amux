@@ -110,6 +110,68 @@ fn apply(store: &Store, generations: Generations, delta: FleetDelta) -> FleetCha
 }
 
 #[test]
+fn fleet_derived_decode_failure_preserves_the_store_and_durable_view() {
+    runtime().block_on(async {
+        let temp = TempDir::new().expect("tempdir");
+        let path = database(&temp);
+        let store = Store::open(&path).await.expect("open");
+        let generations = store_generations(&store);
+        store
+            .view_set("workspace", "selected", "durable")
+            .await
+            .expect("write durable view");
+        store
+            .apply_fleet(
+                generations,
+                FleetDelta::AgentUp {
+                    agent: agent(AGENT_X, "x", 1),
+                    revision: 1,
+                },
+            )
+            .await
+            .expect("store agent");
+        store
+            .apply_fleet(
+                generations,
+                FleetDelta::Summary {
+                    host_id: id(HOST),
+                    agent_id: id(AGENT_X),
+                    envelope: summary(2, 1, "model"),
+                },
+            )
+            .await
+            .expect("store summary");
+
+        let connection = Connection::open(&path).expect("raw connection");
+        connection
+            .execute(
+                "UPDATE host_summary SET summary=X'00' WHERE agent_id=?1",
+                [id(AGENT_X).to_string()],
+            )
+            .expect("damage derived summary");
+        drop(connection);
+
+        assert_eq!(
+            store.fleet(generations).await,
+            Err(StoreError::UnsupportedFormat)
+        );
+        assert_eq!(
+            store.view_get("workspace", "selected").await,
+            Ok(Some("durable".into()))
+        );
+        assert!(!temp.path().join("quarantine/request.json").exists());
+        store.close().await;
+
+        let reopened = Store::open(&path).await.expect("reopen without quarantine");
+        assert_eq!(
+            reopened.view_get("workspace", "selected").await,
+            Ok(Some("durable".into()))
+        );
+        reopened.close().await;
+    });
+}
+
+#[test]
 fn fleet_orders_facts_summaries_progress_and_reachability_independently() {
     let temp = TempDir::new().expect("tempdir");
     let store = runtime()

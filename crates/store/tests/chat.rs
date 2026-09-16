@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
 use fold::claude_sdk::{ClaudeSdkEntryKind, ClaudeSdkFold, ClaudeSdkPartial};
@@ -117,6 +119,17 @@ fn store_generations(store: &Store) -> fold::Generations {
 
 fn all_interest() -> WindowInterest {
     WindowInterest::all(7, 8 * 1024 * 1024)
+}
+
+fn wait_for(path: &Path, timeout: Duration) {
+    let started = Instant::now();
+    while !path.exists() {
+        assert!(
+            started.elapsed() < timeout,
+            "timed out waiting for {path:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 async fn seed_standing(store: &Store, generations: fold::Generations) {
@@ -327,6 +340,357 @@ fn chat_writer_conflict_reload_and_invalidation_are_fenced() {
         assert!(matches!(resumed, CommitOutcome::Committed(_)));
         second.close().await;
         store.close().await;
+    });
+}
+
+#[test]
+fn chat_rejects_stale_derivations_and_invalid_mutations_without_corrupting_store() {
+    runtime().block_on(async {
+        let temp = TempDir::new().unwrap();
+        let store = Store::open(&database(&temp)).await.unwrap();
+        let generations = store_generations(&store);
+        let mut fold = ClaudeSdkFold::default();
+        fold.begin(1, Baseline::Start);
+        let initial = fold_rows(&mut fold, &[(1, "u1", "one")]);
+        let expected = match store
+            .commit(
+                agent_id(),
+                generations,
+                ExpectedHead::Absent { fence: 0 },
+                head(fold.clone(), 1, Baseline::Start, 1),
+                Some(transition(None, 1, Baseline::Start, 0, Some(1), 1)),
+                initial,
+                all_interest(),
+            )
+            .await
+        {
+            CommitOutcome::Committed(result) => result.expected,
+            _ => panic!("seed commit failed"),
+        };
+
+        macro_rules! assert_conflict {
+            ($head:expr, $transition:expr) => {
+                match store
+                    .commit(
+                        agent_id(),
+                        generations,
+                        expected,
+                        $head,
+                        $transition,
+                        Vec::new(),
+                        all_interest(),
+                    )
+                    .await
+                {
+                    CommitOutcome::Conflict(loaded) => {
+                        assert!(matches!(loaded.head, HeadState::Usable(1, _)));
+                        assert_eq!(loaded.window.len(), 1);
+                    }
+                    _ => panic!("stale derivation did not return a fresh load"),
+                }
+            };
+        }
+
+        assert_conflict!(head(fold.clone(), 2, Baseline::Start, 1), None);
+        assert_conflict!(head(fold.clone(), 1, Baseline::Gap { after: 1 }, 1), None);
+        assert_conflict!(head(fold.clone(), 1, Baseline::Start, 0), None);
+        assert_conflict!(
+            head(fold.clone(), 3, Baseline::Gap { after: 1 }, 1),
+            Some(transition(
+                Some(1),
+                3,
+                Baseline::Gap { after: 1 },
+                1,
+                None,
+                1,
+            ))
+        );
+        assert_conflict!(
+            head(fold.clone(), 2, Baseline::Gap { after: 1 }, 1),
+            Some(transition(
+                Some(2),
+                2,
+                Baseline::Gap { after: 1 },
+                1,
+                None,
+                1,
+            ))
+        );
+
+        let loaded = store
+            .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(0))
+            .await
+            .unwrap();
+        let stored = loaded.window.first().expect("stored entry");
+        let past_head = Mutation::Delete {
+            key: stored.key.clone(),
+            revision: Revision::row(2),
+        };
+        assert!(matches!(
+            store
+                .commit(
+                    agent_id(),
+                    generations,
+                    expected,
+                    head(fold.clone(), 1, Baseline::Start, 1),
+                    None,
+                    vec![past_head],
+                    all_interest(),
+                )
+                .await,
+            CommitOutcome::Refused(StoreError::Invalid)
+        ));
+
+        let alias_a = EntryKey::new("alias:a").unwrap();
+        let alias_b = EntryKey::new("alias:b").unwrap();
+        let alias_cycle = vec![
+            Mutation::Alias {
+                from: alias_a.clone(),
+                to: alias_b.clone(),
+                revision: Revision::row(1),
+                promote: None,
+            },
+            Mutation::Alias {
+                from: alias_b,
+                to: alias_a,
+                revision: Revision::row(1),
+                promote: None,
+            },
+        ];
+        assert!(matches!(
+            store
+                .commit(
+                    agent_id(),
+                    generations,
+                    expected,
+                    head(fold.clone(), 1, Baseline::Start, 1),
+                    None,
+                    alias_cycle,
+                    all_interest(),
+                )
+                .await,
+            CommitOutcome::Refused(StoreError::Invalid)
+        ));
+
+        let disagreement = Mutation::Upsert {
+            key: stored.key.clone(),
+            order: stored.order,
+            revision: stored.revision,
+            entry: ClaudeSdkPartial {
+                text: Patch::set("different".into(), Revision::row(1)),
+                ..ClaudeSdkPartial::default()
+            },
+        };
+        assert!(matches!(
+            store
+                .commit(
+                    agent_id(),
+                    generations,
+                    expected,
+                    head(fold, 1, Baseline::Start, 1),
+                    None,
+                    vec![disagreement],
+                    all_interest(),
+                )
+                .await,
+            CommitOutcome::Refused(StoreError::Invalid)
+        ));
+        assert!(!temp.path().join("quarantine/request.json").exists());
+        store.close().await;
+    });
+}
+
+#[test]
+fn chat_unreadable_heads_invalidate_and_open_a_successor() {
+    runtime().block_on(async {
+        for damage in ["missing-tip", "bad-tip", "bad-summary"] {
+            let temp = TempDir::new().unwrap();
+            let path = database(&temp);
+            let store = Store::open(&path).await.unwrap();
+            let generations = store_generations(&store);
+            let mut fold = ClaudeSdkFold::default();
+            fold.begin(1, Baseline::Start);
+            let mutations = fold_rows(&mut fold, &[(1, "u1", "one")]);
+            assert!(matches!(
+                store
+                    .commit(
+                        agent_id(),
+                        generations,
+                        ExpectedHead::Absent { fence: 0 },
+                        head(fold, 1, Baseline::Start, 1),
+                        Some(transition(None, 1, Baseline::Start, 0, Some(1), 1)),
+                        mutations,
+                        all_interest(),
+                    )
+                    .await,
+                CommitOutcome::Committed(_)
+            ));
+
+            let connection = Connection::open(&path).unwrap();
+            match damage {
+                "missing-tip" => {
+                    connection
+                        .execute(
+                            "DELETE FROM claude_sdk_tip WHERE agent_id=?1",
+                            [agent_id().to_string()],
+                        )
+                        .unwrap();
+                }
+                "bad-tip" => {
+                    connection
+                        .execute(
+                            "UPDATE claude_sdk_tip SET tip=X'00' WHERE agent_id=?1",
+                            [agent_id().to_string()],
+                        )
+                        .unwrap();
+                }
+                "bad-summary" => {
+                    connection
+                        .execute(
+                            "UPDATE chat_head SET summary=X'00' WHERE agent_id=?1",
+                            [agent_id().to_string()],
+                        )
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            drop(connection);
+
+            let damaged = store
+                .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(0))
+                .await
+                .unwrap();
+            assert!(matches!(
+                damaged.head,
+                HeadState::NeedsBaseline {
+                    previous_through: 1,
+                    reason: BaselineReason::Corrupt
+                }
+            ));
+            let absent = match store
+                .invalidate::<ClaudeSdkFold>(
+                    agent_id(),
+                    generations,
+                    ExpectedHead::Absent {
+                        fence: damaged.fence,
+                    },
+                    BaselineReason::Corrupt,
+                )
+                .await
+            {
+                CommitOutcome::Committed(result) => result.expected,
+                _ => panic!("{damage} head did not invalidate"),
+            };
+
+            let mut successor = ClaudeSdkFold::default();
+            successor.begin(2, Baseline::Gap { after: 1 });
+            let mutations = fold_rows(&mut successor, &[(2, "u2", "two")]);
+            assert!(matches!(
+                store
+                    .commit(
+                        agent_id(),
+                        generations,
+                        absent,
+                        head(successor, 2, Baseline::Gap { after: 1 }, 2),
+                        Some(transition(
+                            Some(1),
+                            2,
+                            Baseline::Gap { after: 1 },
+                            1,
+                            Some(2),
+                            2,
+                        )),
+                        mutations,
+                        all_interest(),
+                    )
+                    .await,
+                CommitOutcome::Committed(_)
+            ));
+            store.close().await;
+        }
+    });
+}
+
+#[test]
+fn chat_sqlite_corruption_during_writes_stops_worker_and_requests_quarantine() {
+    runtime().block_on(async {
+        for operation in ["commit", "invalidate"] {
+            let temp = TempDir::new().unwrap();
+            let path = database(&temp);
+            let store = Store::open(&path).await.unwrap();
+            let generations = store_generations(&store);
+            let mut fold = ClaudeSdkFold::default();
+            fold.begin(1, Baseline::Start);
+            let mutations = fold_rows(&mut fold, &[(1, "u1", "one")]);
+            let expected = match store
+                .commit(
+                    agent_id(),
+                    generations,
+                    ExpectedHead::Absent { fence: 0 },
+                    head(fold.clone(), 1, Baseline::Start, 1),
+                    Some(transition(None, 1, Baseline::Start, 0, Some(1), 1)),
+                    mutations,
+                    all_interest(),
+                )
+                .await
+            {
+                CommitOutcome::Committed(result) => result.expected,
+                _ => panic!("seed commit failed"),
+            };
+
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "PRAGMA writable_schema=ON;
+                     UPDATE sqlite_schema SET rootpage=2147483647 WHERE name='chat_state';
+                     PRAGMA schema_version=999;",
+                )
+                .unwrap();
+            drop(connection);
+
+            let outcome = match operation {
+                "commit" => {
+                    store
+                        .commit(
+                            agent_id(),
+                            generations,
+                            expected,
+                            head(fold, 1, Baseline::Start, 1),
+                            None,
+                            Vec::new(),
+                            all_interest(),
+                        )
+                        .await
+                }
+                "invalidate" => {
+                    store
+                        .invalidate::<ClaudeSdkFold>(
+                            agent_id(),
+                            generations,
+                            expected,
+                            BaselineReason::Corrupt,
+                        )
+                        .await
+                }
+                _ => unreachable!(),
+            };
+            assert!(matches!(
+                outcome,
+                CommitOutcome::Refused(StoreError::Corrupt)
+            ));
+            wait_for(
+                &temp.path().join("quarantine/request.json"),
+                Duration::from_secs(2),
+            );
+            let lock = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(temp.path().join("store.lock"))
+                .unwrap();
+            lock.try_lock().expect("worker released its store lease");
+            lock.unlock().unwrap();
+            store.close().await;
+        }
     });
 }
 
