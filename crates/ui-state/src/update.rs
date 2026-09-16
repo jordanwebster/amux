@@ -534,7 +534,9 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             }
             model.hosts.remove(&id);
             model.attached.retain(|_, host| *host != id);
-            Vec::new()
+            // A host that left the paired set can no longer confirm what this
+            // device remembered about it.
+            forget_remembered(model, |card| card.agent.host_id == id)
         }
         ServerMsg::HostsSynchronized => {
             let Connection::Connected {
@@ -628,8 +630,18 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             model
                 .attached
                 .retain(|agent, host| *host != host_id || agent_ids.contains(agent));
+            // The host's own inventory is the authority on what this device
+            // remembered about it: listed rows are confirmed, the rest are gone.
+            for card in model.agents.values_mut() {
+                if card.agent.host_id == host_id && agent_ids.contains(&card.agent.id) {
+                    card.remembered = false;
+                }
+            }
+            let effects = forget_remembered(model, |card| {
+                card.agent.host_id == host_id && !agent_ids.contains(&card.agent.id)
+            });
             model.remote_inventories.insert(host_id, agent_ids);
-            Vec::new()
+            effects
         }
         ServerMsg::AgentsSynchronized => {
             let Connection::Connected {
@@ -960,13 +972,13 @@ fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
     let removed: Vec<_> = model
         .agents
         .iter()
-        .filter(|(_, card)| card.epoch != epoch)
+        .filter(|(_, card)| card.epoch != epoch && !model.awaits_own_host(card))
         .map(|(id, _)| *id)
         .collect();
-    for id in removed {
-        crate::queue::remove(model, id);
+    for id in &removed {
+        crate::queue::remove(model, *id);
     }
-    model.agents.retain(|_, card| card.epoch == epoch);
+    model.agents.retain(|id, _| !removed.contains(id));
     let stale: Vec<model::AgentId> = model
         .streams
         .keys()
@@ -975,6 +987,28 @@ fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
         .collect();
     let mut effects = Vec::new();
     for id in stale {
+        if let Some(stream) = model.streams.remove(&id)
+            && !matches!(stream.phase, StreamPhase::Closed { .. })
+        {
+            effects.push(Effect::CloseStream { agent: id });
+        }
+    }
+    effects
+}
+
+/// Drop remembered rows the predicate disproves, closing anything opened for them.
+fn forget_remembered(model: &mut Model, disproved: impl Fn(&AgentCard) -> bool) -> Vec<Effect> {
+    let removed: Vec<_> = model
+        .agents
+        .values()
+        .filter(|card| card.remembered && disproved(card))
+        .map(|card| card.agent.id)
+        .collect();
+    let mut effects = Vec::new();
+    for id in removed {
+        crate::queue::remove(model, id);
+        model.agents.remove(&id);
+        model.attached.remove(&id);
         if let Some(stream) = model.streams.remove(&id)
             && !matches!(stream.phase, StreamPhase::Closed { .. })
         {

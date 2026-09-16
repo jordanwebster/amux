@@ -667,7 +667,7 @@ impl Runtime {
         let profile = ProfileGeneration(generation.0);
         let store_worker = options
             .store_path
-            .map(|path| StoreWorker::spawn(path, profile, msg_sink.clone()));
+            .map(|path| StoreWorker::spawn(path, profile, options.local_host_id, msg_sink.clone()));
         if store_worker.is_none() {
             startup_gate.finish_all();
         }
@@ -751,6 +751,13 @@ impl Runtime {
     /// user interacts with.
     pub fn note_attached(&mut self, agent: AgentId) {
         self.process(Msg::UserAttached { agent });
+    }
+
+    /// Whether this runtime has a store whose remembered fleet is not in the
+    /// model yet. A screen that projects the fleet before then would draw an
+    /// empty fleet over the rows it already showed from the store.
+    pub fn remembered_fleet_pending(&self) -> bool {
+        self.store_worker.is_some() && !self.model.remembered_fleet_settled()
     }
 
     /// Open one structured conversation through its persisted lifecycle.
@@ -2067,10 +2074,7 @@ fn host_messages(event: model::HostEvent) -> Vec<Msg> {
             Msg::Server(ServerMsg::HostUpserted { host }),
         ],
         model::HostEvent::HostRemoved { id } => vec![
-            Msg::FleetDelta(store::FleetDelta::Reachability {
-                host_id: id,
-                online: false,
-            }),
+            Msg::FleetDelta(store::FleetDelta::HostRemoved { host_id: id }),
             Msg::Server(ServerMsg::HostRemoved { id }),
         ],
         model::HostEvent::SnapshotComplete => {
@@ -3152,6 +3156,7 @@ mod tests {
                 runtime.store_worker = Some(StoreWorker::spawn(
                     path.clone(),
                     ProfileGeneration(0),
+                    None,
                     runtime.msg_sink.clone(),
                 ));
                 for _ in 0..3 {

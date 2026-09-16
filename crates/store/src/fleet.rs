@@ -41,6 +41,7 @@ pub(crate) fn apply(
         FleetDelta::Reachability { host_id, online } => {
             apply_reachability(&transaction, host_id, online)?
         }
+        FleetDelta::HostRemoved { host_id } => apply_host_removed(&transaction, host_id, now)?,
         FleetDelta::Snapshot(snapshot) => apply_snapshot(&transaction, snapshot, now)?,
         FleetDelta::AgentUp { agent, revision } | FleetDelta::AgentUpdated { agent, revision } => {
             apply_agent(&transaction, &agent, revision)?
@@ -175,6 +176,32 @@ fn apply_reachability(
         )
         .map_err(map_sqlite_error)?;
     Ok(changed > 0)
+}
+
+/// An unpaired host's rows leave the fleet. Its agents become absent rather
+/// than deleted, so the absent-agent sweep removes their derived rows the way
+/// it does for any other removal; a later pairing's snapshot restores them.
+fn apply_host_removed(
+    transaction: &Transaction<'_>,
+    host_id: HostId,
+    now: DateTime<Utc>,
+) -> Result<bool, StoreError> {
+    let hosts = transaction
+        .execute("DELETE FROM host WHERE id=?1", [host_id.to_string()])
+        .map_err(map_sqlite_error)?;
+    let agents = transaction
+        .execute(
+            "UPDATE agent
+             SET membership=?2, absent_since=COALESCE(absent_since,?3)
+             WHERE host_id=?1 AND membership<>?2",
+            params![
+                host_id.to_string(),
+                membership_code(Membership::Absent),
+                now.timestamp_millis(),
+            ],
+        )
+        .map_err(map_sqlite_error)?;
+    Ok(hosts + agents > 0)
 }
 
 fn apply_agent(

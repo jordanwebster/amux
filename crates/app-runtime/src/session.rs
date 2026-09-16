@@ -102,6 +102,9 @@ impl Places {
             // runtime, and without it a device cannot tell itself from the
             // machines it is paired with.
             local_host_id: Some(session.host),
+            // The account on screen keeps its fleet and conversations in its
+            // own store; an account nobody is reading only counts.
+            store_path: on_screen.then(|| crate::cache::store_path(&self.cache_dir, &session.account)),
             report_dir: on_screen.then(|| self.report_dir.clone()),
             log_path: on_screen.then(|| self.log_path.clone()),
             artifact_cache: on_screen.then(|| {

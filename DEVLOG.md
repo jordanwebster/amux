@@ -1,3 +1,14 @@
+2026-09-16 — **The phone's remembered fleet is read from its SQLite store.**
+The per-account JSON fleet file is gone: each signed-in account on screen now
+keeps its fleet in its own store, and the cached-fleet entry point reads it
+through the same reducer and projection the running library uses, so every
+remembered card is unconfirmed and unsendable. Remembered rows of a paired
+machine that has not answered survive the phone's own synchronization until
+that machine's inventory confirms or removes them; unpairing drops them in the
+reducer and marks them absent in the store. The event queue withholds its
+first fleet until the store's rows are installed, so a launch never blanks the
+rows it drew.
+
 2026-09-16 — **Claude task tools now drive fleet todo progress.** Both Claude
 folds recognize successful `TaskCreate` and `TaskUpdate` pairs from current
 Claude Code transcripts, retain a bounded resumable task registry, and keep

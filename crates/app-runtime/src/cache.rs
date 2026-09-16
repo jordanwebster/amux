@@ -1,20 +1,25 @@
-//! Last displayed inventory, independent of the live reducer and its send gates.
+//! The remembered fleet: what this device's store last knew about one
+//! account's machines and agents, projected the way the running library
+//! projects it.
+//!
+//! Nothing here writes. The account's runtime keeps its store current from
+//! the fleet stream; a launch reads the same rows back before it has a
+//! runtime at all, so the screen a launch draws and the screen a connection
+//! replaces it with come from one source through one projection.
 
-use std::collections::BTreeSet;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use ui_state::Model;
+use model::{DisconnectReason, HostId, RelayConnection};
+use store::{Fleet, Store, StoreError};
+use ui_state::{Effect, Model, Msg, ProfileGeneration, StoreMsg, StoreOp, update};
 
-use crate::projection::Event;
+use crate::projection::{Event, Projection};
 
-pub struct FleetCache {
-    path: PathBuf,
-    fleet: Event,
-}
+/// The name of the signpost span a launch measures around its store read:
+/// opening the account's store and selecting its fleet before the first frame.
+pub const STORE_READ_SPAN: &str = "amux.store.read";
 
-/// The file name an account's remembered fleet is kept under.
+/// The file name an account's store is kept under.
 ///
 /// An account identifier is the application's — normally an email address —
 /// so it cannot be used as a path component as it stands: it may hold a
@@ -30,457 +35,289 @@ pub fn file_name(account: &str) -> String {
             _ => name.push_str(&format!("%{byte:02x}")),
         }
     }
-    name.push_str(".json");
+    name.push_str(".sqlite");
     name
 }
 
-impl FleetCache {
-    /// Open the fleet one account remembers.
-    ///
-    /// The remembered fleet is an account's, not the phone's: its rows are
-    /// that account's machines and that account's agents, and a phone signed
-    /// in to two accounts must never draw one of them under the other's name.
-    /// Each account therefore keeps its own file, the way each profile keeps
-    /// its own artifacts.
-    pub fn open(directory: &Path, account: &str) -> Self {
-        let path = directory.join("fleet").join(file_name(account));
-        // The cache is disposable across schema changes or interrupted writes.
-        let mut fleet = fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .filter(|event| matches!(event, Event::Fleet { .. }))
-            .unwrap_or(Event::Fleet {
-                epoch: 0,
-                agents: vec![],
-                hosts: vec![],
-                reconciled: false,
-            });
-        let Event::Fleet {
-            reconciled, agents, ..
-        } = &mut fleet
-        else {
-            unreachable!()
-        };
-        *reconciled = false;
-        // Nothing in a file has been confirmed by anybody: every row here is
-        // what this device remembered, until the machine that owns it says so.
-        for card in agents {
-            card.awaiting = true;
-        }
-        Self { path, fleet }
-    }
+/// Where one account's store lives under an application's cache directory.
+///
+/// The remembered fleet is an account's, not the phone's: its rows are that
+/// account's machines and that account's agents, and a phone signed in to two
+/// accounts must never draw one of them under the other's name. Each account
+/// therefore keeps a store of its own, named so a launch can find it from the
+/// account alone.
+pub fn store_path(cache_dir: &Path, account: &str) -> PathBuf {
+    cache_dir.join("store").join(file_name(account))
+}
 
-    pub fn initial(&self) -> Event {
-        self.fleet.clone()
-    }
+/// The fleet the store remembers, as the Fleet event a running library
+/// delivers before any machine has answered: every card awaiting its machine,
+/// the fleet unreconciled, and this device itself left out of the machines.
+pub async fn cached_fleet(store: &Store) -> Result<Event, StoreError> {
+    let generations = store
+        .generations()
+        .for_provider("codex")
+        .ok_or(StoreError::Corrupt)?;
+    let fleet = store.fleet(generations).await?;
+    let (kind, key) = ui_runtime::LOCAL_HOST_VIEW;
+    let local = store
+        .view_get(kind, key)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse().ok());
+    Ok(remembered(fleet, generations, local))
+}
 
-    pub fn update(&mut self, event: &mut Event, model: &Model) -> io::Result<()> {
-        let Event::Fleet {
-            agents,
-            hosts,
-            reconciled,
-            ..
-        } = event
-        else {
-            return Ok(());
-        };
-        let Event::Fleet {
-            agents: previous,
-            hosts: previous_hosts,
-            ..
-        } = &self.fleet
-        else {
-            unreachable!()
-        };
-        let mut awaiting = BTreeSet::new();
-        // Only an authenticated remote inventory or the complete paired-host
-        // list can disprove cached membership. Online status is not authority.
-        for card in previous {
-            let host_id = card.agent.host_id;
-            let unpaired =
-                model.is_synchronized() && !hosts.iter().any(|host| host.entry.id == host_id);
-            let removed = model
-                .remote_inventories()
-                .get(&host_id)
-                .is_some_and(|ids| !ids.contains(&card.agent.id));
-            if !unpaired && !removed && !agents.iter().any(|live| live.agent.id == card.agent.id) {
-                awaiting.insert(card.agent.id);
-                let mut card = card.clone();
-                card.awaiting = true;
-                agents.push(card);
+/// Opens an account's store, reads its remembered fleet and closes it again.
+/// A store that is missing, unreadable or refused is a fleet with no rows:
+/// the store is disposable, and a launch without one still has to draw.
+pub async fn read_cached_fleet(cache_dir: &Path, account: &str) -> Event {
+    let path = store_path(cache_dir, account);
+    let fleet = match path.exists() {
+        true => match Store::open(&path).await {
+            Ok(store) => {
+                let fleet = cached_fleet(&store).await.ok();
+                store.close().await;
+                fleet
             }
-        }
-        agents.sort_by_key(|card| {
-            previous
-                .iter()
-                .position(|old| old.agent.id == card.agent.id)
-                .unwrap_or(usize::MAX)
-        });
-        for host in previous_hosts {
-            if !model.is_synchronized()
-                && awaiting.iter().any(|id| {
-                    previous
-                        .iter()
-                        .any(|card| card.agent.id == *id && card.agent.host_id == host.entry.id)
-                })
-                && !hosts.iter().any(|live| live.entry.id == host.entry.id)
-            {
-                let mut host = host.clone();
-                host.entry.online = false;
-                hosts.push(host);
-            }
-        }
-        hosts.sort_by_key(|host| {
-            previous_hosts
-                .iter()
-                .position(|old| old.entry.id == host.entry.id)
-                .unwrap_or(usize::MAX)
-        });
-        *reconciled &= awaiting.is_empty();
-        self.fleet = event.clone();
-        self.write()
-    }
+            Err(_) => None,
+        },
+        false => None,
+    };
+    fleet.unwrap_or(Event::Fleet {
+        epoch: 0,
+        agents: vec![],
+        hosts: vec![],
+        reconciled: false,
+    })
+}
 
-    fn write(&self) -> io::Result<()> {
-        fs::create_dir_all(self.path.parent().expect("cache directory"))?;
-        let temporary = self.path.with_extension("json.tmp");
-        let mut options = OpenOptions::new();
-        options.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary)?;
-        serde_json::to_writer(&mut file, &self.fleet)?;
-        file.flush()?;
-        fs::rename(temporary, &self.path)
+/// Installs the stored fleet into a fresh reducer exactly as the running
+/// runtime's store startup does, then projects it.
+fn remembered(fleet: Fleet, generations: store::Generations, local: Option<HostId>) -> Event {
+    let profile = ProfileGeneration(0);
+    let mut model = Model::default();
+    let op = update(
+        &mut model,
+        Msg::StoreStartup {
+            profile,
+            generations,
+        },
+    )
+    .into_iter()
+    .find_map(|effect| match effect {
+        Effect::Store(StoreOp::FleetLoad { op, .. }) => Some(op),
+        _ => None,
+    })
+    .expect("store startup reads the fleet");
+    update(
+        &mut model,
+        Msg::Store(StoreMsg::FleetLoaded { profile, op, fleet }),
+    );
+    let mut events = Vec::new();
+    Projection::default().collect(
+        &model,
+        &RelayConnection::Disconnected {
+            reason: DisconnectReason::Unreachable,
+        },
+        &mut events,
+    );
+    let mut fleet = events
+        .into_iter()
+        .find(|event| matches!(event, Event::Fleet { .. }))
+        .expect("a projection always carries its first fleet");
+    if let Event::Fleet { hosts, .. } = &mut fleet {
+        hosts.retain(|host| Some(host.entry.id) != local);
     }
+    fleet
 }
 
 #[cfg(test)]
 mod tests {
-    use model::RelayConnection;
-    use ui_state::{Msg, ServerMsg, update};
+    use chrono::DateTime;
+    use store::{FleetDelta, FleetSnapshot};
     use uuid::Uuid;
 
     use super::*;
-    use crate::projection::Projection;
 
-    /// The phone's own identity. It is a device on the account like any
-    /// machine, so it has a host id, but nothing runs on it and no test here
-    /// may hand it out to a machine as well.
     const PHONE: Uuid = Uuid::from_u128(9);
 
-    fn connected() -> ServerMsg {
-        ServerMsg::Connected {
-            local_host_id: Some(PHONE),
+    fn host(id: u128, trust: model::HostTrustStatus) -> model::HostEntry {
+        model::HostEntry {
+            id: Uuid::from_u128(id),
+            name: format!("host-{id}"),
+            online: true,
+            version: None,
+            capabilities: None,
+            trust_status: trust,
+            last_dial_error: None,
+            platform: None,
         }
     }
 
-    fn host(id: u128, online: bool) -> ServerMsg {
-        ServerMsg::HostUpserted {
-            host: model::HostEntry {
-                id: Uuid::from_u128(id),
-                name: format!("host-{id}"),
-                online,
-                version: None,
-                capabilities: None,
-                trust_status: model::HostTrustStatus::Trusted,
-                last_dial_error: None,
-                platform: None,
-            },
+    fn agent(id: u128, host: u128, revision: u64) -> model::Agent {
+        model::Agent {
+            id: Uuid::from_u128(id),
+            host_id: Uuid::from_u128(host),
+            name: Some(format!("agent-{id}")),
+            command: "cat".into(),
+            working_dir: "/work".into(),
+            kind: model::AgentKind::TestAgent,
+            readonly: false,
+            args: vec![],
+            created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            parent: None,
+            working_on: None,
+            summary: None,
+            progress: None,
+            inventory_revision: revision,
         }
     }
 
-    fn agent(id: u128, host: u128) -> ServerMsg {
-        ServerMsg::AgentUpserted {
-            agent: model::Agent {
-                id: Uuid::from_u128(id),
-                host_id: Uuid::from_u128(host),
-                name: Some(format!("agent-{id}")),
-                command: "cat".into(),
-                working_dir: "/work".into(),
-                kind: model::AgentKind::TestAgent,
-                readonly: false,
-                args: vec![],
-                created_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
-                parent: None,
-                working_on: None,
-                summary: None,
-                progress: None,
-                inventory_revision: 0,
-            },
-        }
-    }
-
-    fn collect(cache: &mut FleetCache, projection: &mut Projection, model: &Model) -> Event {
-        let mut events = vec![];
-        projection.collect(model, &RelayConnection::Connected, &mut events);
-        let fleet = events.iter_mut().find(|event| matches!(event, Event::Fleet { .. }))
-            .expect("inventory authority must trigger a fleet callback even if live rows did not change");
-        cache.update(fleet, model).unwrap();
-        fleet.clone()
-    }
-
-    fn check(fleet: &Event, ids: &[u128], synchronized: bool) {
+    fn cards(fleet: &Event) -> Vec<(u128, bool)> {
         let Event::Fleet {
             agents, reconciled, ..
         } = fleet
         else {
             panic!("Fleet expected")
         };
-        assert_eq!(
-            agents
-                .iter()
-                .map(|card| card.agent.id.as_u128())
-                .collect::<Vec<_>>(),
-            ids
-        );
-        assert_eq!(*reconciled, synchronized);
-    }
-
-    #[test]
-    fn mobile_cache_local_sync_prunes_unpaired_host_across_disconnected_frames() {
-        let root = tempfile::tempdir().unwrap();
-        let mut model = Model::default();
-        for msg in [
-            connected(),
-            host(99, true),
-            host(1, true),
-            agent(11, 1),
-            ServerMsg::HostsSynchronized,
-            ServerMsg::AgentsSynchronized,
-        ] {
-            update(&mut model, Msg::Server(msg));
-        }
-        let mut cache = FleetCache::open(root.path(), "owner");
-        collect(&mut cache, &mut Projection::default(), &model);
-
-        let mut cache = FleetCache::open(root.path(), "owner");
-        let mut projection = Projection::default();
-        let mut model = Model::default();
-        let connection = RelayConnection::Disconnected {
-            reason: model::DisconnectReason::Unreachable,
-        };
-        let mut previous_live_fleet = None;
-        check(&cache.initial(), &[11], false);
-        for msg in [
-            connected(),
-            host(99, true),
-            ServerMsg::HostsSynchronized,
-            ServerMsg::AgentsSynchronized,
-        ] {
-            update(&mut model, Msg::Server(msg));
-            let mut events = vec![];
-            projection.collect(&model, &connection, &mut events);
-            let fleet = events
-                .iter_mut()
-                .find(|event| matches!(event, Event::Fleet { .. }));
-            if model.is_synchronized() {
-                let fleet = fleet.expect("local synchronization must trigger a fleet callback");
-                assert_eq!(
-                    Some(&*fleet),
-                    previous_live_fleet.as_ref(),
-                    "live DTO is unchanged"
-                );
-                cache.update(fleet, &model).unwrap();
-                check(fleet, &[], false);
-                let Event::Fleet { hosts, .. } = &*fleet else {
-                    unreachable!()
-                };
-                assert_eq!(hosts.len(), 1);
-                assert_eq!(hosts[0].entry.id, Uuid::from_u128(99));
-                println!(
-                    "Offline synchronization callback: {}",
-                    serde_json::to_string(fleet).unwrap()
-                );
-            } else {
-                if let Some(fleet) = fleet {
-                    previous_live_fleet = Some(fleet.clone());
-                    cache.update(fleet, &model).unwrap();
-                }
-                check(&cache.initial(), &[11], false);
-            }
-            assert_eq!(
-                model.agent_count(),
-                0,
-                "cached rows stay outside the reducer"
-            );
-        }
-        check(
-            &FleetCache::open(root.path(), "owner").initial(),
-            &[],
-            false,
-        );
-        let mut events = vec![];
-        projection.collect(&model, &connection, &mut events);
-        assert!(
-            events.is_empty(),
-            "unchanged authority must not repeat callbacks"
-        );
-    }
-
-    fn awaiting(fleet: &Event) -> Vec<(u128, bool)> {
-        let Event::Fleet { agents, .. } = fleet else {
-            panic!("Fleet expected")
-        };
+        assert!(!reconciled, "nothing remembered is reconciled");
         agents
             .iter()
             .map(|card| (card.agent.id.as_u128(), card.awaiting))
             .collect()
     }
 
-    /// A remembered row is confirmed by the machine that owns it, not by the
-    /// slowest machine on the account: the reader stops treating one row as a
-    /// memory as soon as its own host has been heard from.
-    #[test]
-    fn mobile_cache_confirms_each_row_as_its_own_host_answers() {
-        let root = tempfile::tempdir().unwrap();
-        let mut model = Model::default();
-        for msg in [
-            connected(),
-            host(1, true),
-            host(2, true),
-            agent(11, 1),
-            agent(21, 2),
-            ServerMsg::HostsSynchronized,
-            ServerMsg::AgentsSynchronized,
-        ] {
-            update(&mut model, Msg::Server(msg));
-        }
-        let mut cache = FleetCache::open(root.path(), "owner");
-        collect(&mut cache, &mut Projection::default(), &model);
-
-        // A fresh launch: nothing has been confirmed by anybody yet.
-        let mut cache = FleetCache::open(root.path(), "owner");
-        assert_eq!(awaiting(&cache.initial()), [(11, true), (21, true)]);
-
-        // The first machine answers. Its row is live and confirmed; the other
-        // machine's row is still the one this device remembered.
-        let mut projection = Projection::default();
-        let mut model = Model::default();
-        for msg in [
-            connected(),
-            host(1, true),
-            host(2, true),
-            agent(11, 1),
-            ServerMsg::HostsSynchronized,
-        ] {
-            update(&mut model, Msg::Server(msg));
-        }
-        let fleet = collect(&mut cache, &mut projection, &model);
-        assert_eq!(awaiting(&fleet), [(11, false), (21, true)]);
-        check(&fleet, &[11, 21], false);
-
-        // The second machine answers and nothing is remembered any more.
-        update(&mut model, Msg::Server(agent(21, 2)));
-        update(&mut model, Msg::Server(ServerMsg::AgentsSynchronized));
-        let fleet = collect(&mut cache, &mut projection, &model);
-        assert_eq!(awaiting(&fleet), [(11, false), (21, false)]);
-        check(&fleet, &[11, 21], true);
+    fn hosts(fleet: &Event) -> Vec<u128> {
+        let Event::Fleet { hosts, .. } = fleet else {
+            panic!("Fleet expected")
+        };
+        hosts.iter().map(|host| host.entry.id.as_u128()).collect()
     }
 
-    #[test]
-    fn mobile_cache_authority_is_per_host_and_survives_frame_coalescing() {
+    async fn seeded(root: &Path, account: &str, deltas: Vec<FleetDelta>) {
+        let path = store_path(root, account);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let store = Store::open(&path).await.unwrap();
+        let generations = store.generations().for_provider("codex").unwrap();
+        for delta in deltas {
+            store.apply_fleet(generations, delta).await.unwrap();
+        }
+        let (kind, key) = ui_runtime::LOCAL_HOST_VIEW;
+        store
+            .view_set(kind, key, &PHONE.to_string())
+            .await
+            .unwrap();
+        store.close().await;
+    }
+
+    #[tokio::test]
+    async fn remembered_rows_are_unconfirmed_and_exclude_this_device_and_offers() {
         let root = tempfile::tempdir().unwrap();
-        let mut model = Model::default();
-        for msg in [
-            connected(),
-            host(1, true),
-            host(2, true),
-            agent(11, 1),
-            agent(12, 1),
-            agent(21, 2),
-            ServerMsg::HostsSynchronized,
-            ServerMsg::AgentsSynchronized,
-        ] {
-            update(&mut model, Msg::Server(msg));
-        }
-        let mut cache = FleetCache::open(root.path(), "owner");
-        collect(&mut cache, &mut Projection::default(), &model);
-        let mut cache = FleetCache::open(root.path(), "owner");
-        let mut projection = Projection::default();
-        let mut model = Model::default();
-        for msg in [
-            connected(),
-            host(1, true),
-            host(2, false),
-            ServerMsg::HostsSynchronized,
-            ServerMsg::AgentsSynchronized,
-        ] {
-            update(&mut model, Msg::Server(msg));
-        }
-        check(
-            &collect(&mut cache, &mut projection, &model),
-            &[11, 12, 21],
-            false,
+        seeded(
+            root.path(),
+            "owner",
+            vec![
+                FleetDelta::Host {
+                    host: host(9, model::HostTrustStatus::Trusted),
+                    revision: 0,
+                },
+                FleetDelta::Host {
+                    host: host(1, model::HostTrustStatus::Trusted),
+                    revision: 0,
+                },
+                FleetDelta::Host {
+                    host: host(2, model::HostTrustStatus::UntrustedButOnline),
+                    revision: 0,
+                },
+                FleetDelta::AgentUp {
+                    agent: agent(11, 1, 1),
+                    revision: 1,
+                },
+                FleetDelta::AgentUp {
+                    agent: agent(12, 1, 2),
+                    revision: 2,
+                },
+                // Remembered from before this device's pairing with host 2
+                // was withdrawn.
+                FleetDelta::AgentUp {
+                    agent: agent(21, 2, 1),
+                    revision: 1,
+                },
+            ],
+        )
+        .await;
+        let fleet = read_cached_fleet(root.path(), "owner").await;
+        let mut remembered = cards(&fleet);
+        remembered.sort();
+        assert_eq!(remembered, [(11, true), (12, true)]);
+        assert_eq!(hosts(&fleet), [1]);
+    }
+
+    #[tokio::test]
+    async fn an_authoritative_removal_is_not_remembered() {
+        let root = tempfile::tempdir().unwrap();
+        seeded(
+            root.path(),
+            "owner",
+            vec![
+                FleetDelta::Host {
+                    host: host(1, model::HostTrustStatus::Trusted),
+                    revision: 0,
+                },
+                FleetDelta::AgentUp {
+                    agent: agent(11, 1, 1),
+                    revision: 1,
+                },
+                FleetDelta::AgentUp {
+                    agent: agent(12, 1, 2),
+                    revision: 2,
+                },
+                FleetDelta::Snapshot(FleetSnapshot {
+                    host_id: Uuid::from_u128(1),
+                    through_revision: 3,
+                    agents: vec![(agent(12, 1, 2), 2)],
+                }),
+            ],
+        )
+        .await;
+        assert_eq!(
+            cards(&read_cached_fleet(root.path(), "owner").await),
+            [(12, true)]
         );
-        assert_eq!(model.agent_count(), 0);
-        update(&mut model, Msg::Server(agent(12, 1)));
-        check(
-            &collect(&mut cache, &mut projection, &model),
-            &[11, 12, 21],
-            false,
+    }
+
+    #[tokio::test]
+    async fn each_account_reads_its_own_store_and_a_missing_or_corrupt_one_is_empty() {
+        let root = tempfile::tempdir().unwrap();
+        seeded(
+            root.path(),
+            "Personal@example.com",
+            vec![
+                FleetDelta::Host {
+                    host: host(1, model::HostTrustStatus::Trusted),
+                    revision: 0,
+                },
+                FleetDelta::AgentUp {
+                    agent: agent(11, 1, 1),
+                    revision: 1,
+                },
+            ],
+        )
+        .await;
+        assert_eq!(
+            cards(&read_cached_fleet(root.path(), "Personal@example.com").await),
+            [(11, true)]
         );
-        update(
-            &mut model,
-            Msg::Server(ServerMsg::HostInventory {
-                host_id: Uuid::from_u128(1),
-                agent_ids: vec![Uuid::from_u128(12)],
-            }),
+        assert_ne!(
+            store_path(root.path(), "Personal@example.com"),
+            store_path(root.path(), "personal@example.com")
         );
-        check(
-            &collect(&mut cache, &mut projection, &model),
-            &[12, 21],
-            false,
-        );
-        // An empty snapshot changes no live row. It still resolves the cached row.
-        update(
-            &mut model,
-            Msg::Server(ServerMsg::HostInventory {
-                host_id: Uuid::from_u128(2),
-                agent_ids: vec![],
-            }),
-        );
-        check(&collect(&mut cache, &mut projection, &model), &[12], true);
-        // Reachability removals preserve known membership even when they share a frame.
-        update(&mut model, Msg::Server(host(1, false)));
-        update(
-            &mut model,
-            Msg::Server(ServerMsg::AgentRemoved {
-                id: Uuid::from_u128(12),
-            }),
-        );
-        check(&collect(&mut cache, &mut projection, &model), &[12], false);
-        // HostRemoved signifies removal from the paired set, including while offline.
-        update(
-            &mut model,
-            Msg::Server(ServerMsg::HostRemoved {
-                id: Uuid::from_u128(1),
-            }),
-        );
-        check(&collect(&mut cache, &mut projection, &model), &[], true);
-        assert_eq!(model.agent_count(), 0);
-        let Event::Fleet { hosts, .. } = cache.initial() else {
-            unreachable!()
-        };
-        assert!(hosts.iter().all(|host| host.entry.id != Uuid::from_u128(1)));
-        update(&mut model, Msg::Server(host(1, true)));
-        update(&mut model, Msg::Server(agent(12, 1)));
-        check(&collect(&mut cache, &mut projection, &model), &[12], true);
-        update(
-            &mut model,
-            Msg::Server(ServerMsg::AgentRemoved {
-                id: Uuid::from_u128(12),
-            }),
-        );
-        let ServerMsg::HostUpserted { mut host } = host(1, true) else {
-            unreachable!()
-        };
-        host.trust_status = model::HostTrustStatus::UntrustedButOnline;
-        update(&mut model, Msg::Server(ServerMsg::HostUpserted { host }));
-        check(&collect(&mut cache, &mut projection, &model), &[], true);
+        assert!(cards(&read_cached_fleet(root.path(), "work").await).is_empty());
+
+        let corrupt = store_path(root.path(), "corrupt");
+        std::fs::write(&corrupt, b"not a database").unwrap();
+        assert!(cards(&read_cached_fleet(root.path(), "corrupt").await).is_empty());
     }
 }
-// touch

@@ -754,6 +754,27 @@ impl Model {
         self.store.unavailable
     }
 
+    /// A remembered row of a paired remote host that has not answered this
+    /// connection. The connection's own snapshot cannot disprove it: only that
+    /// host's inventory, or the host leaving the paired set (removed, or no
+    /// longer trusted), can.
+    pub(crate) fn awaits_own_host(&self, card: &AgentCard) -> bool {
+        let host = card.agent.host_id;
+        card.remembered
+            && self
+                .hosts
+                .get(&host)
+                .is_some_and(|state| state.entry.trust_status == model::HostTrustStatus::Trusted)
+            && self.local_host_id != Some(host)
+            && !self.remote_inventories.contains_key(&host)
+    }
+
+    /// Whether the store's remembered fleet has been installed, or can no
+    /// longer be. Until then an empty fleet means "not read yet", not "none".
+    pub fn remembered_fleet_settled(&self) -> bool {
+        self.store.fleet_settled || self.store.unavailable.is_some()
+    }
+
     /// The Claude chat layer for an agent (the chat view's read surface).
     pub fn claude(&self, id: AgentId) -> Option<&ClaudeLayer> {
         self.agents.get(&id).and_then(AgentCard::claude)
@@ -1303,7 +1324,7 @@ impl Model {
                     card_epoch: card.epoch,
                     model_epoch: self.epoch,
                 });
-            } else if synchronized && card.epoch != self.epoch {
+            } else if synchronized && card.epoch != self.epoch && !self.awaits_own_host(card) {
                 violations.push(Violation::CardEpochStale {
                     agent: *id,
                     card_epoch: card.epoch,

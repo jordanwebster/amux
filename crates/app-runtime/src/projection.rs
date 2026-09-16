@@ -601,6 +601,15 @@ impl Projection {
             epoch: model.epoch(),
             agents: model
                 .agents()
+                // A remembered row belongs to a machine this device still
+                // trusts; one whose machine was unpaired is not drawn while
+                // the connection that will drop it is on its way.
+                .filter(|card| {
+                    !card.remembered
+                        || model.host(card.agent.host_id).is_some_and(|host| {
+                            host.entry.trust_status == model::HostTrustStatus::Trusted
+                        })
+                })
                 .map(|card| AgentCardDto {
                     agent: card.agent.clone(),
                     display_name: card.display_name(),
@@ -608,10 +617,9 @@ impl Projection {
                     phase: model.effective_phase(card),
                     last_activity: model.effective_summary_age(card),
                     outcome: None,
-                    // Live rows come from the model the connection filled, so
-                    // they are confirmed by definition; only the cache adds
-                    // rows nobody has answered for yet.
-                    awaiting: false,
+                    // A row the store remembered stays unconfirmed until the
+                    // machine that owns it has answered for it.
+                    awaiting: card.remembered,
                 })
                 .collect(),
             hosts: model

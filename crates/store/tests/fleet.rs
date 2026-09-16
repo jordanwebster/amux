@@ -305,6 +305,74 @@ fn fleet_orders_facts_summaries_progress_and_reachability_independently() {
 }
 
 #[test]
+fn fleet_unpairing_removes_the_host_and_makes_its_agents_absent_until_a_snapshot() {
+    let temp = TempDir::new().expect("tempdir");
+    let store = runtime()
+        .block_on(Store::open(&database(&temp)))
+        .expect("open");
+    let generations = store_generations(&store);
+    apply(
+        &store,
+        generations,
+        FleetDelta::Host {
+            host: host("studio", true),
+            revision: 0,
+        },
+    );
+    apply(
+        &store,
+        generations,
+        FleetDelta::AgentUp {
+            agent: agent(AGENT_X, "x", 1),
+            revision: 1,
+        },
+    );
+    assert_eq!(
+        apply(
+            &store,
+            generations,
+            FleetDelta::HostRemoved { host_id: id(HOST) }
+        ),
+        FleetChange::Changed
+    );
+    let fleet = runtime().block_on(store.fleet(generations)).expect("fleet");
+    assert!(fleet.hosts.is_empty());
+    assert_eq!(fleet.agents.len(), 1);
+    assert_eq!(fleet.agents[0].membership, Membership::Absent);
+    assert!(fleet.agents[0].absent_since.is_some());
+    assert_eq!(
+        apply(
+            &store,
+            generations,
+            FleetDelta::HostRemoved { host_id: id(HOST) }
+        ),
+        FleetChange::Unchanged,
+        "removing an unpaired host again changes nothing"
+    );
+
+    apply(
+        &store,
+        generations,
+        FleetDelta::Host {
+            host: host("studio", true),
+            revision: 0,
+        },
+    );
+    apply(
+        &store,
+        generations,
+        FleetDelta::Snapshot(FleetSnapshot {
+            host_id: id(HOST),
+            through_revision: 2,
+            agents: vec![(agent(AGENT_X, "x", 1), 1)],
+        }),
+    );
+    let fleet = runtime().block_on(store.fleet(generations)).expect("fleet");
+    assert_eq!(fleet.hosts.len(), 1);
+    assert_eq!(fleet.agents[0].membership, Membership::Cached);
+}
+
+#[test]
 fn fleet_snapshot_confirms_membership_without_regressing_newer_values() {
     let temp = TempDir::new().expect("tempdir");
     let store = runtime()

@@ -852,6 +852,11 @@ pub enum FleetDelta {
         host_id: HostId,
         online: bool,
     },
+    /// The host left the paired set: nothing this device remembered about it
+    /// is a member any more.
+    HostRemoved {
+        host_id: HostId,
+    },
     Snapshot(FleetSnapshot),
     AgentUp {
         agent: Agent,
@@ -2073,6 +2078,9 @@ mod tests {
             FleetDelta::Reachability {
                 host_id: HostId::from_u128(2),
                 online: false,
+            },
+            FleetDelta::HostRemoved {
+                host_id: HostId::from_u128(2),
             },
             FleetDelta::Snapshot(snapshot),
             FleetDelta::AgentUp {

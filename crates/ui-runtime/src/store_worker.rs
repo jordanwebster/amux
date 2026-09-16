@@ -21,6 +21,11 @@ use ui_state::{
 
 use crate::runtime::MsgSink;
 
+/// The durable view row naming which host is this device, so a reader of
+/// the store without a connection can tell the device from the machines it
+/// is paired with.
+pub const LOCAL_HOST_VIEW: (&str, &str) = ("device", "local_host");
+
 const DATA_VERSION_POLL: Duration = Duration::from_secs(1);
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const MAINTENANCE_DEADLINE: Duration = Duration::from_millis(100);
@@ -49,7 +54,12 @@ enum Command {
 }
 
 impl StoreWorker {
-    pub(crate) fn spawn(path: PathBuf, profile: ProfileGeneration, sink: MsgSink) -> Self {
+    pub(crate) fn spawn(
+        path: PathBuf,
+        profile: ProfileGeneration,
+        local_host: Option<model::HostId>,
+        sink: MsgSink,
+    ) -> Self {
         let (sender, receiver) = mpsc::channel();
         let worker_sender = sender.clone();
         let retired = Arc::new(AtomicBool::new(false));
@@ -113,6 +123,9 @@ impl StoreWorker {
                     profile,
                     generations,
                 });
+                if let Some(host) = local_host {
+                    record_local_host(&runtime, &store, host);
+                }
                 let mut data_version = runtime.block_on(store.data_version()).ok();
                 let mut maintenance_enabled = false;
                 let mut last_maintenance = None;
@@ -542,5 +555,14 @@ fn failed(
         agent,
         kind,
         error,
+    }
+}
+
+/// Written only when it changed: a durable write costs a full sync.
+fn record_local_host(runtime: &tokio::runtime::Runtime, store: &Store, host: model::HostId) {
+    let (kind, key) = LOCAL_HOST_VIEW;
+    let value = host.to_string();
+    if runtime.block_on(store.view_get(kind, key)).ok().flatten().as_deref() != Some(&value) {
+        let _ = runtime.block_on(store.view_set(kind, key, &value));
     }
 }

@@ -3,7 +3,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use app_embedded::{Embedded, StartConfig};
-use app_runtime::cache::FleetCache;
 use app_runtime::command::{CommandDto, creation};
 use app_runtime::projection::Event;
 use model::RelayConnection;
@@ -63,13 +62,41 @@ fn test_root() -> tempfile::TempDir {
         .expect("create a short mobile test root")
 }
 
-/// Where one account's remembered fleet is kept under a phone's cache
-/// directory. Each account has a file of its own, so a test that reads the
-/// cache has to say whose.
-fn cache_path(cache_dir: &std::path::Path, account: &str) -> std::path::PathBuf {
-    cache_dir
-        .join("fleet")
-        .join(app_runtime::cache::file_name(account))
+/// The fleet a launch draws for one account before it starts anything: that
+/// account's store, read through the entry point the application calls. Each
+/// account has a store of its own, so a test that reads one has to say whose.
+fn cached_fleet(cache_dir: &std::path::Path, account: &str) -> Value {
+    let directory = CString::new(cache_dir.to_str().unwrap()).unwrap();
+    let account = CString::new(account).unwrap();
+    let batch = owned_json(unsafe { amux_app_cached_fleet(directory.as_ptr(), account.as_ptr()) });
+    assert_eq!(batch.as_array().map(Vec::len), Some(1), "{batch}");
+    batch[0].clone()
+}
+
+/// Waits for the account's store to hold what a condition asks for. The
+/// runtime writes its store on a worker of its own, so what a callback showed
+/// reaches the store shortly after rather than before.
+async fn stored(
+    cache_dir: &std::path::Path,
+    account: &str,
+    condition: impl Fn(&Value) -> bool,
+) -> Value {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let fleet = cached_fleet(cache_dir, account);
+            if condition(&fleet) {
+                break fleet;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "the store never held the expected fleet: {}",
+            cached_fleet(cache_dir, account)
+        )
+    })
 }
 
 fn config(root: &std::path::Path, url: String, token: Value) -> Value {
@@ -780,10 +807,7 @@ async fn mobile_unpaired_relay_hosts_are_discovered_without_entering_the_fleet()
             assert_eq!(fleet["agents"], json!([]), "{fleet}");
         }
     }
-    let cache: Value = serde_json::from_slice(
-        &std::fs::read(cache_path(&root.path().join("cache"), "personal")).unwrap(),
-    )
-    .unwrap();
+    let cache = cached_fleet(&root.path().join("cache"), "personal");
     for host in cache["Fleet"]["hosts"].as_array().unwrap() {
         assert_eq!(host["entry"]["name"], "phone", "{cache}");
     }
@@ -874,11 +898,23 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
             .is_some_and(|a| a.iter().any(|a| a["display_name"] == "Renamed"))
     })
     .await;
-    let cache_path = cache_path(&root.path().join("cache"), "personal");
-    let disk: Value = serde_json::from_slice(&std::fs::read(&cache_path).unwrap()).unwrap();
-    assert_eq!(
-        disk, changed,
-        "fleet change was not persisted before callback"
+    let cache_dir = root.path().join("cache");
+    let names = |e: &Value| {
+        e["Fleet"]["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["display_name"].clone())
+            .collect::<Vec<_>>()
+    };
+    let disk = stored(&cache_dir, "personal", |e| names(e) == names(&changed)).await;
+    assert!(
+        disk["Fleet"]["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|a| a["awaiting"] == true),
+        "a stored row is remembered, not confirmed: {disk}"
     );
     net.cloud_offline().await;
     let offline = until(&mut receive, running.handle, &token, |e| {
@@ -888,10 +924,7 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     assert_eq!(offline["Fleet"]["agents"].as_array().unwrap().len(), 2);
     drop(running);
 
-    // A displayed order need not match the reducer's UUID map order.
-    let mut cached: Value = serde_json::from_slice(&std::fs::read(&cache_path).unwrap()).unwrap();
-    cached["Fleet"]["agents"].as_array_mut().unwrap().reverse();
-    std::fs::write(&cache_path, cached.to_string()).unwrap();
+    let cached = cached_fleet(&cache_dir, "personal");
     let ids = |e: &Value| {
         e["Fleet"]["agents"]
             .as_array()
@@ -912,13 +945,17 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
         _events: &events,
     };
     assert!(!running.handle.is_null());
-    let first = tokio::time::timeout(Duration::from_secs(5), receive.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    // The first fleet the running library delivers is the one the launch
+    // already drew from the store; nothing empty comes before it.
+    let first = until(&mut receive, running.handle, &token, |e| {
+        e.get("Fleet").is_some()
+    })
+    .await;
     assert_eq!(first["Fleet"]["reconciled"], false);
     assert_eq!(ids(&first), expected);
-    until(&mut receive, running.handle, &token, |e| {
+    // The unreachable relay may already have been reported in the batch that
+    // carried that first fleet.
+    seen(&mut receive, &events, 0, running.handle, |e| {
         e["Connection"]["state"] == "disconnected"
     })
     .await;
@@ -1018,29 +1055,24 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
 #[test]
 fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
     let root = test_root();
-    let path = cache_path(root.path(), "personal");
+    let path = app_runtime::cache::store_path(root.path(), "personal");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    for bytes in [
-        None,
-        Some("{"),
-        Some(r#"{"TokenRequest":{"request_id":1}}"#),
-    ] {
+    for bytes in [None, Some("{"), Some("SQLite format 3\0 truncated")] {
         if let Some(bytes) = bytes {
             std::fs::write(&path, bytes).unwrap();
         }
-        let cache = FleetCache::open(root.path(), "personal");
+        let fleet: Event = serde_json::from_value(cached_fleet(root.path(), "personal")).unwrap();
         assert!(
-            matches!(cache.initial(), Event::Fleet { agents, reconciled: false, .. } if agents.is_empty())
+            matches!(fleet, Event::Fleet { agents, reconciled: false, .. } if agents.is_empty())
         );
     }
     let file = root.path().join("not-a-directory");
     std::fs::write(&file, "file").unwrap();
-    let mut cache = FleetCache::open(&file, "personal");
-    assert!(
-        cache
-            .update(&mut cache.initial(), &ui_state::Model::default())
-            .is_err()
-    );
+    let fleet: Event = serde_json::from_value(cached_fleet(&file, "personal")).unwrap();
+    assert!(matches!(fleet, Event::Fleet { agents, .. } if agents.is_empty()));
+    unsafe {
+        assert!(amux_app_cached_fleet(std::ptr::null(), std::ptr::null()).is_null());
+    }
     unsafe {
         assert!(amux_app_snapshot(std::ptr::null_mut()).is_null());
         assert!(amux_app_report_snapshot(std::ptr::null_mut()).is_null());
@@ -1145,10 +1177,8 @@ mod mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing 
         .await;
         drop(running);
 
-        let path = cache_path(&root.path().join("cache"), "personal");
-        let mut cached: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        cached["Fleet"]["agents"].as_array_mut().unwrap().reverse();
-        std::fs::write(&path, cached.to_string()).unwrap();
+        let cache_dir = root.path().join("cache");
+        let cached = cached_fleet(&cache_dir, "personal");
         let ids = |event: &Value| {
             event["Fleet"]["agents"]
                 .as_array()
@@ -1183,12 +1213,13 @@ mod mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing 
         }
         let expected = if scenario == "delete_one" {
             vec![
-                json!(uuid::Uuid::from_u128(203)),
                 json!(uuid::Uuid::from_u128(201)),
+                json!(uuid::Uuid::from_u128(203)),
             ]
         } else {
             vec![]
         };
+        let launch = cached_fleet(&cache_dir, "personal");
         let (sender, mut receive) = mpsc::unbounded_channel();
         let events = Events {
             sender,
@@ -1200,13 +1231,22 @@ mod mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing 
             _events: &events,
         };
         assert!(!running.handle.is_null());
-        let first = tokio::time::timeout(Duration::from_secs(5), receive.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        let first = until(&mut receive, running.handle, &token, |e| {
+            e.get("Fleet").is_some()
+        })
+        .await;
         assert_eq!(first["Fleet"]["reconciled"], false);
-        assert_eq!(ids(&first), original);
-        until(&mut receive, running.handle, &token, |e| {
+        // The launch draws what the store remembers. Deletions on the machine
+        // cannot reach it while the relay is away; unpairing is this device's
+        // own act and may already have been written, or may be the local
+        // synchronization the first fleet already reflects.
+        if scenario == "unpair" {
+            assert!(ids(&first) == original || ids(&first).is_empty(), "{first}");
+        } else {
+            assert_eq!(ids(&launch), original);
+            assert_eq!(ids(&first), original);
+        }
+        seen(&mut receive, &events, 0, running.handle, |e| {
             e["Connection"]["state"] == "disconnected"
         })
         .await;
@@ -1217,7 +1257,10 @@ mod mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing 
                     amux_app_snapshot(running.handle)
                 }))
                 .unwrap();
-                assert_eq!(model.agent_count(), 0, "cached rows entered the reducer");
+                assert!(
+                    model.agents().all(|card| card.remembered),
+                    "a remembered row was confirmed before its host answered"
+                );
                 if model.is_synchronized() {
                     break;
                 }
@@ -1268,12 +1311,7 @@ mod mobile_cache_authoritative_inventory_prunes_offline_deletions_and_unpairing 
             e["Fleet"]["reconciled"] == true && ids(e) == expected
         })
         .await;
-        let disk: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(
-            ids(&disk),
-            expected,
-            "pruning was not persisted before callback"
-        );
+        stored(&cache_dir, "personal", |e| ids(e) == expected).await;
         for e in events
             .captured
             .lock()
@@ -2748,14 +2786,13 @@ async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
     };
     let saved = profile_files(root.path());
     assert_eq!(saved.len(), 6, "both profile namespaces must survive");
-    let cached = ["personal", "work"]
-        .map(|account| std::fs::read(cache_path(&root.path().join("cache"), account)).unwrap());
+    let cached = ["personal", "work"].map(|account| cached_fleet(&root.path().join("cache"), account));
     let moved = test_root();
     std::fs::remove_dir(moved.path()).unwrap();
     std::fs::rename(root.path(), moved.path()).unwrap();
     for (index, account) in ["personal", "work"].into_iter().enumerate() {
         assert_eq!(
-            std::fs::read(cache_path(&moved.path().join("cache"), account)).unwrap(),
+            cached_fleet(&moved.path().join("cache"), account),
             cached[index]
         );
     }
@@ -2869,7 +2906,15 @@ async fn mobile_profiles_switching_drops_every_late_result_from_the_previous_acc
     })
     .await
     .expect("a result from the previous account was neither folded nor refused");
-    assert_eq!(dropped["kinds"], json!(["Inventory"]), "{dropped}");
+    // The reported inventory result is among what was refused. The account
+    // left also had its store worker answering fleet writes, and those
+    // answers are refused the same way.
+    assert!(
+        dropped["kinds"]
+            .as_array()
+            .is_some_and(|kinds| kinds.contains(&json!("Inventory"))),
+        "{dropped}"
+    );
     println!("refused after the switch: {dropped}");
 
     // And it never reached a screen: no fleet this phone drew ever carried it.
@@ -2995,11 +3040,8 @@ async fn mobile_profiles_the_remembered_fleet_belongs_to_the_account_that_saw_it
 
     // Two accounts, two files, neither of them a mixture.
     let cache_dir = root.path().join("cache");
-    let personal: Value =
-        serde_json::from_slice(&std::fs::read(cache_path(&cache_dir, "personal")).unwrap())
-            .unwrap();
-    let work: Value =
-        serde_json::from_slice(&std::fs::read(cache_path(&cache_dir, "work")).unwrap()).unwrap();
+    let personal = cached_fleet(&cache_dir, "personal");
+    let work = cached_fleet(&cache_dir, "work");
     assert_eq!(agent_names(&personal), ["fix-login"], "{personal}");
     assert_eq!(host_names(&personal), ["workstation"], "{personal}");
     assert_eq!(agent_names(&work), ["write-docs"], "{work}");

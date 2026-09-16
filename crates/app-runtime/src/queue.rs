@@ -18,7 +18,6 @@ use tokio::sync::{mpsc, oneshot};
 use ui_runtime::MSGS_SCHEMA_VERSION;
 use ui_state::{Msg, OpError, OpId, OpOutcome, ServerMsg};
 
-use crate::cache::FleetCache;
 use crate::command::{
     AccountsCommand, CommandDto, ConnectionCommand, CreationCommand, DevicesCommand,
     PairingCommand, SubscriptionCommand, creation,
@@ -127,20 +126,17 @@ struct DevicesRead {
 
 /// Run the queue until told to stop or until the screen's runtime ends.
 ///
-/// The remembered fleet belongs to the account on screen; it is read first so
-/// a screen has rows before the network answers, and switching opens the
-/// account moved to so nothing the account left behind is drawn under the
-/// new one's name.
+/// The remembered fleet belongs to the account on screen and comes from that
+/// account's store. No fleet is projected until the runtime has installed
+/// it: the application drew the same rows before starting, and an empty fleet
+/// in the first frame would take them away again.
 pub async fn run(
     sessions: &mut Sessions,
-    cache_dir: PathBuf,
     frame_interval: Duration,
     mut commands: mpsc::UnboundedReceiver<Control>,
     mut token_requests: mpsc::Receiver<TokenRequest>,
     sink: &dyn Sink,
 ) -> Result<(), String> {
-    let mut cache = FleetCache::open(&cache_dir, sessions.active_account());
-    sink.send(&[cache.initial()]);
     let mut cadence = Cadence::new(frame_interval);
     cadence.emitted();
     // Every account that is not on screen folds its own subscription while the
@@ -312,7 +308,6 @@ pub async fn run(
                                     watchers = sessions.watch_others(counts.clone());
                                     watched = sessions.inactive_accounts();
                                     attention.retain(|held, _| watched.contains(held));
-                                    cache = FleetCache::open(&cache_dir, &account);
                                     devices = None;
                                     trusted.clear();
                                     projection = Projection::default();
@@ -357,7 +352,9 @@ pub async fn run(
                     events.push(Event::connection(&connection));
                     last_connection = connection.clone();
                 }
-                projection.collect(sessions.ui.model(), &connection, &mut events);
+                if !sessions.ui.remembered_fleet_pending() {
+                    projection.collect(sessions.ui.model(), &connection, &mut events);
+                }
                 // Trust changed, so what This Device lists did too. Pairing and
                 // revocation both land here, and so does a machine trusted
                 // from somewhere else entirely.
@@ -372,13 +369,6 @@ pub async fn run(
                     trusted = now_trusted;
                     read_devices(sessions, devices_reads.clone());
                 }
-                let mut cache_errors = Vec::new();
-                for event in &mut events {
-                    if let Err(error) = cache.update(event, sessions.ui.model()) {
-                        cache_errors.push(Event::Invariant { detail: format!("fleet cache write failed: {error}") });
-                    }
-                }
-                events.extend(cache_errors);
                 if !events.is_empty() {
                     sink.send(&events);
                     cadence.emitted();

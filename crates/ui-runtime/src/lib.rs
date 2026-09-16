@@ -5,6 +5,8 @@ pub mod report;
 mod runtime;
 mod store_worker;
 
+pub use store_worker::LOCAL_HOST_VIEW;
+
 pub use recorder::{
     DEFAULT_RECORDER_CAPACITY, MSGS_SCHEMA_VERSION, Recorder, RecorderSnapshot, ReplayError,
     replay_msgs,

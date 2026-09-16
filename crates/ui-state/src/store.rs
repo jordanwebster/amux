@@ -634,6 +634,9 @@ pub(crate) struct StoreState {
     next_op: u64,
     startup_fleet_op: Option<OpId>,
     startup_view_op: Option<OpId>,
+    /// The startup fleet read has answered, either with rows or with a failure.
+    #[serde(default)]
+    pub(crate) fleet_settled: bool,
 }
 
 impl StoreState {
@@ -768,6 +771,7 @@ pub(crate) fn update_store(state: &mut StoreState, msg: StoreMsg) -> StoreUpdate
         } => failed_result(state, agent, attempt, op, kind, error),
         StoreMsg::FleetLoaded { op, fleet, .. } if state.startup_fleet_op == Some(op) => {
             state.startup_fleet_op = None;
+            state.fleet_settled = true;
             StoreUpdate {
                 fleet: Some(fleet),
                 ..StoreUpdate::default()
@@ -1303,6 +1307,10 @@ fn failed_result(
     error: StoreError,
 ) -> StoreUpdate {
     let Some(agent) = agent else {
+        if kind == StoreOpKind::FleetLoad && state.startup_fleet_op == Some(op) {
+            state.startup_fleet_op = None;
+            state.fleet_settled = true;
+        }
         if error == StoreError::Corrupt {
             state.unavailable = Some(error);
         }

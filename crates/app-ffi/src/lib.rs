@@ -11,7 +11,6 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
 use app_embedded::{Embedded, StartConfig};
-use app_runtime::cache::FleetCache;
 use app_runtime::command::CommandDto;
 use app_runtime::projection::Event;
 use app_runtime::{
@@ -70,15 +69,18 @@ pub extern "C" fn amux_app_build() -> *const c_char {
         .as_ptr()
 }
 
-/// Returns the fleet one account last displayed on this device, as an owned
-/// JSON array of one Fleet event, or NULL when the directory holds nothing
-/// readable for it. Free it with amux_app_free.
+/// Returns the fleet one account's store on this device remembers, as an owned
+/// JSON array of one Fleet event; free it with amux_app_free. A missing,
+/// unreadable or refused store is a fleet with no rows. NULL means the
+/// arguments were not readable strings.
 ///
 /// The application draws this before it has a connection, so the answer is the
 /// same one the running library delivers first: every card marked as awaiting
-/// its machine, and the fleet as a whole unreconciled. Reading it needs no
-/// runtime and no network, so a cold launch can put rows on screen in its first
-/// frame and start the connection afterwards.
+/// its machine, which also keeps every send gate closed, and the fleet as a
+/// whole unreconciled. Reading it needs no runtime and no network, so a cold
+/// launch can put rows on screen in its first frame and start the connection
+/// afterwards; the application marks the call as the store-read span of its
+/// launch.
 ///
 /// The account has to be named because what a device remembers belongs to the
 /// account that saw it: a launch that opens on a second account must draw that
@@ -95,7 +97,21 @@ pub unsafe extern "C" fn amux_app_cached_fleet(
     catch_unwind(AssertUnwindSafe(|| {
         let directory = unsafe { read_string(cache_dir) }?;
         let account = unsafe { read_string(account) }?;
-        let fleet = FleetCache::open(std::path::Path::new(directory), account).initial();
+        let read = || {
+            let executor = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .ok()?;
+            Some(executor.block_on(app_runtime::cache::read_cached_fleet(
+                std::path::Path::new(directory),
+                account,
+            )))
+        };
+        // A caller already inside an async runtime cannot block on another
+        // one from its own thread; the read then runs on a thread of its own.
+        let fleet = match tokio::runtime::Handle::try_current() {
+            Ok(_) => std::thread::scope(|scope| scope.spawn(read).join().ok().flatten()),
+            Err(_) => read(),
+        }?;
         owned(&[fleet])
     }))
     .ok()
@@ -176,7 +192,6 @@ async fn serve(
     let mut embedded = Embedded::open(&config, requests).await?;
     let served = app_runtime::run(
         &mut embedded.sessions,
-        config.cache_dir.clone(),
         config.frame_interval(),
         commands,
         token_requests,

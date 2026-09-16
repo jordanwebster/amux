@@ -12,7 +12,7 @@ use serde_json::json;
 use ui_state::{
     AttemptId, ChatCommand, ChatState, ChatStreamMsg, Effect, LoadedDto, Model, Msg,
     MutationBatchDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto, StoreMsg, StoreOp,
-    StoreOpKind, StoreStreamQuery, StreamCloseReason, StreamEntry, update,
+    ServerMsg, StoreOpKind, StoreStreamQuery, StreamCloseReason, StreamEntry, update,
 };
 
 use crate::harness::*;
@@ -1781,6 +1781,134 @@ fn startup_loads_fleet_and_places_the_remembered_cursor_without_opening_a_chat()
         effects.as_slice(),
         [Effect::Store(StoreOp::FleetApply { .. })]
     ));
+}
+
+/// A device whose own node answers at once while a paired remote host does
+/// not: the remote host's remembered rows stay remembered, send-gated and on
+/// screen until that host's own inventory decides them.
+fn remembered_model_after_local_sync(agents: &[&str]) -> Model {
+    let mut model = Model::default();
+    update(
+        &mut model,
+        Msg::StoreStartup {
+            profile: PROFILE,
+            generations: GENERATIONS,
+        },
+    );
+    let mut fleet = remembered_fleet();
+    fleet.agents = agents
+        .iter()
+        .map(|name| FleetAgent {
+            agent: an_agent(name, "nova"),
+            membership: Membership::Cached,
+            absent_since: None,
+            last_opened_at: None,
+        })
+        .collect();
+    update(
+        &mut model,
+        Msg::Store(StoreMsg::FleetLoaded {
+            profile: PROFILE,
+            op: StoreOpId(1),
+            fleet,
+        }),
+    );
+    for msg in [
+        ServerMsg::Connected {
+            local_host_id: Some(host_id("phone")),
+        },
+        ServerMsg::HostUpserted {
+            host: a_host("phone"),
+        },
+        ServerMsg::HostUpserted {
+            host: an_offline_host("nova"),
+        },
+        ServerMsg::HostsSynchronized,
+        ServerMsg::AgentsSynchronized,
+    ] {
+        update(&mut model, Msg::Server(msg));
+    }
+    model
+}
+
+#[test]
+fn remembered_rows_of_an_unanswered_remote_host_survive_local_synchronization() {
+    let model = remembered_model_after_local_sync(&["stored"]);
+    assert!(model.is_synchronized());
+    let card = model
+        .agent(agent_id("stored"))
+        .expect("a paired host that has not answered cannot disprove its remembered rows");
+    assert!(card.remembered);
+    assert_ne!(
+        ui_state::claude::send_gate(&model, agent_id("stored")),
+        ui_state::SendGate::Ready,
+        "a remembered row never accepts a send"
+    );
+}
+
+#[test]
+fn a_remote_inventory_confirms_listed_remembered_rows_and_removes_the_rest() {
+    let mut model = remembered_model_after_local_sync(&["kept", "removed"]);
+    update(
+        &mut model,
+        Msg::Server(ServerMsg::AgentUpserted {
+            agent: an_agent("kept", "nova"),
+        }),
+    );
+    update(
+        &mut model,
+        Msg::Server(ServerMsg::HostInventory {
+            host_id: host_id("nova"),
+            agent_ids: vec![agent_id("kept")],
+        }),
+    );
+    assert!(!model.agent(agent_id("kept")).unwrap().remembered);
+    assert!(model.agent(agent_id("removed")).is_none());
+}
+
+#[test]
+fn unpairing_or_an_unpaired_snapshot_forgets_remembered_rows() {
+    let mut model = remembered_model_after_local_sync(&["stored"]);
+    update(
+        &mut model,
+        Msg::Server(ServerMsg::HostRemoved {
+            id: host_id("nova"),
+        }),
+    );
+    assert!(model.agent(agent_id("stored")).is_none());
+
+    let mut model = Model::default();
+    update(
+        &mut model,
+        Msg::StoreStartup {
+            profile: PROFILE,
+            generations: GENERATIONS,
+        },
+    );
+    update(
+        &mut model,
+        Msg::Store(StoreMsg::FleetLoaded {
+            profile: PROFILE,
+            op: StoreOpId(1),
+            fleet: remembered_fleet(),
+        }),
+    );
+    for msg in [
+        ServerMsg::Connected {
+            local_host_id: Some(host_id("phone")),
+        },
+        ServerMsg::HostUpserted {
+            host: a_host("phone"),
+        },
+        ServerMsg::HostsSynchronized,
+        ServerMsg::AgentsSynchronized,
+    ] {
+        update(&mut model, Msg::Server(msg));
+    }
+    assert!(
+        model.agent(agent_id("stored")).is_none(),
+        "a host missing from the paired set cannot keep remembered rows"
+    );
 }
 
 fn remembered_fleet() -> Fleet {
