@@ -6,17 +6,7 @@ use serde_json::Value;
 
 use super::{AskWhy, ClaudeSdkLayer};
 use crate::{AgentPhase, Attention, Model, StreamPhase, Violation, Why};
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum TurnState {
-    #[default]
-    Unknown,
-    Idle,
-    Working,
-    Finished,
-    Errored,
-    Interrupted,
-}
+use ::fold::claude_sdk::{AttentionInput, AttentionObservation, StreamState, observe_attention};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
@@ -159,26 +149,30 @@ fn classify(
         return condition;
     };
     condition.input_in_flight = layer.in_flight.is_some() || layer.echo.is_some();
-    condition.state = if layer.exited || matches!(agent, Some(AgentPhase::Exited { .. })) {
-        SdkConditionState::Exited
-    } else if matches!(stream, Some(StreamPhase::Opening | StreamPhase::Replaying)) {
-        SdkConditionState::Replaying
-    } else if !matches!(stream, Some(StreamPhase::Live)) || layer.stale || layer.gap {
-        SdkConditionState::Unknown
-    } else if let Some(ask) = layer.ask_head() {
-        SdkConditionState::AskPending {
-            id: ask.id,
-            why: ask.why(),
-        }
-    } else {
-        match layer.turn {
-            TurnState::Unknown => SdkConditionState::Unknown,
-            TurnState::Idle => SdkConditionState::Idle,
-            TurnState::Working => SdkConditionState::Working,
-            TurnState::Finished => SdkConditionState::Finished,
-            TurnState::Errored => SdkConditionState::Errored,
-            TurnState::Interrupted => SdkConditionState::Interrupted,
-        }
+    let stream = match stream {
+        Some(StreamPhase::Opening | StreamPhase::Replaying) => StreamState::Replaying,
+        Some(StreamPhase::Live) => StreamState::Live,
+        _ => StreamState::Unavailable,
+    };
+    let ask = layer.ask_head().map(|ask| (ask.id, ask.why()));
+    condition.state = match observe_attention(AttentionInput {
+        exited: layer.exited || matches!(agent, Some(AgentPhase::Exited { .. })),
+        stale: layer.stale,
+        stream,
+        gap: layer.observation().has_gap(),
+        turn: layer.observation().turn(),
+        ask,
+    }) {
+        AttentionObservation::Unavailable => SdkConditionState::Unavailable,
+        AttentionObservation::Exited => SdkConditionState::Exited,
+        AttentionObservation::Replaying => SdkConditionState::Replaying,
+        AttentionObservation::Unknown => SdkConditionState::Unknown,
+        AttentionObservation::Idle => SdkConditionState::Idle,
+        AttentionObservation::Working => SdkConditionState::Working,
+        AttentionObservation::Finished => SdkConditionState::Finished,
+        AttentionObservation::Errored => SdkConditionState::Errored,
+        AttentionObservation::Interrupted => SdkConditionState::Interrupted,
+        AttentionObservation::AskPending { id, why } => SdkConditionState::AskPending { id, why },
     };
     condition
 }
@@ -218,68 +212,14 @@ impl ClaudeSdkLayer {
 }
 
 pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
-    let parent = !row["parent_tool_use_id"].is_null();
     match row["type"].as_str().unwrap_or("") {
         "amux.claude_sdk.ready" | "conversation_reset" => {
-            layer.turn = TurnState::Idle;
-            layer.gap = false;
             layer.stale = false;
-            layer.interrupted = false;
             layer.asks.clear();
             layer.clear_inputs("session reset");
         }
-        "amux.claude_sdk.gap" => {
-            layer.gap = true;
-            layer.turn = TurnState::Unknown;
-        }
-        "result" if !parent => {
-            layer.turn = if layer.interrupted {
-                TurnState::Interrupted
-            } else if row["is_error"] == true {
-                TurnState::Errored
-            } else {
-                TurnState::Finished
-            };
-            layer.interrupted = false;
-        }
-        "assistant" if !parent && row["message"]["id"].is_string() => working(layer),
-        "stream_event"
-            if !parent
-                && row["event"]["type"] == "message_start"
-                && row["event"]["message"]["id"].is_string() =>
-        {
-            working(layer)
-        }
-        "user" if !parent => {
-            let content = &row["message"]["content"];
-            let texts: Vec<_> = content
-                .as_str()
-                .into_iter()
-                .chain(
-                    content
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|b| b["text"].as_str()),
-                )
-                .collect();
-            if texts.contains(&"[Request interrupted by user]") {
-                layer.interrupted = true;
-            } else if !texts.is_empty() && row["isSynthetic"] != true && row["isReplay"] != true {
-                working(layer);
-            }
-        }
-        "amux.claude_sdk.permission_required"
-        | "amux.claude_sdk.elicitation_required"
-        | "amux.claude_sdk.dialog_required" => working(layer),
-        "system" if row["subtype"] == "status" && row["status"] == "compacting" => working(layer),
         _ => {}
     }
-}
-
-fn working(layer: &mut ClaudeSdkLayer) {
-    layer.turn = TurnState::Working;
-    layer.interrupted = false;
 }
 
 /// Independent relation over public values, including cached fleet attention.

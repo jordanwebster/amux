@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod claude_pty;
+pub mod claude_sdk;
 pub mod diff;
 
 use std::error::Error;

@@ -1,3 +1,10 @@
+2026-09-16 — **Claude SDK observations now live in the shared fold.**
+SDK feed classification, block and message cursors, task and todo progression,
+ask decoding, session model and context facts, and attention transitions now
+belong to `fold`. The UI keeps the same public feed and projection APIs through
+a facade while retaining optimistic answers, input state, attachments and
+connection-local overlays.
+
 2026-09-16 — **Claude PTY observations now cross a client-neutral facade.**
 The shared fold crate now owns Claude transcript row classification, provider
 fact parsing, todo progression, model and context observation, attention

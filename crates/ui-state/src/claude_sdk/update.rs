@@ -102,7 +102,7 @@ pub(crate) fn update_command(
         ClaudeSdkCommand::CyclePermissionMode { .. } => {
             let mode = match model
                 .claude_sdk(agent)
-                .and_then(|l| l.session.permission_mode.as_deref())
+                .and_then(|l| l.session().permission_mode.as_deref())
             {
                 Some("default") => "acceptEdits",
                 Some("acceptEdits") => "plan",
