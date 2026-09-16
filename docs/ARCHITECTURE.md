@@ -133,9 +133,13 @@ in a bounded in-process ledger; use the same UUID when retrying the same request
 and a new UUID for a new operation. Rename and delete also carry the revision
 the caller observed.
 
-`amux init` creates the installation and an unbound profile, asking about
-keep-awake. `amux profiles` lists profiles; `--profile <name|UUID>` selects one
-for commands such as `amux --profile Work list` or
+`amux init` creates the installation and an unbound profile, asking what the
+host should be called and whether to keep it awake. In scripts,
+`amux init --name <NAME>` sets the host name without prompting. Changing the
+name with `--name` or `--reset` while the server is running requires a restart
+before the new name is advertised. `amux profiles` lists profiles, and
+`--profile <name|UUID>` selects one for commands such as
+`amux --profile Work list` or
 `amux --profile Work profile pause`. Successful client selections remember the
 UUID, so renaming does not change the default device. An explicit unknown or
 ambiguous selector fails instead of falling back. Managed agent hooks and MCP

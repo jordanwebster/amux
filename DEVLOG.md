@@ -73,6 +73,13 @@ finds only the machines named by `-amux-discover-only`. Journeys pass the
 runner's own machines, so a developer's amux server no longer appears in test
 runs. A machine declared `lan` reaches the phone only once a test announces it,
 so a story can still begin with nothing found.
+2026-09-16 — **A fresh host gets a name a person recognizes.** `amux init`
+now asks what the host should be called before it prints the pairing on-ramp,
+using the Mac's friendly Computer Name instead of an mDNS-style `.local`
+hostname. Non-interactive setup receives the same improved default, scripts
+can choose explicitly with `--name`, invalid names are rejected using the
+settings rules, and changing a running host explains that its server must be
+restarted before the new name is advertised.
 
 2026-09-16 — **The Mac and the phone test against the same advertisement.**
 The Mac's advertisement and the phone's reading of it were each tested only

@@ -32,9 +32,12 @@ paused across restarts. Deleting a profile explicitly destroys its keys, trust
 and agents. Profiles isolate amux state and routing, but do not sandbox code
 running as the same OS user.
 
-Run `amux init` to create an installation with an unbound profile, then
-`amux login` to add a cloud account. Login shows the account's name and email;
-use its UUID from `amux profiles` in
+Run `amux init` to name this host and create an installation with an unbound
+profile, then `amux login` to add a cloud account. Interactive setup suggests
+the Mac's Computer Name; scripts can use `amux init --name <NAME>`. If the
+server is already running when the name changes, restart it before expecting
+the new name to appear in discovery or pairing. Login shows the account's name
+and email; use its UUID from `amux profiles` in
 `amux --profile <UUID> profile rename Work` to give it a local label. Another
 account gets a separate profile; logging into it never changes Work's binding.
 

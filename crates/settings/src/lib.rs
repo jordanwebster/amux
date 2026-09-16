@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 use gethostname::gethostname;
 use model::ClaudeDriver;
@@ -129,10 +131,52 @@ impl Default for LanConfig {
     }
 }
 
-fn default_host_name() -> String {
-    gethostname()
-        .into_string()
-        .unwrap_or_else(|_| "unknown".to_string())
+/// The name a new installation presents to nearby devices.
+pub fn default_host_name() -> String {
+    #[cfg(target_os = "macos")]
+    if let Some(name) = macos_computer_name() {
+        return name;
+    }
+
+    fallback_host_name(
+        &gethostname()
+            .into_string()
+            .unwrap_or_else(|_| "unknown".to_string()),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn macos_computer_name() -> Option<String> {
+    let output = Command::new("scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8(output.stdout).ok()?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn fallback_host_name(host_name: &str) -> String {
+    host_name
+        .strip_suffix(".local")
+        .unwrap_or(host_name)
+        .to_string()
+}
+
+/// Apply the validation shared by persisted settings and setup prompts.
+pub fn validate_host_name(host_name: &str) -> Result<(), ConfigError> {
+    if host_name.is_empty() {
+        return Err(ConfigError::Invalid("host_name must not be empty".into()));
+    }
+    if host_name.len() > MAX_HOST_NAME_BYTES {
+        return Err(ConfigError::Invalid(format!(
+            "host_name must be at most {MAX_HOST_NAME_BYTES} bytes"
+        )));
+    }
+    Ok(())
 }
 
 fn default_cloud_url() -> String {
@@ -646,14 +690,7 @@ impl Config {
             )));
         }
 
-        if self.host_name.is_empty() {
-            return Err(ConfigError::Invalid("host_name must not be empty".into()));
-        }
-        if self.host_name.len() > MAX_HOST_NAME_BYTES {
-            return Err(ConfigError::Invalid(format!(
-                "host_name must be at most {MAX_HOST_NAME_BYTES} bytes"
-            )));
-        }
+        validate_host_name(&self.host_name)?;
 
         // Release builds must use HTTPS for cloud URLs to protect tokens in transit
         #[cfg(not(any(debug_assertions, test)))]
@@ -1047,6 +1084,15 @@ mod tests {
         };
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("host_name"));
+    }
+
+    #[test]
+    fn fallback_host_name_strips_the_mdns_suffix() {
+        assert_eq!(
+            fallback_host_name("Jordans-MacBook.local"),
+            "Jordans-MacBook"
+        );
+        assert_eq!(fallback_host_name("build-host"), "build-host");
     }
 
     #[test]
