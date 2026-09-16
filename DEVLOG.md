@@ -1,3 +1,10 @@
+2026-09-16 — **Profile switches leave store work behind immediately.** Retiring
+a profile no longer joins its SQLite worker on the UI thread, even when that
+worker is waiting to publish into a full message channel. Store polling keeps
+its one-second cadence while commands arrive, stops after retirement, and the
+startup and maintenance gates are now tested at the reducer and first-frame
+boundaries they protect.
+
 2026-09-16 — **Store-backed chat recovery no longer deadlocks.** Catch-up keeps
 reading until its replay transition can be committed before applying stream
 backpressure. Closing fences conflicts and storage failures instead of

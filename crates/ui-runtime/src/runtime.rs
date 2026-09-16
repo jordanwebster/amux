@@ -2928,6 +2928,20 @@ mod tests {
         }
     }
 
+    fn test_view_set(
+        profile: ProfileGeneration,
+        op: u64,
+        key: impl Into<String>,
+    ) -> ui_state::StoreOp {
+        ui_state::StoreOp::ViewSet {
+            profile,
+            op: store::OpId(op),
+            kind: "runtime-test".to_owned(),
+            key: key.into(),
+            value: "written".to_owned(),
+        }
+    }
+
     #[tokio::test]
     async fn a_replacement_store_stream_starts_with_reducer_backpressure() {
         let directory = tempfile::tempdir().expect("tempdir");
@@ -2975,11 +2989,32 @@ mod tests {
         );
 
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        for _ in 0..3 {
-            tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
-                .await
-                .expect("startup message timed out");
-        }
+        tokio::task::yield_now().await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the connector must remain gated before store startup is folded"
+        );
+
+        tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+            .await
+            .expect("store startup message timed out");
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+            .await
+            .expect("fleet startup message timed out");
+        tokio::task::yield_now().await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the connector must remain gated until the remembered view is folded"
+        );
+
+        tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+            .await
+            .expect("view startup message timed out");
         tokio::task::yield_now().await;
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
@@ -3009,7 +3044,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn active_store_polls_external_changes() {
+    async fn active_store_polls_external_changes_while_commands_keep_arriving() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("store.sqlite");
         let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3032,6 +3067,22 @@ mod tests {
                 .expect("startup message timed out");
         }
 
+        let worker = runtime
+            .store_worker
+            .as_ref()
+            .expect("store worker")
+            .handle();
+        let producer = tokio::spawn(async move {
+            for op in 10_000..10_040 {
+                worker.execute(test_view_set(
+                    ProfileGeneration(0),
+                    op,
+                    format!("steady-{op}"),
+                ));
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+
         let external = store::Store::open(&path)
             .await
             .expect("second store handle");
@@ -3048,6 +3099,105 @@ mod tests {
         })
         .await
         .expect("data-version change was not reported");
+
+        let polls = runtime
+            .store_worker
+            .as_ref()
+            .expect("store worker")
+            .data_version_poll_counter();
+        runtime.switch_connector(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions::default(),
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let retired_at = polls.load(Ordering::Acquire);
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        assert_eq!(
+            polls.load(Ordering::Acquire),
+            retired_at,
+            "a retired profile must stop polling its store"
+        );
+        producer.abort();
+    }
+
+    #[test]
+    fn switching_profiles_does_not_wait_for_a_store_worker_blocked_on_the_ui_channel() {
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let executor = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            executor.block_on(async move {
+                let directory = tempfile::tempdir().expect("tempdir");
+                let path = directory.path().join("store.sqlite");
+                let mut runtime = a_runtime(directory.path().to_path_buf());
+                runtime.store_worker = Some(StoreWorker::spawn(
+                    path.clone(),
+                    ProfileGeneration(0),
+                    runtime.msg_sink.clone(),
+                ));
+                for _ in 0..3 {
+                    next_store_runtime_message(&mut runtime).await;
+                }
+
+                let generation = runtime.generation();
+                let mut filled = 0;
+                loop {
+                    match runtime
+                        .msg_sink
+                        .tx
+                        .try_send((generation, Msg::Tick { now: Utc::now() }))
+                    {
+                        Ok(()) => filled += 1,
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => break,
+                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                            panic!("runtime message channel closed")
+                        }
+                    }
+                }
+                assert_eq!(filled, MSG_CHANNEL_CAPACITY);
+
+                let worker = runtime.store_worker.as_ref().expect("store worker");
+                for op in 20_000..20_004 {
+                    worker.execute(test_view_set(
+                        ProfileGeneration(0),
+                        op,
+                        format!("queued-{op}"),
+                    ));
+                }
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        let written = rusqlite::Connection::open(&path)
+                            .and_then(|connection| {
+                                connection.query_row(
+                                    "SELECT value FROM view_state WHERE kind='runtime-test' AND key='queued-20000'",
+                                    [],
+                                    |row| row.get::<_, String>(0),
+                                )
+                            })
+                            .ok();
+                        if written.as_deref() == Some("written") {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .expect("store operation did not reach the full UI channel");
+
+                runtime.switch_connector(
+                    Box::new(|| Box::pin(std::future::pending())),
+                    RuntimeOptions::default(),
+                );
+                finished_tx.send(()).expect("report completed switch");
+            });
+        });
+
+        finished_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("profile switch waited for the retired store worker");
+        thread.join().expect("switch test thread");
     }
 
     async fn next_store_runtime_message(runtime: &mut Runtime) {
@@ -3229,6 +3379,17 @@ mod tests {
                 .expect("store worker")
                 .maintenance_runs(),
             0
+        );
+
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        assert_eq!(
+            runtime
+                .store_worker
+                .as_ref()
+                .expect("store worker")
+                .maintenance_runs(),
+            0,
+            "maintenance must not run before the first frame"
         );
 
         tokio::time::timeout(Duration::from_secs(5), runtime.next())
