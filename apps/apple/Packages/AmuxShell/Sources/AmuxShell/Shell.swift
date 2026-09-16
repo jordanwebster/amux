@@ -90,9 +90,9 @@ public struct Shell: View {
     private let deletion: DeletionStore
     /// What the app is wearing, or nothing for whatever the phone is set to.
     private let appearance: Appearance?
-    /// A debug build may supply a Help action. The shell carries no capture
-    /// types or report views, so linking it cannot ship the reporting tools.
-    private let report: (@MainActor () -> Void)?
+    /// Freezes the screen and opens a report on it, from Help. The app owns
+    /// the capture; the shell only knows where the row that asks for it is.
+    private let report: @MainActor () -> Void
     /// Where a build with the reporting tools in it keeps what a conversation
     /// has open and where it is being read, and where a replay puts them back.
     /// Nothing in the shipping app supplies one.
@@ -107,7 +107,7 @@ public struct Shell: View {
         paywall: PaywallStore,
         deletion: DeletionStore,
         appearance: Appearance? = nil,
-        report: (@MainActor () -> Void)? = nil,
+        report: @escaping @MainActor () -> Void = {},
         recording: ConversationRecording? = nil,
         actions: @escaping @MainActor (ShellAction) -> Void
     ) {
@@ -145,8 +145,7 @@ public struct Shell: View {
                     YouTabRoot(
                         router: self.router, accounts: accounts, stores: stores,
                         deletion: deletion, appearance: appearance,
-                        reporting: report != nil,
-                        report: { report?() }, actions: actions)
+                        report: report, actions: actions)
                         .navigationDestination(for: Route.self) { page($0) }
                 }
                 .tabSurface(selected: router.tab == .you)
@@ -879,9 +878,6 @@ private struct YouTabRoot: View {
     let stores: StoreBundle
     let deletion: DeletionStore
     let appearance: Appearance?
-    /// Whether this build can write a report at all. A build a person installs
-    /// cannot, so it does not offer to.
-    let reporting: Bool
     /// Freezes the screen behind this page and opens the report on it.
     let report: @MainActor () -> Void
     let actions: @MainActor (ShellAction) -> Void
@@ -912,8 +908,7 @@ private struct YouTabRoot: View {
             // This phone's own key, read off the machine store the way the
             // devices page reads it: absent until a connection has said what
             // this device's identity is, rather than guessed at.
-            identity: stores.hosts.roster.map { Fingerprint.short($0.identity.fingerprint) },
-            debugTools: reporting
+            identity: stores.hosts.roster.map { Fingerprint.short($0.identity.fingerprint) }
         ) { action in
             switch action {
             case .select(let id): actions(.selectAccount(id))
@@ -934,8 +929,7 @@ private struct YouTabRoot: View {
             case .support: leave(for: CloudEndpoint.production.support)
             // Writing a report freezes the frame that was on show before any
             // of the report's own UI appears — otherwise the picture would be
-            // of the report rather than of what was wrong. The row is only
-            // offered where the debug tools are compiled in at all.
+            // of the report rather than of what was wrong.
             case .report: report()
             case .dismiss: break
             }

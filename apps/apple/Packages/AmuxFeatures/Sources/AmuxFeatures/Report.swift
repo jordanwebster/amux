@@ -1,4 +1,3 @@
-import AmuxFeatures
 import AmuxCore
 import AmuxDesign
 import SwiftUI
@@ -120,10 +119,19 @@ public enum ReportAction: Equatable, Sendable {
 public struct ReportScreen: View {
     @Environment(\.design) private var design
     private let model: ReportStore
+    /// Whether an account is signed in to send this to. A report is filed
+    /// under the person's own account, so with nobody signed in there is
+    /// nowhere for it to go, and the screen says so before Send rather than
+    /// after it.
+    private let signedIn: Bool
     private let actions: @MainActor (ReportAction) -> Void
 
-    public init(model: ReportStore, actions: @escaping @MainActor (ReportAction) -> Void) {
+    public init(
+        model: ReportStore, signedIn: Bool,
+        actions: @escaping @MainActor (ReportAction) -> Void
+    ) {
         self.model = model
+        self.signedIn = signedIn
         self.actions = actions
     }
 
@@ -135,6 +143,9 @@ public struct ReportScreen: View {
                 bar
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        // First, above the picture: nobody should write three
+                        // notes before learning there is nowhere to send them.
+                        if !signedIn { signedOut }
                         frame.disabled(model.uploadBundle != nil)
                         guidance("Drag a box around anything wrong. Each box takes a note.")
                         ForEach(Array(model.draft.marks.enumerated()), id: \.offset) { at, mark in
@@ -177,12 +188,12 @@ public struct ReportScreen: View {
                 Button { actions(.send) } label: {
                     Text(sendTitle)
                         .designFont(.bodyEmphasis, design)
-                        .foregroundStyle(design.accent.color.opacity(sending ? 0.4 : 1))
+                        .foregroundStyle(design.accent.color.opacity(sendable ? 1 : 0.4))
                         .thumbTarget(x: 5, y: 13)
                 }
                 .buttonStyle(.plain)
-                .disabled(sending)
-                .identified("report.send", label: sendTitle, enabled: !sending)
+                .disabled(!sendable)
+                .identified("report.send", label: sendTitle, enabled: sendable)
                 .reclaimingThumbTarget(x: 5, y: 13)
             }
         }
@@ -199,6 +210,8 @@ public struct ReportScreen: View {
     }
 
     private var sending: Bool { model.sending == .sending }
+
+    private var sendable: Bool { signedIn && !sending }
 
     /// What the screen is, in one word, for anybody asking it from outside.
     private var state: String {
@@ -299,6 +312,27 @@ public struct ReportScreen: View {
             .identified("report.note", label: "What went wrong?", value: model.draft.note)
     }
 
+    /// Nobody to send it as. Said before anything else on the page, because a
+    /// button that only explains itself once pressed has already wasted the
+    /// notes somebody wrote.
+    private var signedOut: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Sign in to send a report")
+                .designFont(.bodyEmphasis, design)
+                .foregroundStyle(design.ink.color)
+            Text("Reports go to your amux account, and nobody is signed in on this phone.")
+                .designFont(.detail, design)
+                .foregroundStyle(design.inkMuted.color)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(design.raised.color))
+        .accessibilityElement(children: .combine)
+        .identified("report.signed-out", label: "Sign in to send a report")
+    }
+
     /// The two lines that say what to do and what is being sent.
     private func guidance(_ text: String) -> some View {
         Text(text)
@@ -366,8 +400,8 @@ struct FrozenFrameView: View {
             let shown = geometry.size
             let scale = shown.width / capture.frame.width
             ZStack(alignment: .topLeading) {
-                if let picture = capture.frame.picture {
-                    picture
+                if let image = capture.frame.image {
+                    Image(decorative: image, scale: capture.frame.scale)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                 } else {

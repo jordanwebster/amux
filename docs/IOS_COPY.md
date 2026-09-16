@@ -56,8 +56,9 @@ commands and provider/user content.
 `timeout 300 wt run ios-lint` runs the copy inventory and its failure probes
 alongside the feature architecture checks. It runs without Xcode or a
 simulator. The English catalogue is
-`apps/apple/Amux/Resources/Localizable.xcstrings`. Debug report copy is in
-`AmuxTestSupport/Sources/AmuxTestSupport/Resources/DebugCopy.xcstrings` and its
+`apps/apple/Amux/Resources/Localizable.xcstrings`, and report copy is in it
+like any other shipping screen's. Copy only the driving tools use is in
+`AmuxTestSupport/Sources/AmuxTestSupport/Resources/DebugCopy.xcstrings`, whose
 resource directory is excluded from Release.
 
 Update the source and the catalogue together. Each catalogue entry has its
@@ -69,7 +70,7 @@ formatting from Swift expressions. Copy returned by models and helpers is
 reviewed just like text written directly in a view.
 
 The checker scans all Swift sources in the app and every package, including
-debug report views. Raw strings, multiline strings and strings inside
+report views. Raw strings, multiline strings and strings inside
 interpolation are included. It refuses any new nonempty literal until it
 appears in the appropriate catalogue or receives an exact non-copy exemption
 in `apps/apple/Tools/noncopy.json`. An exemption names its file, literal, surrounding

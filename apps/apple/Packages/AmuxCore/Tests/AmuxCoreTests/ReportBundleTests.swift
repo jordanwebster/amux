@@ -1,7 +1,6 @@
 import Foundation
 import XCTest
-import AmuxCore
-@testable import AmuxTestSupport
+@testable import AmuxCore
 
 /// A capture with everything in it, so a test that wants a part missing takes
 /// that one part away rather than building a different capture.

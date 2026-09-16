@@ -20,10 +20,11 @@ running `amux debug report replay <report-directory>`. Then read `report.json`
 and `frame.txt` and describe where every marked rectangle lands before
 inspecting source code.
 
-The capture and inspection commands in this document exist only in debug
-builds. A release binary still writes bounded tripwire and panic reports, but
-those reports declare the debug-only frame and trace parts absent and cannot be
-replayed as screens.
+The terminal capture and inspection commands in this document exist only in
+debug builds. A release binary still writes bounded tripwire and panic reports,
+but those reports declare the debug-only frame and trace parts absent and cannot
+be replayed as screens. The phone is different: reporting a problem is in every
+build of the app, described below.
 
 In the debug TUI, `C-g` freezes the last drawn frame before either the fleet or
 structured-chat key handler sees it. The flow asks for bug or tweak, a
@@ -45,7 +46,18 @@ owns its screenshot preview, which may be a thumbnail or cover the app; the
 app cannot position its prompt relative to that preview. Returning to the app
 finds the same offer and frozen frame, without a Share step or Photos access.
 Report a Problem under Help on the You tab also freezes the screen before
-opening the report. Both entry points exist only in debug builds.
+opening the report. There is no shake gesture: shaking is undo on iOS, and a
+phone in a pocket shakes all the time.
+
+Both entry points exist in every build of the app, Release included. A Release
+report carries the picture, the rectangles and notes, and the session and host
+records the runtime keeps (`msgs.jsonl` and `daemon.json`). It declares
+`trace.jsonl` absent, because only a build with the driving tools records the
+view-state trace, so a Release report cannot be put back as a screen with
+`just ios replay`. The log part is absent in every build: the app logs through
+the system, which gives no app its records back. A report is filed under the
+signed-in account on screen; with nobody signed in, the report screen says so
+and Send is unavailable.
 
 ## Find the report
 

@@ -14,14 +14,23 @@ import ios_project
 OUTPUT = Path("target/ios/scope-audit")
 DERIVED = Path("target/ios/DerivedData")
 APP = DERIVED / "Build/Products/Release-iphonesimulator/Amux.app"
+# Reporting a problem ships: the report store, its bundle, its screens and the
+# freeze that photographs the window are in every build, and so is the bridge
+# call that freezes the session and host records. What stays out is what only
+# driving and replaying need — the view-state trace (written by the door, and
+# `ReportFreeze.driven` that asks it), a recording put back into the app, and
+# the library built with the driving tools.
 DEBUG_SYMBOLS = (
     "DoorServer", "DoorHost", "DoorScreens", "DoorCapture", "DoorFrames",
     "DoorRecording", "DrivenRoot", "ScenarioShell", "ScenarioScene", "VisibleTree", "AmuxTestSupport",
-    "ReportCapture", "ReportFreeze", "ReportAssembly", "ReportStore", "ReportScreen",
-    "FreezeOnScreenshot", "DebugReports", "FrozenFrame", "ColdStartProbe", "PerfRun",
+    "FreezeOnScreenshot", "DebugReports", "ColdStartProbe", "PerfRun",
     "Workloads", "BudgetTable",
-    "amux_app_report_snapshot", "amux_app_replay_report", "+debug-tools",
+    "amux_app_replay_report", "amux_app_pair_qr", "+debug-tools",
 )
+# What a person reports a problem with, which a Release build must carry: the
+# two entry points, the report screen and the call that freezes the records.
+REPORT_SYMBOLS = ("ReportStore", "ReportScreen", "ReportFreeze", "amux_app_report_snapshot")
+REPORT_COPY = ("Report a Problem", "What went wrong?")
 FORBIDDEN_APIS = (
     "UNUserNotificationCenter", "requestAuthorizationWithOptions",
     "ActivityKit", "ActivityAuthorizationInfo",
@@ -59,6 +68,17 @@ def binary_violations(symbols: str, strings: str) -> list[str]:
                 for name in (*DEBUG_SYMBOLS, *FORBIDDEN_APIS) if name in text]
     rows = set(strings.splitlines())
     failures += [f"excluded row: {row}" for row in FORBIDDEN_ROWS if row in rows]
+    return failures
+
+
+def reporting_violations(symbols: str, strings: str) -> list[str]:
+    """Refuse a bundle somebody could not report a problem from.
+
+    Reporting is for everybody, so its absence is as much a scope failure as a
+    door left in: a build that lost the report screen, the freeze or the Help
+    row would still launch and look complete."""
+    failures = [f"reporting is absent: {name}" for name in REPORT_SYMBOLS if name not in symbols]
+    failures += [f"reporting copy is absent: {copy}" for copy in REPORT_COPY if copy not in strings]
     return failures
 
 
@@ -180,13 +200,13 @@ def detector_probe() -> None:
     """
     source = OUTPUT / "excluded-symbol.c"
     binary = OUTPUT / "excluded-symbol"
-    source.write_text("void amux_app_report_snapshot(void) {}\n"
-                      "int main(void) { amux_app_report_snapshot(); return 0; }\n")
+    source.write_text("void amux_app_replay_report(void) {}\n"
+                      "int main(void) { amux_app_replay_report(); return 0; }\n")
     sdk = run(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"]).stdout.decode().strip()
     run(["xcrun", "clang", "-target", "arm64-apple-ios26.0-simulator", "-isysroot", sdk,
          str(source), "-o", str(binary)])
     failures = binary_violations(*inspect_binary(binary))
-    if "excluded symbol or API: amux_app_report_snapshot" not in failures:
+    if "excluded symbol or API: amux_app_replay_report" not in failures:
         raise RuntimeError("audit accepted a test build containing a debug-only export")
     (OUTPUT / "detector-probe.txt").write_text("Rejected compiler-built probe:\n" + "\n".join(failures) + "\n")
 
@@ -227,6 +247,7 @@ def main() -> None:
     failures += binary_violations(symbols, strings)
     if "Contact Support" not in strings:
         failures.append("Contact Support is absent")
+    failures += reporting_violations(symbols, strings)
     if not any(copy in strings for copy in ("need you", "needs you")):
         failures.append("in-app attention copy is absent")
     graphs = []
@@ -256,8 +277,9 @@ def main() -> None:
                   "PASS: no push authorization, Live Activity, Mute or Notifications row;",
                   f"Bonjour limited to {' '.join(BONJOUR_SERVICES)} behind the agreed explanation "
                   "and no legacy browser; iPhone destinations only;",
-                  "no amuxcloud or React Native package; no driving or report-capture code.",
-                  "PASS: in-app attention copy and Contact Support remain."]
+                  "no amuxcloud or React Native package; no driving, trace or replay code.",
+                  "PASS: in-app attention copy, Contact Support and Report a Problem remain;",
+                  "the report screen, its freeze and the record snapshot ship."]
     lines += ["Limit: simulator Release bundle inspection; distribution signing is checked before release."]
     report.write_text("\n".join(lines) + "\n")
     print(report.read_text(), end="", flush=True)

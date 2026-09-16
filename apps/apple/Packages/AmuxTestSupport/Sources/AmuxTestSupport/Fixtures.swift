@@ -143,6 +143,7 @@ public enum Fixtures {
         Built(.shake, "shake"),
         Built(.dump, "dump"),
         Built(.dump, "upload-failed"),
+        Built(.dump, "report-signed-out"),
     ]
 
     /// The screens the design catalogue describes, in its own order.
@@ -682,6 +683,18 @@ public enum Fixtures {
                 extra: [.opResult(OpResult(
                     op: OpId(UUID(uuidString: "00000000-0000-0000-0000-00000000FA11")!),
                     outcome: .failed(refusal)))])
+        },
+        // A report written with nobody signed in. A report goes to the
+        // person's own account, so there is nowhere to send this one, and the
+        // screen says so above the picture rather than after Send.
+        Fixture(id: "report-signed-out", screen: .dump, cloud: .firstRun, accounts: [],
+                report: Fixture.Reporting(
+                    note: "Queued message stays on screen\nafter sending",
+                    marks: [ReportMark(
+                        x: 24, y: 236, width: 354, height: 30,
+                        note: "this row never leaves once the\nmessage has gone")])
+        ) { bundle in
+            States.open(bundle, entries: Transcript.pairingCopy, session: Sessions.claude())
         },
         // The report could not be sent. The draft is not lost.
         Fixture(id: "upload-failed", screen: .dump,

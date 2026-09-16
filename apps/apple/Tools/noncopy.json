@@ -184,6 +184,9 @@
       {"literal": "\"AmuxGitSHA\"", "context": "Bundle.main.object(forInfoDictionaryKey: \"AmuxGitSHA\") as? String ?? \"\"", "reason": "Built Info.plist key for the checkout revision; not interface copy.", "count": 1},
       {"literal": "\"amux\"", "context": ".appendingPathComponent(\"amux\", isDirectory: true)", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1}
     ],
+    "apps/apple/Amux/Sources/ReportFreeze.swift": [
+      {"literal": "\"this build does not record view state\"", "context": ".failure(PartAbsent(\"this build does not record view state\"))", "reason": "Report bundle absence reason, read by the daemon tooling and never shown on the phone.", "count": 1}
+    ],
     "apps/apple/Packages/AmuxCore/Sources/AmuxCore/AgentWrites.swift": [
       {"literal": "\"command\"", "context": "\"command\": .string(\"set_model\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"set_model\"", "context": "\"command\": .string(\"set_model\"),", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -2036,6 +2039,7 @@
       {"literal": "\"shake\"", "context": "Built(.shake, \"shake\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"dump\"", "context": "Built(.dump, \"dump\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"upload-failed\"", "context": "Built(.dump, \"upload-failed\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"report-signed-out\"", "context": "Built(.dump, \"report-signed-out\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"probe\"", "context": "Fixture(id: \"probe\", screen: .probe),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"home\"", "context": "Fixture(id: \"home\", screen: .home) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"home-quiet\"", "context": "Fixture(id: \"home-quiet\", screen: .homeQuiet) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2086,8 +2090,8 @@
       {"literal": "\"paywall\"", "context": "Fixture(id: \"paywall\", screen: .paywall, cloud: .unsubscribed,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"shake\"", "context": "Fixture(id: \"shake\", screen: .shake) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"dump\"", "context": "Fixture(id: \"dump\", screen: .dump, report: Fixture.Reporting(", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
-      {"literal": "\"Queued message stays on screen\\nafter sending\"", "context": "note: \"Queued message stays on screen\\nafter sending\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
-      {"literal": "\"this row never leaves once the\\nmessage has gone\"", "context": "note: \"this row never leaves once the\\nmessage has gone\")])", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"Queued message stays on screen\\nafter sending\"", "context": "note: \"Queued message stays on screen\\nafter sending\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 3},
+      {"literal": "\"this row never leaves once the\\nmessage has gone\"", "context": "note: \"this row never leaves once the\\nmessage has gone\")])", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
       {"literal": "\"https://apps.apple.com/account/subscriptions\"", "context": "string: \"https://apps.apple.com/account/subscriptions\")!", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"ask-permission-codex\"", "context": "Fixture(id: \"ask-permission-codex\", screen: .askPermission) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"permissions-claude\"", "context": "Fixture(id: \"permissions-claude\", screen: .settings, overlay: .permissions) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2102,6 +2106,7 @@
       {"literal": "\"send-refused\"", "context": "Fixture(id: \"send-refused\", screen: .working) { bundle in", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"replaying\"", "context": "session: Sessions.claude(gate: .replaying, phase: \"replaying\", stream: .replaying),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"00000000-0000-0000-0000-00000000FA11\"", "context": "op: OpId(UUID(uuidString: \"00000000-0000-0000-0000-00000000FA11\")!),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"report-signed-out\"", "context": "Fixture(id: \"report-signed-out\", screen: .dump, cloud: .firstRun, accounts: [],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"upload-failed\"", "context": "Fixture(id: \"upload-failed\", screen: .dump,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"this row never leaves once the\\nmessage has gone\"", "context": "note: \"this row never leaves once the\\nmessage has gone\")],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"paywall-web\"", "context": "Fixture(id: \"paywall-web\", screen: .paywall),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
@@ -2136,11 +2141,14 @@
       {"literal": "\"home-no-agents\"", "context": "Built(.home, \"home-no-agents\"),", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1},
       {"literal": "\"home-no-agents\"", "context": "Fixture(id: \"home-no-agents\", screen: .home) { bundle in", "reason": "Fixture identity a capture and a journey both name a state by; not interface copy.", "count": 1}
     ],
-    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift": [
+    "apps/apple/Packages/AmuxFeatures/Sources/AmuxFeatures/Report.swift": [
+      {"literal": "\"report.signed-out\"", "context": ".identified(\"report.signed-out\", label: \"Sign in to send a report\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"\\(number)\"", "context": "Text(\"\\(number)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
+      {"literal": "\"\\(at + 1)\"", "context": "Text(\"\\(at + 1)\")", "reason": "Formatting, numeric or punctuation syntax with no authored words.", "count": 1},
       {"literal": "\"ladybug\"", "context": "Image(systemName: \"ladybug\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
       {"literal": "\"report.prompt\"", "context": ".identified(\"report.prompt\", label: \"Report\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"report.screen\"", "context": ".identified(\"report.screen\", value: state)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"report.send\"", "context": ".identified(\"report.send\", label: sendTitle, enabled: !sending)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
+      {"literal": "\"report.send\"", "context": ".identified(\"report.send\", label: sendTitle, enabled: sendable)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"sending\"", "context": "case .sending: \"sending\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"failed\"", "context": "case .failed: \"failed\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"sent\"", "context": "case .sent: \"sent\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
@@ -2152,9 +2160,9 @@
       {"literal": "\"report.refusal\"", "context": ".identified(\"report.refusal\", label: \"The report was not sent.\", value: why)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"report.sent\"", "context": ".identified(\"report.sent\", label: \"Sent\", value: receipt.id)", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
       {"literal": "\"report.frame\"", "context": ".identified(\"report.frame\", value: \"\\(marks.count) marked\")", "reason": "Stable element/record identifier, not a displayed label.", "count": 1},
-      {"literal": "\"report.cancel\"", "context": "\"Cancel\", identifier: \"report.cancel\", accessibilityLabel: \"Cancel\"", "reason": "Debug accessibility identifier or SF Symbol; not interface copy.", "count": 1}
+      {"literal": "\"report.cancel\"", "context": "\"Cancel\", identifier: \"report.cancel\", accessibilityLabel: \"Cancel\"", "reason": "Stable element/record identifier, not a displayed label.", "count": 1}
     ],
-    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/ReportAssembly.swift": [
+    "apps/apple/Packages/AmuxCore/Sources/AmuxCore/ReportAssembly.swift": [
       {"literal": "\"report.json\"", "context": "public static let reportFile = \"report.json\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"frame.png\"", "context": "public static let frameFile = \"frame.png\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},
       {"literal": "\"trace.jsonl\"", "context": "public static let traceFile = \"trace.jsonl\"", "reason": "Protocol field, enum tag, resource path or machine-readable format; preserve its exact spelling.", "count": 1},

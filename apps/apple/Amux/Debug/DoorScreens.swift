@@ -59,8 +59,7 @@ enum DoorScreens {
                 // identity the machines were paired with.
                 identity: host.stores.hosts.roster.map {
                     Fingerprint.short($0.identity.fingerprint)
-                },
-                debugTools: true) { _ in }
+                }) { _ in }
         // Giving up an account, over the page it was asked from. The You page
         // behind it is the real one, filled from the same accounts, because
         // how the page dims and how much of it the card covers are facts about
@@ -75,8 +74,7 @@ enum DoorScreens {
                     accounts: host.accounts, appearance: nil,
                     identity: host.stores.hosts.roster.map {
                         Fingerprint.short($0.identity.fingerprint)
-                    },
-                    debugTools: true) { _ in }
+                    }) { _ in }
             }
         // The drawer is drawn over the screen it was opened from, which is a
         // conversation. It is the real one, filled from the same state, rather
@@ -205,7 +203,10 @@ enum DoorScreens {
         // picture and drawing it twice would say something untrue about what
         // this screen covers.
         case .dump:
-            ReportScreen(model: host.reports) { _ in }
+            ReportScreen(
+                model: host.reports,
+                signedIn: host.accounts.selectedAccount?.signedIn == true
+            ) { _ in }
         // Starting an agent. The chooser over it is a state of this screen
         // rather than a screen beside it, so the fixture decides whether it is
         // open and this is the one arm either way.
@@ -241,7 +242,7 @@ struct DrivenRoot<Content: View>: View {
                     router: replayed.router, accounts: replayed.accounts,
                     stores: replayed.stores, signIn: host.signIn,
                     paywall: host.paywall, deletion: host.deletion,
-                    appearance: host.appearance, report: nil,
+                    appearance: host.appearance,
                     recording: replayed.recording,
                     actions: { _ in })
                     .preferredColorScheme(host.appearance == .dark ? .dark : .light)

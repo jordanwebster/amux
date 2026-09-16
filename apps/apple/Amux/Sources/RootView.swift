@@ -50,14 +50,6 @@ struct RootView: View {
         #endif
     }
 
-    private var report: (@MainActor () -> Void)? {
-        #if AMUX_DEBUG_TOOLS
-        { composition.beginReport() }
-        #else
-        nil
-        #endif
-    }
-
     private var app: some View {
         Shell(
             router: composition.router,
@@ -67,7 +59,7 @@ struct RootView: View {
             paywall: composition.paywall,
             deletion: composition.deletion,
             appearance: composition.appearance,
-            report: report,
+            report: { composition.beginReport() },
             recording: composition.conversations,
             actions: { composition.handle($0) }
         )

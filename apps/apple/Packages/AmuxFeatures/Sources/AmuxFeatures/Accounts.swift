@@ -225,20 +225,17 @@ public struct YouScreen: View {
     private let accounts: AccountRegistry
     private let appearance: Appearance?
     private let identity: String?
-    private let debugTools: Bool
     private let actions: @MainActor (AccountsAction) -> Void
 
     public init(
         accounts: AccountRegistry,
         appearance: Appearance? = nil,
         identity: String? = nil,
-        debugTools: Bool = false,
         actions: @escaping @MainActor (AccountsAction) -> Void
     ) {
         self.accounts = accounts
         self.appearance = appearance
         self.identity = identity
-        self.debugTools = debugTools
         self.actions = actions
     }
 
@@ -399,13 +396,9 @@ public struct YouScreen: View {
                 glyphRow("Contact Support", glyph: "envelope", id: "support") {
                     actions(.support)
                 }
-                // Only where the tools to write one exist. A build a person
-                // installs has no report to send.
-                if debugTools {
-                    rule(inset: 14)
-                    glyphRow("Report a Problem", glyph: "ladybug", id: "report") {
-                        actions(.report)
-                    }
+                rule(inset: 14)
+                glyphRow("Report a Problem", glyph: "ladybug", id: "report") {
+                    actions(.report)
                 }
             }
             Text("A report includes a screenshot and available session and host records.")

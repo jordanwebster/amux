@@ -1,9 +1,6 @@
-import AmuxCore
+import CoreGraphics
 import Foundation
-import SwiftUI
-#if canImport(UIKit)
-import UIKit
-#endif
+import ImageIO
 
 /// The picture of the screen a report is about, and how big it was.
 ///
@@ -35,20 +32,15 @@ public struct FrozenFrame: Sendable, Equatable {
 }
 
 extension FrozenFrame {
-    /// The frozen screen as something a view can draw, or nothing when the
-    /// bytes are not an image this phone can read.
+    /// The frozen screen decoded, or nothing when the bytes are not an image
+    /// this phone can read.
     ///
     /// The decode lives beside the value rather than in the screen that shows
-    /// it: turning phone pixels back into a picture is the platform's, and the
-    /// screens in this app are written to be functions of their state with no
-    /// platform in them at all.
-    public var picture: Image? {
-        #if canImport(UIKit)
-        guard let image = UIImage(data: png) else { return nil }
-        return Image(uiImage: image)
-        #else
-        return nil
-        #endif
+    /// it: the screens in this app are written to be functions of their state,
+    /// and turning bytes back into pixels is not something a screen decides.
+    public var image: CGImage? {
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
     }
 }
 

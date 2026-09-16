@@ -1077,7 +1077,8 @@ final class DoorHost {
         do {
             let parts = try DoorRecording.write(
                 directory,
-                freezer: ReportFreeze(runtimeFailure: { [weak self] in self?.coordinator?.failure }),
+                freezer: ReportFreeze.driven(
+                    runtimeFailure: { [weak self] in self?.coordinator?.failure }),
                 draft: ReportDraft(note: note, marks: marks),
                 build: AppFiles.build,
                 log: AppFiles.logTail)

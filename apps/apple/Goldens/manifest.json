@@ -774,6 +774,19 @@
       ]
     },
     {
+      "id": "report-signed-out",
+      "stage": 11,
+      "screen": "dump",
+      "fixture": "report-signed-out",
+      "origin": "added_state",
+      "reason": "a report written on a phone nobody is signed in on, which has no account to send it to and says so before Send",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "ax-conversation",
       "stage": 12,
       "screen": "run",

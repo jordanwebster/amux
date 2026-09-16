@@ -365,11 +365,16 @@ pub unsafe extern "C" fn amux_app_snapshot(handle: *mut Handle) -> *mut c_char {
 /// Freezes recorder checkpoint/message lines and obtains the embedded daemon's
 /// JSON dump. The result has msgs, daemon and daemon_absent_reason fields.
 /// A failed or timed-out dump is null with its reason; msgs remains available.
-/// Free the owned result with amux_app_free. Debug-tools builds only.
+/// Free the owned result with amux_app_free.
+///
+/// In every build, not only the one with the driving tools: a person reporting
+/// a problem from an installed app sends these records to their own account,
+/// and the recorder they come from runs in every build anyway, because a
+/// release panic report is written from it. It reads what this device already
+/// holds and changes nothing, so it is no way to drive the app.
 ///
 /// # Safety
 /// handle must be live and may not race stop. Never call from an event callback.
-#[cfg(feature = "debug-tools")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amux_app_report_snapshot(handle: *mut Handle) -> *mut c_char {
     unsafe { snapshot(handle, Control::ReportSnapshot) }

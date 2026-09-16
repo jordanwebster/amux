@@ -384,6 +384,12 @@ Reference-backed capture of `shake` using the `shake` fixture. No visual departu
 
 Added state using the `upload-failed` fixture. A report the cloud would not take. It follows the same visual system as its parent screen.
 
+## report-signed-out
+
+Added state using the `report-signed-out` fixture. A report written on a phone
+nobody is signed in on: Send is unavailable and a card above the picture says a
+report needs an account. It follows the same visual system as its parent screen.
+
 ## ax-conversation
 
 Added state using the `run-accessibility` fixture. A conversation at an accessibility text size. It follows the same visual system as its parent screen.

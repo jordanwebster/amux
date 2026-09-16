@@ -32,13 +32,15 @@ final class Composition {
     /// What the app is wearing. Nothing means whatever the phone is set to,
     /// which is what most people want and what the app starts as.
     var appearance: Appearance?
-    #if AMUX_DEBUG_TOOLS
-    let reports: ReportStore?
-    let freezer: (any ReportFreezing)?
-    #endif
+    /// The one report this phone is in the middle of, from a screenshot or
+    /// from Help. In every build: reporting a problem is for everybody.
+    let reports = ReportStore()
+    /// What photographs the screen and freezes the records a report carries.
+    let freezer: any ReportFreezing
     /// Where the conversations say what they have open and where they are
     /// being read, so a report can carry two things no message ever does.
-    /// Nothing in a build a person installs: there is no report to write.
+    /// Only a build with the driving tools records them, because only that
+    /// build can put a recording of the views back.
     let conversations: ConversationRecording?
     /// The account service. Every screen sees it as `CloudService` and none of
     /// them knows there is HTTP behind it. A debug build's driving door is
@@ -101,14 +103,14 @@ final class Composition {
         // paired with, so there is a connection behind this screen too.
         coordinator.signedOutStores = signedOut
         runtime = coordinator
-        #if AMUX_DEBUG_TOOLS
-        reports = ReportStore()
         // The page the person is on goes into the report, so whoever opens the
         // bundle knows what they are looking at before they open the picture —
         // and so a picture taken on one page and written up on another says
         // which one it is of.
-        freezer = ReportFreeze(
-            route: { router.top?.name ?? router.tab.rawValue },
+        let route = { router.top?.name ?? router.tab.rawValue }
+        #if AMUX_DEBUG_TOOLS
+        freezer = ReportFreeze.driven(
+            route: route,
             place: { Self.place(for: router) },
             account: { [accounts] in accounts.selectedAccount },
             ordered: { [accounts, signedOut] in (accounts.stores ?? signedOut).fleet.orderedAt },
@@ -141,6 +143,7 @@ final class Composition {
         conversations.asided = { DoorHost.shared.setAside($1, for: $0) }
         self.conversations = conversations
         #else
+        freezer = ReportFreeze(route: route, runtimeFailure: { [runtime] in runtime.failure })
         conversations = nil
         #endif
         router.loads(with: self)

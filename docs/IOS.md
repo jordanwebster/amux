@@ -11,12 +11,12 @@ checkout. The phone does not run local agents.
 | `crates/app-runtime` | Account sessions, the projection from reducer state to presentation values, the fleet cache and the frame-coalesced event queue; links `ui-runtime` and `client`, never the node |
 | `crates/app-embedded` | Starting, credentialing and stopping the provider-free embedded node and holding its relay link; the only crate with a `debug-tools` feature |
 | `crates/app-ffi` | The C ABI: `amux_app_*` symbols, JSON in and out, callbacks, opaque handles and the generated header |
-| `AmuxCore` | Swift bridge adapter, observable stores and model/action contracts, account and purchase service boundaries |
+| `AmuxCore` | Swift bridge adapter, observable stores and model/action contracts, account and purchase service boundaries, the report store and bundle |
 | `AmuxDesign` | Light/dark tokens, bundled fonts, type scaling, glass and target geometry |
-| `AmuxFeatures` | SwiftUI screens driven by state and actions, plus registered UIKit leaves |
+| `AmuxFeatures` | SwiftUI screens driven by state and actions, including the report offer and report screen, plus registered UIKit leaves |
 | `AmuxShell` | iPhone navigation, tabs, routes, deep links and service coordination |
-| `AmuxTestSupport` | Named fixtures, scripted account and StoreKit adapters, driving protocol, report models and views |
-| `apps/apple/Amux` | App entry, platform services, debug capture and driving server |
+| `AmuxTestSupport` | Named fixtures, scripted account and StoreKit adapters, driving protocol, view-state trace |
+| `apps/apple/Amux` | App entry, platform services, report capture, and the debug driving server |
 
 The runtime streams ordered batches into Swift; Swift copies callback bytes
 before returning and applies store changes on the main actor. Feed updates
@@ -65,8 +65,8 @@ checks a changed container, retained account and fleet, and a fresh connection.
 Core models and feature actions remain reusable for a separate future Mac UI.
 The shell belongs to iPhone; there is no Mac, Catalyst or iPad target. Debug
 support is compiled directly into Debug and Measured, with its sources and
-resources excluded from Release. Release retains Contact Support; it exposes
-neither fixture driving nor reporting.
+resources excluded from Release. Release retains Contact Support and reporting
+a problem; it exposes no fixture driving, view-state trace or replay.
 
 ## Build and simulator pins
 
@@ -290,8 +290,8 @@ VoiceOver navigation, gestures, transitions or network behavior.
 The [copy standard](IOS_COPY.md) defines wording, case, terminology and the
 catalogue review process. `just ios lint` checks every Swift app/package
 literal against the English catalogue or an exact, documented non-copy
-exemption. It includes helper/model copy and debug report views. The debug
-catalogue is excluded from Release. A copy change includes its affected
+exemption. It includes helper/model copy and report views. The debug
+catalogue holds copy only the driving tools use and is excluded from Release. A copy change includes its affected
 light/dark goldens and baseline explanation.
 
 ## The app icon
@@ -359,11 +359,16 @@ recorded effect executes and no host is contacted. Client recordings do not
 reconstruct arbitrary provider history; host replay requires provider records or
 an explicitly tested conversion.
 
-Reporting freezes the app's own frame after screenshot notification, or from
-Report a Problem under Help. The system preview remains system-owned. The
-report retains rectangles, notes and available session/host records. Its
-`report.json` declares each part present or absent with a reason; this app
-cannot read its system log back, so its log part is absent. A failed upload
+Reporting is in every build, including Release. It freezes the app's own
+frame after screenshot notification, or from Report a Problem under Help;
+there is no shake gesture. The system preview remains system-owned. The report
+retains rectangles, notes and the session and host records the runtime keeps
+(`msgs.jsonl` and `daemon.json`). Its `report.json` declares each part present
+or absent with a reason: only a build with the driving tools records the
+view-state trace, so a Release report declares `trace.jsonl` absent, and this
+app cannot read its system log back, so its log part is always absent. A report
+is sent to the signed-in account on screen; with nobody signed in the report
+screen says so and Send is unavailable. A failed upload
 retains the same bytes, creation time and stamp for Retry. Sent is final.
 The build stamps its checkout revision into the app, and each report records
 that revision in `git_sha`.
@@ -380,7 +385,7 @@ and reconciliation on older supported hardware, presented-frame cadence and
 hitches on ProMotion and standard displays, and thermal and battery behavior.
 Simulator timing proxies do not mark those checks passed.
 
-- [ ] On a physical iPhone running a debug build, take a system screenshot with
+- [ ] On a physical iPhone running a Release build, take a system screenshot with
   thumbnail preview enabled. Confirm the app-owned Report prompt appears and
   opens the frozen app frame without a Share step or Photos permission.
 - [ ] Repeat with full-screen screenshot preview enabled. Return to the app and

@@ -1,3 +1,22 @@
+2026-09-16 — **Reporting a problem is in every build of the app.** Reports
+were compiled out of Release: the report store, the bundle and the report
+screen sat in the test-support package, the screenshot listener was attached
+only with the driving tools, and a Release build hid Report a Problem while
+still showing its caption. The store and the bundle now live in `AmuxCore`, the
+offer and the report screen in `AmuxFeatures`, and the app's freeze and
+screenshot listener in its own sources, so both entry points (the offer after a
+system screenshot, and Help → Report a Problem) exist in every build. There is
+no shake gesture. A Release report carries the picture, the rectangles and
+notes, and the session and host records; the bridge call that freezes those
+records (`amux_app_report_snapshot`) now ships, because the recorder behind it
+already runs in every build for panic reports. Only the view-state trace stays
+with the driving tools, and a Release report declares it absent with the
+reason. With nobody signed in, the report screen says a report needs an account
+and Send is unavailable, instead of refusing after Send; a signed-out account on
+screen no longer counts as somebody to send as. The release scope audit now
+requires the report surfaces to be present and still refuses the trace, replay
+and door.
+
 2026-09-16 — **New Agent reserves a name as soon as the host accepts it.**
 New Agent suggested names by skipping those in the latest fleet. An agent the
 host had just started was not in that fleet until the next inventory update, so

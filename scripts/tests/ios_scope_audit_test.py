@@ -84,6 +84,21 @@ class ScopeAuditTests(unittest.TestCase):
                 self.assertTrue(audit.binary_violations("", "before\n" + row + "\nafter"))
         self.assertEqual(audit.binary_violations("NotificationCenter", "Contact Support\n3 need you"), [])
 
+    def test_reporting_ships_and_its_absence_is_refused(self):
+        symbols = "\n".join(audit.REPORT_SYMBOLS)
+        strings = "\n".join(audit.REPORT_COPY)
+        self.assertEqual(audit.reporting_violations(symbols, strings), [])
+        # Shipping is not a debug surface: none of it trips the exclusions.
+        self.assertEqual(audit.binary_violations(symbols, strings), [])
+        for name in audit.REPORT_SYMBOLS:
+            with self.subTest(symbol=name):
+                self.assertIn(f"reporting is absent: {name}", audit.reporting_violations(
+                    symbols.replace(name, ""), strings))
+        for copy in audit.REPORT_COPY:
+            with self.subTest(copy=copy):
+                self.assertIn(f"reporting copy is absent: {copy}", audit.reporting_violations(
+                    symbols, strings.replace(copy, "")))
+
     def test_the_legacy_bonjour_browsers_stay_refused(self):
         # Both reach the same multicast as Network.framework without the
         # system's permission prompt in front of them.

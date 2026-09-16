@@ -143,7 +143,7 @@ Its hosts map includes online unpaired hosts advertised through this account's
 relay. The embedded runtime subscribes through its owner administration handle;
 profile sockets and peer tunnels expose only trusted hosts. Pairing candidates
 stay outside Fleet callbacks and the fleet cache until trust is confirmed.
-In `debug-tools` builds, `amux_app_report_snapshot` returns
+In every build, `amux_app_report_snapshot` returns
 `{"msgs":{"format_version":1,"checkpoint":MODEL,"msgs":[JSON_LINE,...]},
 "daemon":JSON_STRING_OR_NULL,"daemon_absent_reason":STRING_OR_NULL}`.
 The recorder freezes before the embedded daemon dump request. To form
@@ -155,7 +155,7 @@ with an explicit absence reason. These calls wait up to five seconds for the
 worker; call them outside the event callback, finish before stop, check for
 null and release returned strings with `amux_app_free`.
 
-Also in `debug-tools` builds, `amux_app_replay_report` takes the path of a
+Only in `debug-tools` builds, `amux_app_replay_report` takes the path of a
 `msgs.jsonl` written that way and returns `{"events":[EVENT,...]}` — the same
 projected events a live connection delivers — or `{"error":STRING}` when the
 file cannot be read or folded. It needs no handle and starts nothing: the
