@@ -1,3 +1,9 @@
+2026-09-16 — **SDK resume restores block-form human prompts.**
+Historical user rows containing text and images now retain their provider
+message unchanged and enter the shared fold as replayed prompts. Canonical
+interrupt blocks remain status events, while tool-result rows keep their
+existing correlation fields and never masquerade as human input.
+
 2026-09-16 — **SDK resume finds Claude's exact project directory.**
 Transcript lookup now replaces every non-ASCII-alphanumeric path character in
 the same way as Claude Code, so dotted worktree paths resolve correctly. When

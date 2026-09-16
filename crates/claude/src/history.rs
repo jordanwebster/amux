@@ -302,9 +302,7 @@ fn historical_user(row: &Value) -> Option<Value> {
         Value::String(text) if is_interrupt_text(text) => {
             Some(Value::Object(normalized_message_envelope(row, "user")?))
         }
-        Value::String(text)
-            if !text.starts_with("<command-") && !text.starts_with("<local-command-") =>
-        {
+        Value::String(text) if !is_command_text(text) => {
             let mut output = normalized_message_envelope(row, "user")?;
             output.insert("isReplay".into(), Value::Bool(true));
             Some(Value::Object(output))
@@ -313,22 +311,47 @@ fn historical_user(row: &Value) -> Option<Value> {
             let tool_result = blocks
                 .iter()
                 .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"));
-            let interrupt = blocks.iter().any(|block| {
-                block
+            if tool_result {
+                let mut output = normalized_message_envelope(row, "user")?;
+                copy_renamed(row, &mut output, "toolUseResult", "tool_use_result");
+                copy_renamed(row, &mut output, "tool_use_result", "tool_use_result");
+                return Some(Value::Object(output));
+            }
+
+            let interrupt = blocks.len() == 1
+                && blocks[0].get("type").and_then(Value::as_str) == Some("text")
+                && blocks[0]
                     .get("text")
                     .and_then(Value::as_str)
-                    .is_some_and(is_interrupt_text)
-            });
-            if !tool_result && !interrupt {
+                    .is_some_and(is_interrupt_text);
+            if interrupt {
+                return Some(Value::Object(normalized_message_envelope(row, "user")?));
+            }
+
+            let prompt = !blocks.is_empty()
+                && blocks.iter().all(|block| {
+                    matches!(
+                        block.get("type").and_then(Value::as_str),
+                        Some("text" | "image")
+                    )
+                })
+                && blocks
+                    .iter()
+                    .filter_map(|block| block.get("text").and_then(Value::as_str))
+                    .all(|text| !is_command_text(text));
+            if !prompt {
                 return None;
             }
             let mut output = normalized_message_envelope(row, "user")?;
-            copy_renamed(row, &mut output, "toolUseResult", "tool_use_result");
-            copy_renamed(row, &mut output, "tool_use_result", "tool_use_result");
+            output.insert("isReplay".into(), Value::Bool(true));
             Some(Value::Object(output))
         }
         _ => None,
     }
+}
+
+fn is_command_text(text: &str) -> bool {
+    text.starts_with("<command-") || text.starts_with("<local-command-")
 }
 
 fn is_interrupt_text(text: &str) -> bool {
@@ -1248,6 +1271,15 @@ mod tests {
         .unwrap();
         assert!(interrupt.payload.get("isReplay").is_none());
 
+        let block_interrupt = historical_row(&json!({
+            "type":"user","uuid":"block-interrupt","sessionId":"session",
+            "message":{"role":"user","content":[
+                {"type":"text","text":"[Request interrupted by user for tool use]"}
+            ]}
+        }))
+        .unwrap();
+        assert!(block_interrupt.payload.get("isReplay").is_none());
+
         let tool_result = historical_row(&json!({
             "type":"user","uuid":"result","sessionId":"session",
             "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool","is_error":false}]},
@@ -1255,6 +1287,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(tool_result.payload["tool_use_result"]["stdout"], "ok");
+        assert!(tool_result.payload.get("isReplay").is_none());
 
         let compact = historical_row(&json!({
             "type":"system","subtype":"compact_boundary","uuid":"compact","sessionId":"session",
@@ -1270,6 +1303,7 @@ mod tests {
         for omitted in [
             json!({"type":"user","uuid":"meta","isMeta":true,"message":{"content":"hidden"}}),
             json!({"type":"user","uuid":"command","message":{"content":"<command-name>test"}}),
+            json!({"type":"user","uuid":"block-command","message":{"content":[{"type":"text","text":"<command-name>test"}]}}),
             json!({"type":"user","uuid":"task","origin":{"kind":"task-notification"},"message":{"content":"done"}}),
             json!({"type":"system","subtype":"turn_duration"}),
             json!({"type":"future"}),

@@ -1370,8 +1370,8 @@ mod tests {
     use std::time::Duration;
 
     use claude::sdk::{HookEvent, HookSubscription};
-    use fold::claude_sdk::ClaudeSdkFold;
-    use fold::{Baseline, Input, MutationOracle, ProviderFold};
+    use fold::claude_sdk::{ClaudeSdkBody, ClaudeSdkEntryKind, ClaudeSdkFold};
+    use fold::{Baseline, Entry, Input, MutationOracle, ProviderFold};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex};
 
     use super::*;
@@ -1581,6 +1581,77 @@ mod tests {
             "live overlap must upsert the historical key"
         );
         assert_eq!(oracle.entries()[0].key, live_only[0].key);
+    }
+
+    #[test]
+    fn daemon_sdk_text_and_image_history_becomes_a_replayed_prompt() {
+        let message = json!({
+            "role":"user",
+            "content":[
+                {"type":"text","text":"Please inspect this image."},
+                {"type":"image","source":{
+                    "type":"base64","media_type":"image/png","data":"iVBORw0KGgo="
+                }}
+            ]
+        });
+        let transcript = json!({
+            "parentUuid":null,
+            "isSidechain":false,
+            "userType":"external",
+            "cwd":"/work/project",
+            "sessionId":"session",
+            "version":"2.1.272",
+            "gitBranch":"database",
+            "type":"user",
+            "message":message,
+            "uuid":"prompt-row",
+            "timestamp":"2026-09-16T10:11:12.345Z",
+            "permissionMode":"default"
+        });
+
+        let mapped = claude::history::historical_row(&transcript).unwrap();
+        assert_eq!(
+            mapped.payload,
+            json!({
+                "type":"user",
+                "uuid":"prompt-row",
+                "session_id":"session",
+                "parent_tool_use_id":null,
+                "timestamp":"2026-09-16T10:11:12.345Z",
+                "message":message,
+                "isReplay":true
+            })
+        );
+
+        let payload = serde_json::to_vec(&mapped.payload).unwrap();
+        let mut fold = ClaudeSdkFold::default();
+        fold.begin(1, Baseline::Start);
+        let changes = fold.apply(Input::Row {
+            seq: 1,
+            published_at: Utc::now(),
+            activity_at: mapped.activity_at,
+            historical: true,
+            payload: &payload,
+        });
+        let mut oracle = MutationOracle::default();
+        oracle.apply_changes(&changes).unwrap();
+        let entries = oracle.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key.as_str(), "user:prompt-row");
+        assert_eq!(
+            entries[0].entry.entry_kind(),
+            Some(ClaudeSdkEntryKind::Prompt)
+        );
+        assert_eq!(entries[0].entry.text(), Some("Please inspect this image."));
+        assert!(matches!(
+            entries[0].entry.body(),
+            Some(ClaudeSdkBody::Prompt {
+                uuid: Some(uuid),
+                image_count: 1,
+                synthetic: false,
+                replay: true,
+            }) if uuid == "prompt-row"
+        ));
     }
 
     #[tokio::test]
