@@ -1,6 +1,6 @@
 [package]
 name = "node"
-version = "0.6.0"
+version = "0.7.0"
 edition.workspace = true
 description = "Identity, routing, and supervised node services for amux"
 publish = false

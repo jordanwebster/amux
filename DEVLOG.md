@@ -1,3 +1,12 @@
+2026-09-16 — **One release number for the CLI and the daemon.** The release
+script moved `crates/amux` alone, which was the whole product when it was
+written. Since the split the daemon is its own crate, and it is the daemon that
+announces a version to peers, writes it into the update marker and reports it
+to the debug server — so the first release after the split would have had
+`amux --version` say 0.7.0 while the machine a person sees in their fleet said
+0.6.0, and the update check compare a manifest against the older number. Both
+crates now carry the release version and the script moves both.
+
 2026-09-16 — **Asked the UDP proxy what it dropped instead of counting what
 arrived.** The loss test blasted ten thousand datagrams through a real socket
 pair and required seven to eight thousand to arrive. A loaded CI runner's
