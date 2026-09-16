@@ -30,8 +30,7 @@ impl StructuredProtocol {
 }
 
 /// Whether an agent currently needs the operator's attention.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "attention", rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Attention {
     Unknown,
     Idle,
@@ -48,8 +47,7 @@ pub enum Why {
 }
 
 /// Lifecycle phase observed from session-stream facts.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "phase", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentPhase {
     Running,
     Exited { exit_code: Option<i32> },
@@ -111,9 +109,172 @@ pub struct Progress {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HostRevision(pub u64);
 
+// Human-readable serializers keep the established API JSON. Persisted binary
+// formats use external tags so non-self-describing codecs such as postcard can
+// decode the same domain types without `deserialize_any`.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "attention", rename_all = "snake_case")]
+enum HumanAttention {
+    Unknown,
+    Idle,
+    Working,
+    NeedsYou { why: Why },
+}
+
+#[derive(Serialize, Deserialize)]
+enum BinaryAttention {
+    Unknown,
+    Idle,
+    Working,
+    NeedsYou { why: Why },
+}
+
+impl From<Attention> for HumanAttention {
+    fn from(value: Attention) -> Self {
+        match value {
+            Attention::Unknown => Self::Unknown,
+            Attention::Idle => Self::Idle,
+            Attention::Working => Self::Working,
+            Attention::NeedsYou { why } => Self::NeedsYou { why },
+        }
+    }
+}
+
+impl From<HumanAttention> for Attention {
+    fn from(value: HumanAttention) -> Self {
+        match value {
+            HumanAttention::Unknown => Self::Unknown,
+            HumanAttention::Idle => Self::Idle,
+            HumanAttention::Working => Self::Working,
+            HumanAttention::NeedsYou { why } => Self::NeedsYou { why },
+        }
+    }
+}
+
+impl From<Attention> for BinaryAttention {
+    fn from(value: Attention) -> Self {
+        match value {
+            Attention::Unknown => Self::Unknown,
+            Attention::Idle => Self::Idle,
+            Attention::Working => Self::Working,
+            Attention::NeedsYou { why } => Self::NeedsYou { why },
+        }
+    }
+}
+
+impl From<BinaryAttention> for Attention {
+    fn from(value: BinaryAttention) -> Self {
+        match value {
+            BinaryAttention::Unknown => Self::Unknown,
+            BinaryAttention::Idle => Self::Idle,
+            BinaryAttention::Working => Self::Working,
+            BinaryAttention::NeedsYou { why } => Self::NeedsYou { why },
+        }
+    }
+}
+
+impl Serialize for Attention {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            HumanAttention::from(*self).serialize(serializer)
+        } else {
+            BinaryAttention::from(*self).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Attention {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            return HumanAttention::deserialize(deserializer).map(Into::into);
+        }
+        BinaryAttention::deserialize(deserializer).map(Into::into)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+enum HumanAgentPhase {
+    Running,
+    Exited { exit_code: Option<i32> },
+}
+
+#[derive(Serialize, Deserialize)]
+enum BinaryAgentPhase {
+    Running,
+    Exited { exit_code: Option<i32> },
+}
+
+impl From<AgentPhase> for HumanAgentPhase {
+    fn from(value: AgentPhase) -> Self {
+        match value {
+            AgentPhase::Running => Self::Running,
+            AgentPhase::Exited { exit_code } => Self::Exited { exit_code },
+        }
+    }
+}
+
+impl From<HumanAgentPhase> for AgentPhase {
+    fn from(value: HumanAgentPhase) -> Self {
+        match value {
+            HumanAgentPhase::Running => Self::Running,
+            HumanAgentPhase::Exited { exit_code } => Self::Exited { exit_code },
+        }
+    }
+}
+
+impl From<AgentPhase> for BinaryAgentPhase {
+    fn from(value: AgentPhase) -> Self {
+        match value {
+            AgentPhase::Running => Self::Running,
+            AgentPhase::Exited { exit_code } => Self::Exited { exit_code },
+        }
+    }
+}
+
+impl From<BinaryAgentPhase> for AgentPhase {
+    fn from(value: BinaryAgentPhase) -> Self {
+        match value {
+            BinaryAgentPhase::Running => Self::Running,
+            BinaryAgentPhase::Exited { exit_code } => Self::Exited { exit_code },
+        }
+    }
+}
+
+impl Serialize for AgentPhase {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            HumanAgentPhase::from(self.clone()).serialize(serializer)
+        } else {
+            BinaryAgentPhase::from(self.clone()).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentPhase {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            return HumanAgentPhase::deserialize(deserializer).map(Into::into);
+        }
+        BinaryAgentPhase::deserialize(deserializer).map(Into::into)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Attention, StructuredProtocol, Why};
+    use super::{AgentPhase, Attention, StructuredProtocol, Why};
 
     #[test]
     fn structured_protocol_keeps_existing_wire_names() {
@@ -139,6 +300,22 @@ mod tests {
             })
             .unwrap(),
             serde_json::json!({"attention": "needs_you", "why": "permission"})
+        );
+    }
+
+    #[test]
+    fn agent_phase_keeps_existing_tagged_shape() {
+        let phase = AgentPhase::Exited { exit_code: Some(7) };
+        assert_eq!(
+            serde_json::to_value(&phase).unwrap(),
+            serde_json::json!({"phase": "exited", "exit_code": 7})
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentPhase>(
+                serde_json::json!({"phase": "exited", "exit_code": 7})
+            )
+            .unwrap(),
+            phase
         );
     }
 }

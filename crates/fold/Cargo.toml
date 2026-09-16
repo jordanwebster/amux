@@ -6,4 +6,9 @@ description = "Pure structured-agent observation and transcript folds"
 publish = false
 
 [dependencies]
+chrono = { workspace = true }
 model = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+postcard = { workspace = true }

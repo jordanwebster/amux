@@ -101,7 +101,7 @@ pub struct WorkingOn {
 }
 
 /// Client-visible agent DTO used by service responses and inventory streams.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
     pub id: Uuid,
     pub host_id: Uuid,
@@ -112,8 +112,106 @@ pub struct Agent {
     pub readonly: bool,
     pub args: Vec<String>,
     pub created_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<AgentParent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_on: Option<WorkingOn>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct HumanAgent {
+    id: Uuid,
+    host_id: Uuid,
+    name: Option<String>,
+    command: String,
+    working_dir: PathBuf,
+    kind: AgentKind,
+    readonly: bool,
+    args: Vec<String>,
+    created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent: Option<AgentParent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    working_on: Option<WorkingOn>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BinaryAgent {
+    id: Uuid,
+    host_id: Uuid,
+    name: Option<String>,
+    command: String,
+    working_dir: PathBuf,
+    kind: AgentKind,
+    readonly: bool,
+    args: Vec<String>,
+    created_at: DateTime<Utc>,
+    parent: Option<AgentParent>,
+    working_on: Option<WorkingOn>,
+}
+
+macro_rules! impl_agent_conversion {
+    ($representation:ty) => {
+        impl From<Agent> for $representation {
+            fn from(value: Agent) -> Self {
+                Self {
+                    id: value.id,
+                    host_id: value.host_id,
+                    name: value.name,
+                    command: value.command,
+                    working_dir: value.working_dir,
+                    kind: value.kind,
+                    readonly: value.readonly,
+                    args: value.args,
+                    created_at: value.created_at,
+                    parent: value.parent,
+                    working_on: value.working_on,
+                }
+            }
+        }
+
+        impl From<$representation> for Agent {
+            fn from(value: $representation) -> Self {
+                Self {
+                    id: value.id,
+                    host_id: value.host_id,
+                    name: value.name,
+                    command: value.command,
+                    working_dir: value.working_dir,
+                    kind: value.kind,
+                    readonly: value.readonly,
+                    args: value.args,
+                    created_at: value.created_at,
+                    parent: value.parent,
+                    working_on: value.working_on,
+                }
+            }
+        }
+    };
+}
+
+impl_agent_conversion!(HumanAgent);
+impl_agent_conversion!(BinaryAgent);
+
+impl Serialize for Agent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            HumanAgent::from(self.clone()).serialize(serializer)
+        } else {
+            BinaryAgent::from(self.clone()).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Agent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            return HumanAgent::deserialize(deserializer).map(Into::into);
+        }
+        BinaryAgent::deserialize(deserializer).map(Into::into)
+    }
 }

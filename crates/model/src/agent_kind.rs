@@ -10,8 +10,7 @@ pub enum ClaudeDriver {
 }
 
 /// A closed description of an agent and its provider-specific driver.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AgentKind {
     Claude { driver: ClaudeDriver },
     Codex,
@@ -27,6 +26,86 @@ pub enum Protocol {
     ClaudeSdkV1,
     CodexSdkV1,
     TestEchoV1,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum HumanAgentKind {
+    Claude { driver: ClaudeDriver },
+    Codex,
+    TestAgent,
+}
+
+#[derive(Serialize, Deserialize)]
+enum BinaryAgentKind {
+    Claude { driver: ClaudeDriver },
+    Codex,
+    TestAgent,
+}
+
+impl From<AgentKind> for HumanAgentKind {
+    fn from(value: AgentKind) -> Self {
+        match value {
+            AgentKind::Claude { driver } => Self::Claude { driver },
+            AgentKind::Codex => Self::Codex,
+            AgentKind::TestAgent => Self::TestAgent,
+        }
+    }
+}
+
+impl From<HumanAgentKind> for AgentKind {
+    fn from(value: HumanAgentKind) -> Self {
+        match value {
+            HumanAgentKind::Claude { driver } => Self::Claude { driver },
+            HumanAgentKind::Codex => Self::Codex,
+            HumanAgentKind::TestAgent => Self::TestAgent,
+        }
+    }
+}
+
+impl From<AgentKind> for BinaryAgentKind {
+    fn from(value: AgentKind) -> Self {
+        match value {
+            AgentKind::Claude { driver } => Self::Claude { driver },
+            AgentKind::Codex => Self::Codex,
+            AgentKind::TestAgent => Self::TestAgent,
+        }
+    }
+}
+
+impl From<BinaryAgentKind> for AgentKind {
+    fn from(value: BinaryAgentKind) -> Self {
+        match value {
+            BinaryAgentKind::Claude { driver } => Self::Claude { driver },
+            BinaryAgentKind::Codex => Self::Codex,
+            BinaryAgentKind::TestAgent => Self::TestAgent,
+        }
+    }
+}
+
+impl Serialize for AgentKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            HumanAgentKind::from(*self).serialize(serializer)
+        } else {
+            BinaryAgentKind::from(*self).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            return HumanAgentKind::deserialize(deserializer).map(Into::into);
+        }
+        BinaryAgentKind::deserialize(deserializer).map(Into::into)
+    }
 }
 
 const CLAUDE_PTY_PROTOCOLS: &[Protocol] = &[Protocol::TerminalV1, Protocol::ClaudePtyTranscriptV1];
@@ -174,5 +253,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn agent_kind_keeps_existing_tagged_json_shape() {
+        let kind = AgentKind::Claude {
+            driver: ClaudeDriver::Sdk,
+        };
+        assert_eq!(
+            serde_json::to_value(kind).unwrap(),
+            serde_json::json!({"kind": "claude", "driver": "sdk"})
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentKind>(
+                serde_json::json!({"kind": "claude", "driver": "sdk"})
+            )
+            .unwrap(),
+            kind
+        );
     }
 }

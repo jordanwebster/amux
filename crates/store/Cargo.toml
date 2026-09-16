@@ -12,4 +12,5 @@ bundled = ["rusqlite/bundled"]
 [dependencies]
 fold = { workspace = true }
 model = { workspace = true }
+postcard = { workspace = true }
 rusqlite = { workspace = true }

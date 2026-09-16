@@ -1,3 +1,12 @@
+2026-09-16 — **The fold and store share one bounded, postcard-safe contract.**
+Heads, segments, entries, pages, commit results and fleet deltas now use the
+same I/O-free values in `fold`, including the corrected replay cuts, boundary
+tie-breakers and canonical commit tokens. Entry keys reject identities beyond
+512 encoded bytes, and provider tips, entries and partials must satisfy a
+sealed compile-time postcard-safety check that excludes JSON value trees.
+Existing human-readable model JSON keeps its wire shape while the persisted
+binary form uses external enum tags that postcard can decode.
+
 2026-09-16 — **Structured observations have one vocabulary below every client.**
 The daemon, shared store and UI reducers now meet on sequence, protocol,
 attention, lifecycle and summary types owned by `model`; `ui-state` re-exports
