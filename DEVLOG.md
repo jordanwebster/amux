@@ -1,3 +1,9 @@
+2026-09-16 — **SDK todo specs follow the resume boundary.**
+The UI integration contract now proves that a ready row preserves task state
+recovered from resume history, while a later conversation reset still clears
+that state. This keeps the client-side specification aligned with the shared
+Claude SDK fold and daemon resume behavior.
+
 2026-09-16 — **Claude SDK resume behavior is pinned to a real provider row.**
 The daemon SDK suite now exercises present and absent transcript files, the
 4 MiB and 2,000-line cuts, a partial final line, marker ordering, recovered

@@ -422,15 +422,26 @@ fn sdk_integration_todos_share_native_blocks_and_replay_without_feed_rows() {
         0,
         "old blocks cannot restore an older list"
     );
-    for reset in [
-        json!({"type":"conversation_reset"}),
-        rows(STREAM)[0].clone(),
-    ] {
-        let mut model = fold(ready());
-        update(&mut model, batch(AGENT, 100, fixtures[..2].to_vec()));
-        update(&mut model, batch(AGENT, 200, vec![reset]));
-        assert!(provider::facts(&model, agent_id(AGENT)).todos.is_none());
-    }
+    let mut model = fold(ready());
+    update(&mut model, batch(AGENT, 100, fixtures[..2].to_vec()));
+    let observed = provider::facts(&model, agent_id(AGENT)).todos;
+    assert!(observed.is_some());
+
+    update(
+        &mut model,
+        batch(AGENT, 200, vec![rows(STREAM)[0].clone()]),
+    );
+    assert_eq!(
+        provider::facts(&model, agent_id(AGENT)).todos,
+        observed,
+        "ready preserves todos recovered before the resumed live stream"
+    );
+
+    update(
+        &mut model,
+        batch(AGENT, 201, vec![json!({"type":"conversation_reset"})]),
+    );
+    assert!(provider::facts(&model, agent_id(AGENT)).todos.is_none());
 }
 #[test]
 fn sdk_integration_todo_failure_is_named_and_child_lists_do_not_replace_parent() {
