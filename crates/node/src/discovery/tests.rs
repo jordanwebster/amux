@@ -23,10 +23,9 @@ fn txt_encoding_contains_only_version_and_host_id() {
 
     assert_eq!(properties.len(), 2);
     assert_eq!(service.get_property_val_str("v"), Some("7"));
-    assert_eq!(
-        service.get_property_val_str("hid"),
-        Some(advert.host_id.simple().to_string().as_str())
-    );
+    let hid = service.get_property_val_str("hid").unwrap();
+    assert_eq!(hid, advert.host_id.hyphenated().to_string());
+    assert_eq!(hid.matches('-').count(), 4);
     assert_eq!(service.get_port(), 4819);
     assert!(service.get_fullname().ends_with(SERVICE_TYPE));
 }

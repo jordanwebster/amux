@@ -1,3 +1,13 @@
+2026-09-16 — **iPhones can see Macs on the same network.** The Mac
+announced its host ID in the local-network advertisement as 32 bare hex digits,
+while every other place a host ID crosses between machines uses the hyphenated
+form. The iPhone app reads the ID with Foundation's `UUID(uuidString:)`, which
+only accepts the hyphenated form, so it treated every Mac as some other service
+and never offered it for pairing. The app's own test built its record with the
+hyphenated form, so neither side's tests saw the mismatch. The advertisement now
+uses the hyphenated form, and the Rust test pins that spelling. The Mac's
+parser already accepted both forms, so Macs still find each other.
+
 2026-09-16 — **One release number for the CLI and the daemon.** The release
 script moved `crates/amux` alone, which was the whole product when it was
 written. Since the split the daemon is its own crate, and it is the daemon that

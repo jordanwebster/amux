@@ -208,7 +208,9 @@ fn service_info(advert: &Advertisement) -> Result<ServiceInfo, DiscoveryError> {
         .collect::<Vec<IpAddr>>();
     let properties = [
         ("v", advert.version.to_string()),
-        ("hid", advert.host_id.simple().to_string()),
+        // Hyphenated: the iPhone app parses this with Foundation's
+        // `UUID(uuidString:)`, which rejects the 32-digit simple form.
+        ("hid", advert.host_id.hyphenated().to_string()),
     ];
     let hostname = format!("amux-{}.local.", advert.host_id.simple());
     let service = ServiceInfo::new(
