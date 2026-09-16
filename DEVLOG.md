@@ -1,3 +1,12 @@
+2026-09-16 — **Claude SDK streams now converge on durable final entries.**
+Streamed blocks retain provisional provider identities only while their message
+cursor is known, then alias into row-UUID final keys whose authoritative
+components replace the streamed prefix. Historical rows restore transcript and
+todo facts without reviving old obligations, while ready clears only live
+obligations. Task lifecycle patches remain row-addressable after eviction and
+adopt their launch entries in either arrival order. The recorded SDK corpus now
+proves postcard continuation, canonical identity and bounded tips at every cut.
+
 2026-09-16 — **Claude PTY transcripts now fold into durable native entries.**
 The pure PTY fold keeps feed bodies out of its bounded continuation tip while
 emitting provider-keyed partial entries, row-UUID text components with native

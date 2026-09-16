@@ -18,6 +18,13 @@ use crate::claude_pty::facts::{
 };
 use crate::claude_pty::{ClaudeTodos, TodoDisposition};
 
+mod semantics;
+
+pub use semantics::{
+    ClaudeSdkBody, ClaudeSdkEntry, ClaudeSdkEntryKind, ClaudeSdkFold, ClaudeSdkPartial,
+    DELIVERY_KEYED_VARIANTS,
+};
+
 pub const FEED_RETAINED: usize = 1000;
 /// A single streaming block cannot grow without bound while the feed is idle.
 pub const CONTENT_BYTES_RETAINED: usize = 64 * 1024;
@@ -123,9 +130,10 @@ pub struct ToolResult {
     pub edit: Option<LandedEdit>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {
+    #[default]
     Running,
     Completed,
     Failed,
