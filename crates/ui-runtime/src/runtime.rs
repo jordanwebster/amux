@@ -2899,6 +2899,339 @@ mod tests {
         .expect("data-version change was not reported");
     }
 
+    async fn next_store_runtime_message(runtime: &mut Runtime) {
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+                .await
+                .expect("store runtime message timed out"),
+            "store runtime closed before the expected message"
+        );
+    }
+
+    async fn wait_for_store_runtime(
+        runtime: &mut Runtime,
+        mut ready: impl FnMut(&Runtime) -> bool,
+    ) {
+        for _ in 0..20 {
+            if ready(runtime) {
+                return;
+            }
+            next_store_runtime_message(runtime).await;
+        }
+        panic!("store runtime did not reach the expected state");
+    }
+
+    async fn seed_recovery_chat(path: &Path, agent: AgentId, host: HostId) {
+        let store = store::Store::open(path).await.expect("seed store");
+        let generations = store
+            .generations()
+            .for_provider("claude_pty")
+            .expect("Claude PTY store generations");
+        store
+            .apply_fleet(
+                generations,
+                store::FleetDelta::Host {
+                    host: model::HostEntry {
+                        id: host,
+                        name: "recovery-host".to_owned(),
+                        online: true,
+                        version: Some("test".to_owned()),
+                        capabilities: Some(model::Capabilities::default()),
+                        trust_status: model::HostTrustStatus::Trusted,
+                        last_dial_error: None,
+                        platform: None,
+                    },
+                    revision: 1,
+                },
+            )
+            .await
+            .expect("seed host");
+        store
+            .apply_fleet(
+                generations,
+                store::FleetDelta::AgentUp {
+                    agent: claude_agent(agent, host),
+                    revision: 2,
+                },
+            )
+            .await
+            .expect("seed agent");
+        store.close().await;
+
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(path.to_owned()),
+                ..RuntimeOptions::default()
+            },
+        );
+        for _ in 0..3 {
+            next_store_runtime_message(&mut runtime).await;
+        }
+        runtime.open_chat(agent);
+        wait_for_store_runtime(&mut runtime, |runtime| {
+            runtime
+                .model()
+                .chat(agent)
+                .is_some_and(|chat| chat.state == ui_state::ChatState::Painted)
+        })
+        .await;
+
+        let attempt = runtime
+            .model()
+            .chat(agent)
+            .expect("seed chat")
+            .stream_attempt;
+        let now = Utc::now();
+        runtime.process(Msg::ChatStream {
+            agent,
+            attempt,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: 1,
+                    through: 2,
+                    selected_from: 1,
+                    reset_at: 0,
+                    outcome: ui_state::ReplayOutcomeDto::Continuous,
+                },
+                at: now,
+            },
+        });
+        runtime.process(Msg::ChatStream {
+            agent,
+            attempt,
+            event: ChatStreamMsg::Batch {
+                at: now,
+                entries: vec![
+                    StreamEntry::observed(
+                        1,
+                        now,
+                        serde_json::json!({"type": "amux.transcript_ready"}),
+                    ),
+                    StreamEntry::observed(
+                        2,
+                        now,
+                        serde_json::json!({
+                            "type": "user",
+                            "uuid": "dddddddd-0000-4000-8000-000000000058",
+                            "sessionId": "22222222-2222-4222-8222-222222222222",
+                            "timestamp": "2026-08-11T22:00:00.000Z",
+                            "message": {"role": "user", "content": "remember this"},
+                            "origin": {"kind": "human"},
+                            "promptSource": "typed"
+                        }),
+                    ),
+                ],
+            },
+        });
+        wait_for_store_runtime(&mut runtime, |runtime| {
+            runtime
+                .model()
+                .chat(agent)
+                .is_some_and(|chat| chat.pending_bytes() == 0)
+        })
+        .await;
+        runtime.process(Msg::ChatStream {
+            agent,
+            attempt,
+            event: ChatStreamMsg::ReplayComplete { at: now },
+        });
+        wait_for_store_runtime(&mut runtime, |runtime| {
+            runtime
+                .model()
+                .chat(agent)
+                .is_some_and(|chat| chat.pending_bytes() == 0)
+        })
+        .await;
+        assert!(!runtime.model().chat(agent).expect("seed chat").live_only);
+    }
+
+    #[tokio::test]
+    async fn invalidated_real_store_chats_open_a_valid_successor_without_losing_the_old_segment() {
+        for (case, damage, expected_boundary) in [
+            (
+                "tip-version",
+                "UPDATE chat_head SET tip_version=0 WHERE agent_id=?1",
+                ui_state::Boundary::VersionGap,
+            ),
+            (
+                "undecodable-tip",
+                "UPDATE claude_pty_tip SET tip=X'00' WHERE agent_id=?1",
+                ui_state::Boundary::Gap,
+            ),
+        ] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let path = directory.path().join(format!("{case}.sqlite"));
+            let agent = AgentId::from_u128(if case == "tip-version" { 581 } else { 582 });
+            let host = HostId::from_u128(583);
+            seed_recovery_chat(&path, agent, host).await;
+
+            let connection = rusqlite::Connection::open(&path).expect("open seeded database");
+            assert_eq!(
+                connection
+                    .execute(damage, [agent.to_string()])
+                    .expect("damage stored tip"),
+                1
+            );
+            drop(connection);
+
+            let mut runtime = Runtime::start(
+                Box::new(|| Box::pin(std::future::pending())),
+                RuntimeOptions {
+                    store_path: Some(path),
+                    ..RuntimeOptions::default()
+                },
+            );
+            wait_for_store_runtime(&mut runtime, |runtime| {
+                runtime.model().chat(agent).is_some_and(|chat| {
+                    chat.state == ui_state::ChatState::Painted
+                        && chat
+                            .boundaries
+                            .iter()
+                            .any(|boundary| boundary.boundary == expected_boundary)
+                })
+            })
+            .await;
+
+            let before = runtime.model().chat(agent).expect("recovered chat");
+            assert!(!before.live_only, "{case} invalidation became live-only");
+            assert!(
+                !before.entries.is_empty(),
+                "{case} discarded the old segment"
+            );
+            let attempt = before.stream_attempt;
+            let now = Utc::now();
+            runtime.process(Msg::ChatStream {
+                agent,
+                attempt,
+                event: ChatStreamMsg::Opened {
+                    facts: ReplayFactsDto {
+                        retained_from: 1,
+                        through: 3,
+                        selected_from: 3,
+                        reset_at: 0,
+                        outcome: ui_state::ReplayOutcomeDto::Continuous,
+                    },
+                    at: now,
+                },
+            });
+            let catching_up = runtime.model().chat(agent).expect("successor chat");
+            assert_eq!(catching_up.state, ui_state::ChatState::CatchingUp);
+            assert!(!catching_up.live_only);
+            assert!(
+                !catching_up.entries.is_empty(),
+                "{case} did not keep the old segment behind the boundary"
+            );
+
+            runtime.process(Msg::ChatStream {
+                agent,
+                attempt,
+                event: ChatStreamMsg::Batch {
+                    at: now,
+                    entries: vec![StreamEntry::observed(
+                        3,
+                        now,
+                        serde_json::json!({
+                            "type": "user",
+                            "uuid": "dddddddd-0000-4000-8000-000000000059",
+                            "sessionId": "22222222-2222-4222-8222-222222222222",
+                            "timestamp": "2026-08-11T22:00:01.000Z",
+                            "message": {"role": "user", "content": "after recovery"},
+                            "origin": {"kind": "human"},
+                            "promptSource": "typed"
+                        }),
+                    )],
+                },
+            });
+            wait_for_store_runtime(&mut runtime, |runtime| {
+                runtime.model().chat(agent).is_some_and(|chat| {
+                    chat.state == ui_state::ChatState::CatchingUp && chat.pending_bytes() == 0
+                })
+            })
+            .await;
+
+            runtime.process(Msg::ChatStream {
+                agent,
+                attempt,
+                event: ChatStreamMsg::ReplayComplete { at: now },
+            });
+            for _ in 0..5 {
+                if runtime.model().chat(agent).is_some_and(|chat| {
+                    chat.state == ui_state::ChatState::Live && chat.pending_bytes() == 0
+                }) {
+                    break;
+                }
+                if tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+                    .await
+                    .is_err()
+                {
+                    panic!(
+                        "{case} successor stopped before commit resolution: {:?}",
+                        runtime.model().chat(agent)
+                    );
+                }
+            }
+            assert!(
+                !runtime
+                    .model()
+                    .chat(agent)
+                    .expect("committed successor")
+                    .live_only,
+                "{case} successor commit was refused"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unresolved_durable_quarantine_does_not_make_derived_chats_live_only() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("store.sqlite");
+        store::Store::open(&path)
+            .await
+            .expect("initialize store")
+            .close()
+            .await;
+        let connection = rusqlite::Connection::open(&path).expect("open initialized database");
+        connection
+            .execute(
+                "INSERT INTO quarantine(id,manifest,durable_unresolved) VALUES ('lost','{}',1)",
+                [],
+            )
+            .expect("mark durable state unresolved");
+        drop(connection);
+
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(path),
+                ..RuntimeOptions::default()
+            },
+        );
+        for _ in 0..3 {
+            next_store_runtime_message(&mut runtime).await;
+        }
+        let agent = AgentId::from_u128(591);
+        let host = HostId::from_u128(592);
+        runtime.process(Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host),
+        }));
+        runtime.process(Msg::Server(ServerMsg::AgentUpserted {
+            agent: claude_agent(agent, host),
+        }));
+        runtime.open_chat(agent);
+        wait_for_store_runtime(&mut runtime, |runtime| {
+            runtime
+                .model()
+                .chat(agent)
+                .is_some_and(|chat| chat.state == ui_state::ChatState::Painted)
+        })
+        .await;
+
+        let chat = runtime.model().chat(agent).expect("derived chat opens");
+        assert!(!chat.live_only);
+        assert_eq!(chat.persistence_error, None);
+    }
+
     #[tokio::test]
     async fn unavailable_store_keeps_a_chat_live_only() {
         let directory = tempfile::tempdir().expect("tempdir");

@@ -347,7 +347,7 @@ fn a_needs_baseline_head_invalidates_once_then_opens_from_the_previous_cut() {
             agent: agent_id("stored"),
             attempt: stream,
             event: ChatStreamMsg::Opened {
-                facts: continuous(31),
+                facts: continuous(32),
                 at: t0_plus(1),
             },
         },
@@ -358,6 +358,63 @@ fn a_needs_baseline_head_invalidates_once_then_opens_from_the_previous_cut() {
         panic!("Claude chat has a Claude head")
     };
     assert_eq!(head.baseline, Baseline::VersionGap { after: 31 });
+
+    let effects = update(&mut model, recorded_batch(stream, 32));
+    let [
+        Effect::Store(StoreOp::Commit {
+            transition: Some(transition),
+            ..
+        }),
+    ] = effects.as_slice()
+    else {
+        panic!("the invalidated successor must persist its transition: {effects:?}");
+    };
+    assert_eq!(transition.predecessor, Some(2));
+    assert_eq!(transition.successor, 3);
+    assert_eq!(transition.previous_through, 31);
+}
+
+#[test]
+fn a_conflict_answering_invalidation_installs_the_fresh_load() {
+    let mut model = inventory_model();
+    let (attempt, load_op) = begin_open(&mut model);
+    let effects = load(
+        &mut model,
+        attempt,
+        load_op,
+        empty_loaded(HeadState::NeedsBaseline {
+            previous_through: 31,
+            reason: BaselineReason::TipVersion,
+        }),
+    );
+    let [Effect::Store(StoreOp::Invalidate { op, .. })] = effects.as_slice() else {
+        panic!("needs-baseline must invalidate: {effects:?}");
+    };
+
+    let effects = update(
+        &mut model,
+        Msg::Store(StoreMsg::Conflict {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: *op,
+            agent: agent_id("stored"),
+            loaded: Box::new(empty_loaded(usable_head(44))),
+        }),
+    );
+    assert_eq!(
+        model.chat(agent_id("stored")).unwrap().state,
+        ChatState::Painted
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [
+            Effect::CloseStream { .. },
+            Effect::OpenStoreStream {
+                query: StoreStreamQuery::After { after: 44, .. },
+                ..
+            }
+        ]
+    ));
 }
 
 #[test]

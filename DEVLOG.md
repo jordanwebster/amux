@@ -1,3 +1,11 @@
+2026-09-16 — **Stored chats recover in place across invalidation and quarantine.**
+Invalidating an obsolete or unreadable chat tip now opens a successor segment
+from the exact stored high-water and previous cursor, so the store accepts the
+first recovered commit while keeping the old segment behind its boundary. A
+concurrent invalidation conflict installs the fresh load instead of stranding
+the chat, and unresolved durable view state no longer disables otherwise
+healthy derived fleet and chat families.
+
 2026-09-16 — **Remembered chats now look remembered while they catch up.**
 The terminal paints canonical stored entries before a live provider stream is
 ready and keeps positioned missing-history, version-change and eviction

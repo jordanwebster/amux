@@ -1011,7 +1011,9 @@ fn conflict_result(
     loaded: LoadedDto,
 ) -> StoreUpdate {
     let valid = state.chats.get(&agent).is_some_and(|chat| {
-        chat.attempt == attempt && chat.in_flight.as_ref().is_some_and(|batch| batch.op == op)
+        chat.attempt == attempt
+            && (chat.in_flight.as_ref().is_some_and(|batch| batch.op == op)
+                || (chat.state == ChatState::Invalidating && chat.invalidation_op == Some(op)))
     });
     if !valid {
         return StoreUpdate::default();
@@ -1056,7 +1058,7 @@ fn committed_result(
         chat.boundaries = merge_boundaries(&chat.boundaries, &result.boundaries);
         chat.state = ChatState::Painted;
         chat.stream_attempt = StreamAttempt(chat.stream_attempt.0.saturating_add(1));
-        let after = chat.invalidation_previous_through.take().unwrap_or(0);
+        let after = chat.invalidation_previous_through.unwrap_or(0);
         return StoreUpdate::effects(vec![open_effect(
             agent,
             chat.protocol,
@@ -1229,7 +1231,7 @@ fn failed_result(
     error: StoreError,
 ) -> StoreUpdate {
     let Some(agent) = agent else {
-        if matches!(error, StoreError::Corrupt | StoreError::RecoveryRequired) {
+        if error == StoreError::Corrupt {
             state.unavailable = Some(error);
         }
         return StoreUpdate::default();
@@ -1405,47 +1407,54 @@ fn opened(
     }
     chat.replay_through = facts.through;
     let existing_through = chat.head.as_ref().map_or(0, HeadDto::through);
-    let baseline =
-        chat.next_baseline
-            .take()
-            .or_else(|| match (&facts.outcome, chat.head.is_some()) {
-                (ReplayOutcomeDto::Continuous, true) => None,
-                (ReplayOutcomeDto::Continuous, false) => {
-                    Some(if facts.through == 0 || facts.selected_from == 1 {
-                        Baseline::Start
+    let invalidation_previous_through = chat.invalidation_previous_through.take();
+    let invalidation_baseline = chat.next_baseline.take();
+    let baseline = invalidation_baseline.or_else(|| match (&facts.outcome, chat.head.is_some()) {
+        (ReplayOutcomeDto::Continuous, true) => None,
+        (ReplayOutcomeDto::Continuous, false) => {
+            Some(if facts.through == 0 || facts.selected_from == 1 {
+                Baseline::Start
+            } else {
+                Baseline::Truncated {
+                    from: if facts.selected_from == 0 {
+                        facts.through.saturating_add(1)
                     } else {
-                        Baseline::Truncated {
-                            from: if facts.selected_from == 0 {
-                                facts.through.saturating_add(1)
-                            } else {
-                                facts.selected_from
-                            },
-                        }
-                    })
+                        facts.selected_from
+                    },
                 }
-                (ReplayOutcomeDto::Truncated { .. } | ReplayOutcomeDto::Reset { .. }, true) => {
-                    Some(Baseline::Gap {
-                        after: existing_through,
-                    })
-                }
-                (ReplayOutcomeDto::Truncated { .. } | ReplayOutcomeDto::Reset { .. }, false) => {
-                    Some(Baseline::Truncated {
-                        from: if facts.selected_from == 0 {
-                            facts.through.saturating_add(1)
-                        } else {
-                            facts.selected_from
-                        },
-                    })
-                }
-            });
+            })
+        }
+        (ReplayOutcomeDto::Truncated { .. } | ReplayOutcomeDto::Reset { .. }, true) => {
+            Some(Baseline::Gap {
+                after: existing_through,
+            })
+        }
+        (ReplayOutcomeDto::Truncated { .. } | ReplayOutcomeDto::Reset { .. }, false) => {
+            Some(Baseline::Truncated {
+                from: if facts.selected_from == 0 {
+                    facts.through.saturating_add(1)
+                } else {
+                    facts.selected_from
+                },
+            })
+        }
+    });
     if let Some(baseline) = baseline {
         let successor = chat.segment_high_water.saturating_add(1).max(1);
-        let predecessor = chat.head.as_ref().map(HeadDto::segment);
+        let (predecessor, previous_through) =
+            if let Some(previous_through) = invalidation_previous_through {
+                (
+                    (chat.segment_high_water > 0).then_some(chat.segment_high_water),
+                    previous_through,
+                )
+            } else {
+                (chat.head.as_ref().map(HeadDto::segment), existing_through)
+            };
         chat.transition = Some(SegmentTransition {
             predecessor,
             successor,
             baseline,
-            previous_through: existing_through,
+            previous_through,
             selected_from: (facts.selected_from != 0).then_some(facts.selected_from),
             replay_through: facts.through,
             opened_at: at,

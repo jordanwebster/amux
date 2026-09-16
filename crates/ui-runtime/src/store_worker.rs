@@ -405,10 +405,7 @@ fn failed(
     kind: StoreOpKind,
     error: store::StoreError,
 ) -> StoreMsg {
-    if matches!(
-        error,
-        store::StoreError::Corrupt | store::StoreError::RecoveryRequired
-    ) {
+    if error == store::StoreError::Corrupt {
         return StoreMsg::Unavailable { profile, error };
     }
     StoreMsg::Failed {

@@ -4848,6 +4848,7 @@ dependencies = [
  "futures-util",
  "model",
  "node",
+ "rusqlite",
  "serde",
  "serde_json",
  "store",
