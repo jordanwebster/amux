@@ -975,7 +975,7 @@ mod tests {
         let AgentEvent::AgentUp { agent } = event else {
             panic!("expected AgentUp");
         };
-        assert_eq!(agent.inventory_revision, 2);
+        assert_eq!(agent.inventory_revision, 1_025);
 
         // These values are captured while the same registry write lock is
         // held by the caller of agent_events_snapshot.
@@ -984,9 +984,9 @@ mod tests {
             .values()
             .map(|context| Agent::from(context.record(host_id)))
             .collect::<Vec<_>>();
-        assert_eq!(restarted.through_inventory_revision(), 2);
+        assert_eq!(restarted.through_inventory_revision(), 1_025);
         assert_eq!(agents.len(), 1);
-        assert_eq!(agents[0].inventory_revision, 2);
+        assert_eq!(agents[0].inventory_revision, 1_025);
     }
 
     #[tokio::test]

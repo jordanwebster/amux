@@ -1,3 +1,10 @@
+2026-09-16 — **Fleet revisions reserve durable ranges ahead of publication.**
+Each daemon now persists a 1,024-revision upper bound before using any value in
+that range. Normal agent and standing events allocate from memory, while block
+exhaustion performs the durable replacement and directory synchronization.
+Restart skips the unused remainder of the prior block, so no authoritative
+revision can be reissued after a crash.
+
 2026-09-16 — **Daemon standing publishes only meaningful cuts.**
 The summarizer now compares each folded summary with the last summary it
 actually published, so unchanged provider rows and one-second lifecycle ticks
