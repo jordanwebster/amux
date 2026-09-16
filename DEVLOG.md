@@ -7,6 +7,11 @@ sealed compile-time postcard-safety check that excludes JSON value trees.
 Existing human-readable model JSON keeps its wire shape while the persisted
 binary form uses external enum tags that postcard can decode.
 
+2026-09-16 — **iOS verification tests exercise the repository Python boundary.**
+The CLI sandbox now supplies the `scripts/python` interpreter wrapper that the
+verifier actually invokes, so its full-run, missing-baseline and machine-error
+contracts no longer depend on an obsolete `python3` PATH shim.
+
 2026-09-16 — **Desktop SQLite selection resolves at every Cargo boundary.**
 Every desktop root forwards an explicit bundled feature to `store`, including
 the product, embedded runtime, test harness and screenshot tool. Mobile checks

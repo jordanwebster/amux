@@ -352,6 +352,7 @@ exec "$XTASK" ci-status --wait 0
 fn ios_verify_fixture() -> tempfile::TempDir {
     let dir = commands();
     std::fs::create_dir_all(dir.path().join("apps/apple/Journeys")).unwrap();
+    std::fs::create_dir_all(dir.path().join("scripts")).unwrap();
     std::fs::write(
         dir.path().join("apps/apple/Journeys/manifest.json"),
         include_str!("../../../apps/apple/Journeys/manifest.json"),
@@ -397,7 +398,7 @@ fi
 "#,
     );
     executable(
-        &dir.path().join("python3"),
+        &dir.path().join("scripts/python"),
         r#"#!/bin/sh
 [ "$*" = '-B scripts/ios-perf.py --machine' ] || exit 92
 [ "$MACHINE_ERROR" != 1 ] || { echo 'unknown performance machine' >&2; exit 1; }
