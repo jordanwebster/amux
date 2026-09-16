@@ -58,6 +58,18 @@ pub struct StartConfig {
     /// rather than emptying the app.
     #[serde(default)]
     pub active: Option<String>,
+    /// Accounts somebody removed from this device. Each one's profile is
+    /// deleted before anything is opened — its key, its trust store and the
+    /// machines it paired with, with the fleet and artifacts it cached — so
+    /// nothing of that account keeps running here.
+    ///
+    /// Said on every start rather than once, because a profile can only be
+    /// deleted by the installation that owns it and a start is when that
+    /// installation exists: a runtime still holding the account when it was
+    /// removed cannot be the one to delete it. Naming an account that has no
+    /// profile any more is not an error.
+    #[serde(default)]
+    pub forget: Vec<String>,
     pub log_path: PathBuf,
     #[serde(default = "default_frame_interval_ns")]
     pub frame_interval_ns: u64,
@@ -170,6 +182,13 @@ impl StartConfig {
                 .is_some_and(|active| seen.contains(active))
         {
             return Err("the active account must be one of the accounts".into());
+        }
+        // An account being removed is not one to open, and not the one whose
+        // machines a signed-out device keeps on screen either.
+        if self.forget.iter().any(|forgotten| {
+            seen.contains(forgotten.as_str()) || self.active.as_deref() == Some(forgotten)
+        }) {
+            return Err("an account being forgotten cannot also be opened".into());
         }
         // Nobody signed in means no relay to dial, and a configuration that
         // named one anyway would be a route for an account that does not
@@ -667,6 +686,11 @@ impl Embedded {
         // Shared with each profile's administration, which has to be able to
         // ask the account service a question the profile itself cannot.
         let installation = Arc::new(installation);
+        // Before any profile is chosen: a removed account's profile must not
+        // be adopted, reopened or left running beside the ones that are.
+        for account in &config.forget {
+            forget_profile(&installation, account, &config.cache_dir).await;
+        }
 
         let opened = match config.accounts.is_empty() {
             true => vec![signed_out_profile(&installation, config.active.as_deref()).await?],
@@ -901,6 +925,33 @@ async fn signed_in_profile(
         id,
         relay: Some((relay, retry)),
     })
+}
+
+/// Delete the profile one removed account ran on, and everything this device
+/// cached for it.
+///
+/// A failure is written to the log and nothing more. Removing an account is
+/// already done as far as the person is concerned — the app has let go of it —
+/// and a device that refused to start over a directory it could not delete
+/// would take every other account down with it. The next start tries again.
+async fn forget_profile(installation: &Installation, account: &str, cache_dir: &std::path::Path) {
+    let labelled = installation
+        .profiles()
+        .into_iter()
+        .find(|profile| profile.record.label.override_name.as_deref() == Some(account));
+    let Some(profile) = labelled else {
+        return;
+    };
+    let id = profile.record.id;
+    if let Err(error) = installation
+        .delete(OperationId::new(), id, profile.record.revision)
+        .await
+    {
+        tracing::warn!(%id, %error, "could not delete a removed account's profile");
+    }
+    if let Err(error) = app_runtime::cache::forget_profile(cache_dir, id) {
+        tracing::warn!(%id, %error, "could not delete a removed account's caches");
+    }
 }
 
 fn available(profile: &node::ProfileStatus) -> Result<(), String> {

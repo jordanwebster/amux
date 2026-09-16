@@ -166,11 +166,8 @@ impl Places {
             local_host_id: Some(session.host),
             report_dir: on_screen.then(|| self.report_dir.clone()),
             log_path: on_screen.then(|| self.log_path.clone()),
-            artifact_cache: on_screen.then(|| {
-                self.cache_dir
-                    .join("artifacts")
-                    .join(session.profile.to_string())
-            }),
+            artifact_cache: on_screen
+                .then(|| crate::cache::artifacts_dir(&self.cache_dir, session.profile)),
             // Only the account on screen reports its cloud state: what the
             // shared model answers about routes and prompts is about what
             // somebody is looking at.

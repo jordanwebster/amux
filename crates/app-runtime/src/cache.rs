@@ -57,6 +57,40 @@ pub fn remember_profiles(
     fs::write(&path, serde_json::to_vec(profiles)?)
 }
 
+/// Where one profile's downloaded artifacts are cached.
+pub fn artifacts_dir(cache_dir: &Path, profile: ProfileId) -> PathBuf {
+    cache_dir.join("artifacts").join(profile.to_string())
+}
+
+/// Delete everything this device cached for one profile: the fleet it
+/// remembered, the artifacts it downloaded, and every entry in the directory
+/// that pointed an account at it. Anything already gone is not an error.
+pub fn forget_profile(cache_dir: &Path, profile: ProfileId) -> io::Result<()> {
+    fn gone(result: io::Result<()>) -> io::Result<()> {
+        match result {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        }
+    }
+    gone(fs::remove_file(
+        cache_dir.join("fleet").join(file_name(profile)),
+    ))?;
+    gone(fs::remove_dir_all(artifacts_dir(cache_dir, profile)))?;
+    let path = directory_path(cache_dir);
+    let Ok(bytes) = fs::read(&path) else {
+        return Ok(());
+    };
+    let Ok(mut profiles) = serde_json::from_slice::<BTreeMap<String, ProfileId>>(&bytes) else {
+        return Ok(());
+    };
+    let before = profiles.len();
+    profiles.retain(|_, remembered| *remembered != profile);
+    if profiles.len() == before {
+        return Ok(());
+    }
+    fs::write(&path, serde_json::to_vec(&profiles)?)
+}
+
 /// Which profile an account's remembered fleet is under, as the last run left
 /// it. `None` asks for the profile this device uses signed out.
 pub fn remembered_profile(cache_dir: &Path, account: Option<&str>) -> Option<ProfileId> {

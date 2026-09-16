@@ -58,6 +58,13 @@ calls using the handle before stopping it. Start returns null for invalid
 configuration or failure to create a worker; asynchronous failures arrive as
 connection events. The generated header documents pointer lifetimes.
 
+The start configuration's `forget` lists accounts removed from the device.
+Before any profile is opened, each one's profile is deleted (its key, trust
+store and pairings) together with its fleet cache, artifacts cache and
+`profiles.json` entry. A failure is logged and the start continues; naming an
+account with no profile does nothing. An account in `forget` may not also be in
+`accounts` or be `active`.
+
 Run `just test-crate app-ffi` for the C-boundary relay, reconnection, token
 and teardown tests; `just test-crate app-runtime` covers the projection and
 queue with no node linked. `just ios graph-check` proves the shipping library
