@@ -2020,6 +2020,7 @@ fn stream_close_from_session(reason: SessionCloseReason) -> StreamCloseReason {
             StreamCloseReason::AgentExited { exit_code }
         }
         SessionCloseReason::HostUnreachable => StreamCloseReason::HostUnreachable,
+        SessionCloseReason::Reset => StreamCloseReason::Reset,
         SessionCloseReason::InternalError { detail } => StreamCloseReason::InternalError { detail },
     }
 }

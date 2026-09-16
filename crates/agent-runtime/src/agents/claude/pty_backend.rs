@@ -25,13 +25,12 @@ use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentDeps, AgentKind, AgentParent, AgentRecord, AgentType,
     BackendState, ClaudeDriver, CreateAgentRequest, HookEnvironment, HookError, HookOutcome,
     LocalAgentNameSource, McpLaunchRoute, ObligationDebug, Plane, Protocol, ProviderSources,
-    PtyHandle, RawPtyTarget, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy,
+    PtyHandle, RawPtyTarget, RingPolicy, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy,
     StructuredInput, StructuredInputEvent, StructuredLogSource, TerminalSize,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
 
-const STRUCTURED_LOG_RETENTION: usize = 1000;
 const HOOK_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const MESSAGING_SOCKET_ENV: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
 const MESSAGING_TOKEN_ENV: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
@@ -110,7 +109,7 @@ impl ClaudePtyBackend {
                 LocalAgentNameSource::Unset
             },
             created_at: Utc::now(),
-            log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+            log: StructuredLogSource::with_policy(RingPolicy::claude_pty()),
             runtime: Arc::new(Mutex::new(Runtime::default())),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             injected: None,
@@ -176,7 +175,7 @@ impl ClaudePtyBackend {
                 LocalAgentNameSource::Unset
             },
             created_at: record.created_at,
-            log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+            log: StructuredLogSource::with_policy(RingPolicy::claude_pty()),
             runtime: Arc::new(Mutex::new(Runtime::default())),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             injected: Some(session),
@@ -341,9 +340,18 @@ impl ClaudePtyBackend {
                     PtyEvent::InputResult(result) => {
                         log.write(input_result_row(result)).await;
                     }
-                    PtyEvent::Relink { reason, .. } => {
+                    PtyEvent::Relink {
+                        reason,
+                        transcript_path,
+                    } => {
                         if !matches!(reason, claude::pty::RelinkReason::Initial) {
-                            log.clear().await;
+                            log.semantic_reset(json!({
+                                "type": "amux.transcript_ready",
+                                "reset": true,
+                                "reason": format!("{reason:?}"),
+                                "transcript_path": transcript_path,
+                            }))
+                            .await;
                         }
                     }
                     PtyEvent::Transcript { row, .. } => {
@@ -1494,7 +1502,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_initial_relink_discards_previous_generation_rows() {
+    async fn daemon_protocol_non_initial_relink_resets_subscribers_and_discards_old_rows() {
         let (backend, hooks, rows, _ingest) = injected_backend();
         let first_session = Uuid::new_v4();
         hooks
@@ -1524,6 +1532,20 @@ mod tests {
         .await
         .unwrap();
 
+        let before_reset = backend.log.current_seq().await;
+        let (mut old_subscription, _) = backend
+            .log
+            .subscribe_with_query(Some(crate::agents::SequencedReplayQuery::After {
+                after: before_reset,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert!(matches!(
+            old_subscription.read_event().await.unwrap(),
+            crate::agents::BroadcastRead::ReplayComplete
+        ));
+
         let second_session = Uuid::new_v4();
         hooks
             .send(hook_payload(
@@ -1544,7 +1566,7 @@ mod tests {
         .await
         .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
-            while backend.log.current_seq().await < 5 {
+            while backend.log.current_seq().await < before_reset + 3 {
                 tokio::task::yield_now().await;
             }
         })
@@ -1552,17 +1574,28 @@ mod tests {
         .unwrap();
 
         let (mut replay, facts) = backend.log.subscribe_with_query(None).await.unwrap();
-        assert_eq!(facts.through, 5, "clearing retains the monotonic sequence");
         assert_eq!(
-            replay.read().await.unwrap().payload["type"],
-            "amux.claude.keymap"
+            facts.through,
+            before_reset + 3,
+            "resetting retains the monotonic sequence"
         );
-        assert_eq!(replay.read().await.unwrap().payload["generation"], "new");
+        assert_eq!(facts.reset_at, before_reset + 1);
+        assert!(matches!(
+            old_subscription.read_event().await.unwrap(),
+            crate::agents::BroadcastRead::Reset
+        ));
+        let mut retained = Vec::new();
+        while let Ok(Some(row)) =
+            tokio::time::timeout(Duration::from_millis(25), replay.read()).await
+        {
+            retained.push(row.payload);
+        }
+        assert_eq!(retained[0]["type"], "amux.transcript_ready");
+        assert!(retained.iter().any(|row| row["generation"] == "new"));
+        assert!(!retained.iter().any(|row| row["generation"] == "old"));
         assert!(
-            tokio::time::timeout(Duration::from_millis(25), replay.read())
-                .await
-                .is_err(),
-            "rows from the prior transcript generation must not replay"
+            matches!(facts.outcome, model::ReplayOutcome::Continuous),
+            "unfiltered replay reports the retained generation"
         );
     }
 }

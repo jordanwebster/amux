@@ -394,6 +394,7 @@ pub enum StreamCloseReason {
         exit_code: Option<i32>,
     },
     HostUnreachable,
+    Reset,
     InternalError {
         detail: String,
     },

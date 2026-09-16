@@ -968,6 +968,7 @@ fn session_close_label(reason: &SessionCloseReason) -> &'static str {
             "session ended"
         }
         SessionCloseReason::HostUnreachable => "host unreachable",
+        SessionCloseReason::Reset => "session reset",
         SessionCloseReason::InternalError { .. } => "session error",
     }
 }
@@ -1740,6 +1741,7 @@ mod attach {
                 outcome,
                 AttachOutcome::SessionClosed(SessionCloseReason::AgentDeleted)
                     | AttachOutcome::SessionClosed(SessionCloseReason::AgentExited { .. })
+                    | AttachOutcome::SessionClosed(SessionCloseReason::Reset)
             ),
             "{outcome:?}"
         );

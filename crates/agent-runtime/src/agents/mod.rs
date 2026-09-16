@@ -29,7 +29,7 @@ pub(crate) use debug::{
     BackendState, BufferDebug, ObligationDebug, OutputDebug, SessionDebug, SubscriptionRecord,
 };
 pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
-pub(crate) use log_source::StructuredLogSource;
+pub(crate) use log_source::{RingPolicy, StructuredLogSource};
 pub use model::{
     Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, ClaudeDriver,
     CreateAgentRequest, Protocol, RenameAgentRequest, SessionCloseReason, TerminalSize, WorkingOn,

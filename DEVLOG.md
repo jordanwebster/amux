@@ -1,3 +1,12 @@
+2026-09-16 — **Structured replay keeps a bounded, explicit semantic cut.**
+Each provider log now applies its row and byte ceilings, clips an oversized row
+to identity plus a visible marker, and trims an idle ring to its smaller memory
+budget. Replay facts follow the complete cursor truth table, including empty
+retention, bounded tails and cursor-ahead resets. Provider relinks and resets
+publish a fresh marker at a retained reset position and terminate every open
+subscription with a reset reason, so reconnecting from the formerly exact
+cursor cannot mistake a new conversation for a continuous suffix.
+
 2026-09-16 — **Session streams carry typed rows and explicit replay facts.**
 Clients, routed node services and provider runtimes now exchange typed session
 arguments, inputs and outputs instead of re-decoding opaque protocol bytes at

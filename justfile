@@ -45,6 +45,10 @@ doctest:
 spec *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; scripts/spec-test.sh "$@"
 
+# Exercise the structured daemon replay, ring and semantic-reset contract.
+test-daemon-protocol *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p agent-runtime daemon_protocol "$@"
+
 # Lint every workspace target with warnings denied.
 lint:
     {{bounded}} 1200 cargo clippy --locked --workspace --all-targets {{desktop_features}} -- -D warnings

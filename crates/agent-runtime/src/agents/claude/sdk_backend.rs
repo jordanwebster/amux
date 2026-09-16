@@ -28,13 +28,12 @@ use super::suspend::{ClaudeSuspendRecord, sanitize_resume_args};
 use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, AgentRecord, AgentType,
     BackendState, ClaudeDriver, ClaudeSdkSource, CreateAgentRequest, LocalAgentNameSource,
-    McpLaunchRoute, ObligationDebug, Plane, Protocol, ProviderSources, SessionDebug, SessionEvent,
-    SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
+    McpLaunchRoute, ObligationDebug, Plane, Protocol, ProviderSources, RingPolicy, SessionDebug,
+    SessionEvent, SpawnInheritance, StopPolicy, StructuredInput, StructuredInputEvent,
+    StructuredLogSource,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
-
-const STRUCTURED_LOG_RETENTION: usize = 8192;
 
 #[derive(Clone, Copy)]
 enum RequestKind {
@@ -181,7 +180,7 @@ impl ClaudeSdkBackend {
                 ..Runtime::default()
             })),
             input_done: Arc::new(Notify::new()),
-            log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+            log: StructuredLogSource::with_policy(RingPolicy::claude_sdk()),
             injected: None,
             sources: None,
             resumed: false,
@@ -242,7 +241,7 @@ impl ClaudeSdkBackend {
                 ..Runtime::default()
             })),
             input_done: Arc::new(Notify::new()),
-            log: StructuredLogSource::new(STRUCTURED_LOG_RETENTION),
+            log: StructuredLogSource::with_policy(RingPolicy::claude_sdk()),
             injected: Some(session),
             sources: None,
             resumed: false,
@@ -528,12 +527,7 @@ async fn ingest_session(
                     let mut state = runtime.lock().expect("Claude SDK runtime poisoned");
                     state.facts.observe(&message).then(|| state.facts.row())
                 };
-                match serde_json::to_value(message) {
-                    Ok(row) => log.write(row).await,
-                    Err(error) => {
-                        tracing::warn!(%agent_id, %error, "failed to serialize Claude SDK row")
-                    }
-                }
+                write_provider_message(agent_id, &log, message).await;
                 if let Some(facts) = facts {
                     write_synthesized(&log, facts).await;
                 }
@@ -704,6 +698,23 @@ async fn write_session_facts(runtime: &Mutex<Runtime>, log: &StructuredLogSource
 async fn write_synthesized(log: &StructuredLogSource, row: ClaudeSdkSynthesized) {
     log.write(ClaudeSdkV1Row::Synthesized(row).into_json())
         .await;
+}
+
+async fn write_provider_message(
+    agent_id: Uuid,
+    log: &StructuredLogSource,
+    message: claude::sdk::Message,
+) {
+    let conversation_reset = matches!(&message, claude::sdk::Message::ConversationReset(_));
+    match serde_json::to_value(message) {
+        Ok(row) if conversation_reset => {
+            log.semantic_reset(row).await;
+        }
+        Ok(row) => log.write(row).await,
+        Err(error) => {
+            tracing::warn!(%agent_id, %error, "failed to serialize Claude SDK row")
+        }
+    }
 }
 
 struct ClaudeSdkInputTarget {
@@ -1166,6 +1177,57 @@ mod tests {
     /// the deadline is only here to turn a genuine hang into a failure rather
     /// than to measure how fast the process starts.
     const START_DEADLINE: Duration = Duration::from_secs(30);
+
+    #[tokio::test]
+    async fn daemon_protocol_conversation_reset_cuts_the_sdk_log_and_subscribers() {
+        let log = StructuredLogSource::new(8);
+        log.write(json!({"type": "assistant", "uuid": Uuid::new_v4()}))
+            .await;
+        let cursor = log.current_seq().await;
+        let (mut subscriber, _) = log
+            .subscribe_with_query(Some(crate::agents::SequencedReplayQuery::After {
+                after: cursor,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert!(matches!(
+            subscriber.read_event().await.unwrap(),
+            crate::agents::BroadcastRead::ReplayComplete
+        ));
+
+        let reset = claude::sdk::Message::parse(json!({
+            "type": "conversation_reset",
+            "uuid": Uuid::new_v4(),
+            "session_id": "session",
+            "new_conversation_id": Uuid::new_v4(),
+        }))
+        .unwrap();
+        write_provider_message(Uuid::new_v4(), &log, reset).await;
+
+        assert!(matches!(
+            subscriber.read_event().await.unwrap(),
+            crate::agents::BroadcastRead::Reset
+        ));
+        let (mut replay, facts) = log
+            .subscribe_with_query(Some(crate::agents::SequencedReplayQuery::After {
+                after: cursor,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(facts.reset_at, cursor + 1);
+        assert_eq!(
+            facts.outcome,
+            model::ReplayOutcome::Reset {
+                reason: "reset".into()
+            }
+        );
+        assert_eq!(
+            replay.read().await.unwrap().payload["type"],
+            "conversation_reset"
+        );
+    }
 
     /// Wait for a stand-in `claude` binary to record the arguments it was
     /// launched with. The stand-ins write the capture to a neighbouring path

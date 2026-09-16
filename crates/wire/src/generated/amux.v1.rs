@@ -1340,7 +1340,7 @@ pub mod session_output {
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionClosed {
-    #[prost(oneof = "session_closed::Reason", tags = "1, 2, 3, 4")]
+    #[prost(oneof = "session_closed::Reason", tags = "1, 2, 3, 4, 5")]
     pub reason: ::core::option::Option<session_closed::Reason>,
 }
 /// Nested message and enum types in `SessionClosed`.
@@ -1355,6 +1355,8 @@ pub mod session_closed {
         HostUnreachable(super::HostUnreachable),
         #[prost(message, tag = "4")]
         InternalError(super::InternalError),
+        #[prost(message, tag = "5")]
+        Reset(super::Reset),
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]

@@ -14,7 +14,9 @@ use model::{ReplayFacts, ReplayOutcome, ReplayQuery};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{RwLock, mpsc};
+use tokio::time::Instant;
 
+use super::log_source::RingPolicy;
 use super::{BufferDebug, OutputDebug};
 
 /// Replay query for sequenced output buffers.
@@ -51,6 +53,7 @@ pub(crate) struct StructuredOutput {
     pub(crate) published_at_unix_ms: i64,
     pub(crate) activity_at_unix_ms: Option<i64>,
     pub(crate) payload: Value,
+    pub(crate) encoded_len: usize,
 }
 
 /// Extra channel capacity beyond the replay snapshot size.
@@ -189,11 +192,27 @@ impl BufferPolicy for BytePolicy {
 /// individually to preserve message boundaries.
 pub(crate) struct StructuredPolicy;
 
-#[derive(Default)]
 #[doc(hidden)]
 pub(crate) struct StructuredStorage {
     entries: Vec<StructuredOutput>,
     last_seq: u64,
+    reset_at: u64,
+    retained_bytes: usize,
+    policy: RingPolicy,
+    last_published_at: Option<Instant>,
+}
+
+impl Default for StructuredStorage {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            last_seq: 0,
+            reset_at: 0,
+            retained_bytes: 0,
+            policy: RingPolicy::test(usize::MAX),
+            last_published_at: None,
+        }
+    }
 }
 
 impl BufferPolicy for StructuredPolicy {
@@ -207,19 +226,27 @@ impl BufferPolicy for StructuredPolicy {
         input: Value,
         capacity: usize,
     ) -> Option<StructuredOutput> {
-        storage.last_seq += 1;
+        storage.last_seq = storage
+            .last_seq
+            .checked_add(1)
+            .expect("structured sequence number exhausted");
+        let encoded_len = serde_json::to_vec(&input).map_or(0, |encoded| encoded.len());
         let item = StructuredOutput {
             seq: storage.last_seq,
             published_at_unix_ms: chrono::Utc::now().timestamp_millis(),
             activity_at_unix_ms: None,
             payload: input,
+            encoded_len,
         };
 
         storage.entries.push(item.clone());
-        if storage.entries.len() > capacity {
-            let excess = storage.entries.len() - capacity;
-            storage.entries.drain(..excess);
-        }
+        storage.retained_bytes = storage.retained_bytes.saturating_add(encoded_len);
+        storage.last_published_at = Some(Instant::now());
+        trim_structured(
+            storage,
+            storage.policy.max_bytes,
+            storage.policy.max_rows.min(capacity),
+        );
 
         Some(item)
     }
@@ -237,6 +264,7 @@ impl BufferPolicy for StructuredPolicy {
 
     fn clear(storage: &mut StructuredStorage) {
         storage.entries.clear();
+        storage.retained_bytes = 0;
     }
 
     fn channel_capacity(buffer_capacity: usize) -> usize {
@@ -258,16 +286,27 @@ impl BufferPolicy for StructuredPolicy {
             .last()
             .map(|entry| entry.seq.saturating_add(1))
             .unwrap_or(head_seq);
-        let bytes = storage
-            .entries
-            .iter()
-            .map(|entry| entry.payload.to_string().len())
-            .sum();
         BufferDebug {
             head_seq,
             tail_seq,
-            bytes,
+            bytes: storage.retained_bytes,
         }
+    }
+}
+
+fn trim_structured(storage: &mut StructuredStorage, max_bytes: usize, max_rows: usize) {
+    let mut remove = 0;
+    let mut retained_bytes = storage.retained_bytes;
+    while storage.entries.len().saturating_sub(remove) > max_rows || retained_bytes > max_bytes {
+        let Some(entry) = storage.entries.get(remove) else {
+            break;
+        };
+        retained_bytes = retained_bytes.saturating_sub(entry.encoded_len);
+        remove += 1;
+    }
+    if remove > 0 {
+        storage.entries.drain(..remove);
+        storage.retained_bytes = retained_bytes;
     }
 }
 
@@ -324,6 +363,16 @@ fn structured_replay_facts(
     let retained_from = storage.entries.first().map_or(0, |entry| entry.seq);
     let selected_from = replay.first().map_or(0, |entry| entry.seq);
     let outcome = match filter {
+        Some(SequencedReplayQuery::After { after, .. }) if *after > storage.last_seq => {
+            ReplayOutcome::Reset {
+                reason: "ahead".to_string(),
+            }
+        }
+        Some(SequencedReplayQuery::After { after, .. }) if *after < storage.reset_at => {
+            ReplayOutcome::Reset {
+                reason: "reset".to_string(),
+            }
+        }
         Some(SequencedReplayQuery::After { after, .. })
             if structured_replay_has_gap(storage, *after) =>
         {
@@ -343,13 +392,20 @@ fn structured_replay_facts(
                 missing_after: selected_from - 1,
             }
         }
+        Some(SequencedReplayQuery::TailCount { .. })
+            if selected_from == 0 && storage.last_seq > 0 =>
+        {
+            ReplayOutcome::Truncated {
+                missing_after: storage.last_seq,
+            }
+        }
         _ => ReplayOutcome::Continuous,
     };
     ReplayFacts {
         retained_from,
         through: storage.last_seq,
         selected_from,
-        reset_at: 0,
+        reset_at: storage.reset_at,
         outcome,
     }
 }
@@ -380,6 +436,7 @@ struct BroadcastInner<P: BufferPolicy> {
 struct BroadcastSubscriber<T> {
     tx: mpsc::Sender<T>,
     overflowed: Arc<AtomicBool>,
+    reset: Arc<AtomicBool>,
 }
 
 impl<P: BufferPolicy> BroadcastBuffer<P> {
@@ -450,6 +507,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
         let capacity = P::channel_capacity(self.inner.capacity);
         let (tx, rx) = mpsc::channel(capacity);
         let overflowed = Arc::new(AtomicBool::new(false));
+        let reset = Arc::new(AtomicBool::new(false));
 
         // Acquire storage read lock FIRST to synchronize with both write() (which
         // holds storage write lock) and close() (which also holds storage write lock).
@@ -469,6 +527,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
             .push(BroadcastSubscriber {
                 tx: tx.clone(),
                 overflowed: overflowed.clone(),
+                reset: reset.clone(),
             });
         let replay_remaining = P::replay(&storage, &tx, &filter);
 
@@ -476,6 +535,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
             BroadcastReader {
                 rx,
                 overflowed,
+                reset,
                 replay_remaining,
                 replay_complete_emitted: false,
             },
@@ -509,6 +569,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     ///
     /// Existing subscribers remain connected and will receive future writes.
     /// Late subscribers will only see data written after the clear.
+    #[allow(dead_code)]
     pub(crate) async fn clear(&self) {
         let mut storage = self.inner.storage.write().await;
         P::clear(&mut storage);
@@ -545,6 +606,7 @@ impl<P: BufferPolicy> Clone for BroadcastBuffer<P> {
 pub(crate) struct BroadcastReader<P: BufferPolicy> {
     rx: mpsc::Receiver<P::Item>,
     overflowed: Arc<AtomicBool>,
+    reset: Arc<AtomicBool>,
     replay_remaining: usize,
     replay_complete_emitted: bool,
 }
@@ -555,6 +617,7 @@ pub(crate) enum BroadcastRead<P: BufferPolicy> {
     ReplayComplete,
     LiveItem(P::Item),
     Lagged,
+    Reset,
 }
 
 impl<P: BufferPolicy> BroadcastReader<P> {
@@ -563,12 +626,19 @@ impl<P: BufferPolicy> BroadcastReader<P> {
     /// `ReplayComplete` is emitted exactly once: immediately for an empty
     /// replay, or immediately after the final replay item has been read.
     pub(crate) async fn read_event(&mut self) -> Option<BroadcastRead<P>> {
+        if self.reset.swap(false, Ordering::AcqRel) {
+            self.rx.close();
+            return Some(BroadcastRead::Reset);
+        }
         if self.replay_remaining == 0 && !self.replay_complete_emitted {
             self.replay_complete_emitted = true;
             return Some(BroadcastRead::ReplayComplete);
         }
 
         let Some(item) = self.rx.recv().await else {
+            if self.reset.swap(false, Ordering::AcqRel) {
+                return Some(BroadcastRead::Reset);
+            }
             return self
                 .overflowed
                 .swap(false, Ordering::AcqRel)
@@ -597,7 +667,7 @@ impl<P: BufferPolicy> BroadcastReader<P> {
                     return Some(item);
                 }
                 BroadcastRead::ReplayComplete => {}
-                BroadcastRead::Lagged => return None,
+                BroadcastRead::Lagged | BroadcastRead::Reset => return None,
             }
         }
     }
@@ -627,21 +697,75 @@ impl BroadcastBuffer<BytePolicy> {
 }
 
 impl BroadcastBuffer<StructuredPolicy> {
-    /// Create an empty structured buffer whose next entry continues after
-    /// `last_seq`.
-    pub(crate) fn with_last_seq(capacity: usize, last_seq: u64) -> Self {
+    pub(crate) fn with_policy(policy: RingPolicy) -> Self {
+        Self::with_policy_and_last_seq(policy, 0)
+    }
+
+    pub(crate) fn with_policy_and_last_seq(policy: RingPolicy, last_seq: u64) -> Self {
         Self {
             inner: Arc::new(BroadcastInner {
                 storage: RwLock::new(StructuredStorage {
                     entries: Vec::new(),
                     last_seq,
+                    reset_at: 0,
+                    retained_bytes: 0,
+                    policy,
+                    last_published_at: None,
                 }),
                 subscribers: RwLock::new(Vec::new()),
-                capacity,
+                capacity: policy.max_rows,
                 closed: RwLock::new(false),
                 epoch: AtomicU64::new(0),
             }),
         }
+    }
+
+    /// Cut the semantic generation, publish its marker and disconnect every
+    /// subscriber under the same publication lock used by writes and opens.
+    pub(crate) async fn semantic_reset(&self, marker: Value) -> StructuredOutput {
+        let mut storage = self.inner.storage.write().await;
+        StructuredPolicy::clear(&mut storage);
+        let item = StructuredPolicy::publish(&mut storage, marker, self.inner.capacity)
+            .expect("structured reset markers are always published");
+        storage.reset_at = item.seq;
+        let mut subscribers = self.inner.subscribers.write().await;
+        for subscriber in subscribers.iter() {
+            subscriber.reset.store(true, Ordering::Release);
+        }
+        subscribers.clear();
+        self.inner.epoch.fetch_add(1, Ordering::Relaxed);
+        item
+    }
+
+    pub(crate) async fn idle_check_after(&self) -> std::time::Duration {
+        self.inspect(|storage| {
+            let Some(last) = storage.last_published_at else {
+                return storage.policy.idle_after;
+            };
+            storage
+                .policy
+                .idle_after
+                .saturating_sub(Instant::now().saturating_duration_since(last))
+        })
+        .await
+    }
+
+    pub(crate) async fn trim_if_idle(&self) -> bool {
+        let mut storage = self.inner.storage.write().await;
+        let idle = storage.last_published_at.is_some_and(|last| {
+            Instant::now().saturating_duration_since(last) >= storage.policy.idle_after
+        });
+        if idle {
+            let max_rows = storage.policy.max_rows;
+            let idle_trim_bytes = storage.policy.idle_trim_bytes;
+            trim_structured(&mut storage, idle_trim_bytes, max_rows);
+            storage.last_published_at = None;
+        }
+        idle
+    }
+
+    pub(crate) async fn is_closed(&self) -> bool {
+        *self.inner.closed.read().await
     }
 
     /// Return the current structured output sequence number.
@@ -1234,7 +1358,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(facts.selected_from, 0);
-        assert_eq!(facts.outcome, ReplayOutcome::Continuous);
+        assert_eq!(facts.outcome, ReplayOutcome::Truncated { missing_after: 2 });
         buffer.write(user_msg("c", "3")).await;
         assert_eq!(reader.read().await.unwrap().seq, 3);
     }

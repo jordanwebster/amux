@@ -1169,6 +1169,7 @@ fn client_service_session_close_reason(
             exit_code: exited.exit_code,
         }),
         wire::session_closed::Reason::HostUnreachable(_) => Ok(SessionCloseReason::HostUnreachable),
+        wire::session_closed::Reason::Reset(_) => Ok(SessionCloseReason::Reset),
         wire::session_closed::Reason::InternalError(error) => {
             Ok(SessionCloseReason::InternalError {
                 detail: error.detail,
@@ -1568,6 +1569,12 @@ mod tests {
             (
                 wire::session_closed::Reason::HostUnreachable(wire::HostUnreachable {}),
                 SessionCloseReason::HostUnreachable,
+            ),
+            (
+                wire::session_closed::Reason::Reset(wire::Reset {
+                    reason: "reset".into(),
+                }),
+                SessionCloseReason::Reset,
             ),
             (
                 wire::session_closed::Reason::InternalError(wire::InternalError {

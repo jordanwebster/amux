@@ -32,14 +32,13 @@ use crate::agents::Delivery;
 use crate::agents::{
     AgentBackend, AgentDeliveryTarget, AgentKind, AgentParent, BackendState, CreateAgentRequest,
     LocalAgentNameSource, McpLaunchRoute, ObligationDebug, Plane, Protocol, PtyHandle,
-    RawPtyTarget, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy, StructuredInput,
-    StructuredInputEvent, StructuredLogSource, spawn_pty_agent,
+    RawPtyTarget, RingPolicy, SessionDebug, SessionEvent, SpawnInheritance, StopPolicy,
+    StructuredInput, StructuredInputEvent, StructuredLogSource, spawn_pty_agent,
 };
 use crate::suspend::SuspendedAgent;
 
 // Codex streams are delta-heavy and this is their sole elastic/replay buffer.
 // 8K rows covers several ordinary turns while staying bounded per agent.
-const STRUCTURED_LOG_RETENTION: usize = 8192;
 const RECONNECT_BACKOFF: [Duration; 5] = [
     Duration::from_millis(100),
     Duration::from_millis(250),
@@ -187,13 +186,13 @@ fn capture_dir() -> Option<PathBuf> {
 
 fn codex_log_source() -> StructuredLogSource {
     let Some(dir) = capture_dir() else {
-        return StructuredLogSource::new(STRUCTURED_LOG_RETENTION);
+        return StructuredLogSource::with_policy(RingPolicy::codex());
     };
-    match StructuredLogSource::recording(STRUCTURED_LOG_RETENTION, &dir.join("rows.jsonl")) {
+    match StructuredLogSource::recording_with_policy(RingPolicy::codex(), &dir.join("rows.jsonl")) {
         Ok(source) => source,
         Err(error) => {
             tracing::warn!(%error, path = %dir.display(), "failed to enable Codex row capture");
-            StructuredLogSource::new(STRUCTURED_LOG_RETENTION)
+            StructuredLogSource::with_policy(RingPolicy::codex())
         }
     }
 }
@@ -1001,6 +1000,10 @@ async fn run_ingest_supervisor(
             break;
         }
 
+        let expected_thread_id = thread_id
+            .as_ref()
+            .or(ambiguous_started_thread_id.as_ref())
+            .cloned();
         let (connection, mut thread, provenance) = match attach_thread(
             &shared_client,
             &thread_config,
@@ -1060,6 +1063,9 @@ async fn run_ingest_supervisor(
             AttachmentProvenance::Resumed => None,
         };
         let id = thread.id().to_string();
+        let provider_replaced_thread = expected_thread_id
+            .as_ref()
+            .is_some_and(|expected| expected != &id);
         // Publish only after a successful resume. Naming alone does not
         // persist paginated history and cannot make raw attach safe.
         thread_id = Some(id.clone());
@@ -1110,6 +1116,13 @@ async fn run_ingest_supervisor(
             }
         }
         let facts = control.session_facts();
+        let replaces_thread = provider_replaced_thread
+            || runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .attached
+                .as_ref()
+                .is_some_and(|attached| attached.thread_id != id);
         {
             let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
             state.startup_error = None;
@@ -1132,7 +1145,11 @@ async fn run_ingest_supervisor(
             take_initial_resumed_marker(&mut initial_persisted_resume_pending, provenance);
         let mut ready = ready_row(resumed);
         ready["session"] = facts;
-        log_source.write(ready).await;
+        if replaces_thread {
+            log_source.semantic_reset(ready).await;
+        } else {
+            log_source.write(ready).await;
+        }
         if capture_drop_connection {
             capture_drop_connection = false;
             connection.client.clone().close().await;
@@ -3432,6 +3449,12 @@ mod tests {
             next_pty_epoch: 0,
         }));
         let source = StructuredLogSource::new(16);
+        let observed_source = source.clone();
+        let (mut old_subscription, _) = source.subscribe_with_query(None).await.unwrap();
+        assert!(matches!(
+            old_subscription.read_event().await.unwrap(),
+            crate::agents::BroadcastRead::ReplayComplete
+        ));
         let (stop_tx, stop_rx) = watch::channel(false);
         let supervisor = tokio::spawn(run_ingest_supervisor(
             Uuid::from_u128(1),
@@ -3558,6 +3581,16 @@ mod tests {
         .await
         .expect("agent did not publish the proven thread after reconnect");
 
+        if !candidate_resumes {
+            assert!(matches!(
+                old_subscription.read_event().await.unwrap(),
+                crate::agents::BroadcastRead::Reset
+            ));
+            let (_, facts) = observed_source.subscribe_with_query(None).await.unwrap();
+            assert!(facts.reset_at > 0);
+            assert_eq!(facts.retained_from, facts.reset_at);
+        }
+
         stop_tx.send(true).unwrap();
         tokio::time::timeout(Duration::from_secs(2), supervisor)
             .await
@@ -3572,7 +3605,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn naming_transport_loss_reconnects_and_replaces_missing_candidate() {
+    async fn daemon_protocol_naming_transport_loss_replaces_thread_with_a_reset_cut() {
         bootstrap_transport_loss_recovers(false, false).await;
     }
 

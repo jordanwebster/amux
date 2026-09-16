@@ -99,6 +99,9 @@ pub(crate) fn session_closed_to_wire(reason: &SessionCloseReason) -> pb::Session
         SessionCloseReason::HostUnreachable => {
             pb::session_closed::Reason::HostUnreachable(pb::HostUnreachable {})
         }
+        SessionCloseReason::Reset => pb::session_closed::Reason::Reset(pb::Reset {
+            reason: "reset".to_string(),
+        }),
         SessionCloseReason::InternalError { detail } => {
             pb::session_closed::Reason::InternalError(pb::InternalError {
                 detail: detail.clone(),
@@ -405,6 +408,12 @@ mod tests {
                 protocol_wire::session_closed::Reason::HostUnreachable(
                     protocol_wire::HostUnreachable {},
                 ),
+            ),
+            (
+                SessionCloseReason::Reset,
+                protocol_wire::session_closed::Reason::Reset(protocol_wire::Reset {
+                    reason: "reset".into(),
+                }),
             ),
             (
                 SessionCloseReason::InternalError {

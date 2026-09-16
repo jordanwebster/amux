@@ -792,6 +792,7 @@ fn direct_session_response_stream(
                             published_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                             activity_at_unix_ms: None,
                             payload: attachments_row(None, &refs),
+                            encoded_len: 0,
                         },
                         protocol,
                         true,
@@ -930,6 +931,9 @@ async fn read_session_output_event(
             BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
                 message: "session output subscriber queue closed".to_string(),
             }),
+            BroadcastRead::Reset => Ok(HostSessionEvent::Closed {
+                reason: SessionCloseReason::Reset,
+            }),
         }),
         SessionOutputReader::Structured {
             protocol, reader, ..
@@ -939,6 +943,9 @@ async fn read_session_output_event(
             BroadcastRead::ReplayComplete => Ok(HostSessionEvent::ReplayComplete),
             BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
                 message: "session output subscriber queue closed".to_string(),
+            }),
+            BroadcastRead::Reset => Ok(HostSessionEvent::Closed {
+                reason: SessionCloseReason::Reset,
             }),
         }),
     }
@@ -1138,6 +1145,45 @@ mod tests {
                 HostSessionEvent::Output(_)
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_semantic_reset_is_a_session_closed_reset_event() {
+        let agent_id = Uuid::from_u128(91);
+        let log = StructuredLogSource::new(8);
+        let (reader, replay) = log.subscribe_with_query(None).await.unwrap();
+        let (_close_tx, close_rx) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let mut stream = direct_session_response_stream(
+            agent_id,
+            SessionOutputReader::Structured {
+                protocol: Protocol::ClaudeSdkV1,
+                reader,
+                replay,
+            },
+            close_rx,
+            shutdown_rx,
+            None,
+            AgentRuntime::new(Uuid::from_u128(1)).state().clone(),
+        );
+
+        assert!(matches!(
+            stream.next().await.unwrap().unwrap(),
+            HostSessionEvent::Opened { .. }
+        ));
+        assert!(matches!(
+            stream.next().await.unwrap().unwrap(),
+            HostSessionEvent::ReplayComplete
+        ));
+        log.semantic_reset(serde_json::json!({"type": "conversation_reset"}))
+            .await;
+        assert_eq!(
+            stream.next().await.unwrap().unwrap(),
+            HostSessionEvent::Closed {
+                reason: SessionCloseReason::Reset
+            }
+        );
+        assert!(stream.next().await.is_none());
     }
 
     #[tokio::test]

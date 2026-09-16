@@ -386,6 +386,7 @@ fn every_msg_variant_round_trips_through_serde() {
         StreamCloseReason::AgentDeleted,
         StreamCloseReason::AgentExited { exit_code: Some(1) },
         StreamCloseReason::HostUnreachable,
+        StreamCloseReason::Reset,
         StreamCloseReason::InternalError {
             detail: "boom".to_string(),
         },

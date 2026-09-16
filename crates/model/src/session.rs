@@ -122,6 +122,7 @@ pub enum SessionCloseReason {
     AgentDeleted,
     AgentExited { exit_code: Option<i32> },
     HostUnreachable,
+    Reset,
     InternalError { detail: String },
 }
 
@@ -136,6 +137,7 @@ impl std::fmt::Display for SessionCloseReason {
             }
             Self::AgentExited { exit_code: None } => f.write_str("agent exited"),
             Self::HostUnreachable => f.write_str("host unreachable"),
+            Self::Reset => f.write_str("session reset"),
             Self::InternalError { detail } => write!(f, "internal error: {detail}"),
         }
     }
