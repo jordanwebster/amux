@@ -729,15 +729,23 @@ impl ClaudeSdkFold {
                     if text.len() > TEXT_MAX_BYTES {
                         patch.clipped = Patch::set(true, revision);
                     }
-                    mutations.push(upsert(key.clone(), seq, slot, revision, patch));
-                    if let Some(cursor_index) = cursor_index
-                        && let Some(from) = self.cursors[cursor_index]
-                            .blocks
-                            .iter()
-                            .find(|block| block.index == block_index)
-                            .map(|block| block.key.clone())
-                        && from != key
-                    {
+                    let provisional = cursor_index
+                        .and_then(|cursor_index| {
+                            self.cursors[cursor_index]
+                                .blocks
+                                .iter()
+                                .find(|block| block.index == block_index)
+                                .map(|block| block.key.clone())
+                        })
+                        .filter(|from| from != &key);
+                    mutations.push(upsert(
+                        provisional.clone().unwrap_or_else(|| key.clone()),
+                        seq,
+                        slot,
+                        revision,
+                        patch,
+                    ));
+                    if let Some(from) = provisional {
                         mutations.push(Mutation::Alias {
                             from,
                             to: key,
@@ -2413,8 +2421,58 @@ mod tests {
         assert_eq!(keys(&warm), ["final:row-4001:0"]);
         assert_eq!(keys(&replay), ["final:row-4001:0"]);
         assert_eq!(keys(&cold), ["final:row-4001:0"]);
+        assert_eq!(warm.entries()[0].order, Order::new(3_990, 0).unwrap());
+        assert_eq!(replay.entries()[0].order, Order::new(3_990, 0).unwrap());
+        assert_eq!(cold.entries()[0].order, Order::new(4_001, 0).unwrap());
         assert_eq!(warm.entries()[0].entry, replay.entries()[0].entry);
         assert_eq!(warm.entries()[0].entry, cold.entries()[0].entry);
+    }
+
+    #[test]
+    fn claude_sdk_whole_final_keeps_streamed_text_before_later_tool() {
+        let input = rows(
+            r#"
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"m"}},"parent_tool_use_id":null}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"answer"}},"parent_tool_use_id":null}
+{"type":"assistant","uuid":"row","parent_tool_use_id":null,"message":{"id":"m","content":[{"type":"text","text":"answer"},{"type":"tool_use","id":"tool-1","name":"Read","input":{}}]}}
+"#,
+        );
+        let mut fold = ClaudeSdkFold::default();
+        fold.begin(1, Baseline::Start);
+        let mut oracle = MutationOracle::default();
+        apply_row(&mut fold, &mut oracle, 10, false, &input[0]);
+        apply_row(&mut fold, &mut oracle, 12, false, &input[1]);
+
+        let changes = fold.apply(Input::Row {
+            seq: 20,
+            published_at: at(20),
+            activity_at: Some(at(20)),
+            historical: false,
+            payload: &input[2],
+        });
+        assert!(matches!(
+            &changes.mutations[..],
+            [
+                Mutation::Upsert { key, .. },
+                Mutation::Alias { from, to, .. },
+                Mutation::Upsert { .. }
+            ] if key.as_str() == "blk:m:0"
+                && from.as_str() == "blk:m:0"
+                && to.as_str() == "final:row:0"
+        ));
+        oracle.apply_changes(&changes).unwrap();
+
+        let entries = oracle.entries();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.key.as_str(), entry.order))
+                .collect::<Vec<_>>(),
+            [
+                ("final:row:0", Order::new(12, 0).unwrap()),
+                ("tool:tool-1", Order::new(20, 1).unwrap()),
+            ]
+        );
     }
 
     #[test]

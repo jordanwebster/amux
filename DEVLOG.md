@@ -1,3 +1,11 @@
+2026-09-16 — **Final Claude SDK blocks retain their streamed placement.**
+When a final assistant row proves which provisional text or thinking block it
+completes, the authoritative content now amends that provisional entry before
+the alias gives it the final row identity. The final entry therefore stays at
+the block-start position, including ahead of tools introduced later in a
+whole-message final, while clients that first see the final row still place it
+at that row and converge on the same key and body.
+
 2026-09-16 — **Codex streams now fold into durable native entries.**
 Items, turn snapshots, completed turns, steer echoes and agent envelopes use
 their provider identities across replay and late amendments, while the small
