@@ -1,3 +1,12 @@
+2026-09-16 — **The Mac and the phone test against the same advertisement.**
+The Mac's advertisement and the phone's reading of it were each tested only
+against their own spelling of the record, which is how a host-ID format the
+phone could not read shipped. A checked-in advertisement record now sits
+between them (`crates/node/tests/fixtures/discovery/advertisement.json`): the
+Rust test requires the Mac to produce exactly that record, and the Swift
+discovery test requires the app to read it. Putting the undashed host ID back in
+the file fails both.
+
 2026-09-16 — **iPhones can see Macs on the same network.** The Mac
 announced its host ID in the local-network advertisement as 32 bare hex digits,
 while every other place a host ID crosses between machines uses the hyphenated

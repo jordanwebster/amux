@@ -20,6 +20,20 @@ final class DiscoveryTests: XCTestCase {
         XCTAssertEqual(claim?.version, 7)
     }
 
+    func testTheRecordAMacAdvertisesIsRead() throws {
+        // The Mac writes this record and its own tests pin the same file, so a
+        // spelling the Mac's parser tolerates and Foundation's does not fails
+        // here instead of hiding every Mac from every phone.
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<7 { root.deleteLastPathComponent() }
+        let url = root.appendingPathComponent("crates/node/tests/fixtures/discovery/advertisement.json")
+        let fixture = try JSONDecoder().decode(AdvertisedRecord.self, from: Data(contentsOf: url))
+
+        let claim = LocalDiscovery.claim(from: NWTXTRecord(fixture.txt))
+        XCTAssertEqual(claim?.host, HostId(try XCTUnwrap(UUID(uuidString: fixture.hostId))))
+        XCTAssertEqual(claim?.version, fixture.version)
+    }
+
     func testAnIncompleteOrUnreadableRecordIsPassedOver() {
         // Some other service answering on the same name, or an amux old enough
         // to have advertised itself differently. Neither is guessed at.
@@ -81,5 +95,15 @@ final class DiscoveryTests: XCTestCase {
         let discovery = LocalDiscovery { handedOver.append($0) }
         discovery.stop()
         XCTAssertEqual(handedOver.count, 0)
+    }
+}
+
+private struct AdvertisedRecord: Decodable {
+    let hostId: String
+    let version: UInt32
+    let txt: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case hostId = "host_id", version, txt
     }
 }

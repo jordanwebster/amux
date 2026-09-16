@@ -23,11 +23,42 @@ fn txt_encoding_contains_only_version_and_host_id() {
 
     assert_eq!(properties.len(), 2);
     assert_eq!(service.get_property_val_str("v"), Some("7"));
-    let hid = service.get_property_val_str("hid").unwrap();
-    assert_eq!(hid, advert.host_id.hyphenated().to_string());
-    assert_eq!(hid.matches('-').count(), 4);
+    assert_eq!(
+        service.get_property_val_str("hid"),
+        Some(advert.host_id.hyphenated().to_string().as_str())
+    );
     assert_eq!(service.get_port(), 4819);
     assert!(service.get_fullname().ends_with(SERVICE_TYPE));
+}
+
+/// The TXT record a Mac advertises, pinned in a file the iPhone app's
+/// discovery test reads too. The app parses the record with Foundation rather
+/// than this crate, so a spelling only this crate accepts would pass every
+/// Rust round trip and still hide the Mac from every phone.
+#[test]
+#[cfg(not(target_os = "ios"))]
+fn txt_encoding_matches_the_record_the_phone_reads() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/discovery/advertisement.json"
+    ))
+    .unwrap();
+    let advert = Advertisement {
+        host_id: fixture["host_id"].as_str().unwrap().parse().unwrap(),
+        name: "Studio".to_string(),
+        version: fixture["version"].as_u64().unwrap() as u32,
+        addrs: vec![SocketAddr::from((Ipv4Addr::new(192, 0, 2, 8), 4819))],
+    };
+    let service = mdns::service_info_for_test(&advert).unwrap();
+
+    let txt = fixture["txt"].as_object().unwrap();
+    assert_eq!(service.get_properties().len(), txt.len());
+    for (key, value) in txt {
+        assert_eq!(
+            service.get_property_val_str(key),
+            value.as_str(),
+            "TXT property {key}"
+        );
+    }
 }
 
 #[test]
