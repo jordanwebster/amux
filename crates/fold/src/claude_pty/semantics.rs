@@ -597,7 +597,7 @@ impl ClaudeFold {
                         ));
                         self.inferred_turn = Some(turn);
                     }
-                    self.attention = Attention::NeedsYou { why: Why::Finished };
+                    self.attention = Attention::Idle;
                     self.known_attention = true;
                     self.known_outstanding = true;
                     self.turn_closed_at = activity_at;
@@ -1925,6 +1925,7 @@ mod tests {
             json!({"type":"user","uuid":"u3","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}),
         );
         assert_eq!(keys(&interruption.1), ["turn:u3", "user:u3"]);
+        assert_eq!(interruption.0.summary().attention, Attention::Idle);
         let compact = one(json!({"type":"system","subtype":"compact_boundary","uuid":"s2"}));
         assert_eq!(keys(&compact.1), ["sys:s2"]);
         let compact_summary = one(

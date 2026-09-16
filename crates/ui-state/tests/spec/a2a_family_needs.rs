@@ -38,7 +38,7 @@ fn codex_approval_rows() -> Vec<Value> {
             "command":"cargo test","cwd":"/work","status":"inProgress"}}),
         json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1",
             "command":"cargo test","cwd":"/work","reason":"run tests?"}),
-        json!({"type":"amux.codex_approval_required","request_id":7,
+        json!({"type":"amux.codex_approval_required","item_id":"exec-1","request_id":7,
             "availableDecisions":["accept","cancel"]}),
     ]
 }
@@ -80,8 +80,10 @@ fn answered_sequence() -> Vec<Msg> {
         vec![batch(
             "scribe",
             30,
-            vec![json!({"type":"amux.codex_approval_resolved",
-                "request_id":7, "resolution":"answered"})],
+            vec![
+                json!({"type":"amux.codex_approval_resolved","item_id":"exec-1",
+                "request_id":7, "resolution":"answered"}),
+            ],
         )],
     ])
 }

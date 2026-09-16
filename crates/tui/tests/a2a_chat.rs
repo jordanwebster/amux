@@ -343,7 +343,7 @@ fn family_msgs() -> Vec<Msg> {
             codex_ready(),
             json!({"type":"turn/started","turn":{"id":"turn-1","status":"inProgress"}}),
             json!({"type":"item/commandExecution/requestApproval","itemId":"exec-ask","command":"cargo test --workspace","cwd":"/work","reason":"Run the repository test suite?","proposedNetworkPolicyAmendments":[]}),
-            json!({"type":"amux.codex_approval_required","request_id":"approval-1","availableDecisions":["accept","decline"]}),
+            json!({"type":"amux.codex_approval_required","item_id":"exec-ask","request_id":"approval-1","availableDecisions":["accept","decline"]}),
         ],
     ));
 
@@ -649,7 +649,7 @@ fn a2a_banner_carries_a_grandchild_up_the_family() {
         vec![
             json!({"type":"turn/started","turn":{"id":"turn-h","status":"inProgress"}}),
             json!({"type":"item/commandExecution/requestApproval","itemId":"exec-h","command":"rm -rf target","cwd":"/work","proposedNetworkPolicyAmendments":[]}),
-            json!({"type":"amux.codex_approval_required","request_id":"approval-h","availableDecisions":["accept","decline"]}),
+            json!({"type":"amux.codex_approval_required","item_id":"exec-h","request_id":"approval-h","availableDecisions":["accept","decline"]}),
         ],
     ));
     let model = fold(msgs);
@@ -686,6 +686,7 @@ fn buried_permission_model() -> Model {
         NOW - 12,
         vec![json!({
             "type": "amux.codex_approval_resolved",
+            "item_id": "exec-ask",
             "request_id": "approval-1",
             "reason": "answered",
         })],
@@ -696,7 +697,7 @@ fn buried_permission_model() -> Model {
         vec![
             json!({"type":"turn/started","turn":{"id":"turn-h","status":"inProgress"}}),
             json!({"type":"item/commandExecution/requestApproval","itemId":"exec-h","command":"rm -rf target","cwd":"/work","proposedNetworkPolicyAmendments":[]}),
-            json!({"type":"amux.codex_approval_required","request_id":"approval-h","availableDecisions":["accept","decline"]}),
+            json!({"type":"amux.codex_approval_required","item_id":"exec-h","request_id":"approval-h","availableDecisions":["accept","decline"]}),
         ],
     ));
     fold(msgs)
@@ -758,6 +759,7 @@ fn a2a_banner_clears_by_re_derivation_when_the_ask_is_answered() {
         NOW - 5,
         vec![json!({
             "type": "amux.codex_approval_resolved",
+            "item_id": "exec-ask",
             "request_id": "approval-1",
             "reason": "answered",
         })],
@@ -1133,6 +1135,7 @@ fn claude_child_asking() -> Model {
         NOW - 12,
         vec![json!({
             "type": "amux.codex_approval_resolved",
+            "item_id": "exec-ask",
             "request_id": "approval-1",
             "reason": "answered",
         })],
@@ -1324,6 +1327,7 @@ fn a2a_inline_answer_clears_when_the_ask_is_answered_anywhere() {
         NOW - 5,
         vec![json!({
             "type": "amux.codex_approval_resolved",
+            "item_id": "exec-ask",
             "request_id": "approval-1",
             "reason": "answered",
         })],
@@ -1406,6 +1410,7 @@ fn a2a_inline_answer_is_not_offered_for_a_child_with_nothing_to_answer() {
         NOW - 5,
         vec![json!({
             "type": "amux.codex_approval_resolved",
+            "item_id": "exec-ask",
             "request_id": "approval-1",
             "reason": "answered",
         })],
@@ -1580,6 +1585,7 @@ fn a2a_bindings_offer_the_answer_chord_only_with_an_ask_to_dock() {
         NOW - 5,
         vec![json!({
             "type": "amux.codex_approval_resolved",
+            "item_id": "exec-ask",
             "request_id": "approval-1",
             "reason": "answered",
         })],

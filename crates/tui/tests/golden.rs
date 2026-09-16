@@ -221,7 +221,7 @@ fn codex_approval_rows() -> Vec<serde_json::Value> {
             "command":"cargo test","cwd":"/work","status":"inProgress"}}),
         serde_json::json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1",
             "command":"cargo test","cwd":"/work","reason":"run tests?"}),
-        serde_json::json!({"type":"amux.codex_approval_required","request_id":7,
+        serde_json::json!({"type":"amux.codex_approval_required","item_id":"exec-1","request_id":7,
             "availableDecisions":["accept","cancel"]}),
     ]
 }
@@ -839,30 +839,7 @@ fn family_msgs() -> Vec<Msg> {
     working_on(&mut runner, "run the tunnel suite end to end", NOW - 60);
     msgs.push(agent_up(&runner));
 
-    let mut flake = a_child("flake-hunter", "codex", "nova", "test-runner");
-    flake.summary = Some(ui_state::SummaryEnvelope {
-        through: 6,
-        producer_version: 1,
-        observed_at: at(NOW - 20),
-        stale: false,
-        revision: 1,
-        summary: ui_state::Summary {
-            attention: ui_state::Attention::NeedsYou {
-                why: ui_state::Why::Permission,
-            },
-            phase: ui_state::AgentPhase::Running,
-            last_activity: Some(at(NOW - 20)),
-            todo: None,
-            context: None,
-            model: None,
-            unknown: vec![
-                ui_state::SummaryField::Todo,
-                ui_state::SummaryField::Context,
-                ui_state::SummaryField::Model,
-                ui_state::SummaryField::Outstanding,
-            ],
-        },
-    });
+    let flake = a_child("flake-hunter", "codex", "nova", "test-runner");
     msgs.push(agent_up(&flake));
 
     msgs.extend(stream_rows(
@@ -880,7 +857,19 @@ fn family_msgs() -> Vec<Msg> {
 }
 
 fn family_model() -> Model {
-    fold(family_msgs())
+    let model = fold(family_msgs());
+    assert_eq!(
+        model.fleet_attention(
+            model
+                .agent(agent_id("flake-hunter"))
+                .expect("flake-hunter card")
+        ),
+        ui_state::Attention::NeedsYou {
+            why: ui_state::Why::Permission,
+        },
+        "the enriched Codex rows drive flake-hunter's fleet standing",
+    );
+    model
 }
 
 fn expanded_view(names: &[&str]) -> ViewState {

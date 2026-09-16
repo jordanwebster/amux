@@ -347,7 +347,7 @@ fn asking_child() -> Model {
                 json!({"type":"turn/started","turn":{"id":"t1","status":"inProgress"}}),
                 json!({"type":"item/started","item":{"id":"exec-1","type":"commandExecution","command":"cargo test","cwd":"/work","status":"inProgress"}}),
                 json!({"type":"item/commandExecution/requestApproval","itemId":"exec-1","command":"cargo test","cwd":"/work","reason":"run tests?"}),
-                json!({"type":"amux.codex_approval_required","request_id":7,"availableDecisions":["accept","cancel"]}),
+                json!({"type":"amux.codex_approval_required","item_id":"exec-1","request_id":7,"availableDecisions":["accept","cancel"]}),
             ]
             .into_iter()
             .enumerate()

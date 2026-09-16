@@ -90,6 +90,20 @@ fn message(id: usize, text: &str) -> Value {
         "message":{"id":format!("message-{id}"), "role":"assistant", "stop_reason":"end_turn",
             "content":[{"type":"text", "text":text}]}})
 }
+fn settle_claude_turn(model: &mut Model, seq: u64) {
+    let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    row(
+        model,
+        seq,
+        json!({"type":"hook.stop","hook_event_name":"Stop","stop_id":seq}),
+    );
+    update(
+        model,
+        Msg::Tick {
+            now: at + chrono::Duration::seconds(61),
+        },
+    );
+}
 fn collect(projection: &mut Projection, model: &Model) -> Vec<Event> {
     let mut events = vec![];
     projection.collect(model, &RelayConnection::Connected, &mut events);
@@ -147,6 +161,7 @@ impl PhoneFeed {
 fn mobile_projection_schema_snapshot() {
     let mut model = claude_model();
     row(&mut model, 1, message(0, "Hello"));
+    settle_claude_turn(&mut model, 2);
     let mut projection = subscribed();
     let mut events = vec![Event::connection(&RelayConnection::Connecting)];
     events.extend(collect(&mut projection, &model));
@@ -181,7 +196,8 @@ fn mobile_projection_schema_snapshot() {
         )
         .unwrap(),
     });
-    row(&mut model, 2, message(0, "Updated"));
+    row(&mut model, 3, message(0, "Updated"));
+    settle_claude_turn(&mut model, 4);
     events.extend(collect(&mut projection, &model));
     let mut codex = model_with_codex_row();
     events.extend(collect(&mut subscribed(), &codex));

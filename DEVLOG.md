@@ -1,3 +1,10 @@
+2026-09-16 — **Fleet standing and native chat now agree on provider rows.**
+Fleet badges, status labels, and family needs all use the same selected summary
+and working-staleness cap. Recorded Claude PTY interruption rows settle to idle,
+and projection fixtures now complete the provider's stop lifecycle before
+snapshotting. Codex permission fixtures carry the item identity enriched by the
+daemon, so family alerts come from the shared fold rather than injected state.
+
 2026-09-16 — **Fleet revisions reserve durable ranges ahead of publication.**
 Each daemon now persists a 1,024-revision upper bound before using any value in
 that range. Normal agent and standing events allocate from memory, while block

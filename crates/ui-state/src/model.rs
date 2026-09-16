@@ -777,7 +777,11 @@ impl Model {
         if !self.host_online(card.agent.host_id) {
             return Attention::Unknown;
         }
-        if card.attention == Attention::Working
+        self.apply_working_staleness_cap(card, card.attention)
+    }
+
+    fn apply_working_staleness_cap(&self, card: &AgentCard, attention: Attention) -> Attention {
+        if attention == Attention::Working
             && card
                 .layer
                 .as_ref()
@@ -785,7 +789,7 @@ impl Model {
         {
             return Attention::Unknown;
         }
-        card.attention
+        attention
     }
 
     /// Attention specifically for fleet presentation. Unlike chat gates and
@@ -798,7 +802,7 @@ impl Model {
             if effective.stale || effective.incompatible {
                 return Attention::Unknown;
             }
-            return effective.summary.attention;
+            return self.apply_working_staleness_cap(card, effective.summary.attention);
         }
         self.effective_attention(card)
     }
@@ -843,6 +847,7 @@ impl Model {
         if !self.host_online(card.agent.host_id) {
             return "–".to_string();
         }
+        let attention = self.fleet_attention(card);
         if let Some(effective) = self.effective_summary(card) {
             if effective.incompatible {
                 return "unknown".to_string();
@@ -850,9 +855,9 @@ impl Model {
             if effective.stale {
                 return "stale".to_string();
             }
-            return card.status_label(effective.summary.attention, &effective.summary.phase);
+            return card.status_label(attention, &effective.summary.phase);
         }
-        card.status_label(self.effective_attention(card), &card.phase)
+        card.status_label(attention, &card.phase)
     }
 
     /// Every descendant of an agent, ranked exactly as the fleet ranks a
@@ -908,7 +913,7 @@ impl Model {
         let mut needs: Vec<FamilyNeed<'_>> = self
             .family_of(parent)
             .into_iter()
-            .filter_map(|member| match self.effective_attention(member.card) {
+            .filter_map(|member| match self.fleet_attention(member.card) {
                 // Read-time policy applies here too: a child on an offline
                 // host degrades to Unknown, and a banner for an ask we can
                 // no longer see would be a promise the chat cannot keep.
