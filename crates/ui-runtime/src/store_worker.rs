@@ -7,7 +7,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -29,10 +30,15 @@ pub(crate) struct StoreWorker {
     thread: Option<JoinHandle<()>>,
     #[cfg(test)]
     maintenance_runs: Arc<AtomicUsize>,
+    #[cfg(test)]
+    data_version_polls: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
-pub(crate) struct StoreWorkerHandle(Sender<Command>);
+pub(crate) struct StoreWorkerHandle {
+    sender: Sender<Command>,
+    retired: Arc<AtomicBool>,
+}
 
 enum Command {
     Execute(Box<StoreOp>),
@@ -46,10 +52,16 @@ impl StoreWorker {
     pub(crate) fn spawn(path: PathBuf, profile: ProfileGeneration, sink: MsgSink) -> Self {
         let (sender, receiver) = mpsc::channel();
         let worker_sender = sender.clone();
+        let retired = Arc::new(AtomicBool::new(false));
+        let worker_retired = Arc::clone(&retired);
         #[cfg(test)]
         let maintenance_runs = Arc::new(AtomicUsize::new(0));
         #[cfg(test)]
         let worker_maintenance_runs = Arc::clone(&maintenance_runs);
+        #[cfg(test)]
+        let data_version_polls = Arc::new(AtomicUsize::new(0));
+        #[cfg(test)]
+        let worker_data_version_polls = Arc::clone(&data_version_polls);
         let thread = std::thread::Builder::new()
             .name("amux-ui-store".to_owned())
             .spawn(move || {
@@ -73,7 +85,10 @@ impl StoreWorker {
                         });
                         let _ = sink
                             .blocking_send(Msg::Store(StoreMsg::Unavailable { profile, error }));
-                        while let Ok(command) = receiver.recv() {
+                        while !worker_retired.load(Ordering::Acquire) {
+                            let Ok(command) = receiver.recv() else {
+                                break;
+                            };
                             match command {
                                 Command::Execute(_) | Command::RecordChatOpened(_) => {
                                     let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
@@ -102,9 +117,11 @@ impl StoreWorker {
                 let mut maintenance_enabled = false;
                 let mut last_maintenance = None;
                 let mut maintenance_thread: Option<JoinHandle<()>> = None;
+                let mut next_poll = Instant::now() + DATA_VERSION_POLL;
 
-                loop {
-                    match receiver.recv_timeout(DATA_VERSION_POLL) {
+                while !worker_retired.load(Ordering::Acquire) {
+                    let wait = next_poll.saturating_duration_since(Instant::now());
+                    match receiver.recv_timeout(wait) {
                         Ok(Command::Execute(op)) => {
                             let message = runtime.block_on(execute(&store, *op));
                             let _ = sink.blocking_send(Msg::Store(message));
@@ -134,43 +151,50 @@ impl StoreWorker {
                             }
                         }
                         Ok(Command::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
-                        Err(RecvTimeoutError::Timeout) => {
-                            if let Ok(current) = runtime.block_on(store.data_version()) {
-                                if data_version.is_some_and(|previous| previous != current) {
-                                    let _ =
-                                        sink.blocking_send(Msg::Store(StoreMsg::FleetChanged {
-                                            profile,
-                                        }));
-                                }
-                                data_version = Some(current);
-                            }
-                            let maintenance_due = maintenance_enabled
-                                && maintenance_thread.is_none()
-                                && last_maintenance.is_none_or(|last: Instant| {
-                                    last.elapsed() >= MAINTENANCE_INTERVAL
-                                });
-                            if maintenance_due {
-                                let maintenance_store = Arc::clone(&store);
-                                let completion = worker_sender.clone();
-                                let spawned = std::thread::Builder::new()
-                                    .name("amux-ui-store-maintenance".to_owned())
-                                    .spawn(move || {
-                                        let runtime = tokio::runtime::Builder::new_current_thread()
-                                            .enable_all()
-                                            .build()
-                                            .expect("store maintenance runtime");
-                                        let result = runtime.block_on(maintenance_store.maintain(
-                                            store::Budget::default(),
-                                            MAINTENANCE_DEADLINE,
-                                        ));
-                                        let _ =
-                                            completion.send(Command::MaintenanceFinished(result));
-                                    });
-                                if let Ok(thread) = spawned {
-                                    last_maintenance = Some(Instant::now());
-                                    maintenance_thread = Some(thread);
-                                }
-                            }
+                        Err(RecvTimeoutError::Timeout) => {}
+                    }
+                    if worker_retired.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let now = Instant::now();
+                    if now < next_poll {
+                        continue;
+                    }
+                    while next_poll <= now {
+                        next_poll += DATA_VERSION_POLL;
+                    }
+                    #[cfg(test)]
+                    worker_data_version_polls.fetch_add(1, Ordering::Release);
+                    if let Ok(current) = runtime.block_on(store.data_version()) {
+                        if data_version.is_some_and(|previous| previous != current) {
+                            let _ =
+                                sink.blocking_send(Msg::Store(StoreMsg::FleetChanged { profile }));
+                        }
+                        data_version = Some(current);
+                    }
+                    let maintenance_due = maintenance_enabled
+                        && maintenance_thread.is_none()
+                        && last_maintenance
+                            .is_none_or(|last: Instant| last.elapsed() >= MAINTENANCE_INTERVAL);
+                    if maintenance_due {
+                        let maintenance_store = Arc::clone(&store);
+                        let completion = worker_sender.clone();
+                        let spawned = std::thread::Builder::new()
+                            .name("amux-ui-store-maintenance".to_owned())
+                            .spawn(move || {
+                                let runtime = tokio::runtime::Builder::new_current_thread()
+                                    .enable_all()
+                                    .build()
+                                    .expect("store maintenance runtime");
+                                let result = runtime.block_on(
+                                    maintenance_store
+                                        .maintain(store::Budget::default(), MAINTENANCE_DEADLINE),
+                                );
+                                let _ = completion.send(Command::MaintenanceFinished(result));
+                            });
+                        if let Ok(thread) = spawned {
+                            last_maintenance = Some(Instant::now());
+                            maintenance_thread = Some(thread);
                         }
                     }
                 }
@@ -183,10 +207,12 @@ impl StoreWorker {
             })
             .expect("spawn profile store executor");
         Self {
-            handle: StoreWorkerHandle(sender),
+            handle: StoreWorkerHandle { sender, retired },
             thread: Some(thread),
             #[cfg(test)]
             maintenance_runs,
+            #[cfg(test)]
+            data_version_polls,
         }
     }
 
@@ -199,31 +225,41 @@ impl StoreWorker {
     }
 
     pub(crate) fn after_first_frame(&self) {
-        let _ = self.handle.0.send(Command::AfterFirstFrame);
+        let _ = self.handle.sender.send(Command::AfterFirstFrame);
     }
 
     pub(crate) fn record_chat_opened(&self, agent: model::AgentId) {
-        let _ = self.handle.0.send(Command::RecordChatOpened(agent));
+        let _ = self.handle.sender.send(Command::RecordChatOpened(agent));
     }
 
     #[cfg(test)]
     pub(crate) fn maintenance_runs(&self) -> usize {
         self.maintenance_runs.load(Ordering::Acquire)
     }
+
+    #[cfg(test)]
+    pub(crate) fn data_version_poll_counter(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.data_version_polls)
+    }
 }
 
 impl StoreWorkerHandle {
     pub(crate) fn execute(&self, op: StoreOp) {
-        let _ = self.0.send(Command::Execute(Box::new(op)));
+        if !self.retired.load(Ordering::Acquire) {
+            let _ = self.sender.send(Command::Execute(Box::new(op)));
+        }
     }
 }
 
 impl Drop for StoreWorker {
     fn drop(&mut self) {
-        let _ = self.handle.0.send(Command::Shutdown);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        self.handle.retired.store(true, Ordering::Release);
+        let _ = self.handle.sender.send(Command::Shutdown);
+        // A store result may be blocked behind the bounded UI channel. The
+        // retired worker owns no UI state, so joining it here would turn a
+        // profile switch into an unbounded synchronous wait. Dropping a
+        // JoinHandle detaches the cooperative shutdown instead.
+        self.thread.take();
     }
 }
 
