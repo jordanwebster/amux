@@ -301,6 +301,55 @@ impl ClientService {
                 });
                 AgentEventOutcome::Removed
             }
+            AgentEvent::Summary {
+                host_id,
+                agent_id,
+                envelope,
+            } => {
+                let mut state = self.state.write().await;
+                let Some(agent) = state.agents_model.get_mut(&agent_id) else {
+                    return AgentEventOutcome::Ignored;
+                };
+                if agent.host_id != host_id
+                    || agent
+                        .summary
+                        .as_ref()
+                        .is_some_and(|current| current.revision >= envelope.revision)
+                {
+                    return AgentEventOutcome::Ignored;
+                }
+                agent.summary = Some(envelope.clone());
+                state.agent_events.emit(AgentEvent::Summary {
+                    host_id,
+                    agent_id,
+                    envelope,
+                });
+                AgentEventOutcome::Upserted
+            }
+            AgentEvent::Progress {
+                host_id,
+                agent_id,
+                progress,
+            } => {
+                let mut state = self.state.write().await;
+                let Some(agent) = state.agents_model.get_mut(&agent_id) else {
+                    return AgentEventOutcome::Ignored;
+                };
+                if agent.host_id != host_id
+                    || agent.progress.as_ref().is_some_and(|current| {
+                        current.revision >= progress.revision || current.through > progress.through
+                    })
+                {
+                    return AgentEventOutcome::Ignored;
+                }
+                agent.progress = Some(progress.clone());
+                state.agent_events.emit(AgentEvent::Progress {
+                    host_id,
+                    agent_id,
+                    progress,
+                });
+                AgentEventOutcome::Upserted
+            }
             AgentEvent::SnapshotComplete { .. } | AgentEvent::HostInventory { .. } => {
                 AgentEventOutcome::Ignored
             }
@@ -345,6 +394,8 @@ impl ClientService {
             AgentEvent::AgentDown {
                 inventory_revision, ..
             } => *inventory_revision,
+            AgentEvent::Summary { envelope, .. } => envelope.revision,
+            AgentEvent::Progress { progress, .. } => progress.revision,
             AgentEvent::SnapshotComplete { .. } | AgentEvent::HostInventory { .. } => 0,
         };
         if self
@@ -419,6 +470,20 @@ impl ClientService {
                     ids.push(id);
                     ids.sort_unstable();
                 }
+                outcome
+            }
+            AgentEvent::Summary { host_id, .. } | AgentEvent::Progress { host_id, .. }
+                if *host_id != source_host_id =>
+            {
+                AgentEventOutcome::Ignored
+            }
+            AgentEvent::Summary { .. } | AgentEvent::Progress { .. } => {
+                let outcome = self.apply_agent_event(event).await;
+                self.state
+                    .write()
+                    .await
+                    .remote_inventory_revisions
+                    .insert(source_host_id, event_revision);
                 outcome
             }
             AgentEvent::SnapshotComplete { .. } => AgentEventOutcome::Ignored,
@@ -1574,6 +1639,24 @@ pub(crate) fn client_agent_event_to_wire(
         } => wire::subscribe_agents_response::Event::SnapshotComplete(wire::SnapshotComplete {
             host_id: uuid_to_bytes(*host_id),
             through_revision: *through_revision,
+        }),
+        AgentEvent::Summary {
+            host_id,
+            agent_id,
+            envelope,
+        } => wire::subscribe_agents_response::Event::Summary(wire::AgentSummaryEvent {
+            host_id: uuid_to_bytes(*host_id),
+            agent_id: uuid_to_bytes(*agent_id),
+            envelope: Some(wire::summary_to_wire(envelope)),
+        }),
+        AgentEvent::Progress {
+            host_id,
+            agent_id,
+            progress,
+        } => wire::subscribe_agents_response::Event::Progress(wire::AgentProgressEvent {
+            host_id: uuid_to_bytes(*host_id),
+            agent_id: uuid_to_bytes(*agent_id),
+            progress: Some(wire::progress_to_wire(progress)),
         }),
     };
     Ok(wire::SubscribeAgentsResponse { event: Some(event) })
@@ -2913,6 +2996,8 @@ mod tests {
             created_at: Utc.timestamp_millis_opt(0).single().unwrap(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 1,
         }
     }

@@ -740,6 +740,8 @@ fn agent(protocol: StructuredProtocol, name: &str) -> Agent {
         created_at: at("2026-08-12T09:00:00Z"),
         parent: None,
         working_on: None,
+        summary: None,
+        progress: None,
         inventory_revision: 0,
     }
 }
@@ -1052,6 +1054,8 @@ fn sdk_family_fixture() -> Fixture {
             text: "split the tunnel supervisor".to_string(),
             updated_at: at("2026-08-12T09:05:00Z"),
         }),
+        summary: None,
+        progress: None,
         inventory_revision: 0,
     };
     let child_of_lead = |protocol: StructuredProtocol, name: &str| Agent {

@@ -16,7 +16,8 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::agents::{
-    AgentDeps, AgentEvent, AgentRecord, AgentSession, SessionCloseReason, WorkingOn,
+    AgentDeps, AgentEvent, AgentRecord, AgentSession, SessionCloseReason, SummarizerHandle,
+    SummarizerPublication, WorkingOn,
 };
 use crate::events::EventSource;
 use crate::host::revision::InventoryRevisions;
@@ -31,6 +32,8 @@ pub(crate) struct AgentServiceState {
     pub(crate) outbound_envelopes: EventSource<Envelope>,
     pub(crate) deps: AgentDeps,
     pub(crate) recent_projects: crate::repositories::RecentProjects,
+    pub(crate) summarizer_publications:
+        Option<tokio::sync::mpsc::UnboundedSender<SummarizerPublication>>,
     inventory_revisions: InventoryRevisions,
 }
 
@@ -38,6 +41,9 @@ pub(crate) struct LocalAgentContext {
     pub(crate) session: AgentSession,
     pub(crate) working_on: Option<WorkingOn>,
     pub(crate) inventory_revision: u64,
+    pub(crate) summarizer: Option<SummarizerHandle>,
+    pub(crate) summary: Option<model::SummaryEnvelope>,
+    pub(crate) progress: Option<model::Progress>,
 }
 
 impl LocalAgentContext {
@@ -45,6 +51,8 @@ impl LocalAgentContext {
         let mut record = self.session.to_agent(host_id);
         record.working_on.clone_from(&self.working_on);
         record.inventory_revision = self.inventory_revision;
+        record.summary.clone_from(&self.summary);
+        record.progress.clone_from(&self.progress);
         record
     }
 }
@@ -70,6 +78,7 @@ impl AgentServiceState {
             local_shutdown_events: EventSource::default(),
             outbound_envelopes: EventSource::default(),
             recent_projects: crate::repositories::RecentProjects::load(&deps.data_dir),
+            summarizer_publications: None,
             inventory_revisions: InventoryRevisions::open(state_path, host_id)?,
             deps,
         })
@@ -92,6 +101,7 @@ impl AgentServiceState {
             .map(|context| context.record(host_id))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn insert_registered_local_agent(
         &mut self,
         host_id: Uuid,
@@ -101,6 +111,7 @@ impl AgentServiceState {
         self.register_local_agent_context(host_id, agent_id, session)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn register_local_agent_context(
         &mut self,
         host_id: Uuid,
@@ -110,12 +121,26 @@ impl AgentServiceState {
         self.register_local_agent_context_with_status(host_id, agent_id, session, None)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn register_local_agent_context_with_status(
         &mut self,
         host_id: Uuid,
         agent_id: Uuid,
         session: AgentSession,
         working_on: Option<WorkingOn>,
+    ) -> Result<AgentEvent, String> {
+        self.register_local_agent_context_with_summarizer(
+            host_id, agent_id, session, working_on, None,
+        )
+    }
+
+    pub(crate) fn register_local_agent_context_with_summarizer(
+        &mut self,
+        host_id: Uuid,
+        agent_id: Uuid,
+        session: AgentSession,
+        working_on: Option<WorkingOn>,
+        summarizer: Option<SummarizerHandle>,
     ) -> Result<AgentEvent, String> {
         if self.contains_agent_id(&agent_id) {
             return Err(format!("Agent already exists: {agent_id}"));
@@ -135,6 +160,18 @@ impl AgentServiceState {
         record.inventory_revision = revision;
         self.recent_projects
             .record(&record.working_dir, record.created_at);
+        let summary = summarizer.as_ref().map(|handle| {
+            let cut = handle.snapshot();
+            model::SummaryEnvelope {
+                through: cut.through,
+                producer_version: cut.producer_version,
+                observed_at: cut.observed_at,
+                stale: cut.stale,
+                revision,
+                summary: cut.summary,
+            }
+        });
+        record.summary.clone_from(&summary);
         let event = record.agent_event();
         self.local_agents.insert(
             agent_id,
@@ -142,6 +179,9 @@ impl AgentServiceState {
                 session,
                 working_on,
                 inventory_revision: revision,
+                summarizer,
+                summary,
+                progress: None,
             },
         );
         Ok(event)
@@ -149,6 +189,10 @@ impl AgentServiceState {
 
     pub(crate) fn through_inventory_revision(&self) -> u64 {
         self.inventory_revisions.through()
+    }
+
+    pub(crate) fn reserve_authoritative_revision(&mut self) -> io::Result<u64> {
+        self.inventory_revisions.reserve()
     }
 
     pub(crate) fn updated_agent_event(

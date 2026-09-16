@@ -863,6 +863,8 @@ mod attach_tests {
             created_at: chrono::Utc::now(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         }
     }
@@ -1332,6 +1334,8 @@ mod attach_tests {
             created_at: chrono::Utc::now(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         };
 

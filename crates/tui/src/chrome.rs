@@ -396,6 +396,10 @@ impl InputEvent {
 
 /// Everything that mutates chrome state, in the order it happened.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "trace replay records complete runtime messages, including fleet summary snapshots"
+)]
 pub enum TraceEvent {
     /// One folded runtime message. The caller folds it into the Model
     /// before stepping — the chrome never owns the Model — so stepping it

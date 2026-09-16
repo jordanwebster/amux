@@ -462,6 +462,8 @@ fn late_agent() -> model::Agent {
         created_at: chrono::Utc::now(),
         parent: None,
         working_on: None,
+        summary: None,
+        progress: None,
         inventory_revision: 0,
     }
 }

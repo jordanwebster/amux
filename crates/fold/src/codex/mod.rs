@@ -3,13 +3,12 @@
 mod fold;
 mod semantics;
 
-pub use semantics::{
-    CodexBody, CodexEntry, CodexEntryKind, CodexFold, CodexPartial, DELIVERY_KEYED_VARIANTS,
-};
-
 use std::collections::{BTreeMap, VecDeque};
 
 use model::AgentMessageKind;
+pub use semantics::{
+    CodexBody, CodexEntry, CodexEntryKind, CodexFold, CodexPartial, DELIVERY_KEYED_VARIANTS,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

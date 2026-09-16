@@ -1347,6 +1347,50 @@ fn client_service_agent_response_to_agent_event(
                 through_revision: snapshot.through_revision,
             })
         }
+        wire::subscribe_agents_response::Event::Summary(event) => Some(AgentEvent::Summary {
+            host_id: uuid_from_wire_bytes(
+                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                "AgentSummaryEvent.host_id",
+                event.host_id,
+            )?,
+            agent_id: uuid_from_wire_bytes(
+                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                "AgentSummaryEvent.agent_id",
+                event.agent_id,
+            )?,
+            envelope: wire::summary_from_wire(event.envelope.ok_or_else(|| {
+                ClientError::Decode {
+                    method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                    message: "missing AgentSummaryEvent.envelope".into(),
+                }
+            })?)
+            .map_err(|error| ClientError::Decode {
+                method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                message: error.to_string(),
+            })?,
+        }),
+        wire::subscribe_agents_response::Event::Progress(event) => Some(AgentEvent::Progress {
+            host_id: uuid_from_wire_bytes(
+                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                "AgentProgressEvent.host_id",
+                event.host_id,
+            )?,
+            agent_id: uuid_from_wire_bytes(
+                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                "AgentProgressEvent.agent_id",
+                event.agent_id,
+            )?,
+            progress: wire::progress_from_wire(event.progress.ok_or_else(|| {
+                ClientError::Decode {
+                    method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                    message: "missing AgentProgressEvent.progress".into(),
+                }
+            })?)
+            .map_err(|error| ClientError::Decode {
+                method: method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                message: error.to_string(),
+            })?,
+        }),
     };
     Ok(event)
 }

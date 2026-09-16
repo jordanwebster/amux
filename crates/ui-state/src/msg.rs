@@ -167,6 +167,10 @@ pub enum Command {
 /// "the state IS this", never "this happened".
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "server", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "agent inventory events carry the complete advisory summary snapshot"
+)]
 pub enum ServerMsg {
     /// A (re)connection to the daemon came up. The reducer opens a new epoch;
     /// the snapshot that follows replaces inventory once both `Synchronized`

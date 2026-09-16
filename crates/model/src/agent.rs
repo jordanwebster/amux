@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{AgentKind, ClaudeDriver};
+use super::{AgentKind, ClaudeDriver, Progress, SummaryEnvelope};
 
 /// Environment variables forwarded from an agent's hook invocation.
 pub type HookEnvironment = HashMap<String, String>;
@@ -114,6 +114,10 @@ pub struct Agent {
     pub created_at: DateTime<Utc>,
     pub parent: Option<AgentParent>,
     pub working_on: Option<WorkingOn>,
+    /// Latest daemon-folded standing, absent for terminal and test agents.
+    pub summary: Option<SummaryEnvelope>,
+    /// Latest daemon-folded watermark, absent for terminal and test agents.
+    pub progress: Option<Progress>,
     /// Durable host-local ordering for authoritative inventory changes.
     pub inventory_revision: u64,
 }
@@ -133,6 +137,10 @@ struct HumanAgent {
     parent: Option<AgentParent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     working_on: Option<WorkingOn>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    summary: Option<SummaryEnvelope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    progress: Option<Progress>,
     #[serde(default, skip_serializing_if = "is_zero")]
     inventory_revision: u64,
 }
@@ -154,6 +162,8 @@ struct BinaryAgent {
     created_at: DateTime<Utc>,
     parent: Option<AgentParent>,
     working_on: Option<WorkingOn>,
+    summary: Option<SummaryEnvelope>,
+    progress: Option<Progress>,
     inventory_revision: u64,
 }
 
@@ -173,6 +183,8 @@ macro_rules! impl_agent_conversion {
                     created_at: value.created_at,
                     parent: value.parent,
                     working_on: value.working_on,
+                    summary: value.summary,
+                    progress: value.progress,
                     inventory_revision: value.inventory_revision,
                 }
             }
@@ -192,6 +204,8 @@ macro_rules! impl_agent_conversion {
                     created_at: value.created_at,
                     parent: value.parent,
                     working_on: value.working_on,
+                    summary: value.summary,
+                    progress: value.progress,
                     inventory_revision: value.inventory_revision,
                 }
             }

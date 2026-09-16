@@ -239,6 +239,12 @@ pub(crate) struct StructuredLogSource {
     idle_monitor_wake: Arc<Notify>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PendingStructuredInput {
+    pub(crate) rows: u64,
+    pub(crate) oldest_published_at_unix_ms: Option<i64>,
+}
+
 impl StructuredLogSource {
     /// Create an empty source retaining at most `retention` entries.
     pub(crate) fn new(retention: usize) -> Self {
@@ -448,6 +454,14 @@ impl StructuredLogSource {
     /// Return the current sequence number.
     pub(crate) async fn current_seq(&self) -> u64 {
         self.buffer.current_seq().await
+    }
+
+    pub(crate) async fn pending_after(&self, through: u64) -> PendingStructuredInput {
+        let (rows, oldest_published_at_unix_ms) = self.buffer.pending_after(through).await;
+        PendingStructuredInput {
+            rows,
+            oldest_published_at_unix_ms,
+        }
     }
 
     /// Snapshot retained coordinates and active readers for diagnostics.

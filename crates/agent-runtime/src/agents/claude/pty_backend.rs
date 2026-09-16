@@ -214,6 +214,8 @@ impl ClaudePtyBackend {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         };
         let mut backend = Self::with_session(record, session);
@@ -1208,6 +1210,8 @@ mod tests {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         };
         let mut backend = ClaudePtyBackend::with_session(record, session);

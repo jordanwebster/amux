@@ -271,6 +271,8 @@ pub(crate) fn agent_to_wire(
         created_at_unix_ms: agent.created_at.timestamp_millis(),
         parent: agent.parent.map(agent_parent_to_wire),
         working_on: agent.working_on.as_ref().map(working_on_to_wire),
+        summary: agent.summary.as_ref().map(protocol_wire::summary_to_wire),
+        progress: agent.progress.as_ref().map(protocol_wire::progress_to_wire),
         inventory_revision: agent.inventory_revision,
     })
 }
@@ -283,6 +285,14 @@ pub fn agent_from_wire(agent: protocol_wire::Agent) -> Result<Agent, protocol_wi
 
     let parent = agent.parent.map(agent_parent_from_wire).transpose()?;
     let working_on = agent.working_on.map(working_on_from_wire).transpose()?;
+    let summary = agent
+        .summary
+        .map(protocol_wire::summary_from_wire)
+        .transpose()?;
+    let progress = agent
+        .progress
+        .map(protocol_wire::progress_from_wire)
+        .transpose()?;
 
     let kind = agent_kind_from_wire(
         agent
@@ -302,6 +312,8 @@ pub fn agent_from_wire(agent: protocol_wire::Agent) -> Result<Agent, protocol_wi
         created_at,
         parent,
         working_on,
+        summary,
+        progress,
         inventory_revision: agent.inventory_revision,
     })
 }
@@ -473,6 +485,8 @@ mod tests {
                 text: "implement the record".to_string(),
                 updated_at,
             }),
+            summary: None,
+            progress: None,
             inventory_revision: 7,
         };
 
@@ -647,6 +661,8 @@ mod tests {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         };
 

@@ -202,6 +202,16 @@ pub enum AgentEvent {
         agent_id: Uuid,
         inventory_revision: u64,
     },
+    Summary {
+        host_id: Uuid,
+        agent_id: Uuid,
+        envelope: crate::SummaryEnvelope,
+    },
+    Progress {
+        host_id: Uuid,
+        agent_id: Uuid,
+        progress: crate::Progress,
+    },
 }
 
 impl AgentEvent {
@@ -212,6 +222,8 @@ impl AgentEvent {
             Self::AgentUp { .. } => "Agent::AgentUp",
             Self::AgentUpdated { .. } => "Agent::AgentUpdated",
             Self::AgentDown { .. } => "Agent::AgentDown",
+            Self::Summary { .. } => "Agent::Summary",
+            Self::Progress { .. } => "Agent::Progress",
         }
     }
 }

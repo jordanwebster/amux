@@ -412,6 +412,66 @@ pub enum AgentFold {
     Codex(codex::CodexFold),
 }
 
+/// Provider-erased output used by observers that retain only standing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SummaryChanges {
+    pub through: Seq,
+    pub changed: bool,
+    pub summary: Summary,
+}
+
+impl AgentFold {
+    pub fn for_protocol(protocol: StructuredProtocol) -> Self {
+        match protocol {
+            StructuredProtocol::ClaudePtyTranscript => Self::Claude(Default::default()),
+            StructuredProtocol::ClaudeSdk => Self::ClaudeSdk(Default::default()),
+            StructuredProtocol::Codex => Self::Codex(Default::default()),
+        }
+    }
+
+    pub fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
+        match self {
+            Self::Claude(fold) => fold.begin(segment, baseline),
+            Self::ClaudeSdk(fold) => fold.begin(segment, baseline),
+            Self::Codex(fold) => fold.begin(segment, baseline),
+        }
+    }
+
+    pub fn apply_summary(&mut self, input: Input<'_>) -> SummaryChanges {
+        macro_rules! apply {
+            ($fold:expr) => {{
+                let changes = $fold.apply(input);
+                SummaryChanges {
+                    through: changes.through,
+                    changed: changes.summary.is_some(),
+                    summary: $fold.summary(),
+                }
+            }};
+        }
+        match self {
+            Self::Claude(fold) => apply!(fold),
+            Self::ClaudeSdk(fold) => apply!(fold),
+            Self::Codex(fold) => apply!(fold),
+        }
+    }
+
+    pub fn summary(&self) -> Summary {
+        match self {
+            Self::Claude(fold) => fold.summary(),
+            Self::ClaudeSdk(fold) => fold.summary(),
+            Self::Codex(fold) => fold.summary(),
+        }
+    }
+
+    pub fn tip_version(&self) -> u32 {
+        match self {
+            Self::Claude(_) => claude_pty::ClaudeFold::TIP_VERSION,
+            Self::ClaudeSdk(_) => claude_sdk::ClaudeSdkFold::TIP_VERSION,
+            Self::Codex(_) => codex::CodexFold::TIP_VERSION,
+        }
+    }
+}
+
 /// Opaque provider JSON in a persisted value.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonBytes(pub Vec<u8>);
@@ -799,6 +859,8 @@ model_struct_safe!(
         created_at,
         parent,
         working_on,
+        summary,
+        progress,
         inventory_revision,
     } => [
         id,
@@ -812,6 +874,8 @@ model_struct_safe!(
         created_at,
         parent,
         working_on,
+        summary,
+        progress,
         inventory_revision,
     ]
 );
@@ -1386,6 +1450,8 @@ mod tests {
             created_at: at(2),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         }
     }

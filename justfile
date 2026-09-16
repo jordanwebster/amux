@@ -53,6 +53,10 @@ spec *ARGS:
 test-daemon-protocol *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; filter=daemon_protocol; if [ "$#" -gt 0 ]; then filter="daemon_protocol_$1"; shift; fi; {{bounded}} 1200 cargo test --locked -p agent-runtime "$filter" "$@"
 
+# Exercise daemon-owned structured-agent summaries, progress and health recovery.
+test-daemon-summarizer *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p agent-runtime daemon_summarizer "$@" && {{bounded}} 1200 cargo test --locked -p node daemon_summarizer "$@"
+
 # Lint every workspace target with warnings denied.
 lint:
     {{bounded}} 1200 cargo clippy --locked --workspace --all-targets {{desktop_features}} -- -D warnings

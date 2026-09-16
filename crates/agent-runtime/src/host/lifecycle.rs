@@ -10,7 +10,8 @@ use uuid::Uuid;
 use super::{AgentServiceState, SharedAgentServiceState};
 use crate::agents::{
     AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest, SessionEvent,
-    StopPolicy, WorkingOn, agent_from_suspended, new_agent,
+    StopPolicy, SummarizerHandle, SummarizerPublication, WorkingOn, agent_from_suspended,
+    new_agent, summarizer_protocol,
 };
 use crate::suspend::{SuspendedAgent, SuspendedServerState};
 
@@ -41,6 +42,75 @@ pub(crate) fn spawn_session_event_loop(
     })
 }
 
+pub(crate) fn spawn_summarizer_publication_loop(
+    agent_state: SharedAgentServiceState,
+    mut publications: mpsc::UnboundedReceiver<SummarizerPublication>,
+    host_id: Uuid,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(publication) = publications.recv().await {
+            let mut state = agent_state.write().await;
+            if !state.local_agents.contains_key(&publication.agent_id) {
+                if let Some(acknowledged) = publication.acknowledged {
+                    let _ = acknowledged.send(());
+                }
+                continue;
+            }
+            let revision_count = if publication.publish_progress { 2 } else { 1 };
+            let mut revisions = Vec::with_capacity(revision_count);
+            for _ in 0..revision_count {
+                match state.reserve_authoritative_revision() {
+                    Ok(revision) => revisions.push(revision),
+                    Err(error) => {
+                        tracing::error!(
+                            agent_id = %publication.agent_id,
+                            %error,
+                            "skipping summarizer publication because its revision was not durable"
+                        );
+                        break;
+                    }
+                }
+            }
+            if revisions.len() == revision_count {
+                let envelope = model::SummaryEnvelope {
+                    through: publication.cut.through,
+                    producer_version: publication.cut.producer_version,
+                    observed_at: publication.cut.observed_at,
+                    stale: publication.cut.stale,
+                    revision: revisions[0],
+                    summary: publication.cut.summary,
+                };
+                if let Some(context) = state.local_agents.get_mut(&publication.agent_id) {
+                    context.summary = Some(envelope.clone());
+                }
+                state.local_agent_events.emit(model::AgentEvent::Summary {
+                    host_id,
+                    agent_id: publication.agent_id,
+                    envelope,
+                });
+                if publication.publish_progress {
+                    let progress = model::Progress {
+                        through: publication.cut.through,
+                        at: chrono::Utc::now(),
+                        revision: revisions[1],
+                    };
+                    if let Some(context) = state.local_agents.get_mut(&publication.agent_id) {
+                        context.progress = Some(progress.clone());
+                    }
+                    state.local_agent_events.emit(model::AgentEvent::Progress {
+                        host_id,
+                        agent_id: publication.agent_id,
+                        progress,
+                    });
+                }
+            }
+            if let Some(acknowledged) = publication.acknowledged {
+                let _ = acknowledged.send(());
+            }
+        }
+    })
+}
+
 async fn handle_session_event(
     agent_state: &SharedAgentServiceState,
     host_id: Uuid,
@@ -58,6 +128,17 @@ async fn handle_session_event(
             }
         }
         SessionEvent::Ended { agent_id } => {
+            let summary_ack = {
+                let state = agent_state.read().await;
+                state.local_agents.get(&agent_id).and_then(|context| {
+                    context.summarizer.as_ref().and_then(|summarizer| {
+                        summarizer.process_exited(context.session.exit_code())
+                    })
+                })
+            };
+            if let Some(summary_ack) = summary_ack {
+                let _ = summary_ack.await;
+            }
             let mut state = agent_state.write().await;
             let envelope = state.local_agents.get(&agent_id).and_then(|context| {
                 parent_envelope(
@@ -217,6 +298,9 @@ pub(crate) async fn create_agent_record(
 
         let mut session = new_agent(&req, &spawn_deps)
             .map_err(|error| CreateAgentError::Start(error.to_string()))?;
+        let summarizer = attach_summarizer(&state, agent_id, &session)
+            .await
+            .map_err(CreateAgentError::Start)?;
         // The registry lock keeps shutdown from missing this session once
         // storage preparation is complete and the lifecycle gate is released.
         drop(operation);
@@ -224,11 +308,12 @@ pub(crate) async fn create_agent_record(
             CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
         })?;
         let announce = state
-            .register_local_agent_context_with_status(
+            .register_local_agent_context_with_summarizer(
                 host_id,
                 agent_id,
                 session,
                 working_on.clone(),
+                summarizer,
             )
             .map_err(|error| {
                 CreateAgentError::Register(format!(
@@ -237,6 +322,9 @@ pub(crate) async fn create_agent_record(
             })?;
         if let Some(context) = state.local_agents.get_mut(&agent_id) {
             context.session.maybe_start_name_sniffer(event_tx);
+            if let Some(summarizer) = &context.summarizer {
+                summarizer.activate();
+            }
         }
 
         monitor_session_exit(exit_handle, event_tx.clone(), agent_id);
@@ -266,6 +354,28 @@ pub(crate) async fn create_agent_record(
         "agent created"
     );
     Ok(info)
+}
+
+pub(super) async fn attach_summarizer(
+    state: &AgentServiceState,
+    agent_id: Uuid,
+    session: &AgentSession,
+) -> Result<Option<SummarizerHandle>, String> {
+    let Some(protocol) = summarizer_protocol(session.kind()) else {
+        return Ok(None);
+    };
+    let source = session
+        .attachment_log()
+        .ok_or_else(|| format!("structured agent {agent_id} has no log source"))?;
+    let publisher = state
+        .summarizer_publications
+        .as_ref()
+        .ok_or_else(|| "summarizer publisher is unavailable".to_string())?
+        .clone();
+    SummarizerHandle::attach(agent_id, protocol, source, publisher)
+        .await
+        .ok_or_else(|| format!("structured agent {agent_id} log source is closed"))
+        .map(Some)
 }
 
 fn spawn_task_name(prompt: &str) -> Option<String> {
@@ -505,6 +615,15 @@ pub(crate) async fn resume_agents(
             0
         };
         let mut session = agent_from_suspended(sa, &spawn_deps, sealed_through);
+        let mut summarizer = match attach_summarizer(&state, agent_id, &session).await {
+            Ok(summarizer) => summarizer,
+            Err(error) => {
+                tracing::error!(agent_id = %agent_id, %error, "failed to attach resumed summarizer");
+                failed += 1;
+                failed_agents.push(original);
+                continue;
+            }
+        };
         drop(operation);
         match session.start(event_tx) {
             Ok(exit_handle) => {
@@ -517,23 +636,25 @@ pub(crate) async fn resume_agents(
                         if state.name_taken_by_other(name, agent_id) {
                             Err(format!("Agent already exists: {name}"))
                         } else {
-                            state.register_local_agent_context_with_status(
+                            state.register_local_agent_context_with_summarizer(
                                 host_id,
                                 agent_id,
                                 session
                                     .take()
                                     .expect("resumed session should still be available"),
                                 working_on.clone(),
+                                summarizer.take(),
                             )
                         }
                     } else {
-                        state.register_local_agent_context_with_status(
+                        state.register_local_agent_context_with_summarizer(
                             host_id,
                             agent_id,
                             session
                                 .take()
                                 .expect("resumed session should still be available"),
                             working_on.clone(),
+                            summarizer.take(),
                         )
                     };
 
@@ -541,6 +662,9 @@ pub(crate) async fn resume_agents(
                         Ok(announce) => {
                             if let Some(context) = state.local_agents.get_mut(&agent_id) {
                                 context.session.maybe_start_name_sniffer(event_tx);
+                                if let Some(summarizer) = &context.summarizer {
+                                    summarizer.activate();
+                                }
                             }
                             state.local_agent_events.emit(announce);
                             true
@@ -776,7 +900,7 @@ mod tests {
 
     use super::*;
     use crate::agents::{
-        Agent, AgentDeps, AgentEvent, AgentType, CreateAgentRequest, TEST_ECHO_COMMAND,
+        Agent, AgentDeps, AgentEvent, AgentType, CreateAgentRequest, SummaryCut, TEST_ECHO_COMMAND,
         TestAgentSession,
     };
     use crate::suspend::SuspendedAgent;
@@ -859,6 +983,64 @@ mod tests {
         assert_eq!(restarted.through_inventory_revision(), 2);
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].inventory_revision, 2);
+    }
+
+    #[tokio::test]
+    async fn daemon_summarizer_summary_and_progress_reserve_one_ordered_cut() {
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let state = empty_state();
+        let mut events = {
+            let mut state = state.write().await;
+            state
+                .insert_registered_local_agent(
+                    host_id,
+                    agent_id,
+                    Box::new(TestAgentSession::echo_for_tests(
+                        agent_id,
+                        Some("summary".into()),
+                    )),
+                )
+                .unwrap();
+            state.local_agent_events.subscribe()
+        };
+        let (tx, rx) = mpsc::unbounded_channel();
+        spawn_summarizer_publication_loop(state.clone(), rx, host_id);
+        tx.send(SummarizerPublication {
+            agent_id,
+            cut: SummaryCut {
+                through: 7,
+                producer_version: 1,
+                observed_at: Utc::now(),
+                stale: false,
+                summary: model::Summary {
+                    attention: model::Attention::Working,
+                    phase: model::AgentPhase::Running,
+                    last_activity: None,
+                    todo: None,
+                    context: None,
+                    model: None,
+                    unknown: Vec::new(),
+                },
+            },
+            publish_progress: true,
+            acknowledged: None,
+        })
+        .unwrap();
+
+        let AgentEvent::Summary { envelope, .. } = events.recv().await.unwrap() else {
+            panic!("expected summary before progress");
+        };
+        let AgentEvent::Progress { progress, .. } = events.recv().await.unwrap() else {
+            panic!("expected progress after summary");
+        };
+        assert_eq!(envelope.through, 7);
+        assert_eq!(progress.through, 7);
+        assert_eq!(progress.revision, envelope.revision + 1);
+        let state = state.read().await;
+        let record = state.local_agent_info(host_id, &agent_id).unwrap();
+        assert_eq!(record.summary.unwrap(), envelope);
+        assert_eq!(record.progress.unwrap(), progress);
     }
 
     #[tokio::test]

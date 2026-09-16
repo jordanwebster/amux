@@ -1438,6 +1438,8 @@ mod tests {
             created_at: chrono::DateTime::from_timestamp(1_754_697_600, 0).expect("epoch"),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         };
         let host = model::HostEntry {

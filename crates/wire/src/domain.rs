@@ -6,6 +6,34 @@ use uuid::Uuid;
 
 use crate::{self as wire, DecodeError};
 
+pub fn agent_to_wire(agent: &model::Agent) -> Result<wire::Agent, crate::EncodeError> {
+    let working_dir = agent.working_dir.to_str().ok_or_else(|| {
+        crate::EncodeError::Invalid("Agent.working_dir must be valid UTF-8".into())
+    })?;
+    Ok(wire::Agent {
+        agent_id: agent.id.as_bytes().to_vec(),
+        host_id: agent.host_id.as_bytes().to_vec(),
+        name: agent.name.clone(),
+        command: agent.command.clone(),
+        working_dir: working_dir.to_owned(),
+        kind: Some(wire::agent_kind_to_wire(agent.kind)),
+        readonly: agent.readonly,
+        args: agent.args.clone(),
+        created_at_unix_ms: agent.created_at.timestamp_millis(),
+        parent: agent.parent.map(|parent| wire::AgentParent {
+            agent_id: parent.agent_id.as_bytes().to_vec(),
+            host_id: parent.host_id.as_bytes().to_vec(),
+        }),
+        working_on: agent.working_on.as_ref().map(|working_on| wire::WorkingOn {
+            text: working_on.text.clone(),
+            updated_at_unix_ms: working_on.updated_at.timestamp_millis(),
+        }),
+        summary: agent.summary.as_ref().map(summary_to_wire),
+        progress: agent.progress.as_ref().map(progress_to_wire),
+        inventory_revision: agent.inventory_revision,
+    })
+}
+
 pub fn agent_from_wire(agent: wire::Agent) -> Result<model::Agent, DecodeError> {
     let created_at = Utc
         .timestamp_millis_opt(agent.created_at_unix_ms)
@@ -13,6 +41,8 @@ pub fn agent_from_wire(agent: wire::Agent) -> Result<model::Agent, DecodeError> 
         .ok_or_else(|| DecodeError::Invalid("invalid agent created_at".into()))?;
     let parent = agent.parent.map(agent_parent_from_wire).transpose()?;
     let working_on = agent.working_on.map(working_on_from_wire).transpose()?;
+    let summary = agent.summary.map(summary_from_wire).transpose()?;
+    let progress = agent.progress.map(progress_from_wire).transpose()?;
     let kind = wire::agent_kind_from_wire(
         agent
             .kind
@@ -30,7 +60,212 @@ pub fn agent_from_wire(agent: wire::Agent) -> Result<model::Agent, DecodeError> 
         created_at,
         parent,
         working_on,
+        summary,
+        progress,
         inventory_revision: agent.inventory_revision,
+    })
+}
+
+pub fn summary_to_wire(envelope: &model::SummaryEnvelope) -> wire::AgentSummary {
+    let (attention, why) = match envelope.summary.attention {
+        model::Attention::Unknown => (wire::SummaryAttention::Unknown, None),
+        model::Attention::Idle => (wire::SummaryAttention::Idle, None),
+        model::Attention::Working => (wire::SummaryAttention::Working, None),
+        model::Attention::NeedsYou { why } => (
+            wire::SummaryAttention::NeedsYou,
+            Some(match why {
+                model::Why::Permission => wire::SummaryWhy::Permission as i32,
+                model::Why::Question => wire::SummaryWhy::Question as i32,
+                model::Why::Finished => wire::SummaryWhy::Finished as i32,
+            }),
+        ),
+    };
+    let (phase, exit_code) = match envelope.summary.phase {
+        model::AgentPhase::Running => (wire::SummaryPhase::Running, None),
+        model::AgentPhase::Exited { exit_code } => (wire::SummaryPhase::Exited, exit_code),
+    };
+    wire::AgentSummary {
+        through: envelope.through,
+        producer_version: envelope.producer_version,
+        observed_at_unix_ms: envelope.observed_at.timestamp_millis(),
+        stale: envelope.stale,
+        revision: envelope.revision,
+        attention: attention as i32,
+        why,
+        phase: phase as i32,
+        exit_code,
+        last_activity_unix_ms: envelope
+            .summary
+            .last_activity
+            .map(|at| at.timestamp_millis()),
+        todo: envelope
+            .summary
+            .todo
+            .as_ref()
+            .map(|todo| wire::SummaryTodoProgress {
+                done: todo.done as u64,
+                total: todo.total as u64,
+                current: todo.current.clone(),
+            }),
+        context: envelope
+            .summary
+            .context
+            .as_ref()
+            .map(|context| wire::SummaryContextMeter {
+                used_tokens: context.used_tokens,
+                window_tokens: context.window_tokens,
+                source: match context.source {
+                    model::ContextMeterSource::AssistantUsage => {
+                        wire::ContextMeterSource::AssistantUsage
+                    }
+                    model::ContextMeterSource::ResultUsage => wire::ContextMeterSource::ResultUsage,
+                    model::ContextMeterSource::AssistantContextUsage => {
+                        wire::ContextMeterSource::AssistantContextUsage
+                    }
+                    model::ContextMeterSource::CompactBoundary => {
+                        wire::ContextMeterSource::CompactBoundary
+                    }
+                } as i32,
+            }),
+        model: envelope.summary.model.clone(),
+        unknown: envelope
+            .summary
+            .unknown
+            .iter()
+            .map(|field| match field {
+                model::SummaryField::Attention => wire::SummaryField::Attention,
+                model::SummaryField::Phase => wire::SummaryField::Phase,
+                model::SummaryField::LastActivity => wire::SummaryField::LastActivity,
+                model::SummaryField::Todo => wire::SummaryField::Todo,
+                model::SummaryField::Context => wire::SummaryField::Context,
+                model::SummaryField::Model => wire::SummaryField::Model,
+                model::SummaryField::Outstanding => wire::SummaryField::Outstanding,
+            } as i32)
+            .collect(),
+    }
+}
+
+pub fn summary_from_wire(value: wire::AgentSummary) -> Result<model::SummaryEnvelope, DecodeError> {
+    let observed_at = Utc
+        .timestamp_millis_opt(value.observed_at_unix_ms)
+        .single()
+        .ok_or_else(|| DecodeError::Invalid("invalid summary observed_at".into()))?;
+    let attention = match wire::SummaryAttention::try_from(value.attention) {
+        Ok(wire::SummaryAttention::Unknown) => model::Attention::Unknown,
+        Ok(wire::SummaryAttention::Idle) => model::Attention::Idle,
+        Ok(wire::SummaryAttention::Working) => model::Attention::Working,
+        Ok(wire::SummaryAttention::NeedsYou) => model::Attention::NeedsYou {
+            why: match value
+                .why
+                .and_then(|why| wire::SummaryWhy::try_from(why).ok())
+            {
+                Some(wire::SummaryWhy::Permission) => model::Why::Permission,
+                Some(wire::SummaryWhy::Question) => model::Why::Question,
+                Some(wire::SummaryWhy::Finished) => model::Why::Finished,
+                _ => return Err(DecodeError::Invalid("needs-you summary missing why".into())),
+            },
+        },
+        _ => return Err(DecodeError::Invalid("invalid summary attention".into())),
+    };
+    let phase = match wire::SummaryPhase::try_from(value.phase) {
+        Ok(wire::SummaryPhase::Running) => model::AgentPhase::Running,
+        Ok(wire::SummaryPhase::Exited) => model::AgentPhase::Exited {
+            exit_code: value.exit_code,
+        },
+        _ => return Err(DecodeError::Invalid("invalid summary phase".into())),
+    };
+    let last_activity = value
+        .last_activity_unix_ms
+        .map(|at| {
+            Utc.timestamp_millis_opt(at)
+                .single()
+                .ok_or_else(|| DecodeError::Invalid("invalid summary last_activity".into()))
+        })
+        .transpose()?;
+    let todo = value
+        .todo
+        .map(|todo| -> Result<model::TodoProgress, DecodeError> {
+            Ok(model::TodoProgress {
+                done: usize::try_from(todo.done)
+                    .map_err(|_| DecodeError::Invalid("summary todo done is too large".into()))?,
+                total: usize::try_from(todo.total)
+                    .map_err(|_| DecodeError::Invalid("summary todo total is too large".into()))?,
+                current: todo.current,
+            })
+        })
+        .transpose()?;
+    let context = value
+        .context
+        .map(|context| {
+            let source = match wire::ContextMeterSource::try_from(context.source) {
+                Ok(wire::ContextMeterSource::AssistantUsage) => {
+                    model::ContextMeterSource::AssistantUsage
+                }
+                Ok(wire::ContextMeterSource::ResultUsage) => model::ContextMeterSource::ResultUsage,
+                Ok(wire::ContextMeterSource::AssistantContextUsage) => {
+                    model::ContextMeterSource::AssistantContextUsage
+                }
+                Ok(wire::ContextMeterSource::CompactBoundary) => {
+                    model::ContextMeterSource::CompactBoundary
+                }
+                _ => return Err(DecodeError::Invalid("invalid context meter source".into())),
+            };
+            Ok(model::ContextMeter {
+                used_tokens: context.used_tokens,
+                window_tokens: context.window_tokens,
+                source,
+            })
+        })
+        .transpose()?;
+    let unknown = value
+        .unknown
+        .into_iter()
+        .map(|field| match wire::SummaryField::try_from(field) {
+            Ok(wire::SummaryField::Attention) => Ok(model::SummaryField::Attention),
+            Ok(wire::SummaryField::Phase) => Ok(model::SummaryField::Phase),
+            Ok(wire::SummaryField::LastActivity) => Ok(model::SummaryField::LastActivity),
+            Ok(wire::SummaryField::Todo) => Ok(model::SummaryField::Todo),
+            Ok(wire::SummaryField::Context) => Ok(model::SummaryField::Context),
+            Ok(wire::SummaryField::Model) => Ok(model::SummaryField::Model),
+            Ok(wire::SummaryField::Outstanding) => Ok(model::SummaryField::Outstanding),
+            _ => Err(DecodeError::Invalid("invalid summary unknown field".into())),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(model::SummaryEnvelope {
+        through: value.through,
+        producer_version: value.producer_version,
+        observed_at,
+        stale: value.stale,
+        revision: value.revision,
+        summary: model::Summary {
+            attention,
+            phase,
+            last_activity,
+            todo,
+            context,
+            model: value.model,
+            unknown,
+        },
+    })
+}
+
+pub fn progress_to_wire(value: &model::Progress) -> wire::Progress {
+    wire::Progress {
+        through: value.through,
+        at_unix_ms: value.at.timestamp_millis(),
+        revision: value.revision,
+    }
+}
+
+pub fn progress_from_wire(value: wire::Progress) -> Result<model::Progress, DecodeError> {
+    let at = Utc
+        .timestamp_millis_opt(value.at_unix_ms)
+        .single()
+        .ok_or_else(|| DecodeError::Invalid("invalid progress at".into()))?;
+    Ok(model::Progress {
+        through: value.through,
+        at,
+        revision: value.revision,
     })
 }
 

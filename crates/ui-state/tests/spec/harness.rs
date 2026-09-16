@@ -90,6 +90,8 @@ pub fn an_agent(name: &str, on: &str) -> Agent {
         created_at: t0(),
         parent: None,
         working_on: None,
+        summary: None,
+        progress: None,
         inventory_revision: 0,
     }
 }
@@ -108,6 +110,8 @@ pub fn a_codex_agent(name: &str, on: &str) -> Agent {
         created_at: t0(),
         parent: None,
         working_on: None,
+        summary: None,
+        progress: None,
         inventory_revision: 0,
     }
 }

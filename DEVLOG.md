@@ -1,3 +1,12 @@
+2026-09-16 — **Daemon-folded agent standing now travels with the fleet.**
+Every local Claude and Codex session subscribes to its structured log before
+the provider starts, folds standing without materializing entries, and emits
+coalesced summaries plus same-cut progress under durable host revisions. A
+separate health supervisor marks lagging or disconnected folds stale and
+restarts them at an explicitly unknown current baseline. Fleet snapshots and
+both event streams now carry validated summary and progress values, including
+provider exit state, while terminal-only and test sessions remain unannotated.
+
 2026-09-16 — **The delivery-key allowance is proved by folded rows.**
 The identity gate now materializes representative creating forms and every
 recorded provider corpus, classifies each delivery-keyed entry from its folded

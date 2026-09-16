@@ -858,6 +858,7 @@ impl ClaudeFold {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn fold_tool_use(
         &mut self,
         seq: u64,

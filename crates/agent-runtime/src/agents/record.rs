@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
+use model::{Progress, SummaryEnvelope};
 use uuid::Uuid;
 
 use crate::agents::{
@@ -28,6 +29,8 @@ pub(crate) struct AgentRecord {
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) parent: Option<AgentParent>,
     pub(crate) working_on: Option<WorkingOn>,
+    pub(crate) summary: Option<SummaryEnvelope>,
+    pub(crate) progress: Option<Progress>,
     pub(crate) inventory_revision: u64,
 }
 
@@ -59,6 +62,8 @@ impl From<&AgentRecord> for Agent {
             created_at: agent.created_at,
             parent: agent.parent,
             working_on: agent.working_on.clone(),
+            summary: agent.summary.clone(),
+            progress: agent.progress.clone(),
             inventory_revision: agent.inventory_revision,
         }
     }
@@ -78,6 +83,8 @@ impl From<AgentRecord> for Agent {
             created_at: agent.created_at,
             parent: agent.parent,
             working_on: agent.working_on,
+            summary: agent.summary,
+            progress: agent.progress,
             inventory_revision: agent.inventory_revision,
         }
     }

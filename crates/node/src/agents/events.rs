@@ -53,6 +53,28 @@ pub(crate) fn agent_event_to_wire(
                 inventory_revision: *inventory_revision,
             },
         ),
+        AgentEvent::Summary {
+            host_id,
+            agent_id,
+            envelope,
+        } => protocol_wire::subscribe_agent_events_response::Event::Summary(
+            protocol_wire::AgentSummaryEvent {
+                host_id: uuid_to_bytes(*host_id),
+                agent_id: uuid_to_bytes(*agent_id),
+                envelope: Some(protocol_wire::summary_to_wire(envelope)),
+            },
+        ),
+        AgentEvent::Progress {
+            host_id,
+            agent_id,
+            progress,
+        } => protocol_wire::subscribe_agent_events_response::Event::Progress(
+            protocol_wire::AgentProgressEvent {
+                host_id: uuid_to_bytes(*host_id),
+                agent_id: uuid_to_bytes(*agent_id),
+                progress: Some(protocol_wire::progress_to_wire(progress)),
+            },
+        ),
     };
     Ok(protocol_wire::SubscribeAgentEventsResponse { event: Some(event) })
 }
@@ -100,6 +122,26 @@ pub(crate) fn agent_event_from_wire(
                 through_revision: event.through_revision,
             })
         }
+        protocol_wire::subscribe_agent_events_response::Event::Summary(event) => {
+            Ok(AgentEvent::Summary {
+                host_id: uuid_from_bytes("host_id", event.host_id)?,
+                agent_id: uuid_from_bytes("agent_id", event.agent_id)?,
+                envelope: protocol_wire::summary_from_wire(event.envelope.ok_or_else(|| {
+                    protocol_wire::DecodeError::Invalid("missing AgentSummaryEvent envelope".into())
+                })?)?,
+            })
+        }
+        protocol_wire::subscribe_agent_events_response::Event::Progress(event) => {
+            Ok(AgentEvent::Progress {
+                host_id: uuid_from_bytes("host_id", event.host_id)?,
+                agent_id: uuid_from_bytes("agent_id", event.agent_id)?,
+                progress: protocol_wire::progress_from_wire(event.progress.ok_or_else(|| {
+                    protocol_wire::DecodeError::Invalid(
+                        "missing AgentProgressEvent progress".into(),
+                    )
+                })?)?,
+            })
+        }
     }
 }
 
@@ -130,6 +172,7 @@ fn uuid_to_bytes(uuid: Uuid) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone as _;
     use model::Agent;
 
     use super::*;
@@ -155,11 +198,63 @@ mod tests {
                 created_at: chrono::Utc::now(),
                 parent: None,
                 working_on: None,
+                summary: None,
+                progress: None,
                 inventory_revision: 1,
             },
         })
         .unwrap_err();
 
         assert!(error.to_string().contains("must be valid UTF-8"));
+    }
+
+    #[test]
+    fn daemon_summarizer_events_round_trip_on_host_stream() {
+        let host_id = Uuid::from_u128(1);
+        let agent_id = Uuid::from_u128(2);
+        let at = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        let summary = AgentEvent::Summary {
+            host_id,
+            agent_id,
+            envelope: model::SummaryEnvelope {
+                through: 9,
+                producer_version: 3,
+                observed_at: at,
+                stale: true,
+                revision: 12,
+                summary: model::Summary {
+                    attention: model::Attention::NeedsYou {
+                        why: model::Why::Permission,
+                    },
+                    phase: model::AgentPhase::Exited { exit_code: Some(7) },
+                    last_activity: Some(at),
+                    todo: Some(model::TodoProgress {
+                        done: 1,
+                        total: 2,
+                        current: Some("verify".into()),
+                    }),
+                    context: Some(model::ContextMeter {
+                        used_tokens: 50,
+                        window_tokens: Some(100),
+                        source: model::ContextMeterSource::ResultUsage,
+                    }),
+                    model: Some("test-model".into()),
+                    unknown: vec![model::SummaryField::Outstanding],
+                },
+            },
+        };
+        let progress = AgentEvent::Progress {
+            host_id,
+            agent_id,
+            progress: model::Progress {
+                through: 9,
+                at,
+                revision: 13,
+            },
+        };
+        for event in [summary, progress] {
+            let encoded = agent_event_to_wire(&event).unwrap();
+            assert_eq!(agent_event_from_wire(encoded).unwrap(), event);
+        }
     }
 }

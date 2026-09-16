@@ -273,6 +273,8 @@ mod tests {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         };
         let mut backend = ClaudeSdkBackend::with_session(record, provider);
@@ -337,6 +339,8 @@ mod tests {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         };
         let mut backend = ClaudeSdkBackend::with_session(record, provider);

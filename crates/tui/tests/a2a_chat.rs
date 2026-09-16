@@ -85,6 +85,8 @@ fn an_agent(name: &str, kind: &str, protocol: &str, parent: Option<&str>) -> Age
             host_id: host_id(),
         }),
         working_on: None,
+        summary: None,
+        progress: None,
         inventory_revision: 0,
     }
 }

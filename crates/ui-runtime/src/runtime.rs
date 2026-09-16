@@ -1821,6 +1821,7 @@ fn agent_server_msgs(event: model::AgentEvent) -> Vec<ServerMsg> {
             vec![ServerMsg::AgentRemoved { id: agent_id }]
         }
         model::AgentEvent::SnapshotComplete { .. } => vec![ServerMsg::AgentsSynchronized],
+        model::AgentEvent::Summary { .. } | model::AgentEvent::Progress { .. } => Vec::new(),
         model::AgentEvent::HostInventory {
             host_id, agents, ..
         } => {
@@ -2168,6 +2169,8 @@ mod tests {
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         }
     }
@@ -2187,6 +2190,8 @@ mod tests {
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         }
     }

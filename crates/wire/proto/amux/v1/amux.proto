@@ -462,7 +462,96 @@ message Agent {
   int64 created_at_unix_ms = 10;
   optional AgentParent parent = 11;
   optional WorkingOn working_on = 12;
+  optional AgentSummary summary = 13;
+  optional Progress progress = 14;
   uint64 inventory_revision = 15;
+}
+
+enum SummaryAttention {
+  SUMMARY_ATTENTION_UNSPECIFIED = 0;
+  SUMMARY_ATTENTION_UNKNOWN = 1;
+  SUMMARY_ATTENTION_IDLE = 2;
+  SUMMARY_ATTENTION_WORKING = 3;
+  SUMMARY_ATTENTION_NEEDS_YOU = 4;
+}
+
+enum SummaryWhy {
+  SUMMARY_WHY_UNSPECIFIED = 0;
+  SUMMARY_WHY_PERMISSION = 1;
+  SUMMARY_WHY_QUESTION = 2;
+  SUMMARY_WHY_FINISHED = 3;
+}
+
+enum SummaryPhase {
+  SUMMARY_PHASE_UNSPECIFIED = 0;
+  SUMMARY_PHASE_RUNNING = 1;
+  SUMMARY_PHASE_EXITED = 2;
+}
+
+enum SummaryField {
+  SUMMARY_FIELD_UNSPECIFIED = 0;
+  SUMMARY_FIELD_ATTENTION = 1;
+  SUMMARY_FIELD_PHASE = 2;
+  SUMMARY_FIELD_LAST_ACTIVITY = 3;
+  SUMMARY_FIELD_TODO = 4;
+  SUMMARY_FIELD_CONTEXT = 5;
+  SUMMARY_FIELD_MODEL = 6;
+  SUMMARY_FIELD_OUTSTANDING = 7;
+}
+
+enum ContextMeterSource {
+  CONTEXT_METER_SOURCE_UNSPECIFIED = 0;
+  CONTEXT_METER_SOURCE_ASSISTANT_USAGE = 1;
+  CONTEXT_METER_SOURCE_RESULT_USAGE = 2;
+  CONTEXT_METER_SOURCE_ASSISTANT_CONTEXT_USAGE = 3;
+  CONTEXT_METER_SOURCE_COMPACT_BOUNDARY = 4;
+}
+
+message SummaryTodoProgress {
+  uint64 done = 1;
+  uint64 total = 2;
+  optional string current = 3;
+}
+
+message SummaryContextMeter {
+  uint64 used_tokens = 1;
+  optional uint64 window_tokens = 2;
+  ContextMeterSource source = 3;
+}
+
+message AgentSummary {
+  uint64 through = 1;
+  uint32 producer_version = 2;
+  int64 observed_at_unix_ms = 3;
+  bool stale = 4;
+  uint64 revision = 5;
+  SummaryAttention attention = 6;
+  optional SummaryWhy why = 7;
+  SummaryPhase phase = 8;
+  optional int32 exit_code = 9;
+  optional int64 last_activity_unix_ms = 10;
+  optional SummaryTodoProgress todo = 11;
+  optional SummaryContextMeter context = 12;
+  optional string model = 13;
+  repeated SummaryField unknown = 14;
+}
+
+message Progress {
+  uint64 through = 1;
+  int64 at_unix_ms = 2;
+  uint64 revision = 3;
+}
+
+message AgentSummaryEvent {
+  bytes host_id = 1;
+  bytes agent_id = 2;
+  AgentSummary envelope = 3;
+}
+
+message AgentProgressEvent {
+  bytes host_id = 1;
+  bytes agent_id = 2;
+  Progress progress = 3;
 }
 
 message AgentParent {
@@ -557,6 +646,8 @@ message SubscribeAgentEventsResponse {
     AgentUp agent_up = 10;
     AgentDown agent_down = 11;
     AgentUpdated agent_updated = 12;
+    AgentSummaryEvent summary = 13;
+    AgentProgressEvent progress = 14;
 
     SnapshotComplete snapshot_complete = 100;
   }
@@ -970,6 +1061,8 @@ message SubscribeAgentsResponse {
     AgentDown agent_down = 2;
     AgentUpdated agent_updated = 3;
     SnapshotComplete snapshot_complete = 100;
+    AgentSummaryEvent summary = 13;
+    AgentProgressEvent progress = 14;
   }
 }
 

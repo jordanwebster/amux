@@ -207,6 +207,8 @@ mod tests {
                 created_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
                 parent: None,
                 working_on: None,
+                summary: None,
+                progress: None,
                 inventory_revision: 0,
             },
         }

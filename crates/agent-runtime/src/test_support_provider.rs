@@ -232,6 +232,8 @@ fn fixture_record(id: Uuid, name: &str, kind: AgentKind) -> AgentRecord {
         created_at: Utc.timestamp_opt(0, 0).single().expect("Unix epoch exists"),
         parent: None,
         working_on: None,
+        summary: None,
+        progress: None,
         inventory_revision: 0,
     }
 }
@@ -286,6 +288,8 @@ pub async fn register_sdk_fixture(
         created_at: Utc.timestamp_opt(0, 0).single().expect("Unix epoch exists"),
         parent,
         working_on: None,
+        summary: None,
+        progress: None,
         inventory_revision: 0,
     };
     Ok(FixtureRowReader(

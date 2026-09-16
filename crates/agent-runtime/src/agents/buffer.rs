@@ -796,6 +796,20 @@ impl BroadcastBuffer<StructuredPolicy> {
         self.inspect(|storage| storage.last_seq).await
     }
 
+    pub(crate) async fn pending_after(&self, through: u64) -> (u64, Option<i64>) {
+        self.inspect(|storage| {
+            (
+                storage.last_seq.saturating_sub(through),
+                storage
+                    .entries
+                    .iter()
+                    .find(|row| row.seq > through)
+                    .map(|row| row.published_at_unix_ms),
+            )
+        })
+        .await
+    }
+
     /// Subscribe to structured output with an optional query filter and return
     /// the sequence number that matches the replayed snapshot.
     pub(crate) async fn subscribe_with_query(

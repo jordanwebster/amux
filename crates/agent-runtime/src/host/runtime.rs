@@ -23,10 +23,10 @@ use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 use super::lifecycle::{
-    CreateAgentError, RenameAgentError, abort_server_suspend, clear_working_on,
+    CreateAgentError, RenameAgentError, abort_server_suspend, attach_summarizer, clear_working_on,
     commit_server_suspend, create_agent_record, delete_local_agent, parent_envelope,
     prepare_server_suspend, rename_local_agent_record, resume_agents, shutdown_server,
-    spawn_session_event_loop, withdraw_agent,
+    spawn_session_event_loop, spawn_summarizer_publication_loop, withdraw_agent,
 };
 use super::{AgentServiceState, SharedAgentServiceState, session};
 use crate::agents::claude::ClaudeSession;
@@ -128,13 +128,14 @@ impl AgentRuntime {
             route,
             claude_user_keymap_dir,
         )?;
-        let state = Arc::new(RwLock::new(AgentServiceState::new_with_revision_path(
-            deps,
-            &state_path,
-            host_id,
-        )?));
+        let (summarizer_tx, summarizer_rx) = mpsc::unbounded_channel();
+        let mut service_state =
+            AgentServiceState::new_with_revision_path(deps, &state_path, host_id)?;
+        service_state.summarizer_publications = Some(summarizer_tx);
+        let state = Arc::new(RwLock::new(service_state));
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);
+        spawn_summarizer_publication_loop(state.clone(), summarizer_rx, host_id);
         let artifact_sweeper = crate::agents::spawn_artifact_sweeper(artifact_owners.clone());
         Ok(Arc::new(Self {
             state,
@@ -184,10 +185,26 @@ impl AgentRuntime {
         };
         let reader = log.subscribe().await.expect("fresh SDK log is open");
         let mut state = self.state.write().await;
+        let summarizer = attach_summarizer(&state, agent_id, &session)
+            .await
+            .map_err(anyhow::Error::msg)?;
         let exit_handle = session.start(&self.event_tx)?;
         state
-            .register_local_agent_context(self.host_id, agent_id, session)
+            .register_local_agent_context_with_summarizer(
+                self.host_id,
+                agent_id,
+                session,
+                None,
+                summarizer,
+            )
             .map_err(anyhow::Error::msg)?;
+        if let Some(summarizer) = state
+            .local_agents
+            .get(&agent_id)
+            .and_then(|context| context.summarizer.as_ref())
+        {
+            summarizer.activate();
+        }
         super::lifecycle::monitor_session_exit(exit_handle, self.event_tx.clone(), agent_id);
         Ok(reader)
     }
@@ -205,9 +222,25 @@ impl AgentRuntime {
             state.deps.mcp_launch_route.clone(),
             state.deps.claude_user_keymap_dir.clone(),
         ));
-        let announce = state
-            .register_local_agent_context(self.host_id, agent_id, session)
+        let summarizer = attach_summarizer(&state, agent_id, &session)
+            .await
             .map_err(|message| ProtocolError::ServerError { message })?;
+        let announce = state
+            .register_local_agent_context_with_summarizer(
+                self.host_id,
+                agent_id,
+                session,
+                None,
+                summarizer,
+            )
+            .map_err(|message| ProtocolError::ServerError { message })?;
+        if let Some(summarizer) = state
+            .local_agents
+            .get(&agent_id)
+            .and_then(|context| context.summarizer.as_ref())
+        {
+            summarizer.activate();
+        }
         let AgentEvent::AgentUp { agent } = &announce else {
             unreachable!("registration always announces AgentUp")
         };
@@ -229,9 +262,25 @@ impl AgentRuntime {
             ClaudeSession::with_supplied_session(&request, &state.deps, session, &self.event_tx)
                 .map_err(|e| error(e.to_string()))?,
         );
-        let announce = state
-            .register_local_agent_context(self.host_id, request.agent_id, session)
+        let summarizer = attach_summarizer(&state, request.agent_id, &session)
+            .await
             .map_err(error)?;
+        let announce = state
+            .register_local_agent_context_with_summarizer(
+                self.host_id,
+                request.agent_id,
+                session,
+                None,
+                summarizer,
+            )
+            .map_err(error)?;
+        if let Some(summarizer) = state
+            .local_agents
+            .get(&request.agent_id)
+            .and_then(|context| context.summarizer.as_ref())
+        {
+            summarizer.activate();
+        }
         let AgentEvent::AgentUp { agent } = &announce else {
             unreachable!("registration always announces AgentUp")
         };
@@ -262,20 +311,38 @@ impl AgentRuntime {
             created_at: chrono::Utc::now(),
             parent: None,
             working_on: None,
+            summary: None,
+            progress: None,
             inventory_revision: 0,
         };
-        let mut backend = CodexBackend::with_session(record, provider);
-        backend
+        let backend = CodexBackend::with_session(record, provider);
+        let agent_id = backend.agent_id();
+        let mut session: AgentSession = Box::new(backend);
+        let mut state = self.state.write().await;
+        let summarizer = attach_summarizer(&state, agent_id, &session)
+            .await
+            .map_err(|message| ProtocolError::ServerError { message })?;
+        session
             .start(&self.event_tx)
             .map_err(|error| ProtocolError::ServerError {
                 message: error.to_string(),
             })?;
-        let agent_id = backend.agent_id();
-        let session: AgentSession = Box::new(backend);
-        let mut state = self.state.write().await;
         let announce = state
-            .register_local_agent_context(self.host_id, agent_id, session)
+            .register_local_agent_context_with_summarizer(
+                self.host_id,
+                agent_id,
+                session,
+                None,
+                summarizer,
+            )
             .map_err(|message| ProtocolError::ServerError { message })?;
+        if let Some(summarizer) = state
+            .local_agents
+            .get(&agent_id)
+            .and_then(|context| context.summarizer.as_ref())
+        {
+            summarizer.activate();
+        }
         let AgentEvent::AgentUp { agent } = &announce else {
             unreachable!("registration always announces AgentUp")
         };
@@ -876,11 +943,22 @@ impl LocalAgentHost for AgentRuntime {
                 match bootstrap_external_hook(agent_id, &payload, &env).await {
                     Ok(ExternalHookBootstrap::Noop) => Ok(()),
                     Ok(ExternalHookBootstrap::Register(session)) => {
-                        match state.insert_registered_local_agent(self.host_id(), agent_id, session)
-                        {
+                        let summarizer = attach_summarizer(&state, agent_id, &session)
+                            .await
+                            .map_err(|message| ProtocolError::ServerError { message })?;
+                        match state.register_local_agent_context_with_summarizer(
+                            self.host_id(),
+                            agent_id,
+                            session,
+                            None,
+                            summarizer,
+                        ) {
                             Ok(announce) => {
-                                if let Some(session) = state.agent_session_mut(&agent_id) {
-                                    session.maybe_start_name_sniffer(self.event_tx());
+                                if let Some(context) = state.local_agents.get_mut(&agent_id) {
+                                    context.session.maybe_start_name_sniffer(self.event_tx());
+                                    if let Some(summarizer) = &context.summarizer {
+                                        summarizer.activate();
+                                    }
                                 }
                                 state.local_agent_events.emit(announce);
                                 tracing::info!(%agent_id, "created readonly session from external hook");

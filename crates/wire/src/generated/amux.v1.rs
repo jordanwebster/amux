@@ -975,8 +975,88 @@ pub struct Agent {
     pub parent: ::core::option::Option<AgentParent>,
     #[prost(message, optional, tag = "12")]
     pub working_on: ::core::option::Option<WorkingOn>,
+    #[prost(message, optional, tag = "13")]
+    pub summary: ::core::option::Option<AgentSummary>,
+    #[prost(message, optional, tag = "14")]
+    pub progress: ::core::option::Option<Progress>,
     #[prost(uint64, tag = "15")]
     pub inventory_revision: u64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SummaryTodoProgress {
+    #[prost(uint64, tag = "1")]
+    pub done: u64,
+    #[prost(uint64, tag = "2")]
+    pub total: u64,
+    #[prost(string, optional, tag = "3")]
+    pub current: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SummaryContextMeter {
+    #[prost(uint64, tag = "1")]
+    pub used_tokens: u64,
+    #[prost(uint64, optional, tag = "2")]
+    pub window_tokens: ::core::option::Option<u64>,
+    #[prost(enumeration = "ContextMeterSource", tag = "3")]
+    pub source: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AgentSummary {
+    #[prost(uint64, tag = "1")]
+    pub through: u64,
+    #[prost(uint32, tag = "2")]
+    pub producer_version: u32,
+    #[prost(int64, tag = "3")]
+    pub observed_at_unix_ms: i64,
+    #[prost(bool, tag = "4")]
+    pub stale: bool,
+    #[prost(uint64, tag = "5")]
+    pub revision: u64,
+    #[prost(enumeration = "SummaryAttention", tag = "6")]
+    pub attention: i32,
+    #[prost(enumeration = "SummaryWhy", optional, tag = "7")]
+    pub why: ::core::option::Option<i32>,
+    #[prost(enumeration = "SummaryPhase", tag = "8")]
+    pub phase: i32,
+    #[prost(int32, optional, tag = "9")]
+    pub exit_code: ::core::option::Option<i32>,
+    #[prost(int64, optional, tag = "10")]
+    pub last_activity_unix_ms: ::core::option::Option<i64>,
+    #[prost(message, optional, tag = "11")]
+    pub todo: ::core::option::Option<SummaryTodoProgress>,
+    #[prost(message, optional, tag = "12")]
+    pub context: ::core::option::Option<SummaryContextMeter>,
+    #[prost(string, optional, tag = "13")]
+    pub model: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(enumeration = "SummaryField", repeated, tag = "14")]
+    pub unknown: ::prost::alloc::vec::Vec<i32>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Progress {
+    #[prost(uint64, tag = "1")]
+    pub through: u64,
+    #[prost(int64, tag = "2")]
+    pub at_unix_ms: i64,
+    #[prost(uint64, tag = "3")]
+    pub revision: u64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AgentSummaryEvent {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub agent_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "3")]
+    pub envelope: ::core::option::Option<AgentSummary>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AgentProgressEvent {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub agent_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "3")]
+    pub progress: ::core::option::Option<Progress>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AgentParent {
@@ -1062,7 +1142,7 @@ pub struct SubscribeAgentEventsRequest {}
 pub struct SubscribeAgentEventsResponse {
     #[prost(
         oneof = "subscribe_agent_events_response::Event",
-        tags = "9, 10, 11, 12, 100"
+        tags = "9, 10, 11, 12, 13, 14, 100"
     )]
     pub event: ::core::option::Option<subscribe_agent_events_response::Event>,
 }
@@ -1078,6 +1158,10 @@ pub mod subscribe_agent_events_response {
         AgentDown(super::AgentDown),
         #[prost(message, tag = "12")]
         AgentUpdated(super::AgentUpdated),
+        #[prost(message, tag = "13")]
+        Summary(super::AgentSummaryEvent),
+        #[prost(message, tag = "14")]
+        Progress(super::AgentProgressEvent),
         #[prost(message, tag = "100")]
         SnapshotComplete(super::SnapshotComplete),
     }
@@ -1687,7 +1771,10 @@ pub struct HostInventory {
 pub struct SubscribeAgentsRequest {}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubscribeAgentsResponse {
-    #[prost(oneof = "subscribe_agents_response::Event", tags = "4, 1, 2, 3, 100")]
+    #[prost(
+        oneof = "subscribe_agents_response::Event",
+        tags = "4, 1, 2, 3, 100, 13, 14"
+    )]
     pub event: ::core::option::Option<subscribe_agents_response::Event>,
 }
 /// Nested message and enum types in `SubscribeAgentsResponse`.
@@ -1704,6 +1791,10 @@ pub mod subscribe_agents_response {
         AgentUpdated(super::AgentUpdated),
         #[prost(message, tag = "100")]
         SnapshotComplete(super::SnapshotComplete),
+        #[prost(message, tag = "13")]
+        Summary(super::AgentSummaryEvent),
+        #[prost(message, tag = "14")]
+        Progress(super::AgentProgressEvent),
     }
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2417,6 +2508,183 @@ impl HostTrustStatus {
             "HOST_TRUST_STATUS_UNSPECIFIED" => Some(Self::Unspecified),
             "TRUSTED" => Some(Self::Trusted),
             "UNTRUSTED_BUT_ONLINE" => Some(Self::UntrustedButOnline),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SummaryAttention {
+    Unspecified = 0,
+    Unknown = 1,
+    Idle = 2,
+    Working = 3,
+    NeedsYou = 4,
+}
+impl SummaryAttention {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SUMMARY_ATTENTION_UNSPECIFIED",
+            Self::Unknown => "SUMMARY_ATTENTION_UNKNOWN",
+            Self::Idle => "SUMMARY_ATTENTION_IDLE",
+            Self::Working => "SUMMARY_ATTENTION_WORKING",
+            Self::NeedsYou => "SUMMARY_ATTENTION_NEEDS_YOU",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SUMMARY_ATTENTION_UNSPECIFIED" => Some(Self::Unspecified),
+            "SUMMARY_ATTENTION_UNKNOWN" => Some(Self::Unknown),
+            "SUMMARY_ATTENTION_IDLE" => Some(Self::Idle),
+            "SUMMARY_ATTENTION_WORKING" => Some(Self::Working),
+            "SUMMARY_ATTENTION_NEEDS_YOU" => Some(Self::NeedsYou),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SummaryWhy {
+    Unspecified = 0,
+    Permission = 1,
+    Question = 2,
+    Finished = 3,
+}
+impl SummaryWhy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SUMMARY_WHY_UNSPECIFIED",
+            Self::Permission => "SUMMARY_WHY_PERMISSION",
+            Self::Question => "SUMMARY_WHY_QUESTION",
+            Self::Finished => "SUMMARY_WHY_FINISHED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SUMMARY_WHY_UNSPECIFIED" => Some(Self::Unspecified),
+            "SUMMARY_WHY_PERMISSION" => Some(Self::Permission),
+            "SUMMARY_WHY_QUESTION" => Some(Self::Question),
+            "SUMMARY_WHY_FINISHED" => Some(Self::Finished),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SummaryPhase {
+    Unspecified = 0,
+    Running = 1,
+    Exited = 2,
+}
+impl SummaryPhase {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SUMMARY_PHASE_UNSPECIFIED",
+            Self::Running => "SUMMARY_PHASE_RUNNING",
+            Self::Exited => "SUMMARY_PHASE_EXITED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SUMMARY_PHASE_UNSPECIFIED" => Some(Self::Unspecified),
+            "SUMMARY_PHASE_RUNNING" => Some(Self::Running),
+            "SUMMARY_PHASE_EXITED" => Some(Self::Exited),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum SummaryField {
+    Unspecified = 0,
+    Attention = 1,
+    Phase = 2,
+    LastActivity = 3,
+    Todo = 4,
+    Context = 5,
+    Model = 6,
+    Outstanding = 7,
+}
+impl SummaryField {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "SUMMARY_FIELD_UNSPECIFIED",
+            Self::Attention => "SUMMARY_FIELD_ATTENTION",
+            Self::Phase => "SUMMARY_FIELD_PHASE",
+            Self::LastActivity => "SUMMARY_FIELD_LAST_ACTIVITY",
+            Self::Todo => "SUMMARY_FIELD_TODO",
+            Self::Context => "SUMMARY_FIELD_CONTEXT",
+            Self::Model => "SUMMARY_FIELD_MODEL",
+            Self::Outstanding => "SUMMARY_FIELD_OUTSTANDING",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "SUMMARY_FIELD_UNSPECIFIED" => Some(Self::Unspecified),
+            "SUMMARY_FIELD_ATTENTION" => Some(Self::Attention),
+            "SUMMARY_FIELD_PHASE" => Some(Self::Phase),
+            "SUMMARY_FIELD_LAST_ACTIVITY" => Some(Self::LastActivity),
+            "SUMMARY_FIELD_TODO" => Some(Self::Todo),
+            "SUMMARY_FIELD_CONTEXT" => Some(Self::Context),
+            "SUMMARY_FIELD_MODEL" => Some(Self::Model),
+            "SUMMARY_FIELD_OUTSTANDING" => Some(Self::Outstanding),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ContextMeterSource {
+    Unspecified = 0,
+    AssistantUsage = 1,
+    ResultUsage = 2,
+    AssistantContextUsage = 3,
+    CompactBoundary = 4,
+}
+impl ContextMeterSource {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CONTEXT_METER_SOURCE_UNSPECIFIED",
+            Self::AssistantUsage => "CONTEXT_METER_SOURCE_ASSISTANT_USAGE",
+            Self::ResultUsage => "CONTEXT_METER_SOURCE_RESULT_USAGE",
+            Self::AssistantContextUsage => "CONTEXT_METER_SOURCE_ASSISTANT_CONTEXT_USAGE",
+            Self::CompactBoundary => "CONTEXT_METER_SOURCE_COMPACT_BOUNDARY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CONTEXT_METER_SOURCE_UNSPECIFIED" => Some(Self::Unspecified),
+            "CONTEXT_METER_SOURCE_ASSISTANT_USAGE" => Some(Self::AssistantUsage),
+            "CONTEXT_METER_SOURCE_RESULT_USAGE" => Some(Self::ResultUsage),
+            "CONTEXT_METER_SOURCE_ASSISTANT_CONTEXT_USAGE" => {
+                Some(Self::AssistantContextUsage)
+            }
+            "CONTEXT_METER_SOURCE_COMPACT_BOUNDARY" => Some(Self::CompactBoundary),
             _ => None,
         }
     }

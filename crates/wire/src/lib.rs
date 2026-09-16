@@ -8,9 +8,10 @@ mod provider;
 pub const PROTOCOL_VERSION: u32 = 1;
 
 pub use domain::{
-    agent_from_wire, agent_parent_from_wire, artifact_kind_from_wire, artifact_kind_to_wire,
-    artifact_ref_from_wire, artifact_ref_to_wire, capabilities_from_wire, diff_base_from_wire,
-    diff_base_to_wire, diff_response_from_wire, diff_response_to_wire,
+    agent_from_wire, agent_parent_from_wire, agent_to_wire, artifact_kind_from_wire,
+    artifact_kind_to_wire, artifact_ref_from_wire, artifact_ref_to_wire, capabilities_from_wire,
+    diff_base_from_wire, diff_base_to_wire, diff_response_from_wire, diff_response_to_wire,
+    progress_from_wire, progress_to_wire, summary_from_wire, summary_to_wire,
 };
 pub use error::{
     DecodeError, EncodeError, decode_protocol_error, encode_protocol_error,

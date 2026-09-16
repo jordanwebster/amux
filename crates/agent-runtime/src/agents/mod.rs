@@ -12,6 +12,7 @@ mod pty;
 mod record;
 mod session;
 mod sources;
+mod summarizer;
 #[cfg(any(debug_assertions, test))]
 mod test_agent;
 pub use attachments::attachments_row;
@@ -49,6 +50,9 @@ pub(crate) use session::{
     agent_from_suspended, bootstrap_external_hook, new_agent,
 };
 pub use sources::{ClaudeSdkSource, ProviderSources};
+#[cfg(test)]
+pub(crate) use summarizer::SummaryCut;
+pub(crate) use summarizer::{SummarizerHandle, SummarizerPublication, summarizer_protocol};
 #[cfg(any(debug_assertions, test))]
 pub(crate) use test_agent::TestAgentSession;
 #[cfg(test)]
