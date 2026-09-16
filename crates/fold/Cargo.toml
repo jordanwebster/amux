@@ -8,9 +8,7 @@ publish = false
 [dependencies]
 chrono = { workspace = true }
 model = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 similar = { workspace = true }
-
-[dev-dependencies]
-postcard = { workspace = true }

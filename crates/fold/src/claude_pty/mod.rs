@@ -20,6 +20,11 @@ const STRUCTURED_PATCH_LINES_RETAINED: usize = 64;
 const STRUCTURED_PATCH_BYTES_RETAINED: usize = 8 * 1024;
 
 pub mod facts;
+mod semantics;
+
+pub use semantics::{
+    ClaudeBody, ClaudeEntry, ClaudeEntryKind, ClaudeFold, ClaudePartial, DELIVERY_KEYED_VARIANTS,
+};
 
 /// Top-level Claude PTY row classification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

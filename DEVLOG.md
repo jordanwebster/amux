@@ -1,3 +1,12 @@
+2026-09-16 — **Claude PTY transcripts now fold into durable native entries.**
+The pure PTY fold keeps feed bodies out of its bounded continuation tip while
+emitting provider-keyed partial entries, row-UUID text components with native
+ordering evidence, late tool-result amendments and inferred-turn aliases.
+Recorded-corpus tests checkpoint every cut and prove restored folding matches
+an uninterrupted materialisation for the tip, summary, entries and redirects.
+Lifecycle knowledge, postcard-safe agent messages, clipping and the one-megabyte
+tip ceiling now follow the shared store contract.
+
 2026-09-16 — **Transcript mutations share one deterministic merge algebra.**
 Provider entries can now merge independently revisioned fields, idempotent
 source-keyed components and authoritative final replacements through reusable

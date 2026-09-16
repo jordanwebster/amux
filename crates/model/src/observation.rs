@@ -115,8 +115,7 @@ pub struct HostRevision(pub u64);
 /// layer keeps to itself is the entry — Claude's is what a transcript could
 /// recover, while Codex's names the carrier that accepted it — because those
 /// are provider-specific facts.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "message_kind", rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AgentMessageKind {
     Message,
     /// The sender finished a turn.
@@ -129,6 +128,99 @@ pub enum AgentMessageKind {
     },
     /// The carrier stated none.
     Unstated,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "message_kind", rename_all = "snake_case")]
+enum HumanAgentMessageKind {
+    Message,
+    Completed,
+    Exited,
+    Other { label: String },
+    Unstated,
+}
+
+#[derive(Serialize, Deserialize)]
+enum BinaryAgentMessageKind {
+    Message,
+    Completed,
+    Exited,
+    Other { label: String },
+    Unstated,
+}
+
+impl From<AgentMessageKind> for HumanAgentMessageKind {
+    fn from(value: AgentMessageKind) -> Self {
+        match value {
+            AgentMessageKind::Message => Self::Message,
+            AgentMessageKind::Completed => Self::Completed,
+            AgentMessageKind::Exited => Self::Exited,
+            AgentMessageKind::Other { label } => Self::Other { label },
+            AgentMessageKind::Unstated => Self::Unstated,
+        }
+    }
+}
+
+impl From<HumanAgentMessageKind> for AgentMessageKind {
+    fn from(value: HumanAgentMessageKind) -> Self {
+        match value {
+            HumanAgentMessageKind::Message => Self::Message,
+            HumanAgentMessageKind::Completed => Self::Completed,
+            HumanAgentMessageKind::Exited => Self::Exited,
+            HumanAgentMessageKind::Other { label } => Self::Other { label },
+            HumanAgentMessageKind::Unstated => Self::Unstated,
+        }
+    }
+}
+
+impl From<AgentMessageKind> for BinaryAgentMessageKind {
+    fn from(value: AgentMessageKind) -> Self {
+        match value {
+            AgentMessageKind::Message => Self::Message,
+            AgentMessageKind::Completed => Self::Completed,
+            AgentMessageKind::Exited => Self::Exited,
+            AgentMessageKind::Other { label } => Self::Other { label },
+            AgentMessageKind::Unstated => Self::Unstated,
+        }
+    }
+}
+
+impl From<BinaryAgentMessageKind> for AgentMessageKind {
+    fn from(value: BinaryAgentMessageKind) -> Self {
+        match value {
+            BinaryAgentMessageKind::Message => Self::Message,
+            BinaryAgentMessageKind::Completed => Self::Completed,
+            BinaryAgentMessageKind::Exited => Self::Exited,
+            BinaryAgentMessageKind::Other { label } => Self::Other { label },
+            BinaryAgentMessageKind::Unstated => Self::Unstated,
+        }
+    }
+}
+
+impl Serialize for AgentMessageKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            HumanAgentMessageKind::from(self.clone()).serialize(serializer)
+        } else {
+            BinaryAgentMessageKind::from(self.clone()).serialize(serializer)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentMessageKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            HumanAgentMessageKind::deserialize(deserializer).map(Into::into)
+        } else {
+            BinaryAgentMessageKind::deserialize(deserializer).map(Into::into)
+        }
+    }
 }
 
 impl AgentMessageKind {

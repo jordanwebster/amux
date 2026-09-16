@@ -667,26 +667,68 @@ fn assert_postcard_safe<T: PostcardSafe>() {
     T::assert_fields_are_postcard_safe();
 }
 
-leaf_safe!(
-    u8,
-    u16,
-    u32,
-    u64,
-    usize,
-    i32,
-    bool,
-    String,
-    DateTime<Utc>,
-    HostId,
-    PathBuf,
-    Baseline,
-    Promotion,
-    AgentFold,
-    Boundary,
-    BaselineReason,
-    StoreError,
-    Membership,
-);
+leaf_safe!(u8, u16, u32, u64, usize, i32, i64, bool, String,);
+
+// External scalar wrappers have no provider-owned generic field graph to
+// audit. Keep them visibly separate from the primitive allowlist so adding a
+// persisted project type always requires an exhaustive implementation below.
+macro_rules! opaque_safe {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl private::Sealed for $ty {
+                fn assert_fields_are_postcard_safe() {}
+            }
+            impl PostcardSafe for $ty {}
+        )+
+    };
+}
+opaque_safe!(DateTime<Utc>, HostId, PathBuf);
+
+macro_rules! fieldless_enum_safe {
+    ($ty:ty, $value:ident => $body:expr) => {
+        impl private::Sealed for $ty {
+            fn assert_fields_are_postcard_safe() {
+                let _ = |$value: $ty| $body;
+            }
+        }
+        impl PostcardSafe for $ty {}
+    };
+}
+
+impl private::Sealed for Baseline {
+    fn assert_fields_are_postcard_safe() {
+        let _ = |value: Baseline| match value {
+            Baseline::Start => {}
+            Baseline::Truncated { from } => assert_value_safe(&from),
+            Baseline::Gap { after } | Baseline::VersionGap { after } => assert_value_safe(&after),
+        };
+    }
+}
+impl PostcardSafe for Baseline {}
+fieldless_enum_safe!(Promotion, value => match value {
+    Promotion::ToolToTask => {}
+});
+fieldless_enum_safe!(AgentFold, value => match value {});
+fieldless_enum_safe!(Boundary, value => match value {
+    Boundary::Truncated | Boundary::Gap | Boundary::VersionGap | Boundary::Evicted => {}
+});
+fieldless_enum_safe!(BaselineReason, value => match value {
+    BaselineReason::TipVersion | BaselineReason::Corrupt | BaselineReason::First => {}
+});
+fieldless_enum_safe!(StoreError, value => match value {
+    StoreError::Busy
+    | StoreError::DiskFull
+    | StoreError::Permission
+    | StoreError::Io
+    | StoreError::Corrupt
+    | StoreError::UnsupportedFormat
+    | StoreError::GenerationMoved
+    | StoreError::RecoveryRequired
+    | StoreError::OverBudget => {}
+});
+fieldless_enum_safe!(Membership, value => match value {
+    Membership::Cached | Membership::Absent => {}
+});
 
 fn assert_value_safe<T: PostcardSafe>(_: &T) {}
 
