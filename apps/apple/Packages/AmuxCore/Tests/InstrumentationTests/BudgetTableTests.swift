@@ -41,15 +41,19 @@ final class BudgetTableTests: XCTestCase {
     func testThePinnedNumbersAreTheOnesInTheDefinitions() throws {
         let table = try BudgetTable.parse(markdown: document())
         let cold = try XCTUnwrap(table.budget(.coldFirstFrameMs))
-        XCTAssertEqual(cold.median, 460)
+        XCTAssertEqual(cold.median, 500)
         XCTAssertEqual(cold.worst, 600)
-        XCTAssertEqual(cold.tolerance, 0.15, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(cold.tolerance), 0.15, accuracy: 1e-9)
+        let read = try XCTUnwrap(table.budget(.coldStoreReadMs))
+        XCTAssertEqual(read.median, 10)
+        XCTAssertNil(read.worst)
+        XCTAssertNil(read.tolerance, "the store read is held to its budget, not to a baseline")
         XCTAssertEqual(try XCTUnwrap(table.budget(.reconciliationMs)).median, 1000)
         XCTAssertEqual(try XCTUnwrap(table.budget(.hitchTimeRatioMsPerS)).median, 5)
         XCTAssertEqual(try XCTUnwrap(table.budget(.mainThreadCpuPercent)).median, 60)
         let footprint = try XCTUnwrap(table.budget(.footprintMB))
         XCTAssertEqual(footprint.median, 250)
-        XCTAssertEqual(footprint.tolerance, 0.10, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(footprint.tolerance), 0.10, accuracy: 1e-9)
         XCTAssertEqual(try XCTUnwrap(table.budget(.idleCommits)).median, 0)
     }
 
@@ -74,7 +78,7 @@ final class BudgetTableTests: XCTestCase {
     func testColdStartKeepsTheSimulatorGateAndThePhoneRequirementApart() throws {
         let text = try document()
         let table = try BudgetTable.parse(markdown: text)
-        XCTAssertEqual(try XCTUnwrap(table.budget(.coldFirstFrameMs)).median, 460)
+        XCTAssertEqual(try XCTUnwrap(table.budget(.coldFirstFrameMs)).median, 500)
         let checklist = try XCTUnwrap(
             text.components(separatedBy: "## The physical-phone checklist").last)
         XCTAssertTrue(

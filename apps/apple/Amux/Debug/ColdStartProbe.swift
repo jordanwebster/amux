@@ -77,12 +77,25 @@ enum ColdStartProbe {
             DisplayTick.once { record(remaining: remaining - 1) }
             return
         }
-        PerfRun.appendColdSample(MetricSample(
+        var samples = [MetricSample(
             metric: .coldFirstFrameMs,
             value: seconds * 1_000,
             unit: .milliseconds,
             proxy: false,
-            workload: .cachedFleet40))
+            workload: .cachedFleet40)]
+        // The store's own share, held to a budget of its own so the looser
+        // number around it cannot hide a slower read. A launch that marked no
+        // read leaves no sample, and the suite counts that as a failure.
+        if let began = Signposts.first(.storeReadBegan),
+           let ended = Signposts.first(.storeReadEnded) {
+            samples.append(MetricSample(
+                metric: .coldStoreReadMs,
+                value: (ended - began) * 1_000,
+                unit: .milliseconds,
+                proxy: false,
+                workload: .cachedFleet40))
+        }
+        PerfRun.appendColdSamples(samples)
         // And where the time went inside the launch, so a number that moves
         // says which half of the launch moved it.
         PerfRun.appendColdMarks(Signposts.marks)

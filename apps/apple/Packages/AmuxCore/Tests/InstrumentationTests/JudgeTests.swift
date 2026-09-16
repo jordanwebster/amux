@@ -104,6 +104,31 @@ final class JudgeTests: XCTestCase {
         XCTAssertFalse(verdict.passed, "10% over 200 MB is 220 MB and the median is 221 MB")
     }
 
+    /// The store read inside a cold launch is a few milliseconds long, so a
+    /// drift allowance on it would be narrower than its noise. It is held to
+    /// its budget alone: no baseline is needed, and a baseline recorded anyway
+    /// does not fail a read that is still inside the budget.
+    func testAMetricWithoutToleranceIsHeldToItsBudgetAlone() throws {
+        let read = Budget(unit: .milliseconds, median: 10, worst: nil, tolerance: nil)
+        let required = [
+            MachineRow(name: "pinned-mac", model: "Mac14,6", budgetsAreHard: true, baselineRequired: true)
+        ]
+        let table = BudgetTable(machines: required, budgets: [.coldStoreReadMs: read])
+            .with(baselines: [Measured(.coldStoreReadMs, .cachedFleet40): 4.6])
+
+        let inside = try judge(
+            samples: samples(.coldStoreReadMs, [18.9, 11.2, 7.3, 6.8, 7.0]),
+            budgets: table, machine: "pinned-mac")
+        XCTAssertTrue(inside.passed, "7.3 ms is past 4.6 ms by far more than noise but inside 10")
+
+        let over = try judge(
+            samples: samples(.coldStoreReadMs, [9.8, 10.4, 11.0, 12.5, 30]),
+            budgets: BudgetTable(machines: required, budgets: [.coldStoreReadMs: read]),
+            machine: "pinned-mac")
+        XCTAssertFalse(over.passed)
+        XCTAssertTrue(try XCTUnwrap(over.results.first?.note).contains("over the budget of 10"))
+    }
+
     func testAMachineThatMustHaveABaselineAndHasNoneIsAnError() {
         let table = BudgetTable(machines: machines, budgets: budgets)
         XCTAssertThrowsError(

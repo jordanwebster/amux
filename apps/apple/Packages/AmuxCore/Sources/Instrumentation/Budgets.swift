@@ -29,9 +29,11 @@ public struct Budget: Sendable, Equatable {
     /// What the worst sample must not exceed, when the definition pins one.
     public let worst: Double?
     /// How far past a recorded baseline the median may drift, as a fraction.
-    public let tolerance: Double
+    /// Nothing for a metric held to its budget alone: a drift allowance on a
+    /// number a few milliseconds long is narrower than the noise in it.
+    public let tolerance: Double?
 
-    public init(unit: MetricUnit, median: Double?, worst: Double?, tolerance: Double) {
+    public init(unit: MetricUnit, median: Double?, worst: Double?, tolerance: Double?) {
         self.unit = unit
         self.median = median
         self.worst = worst
@@ -105,7 +107,8 @@ extension BudgetTable {
                   let unit = MetricUnit(rawValue: bare(cells[1])) else {
                 throw BudgetTableError.rowUnreadable(cells.joined(separator: " | "))
             }
-            guard let tolerance = percentage(cells[4]) else {
+            let tolerance = percentage(cells[4])
+            guard tolerance != nil || bare(cells[4]).isEmpty else {
                 throw BudgetTableError.rowUnreadable(cells.joined(separator: " | "))
             }
             budgets[metric] = Budget(

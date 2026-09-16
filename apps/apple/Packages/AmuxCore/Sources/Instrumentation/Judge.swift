@@ -4,6 +4,10 @@ import Foundation
 /// sample, a baseline and a verdict all spell the same thing.
 public enum Metric: String, Codable, Sendable, CaseIterable {
     case coldFirstFrameMs
+    /// The store read inside a cold launch, from `storeReadBegan` to
+    /// `storeReadEnded`: the part of reaching the first frame the store itself
+    /// is answerable for.
+    case coldStoreReadMs
     case reconciliationMs
     case echoFrames
     case hitchTimeRatioMsPerS
@@ -193,7 +197,10 @@ public func judge(
             let budget = budgets.budget(metric)
             let baseline = budgets.baseline(measured)
             let enrolling = baseline == nil && recording
-            if row.baselineRequired && baseline == nil && !recording {
+            // A metric with no tolerance is held to its budget alone, so there
+            // is no baseline for it to be missing.
+            let drifts = budget.map { $0.tolerance != nil } ?? true
+            if row.baselineRequired && drifts && baseline == nil && !recording {
                 throw PerfError.missingBaseline(measured)
             }
 
@@ -210,7 +217,7 @@ public func judge(
                 note = "worst \(rounded(worst)) is over the worst-case budget of "
                     + "\(rounded(limit))"
             }
-            if note == nil, let baseline {
+            if note == nil, drifts, let baseline {
                 let tolerance = budget?.tolerance ?? 0
                 let allowed = baseline * (1 + tolerance)
                 if middle > allowed {

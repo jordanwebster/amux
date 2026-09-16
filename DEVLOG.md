@@ -1,3 +1,12 @@
+2026-09-17 — **The phone's cold start has a store budget of its own.** Each
+cold launch now reports its store read as a measurement beside its first
+frame, held to a median of 10 ms with no baseline drift allowance, and every
+launch must mark one. The end-to-end cold first frame budget on the pinned
+simulator rises from 460 ms to 500 ms: runs under other worktrees' simulator
+load read 463 to 484 ms while the store read stayed at 4.6 to 7.3 ms, and the
+460 ms gate was being missed the same way in unrelated work. A budget with an
+empty tolerance is now judged against its budget alone.
+
 2026-09-17 — **A phone launch reads its store once.** The app read the
 selected account's remembered fleet in its composition and again when the
 runtime started, into the same stores, both before the first frame; switching

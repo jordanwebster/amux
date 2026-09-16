@@ -35,11 +35,17 @@ final class PerformanceSuite: XCTestCase {
         // pass on a metric it never measured.
         if inputs.measures(.cold) {
             // The launches the recipe already did, measured by the app itself.
+            // Each launch leaves its first frame and the store read inside it.
             let cold = PerfRun.coldSamples()
+            let frames = cold.filter { $0.metric == .coldFirstFrameMs }
+            let reads = cold.filter { $0.metric == .coldStoreReadMs }
             XCTAssertGreaterThanOrEqual(
-                cold.count, samples,
-                "the recipe launched the cold probe \(cold.count) times, not \(samples)")
-            for sample in cold.suffix(samples) { run.record(sample) }
+                frames.count, samples,
+                "the recipe launched the cold probe \(frames.count) times, not \(samples)")
+            XCTAssertEqual(
+                reads.count, frames.count,
+                "\(frames.count) cold launches marked \(reads.count) store reads")
+            for sample in frames.suffix(samples) + reads.suffix(samples) { run.record(sample) }
         }
 
         if inputs.measures(.reconciliation) {

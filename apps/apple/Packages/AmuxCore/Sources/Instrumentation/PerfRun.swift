@@ -163,13 +163,19 @@ public struct PerfRun: Sendable {
         }
     }
 
-    /// Appends one sample the app measured about its own launch. Called by the
-    /// app, once, when the first frame carrying cached rows has been shown.
-    public static func appendColdSample(_ sample: MetricSample) {
+    /// Appends the samples the app measured about its own launch. Called by
+    /// the app, once, when the first frame carrying cached rows has been shown.
+    /// One write for all of them: the recipe terminates the app as soon as a
+    /// launch's first line lands, and a second write could be cut off.
+    public static func appendColdSamples(_ samples: [MetricSample]) {
         PerfFiles.ensure()
-        guard let json = try? JSONEncoder().encode(sample) else { return }
-        var line = json
-        line.append(0x0A)
+        let encoder = JSONEncoder()
+        var line = Data()
+        for sample in samples {
+            guard let json = try? encoder.encode(sample) else { return }
+            line.append(json)
+            line.append(0x0A)
+        }
         if let handle = try? FileHandle(forWritingTo: PerfFiles.coldSamples) {
             defer { try? handle.close() }
             _ = try? handle.seekToEnd()
