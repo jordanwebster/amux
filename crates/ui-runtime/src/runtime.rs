@@ -1987,6 +1987,7 @@ async fn pump_inventory(
     }
     let mut subscription_poll = subscription_status_provider
         .map(|_| tokio::time::interval(SUBSCRIPTION_STATUS_POLL_INTERVAL));
+    let mut snapshot_agents = HashMap::new();
     if let Some(poll) = subscription_poll.as_mut() {
         poll.tick().await;
     }
@@ -1994,28 +1995,14 @@ async fn pump_inventory(
     loop {
         let events: Vec<Msg> = tokio::select! {
             event = hosts_stream.next() => match event {
-                Some(Ok(model::HostEvent::HostUpdated { host })) => vec![
-                    Msg::FleetDelta(store::FleetDelta::Reachability {
-                        host_id: host.id,
-                        online: host.online,
-                    }),
-                    Msg::Server(ServerMsg::HostUpserted { host }),
-                ],
-                Some(Ok(model::HostEvent::HostRemoved { id })) => vec![
-                    Msg::FleetDelta(store::FleetDelta::Reachability {
-                        host_id: id,
-                        online: false,
-                    }),
-                    Msg::Server(ServerMsg::HostRemoved { id }),
-                ],
-                Some(Ok(model::HostEvent::SnapshotComplete)) => vec![Msg::Server(ServerMsg::HostsSynchronized)],
+                Some(Ok(event)) => host_messages(event),
                 Some(Err(error)) => return Some(disconnect_reason(&error)),
                 None => return Some(DisconnectReason::TransportError {
                     message: "host inventory stream ended".into(),
                 }),
             },
             event = agents_stream.recv() => match event {
-                Ok(event) => agent_messages(event),
+                Ok(event) => agent_messages(&mut snapshot_agents, event),
                 Err(error) => return Some(disconnect_reason(&error)),
             },
             _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {
@@ -2035,9 +2022,35 @@ async fn pump_inventory(
     }
 }
 
+fn host_messages(event: model::HostEvent) -> Vec<Msg> {
+    match event {
+        model::HostEvent::HostUpdated { host } => vec![
+            Msg::FleetDelta(store::FleetDelta::Host {
+                host: host.clone(),
+                revision: 0,
+            }),
+            Msg::FleetDelta(store::FleetDelta::Reachability {
+                host_id: host.id,
+                online: host.online,
+            }),
+            Msg::Server(ServerMsg::HostUpserted { host }),
+        ],
+        model::HostEvent::HostRemoved { id } => vec![
+            Msg::FleetDelta(store::FleetDelta::Reachability {
+                host_id: id,
+                online: false,
+            }),
+            Msg::Server(ServerMsg::HostRemoved { id }),
+        ],
+        model::HostEvent::SnapshotComplete => {
+            vec![Msg::Server(ServerMsg::HostsSynchronized)]
+        }
+    }
+}
+
 #[cfg(test)]
 fn agent_server_msgs(event: model::AgentEvent) -> Vec<ServerMsg> {
-    agent_messages(event)
+    agent_messages(&mut HashMap::new(), event)
         .into_iter()
         .filter_map(|message| match message {
             Msg::Server(message) => Some(message),
@@ -2046,9 +2059,13 @@ fn agent_server_msgs(event: model::AgentEvent) -> Vec<ServerMsg> {
         .collect()
 }
 
-fn agent_messages(event: model::AgentEvent) -> Vec<Msg> {
+fn agent_messages(
+    snapshot_agents: &mut HashMap<AgentId, model::Agent>,
+    event: model::AgentEvent,
+) -> Vec<Msg> {
     match event {
         model::AgentEvent::AgentUp { agent } => {
+            snapshot_agents.insert(agent.id, agent.clone());
             let delta = store::FleetDelta::AgentUp {
                 revision: agent.inventory_revision,
                 agent: agent.clone(),
@@ -2059,6 +2076,7 @@ fn agent_messages(event: model::AgentEvent) -> Vec<Msg> {
             ]
         }
         model::AgentEvent::AgentUpdated { agent } => {
+            snapshot_agents.insert(agent.id, agent.clone());
             let delta = store::FleetDelta::AgentUpdated {
                 revision: agent.inventory_revision,
                 agent: agent.clone(),
@@ -2073,6 +2091,7 @@ fn agent_messages(event: model::AgentEvent) -> Vec<Msg> {
             agent_id,
             inventory_revision,
         } => {
+            snapshot_agents.remove(&agent_id);
             vec![
                 Msg::FleetDelta(store::FleetDelta::AgentDown {
                     host_id,
@@ -2083,8 +2102,28 @@ fn agent_messages(event: model::AgentEvent) -> Vec<Msg> {
                 Msg::Server(ServerMsg::AgentRemoved { id: agent_id }),
             ]
         }
-        model::AgentEvent::SnapshotComplete { .. } => {
-            vec![Msg::Server(ServerMsg::AgentsSynchronized)]
+        model::AgentEvent::SnapshotComplete {
+            host_id,
+            through_revision,
+        } => {
+            let mut agents = snapshot_agents
+                .values()
+                .filter(|agent| agent.host_id == host_id)
+                .cloned()
+                .map(|agent| {
+                    let revision = agent.inventory_revision;
+                    (agent, revision)
+                })
+                .collect::<Vec<_>>();
+            agents.sort_by_key(|(agent, _)| agent.id);
+            vec![
+                Msg::FleetDelta(store::FleetDelta::Snapshot(store::FleetSnapshot {
+                    host_id,
+                    through_revision,
+                    agents,
+                })),
+                Msg::Server(ServerMsg::AgentsSynchronized),
+            ]
         }
         model::AgentEvent::Summary {
             host_id,
@@ -2641,6 +2680,65 @@ mod tests {
     }
 
     #[test]
+    fn host_updates_persist_facts_before_reachability_and_model_projection() {
+        let host = model::HostEntry {
+            id: HostId::from_u128(9),
+            name: "remembered-host".to_owned(),
+            online: false,
+            version: Some("test".to_owned()),
+            capabilities: Some(model::Capabilities::default()),
+            trust_status: model::HostTrustStatus::Trusted,
+            last_dial_error: Some("offline".to_owned()),
+            platform: None,
+        };
+        assert_eq!(
+            host_messages(model::HostEvent::HostUpdated { host: host.clone() }),
+            vec![
+                Msg::FleetDelta(store::FleetDelta::Host {
+                    host: host.clone(),
+                    revision: 0,
+                }),
+                Msg::FleetDelta(store::FleetDelta::Reachability {
+                    host_id: host.id,
+                    online: false,
+                }),
+                Msg::Server(ServerMsg::HostUpserted { host }),
+            ]
+        );
+    }
+
+    #[test]
+    fn local_snapshot_uses_the_agent_run_seen_before_completion() {
+        let host = HostId::from_u128(7);
+        let kept = claude_agent(AgentId::from_u128(1), host);
+        let mut snapshot_agents = HashMap::new();
+        let _ = agent_messages(
+            &mut snapshot_agents,
+            model::AgentEvent::AgentUp {
+                agent: kept.clone(),
+            },
+        );
+
+        assert_eq!(
+            agent_messages(
+                &mut snapshot_agents,
+                model::AgentEvent::SnapshotComplete {
+                    host_id: host,
+                    through_revision: 3,
+                },
+            ),
+            vec![
+                Msg::FleetDelta(store::FleetDelta::Snapshot(store::FleetSnapshot {
+                    host_id: host,
+                    through_revision: 3,
+                    agents: vec![(kept.clone(), kept.inventory_revision)],
+                })),
+                Msg::Server(ServerMsg::AgentsSynchronized),
+            ]
+        );
+    }
+
+    #[test]
     fn live_summary_and_progress_events_reach_the_reducer() {
         let agent = AgentId::from_u128(1);
         let host = HostId::from_u128(2);
@@ -3133,7 +3231,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn user_open_records_recency_but_a_remembered_reconnect_does_not() {
+    async fn user_open_records_recency_but_remembered_startup_does_not_subscribe() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("store.sqlite");
         let agent = AgentId::from_u128(598);
@@ -3170,25 +3268,109 @@ mod tests {
 
         let mut reopened = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
         wait_for_store_runtime(&mut reopened, |runtime| {
+            runtime.model().remembered_chat() == Some(agent)
+                && runtime.model().agent(agent).is_some()
+        })
+        .await;
+        reopened.process(Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host),
+        }));
+        assert!(reopened.model().chat(agent).is_none());
+        assert!(
+            reopened.store_streams.is_empty(),
+            "connecting with a remembered cursor must not subscribe"
+        );
+        assert_eq!(
+            stored_last_opened_at(&path, agent),
+            Some(7),
+            "remembered startup must not look like a user open"
+        );
+        reopened.open_chat(agent);
+        wait_for_store_runtime(&mut reopened, |runtime| {
             runtime
                 .model()
                 .chat(agent)
                 .is_some_and(|chat| chat.state == ui_state::ChatState::Painted)
         })
         .await;
-        reopened.process(Msg::Server(ServerMsg::Disconnected {
-            reason: DisconnectReason::TransportError {
-                message: "test reconnect".to_owned(),
+        assert!(
+            reopened.store_streams.contains_key(&agent),
+            "the explicit user open must start the chat stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_local_snapshot_removes_an_agent_that_disappeared_between_runs() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("store.sqlite");
+        let agent = AgentId::from_u128(608);
+        let host = HostId::from_u128(609);
+        seed_recovery_fleet(&path, agent, host).await;
+
+        let options = || RuntimeOptions {
+            store_path: Some(path.clone()),
+            ..RuntimeOptions::default()
+        };
+        let mut observing =
+            Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
+        wait_for_store_runtime(&mut observing, |runtime| {
+            runtime.model().agent(agent).is_some()
+        })
+        .await;
+
+        for message in host_messages(model::HostEvent::HostUpdated {
+            host: model::HostEntry {
+                id: host,
+                name: "remembered-host".to_owned(),
+                online: true,
+                version: Some("new".to_owned()),
+                capabilities: Some(model::Capabilities::default()),
+                trust_status: model::HostTrustStatus::Trusted,
+                last_dial_error: None,
+                platform: None,
             },
-        }));
-        reopened.process(Msg::Server(ServerMsg::Connected {
-            local_host_id: Some(host),
-        }));
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(
-            stored_last_opened_at(&path, agent),
-            Some(7),
-            "remembered startup and reconnect must not look like user opens"
+        }) {
+            observing.process(message);
+        }
+        let mut snapshot_agents = HashMap::new();
+        for message in agent_messages(
+            &mut snapshot_agents,
+            model::AgentEvent::SnapshotComplete {
+                host_id: host,
+                through_revision: 3,
+            },
+        ) {
+            observing.process(message);
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let (membership, host_name): (i64, String) = rusqlite::Connection::open(&path)
+                    .expect("inspect fleet store")
+                    .query_row(
+                        "SELECT agent.membership,host.name
+                         FROM agent JOIN host ON host.id=agent.host_id
+                         WHERE agent.id=?1",
+                        [agent.to_string()],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .expect("stored agent membership");
+                if membership == 1 && host_name == "remembered-host" {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("snapshot was not persisted");
+        drop(observing);
+
+        let mut reopened = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
+        for _ in 0..3 {
+            next_store_runtime_message(&mut reopened).await;
+        }
+        assert!(
+            reopened.model().agent(agent).is_none(),
+            "the absent agent must not return as a remembered card"
         );
     }
 
@@ -3228,6 +3410,12 @@ mod tests {
                     ..RuntimeOptions::default()
                 },
             );
+            wait_for_store_runtime(&mut runtime, |runtime| {
+                runtime.model().remembered_chat() == Some(agent)
+                    && runtime.model().agent(agent).is_some()
+            })
+            .await;
+            runtime.open_chat(agent);
             wait_for_store_runtime(&mut runtime, |runtime| {
                 runtime.model().chat(agent).is_some_and(|chat| {
                     chat.state == ui_state::ChatState::Painted

@@ -117,7 +117,11 @@ fn apply_host(
         .map_err(map_sqlite_error)?
         .map(from_i64)
         .transpose()?;
-    if current.is_some_and(|current| revision <= current) {
+    // HostEvent currently carries no durable revision. Revision zero is the
+    // explicit unordered form used at that boundary: accept its latest facts
+    // without letting it move a revisioned row backwards. Once the wire names
+    // the host revision, ordinary monotonic ordering applies unchanged.
+    if revision != 0 && current.is_some_and(|current| revision <= current) {
         return Ok(false);
     }
 
@@ -139,7 +143,7 @@ fn apply_host(
                 capabilities=excluded.capabilities,
                 trust=excluded.trust,
                 dial_error=excluded.dial_error,
-                revision=excluded.revision,
+                revision=MAX(host.revision,excluded.revision),
                 updated_at=excluded.updated_at",
             params![
                 host.id.to_string(),

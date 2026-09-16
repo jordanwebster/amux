@@ -12,8 +12,9 @@ use chrono::{DateTime, TimeDelta, Utc};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tui::chat::FeedScroll;
+use tui::chrome::{Chrome, ChromeConfig, TraceEvent};
 use tui::replay::capture_frame;
-use tui::view::{Mode, UiAction, ViewState};
+use tui::view::{Mode, UiAction, ViewState, visible_rows};
 use tui::{ColorMode, FrameContext, Theme, render};
 use ui_runtime::{Runtime, RuntimeOptions};
 use ui_state::{
@@ -716,7 +717,7 @@ fn remembered_and_stale_model() -> Model {
             local_host_id: Some(host_id("nova")),
         }),
         server(ServerMsg::HostUpserted {
-            host: a_host("nova"),
+            host: an_offline_host("nova"),
         }),
         agent_up(&remembered),
         agent_up(&stale),
@@ -729,7 +730,19 @@ fn remembered_and_stale_model() -> Model {
         ))
         .expect("remembered card field");
     *remembered = serde_json::Value::Bool(true);
+    value["store"]["remembered_chat"] =
+        serde_json::Value::String(agent_id("remembered-card").to_string());
     serde_json::from_value(value).expect("remembered model deserializes")
+}
+
+fn remembered_auth_model() -> Model {
+    let mut value =
+        serde_json::to_value(remembered_and_stale_model()).expect("remembered model serializes");
+    value["connection"] = serde_json::json!({
+        "connection": "disconnected",
+        "reason": {"reason": "authentication_required"}
+    });
+    serde_json::from_value(value).expect("authentication model deserializes")
 }
 
 fn store_state_golden(model: &Model, view: &ViewState, theme: Theme) -> String {
@@ -752,6 +765,7 @@ fn assert_store_state_goldens(theme: Theme, theme_name: &str) {
             remembered_and_stale_model(),
             view_default(),
         ),
+        ("remembered_auth", remembered_auth_model(), view_default()),
         ("catching_up", catching.clone(), chat_view(&catching)),
         (
             "boundaries",
@@ -832,8 +846,8 @@ fn offline_warm_start_and_gap_reconnect_keep_remembered_history_scrollable() {
     let offline: Model = serde_json::from_value(offline).expect("offline model deserializes");
     let frame = render_frame_at(&offline, &view_default(), 100, 20);
     assert!(frame.contains("remembered-card"));
-    assert!(frame.contains("disconnected"));
-    assert!(!frame.contains("start it with: amux server start"));
+    assert!(frame.contains("daemon unreachable"));
+    assert!(frame.contains("start it with: amux server start"));
 
     let model = durable_boundaries_model();
     let frame = capture_frame(
@@ -855,6 +869,25 @@ fn offline_warm_start_and_gap_reconnect_keep_remembered_history_scrollable() {
     assert!(frame.contains("history version changed"));
     assert!(frame.contains("earlier history evicted"));
     assert!(frame.contains("scrolled back"));
+}
+
+#[test]
+fn remembered_chat_places_the_initial_fleet_cursor_without_opening_it() {
+    let model = remembered_and_stale_model();
+    let mut chrome = Chrome::new(
+        view_default(),
+        ChromeConfig {
+            theme: Theme::default(),
+        },
+    );
+    chrome.step(&model, &TraceEvent::Msg(Msg::Tick { now: at(NOW) }));
+
+    let selected = visible_rows(&model, &chrome.view)
+        .get(chrome.view.selected)
+        .and_then(|row| row.card())
+        .map(|card| card.agent.id);
+    assert_eq!(selected, Some(agent_id("remembered-card")));
+    assert!(chrome.view.chat.is_none());
 }
 
 async fn runtime_message(runtime: &mut Runtime, message: Msg) {
@@ -987,17 +1020,29 @@ async fn seeded_sqlite_warm_start_and_gap_reconnect_paint_at_the_tui_boundary() 
 
     let mut reopened = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
     for _ in 0..8 {
-        if reopened
-            .model()
-            .chat(agent.id)
-            .is_some_and(|chat| !chat.entries.is_empty())
+        if reopened.model().remembered_chat() == Some(agent.id)
+            && reopened.model().agent(agent.id).is_some()
         {
             break;
         }
         next_runtime_message(&mut reopened).await;
     }
+    assert!(
+        reopened
+            .model()
+            .agent(agent.id)
+            .is_some_and(|card| card.remembered)
+    );
+    assert!(reopened.model().chat(agent.id).is_none());
+    reopened.open_chat(agent.id);
+    while reopened
+        .model()
+        .chat(agent.id)
+        .is_none_or(|chat| chat.entries.is_empty())
+    {
+        next_runtime_message(&mut reopened).await;
+    }
     let warm = reopened.model();
-    assert!(warm.agent(agent.id).is_some_and(|card| card.remembered));
     assert!(
         !warm
             .chat(agent.id)

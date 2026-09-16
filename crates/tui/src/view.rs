@@ -254,6 +254,11 @@ pub struct ViewState {
     /// reports simply stops being consulted, and nothing has to be
     /// cleaned up when one disappears.
     pub expanded: BTreeSet<AgentId>,
+    /// Startup applies the durable remembered-chat pointer once as fleet
+    /// navigation state. It never opens the chat; an entry key remains the
+    /// only action that starts a conversation subscription.
+    #[serde(default)]
+    pub remembered_cursor_applied: bool,
 }
 
 impl Default for ViewState {
@@ -273,11 +278,37 @@ impl Default for ViewState {
             quit_guard: QuitGuard::default(),
             chat: None,
             expanded: BTreeSet::new(),
+            remembered_cursor_applied: false,
         }
     }
 }
 
 impl ViewState {
+    pub(crate) fn select_remembered_chat(&mut self, model: &Model) {
+        if self.remembered_cursor_applied || self.chat.is_some() || !self.filter.is_empty() {
+            return;
+        }
+        let Some(agent) = model.remembered_chat() else {
+            return;
+        };
+        if model.agent(agent).is_none() {
+            return;
+        }
+        if let Some(root) = model.family_root(agent)
+            && root != agent
+        {
+            self.expanded.insert(root);
+        }
+        if let Some(index) = visible_rows(model, self)
+            .iter()
+            .position(|row| row.card().is_some_and(|card| card.agent.id == agent))
+        {
+            self.selected = index;
+            self.scroll = index;
+            self.remembered_cursor_applied = true;
+        }
+    }
+
     /// Enter the chat screen for an agent — invoked by the fleet's entry
     /// bindings (Enter/Ctrl+Enter/`o` per A1) through
     /// [`UiAction::OpenChat`]; the run loop notes the attach so the

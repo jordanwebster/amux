@@ -722,26 +722,12 @@ fn update_store_message(model: &mut Model, message: crate::store::StoreMsg) -> V
         | crate::store::StoreMsg::ViewSet { .. }
         | crate::store::StoreMsg::Unavailable { .. } => None,
     };
-    let StoreUpdate {
-        mut effects,
-        fleet,
-        remembered_chat,
-    } = crate::store::update_store(&mut model.store, message);
+    let StoreUpdate { effects, fleet } = crate::store::update_store(&mut model.store, message);
     if let Some(fleet) = fleet {
         install_remembered_fleet(model, fleet);
     }
     if let Some(agent) = affected_agent {
         sync_chat_summary(model, agent);
-    }
-    let remembered = remembered_chat.or(model.store.remembered_chat);
-    if let Some(agent) = remembered
-        && !model.store.chats.contains_key(&agent)
-        && let Some(protocol) = model
-            .agents
-            .get(&agent)
-            .and_then(AgentCard::structured_protocol)
-    {
-        effects.extend(crate::store::open_chat(&mut model.store, agent, protocol));
     }
     effects
 }

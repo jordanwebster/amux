@@ -753,21 +753,38 @@ fn status_line(model: &Model, view: &ViewState, width: usize, theme: Theme) -> L
             ("●", theme.ok(), format!("connected · {hosts} host{plural}"))
         }
         Connection::Connecting => ("◌", theme.muted(), "connecting".to_string()),
-        Connection::Disconnected { .. } => ("✗", theme.error(), "disconnected".to_string()),
+        Connection::Disconnected { reason } => {
+            let summary = match reason {
+                DisconnectReason::AuthenticationRequired => {
+                    "authentication required — run `amux init`".to_string()
+                }
+                DisconnectReason::SubscriptionRequired => {
+                    "subscription required — amux.sh/account".to_string()
+                }
+                DisconnectReason::ServerShutdown { detail } => {
+                    format!("daemon shut down: {detail}")
+                }
+                DisconnectReason::TransportError { .. } | DisconnectReason::ApplicationShutdown => {
+                    "daemon unreachable · start it with: amux server start".to_string()
+                }
+            };
+            ("✗", theme.error(), summary)
+        }
     };
     push_span(&mut line, MARKER_COL, dot, dot_style);
     push_span(&mut line, BADGE_COL, summary, theme.text());
 
-    let hints = match &view.mode {
-        Mode::Normal => normal_hints(model, view, width),
+    let hints = match (model.connection(), &view.mode) {
+        (Connection::Disconnected { .. }, _) => String::new(),
+        (_, Mode::Normal) => normal_hints(model, view, width),
         // "open", not "attach": Enter opens whichever mode the entry
         // policy resolved for the selected row (A1), which the wider
         // hint beside it names in full.
-        Mode::Filter => "esc nav-mode  enter open".to_string(),
-        Mode::Rename { .. } => "enter apply  esc cancel".to_string(),
-        Mode::ConfirmDelete { .. } => String::new(),
-        Mode::Help => "any key to close".to_string(),
-        Mode::Switcher(_) => "j/k move  enter switch  esc close".to_string(),
+        (_, Mode::Filter) => "esc nav-mode  enter open".to_string(),
+        (_, Mode::Rename { .. }) => "enter apply  esc cancel".to_string(),
+        (_, Mode::ConfirmDelete { .. }) => String::new(),
+        (_, Mode::Help) => "any key to close".to_string(),
+        (_, Mode::Switcher(_)) => "j/k move  enter switch  esc close".to_string(),
     };
     if !hints.is_empty() && fits(&hints, width) {
         push_span(&mut line, HINTS_COL, hints, theme.muted());

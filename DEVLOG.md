@@ -1,3 +1,11 @@
+2026-09-16 — **Remembered fleets stay useful without opening hidden chats.**
+The remembered-chat view now restores only the fleet cursor; a chat load and
+daemon subscription begin only after the user opens that conversation. Host
+facts and authoritative local inventory cuts are persisted, so an agent that
+disappeared while clients were away is absent on the next launch. Offline
+remembered rows retain their host, age and last standing, while authentication
+and daemon recovery guidance remains visible beside the cached fleet.
+
 2026-09-16 — **Store-backed desktop journeys are replayable end to end.**
 The `amux store dump` command now renders a profile's stored chat head,
 summary, segments, boundaries, keys, revisions and text. A tmux-driven harness

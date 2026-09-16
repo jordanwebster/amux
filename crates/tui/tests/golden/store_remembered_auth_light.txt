@@ -37,7 +37,7 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│ ● connected · 1 host   enter raw attach  o chat  n new  r rename  d delete  q quit  ? help                           │
+│ ✗ authentication required — run `amux init`                                                                          │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 --- styles ---
 mmeeeemmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
@@ -78,5 +78,5 @@ m...............................................................................
 m......................................................................................................................m
 m......................................................................................................................m
 m......................................................................................................................m
-m.o......................mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm...........................m
+m.x....................................................................................................................m
 mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm

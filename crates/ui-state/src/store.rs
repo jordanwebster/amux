@@ -768,10 +768,7 @@ pub(crate) fn update_store(state: &mut StoreState, msg: StoreMsg) -> StoreUpdate
         StoreMsg::ViewLoaded { op, value, .. } if state.startup_view_op == Some(op) => {
             state.startup_view_op = None;
             state.remembered_chat = value.and_then(|value| value.parse().ok());
-            StoreUpdate {
-                remembered_chat: state.remembered_chat,
-                ..StoreUpdate::default()
-            }
+            StoreUpdate::default()
         }
         StoreMsg::ViewLoaded { .. } | StoreMsg::ViewSet { .. } => StoreUpdate::default(),
         StoreMsg::Unavailable { error, .. } => {
@@ -810,7 +807,6 @@ pub(crate) fn update_store(state: &mut StoreState, msg: StoreMsg) -> StoreUpdate
 pub(crate) struct StoreUpdate {
     pub effects: Vec<Effect>,
     pub fleet: Option<Fleet>,
-    pub remembered_chat: Option<AgentId>,
 }
 
 impl StoreUpdate {

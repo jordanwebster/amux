@@ -848,16 +848,15 @@ impl Model {
             .unwrap_or(card.last_activity)
     }
 
-    /// The fleet status word with read-time policy applied: offline rows
-    /// show `–`, and the word derives from the SAME effective attention as
-    /// the badge — one derivation, so a staleness-degraded Unknown badge
-    /// can never sit beside a stale "working" label (views format, never
-    /// decide).
+    /// The fleet status word with read-time policy applied. Live offline rows
+    /// show `–`; remembered rows retain the stored standing that makes an
+    /// offline launch useful. A live word derives from the SAME effective
+    /// attention as its badge, so a staleness-degraded Unknown badge can never
+    /// sit beside a stale "working" label (views format, never decide).
     pub fn status_label_for(&self, card: &AgentCard) -> String {
-        if !self.host_online(card.agent.host_id) {
+        if !card.remembered && !self.host_online(card.agent.host_id) {
             return "–".to_string();
         }
-        let attention = self.fleet_attention(card);
         if let Some(effective) = self.effective_summary(card) {
             if effective.incompatible {
                 return "unknown".to_string();
@@ -865,8 +864,14 @@ impl Model {
             if effective.stale {
                 return "stale".to_string();
             }
+            let attention = if card.remembered {
+                effective.summary.attention
+            } else {
+                self.fleet_attention(card)
+            };
             return card.status_label(attention, &effective.summary.phase);
         }
+        let attention = self.fleet_attention(card);
         card.status_label(attention, &card.phase)
     }
 

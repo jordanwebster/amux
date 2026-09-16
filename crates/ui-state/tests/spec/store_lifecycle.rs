@@ -899,7 +899,7 @@ fn close_with_no_dirty_state_finishes_immediately_and_deadline_is_idempotent() {
 }
 
 #[test]
-fn startup_loads_fleet_and_remembered_chat_before_network_and_persists_deltas() {
+fn startup_loads_fleet_and_places_the_remembered_cursor_without_opening_a_chat() {
     let mut model = Model::default();
     let effects = update(
         &mut model,
@@ -933,13 +933,11 @@ fn startup_loads_fleet_and_remembered_chat_before_network_and_persists_deltas() 
     );
     assert!(model.agent(agent_id("stored")).unwrap().remembered);
     assert_eq!(model.remembered_chat(), Some(agent_id("stored")));
-    assert!(matches!(
-        effects.as_slice(),
-        [
-            Effect::Store(StoreOp::Load { .. }),
-            Effect::Store(StoreOp::ViewSet { .. })
-        ]
-    ));
+    assert!(
+        effects.is_empty(),
+        "startup must not open the remembered chat"
+    );
+    assert!(model.chat(agent_id("stored")).is_none());
 
     let effects = update(
         &mut model,
@@ -974,7 +972,7 @@ fn remembered_fleet() -> Fleet {
 /// messages; replay must reproduce the complete model after every prefix.
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![(
-        "store/startup-remembered-chat-live-close",
+        "store/startup-remembered-cursor",
         vec![
             Msg::StoreStartup {
                 profile: PROFILE,
@@ -989,30 +987,6 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
                 profile: PROFILE,
                 op: StoreOpId(1),
                 fleet: remembered_fleet(),
-            }),
-            Msg::Store(StoreMsg::Loaded {
-                profile: PROFILE,
-                attempt: AttemptId(1),
-                op: StoreOpId(3),
-                agent: agent_id("stored"),
-                loaded: Box::new(empty_loaded(HeadState::None)),
-            }),
-            Msg::ChatStream {
-                agent: agent_id("stored"),
-                attempt: fold::StreamAttempt(1),
-                event: ChatStreamMsg::Opened {
-                    facts: continuous(0),
-                    at: t0_plus(1),
-                },
-            },
-            Msg::ChatStream {
-                agent: agent_id("stored"),
-                attempt: fold::StreamAttempt(1),
-                event: ChatStreamMsg::ReplayComplete { at: t0_plus(2) },
-            },
-            Msg::Chat(ChatCommand::Close {
-                agent: agent_id("stored"),
-                now: t0_plus(3),
             }),
         ],
     )]

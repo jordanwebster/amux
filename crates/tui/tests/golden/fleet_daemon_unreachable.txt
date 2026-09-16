@@ -36,5 +36,5 @@
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
-│ ✗ disconnected         enter raw attach  o chat  n new  r rename  d delete  q quit  ? help                           │
+│ ✗ daemon unreachable · start it with: amux server start                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

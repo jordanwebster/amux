@@ -567,6 +567,7 @@ impl Chrome {
         match event {
             // The caller folded it; the screen is stale, nothing else.
             TraceEvent::Msg(_) => {
+                self.view.select_remembered_chat(model);
                 self.dirty = true;
                 Vec::new()
             }
@@ -647,6 +648,7 @@ impl Chrome {
         viewport: (u16, u16),
         now: DateTime<Utc>,
     ) -> Vec<ShellEffect> {
+        self.view.remembered_cursor_applied = true;
         match event {
             InputEvent::Key(key) => {
                 self.dirty = true;
