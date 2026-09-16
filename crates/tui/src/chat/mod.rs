@@ -1030,6 +1030,7 @@ mod tests {
                     created_at: at(0),
                     parent: None,
                     working_on: None,
+                    inventory_revision: 0,
                 },
             }),
         ] {

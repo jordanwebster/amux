@@ -1165,6 +1165,7 @@ mod diff {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         }
     }
 

@@ -44,6 +44,7 @@ fn sequence() -> Vec<Msg> {
                 created_at: Utc.timestamp_opt(0, 0).unwrap(),
                 parent: None,
                 working_on: None,
+                inventory_revision: 0,
             },
         }),
         Msg::Server(ServerMsg::HostsSynchronized),

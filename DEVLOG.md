@@ -1,3 +1,13 @@
+2026-09-16 — **Fleet inventory publications have a durable host order.**
+Each host now reserves and synchronizes its next inventory revision before an
+agent appears, changes or leaves. A subscriber opens on one locked
+`HostInventory` cut followed by a matching completion watermark, and remote
+clients reject duplicate or older revisions while retaining the last complete
+inventory through reachability loss. Codex approval rows now preserve their
+item and resolution, and successful steer results repeat the stable input id
+with the text the provider accepted, so independent observers need no hidden
+request state.
+
 2026-09-16 — **A suspended sequence can authorize one continuation only.**
 Suspend preparation now drains and parks every path into an agent's structured
 log before sealing its watermark. The saved record carries a unique seal that

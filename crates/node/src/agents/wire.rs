@@ -271,6 +271,7 @@ pub(crate) fn agent_to_wire(
         created_at_unix_ms: agent.created_at.timestamp_millis(),
         parent: agent.parent.map(agent_parent_to_wire),
         working_on: agent.working_on.as_ref().map(working_on_to_wire),
+        inventory_revision: agent.inventory_revision,
     })
 }
 
@@ -301,6 +302,7 @@ pub fn agent_from_wire(agent: protocol_wire::Agent) -> Result<Agent, protocol_wi
         created_at,
         parent,
         working_on,
+        inventory_revision: agent.inventory_revision,
     })
 }
 
@@ -471,6 +473,7 @@ mod tests {
                 text: "implement the record".to_string(),
                 updated_at,
             }),
+            inventory_revision: 7,
         };
 
         let wire = agent_to_wire(&dto).unwrap();
@@ -644,6 +647,7 @@ mod tests {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
 
         let err = agent_to_wire(&agent).unwrap_err();

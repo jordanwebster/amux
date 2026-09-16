@@ -27,7 +27,10 @@ message Empty {}
 // In-band marker that a local subscription's snapshot has been flushed
 // (agent/host inventory subscriptions). The link layer has no snapshot
 // phase: the neighbor snapshot is a field of Hello/HelloAccepted.
-message SnapshotComplete {}
+message SnapshotComplete {
+  bytes host_id = 1;
+  uint64 through_revision = 2;
+}
 
 // Exclusive cursor or bounded tail selection for a sequenced session.
 message ReplayQuery {
@@ -459,6 +462,7 @@ message Agent {
   int64 created_at_unix_ms = 10;
   optional AgentParent parent = 11;
   optional WorkingOn working_on = 12;
+  uint64 inventory_revision = 15;
 }
 
 message AgentParent {
@@ -510,8 +514,10 @@ message AgentUpdated {
   Agent agent = 1;
 }
 message AgentDown {
-  bytes agent_id = 1;
-  optional string reason = 2;
+  bytes host_id = 1;
+  bytes agent_id = 2;
+  optional string reason = 3;
+  uint64 inventory_revision = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -547,6 +553,7 @@ message SubscribeAgentEventsRequest {}
 
 message SubscribeAgentEventsResponse {
   oneof event {
+    HostInventory host_inventory = 9;
     AgentUp agent_up = 10;
     AgentDown agent_down = 11;
     AgentUpdated agent_updated = 12;
@@ -951,7 +958,8 @@ message HostRemoved {
 // and confirmed deletions replace this membership; reachability loss does not.
 message HostInventory {
   bytes host_id = 1;
-  repeated bytes agent_ids = 2;
+  repeated Agent agents = 2;
+  uint64 through_revision = 3;
 }
 
 message SubscribeAgentsRequest {}

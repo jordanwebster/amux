@@ -214,6 +214,7 @@ impl ClaudePtyBackend {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
         let mut backend = Self::with_session(record, session);
         backend
@@ -1206,6 +1207,7 @@ mod tests {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
         let mut backend = ClaudePtyBackend::with_session(record, session);
         let (event_tx, _event_rx) = mpsc::channel(8);

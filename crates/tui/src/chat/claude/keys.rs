@@ -940,6 +940,7 @@ mod tests {
             created_at: t(0),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
         let host = ui_state::HostEntry {
             id: Uuid::from_u128(1),

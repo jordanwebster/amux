@@ -142,9 +142,13 @@ pub(super) fn watch_event(event: ProfileEvent) -> Result<wire::WatchProfilesResp
         ProfileEvent::Upserted { sequence, profile } => {
             (sequence, Event::Upserted(profile_info(*profile)))
         }
-        ProfileEvent::SnapshotComplete { sequence } => {
-            (sequence, Event::SnapshotComplete(wire::SnapshotComplete {}))
-        }
+        ProfileEvent::SnapshotComplete { sequence } => (
+            sequence,
+            Event::SnapshotComplete(wire::SnapshotComplete {
+                host_id: Vec::new(),
+                through_revision: 0,
+            }),
+        ),
         ProfileEvent::Removed { sequence, id } => (sequence, Event::RemovedId(id.to_string())),
         ProfileEvent::Lagged => {
             return Err(Status::aborted(

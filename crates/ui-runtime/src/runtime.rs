@@ -1796,11 +1796,16 @@ async fn pump_inventory(
                 | Ok(model::AgentEvent::AgentUpdated { agent }) => {
                     ServerMsg::AgentUpserted { agent }
                 }
-                Ok(model::AgentEvent::AgentDown { agent_id }) => {
+                Ok(model::AgentEvent::AgentDown { agent_id, .. }) => {
                     ServerMsg::AgentRemoved { id: agent_id }
                 }
-                Ok(model::AgentEvent::SnapshotComplete) => ServerMsg::AgentsSynchronized,
-                Ok(model::AgentEvent::HostInventory { host_id, agent_ids }) => ServerMsg::HostInventory { host_id, agent_ids },
+                Ok(model::AgentEvent::SnapshotComplete { .. }) => ServerMsg::AgentsSynchronized,
+                Ok(model::AgentEvent::HostInventory {
+                    host_id, agents, ..
+                }) => ServerMsg::HostInventory {
+                    host_id,
+                    agent_ids: agents.into_iter().map(|agent| agent.id).collect(),
+                },
                 Err(error) => return Some(disconnect_reason(&error)),
             },
             _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {
@@ -2128,6 +2133,7 @@ mod tests {
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         }
     }
 
@@ -2146,6 +2152,7 @@ mod tests {
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         }
     }
 

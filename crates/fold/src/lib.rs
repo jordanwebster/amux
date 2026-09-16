@@ -610,6 +610,7 @@ model_struct_safe!(
         created_at,
         parent,
         working_on,
+        inventory_revision,
     } => [
         id,
         host_id,
@@ -622,6 +623,7 @@ model_struct_safe!(
         created_at,
         parent,
         working_on,
+        inventory_revision,
     ]
 );
 
@@ -1087,6 +1089,7 @@ mod tests {
             created_at: at(2),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         }
     }
 

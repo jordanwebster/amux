@@ -2160,7 +2160,7 @@ mod tests {
             .await
             .expect("timed out waiting for agent snapshot complete")
             .unwrap();
-        assert!(matches!(event, crate::AgentEvent::SnapshotComplete));
+        assert!(matches!(event, crate::AgentEvent::SnapshotComplete { .. }));
 
         let created = client
             .create_agent(crate::CreateAgentRequest {
@@ -2225,6 +2225,7 @@ mod tests {
                     created_at: chrono::Utc::now(),
                     parent: None,
                     working_on: None,
+                    inventory_revision: 1,
                 },
             })
             .await;
@@ -2247,7 +2248,9 @@ mod tests {
         let removed = services
             .client
             .apply_agent_event(crate::AgentEvent::AgentDown {
+                host_id: Uuid::from_u128(99),
                 agent_id: other_agent_id,
+                inventory_revision: 2,
             })
             .await;
         assert_eq!(removed, crate::services::client::AgentEventOutcome::Removed);
@@ -2329,6 +2332,7 @@ mod tests {
                 event,
                 crate::AgentEvent::AgentDown {
                     agent_id: event_agent_id,
+                    ..
                 } if *event_agent_id == agent_id
             )
         })
@@ -2337,6 +2341,7 @@ mod tests {
             event,
             crate::AgentEvent::AgentDown {
                 agent_id: event_agent_id,
+                ..
             } if event_agent_id == agent_id
         ));
 
@@ -2379,6 +2384,7 @@ mod tests {
                     created_at: chrono::Utc::now(),
                     parent: None,
                     working_on: None,
+                    inventory_revision: 1,
                 },
             })
             .await;

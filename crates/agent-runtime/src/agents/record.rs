@@ -28,6 +28,7 @@ pub(crate) struct AgentRecord {
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) parent: Option<AgentParent>,
     pub(crate) working_on: Option<WorkingOn>,
+    pub(crate) inventory_revision: u64,
 }
 
 impl AgentRecord {
@@ -58,6 +59,7 @@ impl From<&AgentRecord> for Agent {
             created_at: agent.created_at,
             parent: agent.parent,
             working_on: agent.working_on.clone(),
+            inventory_revision: agent.inventory_revision,
         }
     }
 }
@@ -76,6 +78,7 @@ impl From<AgentRecord> for Agent {
             created_at: agent.created_at,
             parent: agent.parent,
             working_on: agent.working_on,
+            inventory_revision: agent.inventory_revision,
         }
     }
 }

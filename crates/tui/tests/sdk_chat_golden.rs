@@ -60,6 +60,7 @@ fn an_sdk_agent() -> Agent {
         created_at: at("2026-08-12T09:00:00Z"),
         parent: None,
         working_on: None,
+        inventory_revision: 0,
     }
 }
 

@@ -412,6 +412,7 @@ pub(crate) trait AgentBackend: Send + Sync {
             created_at: self.created_at(),
             parent: self.parent(),
             working_on: None,
+            inventory_revision: 0,
         }
     }
 

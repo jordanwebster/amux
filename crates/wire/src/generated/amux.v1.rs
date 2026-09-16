@@ -389,8 +389,13 @@ pub struct Empty {}
 /// In-band marker that a local subscription's snapshot has been flushed
 /// (agent/host inventory subscriptions). The link layer has no snapshot
 /// phase: the neighbor snapshot is a field of Hello/HelloAccepted.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct SnapshotComplete {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SnapshotComplete {
+    #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub through_revision: u64,
+}
 /// Exclusive cursor or bounded tail selection for a sequenced session.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReplayQuery {
@@ -970,6 +975,8 @@ pub struct Agent {
     pub parent: ::core::option::Option<AgentParent>,
     #[prost(message, optional, tag = "12")]
     pub working_on: ::core::option::Option<WorkingOn>,
+    #[prost(uint64, tag = "15")]
+    pub inventory_revision: u64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AgentParent {
@@ -1041,21 +1048,30 @@ pub struct AgentUpdated {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AgentDown {
     #[prost(bytes = "vec", tag = "1")]
+    pub host_id: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
     pub agent_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(string, optional, tag = "2")]
+    #[prost(string, optional, tag = "3")]
     pub reason: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(uint64, tag = "4")]
+    pub inventory_revision: u64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeAgentEventsRequest {}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubscribeAgentEventsResponse {
-    #[prost(oneof = "subscribe_agent_events_response::Event", tags = "10, 11, 12, 100")]
+    #[prost(
+        oneof = "subscribe_agent_events_response::Event",
+        tags = "9, 10, 11, 12, 100"
+    )]
     pub event: ::core::option::Option<subscribe_agent_events_response::Event>,
 }
 /// Nested message and enum types in `SubscribeAgentEventsResponse`.
 pub mod subscribe_agent_events_response {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Event {
+        #[prost(message, tag = "9")]
+        HostInventory(super::HostInventory),
         #[prost(message, tag = "10")]
         AgentUp(super::AgentUp),
         #[prost(message, tag = "11")]
@@ -1658,23 +1674,25 @@ pub struct HostRemoved {
 }
 /// Last complete inventory observed from one remote host. Subsequent snapshots
 /// and confirmed deletions replace this membership; reachability loss does not.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HostInventory {
     #[prost(bytes = "vec", tag = "1")]
     pub host_id: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bytes = "vec", repeated, tag = "2")]
-    pub agent_ids: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+    #[prost(message, repeated, tag = "2")]
+    pub agents: ::prost::alloc::vec::Vec<Agent>,
+    #[prost(uint64, tag = "3")]
+    pub through_revision: u64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SubscribeAgentsRequest {}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubscribeAgentsResponse {
     #[prost(oneof = "subscribe_agents_response::Event", tags = "4, 1, 2, 3, 100")]
     pub event: ::core::option::Option<subscribe_agents_response::Event>,
 }
 /// Nested message and enum types in `SubscribeAgentsResponse`.
 pub mod subscribe_agents_response {
-    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Event {
         #[prost(message, tag = "4")]
         HostInventory(super::HostInventory),

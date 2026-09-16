@@ -591,6 +591,7 @@ mod tests {
             created_at: chrono::DateTime::from_timestamp(1_755_000_000, 0).expect("epoch"),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
         for msg in [
             Msg::Server(ServerMsg::Connected {

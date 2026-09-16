@@ -1416,6 +1416,7 @@ mod tests {
             created_at: t0(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         }
     }
 

@@ -128,7 +128,11 @@ impl AgentRuntime {
             route,
             claude_user_keymap_dir,
         )?;
-        let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
+        let state = Arc::new(RwLock::new(AgentServiceState::new_with_revision_path(
+            deps,
+            &state_path,
+            host_id,
+        )?));
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);
         let artifact_sweeper = crate::agents::spawn_artifact_sweeper(artifact_owners.clone());
@@ -201,10 +205,13 @@ impl AgentRuntime {
             state.deps.mcp_launch_route.clone(),
             state.deps.claude_user_keymap_dir.clone(),
         ));
-        let agent = session.to_agent(self.host_id).into();
         let announce = state
             .register_local_agent_context(self.host_id, agent_id, session)
             .map_err(|message| ProtocolError::ServerError { message })?;
+        let AgentEvent::AgentUp { agent } = &announce else {
+            unreachable!("registration always announces AgentUp")
+        };
+        let agent = agent.clone();
         state.local_agent_events.emit(announce);
         Ok(agent)
     }
@@ -222,10 +229,13 @@ impl AgentRuntime {
             ClaudeSession::with_supplied_session(&request, &state.deps, session, &self.event_tx)
                 .map_err(|e| error(e.to_string()))?,
         );
-        let agent = session.to_agent(self.host_id).into();
         let announce = state
             .register_local_agent_context(self.host_id, request.agent_id, session)
             .map_err(error)?;
+        let AgentEvent::AgentUp { agent } = &announce else {
+            unreachable!("registration always announces AgentUp")
+        };
+        let agent = agent.clone();
         state.local_agent_events.emit(announce);
         Ok(agent)
     }
@@ -252,6 +262,7 @@ impl AgentRuntime {
             created_at: chrono::Utc::now(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
         let mut backend = CodexBackend::with_session(record, provider);
         backend
@@ -261,11 +272,14 @@ impl AgentRuntime {
             })?;
         let agent_id = backend.agent_id();
         let session: AgentSession = Box::new(backend);
-        let agent = session.to_agent(self.host_id).into();
         let mut state = self.state.write().await;
         let announce = state
             .register_local_agent_context(self.host_id, agent_id, session)
             .map_err(|message| ProtocolError::ServerError { message })?;
+        let AgentEvent::AgentUp { agent } = &announce else {
+            unreachable!("registration always announces AgentUp")
+        };
+        let agent = agent.clone();
         state.local_agent_events.emit(announce);
         Ok(agent)
     }
@@ -623,7 +637,7 @@ impl LocalAgentHost for AgentRuntime {
     ) -> Result<(), ProtocolError> {
         let session_to_stop = {
             let mut us = self.state().write().await;
-            delete_local_agent_and_emit_session_close(&mut us, agent_id)
+            delete_local_agent_and_emit_session_close(&mut us, self.host_id, agent_id)
         };
 
         match session_to_stop {
@@ -678,8 +692,10 @@ impl LocalAgentHost for AgentRuntime {
             text,
             updated_at: chrono::Utc::now(),
         });
-        let updated = context.record(self.host_id());
-        state.local_agent_events.emit(updated.agent_updated_event());
+        let event = state
+            .updated_agent_event(self.host_id(), request.agent_id)
+            .map_err(|message| ProtocolError::ServerError { message })?;
+        state.local_agent_events.emit(event);
         Ok(())
     }
 
@@ -797,14 +813,22 @@ impl LocalAgentHost for AgentRuntime {
 
     async fn agent_events_snapshot(&self) -> (Vec<AgentEvent>, mpsc::Receiver<AgentEvent>) {
         let mut state = self.state().write().await;
-        let mut snapshot: Vec<_> = state
+        let mut agents: Vec<_> = state
             .local_agents
             .values()
-            .map(|context| context.record(self.host_id()).agent_event())
+            .map(|context| context.record(self.host_id()).into())
             .collect();
-        snapshot.sort_unstable_by_key(agent_event_sort_key);
+        agents.sort_unstable_by_key(|agent: &Agent| agent.id);
+        let through_revision = state.through_inventory_revision();
         let rx = state.local_agent_events.subscribe_drop_on_overflow();
-        (snapshot, rx)
+        (
+            vec![AgentEvent::HostInventory {
+                host_id: self.host_id(),
+                agents,
+                through_revision,
+            }],
+            rx,
+        )
     }
 
     async fn subscribe_agent_events(&self) -> mpsc::Receiver<AgentEvent> {
@@ -840,7 +864,7 @@ impl LocalAgentHost for AgentRuntime {
                         Ok(())
                     }
                     Ok(HookOutcome::WithdrawSession) => {
-                        session_to_stop = withdraw_agent(&mut state, agent_id);
+                        session_to_stop = withdraw_agent(&mut state, self.host_id, agent_id);
                         Ok(())
                     }
                     Err(error) => Err(error.into_protocol_error()),
@@ -1180,7 +1204,7 @@ impl LocalAgentHost for AgentRuntime {
     }
 
     async fn commit_suspend(&self) {
-        commit_server_suspend(self.state()).await;
+        commit_server_suspend(self.state(), self.host_id).await;
     }
 
     async fn notify_shutdown(&self, reason: ShutdownReason) {
@@ -1281,9 +1305,10 @@ fn delivery_error_to_protocol(error: DeliveryError) -> ProtocolError {
 
 fn delete_local_agent_and_emit_session_close(
     us: &mut AgentServiceState,
+    host_id: Uuid,
     agent_id: Uuid,
 ) -> Option<AgentSession> {
-    let session = delete_local_agent(us, agent_id);
+    let session = delete_local_agent(us, host_id, agent_id);
     if session.is_some() {
         us.local_session_close_events
             .emit((agent_id, SessionCloseReason::AgentDeleted));
@@ -1317,19 +1342,6 @@ fn rename_error_to_protocol(error: RenameAgentError) -> ProtocolError {
         err @ RenameAgentError::Update(_) => ProtocolError::ServerError {
             message: err.to_string(),
         },
-    }
-}
-
-fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
-    match event {
-        AgentEvent::AgentUp { agent } => {
-            (agent.name.clone().unwrap_or_default(), agent.id.as_u128())
-        }
-        AgentEvent::AgentUpdated { agent } => {
-            (agent.name.clone().unwrap_or_default(), agent.id.as_u128())
-        }
-        AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
-        AgentEvent::SnapshotComplete | AgentEvent::HostInventory { .. } => (String::new(), 0),
     }
 }
 

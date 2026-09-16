@@ -1,4 +1,5 @@
 mod lifecycle;
+mod revision;
 mod runtime;
 mod session;
 mod state;

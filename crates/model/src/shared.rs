@@ -179,13 +179,17 @@ pub struct SubscribeSessionRequest {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
-    SnapshotComplete,
+    SnapshotComplete {
+        host_id: Uuid,
+        through_revision: u64,
+    },
     /// The complete inventory of one remote host as the daemon last saw it,
     /// attributed to the authenticated source host. Only the client service
     /// carries this; a host never asserts another host's inventory.
     HostInventory {
         host_id: Uuid,
-        agent_ids: Vec<Uuid>,
+        agents: Vec<Agent>,
+        through_revision: u64,
     },
     AgentUp {
         agent: Agent,
@@ -194,7 +198,9 @@ pub enum AgentEvent {
         agent: Agent,
     },
     AgentDown {
+        host_id: Uuid,
         agent_id: Uuid,
+        inventory_revision: u64,
     },
 }
 
@@ -202,7 +208,7 @@ impl AgentEvent {
     pub fn type_label(&self) -> &'static str {
         match self {
             Self::HostInventory { .. } => "Agent::HostInventory",
-            Self::SnapshotComplete => "Agent::SnapshotComplete",
+            Self::SnapshotComplete { .. } => "Agent::SnapshotComplete",
             Self::AgentUp { .. } => "Agent::AgentUp",
             Self::AgentUpdated { .. } => "Agent::AgentUpdated",
             Self::AgentDown { .. } => "Agent::AgentDown",

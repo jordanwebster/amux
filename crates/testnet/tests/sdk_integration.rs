@@ -52,6 +52,7 @@ fn model() -> Model {
                 created_at: now(),
                 parent: None,
                 working_on: None,
+                inventory_revision: 0,
             },
         }),
         Msg::Server(ServerMsg::HostsSynchronized),

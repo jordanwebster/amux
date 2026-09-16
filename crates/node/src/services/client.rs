@@ -90,6 +90,7 @@ struct ClientServiceState {
     host_events: EventSource<HostEvent>,
     agent_events: EventSource<AgentEvent>,
     remote_inventories: HashMap<Uuid, Vec<Uuid>>,
+    remote_inventory_revisions: HashMap<Uuid, u64>,
     remote_agent_subs: HashMap<Uuid, tokio::task::JoinHandle<()>>,
     pending_pairs: HashMap<Uuid, PendingPairing>,
 }
@@ -237,14 +238,24 @@ impl ClientService {
         let mut state = self.state.write().await;
         let mut snapshot = sorted_values_by_id(&state.agents_model, |agent| agent.id)
             .into_iter()
+            .filter(|agent| !state.remote_inventories.contains_key(&agent.host_id))
             .map(|agent| AgentEvent::AgentUp { agent })
             .collect::<Vec<_>>();
         let mut inventories = state.remote_inventories.iter().collect::<Vec<_>>();
         inventories.sort_by_key(|(host, _)| **host);
         snapshot.extend(inventories.into_iter().map(|(host_id, agent_ids)| {
+            let agents = agent_ids
+                .iter()
+                .filter_map(|agent_id| state.agents_model.get(agent_id).cloned())
+                .collect();
             AgentEvent::HostInventory {
                 host_id: *host_id,
-                agent_ids: agent_ids.clone(),
+                agents,
+                through_revision: state
+                    .remote_inventory_revisions
+                    .get(host_id)
+                    .copied()
+                    .unwrap_or(0),
             }
         }));
         let rx = state.agent_events.subscribe_drop_on_overflow();
@@ -274,15 +285,23 @@ impl ClientService {
             AgentEvent::AgentUpdated { agent } => {
                 self.upsert_agent(agent, AgentChangeKind::Updated).await
             }
-            AgentEvent::AgentDown { agent_id } => {
+            AgentEvent::AgentDown {
+                host_id,
+                agent_id,
+                inventory_revision,
+            } => {
                 let mut state = self.state.write().await;
                 if state.agents_model.remove(&agent_id).is_none() {
                     return AgentEventOutcome::Ignored;
                 }
-                state.agent_events.emit(AgentEvent::AgentDown { agent_id });
+                state.agent_events.emit(AgentEvent::AgentDown {
+                    host_id,
+                    agent_id,
+                    inventory_revision,
+                });
                 AgentEventOutcome::Removed
             }
-            AgentEvent::SnapshotComplete | AgentEvent::HostInventory { .. } => {
+            AgentEvent::SnapshotComplete { .. } | AgentEvent::HostInventory { .. } => {
                 AgentEventOutcome::Ignored
             }
         }
@@ -293,9 +312,53 @@ impl ClientService {
         source_host_id: Uuid,
         event: AgentEvent,
     ) -> AgentEventOutcome {
+        if let AgentEvent::HostInventory {
+            host_id,
+            agents,
+            through_revision,
+        } = &event
+        {
+            if *host_id != source_host_id
+                || agents.iter().any(|agent| agent.host_id != source_host_id)
+            {
+                tracing::warn!(%source_host_id, %host_id, "ignoring inventory asserted for a different host");
+                return AgentEventOutcome::Ignored;
+            }
+            if self
+                .state
+                .read()
+                .await
+                .remote_inventory_revisions
+                .get(host_id)
+                .is_some_and(|current| *through_revision <= *current)
+            {
+                return AgentEventOutcome::Ignored;
+            }
+            self.complete_remote_inventory(*host_id, agents.clone(), *through_revision)
+                .await;
+            return AgentEventOutcome::Upserted;
+        }
+        let event_revision = match &event {
+            AgentEvent::AgentUp { agent } | AgentEvent::AgentUpdated { agent } => {
+                agent.inventory_revision
+            }
+            AgentEvent::AgentDown {
+                inventory_revision, ..
+            } => *inventory_revision,
+            AgentEvent::SnapshotComplete { .. } | AgentEvent::HostInventory { .. } => 0,
+        };
+        if self
+            .state
+            .read()
+            .await
+            .remote_inventory_revisions
+            .get(&source_host_id)
+            .is_some_and(|current| event_revision <= *current)
+        {
+            return AgentEventOutcome::Ignored;
+        }
         match &event {
-            // A remote peer cannot supply another host's inventory authority.
-            AgentEvent::HostInventory { .. } => AgentEventOutcome::Ignored,
+            AgentEvent::HostInventory { .. } => unreachable!("handled above"),
             AgentEvent::AgentUp { agent } | AgentEvent::AgentUpdated { agent }
                 if agent.host_id != source_host_id =>
             {
@@ -307,7 +370,14 @@ impl ClientService {
                 );
                 AgentEventOutcome::Ignored
             }
-            AgentEvent::AgentDown { agent_id } => {
+            AgentEvent::AgentDown {
+                host_id,
+                agent_id,
+                inventory_revision,
+            } => {
+                if *host_id != source_host_id {
+                    return AgentEventOutcome::Ignored;
+                }
                 let existing = self.state.read().await.agents_model.get(agent_id).cloned();
                 if existing
                     .as_ref()
@@ -322,22 +392,27 @@ impl ClientService {
                     return AgentEventOutcome::Ignored;
                 }
                 let agent_id = *agent_id;
+                let revision = *inventory_revision;
                 let outcome = self.apply_agent_event(event).await;
                 let mut state = self.state.write().await;
+                state
+                    .remote_inventory_revisions
+                    .insert(source_host_id, revision);
                 if let Some(ids) = state.remote_inventories.get_mut(&source_host_id) {
                     ids.retain(|id| *id != agent_id);
-                    let agent_ids = ids.clone();
-                    state.agent_events.emit(AgentEvent::HostInventory {
-                        host_id: source_host_id,
-                        agent_ids,
-                    });
+                    let inventory = remote_inventory_event(&state, source_host_id);
+                    state.agent_events.emit(inventory);
                 }
                 outcome
             }
             AgentEvent::AgentUp { agent } | AgentEvent::AgentUpdated { agent } => {
                 let id = agent.id;
+                let revision = agent.inventory_revision;
                 let outcome = self.apply_agent_event(event).await;
                 let mut state = self.state.write().await;
+                state
+                    .remote_inventory_revisions
+                    .insert(source_host_id, revision);
                 if let Some(ids) = state.remote_inventories.get_mut(&source_host_id)
                     && !ids.contains(&id)
                 {
@@ -346,7 +421,7 @@ impl ClientService {
                 }
                 outcome
             }
-            AgentEvent::SnapshotComplete => AgentEventOutcome::Ignored,
+            AgentEvent::SnapshotComplete { .. } => AgentEventOutcome::Ignored,
         }
     }
 
@@ -693,18 +768,9 @@ impl ClientService {
             remote_agent_sub.abort();
         }
 
-        let mut removed_agent_ids = state
-            .agents_model
-            .values()
-            .filter_map(|agent| (agent.host_id == host_id).then_some(agent.id))
-            .collect::<Vec<_>>();
-        removed_agent_ids.sort_unstable();
-        for agent_id in &removed_agent_ids {
-            state.agents_model.remove(agent_id);
-            state.agent_events.emit(AgentEvent::AgentDown {
-                agent_id: *agent_id,
-            });
-        }
+        // Reachability is an observation by this client daemon, not an
+        // authoritative host inventory change. Keep the last complete
+        // inventory and its revision until that host publishes a newer cut.
         if let Some(host) = trusted_replacement {
             state.host_events.emit(HostEvent::HostUpdated { host });
         } else {
@@ -712,9 +778,7 @@ impl ClientService {
                 .host_events
                 .emit(HostEvent::HostRemoved { id: host_id });
         }
-        HostEventOutcome::Removed {
-            removed_agents: removed_agent_ids.len(),
-        }
+        HostEventOutcome::Removed { removed_agents: 0 }
     }
 
     async fn upsert_agent(&self, agent: Agent, kind: AgentChangeKind) -> AgentEventOutcome {
@@ -1394,7 +1458,10 @@ pub(crate) fn client_host_event_to_wire(event: &HostEvent) -> wire::SubscribeHos
             })
         }
         HostEvent::SnapshotComplete => {
-            wire::subscribe_hosts_response::Event::SnapshotComplete(wire::SnapshotComplete {})
+            wire::subscribe_hosts_response::Event::SnapshotComplete(wire::SnapshotComplete {
+                host_id: Vec::new(),
+                through_revision: 0,
+            })
         }
     };
     wire::SubscribeHostsResponse { event: Some(event) }
@@ -1460,21 +1527,32 @@ pub(crate) fn client_agent_event_to_wire(
                 agent: Some(agent_to_wire(agent)?),
             })
         }
-        AgentEvent::AgentDown { agent_id } => {
-            wire::subscribe_agents_response::Event::AgentDown(wire::AgentDown {
-                agent_id: uuid_to_bytes(*agent_id),
-                reason: None,
-            })
-        }
-        AgentEvent::HostInventory { host_id, agent_ids } => {
-            wire::subscribe_agents_response::Event::HostInventory(wire::HostInventory {
-                host_id: host_id.as_bytes().to_vec(),
-                agent_ids: agent_ids.iter().map(|id| id.as_bytes().to_vec()).collect(),
-            })
-        }
-        AgentEvent::SnapshotComplete => {
-            wire::subscribe_agents_response::Event::SnapshotComplete(wire::SnapshotComplete {})
-        }
+        AgentEvent::AgentDown {
+            host_id,
+            agent_id,
+            inventory_revision,
+        } => wire::subscribe_agents_response::Event::AgentDown(wire::AgentDown {
+            host_id: uuid_to_bytes(*host_id),
+            agent_id: uuid_to_bytes(*agent_id),
+            reason: None,
+            inventory_revision: *inventory_revision,
+        }),
+        AgentEvent::HostInventory {
+            host_id,
+            agents,
+            through_revision,
+        } => wire::subscribe_agents_response::Event::HostInventory(wire::HostInventory {
+            host_id: host_id.as_bytes().to_vec(),
+            agents: agents.iter().map(agent_to_wire).collect::<Result<_, _>>()?,
+            through_revision: *through_revision,
+        }),
+        AgentEvent::SnapshotComplete {
+            host_id,
+            through_revision,
+        } => wire::subscribe_agents_response::Event::SnapshotComplete(wire::SnapshotComplete {
+            host_id: uuid_to_bytes(*host_id),
+            through_revision: *through_revision,
+        }),
     };
     Ok(wire::SubscribeAgentsResponse { event: Some(event) })
 }
@@ -1482,7 +1560,10 @@ pub(crate) fn client_agent_event_to_wire(
 fn subscribe_hosts_snapshot_complete() -> wire::SubscribeHostsResponse {
     wire::SubscribeHostsResponse {
         event: Some(wire::subscribe_hosts_response::Event::SnapshotComplete(
-            wire::SnapshotComplete {},
+            wire::SnapshotComplete {
+                host_id: Vec::new(),
+                through_revision: 0,
+            },
         )),
     }
 }
@@ -1490,7 +1571,10 @@ fn subscribe_hosts_snapshot_complete() -> wire::SubscribeHostsResponse {
 fn subscribe_agents_snapshot_complete() -> wire::SubscribeAgentsResponse {
     wire::SubscribeAgentsResponse {
         event: Some(wire::subscribe_agents_response::Event::SnapshotComplete(
-            wire::SnapshotComplete {},
+            wire::SnapshotComplete {
+                host_id: Vec::new(),
+                through_revision: 0,
+            },
         )),
     }
 }
@@ -1822,8 +1906,6 @@ impl ClientService {
             .delete(agent.id)
             .await
             .map_err(protocol_status)?;
-        self.apply_agent_event(AgentEvent::AgentDown { agent_id: agent.id })
-            .await;
         Ok(())
     }
 
@@ -2088,8 +2170,7 @@ impl ClientService {
             .remote_agent_client("ClientService.DeleteAgent", host_id)
             .await?;
         let response = client.delete_agent(request).await?.into_inner();
-        self.apply_agent_event(AgentEvent::AgentDown { agent_id })
-            .await;
+        let _ = agent_id;
         Ok(tonic::Response::new(response))
     }
 
@@ -2276,29 +2357,11 @@ impl ClientService {
             .await?
             .into_inner();
 
-        let mut snapshot_ids = Some(HashSet::new());
         while let Some(response) = stream.next().await {
             let event = response.and_then(|response| {
                 crate::agents::agent_event_from_wire(response).map_err(decode_remote_status)
             })?;
-            if let Some(ids) = &mut snapshot_ids {
-                match &event {
-                    AgentEvent::AgentUp { agent } | AgentEvent::AgentUpdated { agent }
-                        if agent.host_id == host_id =>
-                    {
-                        ids.insert(agent.id);
-                    }
-                    AgentEvent::AgentDown { agent_id } => {
-                        ids.remove(agent_id);
-                    }
-                    _ => {}
-                }
-            }
-            if matches!(event, AgentEvent::SnapshotComplete) {
-                if let Some(ids) = snapshot_ids.take() {
-                    self.complete_remote_inventory(host_id, ids).await;
-                }
-            } else {
+            if !matches!(event, AgentEvent::SnapshotComplete { .. }) {
                 self.apply_remote_agent_event(host_id, event).await;
             }
         }
@@ -2308,8 +2371,15 @@ impl ClientService {
         )))
     }
 
-    async fn complete_remote_inventory(&self, host_id: Uuid, ids: HashSet<Uuid>) {
+    async fn complete_remote_inventory(
+        &self,
+        host_id: Uuid,
+        mut agents: Vec<Agent>,
+        through_revision: u64,
+    ) {
         let mut state = self.state.write().await;
+        agents.sort_unstable_by_key(|agent| agent.id);
+        let ids = agents.iter().map(|agent| agent.id).collect::<HashSet<_>>();
         let mut removed = state
             .agents_model
             .values()
@@ -2319,18 +2389,43 @@ impl ClientService {
         removed.sort_unstable();
         for agent_id in removed {
             state.agents_model.remove(&agent_id);
-            state.agent_events.emit(AgentEvent::AgentDown { agent_id });
         }
-        let mut agent_ids = ids.into_iter().collect::<Vec<_>>();
-        agent_ids.sort_unstable();
+        for agent in &agents {
+            state.agents_model.insert(agent.id, agent.clone());
+        }
+        let agent_ids = agents.iter().map(|agent| agent.id).collect::<Vec<_>>();
         state.remote_inventories.insert(host_id, agent_ids.clone());
         state
-            .agent_events
-            .emit(AgentEvent::HostInventory { host_id, agent_ids });
+            .remote_inventory_revisions
+            .insert(host_id, through_revision);
+        state.agent_events.emit(AgentEvent::HostInventory {
+            host_id,
+            agents,
+            through_revision,
+        });
     }
 
     async fn has_host(&self, host_id: Uuid) -> bool {
         self.state.read().await.hosts_model.contains_key(&host_id)
+    }
+}
+
+fn remote_inventory_event(state: &ClientServiceState, host_id: Uuid) -> AgentEvent {
+    let agents = state
+        .remote_inventories
+        .get(&host_id)
+        .into_iter()
+        .flatten()
+        .filter_map(|agent_id| state.agents_model.get(agent_id).cloned())
+        .collect();
+    AgentEvent::HostInventory {
+        host_id,
+        agents,
+        through_revision: state
+            .remote_inventory_revisions
+            .get(&host_id)
+            .copied()
+            .unwrap_or(0),
     }
 }
 
@@ -2753,6 +2848,7 @@ mod tests {
             created_at: Utc.timestamp_millis_opt(0).single().unwrap(),
             parent: None,
             working_on: None,
+            inventory_revision: 1,
         }
     }
 
@@ -3563,7 +3659,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_removed_removes_remote_agents_and_emits_agent_downs() {
+    async fn host_removed_preserves_authoritative_inventory_without_agent_downs() {
         let service = client_service_with_local_services();
         let removed_host = host(10, non_relay_types());
         service
@@ -3587,15 +3683,9 @@ mod tests {
                     host_id: removed_host.id,
                 })
                 .await,
-            HostEventOutcome::Removed { removed_agents: 1 }
+            HostEventOutcome::Removed { removed_agents: 0 }
         );
-
-        assert_eq!(
-            agent_rx.recv().await,
-            Some(AgentEvent::AgentDown {
-                agent_id: Uuid::from_u128(1),
-            })
-        );
+        assert!(agent_rx.try_recv().is_err());
         assert_eq!(
             host_rx.recv().await,
             Some(HostEvent::HostRemoved {
@@ -3609,7 +3699,7 @@ mod tests {
                 .into_iter()
                 .map(|agent| agent.id)
                 .collect::<Vec<_>>(),
-            vec![Uuid::from_u128(2)]
+            vec![Uuid::from_u128(1), Uuid::from_u128(2)]
         );
     }
 
@@ -3650,15 +3740,8 @@ mod tests {
                 host_id: remote_host_id,
             })
             .await;
-        assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), agent_rx.recv())
-                .await
-                .expect("timed out waiting for host removal cleanup"),
-            Some(AgentEvent::AgentDown {
-                agent_id: Uuid::from_u128(1)
-            })
-        );
-        assert!(service.list_agents().await.is_empty());
+        assert!(agent_rx.try_recv().is_err());
+        assert_eq!(service.list_agents().await.len(), 1);
         task.abort();
     }
 
@@ -3719,7 +3802,9 @@ mod tests {
                 .apply_remote_agent_event(
                     source_host,
                     AgentEvent::AgentDown {
-                        agent_id: existing.id
+                        host_id: source_host,
+                        agent_id: existing.id,
+                        inventory_revision: 2,
                     },
                 )
                 .await,
@@ -3864,7 +3949,9 @@ mod tests {
 
         service
             .apply_agent_event(AgentEvent::AgentDown {
+                host_id: second.host_id,
                 agent_id: second.id,
+                inventory_revision: 2,
             })
             .await;
         assert_eq!(
@@ -3919,41 +4006,33 @@ mod tests {
             service.apply_agent_event(agent_up(agent)).await;
         }
         let mut events = service.subscribe_agents().await;
-        service
-            .complete_remote_inventory(source, HashSet::from([survivor.id]))
-            .await;
-        assert_eq!(
-            events.recv().await,
-            Some(AgentEvent::AgentDown {
-                agent_id: deleted.id
-            })
-        );
         let membership = AgentEvent::HostInventory {
             host_id: source,
-            agent_ids: vec![survivor.id],
+            agents: vec![survivor.clone()],
+            through_revision: 1,
         };
+        assert_eq!(
+            service
+                .apply_remote_agent_event(source, membership.clone())
+                .await,
+            AgentEventOutcome::Upserted
+        );
         assert_eq!(events.recv().await, Some(membership.clone()));
         assert_eq!(
             service.list_agents().await,
             vec![survivor.clone(), other.clone()]
         );
         let (snapshot, _) = service.subscribe_agents_with_snapshot().await;
-        assert_eq!(
-            snapshot,
-            vec![
-                agent_up(survivor.clone()),
-                agent_up(other.clone()),
-                membership
-            ]
-        );
-        // Remote peers cannot forge membership authority, even for themselves.
+        assert_eq!(snapshot, vec![agent_up(other.clone()), membership]);
+        // Replaying the same authoritative cut is idempotent.
         assert_eq!(
             service
                 .apply_remote_agent_event(
                     source,
                     AgentEvent::HostInventory {
                         host_id: source,
-                        agent_ids: vec![],
+                        agents: vec![],
+                        through_revision: 1,
                     }
                 )
                 .await,
@@ -3964,24 +4043,30 @@ mod tests {
             .apply_remote_agent_event(
                 source,
                 AgentEvent::AgentDown {
+                    host_id: source,
                     agent_id: survivor.id,
+                    inventory_revision: 2,
                 },
             )
             .await;
         assert_eq!(
             events.recv().await,
             Some(AgentEvent::AgentDown {
-                agent_id: survivor.id
+                host_id: source,
+                agent_id: survivor.id,
+                inventory_revision: 2,
             })
         );
         assert_eq!(
             events.recv().await,
             Some(AgentEvent::HostInventory {
                 host_id: source,
-                agent_ids: vec![]
+                agents: vec![],
+                through_revision: 2,
             })
         );
-        let added = agent(4, 10, "created later");
+        let mut added = agent(4, 10, "created later");
+        added.inventory_revision = 3;
         service
             .apply_remote_agent_event(source, agent_up(added.clone()))
             .await;
@@ -3991,23 +4076,9 @@ mod tests {
             snapshot.last(),
             Some(&AgentEvent::HostInventory {
                 host_id: source,
-                agent_ids: vec![added.id]
+                agents: vec![added.clone()],
+                through_revision: 3,
             })
-        );
-        // A reachability-driven removal is not evidence that the host deleted it.
-        service
-            .apply_agent_event(AgentEvent::AgentDown { agent_id: added.id })
-            .await;
-        let (snapshot, _) = service.subscribe_agents_with_snapshot().await;
-        assert_eq!(
-            snapshot,
-            vec![
-                agent_up(other),
-                AgentEvent::HostInventory {
-                    host_id: source,
-                    agent_ids: vec![added.id]
-                }
-            ]
         );
     }
 
@@ -4043,7 +4114,9 @@ mod tests {
         );
 
         let down = client_agent_event_to_wire(&AgentEvent::AgentDown {
+            host_id: second.host_id,
             agent_id: second.id,
+            inventory_revision: 2,
         })
         .unwrap();
         let Some(wire::subscribe_agents_response::Event::AgentDown(down)) = down.event else {
@@ -4703,7 +4776,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             events.recv().await,
-            Some(AgentEvent::AgentDown { agent_id: down_id }) if down_id == agent_id
+            Some(AgentEvent::AgentDown { agent_id: down_id, .. }) if down_id == agent_id
         ));
         assert!(service.list_agents().await.is_empty());
     }
@@ -5135,7 +5208,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             events.recv().await,
-            Some(AgentEvent::AgentDown { agent_id: down_id }) if down_id == agent_id
+            Some(AgentEvent::AgentDown { agent_id: down_id, .. }) if down_id == agent_id
         ));
         let closed = tokio::time::timeout(Duration::from_secs(1), stream.next())
             .await
@@ -5274,7 +5347,8 @@ mod tests {
             recv_agent_event(&mut events).await,
             AgentEvent::HostInventory {
                 host_id: remote_host_id,
-                agent_ids: vec![],
+                agents: vec![],
+                through_revision: 0,
             }
         );
         let mut remote_agent_client = service
@@ -5313,13 +5387,14 @@ mod tests {
             .unwrap();
         assert!(matches!(
             recv_agent_event(&mut events).await,
-            AgentEvent::AgentDown { agent_id: down_id } if down_id == agent_id
+            AgentEvent::AgentDown { agent_id: down_id, .. } if down_id == agent_id
         ));
         assert_eq!(
             recv_agent_event(&mut events).await,
             AgentEvent::HostInventory {
                 host_id: remote_host_id,
-                agent_ids: vec![],
+                agents: vec![],
+                through_revision: 3,
             }
         );
         assert!(service.list_agents().await.is_empty());

@@ -1723,6 +1723,7 @@ mod tests {
             created_at: chrono::DateTime::from_timestamp(1_754_697_600, 0).expect("epoch"),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
         let host = model::HostEntry {
             id: Uuid::from_u128(1),

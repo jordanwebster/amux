@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use super::{AgentServiceState, SharedAgentServiceState};
 use crate::agents::{
-    AgentEvent, AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest,
-    SessionEvent, StopPolicy, WorkingOn, agent_from_suspended, new_agent,
+    AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest, SessionEvent,
+    StopPolicy, WorkingOn, agent_from_suspended, new_agent,
 };
 use crate::suspend::{SuspendedAgent, SuspendedServerState};
 
@@ -70,7 +70,7 @@ async fn handle_session_event(
             if let Some(envelope) = envelope {
                 state.outbound_envelopes.emit(envelope);
             }
-            let _ = withdraw_agent(&mut state, agent_id);
+            let _ = withdraw_agent(&mut state, host_id, agent_id);
         }
         SessionEvent::Created {
             agent_id,
@@ -90,7 +90,7 @@ async fn handle_session_event(
                         .get(&source_id)
                         .is_some_and(|context| context.session.readonly());
                     if is_readonly {
-                        withdraw_agent(&mut state, source_id)
+                        withdraw_agent(&mut state, host_id, source_id)
                     } else {
                         None
                     }
@@ -284,19 +284,29 @@ pub(crate) fn clear_working_on(state: &mut AgentServiceState, host_id: Uuid, age
     if context.working_on.take().is_none() {
         return;
     }
-    let updated = context.record(host_id);
-    state.local_agent_events.emit(updated.agent_updated_event());
+    let event = state
+        .updated_agent_event(host_id, agent_id)
+        .expect("inventory revision must be durable before AgentUpdated");
+    state.local_agent_events.emit(event);
 }
 
 /// Remove an agent from local state and broadcast withdrawal.
 pub(crate) fn withdraw_agent(
     state: &mut AgentServiceState,
+    host_id: Uuid,
     agent_id: Uuid,
 ) -> Option<AgentSession> {
-    let context = state.local_agents.remove(&agent_id)?;
-    state
-        .local_agent_events
-        .emit(AgentEvent::AgentDown { agent_id });
+    if !state.local_agents.contains_key(&agent_id) {
+        return None;
+    }
+    let event = state
+        .down_agent_event(host_id, agent_id)
+        .expect("inventory revision must be durable before AgentDown");
+    let context = state
+        .local_agents
+        .remove(&agent_id)
+        .expect("agent existence checked before reserving revision");
+    state.local_agent_events.emit(event);
     tracing::info!(
         %agent_id,
         name = ?context.session.name(),
@@ -308,9 +318,10 @@ pub(crate) fn withdraw_agent(
 
 pub(crate) fn delete_local_agent(
     state: &mut AgentServiceState,
+    host_id: Uuid,
     agent_id: Uuid,
 ) -> Option<AgentSession> {
-    withdraw_agent(state, agent_id)
+    withdraw_agent(state, host_id, agent_id)
 }
 
 /// Shutdown the server — shuts down all agents for the given user state
@@ -359,14 +370,22 @@ pub(crate) async fn prepare_server_suspend(
 }
 
 /// Commit a prepared suspend by withdrawing and stopping all local agents.
-pub(crate) async fn commit_server_suspend(agent_state: &SharedAgentServiceState) {
+pub(crate) async fn commit_server_suspend(agent_state: &SharedAgentServiceState, host_id: Uuid) {
     let sessions: HashMap<Uuid, AgentSession> = {
         let mut state = agent_state.write().await;
+        let mut ids = state.local_agents.keys().copied().collect::<Vec<_>>();
+        ids.sort_unstable();
+        let events = ids
+            .into_iter()
+            .map(|id| {
+                state
+                    .down_agent_event(host_id, id)
+                    .expect("inventory revision must be durable before AgentDown")
+            })
+            .collect::<Vec<_>>();
         let contexts = std::mem::take(&mut state.local_agents);
-        for id in contexts.keys() {
-            state
-                .local_agent_events
-                .emit(AgentEvent::AgentDown { agent_id: *id });
+        for event in events {
+            state.local_agent_events.emit(event);
         }
         contexts
             .into_iter()
@@ -612,7 +631,8 @@ fn commit_local_name_update(
         .get_mut(&agent_id)
         .expect("local agent existence checked above");
     context.session.set_local_name(updated.name.clone(), source);
-    state.local_agent_events.emit(updated.agent_updated_event());
+    let event = state.updated_agent_event(updated.host_id, agent_id)?;
+    state.local_agent_events.emit(event);
     Ok(())
 }
 
@@ -756,7 +776,8 @@ mod tests {
 
     use super::*;
     use crate::agents::{
-        AgentDeps, AgentType, CreateAgentRequest, TEST_ECHO_COMMAND, TestAgentSession,
+        Agent, AgentDeps, AgentEvent, AgentType, CreateAgentRequest, TEST_ECHO_COMMAND,
+        TestAgentSession,
     };
     use crate::suspend::SuspendedAgent;
 
@@ -771,6 +792,73 @@ mod tests {
             )
             .unwrap(),
         )))
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_revision_publications_and_snapshot_share_one_durable_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state.yaml");
+        let host_id = Uuid::new_v4();
+        let deps = || {
+            AgentDeps::new(
+                directory.path().join("data"),
+                directory.path().to_path_buf(),
+                directory.path().join("codex.sock"),
+                crate::agents::mcp_launch_route_for_tests(host_id),
+                directory.path().join("keymaps"),
+            )
+            .unwrap()
+        };
+
+        let first_id = Uuid::new_v4();
+        let mut first =
+            AgentServiceState::new_with_revision_path(deps(), &state_path, host_id).unwrap();
+        let mut first_rx = first.local_agent_events.subscribe();
+        let event = first
+            .insert_registered_local_agent(
+                host_id,
+                first_id,
+                Box::new(TestAgentSession::echo_for_tests(
+                    first_id,
+                    Some("first".into()),
+                )),
+            )
+            .unwrap();
+        first.local_agent_events.emit(event);
+        let AgentEvent::AgentUp { agent } = first_rx.recv().await.unwrap() else {
+            panic!("expected AgentUp");
+        };
+        assert_eq!(agent.inventory_revision, 1);
+        drop(first);
+
+        let second_id = Uuid::new_v4();
+        let mut restarted =
+            AgentServiceState::new_with_revision_path(deps(), &state_path, host_id).unwrap();
+        let event = restarted
+            .insert_registered_local_agent(
+                host_id,
+                second_id,
+                Box::new(TestAgentSession::echo_for_tests(
+                    second_id,
+                    Some("second".into()),
+                )),
+            )
+            .unwrap();
+        let AgentEvent::AgentUp { agent } = event else {
+            panic!("expected AgentUp");
+        };
+        assert_eq!(agent.inventory_revision, 2);
+
+        // These values are captured while the same registry write lock is
+        // held by the caller of agent_events_snapshot.
+        let agents = restarted
+            .local_agents
+            .values()
+            .map(|context| Agent::from(context.record(host_id)))
+            .collect::<Vec<_>>();
+        assert_eq!(restarted.through_inventory_revision(), 2);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].inventory_revision, 2);
     }
 
     #[tokio::test]

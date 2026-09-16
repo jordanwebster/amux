@@ -558,7 +558,7 @@ impl Daemon {
                 tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
                     .await
                     .expect("fleet snapshot completes"),
-                Ok(node::harness::AgentEvent::SnapshotComplete)
+                Ok(node::harness::AgentEvent::SnapshotComplete { .. })
             ) {
                 break;
             }

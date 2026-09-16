@@ -30,6 +30,7 @@ pub fn agent_from_wire(agent: wire::Agent) -> Result<model::Agent, DecodeError> 
         created_at,
         parent,
         working_on,
+        inventory_revision: agent.inventory_revision,
     })
 }
 

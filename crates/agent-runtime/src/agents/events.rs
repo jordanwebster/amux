@@ -6,14 +6,29 @@ pub(crate) fn agent_event_to_wire(
     event: &AgentEvent,
 ) -> Result<protocol_wire::SubscribeAgentEventsResponse, protocol_wire::EncodeError> {
     let event = match event {
-        AgentEvent::HostInventory { .. } => {
-            return Err(protocol_wire::EncodeError::Invalid(
-                "host inventory authority belongs to ClientService".into(),
-            ));
-        }
-        AgentEvent::SnapshotComplete => {
+        AgentEvent::HostInventory {
+            host_id,
+            agents,
+            through_revision,
+        } => protocol_wire::subscribe_agent_events_response::Event::HostInventory(
+            protocol_wire::HostInventory {
+                host_id: uuid_to_bytes(*host_id),
+                agents: agents
+                    .iter()
+                    .map(crate::agents::agent_to_wire)
+                    .collect::<Result<_, _>>()?,
+                through_revision: *through_revision,
+            },
+        ),
+        AgentEvent::SnapshotComplete {
+            host_id,
+            through_revision,
+        } => {
             protocol_wire::subscribe_agent_events_response::Event::SnapshotComplete(
-                protocol_wire::SnapshotComplete {},
+                protocol_wire::SnapshotComplete {
+                    host_id: uuid_to_bytes(*host_id),
+                    through_revision: *through_revision,
+                },
             )
         }
         AgentEvent::AgentUp { agent } => {
@@ -28,11 +43,17 @@ pub(crate) fn agent_event_to_wire(
                 },
             )
         }
-        AgentEvent::AgentDown { agent_id } => {
+        AgentEvent::AgentDown {
+            host_id,
+            agent_id,
+            inventory_revision,
+        } => {
             protocol_wire::subscribe_agent_events_response::Event::AgentDown(
                 protocol_wire::AgentDown {
+                    host_id: uuid_to_bytes(*host_id),
                     agent_id: uuid_to_bytes(*agent_id),
                     reason: None,
+                    inventory_revision: *inventory_revision,
                 },
             )
         }
@@ -55,7 +76,9 @@ pub(crate) fn agent_event_from_wire(
         }
         protocol_wire::subscribe_agent_events_response::Event::AgentDown(event) => {
             Ok(AgentEvent::AgentDown {
+                host_id: uuid_from_bytes("host_id", event.host_id)?,
                 agent_id: uuid_from_bytes("agent_id", event.agent_id)?,
+                inventory_revision: event.inventory_revision,
             })
         }
         protocol_wire::subscribe_agent_events_response::Event::AgentUpdated(event) => {
@@ -64,8 +87,22 @@ pub(crate) fn agent_event_from_wire(
             })?;
             agent_updated_from_wire(agent)
         }
-        protocol_wire::subscribe_agent_events_response::Event::SnapshotComplete(_) => {
-            Ok(AgentEvent::SnapshotComplete)
+        protocol_wire::subscribe_agent_events_response::Event::HostInventory(event) => {
+            Ok(AgentEvent::HostInventory {
+                host_id: uuid_from_bytes("host_id", event.host_id)?,
+                agents: event
+                    .agents
+                    .into_iter()
+                    .map(crate::agents::agent_from_wire)
+                    .collect::<Result<_, _>>()?,
+                through_revision: event.through_revision,
+            })
+        }
+        protocol_wire::subscribe_agent_events_response::Event::SnapshotComplete(event) => {
+            Ok(AgentEvent::SnapshotComplete {
+                host_id: uuid_from_bytes("host_id", event.host_id)?,
+                through_revision: event.through_revision,
+            })
         }
     }
 }
@@ -122,10 +159,37 @@ mod tests {
                 created_at: chrono::Utc::now(),
                 parent: None,
                 working_on: None,
+                inventory_revision: 1,
             },
         })
         .unwrap_err();
 
         assert!(error.to_string().contains("must be valid UTF-8"));
+    }
+
+    #[test]
+    fn daemon_protocol_revision_inventory_wire_round_trip_preserves_locked_cut() {
+        let host_id = Uuid::new_v4();
+        let agent = Agent {
+            id: Uuid::new_v4(),
+            host_id,
+            name: Some("revisioned".into()),
+            command: "test-agent".into(),
+            working_dir: "/tmp".into(),
+            kind: crate::agents::AgentKind::TestAgent,
+            readonly: false,
+            args: Vec::new(),
+            created_at: chrono::Utc::now(),
+            parent: None,
+            working_on: None,
+            inventory_revision: 8,
+        };
+        let event = AgentEvent::HostInventory {
+            host_id,
+            agents: vec![agent],
+            through_revision: 8,
+        };
+        let wire = agent_event_to_wire(&event).unwrap();
+        assert_eq!(agent_event_from_wire(wire).unwrap(), event);
     }
 }

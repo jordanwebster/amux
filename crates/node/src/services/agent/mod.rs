@@ -624,6 +624,8 @@ struct AgentEventStreamState {
     snapshot: VecDeque<AgentEvent>,
     rx: mpsc::Receiver<AgentEvent>,
     snapshot_complete_sent: bool,
+    snapshot_host_id: Uuid,
+    through_revision: u64,
     done: bool,
 }
 
@@ -631,10 +633,26 @@ fn agent_event_response_stream(
     snapshot: Vec<AgentEvent>,
     rx: mpsc::Receiver<AgentEvent>,
 ) -> ResponseStream<wire::SubscribeAgentEventsResponse> {
+    let (snapshot_host_id, through_revision) = snapshot
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::HostInventory {
+                host_id,
+                through_revision,
+                ..
+            } => Some((*host_id, *through_revision)),
+            AgentEvent::AgentUp { agent } | AgentEvent::AgentUpdated { agent } => {
+                Some((agent.host_id, agent.inventory_revision))
+            }
+            _ => None,
+        })
+        .unwrap_or((Uuid::nil(), 0));
     let state = AgentEventStreamState {
         snapshot: snapshot.into_iter().collect(),
         rx,
         snapshot_complete_sent: false,
+        snapshot_host_id,
+        through_revision,
         done: false,
     };
     Box::pin(futures_util::stream::unfold(
@@ -647,7 +665,10 @@ fn agent_event_response_stream(
                 event
             } else if !state.snapshot_complete_sent {
                 state.snapshot_complete_sent = true;
-                AgentEvent::SnapshotComplete
+                AgentEvent::SnapshotComplete {
+                    host_id: state.snapshot_host_id,
+                    through_revision: state.through_revision,
+                }
             } else {
                 let Some(event) = state.rx.recv().await else {
                     state.done = true;
@@ -864,8 +885,17 @@ mod tests {
         let mut stream = response.into_inner();
 
         let first = stream.next().await.unwrap().unwrap();
+        let Some(wire::subscribe_agent_events_response::Event::HostInventory(inventory)) =
+            first.event
+        else {
+            panic!("expected HostInventory");
+        };
+        assert_eq!(inventory.host_id, host_id.as_bytes());
+        assert!(inventory.agents.is_empty());
+
+        let complete = stream.next().await.unwrap().unwrap();
         assert!(matches!(
-            first.event,
+            complete.event,
             Some(wire::subscribe_agent_events_response::Event::SnapshotComplete(_))
         ));
 
@@ -964,7 +994,7 @@ mod tests {
         ctx.delete(first_id).await.unwrap();
         assert!(matches!(
             events.try_recv().unwrap(),
-            AgentEvent::AgentDown { agent_id } if agent_id == first_id
+            AgentEvent::AgentDown { agent_id, .. } if agent_id == first_id
         ));
     }
 
@@ -1053,6 +1083,11 @@ mod tests {
         let first = stream.next().await.unwrap().unwrap();
         assert!(matches!(
             first.event,
+            Some(wire::subscribe_agent_events_response::Event::HostInventory(_))
+        ));
+        let complete = stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            complete.event,
             Some(wire::subscribe_agent_events_response::Event::SnapshotComplete(_))
         ));
 

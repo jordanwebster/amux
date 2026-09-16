@@ -1326,6 +1326,7 @@ mod attach {
             created_at: chrono::Utc::now(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         }
     }
 
@@ -1792,6 +1793,7 @@ mod attach {
             created_at: chrono::Utc::now(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
         let mut model = Model::default();
         for msg in [

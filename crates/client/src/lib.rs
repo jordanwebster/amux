@@ -293,8 +293,14 @@ impl Stream for AgentEventStream {
             &mut this.done,
             method::CLIENT_SUBSCRIBE_AGENTS_NAME,
             |response| {
-                Ok(client_service_agent_response_to_agent_event(response)?
-                    .unwrap_or(AgentEvent::SnapshotComplete))
+                Ok(
+                    client_service_agent_response_to_agent_event(response)?.unwrap_or(
+                        AgentEvent::SnapshotComplete {
+                            host_id: Uuid::nil(),
+                            through_revision: 0,
+                        },
+                    ),
+                )
             },
             cx,
             result_is_terminal,
@@ -427,8 +433,14 @@ async fn recv_client_service_agent_event(
             message: "agent event stream ended".to_string(),
         });
     };
-    Ok(client_service_agent_response_to_agent_event(response)?
-        .unwrap_or(AgentEvent::SnapshotComplete))
+    Ok(
+        client_service_agent_response_to_agent_event(response)?.unwrap_or(
+            AgentEvent::SnapshotComplete {
+                host_id: Uuid::nil(),
+                through_revision: 0,
+            },
+        ),
+    )
 }
 
 /// Operation-oriented client for the local amux RPC surface.
@@ -1292,11 +1304,17 @@ fn client_service_agent_response_to_agent_event(
             })
         }
         wire::subscribe_agents_response::Event::AgentDown(down) => Some(AgentEvent::AgentDown {
+            host_id: uuid_from_wire_bytes(
+                method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                "AgentDown.host_id",
+                down.host_id,
+            )?,
             agent_id: uuid_from_wire_bytes(
                 method::CLIENT_SUBSCRIBE_AGENTS_NAME,
                 "AgentDown.agent_id",
                 down.agent_id,
             )?,
+            inventory_revision: down.inventory_revision,
         }),
         wire::subscribe_agents_response::Event::HostInventory(inventory) => {
             Some(AgentEvent::HostInventory {
@@ -1305,20 +1323,30 @@ fn client_service_agent_response_to_agent_event(
                     "HostInventory.host_id",
                     inventory.host_id,
                 )?,
-                agent_ids: inventory
-                    .agent_ids
+                agents: inventory
+                    .agents
                     .into_iter()
-                    .map(|id| {
-                        uuid_from_wire_bytes(
+                    .map(|agent| {
+                        required_wire_agent(
                             method::CLIENT_SUBSCRIBE_AGENTS_NAME,
-                            "HostInventory.agent_ids",
-                            id,
+                            "HostInventory.agents",
+                            Some(agent),
                         )
                     })
                     .collect::<Result<_, _>>()?,
+                through_revision: inventory.through_revision,
             })
         }
-        wire::subscribe_agents_response::Event::SnapshotComplete(_) => None,
+        wire::subscribe_agents_response::Event::SnapshotComplete(snapshot) => {
+            Some(AgentEvent::SnapshotComplete {
+                host_id: uuid_from_wire_bytes(
+                    method::CLIENT_SUBSCRIBE_AGENTS_NAME,
+                    "SnapshotComplete.host_id",
+                    snapshot.host_id,
+                )?,
+                through_revision: snapshot.through_revision,
+            })
+        }
     };
     Ok(event)
 }

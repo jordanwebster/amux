@@ -38,6 +38,7 @@ fn upsert(kind: model::AgentKind) -> Msg {
             created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         },
     })
 }

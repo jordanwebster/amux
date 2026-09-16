@@ -249,6 +249,12 @@ enum PendingRequestKind {
     ToolCall,
 }
 
+#[derive(Debug, Clone)]
+struct PendingRequest {
+    kind: PendingRequestKind,
+    item_id: String,
+}
+
 enum PendingReply {
     Approval(ApprovalResponse),
 }
@@ -266,7 +272,7 @@ pub(super) struct CodexAttached {
     pub(super) live: Option<CodexLive>,
     pub(super) active_turn_id: Option<String>,
     last_agent_messages: HashMap<String, String>,
-    pending: HashMap<RequestId, PendingRequestKind>,
+    pending: HashMap<RequestId, PendingRequest>,
     applied_name_generation: Option<u64>,
 }
 
@@ -1497,7 +1503,7 @@ pub(super) fn update_attached(
 fn mark_disconnected(
     runtime: &Arc<StdMutex<CodexRuntime>>,
     error: Option<String>,
-) -> Vec<RequestId> {
+) -> Vec<(RequestId, PendingRequest)> {
     let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
     if let Some(error) = error {
         state.startup_error = Some(error);
@@ -1508,7 +1514,7 @@ fn mark_disconnected(
     attached.live = None;
     attached.active_turn_id = None;
     attached.last_agent_messages.clear();
-    attached.pending.drain().map(|(id, _)| id).collect()
+    attached.pending.drain().collect()
 }
 
 async fn write_reconnect_error(log_source: &StructuredLogSource, message: &str) {
@@ -1520,9 +1526,13 @@ async fn write_reconnect_error(log_source: &StructuredLogSource, message: &str) 
         .await;
 }
 
-async fn resolve_pending(log_source: &StructuredLogSource, pending: Vec<RequestId>, reason: &str) {
-    for request_id in pending {
-        write_resolution(log_source, &request_id, reason).await;
+async fn resolve_pending(
+    log_source: &StructuredLogSource,
+    pending: Vec<(RequestId, PendingRequest)>,
+    resolution: &str,
+) {
+    for (request_id, pending) in pending {
+        write_resolution(log_source, &request_id, &pending.item_id, resolution).await;
     }
 }
 
@@ -1581,16 +1591,29 @@ async fn ingest_event(
         }
         TurnEvent::ApprovalRequired(request) => {
             let request_id = request.request_id();
-            insert_pending(runtime, request_id.clone(), PendingRequestKind::Approval);
-            write_approval_ask(log_source, &event, &request_id).await;
+            let item_id = event_item_id(&event);
+            insert_pending(
+                runtime,
+                request_id.clone(),
+                PendingRequestKind::Approval,
+                item_id.clone(),
+            );
+            write_approval_ask(log_source, &event, &request_id, &item_id).await;
         }
         TurnEvent::ToolCallRequired(request) => {
             insert_pending(
                 runtime,
                 request.request_id.clone(),
                 PendingRequestKind::ToolCall,
+                event_item_id(&event),
             );
-            write_approval_ask(log_source, &event, &request.request_id).await;
+            write_approval_ask(
+                log_source,
+                &event,
+                &request.request_id,
+                &event_item_id(&event),
+            )
+            .await;
         }
         TurnEvent::ApprovalResolved { request_id } => {
             let removed = runtime
@@ -1599,8 +1622,14 @@ async fn ingest_event(
                 .attached
                 .as_mut()
                 .and_then(|attached| attached.pending.remove(request_id));
-            if removed.is_some() {
-                write_resolution(log_source, request_id, "answered_elsewhere").await;
+            if let Some(removed) = removed {
+                write_resolution(
+                    log_source,
+                    request_id,
+                    &removed.item_id,
+                    "answered_elsewhere",
+                )
+                .await;
             }
         }
         _ => {}
@@ -1611,32 +1640,54 @@ fn insert_pending(
     runtime: &Arc<StdMutex<CodexRuntime>>,
     request_id: RequestId,
     kind: PendingRequestKind,
+    item_id: String,
 ) {
     update_attached(runtime, |attached| {
-        attached.pending.insert(request_id, kind);
+        attached
+            .pending
+            .insert(request_id, PendingRequest { kind, item_id });
     });
+}
+
+fn event_item_id(event: &ThreadEvent) -> String {
+    event
+        .params
+        .get("itemId")
+        .or_else(|| event.params.get("callId"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 async fn write_approval_ask(
     log_source: &StructuredLogSource,
     event: &ThreadEvent,
     request_id: &RequestId,
+    item_id: &str,
 ) {
     log_source
         .write(json!({
             "type": "amux.codex_approval_required",
             "request_id": request_id,
+            "item_id": item_id,
             "availableDecisions": event.params.get("availableDecisions").cloned().unwrap_or(Value::Null),
         }))
         .await;
 }
 
-async fn write_resolution(log_source: &StructuredLogSource, request_id: &RequestId, reason: &str) {
+async fn write_resolution(
+    log_source: &StructuredLogSource,
+    request_id: &RequestId,
+    item_id: &str,
+    resolution: &str,
+) {
     log_source
         .write(json!({
             "type": "amux.codex_approval_resolved",
             "request_id": request_id,
-            "reason": reason,
+            "item_id": item_id,
+            "resolution": resolution,
+            "reason": resolution,
         }))
         .await;
 }
@@ -1663,7 +1714,7 @@ impl CodexInputTarget {
             .await;
     }
 
-    async fn execute(&self, input: CodexSdkV1Input) -> Result<()> {
+    async fn execute(&self, input: CodexSdkV1Input) -> Result<Option<String>> {
         match input {
             CodexSdkV1Input::Command { name, args } => {
                 let live = self.live()?;
@@ -1671,20 +1722,20 @@ impl CodexInputTarget {
                 update_attached(&self.runtime, |attached| {
                     attached.active_turn_id = Some(turn_id);
                 });
-                Ok(())
+                Ok(None)
             }
             CodexSdkV1Input::SetModel { model } => {
                 let live = self.live()?;
                 live.control.set_model(model)?;
                 self.publish_settings(&live).await;
-                Ok(())
+                Ok(None)
             }
             CodexSdkV1Input::SetEffort { effort } => {
                 let live = self.live()?;
                 live.control
                     .set_effort(serde_json::from_value(json!(effort))?)?;
                 self.publish_settings(&live).await;
-                Ok(())
+                Ok(None)
             }
             CodexSdkV1Input::SetPreset { approval, sandbox } => {
                 let live = self.live()?;
@@ -1699,7 +1750,7 @@ impl CodexInputTarget {
                 live.control
                     .set_preset(approval, serde_json::from_value(sandbox)?);
                 self.publish_settings(&live).await;
-                Ok(())
+                Ok(None)
             }
             CodexSdkV1Input::UserTurn { input } => {
                 let items: Vec<InputItem> = serde_json::from_slice(&input)
@@ -1709,11 +1760,19 @@ impl CodexInputTarget {
                 update_attached(&self.runtime, |attached| {
                     attached.active_turn_id = Some(turn_id);
                 });
-                Ok(())
+                Ok(None)
             }
             CodexSdkV1Input::Steer { turn_id, input } => {
                 let items: Vec<InputItem> = serde_json::from_slice(&input)
                     .context("Codex steer input must be JSON input items")?;
+                let accepted_text = items
+                    .iter()
+                    .filter_map(|item| match item {
+                        InputItem::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let live = self.live()?;
                 let active = live
                     .control
@@ -1722,7 +1781,7 @@ impl CodexInputTarget {
                 update_attached(&self.runtime, |attached| {
                     attached.active_turn_id = Some(active);
                 });
-                Ok(())
+                Ok(Some(accepted_text))
             }
             CodexSdkV1Input::Interrupt { turn_id } => {
                 let (live, interrupt_turn_id) = {
@@ -1732,13 +1791,13 @@ impl CodexInputTarget {
                         .unwrap_or_else(|poison| poison.into_inner());
                     let Some(attached) = state.attached.as_ref() else {
                         if turn_id.is_empty() {
-                            return Ok(());
+                            return Ok(None);
                         }
                         return Err(anyhow!("Codex thread is not attached"));
                     };
                     let interrupt_turn_id = if turn_id.is_empty() {
                         let Some(active) = attached.active_turn_id.clone() else {
-                            return Ok(());
+                            return Ok(None);
                         };
                         active
                     } else {
@@ -1750,7 +1809,7 @@ impl CodexInputTarget {
                     (live, interrupt_turn_id)
                 };
                 live.control.interrupt(&interrupt_turn_id).await?;
-                Ok(())
+                Ok(None)
             }
             CodexSdkV1Input::ApprovalDecision {
                 request_id,
@@ -1758,7 +1817,7 @@ impl CodexInputTarget {
             } => {
                 let request_id: RequestId = serde_json::from_slice(&request_id)
                     .context("approval request_id must be a JSON string or integer")?;
-                let (live, reply) = {
+                let (live, reply, item_id) = {
                     let mut state = self
                         .runtime
                         .lock()
@@ -1767,11 +1826,11 @@ impl CodexInputTarget {
                         .attached
                         .as_mut()
                         .ok_or_else(|| anyhow!("unknown or already-resolved request id"))?;
-                    let kind = *attached
+                    let pending = attached
                         .pending
                         .get(&request_id)
                         .ok_or_else(|| anyhow!("unknown or already-resolved request id"))?;
-                    let reply = match kind {
+                    let reply = match pending.kind {
                         PendingRequestKind::Approval => {
                             PendingReply::Approval(approval_response(&decision)?)
                         }
@@ -1784,8 +1843,9 @@ impl CodexInputTarget {
                     let live = attached.live.clone().ok_or_else(|| {
                         anyhow!("Codex thread is read-only until reconnect succeeds")
                     })?;
+                    let item_id = pending.item_id.clone();
                     attached.pending.remove(&request_id);
-                    (live, reply)
+                    (live, reply, item_id)
                 };
                 let result = match reply {
                     PendingReply::Approval(response) => {
@@ -1797,27 +1857,36 @@ impl CodexInputTarget {
                 } else {
                     "response_failed"
                 };
-                write_resolution(&self.log_source, &request_id, reason).await;
-                result.map_err(Into::into)
+                write_resolution(&self.log_source, &request_id, &item_id, reason).await;
+                result.map(|()| None).map_err(Into::into)
             }
         }
     }
 
     async fn send(&self, input_id: Vec<u8>, input: CodexSdkV1Input) {
         let result = self.execute(input).await;
-        let row = match result {
-            Ok(()) => json!({
-                "type": "amux.input_result",
-                "input_id": input_id,
-                "ok": {},
-            }),
-            Err(error) => json!({
-                "type": "amux.input_result",
-                "input_id": input_id,
-                "error": {"message": error.to_string()},
-            }),
-        };
+        let row = input_result_row(input_id, result);
         self.log_source.write(row).await;
+    }
+}
+
+fn input_result_row(input_id: Vec<u8>, result: Result<Option<String>>) -> Value {
+    match result {
+        Ok(Some(text)) => json!({
+            "type": "amux.input_result",
+            "input_id": input_id,
+            "ok": {"input_id": input_id, "text": text},
+        }),
+        Ok(None) => json!({
+            "type": "amux.input_result",
+            "input_id": input_id,
+            "ok": {},
+        }),
+        Err(error) => json!({
+            "type": "amux.input_result",
+            "input_id": input_id,
+            "error": {"message": error.to_string()},
+        }),
     }
 }
 
@@ -2038,7 +2107,7 @@ impl AgentBackend for CodexBackend {
                     attached
                         .pending
                         .iter()
-                        .map(|(id, kind)| (id.clone(), *kind))
+                        .map(|(id, pending)| (id.clone(), pending.kind))
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
@@ -2240,6 +2309,7 @@ mod tests {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            inventory_revision: 0,
         };
         let mut backend = CodexBackend::with_session(record, provider);
         let (mut rows, facts) = backend.log_source.subscribe_with_query(None).await.unwrap();
@@ -2619,7 +2689,10 @@ mod tests {
                 .unwrap()
                 .pending
                 .get(&RequestId::Integer(77)),
-            Some(PendingRequestKind::ToolCall)
+            Some(PendingRequest {
+                kind: PendingRequestKind::ToolCall,
+                ..
+            })
         ));
         assert!(
             tokio::time::timeout(Duration::from_millis(30), read_request(&mut reader))
@@ -3791,10 +3864,19 @@ mod tests {
                 active_turn_id: Some("turn-1".into()),
                 last_agent_messages: HashMap::new(),
                 pending: HashMap::from([
-                    (RequestId::Integer(1), PendingRequestKind::Approval),
+                    (
+                        RequestId::Integer(1),
+                        PendingRequest {
+                            kind: PendingRequestKind::Approval,
+                            item_id: "item-1".into(),
+                        },
+                    ),
                     (
                         RequestId::String("tool-2".into()),
-                        PendingRequestKind::ToolCall,
+                        PendingRequest {
+                            kind: PendingRequestKind::ToolCall,
+                            item_id: "item-2".into(),
+                        },
                     ),
                 ]),
                 applied_name_generation: Some(0),
@@ -3818,10 +3900,56 @@ mod tests {
             let row = reader.read().await.unwrap().payload;
             assert_eq!(row["type"], "amux.codex_approval_resolved");
             assert_eq!(row["reason"], "connection_lost");
+            assert_eq!(row["resolution"], "connection_lost");
+            assert!(matches!(row["item_id"].as_str(), Some("item-1" | "item-2")));
             ids.push(row["request_id"].clone());
         }
         assert!(ids.contains(&json!(1)));
         assert!(ids.contains(&json!("tool-2")));
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_revision_codex_rows_are_self_describing_for_every_observer() {
+        let source = StructuredLogSource::new(16);
+        let event = ThreadEvent {
+            method: "item/commandExecution/requestApproval".into(),
+            params: json!({"itemId":"item-7","availableDecisions":["accept","decline"]}),
+            turn_id: Some("turn-3".into()),
+            event: TurnEvent::Warning {
+                message: "fixture".into(),
+            },
+        };
+        let request_id = RequestId::Integer(41);
+        write_approval_ask(&source, &event, &request_id, "item-7").await;
+        write_resolution(&source, &request_id, "item-7", "answered").await;
+        let (mut reader, facts) = source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 2);
+        let rows = vec![
+            reader.read().await.unwrap().payload,
+            reader.read().await.unwrap().payload,
+        ];
+
+        let fold = |rows: &[Value]| {
+            let mut items = HashMap::new();
+            for row in rows {
+                items.insert(
+                    row["item_id"].as_str().unwrap().to_string(),
+                    row.get("resolution")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                );
+            }
+            items
+        };
+        let replayed: Vec<Value> =
+            serde_json::from_slice(&serde_json::to_vec(&rows).unwrap()).unwrap();
+        assert_eq!(fold(&rows), fold(&replayed));
+        assert_eq!(fold(&rows)["item-7"], Some("answered".into()));
+
+        let steer = input_result_row(b"stable-input-9".to_vec(), Ok(Some("accepted".into())));
+        assert_eq!(steer["input_id"], json!(b"stable-input-9"));
+        assert_eq!(steer["ok"]["input_id"], json!(b"stable-input-9"));
+        assert_eq!(steer["ok"]["text"], "accepted");
     }
 
     #[tokio::test]

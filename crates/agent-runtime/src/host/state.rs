@@ -6,6 +6,8 @@
 //! [`super::LocalAgentHost`] seam.
 
 use std::collections::HashMap;
+use std::io;
+use std::path::Path;
 use std::sync::Arc;
 
 use model::ShutdownReason;
@@ -17,6 +19,7 @@ use crate::agents::{
     AgentDeps, AgentEvent, AgentRecord, AgentSession, SessionCloseReason, WorkingOn,
 };
 use crate::events::EventSource;
+use crate::host::revision::InventoryRevisions;
 
 pub(crate) type SharedAgentServiceState = Arc<RwLock<AgentServiceState>>;
 
@@ -28,32 +31,48 @@ pub(crate) struct AgentServiceState {
     pub(crate) outbound_envelopes: EventSource<Envelope>,
     pub(crate) deps: AgentDeps,
     pub(crate) recent_projects: crate::repositories::RecentProjects,
+    inventory_revisions: InventoryRevisions,
 }
 
 pub(crate) struct LocalAgentContext {
     pub(crate) session: AgentSession,
     pub(crate) working_on: Option<WorkingOn>,
+    pub(crate) inventory_revision: u64,
 }
 
 impl LocalAgentContext {
     pub(crate) fn record(&self, host_id: Uuid) -> AgentRecord {
         let mut record = self.session.to_agent(host_id);
         record.working_on.clone_from(&self.working_on);
+        record.inventory_revision = self.inventory_revision;
         record
     }
 }
 
 impl AgentServiceState {
+    #[cfg(test)]
     pub(crate) fn new(deps: AgentDeps) -> Self {
-        Self {
+        let host_id = deps.mcp_launch_route.host_id();
+        let state_path = deps.data_dir.join(format!("state-{host_id}.yaml"));
+        Self::new_with_revision_path(deps, &state_path, host_id)
+            .expect("test inventory revision store should open")
+    }
+
+    pub(crate) fn new_with_revision_path(
+        deps: AgentDeps,
+        state_path: &Path,
+        host_id: Uuid,
+    ) -> io::Result<Self> {
+        Ok(Self {
             local_agents: HashMap::new(),
             local_agent_events: EventSource::default(),
             local_session_close_events: EventSource::default(),
             local_shutdown_events: EventSource::default(),
             outbound_envelopes: EventSource::default(),
             recent_projects: crate::repositories::RecentProjects::load(&deps.data_dir),
+            inventory_revisions: InventoryRevisions::open(state_path, host_id)?,
             deps,
-        }
+        })
     }
 
     /// Number of locally-hosted agents.
@@ -107,8 +126,13 @@ impl AgentServiceState {
             return Err(format!("Agent already exists: {name}"));
         }
 
+        let revision = self
+            .inventory_revisions
+            .reserve()
+            .map_err(|error| format!("failed to reserve inventory revision: {error}"))?;
         let mut record = session.to_agent(host_id);
         record.working_on.clone_from(&working_on);
+        record.inventory_revision = revision;
         self.recent_projects
             .record(&record.working_dir, record.created_at);
         let event = record.agent_event();
@@ -117,9 +141,47 @@ impl AgentServiceState {
             LocalAgentContext {
                 session,
                 working_on,
+                inventory_revision: revision,
             },
         );
         Ok(event)
+    }
+
+    pub(crate) fn through_inventory_revision(&self) -> u64 {
+        self.inventory_revisions.through()
+    }
+
+    pub(crate) fn updated_agent_event(
+        &mut self,
+        host_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<AgentEvent, String> {
+        let revision = self
+            .inventory_revisions
+            .reserve()
+            .map_err(|error| format!("failed to reserve inventory revision: {error}"))?;
+        let context = self
+            .local_agents
+            .get_mut(&agent_id)
+            .ok_or_else(|| format!("Agent not found: {agent_id}"))?;
+        context.inventory_revision = revision;
+        Ok(context.record(host_id).agent_updated_event())
+    }
+
+    pub(crate) fn down_agent_event(
+        &mut self,
+        host_id: Uuid,
+        agent_id: Uuid,
+    ) -> Result<AgentEvent, String> {
+        let inventory_revision = self
+            .inventory_revisions
+            .reserve()
+            .map_err(|error| format!("failed to reserve inventory revision: {error}"))?;
+        Ok(AgentEvent::AgentDown {
+            host_id,
+            agent_id,
+            inventory_revision,
+        })
     }
 
     pub(crate) fn contains_agent_id(&self, agent_id: &Uuid) -> bool {

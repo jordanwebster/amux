@@ -114,6 +114,8 @@ pub struct Agent {
     pub created_at: DateTime<Utc>,
     pub parent: Option<AgentParent>,
     pub working_on: Option<WorkingOn>,
+    /// Durable host-local ordering for authoritative inventory changes.
+    pub inventory_revision: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -131,6 +133,8 @@ struct HumanAgent {
     parent: Option<AgentParent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     working_on: Option<WorkingOn>,
+    #[serde(default)]
+    inventory_revision: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -146,6 +150,7 @@ struct BinaryAgent {
     created_at: DateTime<Utc>,
     parent: Option<AgentParent>,
     working_on: Option<WorkingOn>,
+    inventory_revision: u64,
 }
 
 macro_rules! impl_agent_conversion {
@@ -164,6 +169,7 @@ macro_rules! impl_agent_conversion {
                     created_at: value.created_at,
                     parent: value.parent,
                     working_on: value.working_on,
+                    inventory_revision: value.inventory_revision,
                 }
             }
         }
@@ -182,6 +188,7 @@ macro_rules! impl_agent_conversion {
                     created_at: value.created_at,
                     parent: value.parent,
                     working_on: value.working_on,
+                    inventory_revision: value.inventory_revision,
                 }
             }
         }
