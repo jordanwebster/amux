@@ -67,9 +67,14 @@ pub use queue::{Draft, DraftSegment, QueueCommand, QueueDelivery, QueuedMessage}
 pub use store::{
     AttemptId, ChatCommand, ChatState, ChatStreamMsg, ChatWindow, FLUSH_DEADLINE, HeadDto,
     LoadedDto, MutationBatchDto, PageDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto,
-    StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto, behind,
+    StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto, WINDOW_PAGE_ENTRIES, behind,
 };
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
+
+/// Durable summary version accepted for one structured provider protocol.
+pub fn summary_producer_version(protocol: StructuredProtocol) -> u32 {
+    fold::AgentFold::for_protocol(protocol).tip_version()
+}
 
 pub use self::model::{
     AgentCard, AgentLayer, AgentMessageKind, AgentMessagePresentation, AgentMessageSender,

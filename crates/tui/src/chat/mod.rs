@@ -569,14 +569,54 @@ pub fn handle_chat_key(
     };
     if let Some(intent) = intent {
         let metrics = chat.metrics_for(model, viewport, now);
+        let was_following = matches!(chat.viewport.scroll, FeedScroll::Following);
         apply_scroll(
             &mut chat.viewport,
             &metrics,
             intent,
             entry_watermark(model, chat.agent),
         );
+        return action
+            .or_else(|| store_scroll_action(chat, model, intent, &metrics, was_following));
     }
     action
+}
+
+fn store_scroll_action(
+    chat: &ChatView,
+    model: &Model,
+    intent: viewport::ScrollIntent,
+    metrics: &FeedMetrics,
+    was_following: bool,
+) -> Option<UiAction> {
+    let window = model.chat(chat.agent)?;
+    if window.live_only {
+        return None;
+    }
+    let at_oldest = match chat.viewport.scroll {
+        FeedScroll::Paused { top_line, .. } => top_line == 0,
+        FeedScroll::Following => metrics.max_top == 0,
+    };
+    let toward_older = match intent {
+        viewport::ScrollIntent::Oldest => true,
+        viewport::ScrollIntent::Rows(delta) | viewport::ScrollIntent::Page(delta) => delta < 0,
+        viewport::ScrollIntent::Follow => false,
+    };
+    if toward_older && at_oldest && window.first_page.is_some() {
+        return Some(UiAction::PageChatOlder(chat.agent));
+    }
+    let toward_tip = match intent {
+        viewport::ScrollIntent::Follow => true,
+        viewport::ScrollIntent::Rows(delta) | viewport::ScrollIntent::Page(delta) => delta > 0,
+        viewport::ScrollIntent::Oldest => false,
+    };
+    if toward_tip
+        && matches!(chat.viewport.scroll, FeedScroll::Following)
+        && (!was_following || matches!(intent, viewport::ScrollIntent::Follow))
+    {
+        return Some(UiAction::FollowChatTip(chat.agent));
+    }
+    None
 }
 
 /// Ctrl+V: attach whatever the clipboard holds.
@@ -611,11 +651,20 @@ pub fn handle_chat_mouse(
     event: MouseEvent,
     size: (u16, u16),
 ) -> bool {
+    handle_chat_mouse_with_action(chat, model, event, size).0
+}
+
+pub(crate) fn handle_chat_mouse_with_action(
+    chat: &mut ChatView,
+    model: &Model,
+    event: MouseEvent,
+    size: (u16, u16),
+) -> (bool, Option<UiAction>) {
     const NOTCH_ROWS: i32 = 3;
     let rows = match event.kind {
         MouseEventKind::ScrollUp => -NOTCH_ROWS,
         MouseEventKind::ScrollDown => NOTCH_ROWS,
-        _ => return false,
+        _ => return (false, None),
     };
 
     // The review page is the whole frame while it is open, so a notch
@@ -626,7 +675,7 @@ pub fn handle_chat_mouse(
         review.resize(size.0, size.1);
         let before = review.scroll();
         review.handle_wheel(rows);
-        return review.scroll() != before;
+        return (review.scroll() != before, None);
     }
 
     let intent = viewport::ScrollIntent::Rows(rows);
@@ -641,15 +690,18 @@ pub fn handle_chat_mouse(
         || row < geometry.feed_top
         || row >= geometry.feed_top.saturating_add(geometry.feed_rows)
     {
-        return false;
+        return (false, None);
     }
 
-    apply_scroll(
+    let was_following = matches!(chat.viewport.scroll, FeedScroll::Following);
+    let moved = apply_scroll(
         &mut chat.viewport,
         &metrics,
         intent,
         entry_watermark(model, chat.agent),
-    )
+    );
+    let action = store_scroll_action(chat, model, intent, &metrics, was_following);
+    (moved, action)
 }
 
 pub(crate) fn build_chat_lines(

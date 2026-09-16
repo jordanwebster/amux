@@ -530,6 +530,8 @@ pub enum UiAction {
     /// chrome — no terminal handoff — and notes the attach for the
     /// subscription policy.
     OpenChat(AgentId),
+    PageChatOlder(AgentId),
+    FollowChatTip(AgentId),
     Dispatch(Command),
     /// Leave the chat back to the fleet (read-only chats' `q`, F1; the
     /// writable chat leaves via the chrome leader — Phase 6).

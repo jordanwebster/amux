@@ -761,6 +761,19 @@ impl Runtime {
         self.process(Msg::Chat(ChatCommand::Open { agent }));
     }
 
+    /// Extend the visible store-backed chat window toward older history.
+    pub fn page_chat_older(&mut self, agent: AgentId) {
+        self.process(Msg::Chat(ChatCommand::PageOlder {
+            agent,
+            n: ui_state::WINDOW_PAGE_ENTRIES,
+        }));
+    }
+
+    /// Return an older-history window to the newest persisted rows.
+    pub fn follow_chat_tip(&mut self, agent: AgentId) {
+        self.process(Msg::Chat(ChatCommand::FollowTip { agent }));
+    }
+
     /// Reify a user detach: a conversation nobody has open no longer widens
     /// the subscription policy, and the stream it asked for is let go.
     pub fn note_detached(&mut self, agent: AgentId) {

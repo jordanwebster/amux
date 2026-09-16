@@ -338,6 +338,7 @@ impl CodexLayer {
     fn observe_provider(&mut self, row: &Value) {
         match row.get("type").and_then(Value::as_str) {
             Some("amux.codex_ready" | "amux.codex_settings") => {
+                self.stale = false;
                 if let Some(session) = row.get("session") {
                     self.provider.observe_codex(session);
                 }

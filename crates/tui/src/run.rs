@@ -372,6 +372,8 @@ async fn perform(
             ShellEffect::Attach(agent) => *exit_request = Some(ChromeExit::Attach(agent)),
             ShellEffect::NoteAttached(agent) => runtime.open_chat(agent),
             ShellEffect::NoteDetached(agent) => runtime.close_chat(agent),
+            ShellEffect::PageChatOlder(agent) => runtime.page_chat_older(agent),
+            ShellEffect::FollowChatTip(agent) => runtime.follow_chat_tip(agent),
             ShellEffect::WriteClipboard(text) => {
                 // A truncated copy is not the copy that was asked for,
                 // so it reads as a problem even though bytes did land.

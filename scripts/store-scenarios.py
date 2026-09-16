@@ -529,8 +529,11 @@ def chat(output: Path) -> None:
         journey.wait_frame(pane, "live-row-10999", timeout=90)
         journey.frame(pane, "caught up at stream tip")
         journey.tmux("send-keys", "-t", pane, "C-Home")
-        scrolled = journey.wait_frame(pane, "scrolled back", timeout=60)
+        scrolled = journey.page_until(pane, "stored-row-04599")
         journey.frame(pane, "scroll-back paged older entries", scrolled)
+        journey.tmux("send-keys", "-t", pane, "C-End")
+        returned = journey.wait_frame(pane, "live-row-10999", timeout=90)
+        journey.frame(pane, "returned to the streamed tip", returned)
         diagnostics = journey.diagnostics()
         encoded = json.dumps(diagnostics)
         if '"after"' not in encoded and "after " not in encoded:
@@ -542,7 +545,8 @@ def chat(output: Path) -> None:
             [
                 "the store held at least 5,000 entries before reopen",
                 "the reopened chat painted while a 2,000 rows/s producer ran",
-                "the chat reached the final streamed row and scrolled into older pages",
+                "the chat paged to a row older than its initial 400-entry window",
+                "returning to the tip restored the final streamed row",
                 "subscription diagnostics recorded an exact after-cursor query",
             ],
         )

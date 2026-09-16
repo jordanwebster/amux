@@ -5,14 +5,14 @@ use fold::claude_sdk::ClaudeSdkFold;
 use fold::codex::CodexFold;
 use fold::{
     Baseline, BaselineReason, CommitResult, ExpectedHead, Fleet, FleetAgent, FleetHost,
-    Generations, Head, HeadState, Input, Loaded, Membership, OpId as StoreOpId, ProviderFold,
-    StoreError,
+    Generations, Head, HeadState, Input, JsonBytes, Loaded, Membership, MutationOracle,
+    OpId as StoreOpId, Placement, ProviderFold, StoreError, Stored,
 };
 use serde_json::json;
 use ui_state::{
     AttemptId, ChatCommand, ChatState, ChatStreamMsg, Effect, LoadedDto, Model, Msg,
-    ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto, StoreMsg, StoreOp, StoreOpKind,
-    StoreStreamQuery, StreamCloseReason, StreamEntry, update,
+    MutationBatchDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto, StoreMsg, StoreOp,
+    StoreOpKind, StoreStreamQuery, StreamCloseReason, StreamEntry, update,
 };
 
 use crate::harness::*;
@@ -31,6 +31,22 @@ fn empty_loaded(head: HeadState<ClaudeFold>) -> LoadedDto {
         content_revision: 9,
         segment_high_water: 2,
         head,
+        window: Vec::new(),
+        boundaries: Vec::new(),
+        first_page: None,
+        aliases: Vec::new(),
+        host: None,
+        progress: None,
+    })
+}
+
+fn empty_codex_loaded() -> LoadedDto {
+    LoadedDto::Codex(Loaded {
+        generations: GENERATIONS,
+        fence: 7,
+        content_revision: 9,
+        segment_high_water: 2,
+        head: HeadState::None,
         window: Vec::new(),
         boundaries: Vec::new(),
         first_page: None,
@@ -429,6 +445,72 @@ fn store_cursor_without_a_head_never_opens_the_pty_send_gate() {
 }
 
 #[test]
+fn authoritative_ready_rows_clear_unknown_pre_cursor_state() {
+    let cases = [
+        (
+            inventory_model(),
+            empty_loaded(HeadState::None),
+            serde_json::json!({"type":"amux.transcript_ready"}),
+        ),
+        (
+            inventory_model_with(a_codex_agent("stored", "nova")),
+            empty_codex_loaded(),
+            serde_json::json!({"type":"amux.codex_ready"}),
+        ),
+    ];
+    for (mut model, loaded, ready) in cases {
+        let (attempt, op) = begin_open(&mut model);
+        let effects = load(&mut model, attempt, op, loaded);
+        let stream = stream_attempt(&effects);
+        update(
+            &mut model,
+            Msg::ChatStream {
+                agent: agent_id("stored"),
+                attempt: stream,
+                event: ChatStreamMsg::Opened {
+                    facts: continuous(1),
+                    at: t0_plus(1),
+                },
+            },
+        );
+        update(
+            &mut model,
+            Msg::ChatStream {
+                agent: agent_id("stored"),
+                attempt: stream,
+                event: ChatStreamMsg::Batch {
+                    at: t0_plus(2),
+                    entries: vec![StreamEntry::observed(1, t0_plus(2), ready)],
+                },
+            },
+        );
+        update(
+            &mut model,
+            Msg::ChatStream {
+                agent: agent_id("stored"),
+                attempt: stream,
+                event: ChatStreamMsg::ReplayComplete { at: t0_plus(3) },
+            },
+        );
+        match model
+            .agent(agent_id("stored"))
+            .unwrap()
+            .structured_protocol()
+        {
+            Some(model::StructuredProtocol::ClaudePtyTranscript) => assert_eq!(
+                ui_state::claude::send_gate(&model, agent_id("stored")),
+                ui_state::SendGate::Ready
+            ),
+            Some(model::StructuredProtocol::Codex) => assert_eq!(
+                ui_state::codex::send_gate(&model, agent_id("stored")),
+                ui_state::codex::SendGate::Ready
+            ),
+            protocol => panic!("unexpected protocol {protocol:?}"),
+        }
+    }
+}
+
+#[test]
 fn store_cursor_keeps_a_working_turn_closed_to_new_prompts_after_reconnect() {
     let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);
@@ -525,6 +607,103 @@ fn recorded_batch(stream: fold::StreamAttempt, from: u64) -> Msg {
             )],
         },
     }
+}
+
+#[test]
+fn a_persisted_stream_never_grows_the_visible_window_past_its_budget() {
+    let mut model = inventory_model();
+    let (_, stream) = live_empty(&mut model);
+    let entries = (1..=1_000)
+        .map(|seq| {
+            StreamEntry::observed(
+                seq,
+                t0_plus(3),
+                serde_json::json!({
+                    "type": "assistant",
+                    "uuid": uuid::Uuid::from_u128(u128::from(seq)).to_string(),
+                    "sessionId": "22222222-2222-4222-8222-222222222222",
+                    "timestamp": "2025-10-09T08:53:23.000Z",
+                    "message": {
+                        "id": format!("message-{seq:04}"),
+                        "role": "assistant",
+                        "stop_reason": "end_turn",
+                        "content": [{"type": "text", "text": format!("stored row {seq:04}")}],
+                    },
+                }),
+            )
+        })
+        .collect();
+    let effects = update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: stream,
+            event: ChatStreamMsg::Batch {
+                at: t0_plus(3),
+                entries,
+            },
+        },
+    );
+    let [
+        Effect::Store(StoreOp::Commit {
+            attempt,
+            op,
+            mutations: MutationBatchDto::Claude(mutations),
+            ..
+        }),
+    ] = effects.as_slice()
+    else {
+        panic!("the stream batch must be persisted: {effects:?}");
+    };
+    let mut oracle = MutationOracle::default();
+    oracle.apply(mutations).unwrap();
+    let canonical = oracle.entries();
+    let placed = canonical
+        .iter()
+        .map(|entry| Placement {
+            key: entry.key.clone(),
+            segment: entry.segment,
+            order: entry.order,
+            revision: entry.revision,
+        })
+        .collect();
+    let bodies = canonical
+        .into_iter()
+        .map(|entry| Stored {
+            key: entry.key,
+            segment: entry.segment,
+            order: entry.order,
+            revision: entry.revision,
+            entry: JsonBytes(postcard::to_allocvec(&entry.entry).unwrap()),
+        })
+        .collect();
+    update(
+        &mut model,
+        Msg::Store(StoreMsg::Committed {
+            profile: ProfileGeneration(0),
+            attempt: *attempt,
+            op: *op,
+            agent: agent_id("stored"),
+            result: CommitResult {
+                expected: ExpectedHead::Present {
+                    fence: 8,
+                    version: 2,
+                },
+                content_revision: 11,
+                placed,
+                bodies,
+                deleted: Vec::new(),
+                redirected: Vec::new(),
+                boundaries: Vec::new(),
+            },
+        }),
+    );
+    let window = &model.chat(agent_id("stored")).unwrap().entries;
+    assert_eq!(window.len(), ui_state::store::WINDOW_MAX_ENTRIES);
+    assert!(
+        postcard::to_allocvec(window).unwrap().len() <= ui_state::store::WINDOW_MAX_BYTES,
+        "the retained window also obeys its encoded-byte budget"
+    );
 }
 
 #[test]

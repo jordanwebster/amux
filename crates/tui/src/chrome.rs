@@ -466,6 +466,8 @@ pub enum ShellEffect {
     Dispatch(Command),
     NoteAttached(AgentId),
     NoteDetached(AgentId),
+    PageChatOlder(AgentId),
+    FollowChatTip(AgentId),
     WriteClipboard(String),
     Create {
         host: Option<HostId>,
@@ -688,8 +690,14 @@ impl Chrome {
                 // whether anything actually moved, so a clamped wheel
                 // event costs no repaint.
                 if let Some(chat) = self.view.chat.as_mut() {
-                    self.dirty |=
-                        crate::chat::handle_chat_mouse(chat, model, mouse.to_event(), viewport);
+                    let (moved, action) = crate::chat::handle_chat_mouse_with_action(
+                        chat,
+                        model,
+                        mouse.to_event(),
+                        viewport,
+                    );
+                    self.dirty |= moved;
+                    return self.action(model, action);
                 }
                 Vec::new()
             }
@@ -722,6 +730,8 @@ impl Chrome {
                     .chain(std::iter::once(ShellEffect::NoteAttached(agent)))
                     .collect()
             }
+            Some(UiAction::PageChatOlder(agent)) => vec![ShellEffect::PageChatOlder(agent)],
+            Some(UiAction::FollowChatTip(agent)) => vec![ShellEffect::FollowChatTip(agent)],
             Some(UiAction::Dispatch(command)) => vec![ShellEffect::Dispatch(command)],
             Some(UiAction::Create { host }) => vec![ShellEffect::Create { host }],
             Some(UiAction::ListProfiles) => vec![ShellEffect::ListProfiles],

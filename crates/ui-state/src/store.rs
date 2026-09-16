@@ -26,6 +26,7 @@ use crate::{Effect, StreamCloseReason, StreamEntry};
 pub const PENDING_COMMIT_MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const WINDOW_MAX_ENTRIES: usize = 800;
 pub const WINDOW_MAX_BYTES: usize = 16 * 1024 * 1024;
+pub const WINDOW_PAGE_ENTRIES: usize = 400;
 pub const COMMIT_RESULT_MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const FLUSH_DEADLINE: TimeDelta = TimeDelta::seconds(5);
 
@@ -411,6 +412,7 @@ pub enum StoreMsg {
 pub enum ChatCommand {
     Open { agent: AgentId },
     PageOlder { agent: AgentId, n: usize },
+    FollowTip { agent: AgentId },
     Close { agent: AgentId, now: DateTime<Utc> },
     FlushDeadline { agent: AgentId, now: DateTime<Utc> },
 }
@@ -551,9 +553,18 @@ pub struct ChatWindow {
     load_retries: u8,
     replay_through: Seq,
     flush_deadline: Option<DateTime<Utc>>,
+    #[serde(default)]
+    retain_oldest: bool,
+    #[serde(default)]
+    newest_evicted: bool,
 }
 
 impl ChatWindow {
+    /// Encoded size governed by the visible-window memory budget.
+    pub fn encoded_window_bytes(&self) -> usize {
+        postcard::to_allocvec(self.entries.as_slice()).map_or(usize::MAX, |bytes| bytes.len())
+    }
+
     fn loading(protocol: StructuredProtocol, attempt: AttemptId) -> Self {
         Self {
             state: ChatState::Loading,
@@ -590,6 +601,8 @@ impl ChatWindow {
             load_retries: 0,
             replay_through: 0,
             flush_deadline: None,
+            retain_oldest: false,
+            newest_evicted: false,
         }
     }
 
@@ -977,6 +990,8 @@ fn install_loaded(chat: &mut ChatWindow, loaded: LoadedDto) -> LoadedBranch {
             chat.live_only = false;
             chat.persistence_error = None;
             chat.catching_up_since = None;
+            chat.retain_oldest = false;
+            chat.newest_evicted = false;
             chat.view_epoch = chat.view_epoch.saturating_add(1);
             match $loaded.head {
                 HeadState::Usable(_, head) => {
@@ -1141,6 +1156,13 @@ pub fn reconcile(chat: &mut ChatWindow, result: &fold::CommitResult) -> Result<(
         chat.canonical_entries.push(stored);
     }
     sort_entries(&mut chat.canonical_entries);
+    let retained = if chat.retain_oldest {
+        WindowEnd::Oldest
+    } else {
+        WindowEnd::Newest
+    };
+    let evicted = trim_window(&mut chat.canonical_entries, retained);
+    chat.newest_evicted |= retained == WindowEnd::Oldest && evicted;
     chat.entries.clone_from(&chat.canonical_entries);
     chat.aliases.clone_from(&chat.canonical_aliases);
     for pending in &chat.pending {
@@ -1151,6 +1173,8 @@ pub fn reconcile(chat: &mut ChatWindow, result: &fold::CommitResult) -> Result<(
             false,
         )?;
     }
+    let evicted = trim_window(&mut chat.entries, retained);
+    chat.newest_evicted |= retained == WindowEnd::Oldest && evicted;
     chat.view_epoch = chat.view_epoch.saturating_add(1);
     Ok(())
 }
@@ -1211,17 +1235,36 @@ fn paged_result(
             if $page.content_revision != chat.content_revision {
                 return retry_page(state, agent, request.n);
             }
-            let mut older = $page
+            let older = $page
                 .entries
                 .into_iter()
                 .map(|value| StoredDto::$variant(Box::new(value)))
                 .collect::<Vec<_>>();
-            older.append(&mut chat.entries);
-            chat.entries = older;
+            chat.canonical_entries.extend(older);
+            sort_entries(&mut chat.canonical_entries);
+            chat.canonical_entries
+                .dedup_by(|left, right| left.key() == right.key());
+            chat.newest_evicted |= trim_window(&mut chat.canonical_entries, WindowEnd::Oldest);
+            chat.entries.clone_from(&chat.canonical_entries);
+            chat.aliases.clone_from(&chat.canonical_aliases);
+            for pending in &chat.pending {
+                if pending
+                    .mutations
+                    .apply_to(
+                        &mut chat.entries,
+                        &mut chat.aliases,
+                        pending.head.segment(),
+                        false,
+                    )
+                    .is_err()
+                {
+                    return reload(state, agent);
+                }
+            }
             sort_entries(&mut chat.entries);
             chat.entries
                 .dedup_by(|left, right| left.key() == right.key());
-            trim_window(&mut chat.entries);
+            chat.newest_evicted |= trim_window(&mut chat.entries, WindowEnd::Oldest);
             chat.boundaries = merge_boundaries(&chat.boundaries, &$page.boundaries);
             chat.first_page = $page.next;
             chat.view_epoch = chat.view_epoch.saturating_add(1);
@@ -1580,8 +1623,14 @@ fn enqueue(state: &mut StoreState, agent: AgentId, mutations: MutationBatchDto) 
     {
         return reload(state, agent).effects;
     }
+    let retained = if chat.retain_oldest {
+        WindowEnd::Oldest
+    } else {
+        WindowEnd::Newest
+    };
+    let evicted = trim_window(&mut chat.entries, retained);
+    chat.newest_evicted |= retained == WindowEnd::Oldest && evicted;
     if chat.live_only {
-        trim_window(&mut chat.entries);
         return Vec::new();
     }
     let (mutations, transition) = if let Some(transition) = chat.transition.as_ref() {
@@ -1678,10 +1727,14 @@ fn interest(chat: &ChatWindow) -> WindowInterest {
             .iter()
             .map(|entry| entry.key().clone())
             .collect(),
-        feed_from: chat.entries.first().map(|entry| {
-            let (segment, order, key) = entry.position();
-            (segment, order, key.clone())
-        }),
+        feed_from: if chat.retain_oldest {
+            None
+        } else {
+            chat.entries.first().map(|entry| {
+                let (segment, order, key) = entry.position();
+                (segment, order, key.clone())
+            })
+        },
         view_epoch: chat.view_epoch,
         result_max_bytes: COMMIT_RESULT_MAX_BYTES,
     }
@@ -1750,6 +1803,7 @@ pub(crate) fn page_older(state: &mut StoreState, agent: AgentId, n: usize) -> Ve
     if chat.page_request.is_some() || chat.live_only {
         return Vec::new();
     }
+    chat.retain_oldest = true;
     token.view_epoch = chat.view_epoch;
     token.content_revision = chat.content_revision;
     chat.page_request = Some(PageRequest {
@@ -1767,6 +1821,18 @@ pub(crate) fn page_older(state: &mut StoreState, agent: AgentId, n: usize) -> Ve
         token,
         n,
     })]
+}
+
+pub(crate) fn follow_tip(state: &mut StoreState, agent: AgentId) -> Vec<Effect> {
+    let Some(chat) = state.chats.get_mut(&agent) else {
+        return Vec::new();
+    };
+    chat.retain_oldest = false;
+    chat.page_request = None;
+    if !chat.newest_evicted {
+        return Vec::new();
+    }
+    reload(state, agent).effects
 }
 
 fn retry_page(state: &mut StoreState, agent: AgentId, n: usize) -> StoreUpdate {
@@ -1897,16 +1963,40 @@ fn sort_entries(entries: &mut [StoredDto]) {
     entries.sort_by(|left, right| left.position().cmp(&right.position()));
 }
 
-fn trim_window(entries: &mut Vec<StoredDto>) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WindowEnd {
+    Oldest,
+    Newest,
+}
+
+/// Retain the end nearest the viewport and report whether the opposite end moved.
+fn trim_window(entries: &mut Vec<StoredDto>, retained: WindowEnd) -> bool {
+    let mut trimmed = false;
     if entries.len() > WINDOW_MAX_ENTRIES {
-        entries.drain(..entries.len() - WINDOW_MAX_ENTRIES);
+        let excess = entries.len() - WINDOW_MAX_ENTRIES;
+        match retained {
+            WindowEnd::Oldest => entries.truncate(WINDOW_MAX_ENTRIES),
+            WindowEnd::Newest => {
+                entries.drain(..excess);
+            }
+        }
+        trimmed = true;
     }
     while postcard::to_allocvec(entries.as_slice())
         .map_or(true, |bytes| bytes.len() > WINDOW_MAX_BYTES)
         && entries.len() > 1
     {
-        entries.remove(0);
+        match retained {
+            WindowEnd::Oldest => {
+                entries.pop();
+            }
+            WindowEnd::Newest => {
+                entries.remove(0);
+            }
+        }
+        trimmed = true;
     }
+    trimmed
 }
 
 #[cfg(test)]

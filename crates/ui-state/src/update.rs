@@ -670,6 +670,7 @@ fn update_chat_command(model: &mut Model, command: ChatCommand) -> Vec<Effect> {
             crate::store::open_chat(&mut model.store, agent, protocol)
         }
         ChatCommand::PageOlder { agent, n } => crate::store::page_older(&mut model.store, agent, n),
+        ChatCommand::FollowTip { agent } => crate::store::follow_tip(&mut model.store, agent),
         ChatCommand::Close { agent, now } => crate::store::close_chat(&mut model.store, agent, now),
         ChatCommand::FlushDeadline { agent, now } => {
             crate::store::flush_deadline(&mut model.store, agent, now)

@@ -1,5 +1,5 @@
 --- text ---
-  stored-session-history · claude @ nova                                                                 chat · unknown 
+  stored-session-history · claude @ nova                                                                    chat · idle 
                                                                                                                         
   ▸ Write /tmp/old                                                                                                      
     └ running                                                                                                           
@@ -38,9 +38,9 @@
 ▎   Type a message▌                                                                                                     
 ▎                                                                                                                       
                                                                                                                         
-    send gated — session state unknown · ? help                                                                         
+    enter send · ctrl+j newline · C-a r review diff · ? help                                                            
 --- styles ---
-..eeeeeeeeeeeeeeeeeeeeeemmmmmmmmmmmmmmmm.................................................................mmmmmmmmmmmmmm.
+..eeeeeeeeeeeeeeeeeeeeeemmmmmmmmmmmmmmmm....................................................................mmmmmmmmmmm.
 ........................................................................................................................
 ........................................................................................................................
 ....m.mmmmmmm...........................................................................................................
@@ -79,4 +79,4 @@ AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 AUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU
 ........................................................................................................................
-....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm.........................................................................
+....mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm............................................................

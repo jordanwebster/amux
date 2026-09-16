@@ -9,6 +9,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tui::chat::FeedScroll;
@@ -177,6 +178,18 @@ fn prompt_row(n: u8) -> serde_json::Value {
         "sessionId": "22222222-2222-4222-8222-222222222222",
         "timestamp": "2026-08-11T22:00:00.000Z",
         "message": {"role": "user", "content": "do the thing"},
+        "origin": {"kind": "human"},
+        "promptSource": "typed",
+    })
+}
+
+fn stored_prompt_row(n: usize) -> serde_json::Value {
+    serde_json::json!({
+        "type": "user",
+        "uuid": Uuid::from_u128(n as u128 + 1).to_string(),
+        "sessionId": "22222222-2222-4222-8222-222222222222",
+        "timestamp": "2026-08-11T22:00:00.000Z",
+        "message": {"role": "user", "content": format!("stored row {n:04}")},
         "origin": {"kind": "human"},
         "promptSource": "typed",
     })
@@ -467,7 +480,9 @@ fn fleet_rows_draw_daemon_summary_freshness_and_incompatible_age() {
     let mut stale = an_agent("stale-agent", "claude", "nova");
     stale.summary = Some(ui_state::SummaryEnvelope {
         through: 7,
-        producer_version: 1,
+        producer_version: ui_state::summary_producer_version(
+            ui_state::StructuredProtocol::ClaudePtyTranscript,
+        ),
         observed_at: at(NOW - 20),
         stale: true,
         revision: 4,
@@ -914,7 +929,9 @@ fn remembered_and_stale_model() -> Model {
     let mut remembered = an_agent("remembered-card", "claude", "nova");
     remembered.summary = Some(ui_state::SummaryEnvelope {
         through: 6,
-        producer_version: 1,
+        producer_version: ui_state::summary_producer_version(
+            ui_state::StructuredProtocol::ClaudePtyTranscript,
+        ),
         observed_at: at(NOW - 60),
         stale: false,
         revision: 3,
@@ -933,7 +950,9 @@ fn remembered_and_stale_model() -> Model {
     let mut stale = an_agent("stale-summary", "claude", "nova");
     stale.summary = Some(ui_state::SummaryEnvelope {
         through: 7,
-        producer_version: 1,
+        producer_version: ui_state::summary_producer_version(
+            ui_state::StructuredProtocol::ClaudePtyTranscript,
+        ),
         observed_at: at(NOW - 20),
         stale: true,
         revision: 4,
@@ -1378,6 +1397,174 @@ async fn seeded_sqlite_warm_start_and_gap_reconnect_paint_at_the_tui_boundary() 
     .text;
     assert!(gap_frame.contains("do the thing"));
     assert!(gap_frame.contains("missing history"));
+}
+
+#[tokio::test]
+async fn sqlite_chat_pages_past_the_loaded_window_and_returns_to_the_tip() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("store.sqlite");
+    let agent = an_agent("stored-chat", "claude", "nova");
+    let host = a_host("nova");
+    let options = || RuntimeOptions {
+        store_path: Some(path.clone()),
+        ..RuntimeOptions::default()
+    };
+
+    let mut seed = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
+    for _ in 0..3 {
+        next_runtime_message(&mut seed).await;
+    }
+    for message in [
+        server(ServerMsg::Connected {
+            local_host_id: Some(host.id),
+        }),
+        server(ServerMsg::HostUpserted { host: host.clone() }),
+        agent_up(&agent),
+        server(ServerMsg::HostsSynchronized),
+        server(ServerMsg::AgentsSynchronized),
+    ] {
+        runtime_message(&mut seed, message).await;
+    }
+    for delta in [
+        FleetDelta::Host {
+            host: host.clone(),
+            revision: 1,
+        },
+        FleetDelta::AgentUp {
+            agent: agent.clone(),
+            revision: 2,
+        },
+    ] {
+        runtime_message(&mut seed, Msg::FleetDelta(delta)).await;
+        next_runtime_message(&mut seed).await;
+    }
+
+    seed.open_chat(agent.id);
+    while seed
+        .model()
+        .chat(agent.id)
+        .is_none_or(|chat| !chat.is_painted())
+    {
+        next_runtime_message(&mut seed).await;
+    }
+    let stream = seed.model().chat(agent.id).unwrap().stream_attempt;
+    runtime_message(
+        &mut seed,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: ReplayFactsDto {
+                    retained_from: 1,
+                    through: 2_401,
+                    selected_from: 1,
+                    reset_at: 0,
+                    outcome: ReplayOutcomeDto::Continuous,
+                },
+                at: at(NOW - 10),
+            },
+        },
+    )
+    .await;
+    let mut entries = Vec::with_capacity(2_401);
+    entries.push(StreamEntry::observed(1, at(NOW - 9), ready_row()));
+    entries.extend(
+        (1..=2_400).map(|n| StreamEntry::observed(n as u64 + 1, at(NOW - 9), stored_prompt_row(n))),
+    );
+    runtime_message(
+        &mut seed,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::Batch {
+                at: at(NOW - 9),
+                entries,
+            },
+        },
+    )
+    .await;
+    while seed
+        .model()
+        .chat(agent.id)
+        .is_some_and(|chat| chat.pending_bytes() > 0)
+    {
+        next_runtime_message(&mut seed).await;
+    }
+    runtime_message(
+        &mut seed,
+        Msg::ChatStream {
+            agent: agent.id,
+            attempt: stream,
+            event: ChatStreamMsg::ReplayComplete { at: at(NOW - 8) },
+        },
+    )
+    .await;
+    while seed
+        .model()
+        .chat(agent.id)
+        .is_some_and(|chat| chat.pending_bytes() > 0)
+    {
+        next_runtime_message(&mut seed).await;
+    }
+    drop(seed);
+
+    let mut runtime = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
+    for _ in 0..8 {
+        if runtime.model().agent(agent.id).is_some() {
+            break;
+        }
+        next_runtime_message(&mut runtime).await;
+    }
+    runtime.open_chat(agent.id);
+    while runtime
+        .model()
+        .chat(agent.id)
+        .is_none_or(|chat| chat.entries.is_empty())
+    {
+        next_runtime_message(&mut runtime).await;
+    }
+    let mut view = chat_view(runtime.model());
+    assert!(render_frame_at(runtime.model(), &view, 120, 40).contains("stored row 2400"));
+
+    for _ in 0..5 {
+        let action = tui::chat::handle_chat_key(
+            view.chat.as_mut().expect("chat open"),
+            runtime.model(),
+            KeyEvent::new(KeyCode::Home, KeyModifiers::CONTROL),
+            (120, 40),
+            at(NOW),
+        );
+        assert_eq!(action, Some(UiAction::PageChatOlder(agent.id)));
+        let before = runtime.model().chat(agent.id).unwrap().view_epoch;
+        runtime.page_chat_older(agent.id);
+        while runtime.model().chat(agent.id).unwrap().view_epoch == before {
+            next_runtime_message(&mut runtime).await;
+        }
+        let window = runtime.model().chat(agent.id).unwrap();
+        assert!(window.entries.len() <= ui_state::store::WINDOW_MAX_ENTRIES);
+        assert!(window.encoded_window_bytes() <= ui_state::store::WINDOW_MAX_BYTES);
+        view.chat.as_mut().unwrap().reconcile(runtime.model());
+        let _ = render_frame_at(runtime.model(), &view, 120, 40);
+    }
+    let oldest = render_frame_at(runtime.model(), &view, 120, 40);
+    assert!(oldest.contains("stored row 0001"), "{oldest}");
+
+    let action = tui::chat::handle_chat_key(
+        view.chat.as_mut().expect("chat open"),
+        runtime.model(),
+        KeyEvent::new(KeyCode::End, KeyModifiers::CONTROL),
+        (120, 40),
+        at(NOW),
+    );
+    assert_eq!(action, Some(UiAction::FollowChatTip(agent.id)));
+    let before = runtime.model().chat(agent.id).unwrap().view_epoch;
+    runtime.follow_chat_tip(agent.id);
+    while runtime.model().chat(agent.id).unwrap().view_epoch == before {
+        next_runtime_message(&mut runtime).await;
+    }
+    view.chat.as_mut().unwrap().reconcile(runtime.model());
+    let newest = render_frame_at(runtime.model(), &view, 120, 40);
+    assert!(newest.contains("stored row 2400"), "{newest}");
 }
 
 /// Cloud-auth expiry is a degraded banner over a working fleet — never a

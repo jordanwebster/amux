@@ -90,6 +90,7 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
         RowKind::TranscriptReady | RowKind::Keymap | RowKind::InputResult => {
             if row_kind == RowKind::TranscriptReady {
                 layer.transcript_ready = true;
+                layer.stale = false;
             }
             return;
         }

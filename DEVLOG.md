@@ -1,3 +1,11 @@
+2026-09-16 — **Stored chats page through history without growing forever.**
+Reaching the oldest visible row now fetches the preceding SQLite page. The
+bounded chat window retains the end being viewed while paging or streaming,
+stays within 800 entries and 16 MiB, and reloads the newest stored window when
+the reader returns to sticky-bottom following. Authoritative provider-ready
+rows also reopen a cursor that began without enough stored state, while an
+empty replay remains safely closed.
+
 2026-09-16 — **Reopened chats keep their pending obligations.**
 Provider tips now retain the bounded facts needed to restore answerable Claude
 PTY, Claude SDK and Codex asks at the stored cursor. Opening or reconnecting a
