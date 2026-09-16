@@ -39,6 +39,7 @@ pub struct MaintenanceReport {
     pub retirements_completed: usize,
     pub retired_rows_deleted: usize,
     pub retired_tables_dropped: usize,
+    pub quick_check_started: bool,
     pub quick_check_complete: bool,
     pub checkpoint_complete: bool,
     pub vacuum_steps: usize,
@@ -172,6 +173,7 @@ fn run_inner(
         report.deadline_reached = true;
         return Ok(report);
     }
+    report.quick_check_started = true;
     let check = quick_check(connection);
     match check {
         Ok(true) => report.quick_check_complete = true,

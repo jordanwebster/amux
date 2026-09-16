@@ -123,7 +123,7 @@ bytes = "1"
 similar = "3"
 qrcode = { version = "0.14", default-features = false }
 nix = { version = "0.31", features = ["process", "signal"] }
-rusqlite = { version = "0.40.2", default-features = false }
+rusqlite = { version = "0.40.2", default-features = false, features = ["hooks"] }
 rustix = { version = "1.1", features = ["fs"] }
 
 # Cargo defaults macOS debug profiles to split-debuginfo = "unpacked", which

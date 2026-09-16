@@ -21,7 +21,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-pub use db::{LibraryReport, StoreGenerations, qualify_library};
+pub use db::{LibraryReport, OpenReport, StoreGenerations, qualify_library};
 pub use families::{
     CHAT, CHAT_SHAPE, CLAUDE_PTY, CLAUDE_SDK, CODEX, FLEET, FLEET_SHAPE, Family, META, Migration,
     REGISTRY, Regime, Registry, VIEW,
@@ -51,6 +51,7 @@ pub struct Store {
     worker: Option<JoinHandle<()>>,
     generations: StoreGenerations,
     library: LibraryReport,
+    open_report: OpenReport,
 }
 
 impl Store {
@@ -69,6 +70,7 @@ impl Store {
                 worker: Some(worker),
                 generations: ready.generations,
                 library: ready.library,
+                open_report: ready.open_report,
             }),
             Err(error) => {
                 let _ = worker.join();
@@ -83,6 +85,10 @@ impl Store {
 
     pub fn library_report(&self) -> &LibraryReport {
         &self.library
+    }
+
+    pub fn open_report(&self) -> OpenReport {
+        self.open_report
     }
 
     pub async fn maintain(
@@ -362,6 +368,7 @@ enum Command {
 struct Ready {
     generations: StoreGenerations,
     library: LibraryReport,
+    open_report: OpenReport,
 }
 
 fn worker(
@@ -494,6 +501,7 @@ fn open_on_worker(path: &Path) -> Result<(rusqlite::Connection, File, Ready), St
     let ready = Ready {
         generations: opened.generations,
         library: opened.library,
+        open_report: opened.open_report,
     };
     Ok((opened.connection, lock_file, ready))
 }

@@ -103,13 +103,48 @@ fn lifecycle_interrupted_migration_restarts_from_ledger_prefix() {
     let connection = Connection::open(&path).expect("raw connection");
     connection
         .execute_batch(
-            "BEGIN IMMEDIATE;
-             DELETE FROM migration WHERE family='view';
+            "DELETE FROM migration WHERE family='view';
+             DELETE FROM family_shape WHERE family='view';
              DROP TABLE view_state;
-             CREATE TABLE interrupted_migration(value TEXT);
-             ROLLBACK;",
+             CREATE TRIGGER interrupt_view_migration
+             BEFORE INSERT ON migration
+             WHEN NEW.family='view'
+             BEGIN
+                 SELECT RAISE(ABORT, 'interrupt view migration after DDL');
+             END;",
         )
-        .expect("simulate interruption");
+        .expect("install committed migration obstacle");
+    drop(connection);
+
+    assert_open_error(&path, StoreError::Io);
+    let connection = Connection::open(&path).expect("inspect failed migration");
+    let partial_schema: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='view_state')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("partial schema check");
+    let ledger_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM migration WHERE family='view'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("migration ledger check");
+    let shape_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM family_shape WHERE family='view'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("family shape check");
+    assert!(!partial_schema, "failed open must roll back migration DDL");
+    assert_eq!(ledger_rows, 0, "failed open must not advance the ledger");
+    assert_eq!(shape_rows, 0, "failed open must not publish the new shape");
+    connection
+        .execute("DROP TRIGGER interrupt_view_migration", [])
+        .expect("remove migration obstacle");
     drop(connection);
 
     let store = runtime().block_on(Store::open(&path)).expect("reopen");
@@ -123,6 +158,22 @@ fn lifecycle_interrupted_migration_restarts_from_ledger_prefix() {
         )
         .expect("view table");
     assert!(view_exists);
+    let ledger_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM migration WHERE family='view' AND id=1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("completed migration ledger");
+    let shape_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM family_shape WHERE family='view' AND shape=1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("completed family shape");
+    assert_eq!(ledger_rows, 1);
+    assert_eq!(shape_rows, 1);
 }
 
 #[test]
@@ -239,14 +290,38 @@ fn lifecycle_renames_dependency_closure_and_maintains_in_batches() {
 }
 
 #[test]
-fn lifecycle_zero_deadline_is_incomplete_not_corrupt() {
+fn lifecycle_interrupted_quick_check_is_incomplete_not_corrupt() {
     let temp = TempDir::new().expect("tempdir");
     let path = database(&temp);
     let store = runtime().block_on(Store::open(&path)).expect("open");
+    let connection = Connection::open(&path).expect("seed checked pages");
+    connection
+        .execute_batch(
+            "PRAGMA synchronous=OFF;
+             CREATE TABLE checked_pages(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             WITH RECURSIVE n(x) AS (
+                 VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000
+             )
+             INSERT INTO checked_pages
+             SELECT printf('checked-%08d',x),printf('value-%08d',x) FROM n;",
+        )
+        .expect("seed enough pages to interrupt quick check");
+    drop(connection);
+
+    let started = Instant::now();
     let report = runtime()
-        .block_on(store.maintain(Budget::default(), Duration::ZERO))
-        .expect("deadline is not corruption");
+        .block_on(store.maintain(
+            Budget {
+                retired_rows_per_table: 0,
+                vacuum_steps: 0,
+                ..Budget::default()
+            },
+            Duration::from_millis(25),
+        ))
+        .expect("an interrupted integrity statement is incomplete, not corrupt");
+    assert!(started.elapsed() >= Duration::from_millis(25));
     assert!(report.deadline_reached);
+    assert!(report.quick_check_started);
     assert!(!report.quick_check_complete);
     runtime().block_on(store.close());
 }

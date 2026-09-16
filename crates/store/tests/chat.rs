@@ -1,5 +1,6 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
@@ -315,18 +316,6 @@ fn chat_writer_conflict_reload_and_invalidation_are_fenced() {
             .await;
         assert!(matches!(stale_invalidation, CommitOutcome::Conflict(_)));
 
-        let delayed = second
-            .commit(
-                agent_id(),
-                second_generations,
-                first_expected,
-                head(fold, 1, Baseline::Start, 1),
-                None,
-                Vec::new(),
-                all_interest(),
-            )
-            .await;
-        assert!(matches!(delayed, CommitOutcome::Conflict(_)));
         let mut resumed = ClaudeSdkFold::default();
         resumed.begin(2, Baseline::VersionGap { after: 1 });
         let resumed_mutations = fold_rows(&mut resumed, &[(2, "u2", "two")]);
@@ -348,7 +337,43 @@ fn chat_writer_conflict_reload_and_invalidation_are_fenced() {
                 all_interest(),
             )
             .await;
-        assert!(matches!(resumed, CommitOutcome::Committed(_)));
+        let resumed_expected = match resumed {
+            CommitOutcome::Committed(result) => result.expected,
+            _ => panic!("successor commit failed"),
+        };
+        assert!(matches!(
+            (first_expected, resumed_expected),
+            (
+                ExpectedHead::Present { version: 1, .. },
+                ExpectedHead::Present { version: 1, .. }
+            )
+        ));
+
+        let delayed = second
+            .commit(
+                agent_id(),
+                second_generations,
+                first_expected,
+                head(fold, 1, Baseline::Start, 1),
+                None,
+                Vec::new(),
+                all_interest(),
+            )
+            .await;
+        match delayed {
+            CommitOutcome::Conflict(loaded) => {
+                assert!(matches!(loaded.head, HeadState::Usable(1, _)));
+                assert_ne!(
+                    first_expected,
+                    ExpectedHead::Present {
+                        fence: loaded.fence,
+                        version: 1,
+                    },
+                    "the equal head version must be rejected by the invalidation fence"
+                );
+            }
+            _ => panic!("delayed pre-invalidation writer replaced the successor"),
+        }
         second.close().await;
         store.close().await;
     });
@@ -1169,7 +1194,170 @@ fn chat_alias_delete_and_canonical_results_match_oracle() {
 }
 
 #[test]
-fn chat_generation_move_and_newer_tip_are_refused() {
+fn chat_family_recreation_by_another_process_moves_generation_and_refuses_newer_shape() {
+    runtime().block_on(async {
+        let temp = TempDir::new().unwrap();
+        let path = database(&temp);
+        let store = Store::open(&path).await.unwrap();
+        let generations = store_generations(&store);
+        let mut fold = ClaudeSdkFold::default();
+        fold.begin(1, Baseline::Start);
+        let mutations = fold_rows(
+            &mut fold,
+            &[(1, "u1", "one"), (2, "u2", "two"), (3, "u3", "three")],
+        );
+        let expected = match store
+            .commit(
+                agent_id(),
+                generations,
+                ExpectedHead::Absent { fence: 0 },
+                head(fold.clone(), 1, Baseline::Start, 3),
+                Some(transition(None, 1, Baseline::Start, 0, Some(1), 3)),
+                mutations,
+                all_interest(),
+            )
+            .await
+        {
+            CommitOutcome::Committed(result) => result.expected,
+            _ => panic!("seed commit failed"),
+        };
+        let before = store
+            .load::<ClaudeSdkFold>(
+                agent_id(),
+                WindowBudget {
+                    max_entries: 1,
+                    max_bytes: 8 * 1024 * 1024,
+                    view_epoch: 7,
+                },
+            )
+            .await
+            .unwrap();
+        let stale_page = before.first_page.expect("older stored entries");
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute("UPDATE family_shape SET shape=0 WHERE family='chat'", [])
+            .unwrap();
+        drop(connection);
+        run_open_helper(&path, "success");
+
+        let moved = store
+            .commit(
+                agent_id(),
+                generations,
+                expected,
+                head(fold, 1, Baseline::Start, 3),
+                None,
+                Vec::new(),
+                all_interest(),
+            )
+            .await;
+        assert!(matches!(
+            moved,
+            CommitOutcome::Refused(StoreError::GenerationMoved)
+        ));
+        let reloaded = store
+            .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(7))
+            .await
+            .unwrap();
+        assert!(reloaded.generations.chat > generations.chat);
+        assert!(reloaded.generations.provider > generations.provider);
+        assert!(matches!(reloaded.head, HeadState::None));
+        assert_eq!(
+            store
+                .page::<ClaudeSdkFold>(agent_id(), stale_page, 2)
+                .await,
+            Err(StoreError::GenerationMoved)
+        );
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE family_shape SET shape=?1 WHERE family='chat'",
+                [i64::from(store::CHAT_SHAPE + 1)],
+            )
+            .unwrap();
+        let generation_before_refusal: i64 = connection
+            .query_row(
+                "SELECT generation FROM family_shape WHERE family='chat'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        run_open_helper(&path, "unsupported");
+        assert!(matches!(
+            store
+                .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(7))
+                .await,
+            Err(StoreError::UnsupportedFormat)
+        ));
+        let connection = Connection::open(&path).unwrap();
+        let generation_after_refusal: i64 = connection
+            .query_row(
+                "SELECT generation FROM family_shape WHERE family='chat'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let first_retirement_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='chat_state_old_1')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let later_retirements: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name LIKE '%_old_2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(generation_after_refusal, generation_before_refusal);
+        assert!(first_retirement_exists);
+        assert_eq!(later_retirements, 0);
+        store.close().await;
+    });
+}
+
+fn run_open_helper(path: &Path, expected: &str) {
+    let output = Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "chat_helper_opens_store",
+            "--nocapture",
+        ])
+        .env("AMUX_STORE_HELPER_DB", path)
+        .env("AMUX_STORE_HELPER_EXPECT", expected)
+        .output()
+        .expect("spawn store opener");
+    assert!(
+        output.status.success(),
+        "store opener failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "spawned by chat_family_recreation_by_another_process_moves_generation_and_refuses_newer_shape"]
+fn chat_helper_opens_store() {
+    let path = PathBuf::from(std::env::var_os("AMUX_STORE_HELPER_DB").expect("database path"));
+    let expected = std::env::var("AMUX_STORE_HELPER_EXPECT").expect("expected outcome");
+    match (expected.as_str(), runtime().block_on(Store::open(&path))) {
+        ("success", Ok(store)) => runtime().block_on(store.close()),
+        ("unsupported", Err(StoreError::UnsupportedFormat)) => {}
+        (expected, Ok(store)) => {
+            runtime().block_on(store.close());
+            panic!("store unexpectedly opened while expecting {expected}");
+        }
+        (expected, Err(error)) => panic!("expected {expected}, got {error:?}"),
+    }
+}
+
+#[test]
+fn chat_newer_tip_is_refused() {
     runtime().block_on(async {
         let temp = TempDir::new().unwrap();
         let path = database(&temp);
@@ -1189,52 +1377,12 @@ fn chat_generation_move_and_newer_tip_are_refused() {
                 all_interest(),
             )
             .await;
-        let expected = match committed {
-            CommitOutcome::Committed(result) => result.expected,
+        match committed {
+            CommitOutcome::Committed(_) => {}
             _ => panic!("seed commit failed"),
-        };
+        }
 
         let connection = Connection::open(&path).unwrap();
-        connection
-            .execute(
-                "UPDATE family_shape SET generation=generation+1 WHERE family='chat'",
-                [],
-            )
-            .unwrap();
-        let moved = store
-            .commit(
-                agent_id(),
-                generations,
-                expected,
-                head(fold.clone(), 1, Baseline::Start, 1),
-                None,
-                Vec::new(),
-                all_interest(),
-            )
-            .await;
-        assert!(matches!(
-            moved,
-            CommitOutcome::Refused(StoreError::GenerationMoved)
-        ));
-
-        connection
-            .execute(
-                "UPDATE family_shape SET shape=?1 WHERE family='chat'",
-                [i64::from(store::CHAT_SHAPE + 1)],
-            )
-            .unwrap();
-        assert!(matches!(
-            store
-                .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(0))
-                .await,
-            Err(StoreError::UnsupportedFormat)
-        ));
-        connection
-            .execute(
-                "UPDATE family_shape SET shape=?1 WHERE family='chat'",
-                [i64::from(store::CHAT_SHAPE)],
-            )
-            .unwrap();
         connection
             .execute(
                 "UPDATE chat_head SET tip_version=?1 WHERE agent_id=?2",

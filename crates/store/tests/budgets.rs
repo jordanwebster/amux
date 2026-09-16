@@ -824,25 +824,73 @@ fn large_store_opens_without_data_proportional_work_and_refuses_writes_at_reserv
     runtime().block_on(store.close());
     let connection = Connection::open(&path).unwrap();
     connection
+        .execute_batch(
+            "PRAGMA synchronous=OFF;
+             INSERT INTO chat_state(agent_id,revision,content_revision,segment_high_water,
+                 previous_through,needs_baseline,retiring)
+             VALUES ('large-chat',0,0,1,NULL,0,0);
+             WITH RECURSIVE n(x) AS (
+                 VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<96000
+             )
+             INSERT INTO claude_sdk_entry(agent_id,key,segment,order_seq,order_slot,
+                 revision_seq,revision_fence,revision_ordinal,kind,text,bytes,body)
+             SELECT 'large-chat',printf('entry-%06d',x),1,x,0,x,0,0,'prompt',
+                 printf('stored chat entry %06d',x),4096,zeroblob(4096) FROM n;
+             WITH RECURSIVE n(x) AS (
+                 VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000
+             )
+             INSERT INTO agent(id,host_id,kind,protocol,name,command,working_dir,args,
+                 readonly,created_at,membership,revision)
+             SELECT printf('fleet-%06d',x),'large-host',X'00',1,
+                 printf('fleet agent %06d',x),'command','/work',X'00',0,0,0,x FROM n;
+             PRAGMA wal_checkpoint(TRUNCATE);",
+        )
+        .unwrap();
+    drop(connection);
+    let seeded_bytes = store_disk_bytes(&path);
+    assert!(
+        (350 * 1024 * 1024..500 * 1024 * 1024).contains(&seeded_bytes),
+        "fixture should contain roughly 400 MiB of store rows, got {seeded_bytes} bytes"
+    );
+
+    let store = runtime().block_on(Store::open(&path)).unwrap();
+    assert!(
+        store.open_report().vm_steps > 0,
+        "open VM accounting must observe executed instructions"
+    );
+    assert!(
+        store.open_report().vm_steps < 100_000,
+        "open executed {} SQLite VM steps for a {} byte store",
+        store.open_report().vm_steps,
+        seeded_bytes
+    );
+    runtime().block_on(store.close());
+
+    let connection = Connection::open(&path).unwrap();
+    connection
         .execute("CREATE TABLE ballast(bytes BLOB NOT NULL)", [])
         .unwrap();
     connection
         .execute(
             "INSERT INTO ballast VALUES (zeroblob(?1))",
-            [568 * 1024 * 1024i64],
+            [200 * 1024 * 1024i64],
         )
         .unwrap();
     drop(connection);
 
-    let started = Instant::now();
     let store = runtime().block_on(Store::open(&path)).unwrap();
-    assert!(started.elapsed() < Duration::from_secs(2));
     assert_eq!(
         runtime().block_on(store.view_set("ui", "selected", "agent")),
         Err(StoreError::DiskFull)
     );
     assert_eq!(
-        runtime().block_on(store.maintain(Budget::default(), Duration::from_secs(30))),
+        runtime().block_on(store.maintain(
+            Budget {
+                store_target_bytes: 128 * 1024 * 1024,
+                ..Budget::default()
+            },
+            Duration::from_secs(30),
+        )),
         Err(StoreError::OverBudget)
     );
     runtime().block_on(store.close());

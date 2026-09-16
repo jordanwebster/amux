@@ -1,3 +1,11 @@
+2026-09-16 — **Store recovery tests now cross the failure boundaries they protect.**
+Migration coverage fails after schema work but before its ledger write and
+proves the whole open transaction rolls back. Maintenance interrupts a real
+integrity statement, large-store open records a bounded SQLite instruction
+count over hundreds of megabytes of chat and fleet rows, and chat tests now
+exercise equal-version fence conflicts plus family replacement by a second
+process, including newer-format refusal.
+
 2026-09-16 — **One maintenance run restores cache budgets.**
 Maintenance now repeats bounded transcript eviction, metadata retirement,
 retired-table deletion and incremental vacuum work until it converges, reaches

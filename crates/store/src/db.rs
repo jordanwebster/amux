@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fold::{Generation, Generations, StoreError};
@@ -27,6 +29,11 @@ pub struct LibraryReport {
     pub version: String,
     pub source_id: String,
     pub compile_options: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OpenReport {
+    pub vm_steps: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +65,7 @@ pub(crate) struct OpenedDatabase {
     pub connection: Connection,
     pub generations: StoreGenerations,
     pub library: LibraryReport,
+    pub open_report: OpenReport,
 }
 
 pub(crate) fn open_database(
@@ -73,6 +81,19 @@ pub(crate) fn open_database(
     )
     .map_err(map_sqlite_error)?;
 
+    const PROGRESS_INTERVAL: i32 = 100;
+    let progress_calls = Arc::new(AtomicU64::new(0));
+    let counted_calls = Arc::clone(&progress_calls);
+    connection
+        .progress_handler(
+            PROGRESS_INTERVAL,
+            Some(move || {
+                counted_calls.fetch_add(1, Ordering::Relaxed);
+                false
+            }),
+        )
+        .map_err(map_sqlite_error)?;
+
     configure(&connection, new_file)?;
     let library = qualify_library(&connection)?;
     let generations = match initialize_once(&mut connection, pending_quarantines) {
@@ -80,11 +101,20 @@ pub(crate) fn open_database(
         result => result?,
     };
     set_synchronous(&connection, "NORMAL")?;
+    connection
+        .progress_handler(0, None::<fn() -> bool>)
+        .map_err(map_sqlite_error)?;
+    let open_report = OpenReport {
+        vm_steps: progress_calls
+            .load(Ordering::Relaxed)
+            .saturating_mul(PROGRESS_INTERVAL as u64),
+    };
 
     Ok(OpenedDatabase {
         connection,
         generations,
         library,
+        open_report,
     })
 }
 
