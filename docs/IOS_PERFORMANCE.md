@@ -234,6 +234,34 @@ that.
 The 400 ms stays where it belongs, on the physical-phone checklist, and stays
 unmeasured until somebody runs the app on a phone.
 
+## The account store in a launch
+
+A launch draws its remembered fleet from the account's SQLite store: it opens
+the store, reads the fleet through the same reducer and projection a running
+app uses, and closes it again before the first frame. The app marks
+`storeReadBegan` and `storeReadEnded` around that read, and the cold-start
+split reports the interval as part of drawing the first frame. The probe home
+reads its forty-agent workload from a real store, written by one unmeasured
+launch before the five measured ones, so no measured launch pays for writing
+it.
+
+Measured on the pinned Mac and simulator with `just ios perf --only cold` on
+2026-09-17: reading the store took a median of 3.4 ms of a 164 ms first-frame
+draw, and the cold first frame read 473, 464, 460, 463 and 462 ms, a median of
+463 ms. That is 3 ms over the 460 ms simulator budget and about 18 ms over the
+recorded baseline, of which the store read is 3.4 ms and loading the app (297
+ms against 287) is the linker's share; the miss is a defect to explain, not a
+number to adopt.
+
+Carrying the pinned SQLite rather than the system's (see `docs/IOS.md`) has a
+size cost. In the size-optimised
+`mobile` bridge for a phone (`aarch64-apple-ios`), the machine code and data
+the store brings, before the app's link strips what nothing reaches, are
+1,082 KiB for the SQLite 3.53.2 amalgamation, 372 KiB for the `store` crate and
+49 KiB for `rusqlite`: at most 1.5 MiB added to the installed app. Those are the
+object sizes in the packaged archive, excluding embedded bitcode and unwind
+tables, which are not part of the linked binary.
+
 ## Proxies, stated plainly
 
 - The simulator reports 60 Hz and composites through the Mac's display. Every

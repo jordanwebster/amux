@@ -1,3 +1,9 @@
+2026-09-17 — **The performance document records what the store costs a
+launch.** A cold launch reads its fleet from the store in a median of 3.4 ms,
+and the store brings at most 1.5 MiB of object code to the phone bridge, most
+of it the SQLite amalgamation. The same run measured a 463 ms cold first frame,
+3 ms over the simulator budget; the miss is recorded rather than absorbed.
+
 2026-09-16 — **The phone's cached screens are photographed from real
 stores.** Driving builds gain two bridge entry points that write an account
 store through the phone's own store, runtime and reducer and open one of its
