@@ -194,7 +194,16 @@ pub async fn initialize(
         directory.push(profile);
     }
     println!("Installation ready. Run `amux login` to connect a cloud account.");
-    if let Some(profile_id) = onramp_profile_id(profile_path, &installation, &directory)? {
+    // A running server keeps advertising its old name until it restarts, and
+    // the restart discards any pairing code issued now. Offering one here would
+    // send a phone looking for a name nobody advertises, with a code that dies.
+    let awaiting_restart = was_running && host_name_changed;
+    let onramp = if awaiting_restart {
+        None
+    } else {
+        onramp_profile_id(profile_path, &installation, &directory)?
+    };
+    if let Some(profile_id) = onramp {
         let admin = front.admin(node::installation::ProfileId(profile_id));
         if admin.list_peers().await?.is_empty() {
             if admin.pairing_is_active().await? {
@@ -217,12 +226,14 @@ pub async fn initialize(
             }
         }
     }
-    if was_running && host_name_changed && preferences_changed {
+    if awaiting_restart && preferences_changed {
         println!(
-            "Restart the server to advertise the new host name and apply changed keep-awake preferences."
+            "Restart the server to advertise the new host name and apply changed keep-awake preferences, then run `amux pair` to pair a phone."
         );
-    } else if was_running && host_name_changed {
-        println!("Restart the server to advertise the new host name.");
+    } else if awaiting_restart {
+        println!(
+            "Restart the server to advertise the new host name, then run `amux pair` to pair a phone."
+        );
     } else if was_running && preferences_changed {
         println!("Restart the server to apply changed keep-awake preferences.");
     }

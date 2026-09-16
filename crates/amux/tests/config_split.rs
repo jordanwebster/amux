@@ -548,7 +548,10 @@ fn profile_selector_cli_fresh_init_and_default_last_used() {
     };
     run(&["list"]);
     let renamed = run(&["init", "--name", "Scripted Mac"]);
-    assert!(renamed.contains("Restart the server to advertise the new host name."));
+    assert!(renamed.contains(
+        "Restart the server to advertise the new host name, then run `amux pair` to pair a phone."
+    ));
+    assert!(!renamed.contains("Pairing code:"), "{renamed}");
     assert_eq!(
         InstallationConfig::from_file(&installation_path)
             .unwrap()
