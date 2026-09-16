@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::codex::CodexInput;
 use crate::model::StructuredProtocol;
 use crate::msg::{Command, OpId};
+use crate::store::{StoreOp, StoreStreamQuery};
 
 /// Native input for one typed agent layer. Adding a layer adds an enum arm;
 /// payloads are never normalized across agents.
@@ -48,8 +49,25 @@ pub enum Effect {
         protocol: StructuredProtocol,
         tail: u64,
     },
+    /// Open a store-backed chat from an exact persisted cursor or a bounded
+    /// retained tail. Its attempt fences late stream messages.
+    OpenStoreStream {
+        agent: AgentId,
+        protocol: StructuredProtocol,
+        attempt: fold::StreamAttempt,
+        query: StoreStreamQuery,
+    },
     /// Close a previously opened stream.
     CloseStream { agent: AgentId },
+    /// Stop reading a chat stream while the store commit queue is over its
+    /// byte budget. The subscription remains owned by the runtime.
+    PauseStream(AgentId),
+    /// Resume a stream paused by [`Effect::PauseStream`].
+    ResumeStream(AgentId),
+    /// Execute one operation on the profile's store worker.
+    Store(StoreOp),
+    /// Schedule exactly one retry of a failed store commit.
+    RetryStore { after_ms: u64, op: Box<Effect> },
     /// Send one layer-native input and MUST answer with a `Msg::OpResult`
     /// for `op`. Disconnected executions fail fast with an error outcome —
     /// explicitly held messages retain the failed delivery in queue state.

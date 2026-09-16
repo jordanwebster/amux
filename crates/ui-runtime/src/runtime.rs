@@ -306,12 +306,17 @@ impl LateResult {
     fn of(msg: &Msg) -> Option<Self> {
         match msg {
             Msg::Server(_) => Some(Self::Inventory),
-            Msg::Stream { .. } => Some(Self::Session),
+            Msg::Stream { .. } | Msg::ChatStream { .. } => Some(Self::Session),
             Msg::OpResult {
                 outcome: OpOutcome::AttachmentOpened { .. } | OpOutcome::DiffFetched { .. },
                 ..
             } => Some(Self::Attachment),
-            Msg::OpResult { .. } | Msg::Command { .. } => Some(Self::Command),
+            Msg::OpResult { .. }
+            | Msg::Command { .. }
+            | Msg::Store(_)
+            | Msg::FleetDelta(_)
+            | Msg::Chat(_)
+            | Msg::StoreStartup { .. } => Some(Self::Command),
             // Folded straight from the caller's thread, never through a task.
             Msg::Tick { .. } | Msg::UserAttached { .. } | Msg::UserDetached { .. } => None,
         }
@@ -1061,6 +1066,21 @@ impl Runtime {
                 ) {
                     stale.abort();
                 }
+            }
+            Effect::OpenStoreStream { agent, .. } => {
+                tracing::debug!(%agent, "store-backed stream execution awaits the store worker");
+            }
+            Effect::PauseStream(agent) => {
+                tracing::debug!(%agent, "store-backed stream paused");
+            }
+            Effect::ResumeStream(agent) => {
+                tracing::debug!(%agent, "store-backed stream resumed");
+            }
+            Effect::Store(op) => {
+                tracing::debug!(?op, "store operation awaits the store worker");
+            }
+            Effect::RetryStore { after_ms, op } => {
+                tracing::debug!(after_ms, ?op, "store retry awaits the store worker");
             }
             Effect::CloseStream { agent } => {
                 if let Some(task) = self.streams.remove(&agent) {

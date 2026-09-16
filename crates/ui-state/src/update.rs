@@ -11,6 +11,7 @@ use crate::model::{
     HostState, LocalSummary, Model, PendingOp, StreamPhase, StreamState,
 };
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
+use crate::store::{ChatCommand, StoreUpdate};
 
 /// Error message for commands dispatched while the daemon link is down.
 /// Immediate writes fail fast; explicitly held drafts remain local.
@@ -27,6 +28,29 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
         Msg::Server(server) => update_server(model, server),
         Msg::OpResult { op, outcome } => update_op_result(model, op, outcome),
         Msg::Stream { agent, event } => update_stream(model, agent, event),
+        Msg::StoreStartup {
+            profile,
+            generations,
+        } => crate::store::startup(&mut model.store, profile, generations),
+        Msg::Store(message) => update_store_message(model, message),
+        Msg::FleetDelta(delta) => crate::store::fleet_apply(&mut model.store, delta),
+        Msg::Chat(command) => update_chat_command(model, command),
+        Msg::ChatStream {
+            agent,
+            attempt,
+            event,
+        } => {
+            if !model.store.accepts_stream(agent, attempt) {
+                Vec::new()
+            } else {
+                let mirror = event.clone();
+                let mut effects =
+                    crate::store::update_chat_stream(&mut model.store, agent, attempt, event);
+                effects.extend(mirror_chat_stream(model, agent, mirror));
+                sync_chat_summary(model, agent);
+                effects
+            }
+        }
         Msg::UserAttached { agent } => {
             if let Some(card) = model.agents.get(&agent) {
                 model.attached.insert(agent, card.agent.host_id);
@@ -529,7 +553,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             model.local_host_id = local_host_id.or(model.local_host_id);
             model.cloud_auth_required = false;
             model.cloud_subscription_required = false;
-            Vec::new()
+            crate::store::reconnect(&mut model.store)
         }
         ServerMsg::CloudSubscriptionStatus { required } => {
             model.cloud_subscription_required = required;
@@ -586,6 +610,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                     // upserts of the same entity.
                     card.agent = agent;
                     card.epoch = epoch;
+                    card.remembered = false;
                 }
                 None => {
                     let card = AgentCard {
@@ -593,6 +618,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                         provider_label: None,
                         attention: Attention::Unknown,
                         phase: AgentPhase::Running,
+                        remembered: false,
                         local_summary: None,
                         layer: None,
                         epoch,
@@ -674,6 +700,132 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             *agents_synchronized = true;
             prune_if_synchronized(model)
         }
+    }
+}
+
+fn update_chat_command(model: &mut Model, command: ChatCommand) -> Vec<Effect> {
+    match command {
+        ChatCommand::Open { agent } => {
+            let Some(protocol) = model
+                .agents
+                .get(&agent)
+                .and_then(AgentCard::structured_protocol)
+            else {
+                return Vec::new();
+            };
+            crate::store::open_chat(&mut model.store, agent, protocol)
+        }
+        ChatCommand::PageOlder { agent, n } => crate::store::page_older(&mut model.store, agent, n),
+        ChatCommand::Close { agent, now } => crate::store::close_chat(&mut model.store, agent, now),
+        ChatCommand::FlushDeadline { agent, now } => {
+            crate::store::flush_deadline(&mut model.store, agent, now)
+        }
+    }
+}
+
+fn mirror_chat_stream(
+    model: &mut Model,
+    agent: model::AgentId,
+    event: crate::store::ChatStreamMsg,
+) -> Vec<Effect> {
+    let event = match event {
+        crate::store::ChatStreamMsg::Opened { facts, .. } => StreamMsg::Opened {
+            truncated: !matches!(facts.outcome, crate::store::ReplayOutcomeDto::Continuous),
+        },
+        crate::store::ChatStreamMsg::Batch { at, entries } => StreamMsg::Batch { at, entries },
+        crate::store::ChatStreamMsg::ReplayComplete { .. } => StreamMsg::ReplayComplete,
+        crate::store::ChatStreamMsg::Closed { reason, .. } => StreamMsg::Closed { reason },
+    };
+    update_stream(model, agent, event)
+}
+
+fn sync_chat_summary(model: &mut Model, agent: model::AgentId) {
+    let local = model
+        .store
+        .chats
+        .get(&agent)
+        .and_then(|chat| chat.head.as_ref())
+        .map(|head| LocalSummary {
+            fold: head.agent_fold(),
+            through: head.through(),
+        });
+    if let Some(card) = model.agents.get_mut(&agent) {
+        card.local_summary = local;
+    }
+}
+
+fn update_store_message(model: &mut Model, message: crate::store::StoreMsg) -> Vec<Effect> {
+    let affected_agent = match &message {
+        crate::store::StoreMsg::Loaded { agent, .. }
+        | crate::store::StoreMsg::Committed { agent, .. }
+        | crate::store::StoreMsg::Conflict { agent, .. }
+        | crate::store::StoreMsg::Paged { agent, .. } => Some(*agent),
+        crate::store::StoreMsg::Failed { agent, .. } => *agent,
+        crate::store::StoreMsg::FleetLoaded { .. }
+        | crate::store::StoreMsg::FleetApplied { .. }
+        | crate::store::StoreMsg::FleetChanged { .. }
+        | crate::store::StoreMsg::ViewLoaded { .. }
+        | crate::store::StoreMsg::ViewSet { .. }
+        | crate::store::StoreMsg::Unavailable { .. } => None,
+    };
+    let StoreUpdate {
+        mut effects,
+        fleet,
+        remembered_chat,
+    } = crate::store::update_store(&mut model.store, message);
+    if let Some(fleet) = fleet {
+        install_remembered_fleet(model, fleet);
+    }
+    if let Some(agent) = affected_agent {
+        sync_chat_summary(model, agent);
+    }
+    let remembered = remembered_chat.or(model.store.remembered_chat);
+    if let Some(agent) = remembered
+        && !model.store.chats.contains_key(&agent)
+        && let Some(protocol) = model
+            .agents
+            .get(&agent)
+            .and_then(AgentCard::structured_protocol)
+    {
+        effects.extend(crate::store::open_chat(&mut model.store, agent, protocol));
+    }
+    effects
+}
+
+fn install_remembered_fleet(model: &mut Model, fleet: fold::Fleet) {
+    for remembered in fleet.hosts {
+        model.hosts.insert(
+            remembered.host.id,
+            HostState {
+                entry: remembered.host,
+                epoch: 0,
+            },
+        );
+    }
+    for remembered in fleet.agents {
+        if remembered.membership != fold::Membership::Cached {
+            model.agents.remove(&remembered.agent.id);
+            continue;
+        }
+        let agent = remembered.agent;
+        model.agents.insert(
+            agent.id,
+            AgentCard {
+                last_activity: agent
+                    .summary
+                    .as_ref()
+                    .and_then(|summary| summary.summary.last_activity)
+                    .unwrap_or(agent.created_at),
+                provider_label: None,
+                attention: Attention::Unknown,
+                phase: AgentPhase::Running,
+                remembered: true,
+                local_summary: None,
+                layer: None,
+                epoch: 0,
+                agent,
+            },
+        );
     }
 }
 

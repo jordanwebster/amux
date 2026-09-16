@@ -1,3 +1,14 @@
+2026-09-16 — **Chats paint from the store and catch up under reducer control.**
+The pure UI reducer now owns store loads, exact-cursor subscriptions, provider
+fold heads, visible windows, paging and flush state behind profile, chat,
+stream and operation fences. It paints retained windows before opening their
+streams, persists optimistic batches, rebases later work over canonical
+results, pauses at the pending-byte ceiling, reloads after conflicts or moved
+generations, and degrades visibly to a bounded live-only materializer when
+persistence is unavailable. Store startup also restores the cached fleet and
+remembered chat before network inventory, and recorded reducer specs replay
+store results into the same model.
+
 2026-09-16 — **Store qualification reports its SQLite identity.**
 Before accepting or refusing a SQLite library, the store now records its
 version, source ID and compile options. The same values are emitted by a

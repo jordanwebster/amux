@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, TimeZone, Utc};
-use fold::{FleetDelta, FleetSnapshot, Generations, Membership, StoreError};
+use fold::{
+    Fleet, FleetAgent, FleetDelta, FleetHost, FleetSnapshot, Generations, Membership, StoreError,
+};
 use model::{
     Agent, AgentId, AgentKind, AgentParent, ClaudeDriver, HostEntry, HostId, HostTrustStatus,
     Progress, StructuredProtocol, SummaryEnvelope, WorkingOn,
@@ -15,27 +17,6 @@ use crate::db::{admit_growth, map_sqlite_error};
 pub enum FleetChange {
     Changed,
     Unchanged,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Fleet {
-    pub hosts: Vec<FleetHost>,
-    pub agents: Vec<FleetAgent>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FleetHost {
-    pub host: HostEntry,
-    pub revision: u64,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FleetAgent {
-    pub agent: Agent,
-    pub membership: Membership,
-    pub absent_since: Option<DateTime<Utc>>,
-    pub last_opened_at: Option<DateTime<Utc>>,
 }
 
 pub(crate) fn apply(

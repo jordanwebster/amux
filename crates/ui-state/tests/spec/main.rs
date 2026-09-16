@@ -72,6 +72,8 @@ mod fleet_mixed; // One fleet: both Claude drivers rank, sort and group alike
 
 mod fleet_summary; // Host/local summary selection and visible freshness
 
+mod store_lifecycle; // Store effects, chat fencing, and recorded lifecycle rows
+
 mod a2a_claude_inbound; // Chapter 20 — Claude inbound: a message from another agent
 
 mod a2a_claude_send_row; // Chapter 21 — Claude outbound: sending to another agent

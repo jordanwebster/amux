@@ -41,6 +41,10 @@ test-fold *ARGS:
 test-store *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"
 
+# Exercise the pure store-backed reducer lifecycle and recorded UI specs.
+test-ui *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p ui-state "$@"
+
 # Compile every ordinary workspace test target without running it.
 test-build:
     {{bounded}} 1200 cargo test --locked --workspace --lib --tests --no-run {{desktop_features}}

@@ -361,7 +361,7 @@ pub trait Entry: Serialize + DeserializeOwned + Clone + PostcardSafe {
     fn bytes(&self) -> usize;
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub enum Mutation<E: Entry> {
     Upsert {
@@ -590,7 +590,7 @@ impl AgentFold {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonBytes(pub Vec<u8>);
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct Head<F: ProviderFold> {
     pub segment: SegmentId,
@@ -706,7 +706,7 @@ pub struct Page<E> {
     pub content_revision: ChatRevision,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub enum HeadState<F: ProviderFold> {
     Usable(HeadVersion, Head<F>),
@@ -724,7 +724,7 @@ pub enum BaselineReason {
     First,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct Loaded<F: ProviderFold> {
     pub generations: Generations,
@@ -769,6 +769,28 @@ pub enum CommitOutcome<F: ProviderFold> {
     Committed(CommitResult),
     Conflict(Loaded<F>),
     Refused(StoreError),
+}
+
+/// A store-backed fleet snapshot shared with I/O-free reducers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fleet {
+    pub hosts: Vec<FleetHost>,
+    pub agents: Vec<FleetAgent>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetHost {
+    pub host: HostEntry,
+    pub revision: u64,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FleetAgent {
+    pub agent: Agent,
+    pub membership: Membership,
+    pub absent_since: Option<DateTime<Utc>>,
+    pub last_opened_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

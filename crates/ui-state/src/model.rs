@@ -196,6 +196,10 @@ pub struct AgentCard {
     /// the creation time.
     pub last_activity: DateTime<Utc>,
     pub phase: AgentPhase,
+    /// Loaded from the local store and not yet confirmed by this connection's
+    /// authoritative host snapshot.
+    #[serde(default)]
+    pub remembered: bool,
     /// The shared provider fold for this device's currently open stream.
     /// Fleet selection compares this whole summary with the host envelope.
     pub(crate) local_summary: Option<LocalSummary>,
@@ -557,6 +561,7 @@ pub struct Model {
     pub(crate) op_seq: u64,
     /// Last observed time (enters via `Msg::Tick`).
     pub(crate) now: Option<DateTime<Utc>>,
+    pub(crate) store: crate::store::StoreState,
 }
 
 impl Default for Model {
@@ -579,6 +584,7 @@ impl Default for Model {
             finished_ops: Vec::new(),
             op_seq: 0,
             now: None,
+            store: crate::store::StoreState::default(),
         }
     }
 }
@@ -725,6 +731,22 @@ impl Model {
 
     pub fn stream(&self, id: AgentId) -> Option<&StreamState> {
         self.streams.get(&id)
+    }
+
+    pub fn chat(&self, id: AgentId) -> Option<&crate::store::ChatWindow> {
+        self.store.chats.get(&id)
+    }
+
+    pub fn chats(&self) -> impl Iterator<Item = (&AgentId, &crate::store::ChatWindow)> {
+        self.store.chats.iter()
+    }
+
+    pub fn remembered_chat(&self) -> Option<AgentId> {
+        self.store.remembered_chat
+    }
+
+    pub fn store_unavailable(&self) -> Option<fold::StoreError> {
+        self.store.unavailable
     }
 
     /// The Claude chat layer for an agent (the chat view's read surface).

@@ -20,6 +20,7 @@ mod msg;
 pub mod provider;
 pub mod queue;
 pub mod review;
+pub mod store;
 mod update;
 
 // Kernel entity vocabulary re-exported so renderers depend on ui-state alone.
@@ -47,6 +48,11 @@ pub use msg::{
 };
 pub use provider::ProviderFacts;
 pub use queue::{Draft, DraftSegment, QueueCommand, QueueDelivery, QueuedMessage};
+pub use store::{
+    AttemptId, ChatCommand, ChatState, ChatStreamMsg, ChatWindow, FLUSH_DEADLINE, HeadDto,
+    LoadedDto, MutationBatchDto, PageDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto,
+    StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto, behind,
+};
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
 
 pub use self::model::{

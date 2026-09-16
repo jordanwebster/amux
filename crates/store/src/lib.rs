@@ -26,12 +26,12 @@ pub use families::{
     CHAT, CHAT_SHAPE, CLAUDE_PTY, CLAUDE_SDK, CODEX, FLEET, FLEET_SHAPE, Family, META, Migration,
     REGISTRY, Regime, Registry, VIEW,
 };
-pub use fleet::{Fleet, FleetAgent, FleetChange, FleetHost};
+pub use fleet::FleetChange;
 use fold::{
     CommitOutcome, Entry, ExpectedHead, Generations, Head, Mutation, Page, PageToken, ProviderFold,
     SegmentTransition, WindowBudget, WindowInterest,
 };
-pub use fold::{FleetDelta, FleetSnapshot, Membership, StoreError};
+pub use fold::{Fleet, FleetAgent, FleetDelta, FleetHost, FleetSnapshot, Membership, StoreError};
 pub use maintain::{Budget, MaintenanceReport};
 use model::AgentId;
 use rustix::fs::{FlockOperation, flock};

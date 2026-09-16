@@ -49,6 +49,23 @@ pub enum Msg {
     /// Per-agent session-stream events. High-rate entries arrive coalesced:
     /// the recorded Msg is the batch.
     Stream { agent: AgentId, event: StreamMsg },
+    /// Start the profile-local store before connecting to a daemon.
+    StoreStartup {
+        profile: crate::store::ProfileGeneration,
+        generations: fold::Generations,
+    },
+    /// Result of a store effect. All variants carry freshness envelopes.
+    Store(crate::store::StoreMsg),
+    /// A daemon fleet event to persist under its durable revision.
+    FleetDelta(fold::FleetDelta),
+    /// User-visible store-backed chat lifecycle commands.
+    Chat(crate::store::ChatCommand),
+    /// One attempted chat subscription's ordered input.
+    ChatStream {
+        agent: AgentId,
+        attempt: fold::StreamAttempt,
+        event: crate::store::ChatStreamMsg,
+    },
     /// The user attached to an agent — a reified interaction fact. The
     /// subscription policy widens to any agent the user interacts with, so
     /// its attention stays fresh after detach.
@@ -72,8 +89,18 @@ impl Msg {
             Msg::Command { .. }
             | Msg::Server(_)
             | Msg::OpResult { .. }
+            | Msg::StoreStartup { .. }
+            | Msg::Store(_)
+            | Msg::FleetDelta(_)
+            | Msg::Chat(_)
             | Msg::UserAttached { .. }
             | Msg::UserDetached { .. } => FlowClass::Lossless,
+            Msg::ChatStream { event, .. } => match event {
+                crate::store::ChatStreamMsg::Batch { .. } => FlowClass::Coalescable,
+                crate::store::ChatStreamMsg::Opened { .. }
+                | crate::store::ChatStreamMsg::ReplayComplete { .. }
+                | crate::store::ChatStreamMsg::Closed { .. } => FlowClass::Lossless,
+            },
             Msg::Stream { event, .. } => match event {
                 StreamMsg::Batch { .. } => FlowClass::Coalescable,
                 StreamMsg::Opened { .. } | StreamMsg::ReplayComplete | StreamMsg::Closed { .. } => {

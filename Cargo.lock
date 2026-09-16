@@ -4868,6 +4868,7 @@ dependencies = [
  "chrono",
  "fold",
  "model",
+ "postcard",
  "serde",
  "serde_json",
  "similar",
