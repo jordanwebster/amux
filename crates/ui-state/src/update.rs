@@ -55,13 +55,7 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
             if let Some(card) = model.agents.get(&agent) {
                 model.attached.insert(agent, card.agent.host_id);
             }
-            // Widen the subscription policy to agents the user interacts
-            // with, wherever they run — readonly agents included: opening
-            // a read-only chat (F1) IS the interaction, and the feed it
-            // renders needs the stream.
-            ensure_stream(model, agent, StreamWanted::UserRequested)
-                .into_iter()
-                .collect()
+            ensure_stream(model, agent).into_iter().collect()
         }
         Msg::UserDetached { agent } => {
             model.attached.remove(&agent);
@@ -82,61 +76,11 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
     effects
 }
 
-/// Why a stream is being ensured: kernel inventory policy subscribes
-/// eagerly (fleet badges), a user interaction subscribes deliberately —
-/// and only the latter covers readonly agents.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum StreamWanted {
-    InventoryPolicy,
-    UserRequested,
-}
-
-/// Let go of a stream this build was holding only because somebody asked for
-/// it.
-///
-/// The inventory policy opens a stream for every agent on this machine that is
-/// not readonly, so its badge stays current whether or not anyone is reading
-/// it; closing a conversation on one of those changes nothing but the
-/// attachment. Everything else — an agent on another machine, or a readonly
-/// one, which is not in the fleet at all — has a stream only because of the
-/// interaction that just ended, so the stream ends with it.
-fn release_stream(model: &mut Model, agent_id: crate::AgentId) -> Option<Effect> {
-    if let Some(card) = model.agents.get(&agent_id)
-        && model.local_host_id == Some(card.agent.host_id)
-        && !card.agent.readonly
-    {
-        return None;
-    }
-    let stream = model.streams.remove(&agent_id)?;
-    refresh_attention(model, agent_id);
-    if matches!(stream.phase, StreamPhase::Closed { .. }) {
-        return None;
-    }
-    Some(Effect::CloseStream { agent: agent_id })
-}
-
-/// Subscription policy: open the structured stream for an agent whose kind
-/// has a layer this build folds, and none is already live. Emits at most one effect;
-/// re-upserts are idempotent. Retryable closes (transport loss) reopen on
-/// the next inventory event; terminal closes (deleted, exited) do not.
-fn ensure_stream(
-    model: &mut Model,
-    agent_id: model::AgentId,
-    wanted: StreamWanted,
-) -> Option<Effect> {
+/// Open a legacy structured stream only for an explicitly attached
+/// conversation. Fleet inventory never calls this; standing comes from the
+/// daemon's fleet summaries.
+fn ensure_stream(model: &mut Model, agent_id: model::AgentId) -> Option<Effect> {
     let card = model.agents.get(&agent_id)?;
-    // Readonly agents are hidden from the fleet, so the eager inventory
-    // subscription skips them (a badge nobody can see is not worth a
-    // stream) — but a user opening one (the read-only chat, F1) is
-    // exactly the interaction the policy widens for.
-    if card.agent.readonly && wanted == StreamWanted::InventoryPolicy {
-        return None;
-    }
-    if wanted == StreamWanted::InventoryPolicy
-        && model.eager_subscription_exclusions.contains(&agent_id)
-    {
-        return None;
-    }
     let protocol = AgentLayer::from_kind(&card.agent.kind)?.protocol();
     let reopen = match model.streams.get(&agent_id) {
         None => true,
@@ -166,6 +110,13 @@ fn ensure_stream(
     })
 }
 
+fn release_stream(model: &mut Model, agent_id: crate::AgentId) -> Option<Effect> {
+    let stream = model.streams.remove(&agent_id)?;
+    refresh_attention(model, agent_id);
+    (!matches!(stream.phase, StreamPhase::Closed { .. }))
+        .then_some(Effect::CloseStream { agent: agent_id })
+}
+
 fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> {
     // 1-based so "no failures dismissed" is naturally seq 0 for viewers.
     model.op_seq += 1;
@@ -175,8 +126,9 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
         return crate::queue::update_command(model, op, seq, command);
     }
 
-    if !model.is_connected() {
-        // Commands fail fast while disconnected — no offline queue.
+    if !model.is_synchronized() {
+        // Commands fail fast until this connection's inventory snapshot has
+        // confirmed the card — no write may target remembered-only state.
         return refuse(model, op, seq, redact_command(command), NOT_CONNECTED_ERROR);
     }
 
@@ -603,14 +555,12 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             if let Some(ids) = model.remote_inventories.get_mut(&agent.host_id) {
                 ids.insert(agent_id);
             }
-            let is_local = model.local_host_id == Some(agent.host_id);
             match model.agents.get_mut(&agent_id) {
                 Some(card) => {
                     // Facts update; UI-layer derived state persists across
                     // upserts of the same entity.
                     card.agent = agent;
                     card.epoch = epoch;
-                    card.remembered = false;
                 }
                 None => {
                     let card = AgentCard {
@@ -627,16 +577,8 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                     model.agents.insert(agent_id, card);
                 }
             }
-            // Remote conversations join on attach and rejoin after transport
-            // loss, including when the offline host lost its inventory.
             if model.attached.contains_key(&agent_id) {
-                ensure_stream(model, agent_id, StreamWanted::UserRequested)
-                    .into_iter()
-                    .collect()
-            } else if is_local {
-                ensure_stream(model, agent_id, StreamWanted::InventoryPolicy)
-                    .into_iter()
-                    .collect()
+                ensure_stream(model, agent_id).into_iter().collect()
             } else {
                 Vec::new()
             }
@@ -698,6 +640,10 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 return tripwire("agents synchronized while not connected");
             };
             *agents_synchronized = true;
+            let epoch = model.epoch;
+            for card in model.agents.values_mut().filter(|card| card.epoch == epoch) {
+                card.remembered = false;
+            }
             prune_if_synchronized(model)
         }
     }

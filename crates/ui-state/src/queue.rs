@@ -89,7 +89,7 @@ pub struct QueuedMessage {
 
 /// Holding is deliberate: only a live working session accepts a new queue.
 pub fn can_hold(model: &Model, agent: AgentId) -> bool {
-    model.is_connected()
+    model.is_synchronized()
         && match model.agent(agent).and_then(|card| card.layer.as_ref()) {
             Some(AgentLayer::Claude(_)) => {
                 crate::claude::send_gate(model, agent) == crate::claude::SendGate::Working
@@ -105,7 +105,7 @@ pub fn can_hold(model: &Model, agent: AgentId) -> bool {
 }
 
 fn ready(model: &Model, agent: AgentId) -> bool {
-    model.is_connected()
+    model.is_synchronized()
         && match model.agent(agent).and_then(|card| card.layer.as_ref()) {
             Some(AgentLayer::Claude(_)) => {
                 crate::claude::send_gate(model, agent) == crate::claude::SendGate::Ready

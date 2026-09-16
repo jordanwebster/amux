@@ -83,8 +83,8 @@ fn kind_without_a_structured_layer_still_renders_a_card() {
 }
 
 #[test]
-fn known_agents_open_streams_with_typed_protocols() {
-    for (agent, expected) in [
+fn known_agents_do_not_open_eager_streams() {
+    for (agent, _expected) in [
         (
             an_agent("claude-agent", "nova"),
             StructuredProtocol::ClaudePtyTranscript,
@@ -95,15 +95,12 @@ fn known_agents_open_streams_with_typed_protocols() {
         ),
     ] {
         let (_, effects) = fold_with_effects(seq([base(), vec![agent_up(&agent)]]));
-        assert!(effects.iter().any(|effect| matches!(
-            effect,
-            Effect::OpenStream { protocol, .. } if *protocol == expected
-        )));
+        assert!(effects.is_empty(), "inventory must not open {agent:?}");
     }
 }
 
-/// Local inventory opens the SDK stream once. Opening the chat reuses that
-/// subscription and never requests a terminal protocol.
+/// Opening an SDK conversation requests exactly one typed stream; inventory
+/// alone requested none.
 #[test]
 fn claude_sdk_inventory_opens_one_stream_shared_with_user_attach() {
     let mut sdk = an_agent("sdk-agent", "nova");
@@ -193,10 +190,9 @@ fn readonly_sequence() -> Vec<Msg> {
 
 /// Readonly agents (captured sessions the chrome cannot drive) surface in
 /// the fleet — A3: they exist and open in chat only, with their resting
-/// status word stating `read-only` — but still get no EAGER stream
-/// subscription: a resting row is not worth a stream. A user opening one
-/// subscribes it deliberately (`Msg::UserAttached` — the read-only chat's
-/// feed, F1; covered in the attention chapter).
+/// status word stating `read-only` — but still get no eager stream
+/// subscription: a resting row is not worth a stream. Opening one subscribes
+/// through the store-backed chat lifecycle.
 #[test]
 fn readonly_agents_surface_in_the_fleet_without_an_eager_stream() {
     let (model, effects) = fold_with_effects(readonly_sequence());
@@ -215,7 +211,7 @@ fn readonly_agents_surface_in_the_fleet_without_an_eager_stream() {
         .iter()
         .filter(|effect| matches!(effect, ui_state::Effect::OpenStream { .. }))
         .count();
-    assert_eq!(opened, 1, "still no eager stream for the readonly agent");
+    assert_eq!(opened, 0, "neither fleet row opens a chat stream");
 }
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
@@ -307,37 +303,23 @@ fn attached_remote_conversations_rejoin_after_an_outage() {
     }
 }
 
-/// Closing a conversation gives back the stream it asked for — and only that.
-///
-/// The eager inventory policy keeps a stream open for every agent on this
-/// machine that is not readonly, because its badge is worth one whether or
-/// not anybody is reading it, so closing a conversation on one of those
-/// changes nothing but the attachment. Everything else — an agent on another
-/// machine, or a readonly one, which the eager policy skips — has a stream
-/// only because somebody opened it, so closing the conversation closes the
-/// stream and a later inventory upsert does not bring it back.
+/// Closing a conversation gives back the only stream it asked for.
 #[test]
 fn a_closed_conversation_lets_go_of_the_stream_it_asked_for() {
     use ui_state::{Effect, update};
 
-    // The host the agent runs on, whether it is readonly, and whether the
-    // eager policy would have opened its stream without anybody asking.
-    for (on, readonly, eager) in [
-        ("hetzner", false, false),
-        ("hetzner", true, false),
-        ("nova", false, true),
-        ("nova", true, false),
+    for (on, readonly) in [
+        ("hetzner", false),
+        ("hetzner", true),
+        ("nova", false),
+        ("nova", true),
     ] {
         let mut agent = an_agent(&format!("chat-{on}-{readonly}"), on);
         agent.readonly = readonly;
         let mut model = fold(seq([base(), vec![host_up(&a_host("hetzner"))]]));
 
         let inventory = update(&mut model, agent_up(&agent));
-        assert_eq!(
-            inventory.len(),
-            usize::from(eager),
-            "{on} readonly={readonly}"
-        );
+        assert_eq!(inventory.len(), 0, "{on} readonly={readonly}");
         update(&mut model, Msg::UserAttached { agent: agent.id });
         assert!(model.is_attached(agent.id));
         assert!(model.stream(agent.id).is_some(), "{on} readonly={readonly}");
@@ -347,11 +329,6 @@ fn a_closed_conversation_lets_go_of_the_stream_it_asked_for() {
             !model.is_attached(agent.id),
             "a closed conversation is not open: {on} readonly={readonly}"
         );
-        if eager {
-            assert!(released.is_empty(), "the badge still wants this stream");
-            assert!(model.stream(agent.id).is_some());
-            continue;
-        }
         assert!(
             matches!(released.as_slice(), [Effect::CloseStream { agent: closed }] if *closed == agent.id),
             "the stream nobody asked for any more stays open: {released:?}"

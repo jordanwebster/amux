@@ -8,8 +8,6 @@
 //! resources only (sockets, reconnect backoff, buffers).
 
 use std::collections::{HashMap, HashSet};
-#[cfg(debug_assertions)]
-use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -27,12 +25,13 @@ use model::{
     SendInputRequest, SessionArgs, SessionCloseReason, SessionInput, SessionOutput,
     SubscribeSessionEvent, SubscribeSessionRequest,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc, watch};
 use tokio::task::JoinHandle;
 use ui_state::codex::CodexInput;
 use ui_state::{
-    Command, DisconnectReason, DumpReason, Effect, InputPayload, Model, Msg, NOT_CONNECTED_ERROR,
-    OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamEntry, StreamMsg,
+    ChatCommand, ChatStreamMsg, Command, DisconnectReason, DumpReason, Effect, InputPayload, Model,
+    Msg, NOT_CONNECTED_ERROR, OpError, OpId, OpOutcome, ProfileGeneration, ReplayFactsDto,
+    ServerMsg, StoreMsg, StoreStreamQuery, StreamCloseReason, StreamEntry, StreamMsg,
     StructuredProtocol, update,
 };
 use uuid::Uuid;
@@ -42,6 +41,7 @@ use crate::report::{
     FrameCapture, LOG_TAIL_BYTES, ReplayVerdict, ReportDraft, ReportKind, ReportParts,
     ReportWriter, TraceKind, log_tail,
 };
+use crate::store_worker::StoreWorker;
 
 /// Reducer build identity, stamped into reports.
 pub const BUILD: &str = concat!("ui-runtime/", env!("CARGO_PKG_VERSION"));
@@ -337,6 +337,12 @@ impl MsgSink {
     async fn send(&self, msg: Msg) -> Result<(), ()> {
         self.tx.send((self.generation, msg)).await.map_err(|_| ())
     }
+
+    pub(crate) fn blocking_send(&self, msg: Msg) -> Result<(), ()> {
+        self.tx
+            .blocking_send((self.generation, msg))
+            .map_err(|_| ())
+    }
 }
 
 /// The host events an inventory source yields, in the client's own vocabulary.
@@ -360,9 +366,9 @@ pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
     pub local_host_id: Option<HostId>,
-    /// Boundary-test exceptions to the current eager inventory policy.
-    #[cfg(debug_assertions)]
-    pub eager_subscription_exclusions: BTreeSet<AgentId>,
+    /// Shared client store for this profile. `None` is reserved for
+    /// embedders and tests that have not installed persistence.
+    pub store_path: Option<PathBuf>,
     /// Owner inventory for an embedded profile, including cloud pairing
     /// candidates. Without it, host presence comes from the trusted-only
     /// client subscription.
@@ -396,8 +402,7 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             local_host_id: None,
-            #[cfg(debug_assertions)]
-            eager_subscription_exclusions: BTreeSet::new(),
+            store_path: None,
             host_inventory: None,
             report_dir: None,
             log_path: None,
@@ -429,6 +434,9 @@ pub struct Runtime {
     /// Live per-agent stream tasks (shell resource bookkeeping only; the
     /// semantic stream state lives in the Model).
     streams: HashMap<AgentId, JoinHandle<()>>,
+    store_streams: HashMap<AgentId, StoreStreamTask>,
+    store_worker: Option<StoreWorker>,
+    startup_gate: Arc<StartupGate>,
     report_dir: Option<PathBuf>,
     log_path: Option<PathBuf>,
     git_sha: &'static str,
@@ -446,6 +454,62 @@ pub struct Runtime {
     /// reports are throttled to once per kind so a persistent incoherence
     /// cannot fill the report directory.
     reported_violations: HashSet<&'static str>,
+}
+
+struct StoreStreamTask {
+    task: JoinHandle<()>,
+    paused: watch::Sender<bool>,
+}
+
+#[derive(Default)]
+struct StartupGate {
+    completed: std::sync::atomic::AtomicU8,
+    notify: Notify,
+}
+
+impl StartupGate {
+    const FLEET: u8 = 1;
+    const VIEW: u8 = 2;
+
+    fn finish_all(&self) {
+        self.completed
+            .store(Self::FLEET | Self::VIEW, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    fn observe(&self, msg: &Msg) {
+        let bit = match msg {
+            Msg::Store(StoreMsg::FleetLoaded { .. }) => Self::FLEET,
+            Msg::Store(StoreMsg::ViewLoaded { .. }) => Self::VIEW,
+            Msg::Store(StoreMsg::Failed {
+                kind: ui_state::StoreOpKind::FleetLoad,
+                ..
+            }) => Self::FLEET,
+            Msg::Store(StoreMsg::Failed {
+                kind: ui_state::StoreOpKind::ViewGet,
+                ..
+            }) => Self::VIEW,
+            Msg::Store(StoreMsg::Unavailable { .. }) => {
+                self.finish_all();
+                return;
+            }
+            _ => return,
+        };
+        let previous = self.completed.fetch_or(bit, Ordering::AcqRel);
+        if previous | bit == Self::FLEET | Self::VIEW {
+            self.notify.notify_waiters();
+        }
+    }
+
+    async fn wait(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if self.completed.load(Ordering::Acquire) == Self::FLEET | Self::VIEW {
+                return;
+            }
+            notified.await;
+        }
+    }
 }
 
 impl Runtime {
@@ -527,6 +591,9 @@ impl Runtime {
         for (_, task) in self.streams.drain() {
             task.abort();
         }
+        for (_, stream) in self.store_streams.drain() {
+            stream.task.abort();
+        }
 
         let next = Self::start_on_channel(connector, options, msg_tx, msg_rx, generation);
         // Dropping the retired runtime releases its client and caches.
@@ -580,10 +647,6 @@ impl Runtime {
         generation: Generation,
     ) -> Self {
         let model = Model::default();
-        #[cfg(debug_assertions)]
-        let mut model = model;
-        #[cfg(debug_assertions)]
-        model.set_eager_subscription_exclusions(options.eager_subscription_exclusions);
         let recorder = Arc::new(StdMutex::new(Recorder::new(
             options.recorder_capacity,
             &model,
@@ -599,7 +662,17 @@ impl Runtime {
                 .map_err(|error| error.to_string())
         });
 
+        let startup_gate = Arc::new(StartupGate::default());
+        let profile = ProfileGeneration(generation.0);
+        let store_worker = options
+            .store_path
+            .map(|path| StoreWorker::spawn(path, profile, msg_sink.clone()));
+        if store_worker.is_none() {
+            startup_gate.finish_all();
+        }
+
         let subscription_status_provider = options.subscription_status_provider;
+        let connection_gate = startup_gate.clone();
         let connection_task = tokio::spawn(connection_task(
             connector,
             msg_sink.clone(),
@@ -607,6 +680,7 @@ impl Runtime {
             options.local_host_id,
             subscription_status_provider.clone(),
             options.host_inventory,
+            connection_gate,
         ));
 
         Self {
@@ -617,6 +691,9 @@ impl Runtime {
             client,
             tasks: vec![connection_task],
             streams: HashMap::new(),
+            store_streams: HashMap::new(),
+            store_worker,
+            startup_gate,
             report_dir: options.report_dir,
             log_path: options.log_path,
             git_sha: options.git_sha,
@@ -674,10 +751,34 @@ impl Runtime {
         self.process(Msg::UserAttached { agent });
     }
 
+    /// Open one structured conversation through its persisted lifecycle.
+    pub fn open_chat(&mut self, agent: AgentId) {
+        self.process(Msg::Chat(ChatCommand::Open { agent }));
+    }
+
     /// Reify a user detach: a conversation nobody has open no longer widens
     /// the subscription policy, and the stream it asked for is let go.
     pub fn note_detached(&mut self, agent: AgentId) {
         self.process(Msg::UserDetached { agent });
+    }
+
+    /// Close a structured conversation after its bounded store flush.
+    pub fn close_chat(&mut self, agent: AgentId) {
+        let now = Utc::now();
+        self.process(Msg::Chat(ChatCommand::Close { agent, now }));
+        let tx = self.msg_sink.clone();
+        tokio::spawn(async move {
+            let delay = ui_state::FLUSH_DEADLINE
+                .to_std()
+                .unwrap_or_else(|_| Duration::from_secs(5));
+            tokio::time::sleep(delay).await;
+            let _ = tx
+                .send(Msg::Chat(ChatCommand::FlushDeadline {
+                    agent,
+                    now: now + ui_state::FLUSH_DEADLINE,
+                }))
+                .await;
+        });
     }
 
     /// Await the next Msg, then fold everything already pending (up to a
@@ -817,6 +918,17 @@ impl Runtime {
         if let Some(tap) = self.msg_tap.as_mut() {
             tap(&msg);
         }
+        let startup_result = matches!(
+            &msg,
+            Msg::Store(StoreMsg::FleetLoaded { .. })
+                | Msg::Store(StoreMsg::ViewLoaded { .. })
+                | Msg::Store(StoreMsg::Unavailable { .. })
+                | Msg::Store(StoreMsg::Failed {
+                    kind: ui_state::StoreOpKind::FleetLoad | ui_state::StoreOpKind::ViewGet,
+                    ..
+                })
+        )
+        .then(|| msg.clone());
         // Shell-side resource bookkeeping keyed on an observed Msg (allowed:
         // the shell manages resources, never decides semantics): a stream
         // task always ends by sending `Closed`, so drop its finished
@@ -834,10 +946,28 @@ impl Runtime {
         {
             self.streams.remove(agent);
         }
+        if let Msg::ChatStream {
+            agent,
+            event: ChatStreamMsg::Closed { .. },
+            ..
+        } = &msg
+            && self
+                .store_streams
+                .get(agent)
+                .is_some_and(|stream| stream.task.is_finished())
+        {
+            self.store_streams.remove(agent);
+        }
         let effects = update(&mut self.model, msg);
         self.enforce_invariants();
         for effect in effects {
             self.run_effect(effect);
+        }
+        // Opening the network is gated on these messages having crossed the
+        // recorder and reducer seam, not merely having been queued by the
+        // store thread.
+        if let Some(msg) = startup_result.as_ref() {
+            self.startup_gate.observe(msg);
         }
         self.enforce_invariants();
         // Binary payloads are shell resources, absent from reducer state and reports.
@@ -1067,24 +1197,55 @@ impl Runtime {
                     stale.abort();
                 }
             }
-            Effect::OpenStoreStream { agent, .. } => {
-                tracing::debug!(%agent, "store-backed stream execution awaits the store worker");
+            Effect::OpenStoreStream {
+                agent,
+                protocol,
+                attempt,
+                query,
+            } => {
+                let client = self.client.clone();
+                let tx = self.msg_sink.clone();
+                let (paused, paused_rx) = watch::channel(false);
+                let task = tokio::spawn(store_stream_task(
+                    client, agent, protocol, attempt, query, paused_rx, tx,
+                ));
+                if let Some(stale) = self
+                    .store_streams
+                    .insert(agent, StoreStreamTask { task, paused })
+                {
+                    stale.task.abort();
+                }
             }
             Effect::PauseStream(agent) => {
-                tracing::debug!(%agent, "store-backed stream paused");
+                if let Some(stream) = self.store_streams.get(&agent) {
+                    let _ = stream.paused.send(true);
+                }
             }
             Effect::ResumeStream(agent) => {
-                tracing::debug!(%agent, "store-backed stream resumed");
+                if let Some(stream) = self.store_streams.get(&agent) {
+                    let _ = stream.paused.send(false);
+                }
             }
             Effect::Store(op) => {
-                tracing::debug!(?op, "store operation awaits the store worker");
+                if let Some(worker) = &self.store_worker {
+                    worker.execute(op);
+                }
             }
             Effect::RetryStore { after_ms, op } => {
-                tracing::debug!(after_ms, ?op, "store retry awaits the store worker");
+                if let (Some(worker), Effect::Store(op)) = (&self.store_worker, *op) {
+                    let worker = worker.handle();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(after_ms)).await;
+                        worker.execute(op);
+                    });
+                }
             }
             Effect::CloseStream { agent } => {
                 if let Some(task) = self.streams.remove(&agent) {
                     task.abort();
+                }
+                if let Some(stream) = self.store_streams.remove(&agent) {
+                    stream.task.abort();
                 }
             }
             Effect::RequestDump { reason } => {
@@ -1103,6 +1264,9 @@ impl Drop for Runtime {
         }
         for task in self.streams.values() {
             task.abort();
+        }
+        for stream in self.store_streams.values() {
+            stream.task.abort();
         }
     }
 }
@@ -1711,7 +1875,9 @@ async fn connection_task(
     local_host_id: Option<HostId>,
     subscription_status_provider: Option<SubscriptionStatusProvider>,
     host_inventory: Option<Arc<dyn HostInventory>>,
+    startup_gate: Arc<StartupGate>,
 ) {
+    startup_gate.wait().await;
     let mut backoff = RECONNECT_BACKOFF_INITIAL;
     loop {
         let client = match connector().await {
@@ -1812,18 +1978,30 @@ async fn pump_inventory(
     }
 
     loop {
-        let events = tokio::select! {
+        let events: Vec<Msg> = tokio::select! {
             event = hosts_stream.next() => match event {
-                Some(Ok(model::HostEvent::HostUpdated { host })) => vec![ServerMsg::HostUpserted { host }],
-                Some(Ok(model::HostEvent::HostRemoved { id })) => vec![ServerMsg::HostRemoved { id }],
-                Some(Ok(model::HostEvent::SnapshotComplete)) => vec![ServerMsg::HostsSynchronized],
+                Some(Ok(model::HostEvent::HostUpdated { host })) => vec![
+                    Msg::FleetDelta(store::FleetDelta::Reachability {
+                        host_id: host.id,
+                        online: host.online,
+                    }),
+                    Msg::Server(ServerMsg::HostUpserted { host }),
+                ],
+                Some(Ok(model::HostEvent::HostRemoved { id })) => vec![
+                    Msg::FleetDelta(store::FleetDelta::Reachability {
+                        host_id: id,
+                        online: false,
+                    }),
+                    Msg::Server(ServerMsg::HostRemoved { id }),
+                ],
+                Some(Ok(model::HostEvent::SnapshotComplete)) => vec![Msg::Server(ServerMsg::HostsSynchronized)],
                 Some(Err(error)) => return Some(disconnect_reason(&error)),
                 None => return Some(DisconnectReason::TransportError {
                     message: "host inventory stream ended".into(),
                 }),
             },
             event = agents_stream.recv() => match event {
-                Ok(event) => agent_server_msgs(event),
+                Ok(event) => agent_messages(event),
                 Err(error) => return Some(disconnect_reason(&error)),
             },
             _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {
@@ -1832,47 +2010,124 @@ async fn pump_inventory(
                     continue;
                 }
                 subscription_required = Some(required);
-                vec![ServerMsg::CloudSubscriptionStatus { required }]
+                vec![Msg::Server(ServerMsg::CloudSubscriptionStatus { required })]
             },
         };
         for event in events {
-            if tx.send(Msg::Server(event)).await.is_err() {
+            if tx.send(event).await.is_err() {
                 return None;
             }
         }
     }
 }
 
+#[cfg(test)]
 fn agent_server_msgs(event: model::AgentEvent) -> Vec<ServerMsg> {
+    agent_messages(event)
+        .into_iter()
+        .filter_map(|message| match message {
+            Msg::Server(message) => Some(message),
+            _ => None,
+        })
+        .collect()
+}
+
+fn agent_messages(event: model::AgentEvent) -> Vec<Msg> {
     match event {
-        model::AgentEvent::AgentUp { agent } | model::AgentEvent::AgentUpdated { agent } => {
-            vec![ServerMsg::AgentUpserted { agent }]
+        model::AgentEvent::AgentUp { agent } => {
+            let delta = store::FleetDelta::AgentUp {
+                revision: agent.inventory_revision,
+                agent: agent.clone(),
+            };
+            vec![
+                Msg::FleetDelta(delta),
+                Msg::Server(ServerMsg::AgentUpserted { agent }),
+            ]
         }
-        model::AgentEvent::AgentDown { agent_id, .. } => {
-            vec![ServerMsg::AgentRemoved { id: agent_id }]
+        model::AgentEvent::AgentUpdated { agent } => {
+            let delta = store::FleetDelta::AgentUpdated {
+                revision: agent.inventory_revision,
+                agent: agent.clone(),
+            };
+            vec![
+                Msg::FleetDelta(delta),
+                Msg::Server(ServerMsg::AgentUpserted { agent }),
+            ]
         }
-        model::AgentEvent::SnapshotComplete { .. } => vec![ServerMsg::AgentsSynchronized],
+        model::AgentEvent::AgentDown {
+            host_id,
+            agent_id,
+            inventory_revision,
+        } => {
+            vec![
+                Msg::FleetDelta(store::FleetDelta::AgentDown {
+                    host_id,
+                    agent_id,
+                    revision: inventory_revision,
+                    reason: None,
+                }),
+                Msg::Server(ServerMsg::AgentRemoved { id: agent_id }),
+            ]
+        }
+        model::AgentEvent::SnapshotComplete { .. } => {
+            vec![Msg::Server(ServerMsg::AgentsSynchronized)]
+        }
         model::AgentEvent::Summary {
-            agent_id, envelope, ..
-        } => vec![ServerMsg::AgentSummary {
-            agent: agent_id,
+            host_id,
+            agent_id,
             envelope,
-        }],
+        } => vec![
+            Msg::FleetDelta(store::FleetDelta::Summary {
+                host_id,
+                agent_id,
+                envelope: envelope.clone(),
+            }),
+            Msg::Server(ServerMsg::AgentSummary {
+                agent: agent_id,
+                envelope,
+            }),
+        ],
         model::AgentEvent::Progress {
-            agent_id, progress, ..
-        } => vec![ServerMsg::AgentProgress {
-            agent: agent_id,
+            host_id,
+            agent_id,
             progress,
-        }],
+        } => vec![
+            Msg::FleetDelta(store::FleetDelta::Progress {
+                host_id,
+                agent_id,
+                progress: progress.clone(),
+            }),
+            Msg::Server(ServerMsg::AgentProgress {
+                agent: agent_id,
+                progress,
+            }),
+        ],
         model::AgentEvent::HostInventory {
-            host_id, agents, ..
+            host_id,
+            agents,
+            through_revision,
         } => {
             let agent_ids = agents.iter().map(|agent| agent.id).collect();
             let mut messages = agents
-                .into_iter()
-                .map(|agent| ServerMsg::AgentUpserted { agent })
+                .iter()
+                .cloned()
+                .map(|agent| Msg::Server(ServerMsg::AgentUpserted { agent }))
                 .collect::<Vec<_>>();
-            messages.push(ServerMsg::HostInventory { host_id, agent_ids });
+            messages.insert(
+                0,
+                Msg::FleetDelta(store::FleetDelta::Snapshot(store::FleetSnapshot {
+                    host_id,
+                    through_revision,
+                    agents: agents
+                        .into_iter()
+                        .map(|agent| {
+                            let revision = agent.inventory_revision;
+                            (agent, revision)
+                        })
+                        .collect(),
+                })),
+            );
+            messages.push(Msg::Server(ServerMsg::HostInventory { host_id, agent_ids }));
             messages
         }
     }
@@ -1902,6 +2157,175 @@ async fn stream_task(
             })
             .await;
     }
+}
+
+async fn store_stream_task(
+    shared_client: Arc<StdMutex<Option<Client>>>,
+    agent: AgentId,
+    protocol: StructuredProtocol,
+    attempt: ui_state::StreamAttempt,
+    query: StoreStreamQuery,
+    paused: watch::Receiver<bool>,
+    tx: MsgSink,
+) {
+    let reason =
+        pump_store_stream(shared_client, agent, protocol, attempt, query, paused, &tx).await;
+    if let Some(reason) = reason {
+        let _ = tx
+            .send(Msg::ChatStream {
+                agent,
+                attempt,
+                event: ChatStreamMsg::Closed {
+                    at: Utc::now(),
+                    reason,
+                },
+            })
+            .await;
+    }
+}
+
+async fn pump_store_stream(
+    shared_client: Arc<StdMutex<Option<Client>>>,
+    agent: AgentId,
+    protocol: StructuredProtocol,
+    attempt: ui_state::StreamAttempt,
+    query: StoreStreamQuery,
+    mut paused: watch::Receiver<bool>,
+    tx: &MsgSink,
+) -> Option<StreamCloseReason> {
+    let client = loop {
+        if let Some(client) = shared_client.lock().expect("client mutex poisoned").clone() {
+            break client;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let replay_query = match query {
+        StoreStreamQuery::After { after, tail_bound } => ReplayQuery::After { after, tail_bound },
+        StoreStreamQuery::TailCount { count, tail_bound } => {
+            ReplayQuery::TailCount { count, tail_bound }
+        }
+    };
+    let mut session = match client
+        .subscribe_session(SubscribeSessionRequest {
+            agent: AgentIdentifier::Id(agent),
+            args: structured_stream_args_with_query(protocol, replay_query),
+        })
+        .await
+    {
+        Ok(session) => session,
+        Err(error) => return Some(stream_close_from_client_error(&error)),
+    };
+
+    let mut opened = false;
+    let mut batch = Vec::new();
+    loop {
+        while *paused.borrow() {
+            if paused.changed().await.is_err() {
+                return None;
+            }
+        }
+        let event = if batch.is_empty() {
+            Some(session.recv().await)
+        } else if batch.len() >= MAX_STREAM_BATCH {
+            None
+        } else {
+            session.recv().now_or_never()
+        };
+        match event {
+            None => flush_store_stream_batch(tx, agent, attempt, &mut batch).await?,
+            Some(Ok(SubscribeSessionEvent::Opened { replay })) => {
+                if opened {
+                    return Some(StreamCloseReason::InternalError {
+                        detail: "session opened more than once".to_owned(),
+                    });
+                }
+                let Some(facts) = replay else {
+                    return Some(StreamCloseReason::InternalError {
+                        detail: "structured session opened without replay facts".to_owned(),
+                    });
+                };
+                tx.send(Msg::ChatStream {
+                    agent,
+                    attempt,
+                    event: ChatStreamMsg::Opened {
+                        facts: ReplayFactsDto::from(facts),
+                        at: Utc::now(),
+                    },
+                })
+                .await
+                .ok()?;
+                opened = true;
+            }
+            Some(Ok(SubscribeSessionEvent::Output(output))) => {
+                if !opened {
+                    return Some(StreamCloseReason::InternalError {
+                        detail: "structured session emitted output before opening".to_owned(),
+                    });
+                }
+                let row = match (protocol, output) {
+                    (
+                        StructuredProtocol::ClaudePtyTranscript,
+                        SessionOutput::ClaudePtyTranscriptV1(row),
+                    )
+                    | (StructuredProtocol::ClaudeSdk, SessionOutput::ClaudeSdkV1(row))
+                    | (StructuredProtocol::Codex, SessionOutput::CodexSdkV1(row)) => row,
+                    _ => {
+                        flush_store_stream_batch(tx, agent, attempt, &mut batch).await?;
+                        return Some(StreamCloseReason::InternalError {
+                            detail: "session emitted output for the wrong protocol".to_owned(),
+                        });
+                    }
+                };
+                match stream_entry(row) {
+                    Ok(entry) => batch.push(entry),
+                    Err(reason) => {
+                        flush_store_stream_batch(tx, agent, attempt, &mut batch).await?;
+                        return Some(reason);
+                    }
+                }
+            }
+            Some(Ok(SubscribeSessionEvent::ReplayComplete)) => {
+                flush_store_stream_batch(tx, agent, attempt, &mut batch).await?;
+                tx.send(Msg::ChatStream {
+                    agent,
+                    attempt,
+                    event: ChatStreamMsg::ReplayComplete { at: Utc::now() },
+                })
+                .await
+                .ok()?;
+            }
+            Some(Ok(SubscribeSessionEvent::Closed { reason })) => {
+                flush_store_stream_batch(tx, agent, attempt, &mut batch).await?;
+                return Some(stream_close_from_session(reason));
+            }
+            Some(Err(error)) => {
+                flush_store_stream_batch(tx, agent, attempt, &mut batch).await?;
+                return Some(stream_close_from_client_error(&error));
+            }
+        }
+    }
+}
+
+async fn flush_store_stream_batch(
+    tx: &MsgSink,
+    agent: AgentId,
+    attempt: ui_state::StreamAttempt,
+    batch: &mut Vec<StreamEntry>,
+) -> Option<()> {
+    if batch.is_empty() {
+        return Some(());
+    }
+    tx.send(Msg::ChatStream {
+        agent,
+        attempt,
+        event: ChatStreamMsg::Batch {
+            at: Utc::now(),
+            entries: std::mem::take(batch),
+        },
+    })
+    .await
+    .ok()?;
+    Some(())
 }
 
 /// Batches structured output opportunistically: block for the first entry,
@@ -2046,6 +2470,20 @@ fn structured_stream_args(protocol: StructuredProtocol, tail: u64) -> SessionArg
         count: tail,
         tail_bound: None,
     });
+    structured_stream_args_optional(protocol, replay_query)
+}
+
+fn structured_stream_args_with_query(
+    protocol: StructuredProtocol,
+    replay_query: ReplayQuery,
+) -> SessionArgs {
+    structured_stream_args_optional(protocol, Some(replay_query))
+}
+
+fn structured_stream_args_optional(
+    protocol: StructuredProtocol,
+    replay_query: Option<ReplayQuery>,
+) -> SessionArgs {
     match protocol {
         StructuredProtocol::ClaudePtyTranscript => {
             SessionArgs::ClaudePtyTranscriptV1(model::ClaudePtyTranscriptV1Args {
@@ -2346,6 +2784,9 @@ mod tests {
             client: Arc::new(StdMutex::new(None)),
             tasks: Vec::new(),
             streams: HashMap::new(),
+            store_streams: HashMap::new(),
+            store_worker: None,
+            startup_gate: Arc::new(StartupGate::default()),
             report_dir: Some(report_dir),
             log_path: Some(log_path),
             git_sha,
@@ -2358,6 +2799,162 @@ mod tests {
             discarded_late_count: 0,
             reported_violations: HashSet::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn store_startup_is_recorded_before_the_first_connection_attempt() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let connector_calls = calls.clone();
+        let connector: Connector = Box::new(move || {
+            connector_calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(std::future::pending())
+        });
+        let seen = Arc::new(StdMutex::new(Vec::<Msg>::new()));
+        let tapped = seen.clone();
+        let mut runtime = Runtime::start(
+            connector,
+            RuntimeOptions {
+                store_path: Some(directory.path().join("store.sqlite")),
+                msg_tap: Some(Box::new(move |msg| {
+                    tapped.lock().expect("tap mutex").push(msg.clone());
+                })),
+                ..RuntimeOptions::default()
+            },
+        );
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+                .await
+                .expect("startup message timed out");
+        }
+        tokio::task::yield_now().await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let seen = seen.lock().expect("tap mutex");
+        assert!(matches!(seen[0], Msg::StoreStartup { .. }));
+        assert!(matches!(
+            (&seen[1], &seen[2]),
+            (
+                Msg::Store(StoreMsg::FleetLoaded { .. }),
+                Msg::Store(StoreMsg::ViewLoaded { .. })
+            )
+        ));
+        assert!(
+            runtime
+                .recorder_snapshot()
+                .msgs
+                .iter()
+                .any(|line| line.contains("FleetLoaded"))
+        );
+        assert!(
+            runtime
+                .recorder_snapshot()
+                .msgs
+                .iter()
+                .any(|line| line.contains("ViewLoaded"))
+        );
+    }
+
+    #[tokio::test]
+    async fn active_store_polls_external_changes() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("store.sqlite");
+        let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let tapped = changed.clone();
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(path.clone()),
+                msg_tap: Some(Box::new(move |msg| {
+                    if matches!(msg, Msg::Store(StoreMsg::FleetChanged { .. })) {
+                        tapped.store(true, Ordering::Release);
+                    }
+                })),
+                ..RuntimeOptions::default()
+            },
+        );
+        for _ in 0..3 {
+            tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+                .await
+                .expect("startup message timed out");
+        }
+
+        let external = store::Store::open(&path)
+            .await
+            .expect("second store handle");
+        external
+            .view_set("poll-test", "changed", "yes")
+            .await
+            .expect("external write");
+        external.close().await;
+
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !changed.load(Ordering::Acquire) {
+                assert!(runtime.next_message().await);
+            }
+        })
+        .await
+        .expect("data-version change was not reported");
+    }
+
+    #[tokio::test]
+    async fn unavailable_store_keeps_a_chat_live_only() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let obstruction = directory.path().join("not-a-directory");
+        std::fs::write(&obstruction, b"file").expect("write obstruction");
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(obstruction.join("store.sqlite")),
+                ..RuntimeOptions::default()
+            },
+        );
+        for _ in 0..2 {
+            tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+                .await
+                .expect("unavailable startup timed out");
+        }
+
+        let agent = Uuid::from_u128(801);
+        let host = Uuid::from_u128(802);
+        runtime.process(Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host),
+        }));
+        runtime.process(Msg::Server(ServerMsg::AgentUpserted {
+            agent: claude_agent(agent, host),
+        }));
+        runtime.open_chat(agent);
+        tokio::time::timeout(Duration::from_secs(5), runtime.next_message())
+            .await
+            .expect("load unavailability timed out");
+
+        let chat = runtime.model().chat(agent).expect("chat remains visible");
+        assert!(chat.live_only);
+        assert_eq!(chat.state, ui_state::ChatState::Painted);
+        assert_eq!(chat.persistence_error, Some(store::StoreError::Io));
+    }
+
+    #[tokio::test]
+    async fn store_result_from_a_retired_profile_is_discarded() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(directory.path().to_path_buf());
+        let retired = runtime.shell_edge();
+        runtime.switch_connector(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions::default(),
+        );
+        retired
+            .report(Msg::Store(StoreMsg::FleetChanged {
+                profile: ProfileGeneration(0),
+            }))
+            .await
+            .expect("shared channel remains live");
+        tokio::task::yield_now().await;
+        assert!(!runtime.drain(), "late result must not reach the reducer");
+        assert_eq!(runtime.discarded_late_results(), 1);
+        assert_eq!(runtime.discarded_late_kinds(), vec![LateResult::Command]);
     }
 
     /// Binary queue resources survive holding and cancellation, while the Model
@@ -2377,6 +2974,8 @@ mod tests {
             Msg::Server(ServerMsg::AgentUpserted {
                 agent: claude_agent(agent, host),
             }),
+            Msg::Server(ServerMsg::HostsSynchronized),
+            Msg::Server(ServerMsg::AgentsSynchronized),
             Msg::Stream {
                 agent,
                 event: StreamMsg::Opened { truncated: false },
@@ -2717,6 +3316,8 @@ mod tests {
             Msg::Server(ServerMsg::AgentUpserted {
                 agent: claude_agent(agent, host),
             }),
+            Msg::Server(ServerMsg::HostsSynchronized),
+            Msg::Server(ServerMsg::AgentsSynchronized),
             Msg::Stream {
                 agent,
                 event: StreamMsg::Opened { truncated: false },

@@ -441,9 +441,10 @@ review notes in the devlog).
 Doors left open on purpose; any future answer must respect the stated
 constraint.
 
-- **Subscription policy.** V1 subscribes to local agents (and any agent
-  the user interacts with); broader eager subscription is a kernel Effect
-  policy change and must move no interpretation anywhere.
+- **Subscription policy.** V1 subscribes only to conversations the user has
+  open; fleet standing comes from the daemon's summary envelopes. Any policy
+  change remains a kernel Effect decision and must move no interpretation
+  anywhere.
 - **Push notifications.** When wanted, the sender runs the same summarizer
   fold over facts it can already see (the folds are pure, so extracting
   them into a shared crate is mechanical); interpreted state still never

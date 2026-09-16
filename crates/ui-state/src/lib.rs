@@ -42,6 +42,7 @@ pub use claude::{ClaudeCommand, SendGate};
 pub use claude_sdk::{ClaudeSdkCommand, ClaudeSdkInput, SdkAnswer};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};
 pub use effect::{DumpReason, Effect, InputPayload};
+pub use fold::StreamAttempt;
 pub use msg::{
     Command, DisconnectReason, Ephemeral, FlowClass, Msg, OpError, OpId, OpOutcome, ServerMsg,
     StreamCloseReason, StreamEntry, StreamMsg,

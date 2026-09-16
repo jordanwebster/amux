@@ -93,9 +93,17 @@ fn begin_open(model: &mut Model) -> (AttemptId, StoreOpId) {
             agent: agent_id("stored"),
         }),
     );
-    let [Effect::Store(StoreOp::Load { attempt, op, .. })] = effects.as_slice() else {
-        panic!("open must issue exactly one store load: {effects:?}");
+    let [
+        Effect::Store(StoreOp::Load { attempt, op, .. }),
+        Effect::Store(StoreOp::ViewSet {
+            kind, key, value, ..
+        }),
+    ] = effects.as_slice()
+    else {
+        panic!("open must load the chat and remember it: {effects:?}");
     };
+    assert_eq!((kind.as_str(), key.as_str()), ("ui", "remembered_chat"));
+    assert_eq!(value, &agent_id("stored").to_string());
     (*attempt, *op)
 }
 
@@ -820,7 +828,10 @@ fn startup_loads_fleet_and_remembered_chat_before_network_and_persists_deltas() 
     assert_eq!(model.remembered_chat(), Some(agent_id("stored")));
     assert!(matches!(
         effects.as_slice(),
-        [Effect::Store(StoreOp::Load { .. })]
+        [
+            Effect::Store(StoreOp::Load { .. }),
+            Effect::Store(StoreOp::ViewSet { .. })
+        ]
     ));
 
     let effects = update(

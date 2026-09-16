@@ -266,6 +266,7 @@ pub enum StoreOp {
         attempt: AttemptId,
         op: OpId,
         agent: AgentId,
+        protocol: StructuredProtocol,
         token: PageToken,
         n: usize,
     },
@@ -274,6 +275,7 @@ pub enum StoreOp {
         attempt: AttemptId,
         op: OpId,
         agent: AgentId,
+        protocol: StructuredProtocol,
         generations: Generations,
         expected: ExpectedHead,
         reason: BaselineReason,
@@ -627,18 +629,29 @@ pub(crate) fn open_chat(
     protocol: StructuredProtocol,
 ) -> Vec<Effect> {
     let attempt = state.attempt();
-    let op = state.op();
+    let load_op = state.op();
+    let view_op = state.op();
     let mut chat = ChatWindow::loading(protocol, attempt);
-    chat.active_load = Some(op);
+    chat.active_load = Some(load_op);
     state.chats.insert(agent, chat);
-    vec![Effect::Store(StoreOp::Load {
-        profile: state.profile,
-        attempt,
-        op,
-        agent,
-        protocol,
-        window: WindowBudget::desktop(0),
-    })]
+    state.remembered_chat = Some(agent);
+    vec![
+        Effect::Store(StoreOp::Load {
+            profile: state.profile,
+            attempt,
+            op: load_op,
+            agent,
+            protocol,
+            window: WindowBudget::desktop(0),
+        }),
+        Effect::Store(StoreOp::ViewSet {
+            profile: state.profile,
+            op: view_op,
+            kind: "ui".to_owned(),
+            key: "remembered_chat".to_owned(),
+            value: agent.to_string(),
+        }),
+    ]
 }
 
 pub(crate) fn fleet_apply(state: &mut StoreState, delta: FleetDelta) -> Vec<Effect> {
@@ -865,6 +878,7 @@ fn loaded_result(
                 attempt,
                 op: invalidate_op,
                 agent,
+                protocol: chat.protocol,
                 generations,
                 expected: chat.expected,
                 reason,
@@ -1670,6 +1684,7 @@ pub(crate) fn page_older(state: &mut StoreState, agent: AgentId, n: usize) -> Ve
         attempt: chat.attempt,
         op,
         agent,
+        protocol: chat.protocol,
         token,
         n,
     })]

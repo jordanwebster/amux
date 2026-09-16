@@ -129,16 +129,15 @@ fn stale_and_foreign_host_summaries_keep_their_age_visible() {
 }
 
 #[test]
-fn an_explicit_exclusion_skips_only_the_eager_inventory_subscription() {
+fn fleet_inventory_never_subscribes_until_a_conversation_opens() {
     let agent = an_agent("summary", "nova");
     let mut model = Model::default();
-    model.set_eager_subscription_exclusions([agent.id]);
     update(&mut model, connected("nova"));
     update(&mut model, host_up(&a_host("nova")));
 
     assert!(
         update(&mut model, agent_up(&agent)).is_empty(),
-        "the inventory policy must not subscribe to the excluded agent"
+        "fleet standing comes from the daemon summary, not a chat stream"
     );
     assert!(model.stream(agent.id).is_none());
 

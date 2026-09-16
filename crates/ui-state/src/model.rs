@@ -547,10 +547,6 @@ pub struct Model {
     /// Last authoritative remote membership; disconnection does not mean deletion.
     pub(crate) remote_inventories: BTreeMap<HostId, BTreeSet<AgentId>>,
     pub(crate) streams: BTreeMap<AgentId, StreamState>,
-    /// Explicit harness-only exceptions to the eager inventory policy. User
-    /// attachments still open these streams normally.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub(crate) eager_subscription_exclusions: BTreeSet<AgentId>,
     /// User-opened conversations outlive the temporary inventory removal of
     /// an unreachable host. Its next inventory re-establishes these streams.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -561,6 +557,7 @@ pub struct Model {
     pub(crate) op_seq: u64,
     /// Last observed time (enters via `Msg::Tick`).
     pub(crate) now: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub(crate) store: crate::store::StoreState,
 }
 
@@ -577,7 +574,6 @@ impl Default for Model {
             agents: BTreeMap::new(),
             remote_inventories: BTreeMap::new(),
             streams: BTreeMap::new(),
-            eager_subscription_exclusions: BTreeSet::new(),
             attached: BTreeMap::new(),
             queues: BTreeMap::new(),
             pending_ops: BTreeMap::new(),
@@ -590,13 +586,6 @@ impl Default for Model {
 }
 
 impl Model {
-    /// Install explicit eager-subscription exceptions before inventory starts.
-    /// This is used by boundary tests to prove fleet summaries do not depend
-    /// on opening a chat; deliberate user attachment is unaffected.
-    pub fn set_eager_subscription_exclusions(&mut self, agents: impl IntoIterator<Item = AgentId>) {
-        self.eager_subscription_exclusions = agents.into_iter().collect();
-    }
-
     pub fn queued(&self, agent: AgentId) -> Option<&crate::QueuedMessage> {
         self.queues.get(&agent)
     }
@@ -830,8 +819,7 @@ impl Model {
     }
 
     /// The advisory host fold and this client's open-chat fold resolved by
-    /// position. Agents without either retain the legacy projection until
-    /// eager subscriptions are removed in the store milestone.
+    /// position. Agents without either retain the legacy projection.
     pub fn effective_summary(&self, card: &AgentCard) -> Option<fold::Effective> {
         let protocol = card.structured_protocol()?;
         let producer_version = fold::AgentFold::for_protocol(protocol).tip_version();

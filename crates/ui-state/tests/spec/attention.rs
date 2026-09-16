@@ -298,11 +298,9 @@ fn fleet_attention_and_chat_phase_share_one_interpretation() {
     }
 }
 
-/// Kernel subscription policy: every local agent advertising the structured
-/// stream is subscribed exactly once; remote agents join when the user
-/// attaches.
+/// Fleet inventory never opens a chat stream; an explicit conversation does.
 #[test]
-fn subscription_policy_covers_local_agents_and_attached_remotes() {
+fn subscription_policy_opens_only_requested_conversations() {
     let local = an_agent("local-agent", "nova");
     let remote = an_agent("remote-agent", "hetzner");
     let (_, effects) = fold_with_effects(seq([
@@ -324,11 +322,7 @@ fn subscription_policy_covers_local_agents_and_attached_remotes() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        opens,
-        vec![(agent_id("local-agent"), ui_state::REPLAY_TAIL)],
-        "exactly one open, local only"
-    );
+    assert!(opens.is_empty(), "standing comes from fleet summaries");
 
     let (_, effects) = fold_with_effects(seq([
         vec![

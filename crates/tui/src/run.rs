@@ -151,7 +151,9 @@ where
                 // before we got here); widen the subscription policy, then
                 // hand the real terminal to the passthrough.
                 runtime.note_attached(agent);
-                match attach(agent).await {
+                let result = attach(agent).await;
+                runtime.note_detached(agent);
+                match result {
                     // Detach, or the session ending: the shell, not the chrome.
                     Ok(AttachReturn::Exit) => return Ok(()),
                     Ok(AttachReturn::Fleet(notice)) => {
@@ -368,7 +370,8 @@ async fn perform(
         match effect {
             ShellEffect::Quit => *exit_request = Some(ChromeExit::Quit),
             ShellEffect::Attach(agent) => *exit_request = Some(ChromeExit::Attach(agent)),
-            ShellEffect::NoteAttached(agent) => runtime.note_attached(agent),
+            ShellEffect::NoteAttached(agent) => runtime.open_chat(agent),
+            ShellEffect::NoteDetached(agent) => runtime.close_chat(agent),
             ShellEffect::WriteClipboard(text) => {
                 // A truncated copy is not the copy that was asked for,
                 // so it reads as a problem even though bytes did land.

@@ -1284,6 +1284,8 @@ mod tests {
     }
 
     fn send_prompt(model: &mut Model, agent: AgentId, seconds: i64) {
+        update(model, Msg::Server(ServerMsg::HostsSynchronized));
+        update(model, Msg::Server(ServerMsg::AgentsSynchronized));
         update(model, Msg::Tick { now: at(seconds) });
         update(
             model,

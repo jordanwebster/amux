@@ -66,16 +66,10 @@ pub enum Msg {
         attempt: fold::StreamAttempt,
         event: crate::store::ChatStreamMsg,
     },
-    /// The user attached to an agent — a reified interaction fact. The
-    /// subscription policy widens to any agent the user interacts with, so
-    /// its attention stays fresh after detach.
+    /// The user entered a legacy raw conversation. Its structured stream is
+    /// held only for the duration of that interaction.
     UserAttached { agent: AgentId },
-    /// The user closed a conversation they had opened. The interaction that
-    /// widened the policy is over, so the agent leaves `attached` and its
-    /// stream is let go unless the inventory policy would have opened it
-    /// anyway. The TUI never sends this: leaving an attach there deliberately
-    /// leaves the stream up so attention stays fresh. The phone does, because
-    /// a conversation it has closed is one nobody is reading.
+    /// The user left a legacy raw conversation, so its stream is released.
     UserDetached { agent: AgentId },
     /// Observed time for time-dependent display. Data, not a timer: the shell
     /// schedules ticks only while something on screen needs them.

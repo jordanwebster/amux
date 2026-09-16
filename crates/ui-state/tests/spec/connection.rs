@@ -117,7 +117,7 @@ fn reconnect_stream_prune_sequence() -> Vec<Msg> {
         vec![
             connected("nova"),
             host_up(&a_host("nova")),
-            // Local claude agent: the subscription policy opened its stream.
+            // The fixture seeds one stream from the agent's first life.
             agent_up(&an_agent("first-life-a", "nova")),
         ],
         synced(),

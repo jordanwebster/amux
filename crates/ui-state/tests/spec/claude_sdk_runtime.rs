@@ -37,15 +37,15 @@ fn subscriptions() -> Vec<Msg> {
     ])
 }
 #[test]
-fn claude_sdk_subscription_policy_opens_local_once_and_remote_or_readonly_on_request() {
+fn claude_sdk_subscription_policy_opens_only_requested_conversations() {
     let (mut model, effects) = fold_with_effects(subscriptions());
     let expected = |name| Effect::OpenStream {
         agent: agent_id(name),
         protocol: StructuredProtocol::ClaudeSdk,
         tail: ui_state::REPLAY_TAIL,
     };
-    assert_eq!(effects, vec![expected(AGENT)]);
-    for name in ["remote", "observer"] {
+    assert!(effects.is_empty());
+    for name in [AGENT, "remote", "observer"] {
         assert_eq!(
             ui_state::update(
                 &mut model,
@@ -76,7 +76,8 @@ fn claude_sdk_subscription_policy_opens_local_once_and_remote_or_readonly_on_req
     );
     assert_eq!(
         ui_state::update(&mut model, agent_up(&sdk(AGENT, "nova"))),
-        vec![expected(AGENT)]
+        vec![expected(AGENT)],
+        "an explicitly open conversation reconnects"
     );
     ui_state::update(
         &mut model,

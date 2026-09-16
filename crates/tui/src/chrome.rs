@@ -465,6 +465,7 @@ pub enum ShellEffect {
     Attach(AgentId),
     Dispatch(Command),
     NoteAttached(AgentId),
+    NoteDetached(AgentId),
     WriteClipboard(String),
     Create {
         host: Option<HostId>,
@@ -704,24 +705,29 @@ impl Chrome {
             Some(UiAction::Attach(agent)) => vec![ShellEffect::Attach(agent)],
             Some(UiAction::CopyToClipboard(text)) => vec![ShellEffect::WriteClipboard(text)],
             Some(UiAction::OpenChat(agent)) => {
-                // Chat entry (A1/A3) stays inside the chrome — no terminal
-                // handoff — but widens the subscription policy exactly like
-                // raw attach: the reducer subscribes readonly agents'
-                // streams on UserAttached, so the read-only chat's feed
-                // lights up through the normal policy.
+                // Chat entry (A1/A3) stays inside the chrome. The shell opens
+                // the store-backed lifecycle for exactly this visible chat;
+                // switching or closing returns that subscription.
+                let previous = self.view.chat.as_ref().map(|chat| chat.agent);
                 self.view.open_chat(model, agent);
                 if let Some(chat) = self.view.chat.as_mut() {
                     chat.reconcile(model);
                 }
-                vec![ShellEffect::NoteAttached(agent)]
+                previous
+                    .filter(|previous| *previous != agent)
+                    .map(ShellEffect::NoteDetached)
+                    .into_iter()
+                    .chain(std::iter::once(ShellEffect::NoteAttached(agent)))
+                    .collect()
             }
             Some(UiAction::Dispatch(command)) => vec![ShellEffect::Dispatch(command)],
             Some(UiAction::Create { host }) => vec![ShellEffect::Create { host }],
             Some(UiAction::ListProfiles) => vec![ShellEffect::ListProfiles],
             Some(UiAction::SwitchProfile(entry)) => vec![ShellEffect::SwitchProfile(entry)],
             Some(UiAction::CloseChat) => {
+                let agent = self.view.chat.as_ref().map(|chat| chat.agent);
                 self.view.close_chat();
-                Vec::new()
+                agent.map(ShellEffect::NoteDetached).into_iter().collect()
             }
         }
     }

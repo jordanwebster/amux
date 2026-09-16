@@ -27,11 +27,14 @@ pub use families::{
     REGISTRY, Regime, Registry, VIEW,
 };
 pub use fleet::FleetChange;
-use fold::{
-    CommitOutcome, Entry, ExpectedHead, Generations, Head, Mutation, Page, PageToken, ProviderFold,
-    SegmentTransition, WindowBudget, WindowInterest,
+pub use fold::{
+    AttemptId, CommitOutcome, Fleet, FleetAgent, FleetDelta, FleetHost, FleetSnapshot, Generations,
+    Loaded, Membership, OpId, ProviderFold, StoreError, claude_pty, claude_sdk, codex,
 };
-pub use fold::{Fleet, FleetAgent, FleetDelta, FleetHost, FleetSnapshot, Membership, StoreError};
+use fold::{
+    Entry, ExpectedHead, Head, Mutation, Page, PageToken, SegmentTransition, WindowBudget,
+    WindowInterest,
+};
 pub use maintain::{Budget, MaintenanceReport};
 use model::AgentId;
 use rustix::fs::{FlockOperation, flock};

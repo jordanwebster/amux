@@ -1,3 +1,13 @@
+2026-09-16 — **The TUI restores each profile before it connects.**
+Each selected profile now opens its shared SQLite store on a dedicated worker,
+records the cached fleet and remembered-chat results before the first daemon
+dial, and executes typed loads, commits, pages, invalidations and durable view
+operations behind freshness envelopes. Open chats resume from their exact
+stored cursor with bounded batching and pause/resume backpressure; fleet-only
+agents no longer open streams. Cached cards remain remembered and all sends
+stay closed until the new connection completes its inventory snapshot, while
+store failure leaves the conversation available in live-only mode.
+
 2026-09-16 — **Chats paint from the store and catch up under reducer control.**
 The pure UI reducer now owns store loads, exact-cursor subscriptions, provider
 fold heads, visible windows, paging and flush state behind profile, chat,

@@ -213,17 +213,6 @@ fn runtime_options(
     // does not mark the local host (see docs/UI.md, subscription policy).
     let local_host_id = amux::setup::local_host_id(config);
     let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
-    #[cfg(debug_assertions)]
-    let eager_subscription_exclusions = std::env::var("AMUX_TUI_EAGER_EXCLUDE")
-        .ok()
-        .into_iter()
-        .flat_map(|value| {
-            value
-                .split(',')
-                .filter_map(|id| id.parse().ok())
-                .collect::<Vec<_>>()
-        })
-        .collect();
     // The fold order is the runtime's to report. Reconstructing it from
     // outside would mean guessing how a drain batched, and a wrong guess is
     // a replay that diverges for no visible reason.
@@ -235,8 +224,7 @@ fn runtime_options(
     });
     RuntimeOptions {
         local_host_id,
-        #[cfg(debug_assertions)]
-        eager_subscription_exclusions,
+        store_path: Some(config.data_dir.join("store.sqlite")),
         report_dir: Some(config.reports_dir()),
         log_path: Some(amux::diagnostics::resolved_log_path()),
         git_sha: GIT_SHA,
