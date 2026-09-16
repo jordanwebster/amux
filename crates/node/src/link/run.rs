@@ -19,8 +19,8 @@ use super::{LinkCarrier as Carrier, read_message, write_message};
 use crate::routing::{
     ConnectHandshake, ConnectHandshakeEvent, DirectLinkOrder, Host, LinkAdmission,
     LinkCarrier as RoutingCarrier, LinkCloseRequest, LinkId, LinkProperties, LinkRegistry,
-    LinkRole, LiveLocalHost, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,
-    inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
+    LinkRole, LiveLocalHost, Registration, RouteUpdateOutcome, RoutingCore, host_from_wire,
+    host_to_wire, inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
     protocol_error_hello_ack, protocol_error_link_close, validate_remote_host,
 };
 use crate::{HostId, audit};
@@ -524,9 +524,9 @@ async fn run_established(
         _ => ctx.routing_carrier,
     };
     let (out_tx, mut out_rx) = mpsc::channel(256);
-    let link_close_rx = ctx
+    let registration = ctx
         .links
-        .register_with_details(
+        .register_displacing(
             link,
             peer_host.clone(),
             out_tx.clone(),
@@ -544,7 +544,11 @@ async fn run_established(
             Some(carrier.clone()),
         )
         .await;
-    let Some(mut link_close_rx) = link_close_rx else {
+    let Some(Registration {
+        close_rx: mut link_close_rx,
+        displaced,
+    }) = registration
+    else {
         signal_establishment(ctx.take_established_tx(), Ok(peer_host));
         carrier.close(wire::pb::LinkCloseReason::UserShutdown);
         return Ok(());
@@ -571,6 +575,13 @@ async fn run_established(
                 return Err(status.into());
             }
         }
+    }
+    // The links this one superseded leave routing now, after this link has
+    // joined it, so the peer never looks absent. Their tasks remove them again
+    // when they finish closing, which by then is a no-op; until then a route
+    // chosen from routing would be a link the registry no longer holds.
+    for superseded in displaced {
+        ctx.routing.apply_direct_down(superseded).await;
     }
     signal_establishment(ctx.take_established_tx(), Ok(peer_host.clone()));
 

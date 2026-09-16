@@ -1,3 +1,16 @@
+2026-09-16 — **A call survives the direct link it chose being superseded.**
+Two paired daemons that start together dial each other, and the rule for
+crossed dials closes the losing link as soon as the preferred one registers. A
+call that had just started opening a stream on the losing link failed with "no
+live link", although a working link was already there. On Windows this happened
+in 13 of 20 isolated runs of `a2a_cascade_delete_reports_unreachable_children`
+and `a_paired_peer_cannot_shut_down_or_suspend_the_daemon`. A call on a direct
+route that fails that way now retries once if routing has meanwhile moved to a
+different route. To make that dependable, a registration that supersedes links
+now removes them from routing immediately, instead of waiting for their own
+tasks to finish closing. With both changes, the same Windows run passed 30 of
+30 while the race still occurred 156 times.
+
 2026-09-16 — **Phone journeys find machines with the app's own browser.** The
 onboarding, signed-out, profiles and free-tier journeys used to inject
 already-decoded found machines through the debug door, so no simulator ever read

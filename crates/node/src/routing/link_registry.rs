@@ -109,6 +109,17 @@ pub(crate) enum LinkCloseRequest {
     Superseded,
 }
 
+/// A link the registry accepted.
+pub(crate) struct Registration {
+    /// Receives the registry's requests to close this link.
+    pub(crate) close_rx: mpsc::Receiver<LinkCloseRequest>,
+    /// Direct links to the same peer this one superseded. They are gone from
+    /// the registry already and are asked to close, but their own tasks take
+    /// time to finish; whoever routes over links has to forget them now, or a
+    /// call in that gap picks a link nothing can open a stream on.
+    pub(crate) displaced: Vec<LinkId>,
+}
+
 impl LinkRegistry {
     pub async fn cloud_link_ids(&self) -> Vec<String> {
         let state = self.state.read().await;
@@ -189,6 +200,7 @@ impl LinkRegistry {
         .expect("test registration has no ordered direct duplicate")
     }
 
+    #[cfg(test)]
     pub(crate) async fn register_with_details(
         &self,
         link: LinkId,
@@ -198,6 +210,29 @@ impl LinkRegistry {
         advertised_snapshot: &[HostId],
         native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
     ) -> Option<mpsc::Receiver<LinkCloseRequest>> {
+        self.register_displacing(
+            link,
+            host,
+            outgoing_tx,
+            properties,
+            advertised_snapshot,
+            native_carrier,
+        )
+        .await
+        .map(|registration| registration.close_rx)
+    }
+
+    /// Registers a link and names the direct links it superseded, or refuses
+    /// it where a preferred direct link to the same peer is already held.
+    pub(crate) async fn register_displacing(
+        &self,
+        link: LinkId,
+        host: Host,
+        outgoing_tx: LinkOutputTx,
+        properties: LinkProperties,
+        advertised_snapshot: &[HostId],
+        native_carrier: Option<Arc<dyn NativeLinkCarrier>>,
+    ) -> Option<Registration> {
         let LinkProperties {
             role,
             admission,
@@ -282,6 +317,7 @@ impl LinkRegistry {
             },
         );
         drop(state);
+        let displaced_ids = displaced.iter().map(|(id, _)| *id).collect();
         for (id, writer) in displaced {
             let _ = writer.close_tx.try_send(LinkCloseRequest::Superseded);
             writer.closed.notify_waiters();
@@ -292,7 +328,10 @@ impl LinkRegistry {
             audit::link_down(old.host.id, &link, "replaced");
         }
         audit::link_up(host.id, &link, role);
-        Some(close_rx)
+        Some(Registration {
+            close_rx,
+            displaced: displaced_ids,
+        })
     }
 
     /// Removes a link; if it was the last link to its peer, other links
@@ -769,24 +808,23 @@ mod tests {
             .expect("a lone fallback link is usable");
 
         let (preferred_tx, _) = mpsc::channel(8);
-        assert!(
-            registry
-                .register_with_details(
-                    preferred,
-                    peer.clone(),
-                    preferred_tx,
-                    LinkProperties {
-                        role: LinkRole::Peer,
-                        admission: LinkAdmission::PinnedKey,
-                        carrier: LinkCarrier::Direct,
-                        direct_order: Some(DirectLinkOrder::Preferred),
-                    },
-                    &[],
-                    None,
-                )
-                .await
-                .is_some()
-        );
+        let registration = registry
+            .register_displacing(
+                preferred,
+                peer.clone(),
+                preferred_tx,
+                LinkProperties {
+                    role: LinkRole::Peer,
+                    admission: LinkAdmission::PinnedKey,
+                    carrier: LinkCarrier::Direct,
+                    direct_order: Some(DirectLinkOrder::Preferred),
+                },
+                &[],
+                None,
+            )
+            .await
+            .expect("a preferred link supersedes a fallback");
+        assert_eq!(registration.displaced, vec![fallback]);
         assert_eq!(
             fallback_close.recv().await,
             Some(LinkCloseRequest::Superseded)
