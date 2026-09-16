@@ -824,6 +824,17 @@ fn offline_warm_start_and_gap_reconnect_keep_remembered_history_scrollable() {
         "a remembered-only card cannot send before this connection confirms it"
     );
 
+    let mut offline = serde_json::to_value(&remembered).expect("remembered model serializes");
+    offline["connection"] = serde_json::json!({
+        "connection": "disconnected",
+        "reason": {"reason": "transport_error", "message": "daemon is offline"}
+    });
+    let offline: Model = serde_json::from_value(offline).expect("offline model deserializes");
+    let frame = render_frame_at(&offline, &view_default(), 100, 20);
+    assert!(frame.contains("remembered-card"));
+    assert!(frame.contains("disconnected"));
+    assert!(!frame.contains("start it with: amux server start"));
+
     let model = durable_boundaries_model();
     let frame = capture_frame(
         &render_buffer_at(

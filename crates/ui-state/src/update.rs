@@ -659,6 +659,14 @@ fn update_chat_command(model: &mut Model, command: ChatCommand) -> Vec<Effect> {
             else {
                 return Vec::new();
             };
+            if model.store.chats.get(&agent).is_some_and(|chat| {
+                !matches!(
+                    chat.state,
+                    crate::store::ChatState::Absent | crate::store::ChatState::Flushing
+                )
+            }) {
+                return Vec::new();
+            }
             crate::store::open_chat(&mut model.store, agent, protocol)
         }
         ChatCommand::PageOlder { agent, n } => crate::store::page_older(&mut model.store, agent, n),
@@ -740,13 +748,10 @@ fn update_store_message(model: &mut Model, message: crate::store::StoreMsg) -> V
 
 fn install_remembered_fleet(model: &mut Model, fleet: fold::Fleet) {
     for remembered in fleet.hosts {
-        model.hosts.insert(
-            remembered.host.id,
-            HostState {
-                entry: remembered.host,
-                epoch: 0,
-            },
-        );
+        model.hosts.entry(remembered.host.id).or_insert(HostState {
+            entry: remembered.host,
+            epoch: model.epoch,
+        });
     }
     for remembered in fleet.agents {
         if remembered.membership != fold::Membership::Cached {
@@ -754,21 +759,31 @@ fn install_remembered_fleet(model: &mut Model, fleet: fold::Fleet) {
             continue;
         }
         let agent = remembered.agent;
+        let last_activity = agent
+            .summary
+            .as_ref()
+            .and_then(|summary| summary.summary.last_activity)
+            .unwrap_or(agent.created_at);
+        if let Some(card) = model.agents.get_mut(&agent.id) {
+            // Another client can advance the shared fleet fold without this
+            // connection receiving a matching inventory upsert. Refresh the
+            // durable facts while retaining this client's live stream layer.
+            card.agent = agent;
+            card.last_activity = card.last_activity.max(last_activity);
+            card.epoch = model.epoch;
+            continue;
+        }
         model.agents.insert(
             agent.id,
             AgentCard {
-                last_activity: agent
-                    .summary
-                    .as_ref()
-                    .and_then(|summary| summary.summary.last_activity)
-                    .unwrap_or(agent.created_at),
+                last_activity,
                 provider_label: None,
                 attention: Attention::Unknown,
                 phase: AgentPhase::Running,
                 remembered: true,
                 local_summary: None,
                 layer: None,
-                epoch: 0,
+                epoch: model.epoch,
                 agent,
             },
         );

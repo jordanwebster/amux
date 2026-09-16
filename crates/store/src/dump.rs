@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use fold::StoreError;
-use model::AgentId;
+use model::{AgentId, Summary};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::db::map_sqlite_error;
@@ -42,6 +42,67 @@ pub(crate) fn render(connection: &Connection, agent: AgentId) -> Result<String, 
         .expect("write to string");
     } else {
         output.push_str("state none\n");
+    }
+
+    let head = connection
+        .query_row(
+            "SELECT version,protocol,segment,baseline_kind,baseline_seq,through,tip_version,entry_version,observed_at,summary
+             FROM chat_head WHERE agent_id=?1",
+            [&agent],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, Vec<u8>>(9)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sqlite_error)?;
+    if let Some((
+        version,
+        protocol,
+        segment,
+        baseline,
+        baseline_seq,
+        through,
+        tip,
+        entry,
+        observed,
+        summary,
+    )) = head
+    {
+        let summary: Summary = postcard::from_bytes(&summary).map_err(|_| StoreError::Corrupt)?;
+        writeln!(
+            &mut output,
+            "head version={version} protocol={} segment={segment} boundary={} baseline_seq={} through={through} tip_version={tip} entry_version={entry} observed_at={observed}",
+            protocol_name(protocol), boundary_name(baseline), show(baseline_seq)
+        )
+        .expect("write to string");
+        let todo = summary.todo.as_ref().map_or_else(
+            || "none".to_owned(),
+            |todo| {
+                format!(
+                    "{}/{} current={:?}",
+                    todo.done,
+                    todo.total,
+                    todo.current.as_deref().unwrap_or("")
+                )
+            },
+        );
+        writeln!(
+            &mut output,
+            "summary attention={:?} phase={:?} todo={todo} context={:?} model={:?} unknown={:?}",
+            summary.attention, summary.phase, summary.context, summary.model, summary.unknown
+        )
+        .expect("write to string");
     }
 
     let mut segments = connection
@@ -147,5 +208,14 @@ fn boundary_name(value: i64) -> &'static str {
         3 => "VersionGap",
         4 => "Evicted",
         _ => "Invalid",
+    }
+}
+
+fn protocol_name(value: i64) -> &'static str {
+    match value {
+        0 => "claude_pty",
+        1 => "claude_sdk",
+        2 => "codex",
+        _ => "invalid",
     }
 }

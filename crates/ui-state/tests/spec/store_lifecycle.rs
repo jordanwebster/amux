@@ -120,6 +120,22 @@ fn load(model: &mut Model, attempt: AttemptId, op: StoreOpId, loaded: LoadedDto)
     )
 }
 
+#[test]
+fn opening_an_already_active_remembered_chat_is_idempotent() {
+    let mut model = inventory_model();
+    let (attempt, _) = begin_open(&mut model);
+
+    let effects = update(
+        &mut model,
+        Msg::Chat(ChatCommand::Open {
+            agent: agent_id("stored"),
+        }),
+    );
+
+    assert!(effects.is_empty());
+    assert_eq!(model.chat(agent_id("stored")).unwrap().attempt, attempt);
+}
+
 fn stream_attempt(effects: &[Effect]) -> fold::StreamAttempt {
     let [Effect::OpenStoreStream { attempt, .. }] = effects else {
         panic!("load must open exactly one store stream: {effects:?}");
@@ -232,6 +248,38 @@ fn a_batch_without_window_mutations_still_commits_its_advanced_head() {
 }
 
 #[test]
+fn stream_batches_coalesce_behind_the_in_flight_commit() {
+    let mut model = inventory_model();
+    let (attempt, stream) = live_empty(&mut model);
+    let first = update(&mut model, recorded_batch(stream, 1));
+    let [Effect::Store(StoreOp::Commit { op, .. })] = first.as_slice() else {
+        panic!("the first batch must begin a commit: {first:?}");
+    };
+    let first_op = *op;
+
+    assert!(update(&mut model, recorded_batch(stream, 2)).is_empty());
+    assert!(update(&mut model, recorded_batch(stream, 3)).is_empty());
+
+    let effects = update(
+        &mut model,
+        Msg::Store(StoreMsg::Committed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: first_op,
+            agent: agent_id("stored"),
+            result: commit_result(ExpectedHead::Present {
+                fence: 7,
+                version: 2,
+            }),
+        }),
+    );
+    let [Effect::Store(StoreOp::Commit { head, .. })] = effects.as_slice() else {
+        panic!("the queued suffix must become one commit: {effects:?}");
+    };
+    assert_eq!(head.through(), 3);
+}
+
+#[test]
 fn loading_usable_none_and_failure_each_paint_before_opening_the_stream() {
     let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);
@@ -248,6 +296,7 @@ fn loading_usable_none_and_failure_each_paint_before_opening_the_stream() {
         }]
     ));
 
+    let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);
     let effects = load(&mut model, attempt, op, empty_loaded(HeadState::None));
     assert!(matches!(
@@ -258,6 +307,7 @@ fn loading_usable_none_and_failure_each_paint_before_opening_the_stream() {
         }]
     ));
 
+    let mut model = inventory_model();
     let (attempt, op) = begin_open(&mut model);
     let effects = update(
         &mut model,

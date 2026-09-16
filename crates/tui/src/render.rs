@@ -204,10 +204,10 @@ fn screen_state(
         return ScreenState::Switcher(state.clone());
     }
     match model.connection() {
-        Connection::Connecting => {
+        Connection::Connecting if rows.is_empty() => {
             return ScreenState::Message(vec![("Starting daemon… ◌".to_string(), theme.text())]);
         }
-        Connection::Disconnected { reason } => {
+        Connection::Disconnected { reason } if rows.is_empty() => {
             let detail = match reason {
                 DisconnectReason::AuthenticationRequired => {
                     "✗ authentication required — run `amux init`".to_string()
@@ -230,7 +230,8 @@ fn screen_state(
                 ),
             ]);
         }
-        Connection::Connected { .. } => {}
+        Connection::Connecting | Connection::Disconnected { .. } | Connection::Connected { .. } => {
+        }
     }
     // Deleting a family takes everything below it (row 9), so the
     // confirmation names everything below it. An agent that started

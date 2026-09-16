@@ -1,3 +1,13 @@
+2026-09-16 — **Store-backed desktop journeys are replayable end to end.**
+The `amux store dump` command now renders a profile's stored chat head,
+summary, segments, boundaries, keys, revisions and text. A tmux-driven harness
+replays offline warm start, high-volume catch-up and paging, two clients sharing
+one transcript, gap and version recovery, and a real Claude Code SDK resume,
+leaving readable frames, terminal recordings, dumps, subscription diagnostics
+and assertion results for each journey. Pending stream mutations coalesce behind
+the active SQLite commit so burst traffic does not become one durable
+transaction per row.
+
 2026-09-16 — **Client stores maintain themselves after launch.**
 The UI store worker now waits until the first frame is clear, then runs bounded
 maintenance whenever it is idle, no more than once an hour. Maintenance runs

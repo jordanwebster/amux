@@ -85,6 +85,7 @@ dependencies = [
  "serde_yaml",
  "settings",
  "sha2",
+ "store",
  "tempfile",
  "testnet",
  "thiserror 2.0.20",

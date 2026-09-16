@@ -170,6 +170,15 @@ impl MutationBatchDto {
         postcard::to_allocvec(self).map_or(PENDING_COMMIT_MAX_BYTES + 1, |bytes| bytes.len())
     }
 
+    fn append(&mut self, source: Self) {
+        match (self, source) {
+            (Self::Claude(left), Self::Claude(mut right)) => left.append(&mut right),
+            (Self::ClaudeSdk(left), Self::ClaudeSdk(mut right)) => left.append(&mut right),
+            (Self::Codex(left), Self::Codex(mut right)) => left.append(&mut right),
+            _ => debug_assert!(false, "cannot combine mutations from different providers"),
+        }
+    }
+
     fn apply_to(
         &self,
         entries: &mut Vec<StoredDto>,
@@ -1540,18 +1549,10 @@ fn batch(
 }
 
 fn append_mutations(target: &mut Option<MutationBatchDto>, source: MutationBatchDto) {
-    match (target, source) {
-        (slot @ None, value) => *slot = Some(value),
-        (Some(MutationBatchDto::Claude(left)), MutationBatchDto::Claude(mut right)) => {
-            left.append(&mut right)
-        }
-        (Some(MutationBatchDto::ClaudeSdk(left)), MutationBatchDto::ClaudeSdk(mut right)) => {
-            left.append(&mut right)
-        }
-        (Some(MutationBatchDto::Codex(left)), MutationBatchDto::Codex(mut right)) => {
-            left.append(&mut right)
-        }
-        _ => {}
+    if let Some(target) = target {
+        target.append(source);
+    } else {
+        *target = Some(source);
     }
 }
 
@@ -1579,16 +1580,48 @@ fn enqueue(state: &mut StoreState, agent: AgentId, mutations: MutationBatchDto) 
         trim_window(&mut chat.entries);
         return Vec::new();
     }
-    let bytes = mutations.encoded_bytes();
-    chat.pending.push(PendingCommit {
-        op,
-        head,
-        transition: chat.transition.take(),
-        mutations,
-        bytes,
-        busy_retries: 0,
-    });
-    let mut effects = dispatch_next(state, agent);
+    let (mutations, transition) = if let Some(transition) = chat.transition.as_ref() {
+        let replay_ready = head.through() >= transition.replay_through;
+        let mut combined = None;
+        for pending in chat.pending.drain(..) {
+            append_mutations(&mut combined, pending.mutations);
+        }
+        append_mutations(&mut combined, mutations);
+        (
+            combined.expect("the current stream batch contributes mutations"),
+            replay_ready.then(|| {
+                chat.transition
+                    .take()
+                    .expect("the replay transition was just observed")
+            }),
+        )
+    } else {
+        (mutations, None)
+    };
+    let replay_waiting = chat.transition.is_some();
+    if let Some(pending) = chat.pending.last_mut() {
+        pending.head = head;
+        if transition.is_some() {
+            pending.transition = transition;
+        }
+        pending.mutations.append(mutations);
+        pending.bytes = pending.mutations.encoded_bytes();
+    } else {
+        let bytes = mutations.encoded_bytes();
+        chat.pending.push(PendingCommit {
+            op,
+            head,
+            transition,
+            mutations,
+            bytes,
+            busy_retries: 0,
+        });
+    }
+    let mut effects = if replay_waiting {
+        Vec::new()
+    } else {
+        dispatch_next(state, agent)
+    };
     if let Some(chat) = state.chats.get_mut(&agent)
         && chat.pending_bytes() > PENDING_COMMIT_MAX_BYTES
         && !chat.paused

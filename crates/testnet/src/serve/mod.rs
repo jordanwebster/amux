@@ -151,6 +151,9 @@ pub enum Control {
     RestartDaemon {
         name: String,
     },
+    SuspendRestart {
+        name: String,
+    },
     Unpair {
         daemon: String,
         peer: String,
@@ -639,6 +642,19 @@ async fn apply(
         }
         Control::RestartDaemon { name } => {
             net.restart_daemon(&daemon(&name)?).await;
+            for agent in agents.values_mut().filter(|agent| agent.daemon == name) {
+                agent.provider.close().await;
+            }
+            agents.retain(|_, agent| agent.daemon != name);
+        }
+        Control::SuspendRestart { name } => {
+            let (resumed, failed) = daemon(&name)?.suspend_restart_agents().await?;
+            if let Reply::Ack { diagnostics, .. } = &mut reply {
+                *diagnostics = Some(serde_json::json!({
+                    "resumed": resumed,
+                    "failed": failed,
+                }));
+            }
             for agent in agents.values_mut().filter(|agent| agent.daemon == name) {
                 agent.provider.close().await;
             }

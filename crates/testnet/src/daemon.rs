@@ -903,6 +903,29 @@ impl Daemon {
         *self.inner.runtime.lock().await = Some(runtime);
     }
 
+    /// Suspend every local agent through the production seal boundary, restart
+    /// the daemon, and resume the saved sessions. External scenario drivers use
+    /// this to exercise provider resume behavior without reaching into daemon
+    /// state or replacing a graceful suspend with a process restart.
+    pub async fn suspend_restart_agents(&self) -> anyhow::Result<(u64, u64)> {
+        let state_path = self.inner.data_dir.join("state.yaml");
+        let parts = self
+            .try_parts()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("daemon '{}' is not running", self.name()))?;
+        parts.agent_host.prepare_suspend(state_path.clone()).await?;
+        parts.agent_host.commit_suspend().await;
+        self.restart().await;
+        let resumed = self
+            .try_parts()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("daemon '{}' did not restart", self.name()))?;
+        Ok(resumed
+            .agent_host
+            .resume(state_path, &host_api::OperationGate::default())
+            .await?)
+    }
+
     /// Waits until every other daemon has seen this one go offline, so the
     /// restart comes back into a settled network. Without this beat, a
     /// daemon that reattaches to the cloud before its HostDown propagated

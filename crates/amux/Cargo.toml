@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = ["diagnostics"]
-bundled = ["ui-runtime/bundled"]
+bundled = ["store/bundled", "ui-runtime/bundled"]
 diagnostics = []
 
 [lib]
@@ -29,6 +29,7 @@ claude = { workspace = true }
 tui = { workspace = true }
 ui-runtime = { workspace = true }
 ui-state = { workspace = true }
+store = { workspace = true }
 redaction = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }

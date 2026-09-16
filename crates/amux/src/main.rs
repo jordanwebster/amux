@@ -139,6 +139,12 @@ enum Commands {
         command: profiles::ProfileCommands,
     },
 
+    /// Inspect the selected profile's local store
+    Store {
+        #[command(subcommand)]
+        command: StoreCommands,
+    },
+
     /// Manage the amux server lifecycle
     Server {
         #[command(subcommand)]
@@ -385,6 +391,15 @@ enum McpProvider {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum StoreCommands {
+    /// Print one agent's stored transcript
+    Dump {
+        /// Agent UUID
+        agent: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<ExitCode> {
     let _log_guard = init_tracing();
@@ -543,7 +558,7 @@ async fn main() -> Result<ExitCode> {
         && cli.profile.is_none()
     {
         profiles::load(cli.config.as_deref().unwrap())?
-    } else if matches!(command, Commands::Ui)
+    } else if matches!(command, Commands::Ui | Commands::Store { .. })
         && cfg!(debug_assertions)
         && std::env::var_os("AMUX_TUI_DIRECT_PROFILE").is_some()
     {
@@ -659,6 +674,22 @@ async fn run_command(command: Commands, mut config: Config) -> Result<ExitCode> 
             session_client::remove_agent(&target, force, &config).await?
         }
         Commands::List { all } => session_client::list_agents(all, &config).await?,
+        Commands::Store { command } => match command {
+            StoreCommands::Dump { agent } => {
+                let agent = agent
+                    .parse()
+                    .with_context(|| format!("invalid agent UUID {agent:?}"))?;
+                let store = store::Store::open(&config.data_dir.join("store.sqlite"))
+                    .await
+                    .map_err(|error| anyhow!("cannot open profile store: {error}"))?;
+                let dump = store
+                    .dump(agent)
+                    .await
+                    .map_err(|error| anyhow!("cannot dump stored transcript: {error}"))?;
+                print!("{dump}");
+                store.close().await;
+            }
+        },
         Commands::Keymap { .. } => unreachable!("keymaps dispatches before profile configuration"),
         Commands::Server { command } => match command {
             ServerCommands::Start {
@@ -1695,6 +1726,25 @@ mod tests {
             panic!("expected list command");
         };
         assert!(all);
+    }
+
+    #[test]
+    fn store_dump_requires_one_agent_uuid_argument() {
+        let cli = Cli::try_parse_from([
+            "amux",
+            "store",
+            "dump",
+            "01234567-89ab-cdef-0123-456789abcdef",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Store {
+                command: StoreCommands::Dump { ref agent }
+            }) if agent == "01234567-89ab-cdef-0123-456789abcdef"
+        ));
+        assert!(Cli::try_parse_from(["amux", "store", "dump"]).is_err());
+        assert!(Cli::try_parse_from(["amux", "store", "dump", "one", "two"]).is_err());
     }
 
     #[test]

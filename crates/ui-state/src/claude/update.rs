@@ -167,7 +167,12 @@ fn dispatch_claude_input(
     intent: ClaudePtyIntent,
     retry_stale: bool,
 ) -> Vec<crate::Effect> {
-    let expected_seq = model.claude(agent).map_or(0, ClaudeLayer::cursor);
+    let live_cursor = model.claude(agent).map_or(0, ClaudeLayer::cursor);
+    let stored_cursor = model
+        .chat(agent)
+        .and_then(|chat| chat.head.as_ref())
+        .map_or(0, crate::store::HeadDto::through);
+    let expected_seq = live_cursor.max(stored_cursor);
     dispatch_input(
         model,
         op,
