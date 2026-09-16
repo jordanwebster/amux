@@ -105,6 +105,15 @@ targets:
         # first. docs/RELEASE.md owns how each is derived.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Answers Apple's export-compliance question in the build rather than
+        # leaving every upload to sit at "Missing Compliance" until somebody
+        # answers it by hand, which blocks testers from installing it at all.
+        # This app carries its own TLS 1.3 — rustls and ring, through quinn —
+        # beside the encryption it gets from iOS, but all of it is published
+        # standard algorithms and none of it is proprietary, which is what
+        # this key claims. A build that ever needed France's declaration would
+        # carry ITSEncryptionExportComplianceCode beside this.
+        ITSAppUsesNonExemptEncryption: false
         # The one service this app looks for, and the sentence iOS shows when
         # it asks. Without the declaration the system answers the browser with
         # nothing at all, and a phone on the same network as a machine would
