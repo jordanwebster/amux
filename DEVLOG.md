@@ -7,8 +7,9 @@ retains attachments, provider settings, lifecycle and in-flight input overlays.
 Authoritative host inventories now forward their complete agent records before
 their membership cut, so clients can materialize a fresh remote fleet without
 depending on separate per-agent snapshot events.
-Provider-derived fixtures now follow semantic reset cuts, and pin the stable
-item identity and resolution carried by Codex approval rows.
+Provider-derived fixtures now reconnect across semantic reset cuts, retaining
+only the fresh generation (including a compaction boundary and summary), and
+pin the stable item identity and resolution carried by Codex approval rows.
 
 2026-09-16 — **Claude SDK observations now live in the shared fold.**
 SDK feed classification, block and message cursors, task and todo progression,

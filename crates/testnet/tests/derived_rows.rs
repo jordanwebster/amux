@@ -1157,6 +1157,9 @@ async fn derive_claude_pty(spec: &str, recording: &Recording) -> Result<Vec<u8>>
     tokio::time::timeout(Duration::from_secs(30), &mut replay_driver)
         .await
         .with_context(|| format!("strict Claude PTY replay driver did not exhaust for {spec}"))??;
+    if matches!(spec, "compact_relink" | "clear_relink") {
+        harness.resubscribe_after_reset().await?;
+    }
     controller
         .finish()
         .with_context(|| format!("strict Claude PTY replay accounting failed for {spec}"))?;

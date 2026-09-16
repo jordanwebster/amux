@@ -354,48 +354,23 @@ fn an_interrupt_closes_the_tool_request_and_infers_the_turn() {
     );
 }
 
-/// The compact fixture end to end: four measured turns, the typed `/compact`
-/// as a bare prompt (no origin — never a turn start), the boundary with its
-/// FACT token counts, and the transcript-only summary. Meta and
-/// local-command records fold to session bookkeeping, not entries.
+/// The compact fixture's current semantic generation begins at the relink
+/// marker and retains the boundary with its FACT token counts plus the
+/// transcript-only summary. The preceding turns belong to the closed
+/// generation and cannot reappear after reconnect.
 #[test]
 fn compaction_folds_to_boundary_plus_summary() {
+    let rows = chat_rows("compact");
+    assert_eq!(rows[0]["type"], "amux.transcript_ready");
+    assert_eq!(rows[0]["reset"], true);
+    assert_eq!(rows[0]["reason"], "Compact");
+
     let model = fold(chat_feed("fix-auth-bug", "compact"));
     assert_eq!(
         kind_words(&model, "fix-auth-bug"),
-        vec![
-            "prompt",
-            "thinking",
-            "message",
-            "turn",
-            "prompt",
-            "thinking",
-            "message",
-            "turn",
-            "prompt",
-            "thinking",
-            "message",
-            "turn",
-            "prompt",
-            "thinking",
-            "message",
-            "turn",
-            "prompt", // the bare `/compact` record, source unstated
-            "compaction",
-            "compact-summary",
-        ]
+        vec!["compaction", "compact-summary"]
     );
     let layer = claude_layer(&model, "fix-auth-bug");
-    let bare = layer
-        .entries()
-        .filter_map(|entry| match &entry.kind {
-            FeedEntryKind::Prompt(prompt) => Some(prompt),
-            _ => None,
-        })
-        .nth(4)
-        .expect("the /compact record");
-    assert_eq!(bare.text, "/compact");
-    assert_eq!(bare.source, PromptSource::Unstated);
     let compaction = layer
         .entries()
         .find_map(|entry| match &entry.kind {

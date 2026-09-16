@@ -52,6 +52,13 @@ impl ClaudePtyBackendHarness {
         }
     }
 
+    pub async fn resubscribe_after_reset(&mut self) -> Result<()> {
+        self.backend.resubscribe_after_reset().await?;
+        self.rows.clear();
+        self.cursor = 0;
+        Ok(())
+    }
+
     pub async fn finish(mut self) -> Result<Vec<Value>> {
         tokio::time::timeout(Duration::from_secs(2), async {
             let mut last_seq = self.backend.claude_pty_sequence().await?;
