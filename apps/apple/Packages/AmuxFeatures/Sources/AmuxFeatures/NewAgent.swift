@@ -80,6 +80,7 @@ public struct NewAgent: View {
             VStack(alignment: .leading, spacing: 22) {
                 machines
                 directory
+                naming
                 layers
             }
             .padding(.horizontal, design.metrics.gutter)
@@ -265,6 +266,38 @@ public struct NewAgent: View {
             .padding(.vertical, 1)
         }
         .scrollIndicators(.hidden)
+    }
+
+    // MARK: - What it is called
+
+    /// The name, standing in the field as the suggestion until it is changed.
+    ///
+    /// Filled rather than left as a placeholder: the suggestion is what will
+    /// be sent if nothing is typed, and a grey hint would suggest the field
+    /// was empty. The machine still has the last word, and a name it refuses
+    /// comes back as its own sentence under the host.
+    private var naming: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            SectionHead(title: "Name")
+            TextField(
+                "Name",
+                text: Binding(get: { model.name }, set: { model.choose(name: $0) }))
+                .textFieldStyle(.plain)
+                .designFont(.mono, design)
+                .foregroundStyle(design.ink.color)
+                .tint(design.accentColor)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.done)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 44)
+                .background {
+                    RoundedRectangle(
+                        cornerRadius: design.metrics.controlRadius, style: .continuous)
+                        .fill(design.sunken.color)
+                }
+                .identified("new-agent.name", label: "Name", value: model.name)
+        }
     }
 
     // MARK: - What runs there

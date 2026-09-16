@@ -12,9 +12,10 @@ import SwiftUI
 /// place said what a row could be — which is how two marks in the vocabulary
 /// came to mean nothing without anybody noticing.
 ///
-/// The marks are gone. A row draws one thing, the accent disc, for the one
-/// state that is waiting on a person; everything else is said in words on the
-/// third line, where `Idle` and `Finished · 4 files · +118 −40` already were.
+/// The marks are gone. A row draws one thing, the accent dot beside its age,
+/// for the one state that is waiting on a person; everything else is said in
+/// words on the third line, where `Idle` and `Finished · 4 files · +118 −40`
+/// already were.
 /// A word is more precise than a glyph and needs no vocabulary learnt first.
 enum RowState: Equatable {
     /// Stopped and cannot continue without you. The only case with a mark.
@@ -51,7 +52,7 @@ enum RowState: Equatable {
             return
         }
         if let host, !host.online || reach == .offline {
-            self = .hostOffline(host.name)
+            self = .hostOffline(PlaceNames.host(host.name))
             return
         }
         // Listed and not live. Nothing here is stale — the last thing this
@@ -59,7 +60,7 @@ enum RowState: Equatable {
         // is arriving either, and a row that said "Working" about an agent no
         // stream is reaching would be this phone guessing.
         if let host, reach == .away {
-            self = .hostAway(host.name)
+            self = .hostAway(PlaceNames.host(host.name))
             return
         }
         switch row.attention {
@@ -87,7 +88,7 @@ enum RowState: Equatable {
     /// doubly wrong, because the core deliberately stopped asserting it. The
     /// row already carries the honest fact: the age in its top corner.
     ///
-    /// `needsYou` says nothing either, because its mark has already said it.
+    /// `needsYou` says nothing either: its row says what is wanted instead.
     var word: String? {
         switch self {
         case .needsYou, .unheard: nil
@@ -129,11 +130,11 @@ enum RowState: Equatable {
         }
     }
 
-    /// The mark, as the vocabulary the mark view speaks. Only a demand draws
-    /// anything; everything else reserves the space and stays empty.
-    var attentionMark: Attention {
-        if case .needsYou(let why) = self { return .needsYou(why: why) }
-        return .idle
+    /// Whether the row is waiting on a person, which is the one state a row
+    /// draws in the accent colour.
+    var needsYou: Bool {
+        if case .needsYou = self { return true }
+        return false
     }
 
     /// The state said aloud, for a reader who cannot see the row. Nothing

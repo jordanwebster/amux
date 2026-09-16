@@ -12,7 +12,7 @@ public struct TabChrome<Items: View>: View {
     public var body: some View {
         HStack(spacing: 2) { items }
             .padding(.horizontal, 6)
-            .frosted(Capsule())
+            .frosted(Capsule(), as: .control)
             .padding(.horizontal, 44)
     }
 }

@@ -188,8 +188,9 @@ public struct ConversationSubject: Equatable, Sendable {
             working: row.working(at: fleet.orderedAt), readable: row.readable)
     }
 
-    /// "Studio · ~/src/amux", or just the directory while the machine that
-    /// owns this agent has not been heard from.
+    /// "~/s/amux · Studio", or just the directory while the machine that
+    /// owns this agent has not been heard from. Written short by
+    /// ``PlaceNames``; the place sheet has both in full.
     ///
     /// A machine that has gone away says so here instead of naming the
     /// directory. The directory has not changed, but it is the least useful
@@ -197,14 +198,23 @@ public struct ConversationSubject: Equatable, Sendable {
     /// be reached, and this line is the one place a reader is already looking
     /// to find out where this conversation lives.
     public var place: String {
+        let machine = host.map(PlaceNames.host)
         guard hostReachable else {
-            return [host, "unreachable"].compactMap { $0 }.joined(separator: " · ")
+            return [machine, "unreachable"].compactMap { $0 }.joined(separator: " · ")
         }
         // The same substitution for the same reason: a directory on a machine
         // nothing will reach is the least useful true thing on the screen, and
         // this line is where a reader is already looking to find out why.
-        if hostAway { return [host, "away"].compactMap { $0 }.joined(separator: " · ") }
-        return [host, directory].compactMap { $0 }.joined(separator: " · ")
+        if hostAway { return [machine, "away"].compactMap { $0 }.joined(separator: " · ") }
+        return PlaceNames.place(host: host, directory: directory)
+    }
+
+    /// Where this agent can be written to from elsewhere: "refactor-auth/studio".
+    /// It is what a person copies in order to write to it from another agent,
+    /// a script or a terminal, so it is the name and the machine and nothing
+    /// else.
+    public var address: String {
+        [name, host?.lowercased()].compactMap { $0 }.joined(separator: "/")
     }
 }
 
@@ -250,6 +260,10 @@ public struct Conversation: View {
     /// scroll inside what there is instead.
     @State private var pageHeight: CGFloat = 0
     @State private var footHeight: CGFloat = 0
+    /// Whether the sheet with the machine, directory and address in full is
+    /// up. A system sheet rather than one of the cards above: it is read and
+    /// put away, and nothing on the conversation waits on it.
+    @State private var placeOpen = false
 
 
     public init(
@@ -327,6 +341,11 @@ public struct Conversation: View {
         // pass through an action at all. What is open is one piece of state,
         // so what is open is what is reported.
         .onChange(of: showing) { _, now in opening?(now) }
+        .sheet(isPresented: $placeOpen) {
+            PlaceSheet(subject: subject)
+                .presentationDetents([.height(PlaceSheet.height)])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     /// The feed, under the chrome rather than beside it.
@@ -417,13 +436,7 @@ public struct Conversation: View {
         actions(action)
     }
 
-    /// What this agent answers to elsewhere: "refactor-auth/studio". It is
-    /// what a person copies in order to write to it from another agent, a
-    /// script or a terminal, so it is the name and the machine and nothing
-    /// else.
-    private var address: String {
-        [subject.name, subject.host?.lowercased()].compactMap { $0 }.joined(separator: "/")
-    }
+    private var address: String { subject.address }
 
     /// Surfaces opened over the conversation push its page back. Growing the
     /// facts strip does not: it is part of the conversation's bottom content.
@@ -493,11 +506,11 @@ public struct Conversation: View {
                     .accessibilityLabel("Agents")
                     .identified("conversation.drawer", label: "Agents")
                     .reclaimingThumbTarget(x: 15, y: 15)
-                    subjectLabel
+                    placeButton(grow: 8) { subjectLabel }
                 }
                 .padding(.horizontal, 13)
                 .padding(.vertical, 8)
-                .frosted(Capsule())
+                .frosted(Capsule(), as: .control)
             }
         }
         .accessibilityElement(children: .contain)
@@ -518,11 +531,11 @@ public struct Conversation: View {
             .buttonStyle(.amuxControl)
             .accessibilityLabel("Agents")
             .identified("conversation.drawer", label: "Agents")
-            subjectLabel.padding(.trailing, 14)
+            placeButton(grow: 0) { subjectLabel }.padding(.trailing, 14)
         }
         .padding(.leading, 2)
         .frame(minHeight: 52)
-        .frosted(Capsule(), wash: 1)
+        .frosted(Capsule(), wash: 1, as: .control)
     }
 
     private var subjectLabel: some View {
@@ -535,8 +548,28 @@ public struct Conversation: View {
                 .designFont(.monoSmall, design)
                 .foregroundStyle(design.inkFaint.color)
                 .lineLimit(1)
+                .truncationMode(.middle)
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// The name and the short place, pressed for the long ones.
+    /// `grow` reaches the pill's own edges, so the whole height of the pill
+    /// beside the drawer control answers the press without the pill growing.
+    private func placeButton<Label: View>(
+        grow: CGFloat, @ViewBuilder label: () -> Label
+    ) -> some View {
+        Button {
+            Keyboard.putDown()
+            placeOpen = true
+        } label: {
+            label().thumbTarget(y: grow)
+        }
+        .buttonStyle(.amuxControl)
+        .accessibilityLabel("\(subject.name), \(subject.place)")
+        .accessibilityHint("Shows the host, directory and address in full")
+        .identified("conversation.place", label: "\(subject.name), \(subject.place)")
+        .reclaimingThumbTarget(y: grow)
     }
 }
 
@@ -742,7 +775,7 @@ private struct ConversationTranscript: View {
     let reading: (@MainActor (TranscriptResting) -> Void)?
 
     var body: some View {
-        let rows = model.confirmedRows()
+        let rows = withUnreadable(model.confirmedRows())
         TranscriptContainer(resting: resting, moved: reading, tail: rows.last?.id) {
             if !subject.readable {
                 UnsupportedLayer(layer: "this agent’s transcript")
@@ -772,6 +805,21 @@ private struct ConversationTranscript: View {
                !(typeSize.isAccessibilitySize && model.asks.panel != nil) {
                 PendingTranscriptFeed(model: model)
             }
+        }
+    }
+}
+
+extension ConversationTranscript {
+    /// The feed, with a row at its foot for each update about this agent that
+    /// could not be read. What such an update carried is missing from the
+    /// rows above, and saying so where the reader is looking is the difference
+    /// between a conversation that admits a gap and one that looks current.
+    fileprivate func withUnreadable(_ rows: [TranscriptRow]) -> [TranscriptRow] {
+        guard !model.unreadable.isEmpty else { return rows }
+        return rows + model.unreadable.enumerated().map { index, unread in
+            TranscriptRow(
+                id: "unreadable-update-\(index)", layer: rows.last?.layer ?? .claudePty,
+                kind: .unreadable(label: "\(unread.kind.lowercased()) update"))
         }
     }
 }
@@ -807,7 +855,7 @@ struct ChangesChip: View {
             // in the label's colours, which on a light ground is a black
             // capsule; a layer behind it is the frosted plate this wants.
             .frame(minWidth: 44, minHeight: 44)
-            .background { Color.clear.frosted(Capsule()) }
+            .background { Color.clear.frosted(Capsule(), as: .control) }
             .contentShape(Capsule())
         }
         .buttonStyle(.amuxControl)

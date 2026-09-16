@@ -105,11 +105,15 @@ public final class StoreBundle {
         case .feed(let update): conversation(update.agent).apply(event)
         case .session(let session): conversation(session.agent).apply(event)
         case .diff(let update): conversation(update.agent).apply(event)
+        // An event about one agent that could not be read is that agent's
+        // conversation's to admit to, even when nothing has opened it yet.
+        case .unreadable(let unread) where unread.agent != nil:
+            conversation(unread.agent!).apply(event)
         // Nothing here names an agent, so every open conversation is offered
         // the event and decides for itself. A result is claimed only by the
         // conversation that dispatched the operation it answers.
         case .opResult, .fleet, .discovered, .connection, .tokenRequest, .invariant, .devices,
-             .attention, .cloudState:
+             .attention, .cloudState, .unreadable:
             for store in conversations.values { store.apply(event) }
         }
     }
@@ -281,7 +285,7 @@ public final class StoreBundle {
     public func startAgent() -> Bool {
         guard newAgent.ready, let host = newAgent.machine else { return false }
         let op = dispatch?(.createAgent(
-            host: host, directory: newAgent.directory, name: newAgent.name,
+            host: host, directory: newAgent.directory, name: newAgent.chosenName,
             agent: newAgent.kind))
         newAgent.starts(op)
         return op != nil

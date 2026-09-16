@@ -203,7 +203,8 @@ public enum Scenario {
         minutesAgo: Double,
         phase: AgentPhase = .running,
         headline: String? = nil,
-        outcome: TurnOutcome? = nil
+        outcome: TurnOutcome? = nil,
+        ask: Ask? = nil
     ) -> AgentCard {
         let activity = now.addingTimeInterval(-60 * minutesAgo)
         return AgentCard(
@@ -220,7 +221,8 @@ public enum Scenario {
             attention: attention,
             phase: phase,
             lastActivity: activity,
-            outcome: outcome)
+            outcome: outcome,
+            ask: ask)
     }
 
     private static let claude = AgentKind.claude(driver: .pty)
@@ -232,13 +234,15 @@ public enum Scenario {
     public static let agents: [AgentCard] = [
         card("refactor-auth", host: studio, directory: "~/src/amux", kind: claude,
              attention: .needsYou(why: .permission), minutesAgo: 2,
-             headline: "Wants to run a command"),
+             headline: "Checking the token refresh against the spec",
+             ask: Sessions.claudePermission),
         card("spec-suite", host: mini, directory: "~/src/amux", kind: codex,
              attention: .working, minutesAgo: 14.0 / 60,
              headline: "Running the spec suite · 47 of 126"),
         card("docs-pass", host: studio, directory: "~/src/amux-docs", kind: claude,
              attention: .needsYou(why: .question), minutesAgo: 6,
-             headline: "Which crate should own the redaction table?"),
+             headline: "Moving the redaction notes next to the code",
+             ask: Sessions.claudeQuestion),
         card("ios-bridge", host: studio, directory: "~/src/amux-core-bridge", kind: codex,
              attention: .working, minutesAgo: 3,
              headline: "Editing bridge/src/session.rs"),

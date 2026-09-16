@@ -63,36 +63,18 @@ public enum ConversationFootState: Equatable {
 
     /// What this build says about a gate nobody has tried to send through.
     ///
-    /// Only the two gates that pass on their own are worded here. A gate that
-    /// is waiting on the reader is the ask panel's to report, one that is
-    /// working is the composer's, and one that says the layer is unavailable
-    /// has nothing to add to a screen that is already empty.
+    /// Only the gate that passes on its own is worded here. A gate that is
+    /// waiting on the reader is the ask panel's to report, one that is working
+    /// or still sending is the composer's, and one that says the layer is
+    /// unavailable has nothing to add to a screen that is already empty.
     private static func sentence(for gate: SendGate) -> String? {
         switch gate {
-        case .claudePty(let gate):
-            switch gate {
-            case .replaying: replaying
-            case .sendInFlight: inFlight
-            default: nil
-            }
-        case .claudeSdk(let gate):
-            switch gate {
-            case .replaying: replaying
-            case .inputInFlight: inFlight
-            default: nil
-            }
-        case .codex(let gate):
-            switch gate {
-            case .replaying: replaying
-            case .inputInFlight: inFlight
-            default: nil
-            }
-        case .unavailable: nil
+        case .claudePty(.replaying), .claudeSdk(.replaying), .codex(.replaying): replaying
+        default: nil
         }
     }
 
     private static let replaying = "This session is replaying what it missed."
-    private static let inFlight = "The last message has not been acknowledged yet."
 
     /// The line in bold.
     public var headline: String {

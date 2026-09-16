@@ -969,6 +969,19 @@
       ]
     },
     {
+      "id": "home-no-agents",
+      "stage": 10,
+      "screen": "home",
+      "fixture": "home-no-agents",
+      "origin": "added_state",
+      "reason": "a phone paired with machines that are running nothing yet: the home says there are no agents, counts the hosts and offers New Agent rather than pairing again",
+      "simulator": "golden",
+      "appearances": [
+        "light",
+        "dark"
+      ]
+    },
+    {
       "id": "chat-subscribe",
       "stage": 10,
       "screen": "run",

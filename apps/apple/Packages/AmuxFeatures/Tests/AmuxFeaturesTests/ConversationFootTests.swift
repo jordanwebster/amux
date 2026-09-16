@@ -54,13 +54,10 @@ final class ConversationFootTests: XCTestCase {
         }
     }
 
-    /// Replaying and a send already in flight both refuse, in both layers'
-    /// vocabularies. Nothing about the two providers is flattened into one.
-    func testReplayingAndASendInFlightRefuse() {
-        let gates: [SendGate] = [
-            .claudePty(.replaying), .claudePty(.sendInFlight),
-            .codex(.replaying), .codex(.inputInFlight),
-        ]
+    /// Replaying refuses, in both layers' vocabularies. Nothing about the two
+    /// providers is flattened into one.
+    func testReplayingRefuses() {
+        let gates: [SendGate] = [.claudePty(.replaying), .codex(.replaying)]
         for gate in gates {
             guard case .refused(let headline, let reason)? =
                 ConversationFootState(gate: gate, refusal: nil, subject: subject())
@@ -112,11 +109,22 @@ final class ConversationFootTests: XCTestCase {
         XCTAssertEqual(theirReason, "that layer is replaying history")
     }
 
+    /// A message on its way is the composer's to show, not a refusal. The box
+    /// that sent it stays, so the keyboard does too.
+    func testASendInFlightIsNotAFoot() {
+        for gate in [SendGate.claudePty(.sendInFlight), .claudeSdk(.inputInFlight),
+                     .codex(.inputInFlight)] {
+            XCTAssertNil(
+                ConversationFootState(gate: gate, refusal: nil, subject: subject()),
+                "\(gate) replaced the composer that sent the message")
+        }
+    }
+
     /// A reader is refused, sends again, and is refused again. The panel is
     /// about the message in flight at each step: the host's first sentence,
-    /// then this build's own wording while the second message is genuinely on
-    /// its way, then the host's second sentence. It never captions a message
-    /// in flight with an earlier message's reason.
+    /// then nothing while the second message is genuinely on its way, then the
+    /// host's second sentence. It never captions a message in flight with an
+    /// earlier message's reason.
     func testTheDrawnRefusalFollowsTheMessageInFlight() {
         let store = ConversationStore(agent: agent)
         let first = OpId(UUID(uuidString: "00000000-0000-0000-0000-0000000000C1")!)
@@ -131,11 +139,10 @@ final class ConversationFootTests: XCTestCase {
         XCTAssertEqual(reason, "the session is replaying history")
 
         store.dispatched(second)
-        guard case .refused(let pendingHeadline, let pendingReason)? = ConversationFootState(
-            gate: .claudePty(.sendInFlight), refusal: store.refusal, subject: subject())
-        else { return XCTFail("a send in flight should be reported") }
-        XCTAssertEqual(pendingHeadline, "Cannot send")
-        XCTAssertEqual(pendingReason, "The last message has not been acknowledged yet.")
+        XCTAssertNil(
+            ConversationFootState(
+                gate: .claudePty(.sendInFlight), refusal: store.refusal, subject: subject()),
+            "the first refusal captioned the message now on its way")
 
         store.apply(.opResult(refusal("that layer is still replaying", op: second)))
         guard case .refused(let againHeadline, let againReason)? = ConversationFootState(
@@ -168,7 +175,7 @@ final class ConversationFootTests: XCTestCase {
     /// The chrome says where a conversation lives, and when the machine
     /// holding it cannot be reached it says that instead of the directory.
     func testAnUnreachableMachineIsSaidWhereThePlaceGoes() {
-        XCTAssertEqual(subject().place, "Studio · ~/src/amux")
+        XCTAssertEqual(subject().place, "~/s/amux · Studio")
         XCTAssertEqual(subject(hostReachable: false).place, "Studio · unreachable")
     }
 

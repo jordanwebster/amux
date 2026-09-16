@@ -693,7 +693,7 @@ private struct EdgeWheel: View {
                     }
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
-                    .background { Color.clear.frosted(Capsule()) }
+                    .background { Color.clear.frosted(Capsule(), as: .control) }
                     .padding(.trailing, 26)
                     .offset(y: 65 + offset + heights[on] / 2 - 19)
                     .transition(.opacity)

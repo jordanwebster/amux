@@ -224,6 +224,71 @@ final class NewAgentTests: XCTestCase {
 
     /// Answers the last request this test dispatched, under the identifier the
     /// store is actually waiting on.
+    /// A fleet in which the named agents already run on one machine.
+    private func running(_ names: [String], on host: HostId) -> Event {
+        .fleet(Fleet(
+            epoch: 1,
+            agents: names.map { name in
+                AgentCard(
+                    agent: Agent(
+                        id: AgentId(UUID()), hostId: host, name: name, command: "claude",
+                        workingDir: "~/src/amux", kind: .claude(driver: .sdk),
+                        createdAt: Date(timeIntervalSince1970: 1_700_000_000)),
+                    displayName: name, attention: .idle, phase: .running,
+                    lastActivity: Date(timeIntervalSince1970: 1_700_000_000))
+            },
+            hosts: [HostState(entry: HostEntry(id: host, name: "Studio", online: true), epoch: 1)],
+            reconciled: true))
+    }
+
+    /// The folder's name stands in the field, stepped past the names the
+    /// machine already has, the way the terminal numbers a second Claude.
+    func testTheSuggestedNameStepsAroundNamesTheMachineHas() {
+        let (stores, sent) = bundle()
+        stores.apply([running(["amux", "amux-2", "atlas"], on: studio)])
+        stores.startNewAgent(on: studio)
+        deliver(stores, sent, .repositories(
+            host: studio, recent: [Project(path: "~/src/amux", name: "amux")],
+            repositories: [], roots: ["~/src"]))
+
+        XCTAssertEqual(stores.newAgent.name, "amux-3")
+        XCTAssertTrue(stores.startAgent())
+        XCTAssertEqual(
+            sent.commands.last,
+            .createAgent(host: studio, directory: "~/src/amux", name: "amux-3", agent: .claude))
+    }
+
+    /// Names are per machine: another machine's agents take nothing here.
+    func testAnotherMachinesNamesAreNotTaken() {
+        let (stores, sent) = bundle()
+        stores.apply([running(["amux"], on: mini)])
+        stores.startNewAgent(on: studio)
+        deliver(stores, sent, .repositories(
+            host: studio, recent: [Project(path: "~/src/amux", name: "amux")],
+            repositories: [], roots: ["~/src"]))
+
+        XCTAssertEqual(stores.newAgent.name, "amux")
+    }
+
+    /// A typed name is kept when the directory changes, and an emptied field
+    /// holds the start button rather than sending an agent called nothing.
+    func testATypedNameIsKeptAndAnEmptyOneCannotStart() {
+        let (stores, sent) = bundle()
+        stores.startNewAgent(on: studio)
+        deliver(stores, sent, .repositories(
+            host: studio, recent: [Project(path: "~/src/amux", name: "amux")],
+            repositories: [], roots: ["~/src"]))
+
+        stores.newAgent.choose(name: "  review-bot ")
+        stores.newAgent.choose(directory: "~/work/atlas")
+        XCTAssertEqual(stores.newAgent.chosenName, "review-bot")
+        XCTAssertTrue(stores.newAgent.ready)
+
+        stores.newAgent.choose(name: " ")
+        XCTAssertFalse(stores.newAgent.ready)
+        XCTAssertFalse(stores.startAgent())
+    }
+
     private func deliver(_ stores: StoreBundle, _ sent: Sent, _ outcome: OpOutcome) {
         guard let op = sent.ops.last else { return XCTFail("nothing was dispatched") }
         stores.apply([.opResult(OpResult(op: op, outcome: outcome))])

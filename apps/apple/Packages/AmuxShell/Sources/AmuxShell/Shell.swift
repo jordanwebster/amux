@@ -706,7 +706,7 @@ private struct NewAgentPage: View {
 /// stays where they typed it, and going back from either is going back to
 /// Hosts.
 private struct PairByCodePage: View {
-    let host: HostId?
+    let host: HostId
     let router: Router
     let stores: StoreBundle
     /// Buying the relay tunnel, for the one refusal a code cannot be typed out
@@ -716,7 +716,7 @@ private struct PairByCodePage: View {
     var body: some View {
         page
             .toolbar(.hidden, for: .navigationBar)
-            .onAppear { stores.pairing.open(machine: host.flatMap { stores.hosts.known($0) }) }
+            .onAppear { stores.pairing.open(machine: stores.hosts.known(host)) }
     }
 
     @ViewBuilder

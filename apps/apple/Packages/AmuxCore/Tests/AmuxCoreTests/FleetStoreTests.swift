@@ -121,15 +121,15 @@ final class FleetStoreTests: XCTestCase {
         ], reconciled: true))
 
         XCTAssertEqual(store.rows.map(\.id), placedFirst)
-        XCTAssertEqual(store.sections.map(\.kind), [.everythingElse])
+        XCTAssertEqual(store.sections.map(\.kind), [.agents])
         XCTAssertTrue(store.reconciled)
         XCTAssertEqual(store.rows.map(\.confirmed), [true, true, true])
 
         // Regrouping is something the screen asks for, not something a sync
         // does to it.
         store.refreshOrder(now: now)
-        XCTAssertEqual(store.sections.map(\.kind), [.needsYou, .everythingElse])
-        XCTAssertEqual(store.sections[0].rows.map(\.name), ["gamma"])
+        XCTAssertEqual(store.sections.map(\.kind), [.agents])
+        XCTAssertEqual(store.rows.map(\.name), ["beta", "alpha", "gamma"])
     }
 
     /// Hosts answer one at a time, so rows are confirmed one at a time.

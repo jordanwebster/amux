@@ -130,7 +130,7 @@ public final class FleetStore {
         case .cloudState(let state):
             cloud = state
         case .feed, .session, .opResult, .diff, .discovered, .tokenRequest, .invariant, .devices,
-             .attention:
+             .attention, .unreadable:
             break
         }
     }
@@ -164,7 +164,7 @@ public final class FleetStore {
         guard cards[agent.id] == nil else { return }
         cards[agent.id] = AgentCard(
             agent: agent, displayName: agent.name ?? agent.command,
-            attention: .idle, phase: .running, lastActivity: agent.createdAt)
+            attention: .idle, phase: .running, lastActivity: agent.lastActivity)
         reconcileOrder()
         rebuild()
     }
@@ -241,18 +241,9 @@ public final class FleetStore {
             guard let card = cards[id] else { return nil }
             return AgentRow(card: card, unread: unread.isUnread(card))
         }
-        let waiting = rows.filter { placement[$0.id] == .needsYou }
-        let recent = rows.filter { placement[$0.id] == .everythingElse }
+        let recent = rows.filter { placement[$0.id] == .agents }
         let older = rows.filter { placement[$0.id] == .older }
-        var built: [FleetSection] = []
-        if !waiting.isEmpty {
-            built.append(FleetSection(kind: .needsYou, title: "Needs you", rows: waiting, folded: false))
-        }
-        built.append(FleetSection(
-            kind: .everythingElse,
-            title: waiting.isEmpty ? "Agents" : "Everything else",
-            rows: recent,
-            folded: false))
+        var built = [FleetSection(kind: .agents, title: "Agents", rows: recent, folded: false)]
         if !older.isEmpty {
             built.append(FleetSection(kind: .older, title: "Older", rows: older, folded: true))
         }

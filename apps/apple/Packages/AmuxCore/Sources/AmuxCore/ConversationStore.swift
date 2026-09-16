@@ -78,6 +78,11 @@ public final class ConversationStore {
     /// A batch the bridge could not place. Kept rather than hidden: a hole in
     /// the transcript is a fact the report screen has to be able to state.
     public private(set) var invariants: [String] = []
+    /// Updates about this agent that this build could not read. Each one is
+    /// drawn at the foot of the transcript: whatever it carried is missing
+    /// from the screen, and a conversation that silently went stale would
+    /// look current.
+    public private(set) var unreadable: [UnreadableEvent] = []
 
     /// Absolute position of `entries.first`.
     public private(set) var firstPosition: UInt64 = 0
@@ -151,12 +156,12 @@ public final class ConversationStore {
     /// The transcript as a reader sees it: what the host has sent, then
     /// whatever this phone has sent and not seen come back.
     ///
-    /// The two are drawn the same, because they are the same message and a
-    /// row that changed appearance a second after it appeared would draw the
-    /// eye to the one thing on the screen nobody needs to look at. What
-    /// distinguishes them is that a pending row is named `pending-…`, so a
-    /// test can say which frame it appeared in and which frame it stopped
-    /// being pending in.
+    /// The two are drawn as the same bubble, because they are the same message
+    /// and a bubble that changed appearance a second after it appeared would
+    /// draw the eye to the one thing on the screen nobody needs to look at; a
+    /// pending one only carries a quiet "Sending" under it. A pending row is
+    /// named `pending-…`, so a test can say which frame it appeared in and
+    /// which frame it stopped being pending in.
     private var layer: FeedEntry.Layer {
         switch facts {
         case .claudeSdk: .claudeSdk
@@ -240,8 +245,10 @@ public final class ConversationStore {
             }
         case .invariant(let detail):
             invariants.append(detail)
+        case .unreadable(let unread) where unread.agent == agent:
+            unreadable.append(unread)
         case .feed, .session, .diff, .fleet, .discovered, .connection, .tokenRequest, .devices,
-             .attention, .cloudState:
+             .attention, .cloudState, .unreadable:
             break
         }
     }
@@ -253,14 +260,18 @@ public final class ConversationStore {
     /// guessing one would put a row in the feed at a place the host disagrees
     /// with. Only the rows that just arrived are examined, so a long feed
     /// costs nothing.
-    private func reconcile(_ appended: [FeedEntry]) {
-        guard !unacknowledged.isEmpty else { return }
+    /// Takes the pending rows the host has now sent back off the optimistic
+    /// tail, and says whether any went.
+    private func reconcile(_ appended: [FeedEntry]) -> Bool {
+        guard !unacknowledged.isEmpty else { return false }
         let arrived = Set(appended.transcriptRows().compactMap { row -> String? in
             guard case .prompt(let text) = row.kind else { return nil }
             return text
         })
-        guard !arrived.isEmpty else { return }
+        guard !arrived.isEmpty else { return false }
+        let before = unacknowledged.count
         unacknowledged.removeAll { arrived.contains($0.text) }
+        return unacknowledged.count != before
     }
 
     private func apply(_ update: FeedUpdate) {
@@ -315,8 +326,12 @@ public final class ConversationStore {
         } else {
             projectedRows = entries.transcriptRows()
         }
-        publishProjection(coalescing: isPlainAppend)
-        reconcile(update.append)
+        // An append that confirms a pending prompt takes that prompt off the
+        // tail at once, so its confirmed row has to be on screen in the same
+        // frame. Held back for the coalescing interval, the message vanished
+        // for a frame or two and then came back.
+        let confirmedAPrompt = reconcile(update.append)
+        publishProjection(coalescing: isPlainAppend && !confirmedAPrompt)
         for _ in update.append { Signposts.emit(.streamRow) }
         Signposts.emit(.transcriptCommit)
     }

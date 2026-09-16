@@ -17,13 +17,24 @@ public struct AmuxRowButtonStyle: ButtonStyle {
     /// width of its group, which is most of them; the label's own radius for a
     /// row that is drawn as a rounded plate of its own.
     private let cornerRadius: CGFloat
+    /// Whether the press lights the row at all. A row that opens another
+    /// screen does not: the screen arriving is the acknowledgement, and a tint
+    /// drawn for the frames before it arrives only shows as a grey slab over
+    /// a rounded group whose corners it does not follow.
+    private let lights: Bool
 
-    public init(cornerRadius: CGFloat = 0) {
+    public init(cornerRadius: CGFloat = 0, lights: Bool = true) {
         self.cornerRadius = cornerRadius
+        self.lights = lights
     }
 
     public func makeBody(configuration: Configuration) -> some View {
-        Lit(configuration: configuration, cornerRadius: cornerRadius)
+        Lit(configuration: configuration, cornerRadius: cornerRadius, lights: lights)
+            // The whole row answers a touch, not only the pixels something is
+            // drawn on. Without this the gaps between a row's lines and the
+            // space around its text fall through, and a row near its edges
+            // takes a hard press to open. Set here so no row can forget it.
+            .contentShape(Rectangle())
     }
 
     /// Environment is read inside a view rather than on the style, because a
@@ -34,13 +45,14 @@ public struct AmuxRowButtonStyle: ButtonStyle {
         @Environment(\.isEnabled) private var isEnabled
         let configuration: Configuration
         let cornerRadius: CGFloat
+        let lights: Bool
 
         // The tint exists only while the press does, rather than sitting over
         // every row at zero opacity waiting for one: an acknowledgement is
         // instant, so there is nothing an interpolated value would buy.
         @ViewBuilder
         var body: some View {
-            if configuration.isPressed {
+            if configuration.isPressed && lights {
                 configuration.label
                     // Over the label rather than behind it. Several of these
                     // rows draw their own opaque plate, and a tint behind one
@@ -108,6 +120,10 @@ extension ButtonStyle where Self == AmuxRowButtonStyle {
     public static func amuxRow(cornerRadius: CGFloat) -> AmuxRowButtonStyle {
         AmuxRowButtonStyle(cornerRadius: cornerRadius)
     }
+
+    /// A row that opens another screen. Nothing is drawn under the thumb,
+    /// because the screen that arrives is the answer to the press.
+    public static var amuxPush: AmuxRowButtonStyle { AmuxRowButtonStyle(lights: false) }
 }
 
 extension ButtonStyle where Self == AmuxControlButtonStyle {

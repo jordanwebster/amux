@@ -74,7 +74,7 @@ final class ConversationChromeTests: XCTestCase {
         let subject = ConversationSubject(agent: agent, in: fleet)
 
         XCTAssertEqual(subject.name, "refactor-auth")
-        XCTAssertEqual(subject.place, "Studio · ~/src/amux")
+        XCTAssertEqual(subject.place, "~/s/amux · Studio")
     }
 
     /// A conversation can be opened on the frame the tap happened, before the

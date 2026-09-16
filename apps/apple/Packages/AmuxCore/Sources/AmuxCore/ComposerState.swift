@@ -21,7 +21,7 @@ public struct ComposerActivity: Equatable, Sendable {
     }
 }
 
-/// Whether there is a composer at all, and which of its two states it is in.
+/// Whether there is a composer at all, and which of its states it is in.
 ///
 /// The bottom of a conversation holds exactly one thing. An unanswered ask
 /// holds it first, then a finished turn's offer, then whatever
@@ -30,9 +30,17 @@ public struct ComposerActivity: Equatable, Sendable {
 /// message — an ended run, a session this build cannot read, a layer catching
 /// up — and a box is drawn only where writing one is a thing a person can
 /// actually do.
+///
+/// A message on its way is not one of those gates. The box that sent it stays
+/// where it is, with its keyboard still up, and only its button waits: taking
+/// the box away for the moment between the tap and the machine's answer put
+/// the keyboard down, stuttered the page and then put a new box back.
 public enum ComposerState: Equatable, Sendable {
     /// The layer will take a message now.
     case writing
+    /// The last message has left and the machine has not acknowledged it yet.
+    /// The field can be written in; nothing more can be sent until it answers.
+    case sending
     /// A turn is running. What is written is held until it ends.
     case working(ComposerActivity)
 
@@ -44,18 +52,21 @@ public enum ComposerState: Equatable, Sendable {
         case .claudePty(let gate):
             switch gate {
             case .ready: self = .writing
+            case .sendInFlight: self = .sending
             case .working: self = .working(Self.activity(tail, elapsed))
             default: return nil
             }
         case .claudeSdk(let gate):
             switch gate {
             case .ready: self = .writing
+            case .inputInFlight: self = .sending
             case .working: self = .working(Self.activity(tail, elapsed))
             default: return nil
             }
         case .codex(let gate):
             switch gate {
             case .ready: self = .writing
+            case .inputInFlight: self = .sending
             case .activeTurn: self = .working(Self.activity(tail, elapsed))
             default: return nil
             }
@@ -69,7 +80,7 @@ public enum ComposerState: Equatable, Sendable {
     /// box which one is about to be interrupted.
     public func placeholder(agent name: String) -> String {
         switch self {
-        case .writing: "Message \(name)"
+        case .writing, .sending: "Message \(name)"
         case .working: "Queue a message"
         }
     }
@@ -82,6 +93,10 @@ public enum ComposerState: Equatable, Sendable {
     /// A turn is running, so pressing the button holds the message rather
     /// than sending it, and the button with nothing to say stops the turn.
     public var busy: Bool { activity != nil }
+
+    /// Whether the button may send. Not while a message is still on its way:
+    /// the layer takes one at a time, and a second tap would only be refused.
+    public var sends: Bool { self != .sending }
 
     /// What the agent is doing, named by the row it is doing it in.
     ///

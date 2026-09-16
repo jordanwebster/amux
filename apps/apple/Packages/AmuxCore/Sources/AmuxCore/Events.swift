@@ -37,6 +37,12 @@ public enum Event: Sendable, Equatable, Codable {
     /// nothing has to ask the account service a second time to know what to
     /// offer.
     case cloudState(CloudState)
+    /// An event this build could not read, standing in its place in the batch.
+    ///
+    /// Never sent by the bridge: it is what reading a batch leaves where one
+    /// event would not decode, so the rest of the batch still applies and the
+    /// screen the event was for can say something is missing.
+    case unreadable(UnreadableEvent)
 
     private enum Key: String, CodingKey {
         case fleet = "Fleet"
@@ -51,6 +57,7 @@ public enum Event: Sendable, Equatable, Codable {
         case invariant = "Invariant"
         case devices = "Devices"
         case cloudState = "CloudState"
+        case unreadable = "Unreadable"
     }
 
     private struct RequestId: Codable, Sendable, Equatable {
@@ -97,7 +104,42 @@ public enum Event: Sendable, Equatable, Codable {
             self = .invariant(detail: try container.decode(Detail.self, forKey: key).detail)
         case .devices: self = .devices(try container.decode(DeviceRoster.self, forKey: key))
         case .cloudState: self = .cloudState(try container.decode(CloudState.self, forKey: key))
+        case .unreadable:
+            self = .unreadable(try container.decode(UnreadableEvent.self, forKey: key))
         }
+    }
+
+    /// Reads one callback's batch, event by event.
+    ///
+    /// One event this build cannot read does not cost the others. Decoding the
+    /// batch as a single array did: a fleet, a feed and a session sent in the
+    /// same moment were all dropped because one of them carried a value the
+    /// app did not expect, and the screen went on showing the moment before.
+    /// An event that will not decode is kept as ``unreadable(_:)``, in its
+    /// place, and its bytes are returned so a report can carry them.
+    ///
+    /// The whole batch is read in one pass first, because that is every batch
+    /// a matching build ever sends and a stream sends dozens a second; only a
+    /// batch that fails is read again one event at a time.
+    static func batch(
+        from data: Data, decoder: JSONDecoder
+    ) throws -> (events: [Event], unreadable: [String]) {
+        if let whole = try? decoder.decode([Event].self, from: data) { return (whole, []) }
+        let raw = try decoder.decode([JSONValue].self, from: data)
+        let encoder = JSONEncoder()
+        var events: [Event] = []
+        var unreadable: [String] = []
+        events.reserveCapacity(raw.count)
+        for value in raw {
+            let bytes = try encoder.encode(value)
+            do {
+                events.append(try decoder.decode(Event.self, from: bytes))
+            } catch {
+                unreadable.append(String(decoding: bytes, as: UTF8.self))
+                events.append(.unreadable(UnreadableEvent(value, error: error)))
+            }
+        }
+        return (events, unreadable)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -119,7 +161,35 @@ public enum Event: Sendable, Equatable, Codable {
             try container.encode(Detail(detail: detail), forKey: .invariant)
         case .devices(let roster): try container.encode(roster, forKey: .devices)
         case .cloudState(let state): try container.encode(state, forKey: .cloudState)
+        case .unreadable(let event): try container.encode(event, forKey: .unreadable)
         }
+    }
+}
+
+/// What can still be said about an event that would not decode: which kind it
+/// was, the agent it was about where it named one, and why it was refused.
+public struct UnreadableEvent: Codable, Sendable, Equatable {
+    /// The event's own tag, such as `Session`, or a description of its shape
+    /// where it had no single tag.
+    public var kind: String
+    public var agent: AgentId?
+    public var reason: String
+
+    public init(kind: String, agent: AgentId?, reason: String) {
+        self.kind = kind
+        self.agent = agent
+        self.reason = reason
+    }
+
+    init(_ value: JSONValue, error: any Error) {
+        if case .object(let fields) = value, fields.count == 1, let (tag, body) = fields.first {
+            kind = tag
+            agent = body["agent"]?.stringValue.flatMap(AgentId.init)
+        } else {
+            kind = "an event with no single tag"
+            agent = nil
+        }
+        reason = String(describing: error)
     }
 }
 
@@ -160,6 +230,13 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
     /// row become confirmed on its own instead of the list waiting for the
     /// slowest machine on the account.
     public var awaiting: Bool
+    /// The ask at the head of this agent's queue, while it is waiting on you.
+    ///
+    /// Carried on the card so a row can say what is wanted — the question, the
+    /// command — rather than only that something is. Absent when nothing is
+    /// asked, or when this phone is not reading the agent's stream and so
+    /// cannot know.
+    public var ask: Ask?
 
     public var id: AgentId { agent.id }
 
@@ -171,6 +248,7 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         case lastActivity = "last_activity"
         case outcome
         case awaiting
+        case ask
     }
 
     /// Written out rather than synthesised because the bridge leaves
@@ -185,11 +263,13 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         lastActivity = try fields.decode(Date.self, forKey: .lastActivity)
         outcome = try fields.decodeIfPresent(TurnOutcome.self, forKey: .outcome)
         awaiting = try fields.decodeIfPresent(Bool.self, forKey: .awaiting) ?? false
+        ask = try fields.decodeIfPresent(Ask.self, forKey: .ask)
     }
 
     public init(
         agent: Agent, displayName: String, attention: Attention, phase: AgentPhase,
-        lastActivity: Date, outcome: TurnOutcome? = nil, awaiting: Bool = false
+        lastActivity: Date, outcome: TurnOutcome? = nil, awaiting: Bool = false,
+        ask: Ask? = nil
     ) {
         self.agent = agent
         self.displayName = displayName
@@ -198,6 +278,7 @@ public struct AgentCard: Codable, Sendable, Equatable, Identifiable {
         self.lastActivity = lastActivity
         self.outcome = outcome
         self.awaiting = awaiting
+        self.ask = ask
     }
 }
 
@@ -239,6 +320,12 @@ public struct Agent: Codable, Sendable, Equatable, Identifiable {
     public var readonly: Bool
     public var args: [String]
     public var createdAt: Date
+    /// When the machine last saw this agent do anything, by its own clock.
+    ///
+    /// The host dates activity as it happens, so this is true for an agent
+    /// this phone has never opened, and neither opening one nor replaying its
+    /// history moves it.
+    public var lastActivity: Date
     public var parent: AgentParent?
     public var workingOn: WorkingOn?
 
@@ -252,14 +339,17 @@ public struct Agent: Codable, Sendable, Equatable, Identifiable {
         case readonly
         case args
         case createdAt = "created_at"
+        case lastActivity = "last_activity"
         case parent
         case workingOn = "working_on"
     }
 
+    /// A missing `lastActivity` is the creation time: an agent nobody has seen
+    /// do anything was last active when it started.
     public init(
         id: AgentId, hostId: HostId, name: String?, command: String, workingDir: String,
         kind: AgentKind, readonly: Bool = false, args: [String] = [], createdAt: Date,
-        parent: AgentParent? = nil, workingOn: WorkingOn? = nil
+        lastActivity: Date? = nil, parent: AgentParent? = nil, workingOn: WorkingOn? = nil
     ) {
         self.id = id
         self.hostId = hostId
@@ -270,6 +360,7 @@ public struct Agent: Codable, Sendable, Equatable, Identifiable {
         self.readonly = readonly
         self.args = args
         self.createdAt = createdAt
+        self.lastActivity = lastActivity ?? createdAt
         self.parent = parent
         self.workingOn = workingOn
     }

@@ -130,6 +130,7 @@ public enum Fixtures {
         Built(.home, "host-away"),
         Built(.home, "home-signed-out-offline"),
         Built(.home, "home-all-reachable"),
+        Built(.home, "home-no-agents"),
         Built(.run, "chat-subscribe"),
         Built(.offline, "host-offline"),
         Built(.pin, "pin"),
@@ -606,6 +607,12 @@ public enum Fixtures {
         // than decorative.
         Fixture(id: "home-all-reachable", screen: .home) { bundle in
             States.open(bundle, hosts: Scenario.reachableHosts)
+            States.linked(bundle, .connected(tier: .pro, carrier: .quic))
+        },
+        // Paired and nothing started yet. The phone has done the pairing, so
+        // the home says what comes next rather than offering to pair again.
+        Fixture(id: "home-no-agents", screen: .home) { bundle in
+            States.open(bundle, agents: [], hosts: Scenario.reachableHosts)
             States.linked(bundle, .connected(tier: .pro, carrier: .quic))
         },
         // Opening one of those agents. The transcript is the cache and stays

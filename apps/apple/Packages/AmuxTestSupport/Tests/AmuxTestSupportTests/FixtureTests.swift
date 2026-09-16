@@ -81,10 +81,16 @@ final class FixtureTests: XCTestCase {
 
         XCTAssertEqual(bundle.fleet.rows.count, 10)
         XCTAssertEqual(bundle.fleet.subtitle, "2 need you · 10 agents")
-        // Only the two agents unable to continue are pinned. Unread finished
-        // work remains in the recency list below them.
-        let waiting = bundle.fleet.sections.first { $0.kind == .needsYou }
-        XCTAssertEqual(waiting?.rows.map(\.name), ["refactor-auth", "docs-pass"])
+        // Nothing is pinned: the two agents unable to continue are in the
+        // one recency list, and say so on their own rows.
+        let waiting = bundle.fleet.rows.filter(\.needsYou)
+        XCTAssertEqual(waiting.map(\.name), ["refactor-auth", "docs-pass"])
+        // Each says what it wants rather than only that it wants something.
+        XCTAssertEqual(waiting.map(\.need), [
+            "Wants to run cargo test --workspace --test spec",
+            "Asks: Which crate should own the redaction table?",
+        ])
+        XCTAssertTrue(bundle.fleet.rows.filter { !$0.needsYou }.allSatisfy { $0.need == nil })
         XCTAssertEqual(bundle.fleet.exceptions, "air offline")
     }
 

@@ -15,7 +15,7 @@ the preserved designs.
 
 ## Nothing is quarantined
 
-Every one of the 124 captures gates. `strip.light`, `strip.dark` and
+Every one of the 150 captures gates. `strip.light`, `strip.dark` and
 `ax-composer.dark` were quarantined until 2026-09-14 and are not any more.
 
 They varied for two reasons, both in the transcript rather than in the camera.
@@ -32,6 +32,23 @@ nothing left to guess at. The strip's own feed and the accessibility composer's
 show exactly what they showed before.
 
 The global tolerance remains two per channel with at most 64 differing pixels.
+
+## Re-approved 2026-09-16: frosted panels and the papercut pass
+
+Every capture was taken again for one batch of fixes, and nearly all of them
+changed. Glass stays on small controls only: the conversation's pill, round
+icon buttons, the changes chip, the pairing keypad and the tab bar. Panels that
+carry content use frosted material with a hairline rim: the composer, ask
+panels, cards, menus, bottom actions and the home's groups of rows. The home is
+one list with no "Needs you" section and no leading mark slot. A row waiting on
+you has an accent dot beside its age and says what it wants in the accent, and
+its separators start at the row's own padding. The filter button is gone from
+the home header and the "+" from Hosts. The empty home and Hosts say how to
+pair instead of offering a button. The composer's empty field is two lines
+tall. A place is written short, directory first and host without `.local`
+(`~/s/amux · Studio`). New Agent has a Name field. `home-no-agents` is new. The
+home fixture's two waiting agents carry their asks and new headlines, so the
+rows show a realistic want.
 
 ## Departures every screen shares
 
@@ -439,6 +456,14 @@ signed into that has lost sight of one of its machines. The agents on it stay
 listed and the machine is named; an account is offered above them as the thing
 that would find it from somewhere else, drawn as an offer rather than as a
 fault. It follows the same visual system as its parent screen.
+
+## home-no-agents
+
+Added state using the `home-no-agents` fixture. Paired with reachable machines
+that are running nothing. The home names what is true, no agents and how many
+hosts, and offers New Agent; it does not offer to pair again, which a phone
+that has just paired would read as its pairing having failed. It follows the
+same visual system as its parent screen.
 
 ## home-all-reachable
 

@@ -1,3 +1,31 @@
+2026-09-16 — **A pass over the phone's papercuts.** A batch of small iPhone
+fixes from using the app day to day. The Agents home is one list ordered by last
+activity, with no "Needs you" section. A row that needs you has an accent dot
+beside its age, and its last line says in the accent what it wants: the
+question, or the command. This needs the ask at the head of the agent's queue,
+which the fleet card now carries. Without the leading mark there is no longer an
+empty slot on calm rows. The filter is gone. A paired phone with no agents shows
+"No agents yet · N hosts" and New Agent instead of "Nothing paired yet".
+Pairing starts only from a host the phone has found, or from a scanned
+`amux pair --qr` link: the Hosts "+" and both "Pair a Host" buttons opened a
+keypad for no host, so they are replaced by a line saying how to pair, and the
+pairing route now requires a host. A whole row answers a tap, and a row that
+opens another screen no longer draws a grey press overlay. The composer's empty
+height is two lines. New Agent has a name field, filled in with the folder name
+and numbered past names already taken on that host (`amux-2`). The conversation
+header, agent rows and drawer write where an agent runs the same way: the
+shortened path first (`~/s/amux`), then the host without `.local`. Tapping the
+header shows the full host, path and address. A send no longer swaps the composer
+for a "Cannot send" card while the message is in flight. The composer stays, with
+its keyboard up, and holds its button, and the pending prompt says "Sending".
+When the host sends a pending prompt back, it is replaced in the same frame. The
+transcript no longer scrolls to the bottom when the latest row is already
+visible. Glass is now only on small controls. Composer, cards, menus and home
+row groups use frosted material with a hairline edge. Swift now reads a JSON
+`null` field as missing. Swift reads the bridge's updates one by one. An
+update it cannot read is recorded and, when it names an agent, shown as a row
+at the end of that conversation. The rest of the batch still applies.
+
 2026-09-16 — **Hosts date agent activity; opening an agent no longer reorders
 the list.** The client reducer stamped every stream batch with the time it
 arrived, including the history a stream replays when an agent is opened, so

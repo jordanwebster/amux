@@ -13,7 +13,7 @@ final class ClaudeSdkSessionTests: XCTestCase {
         }
         XCTAssertEqual(ComposerState(gate: .claudeSdk(.ready), tail: nil, elapsed: nil), .writing)
         XCTAssertTrue(ComposerState(gate: .claudeSdk(.working), tail: nil, elapsed: nil)?.busy == true)
-        XCTAssertNil(ComposerState(gate: .claudeSdk(.inputInFlight), tail: nil, elapsed: nil))
+        XCTAssertEqual(ComposerState(gate: .claudeSdk(.inputInFlight), tail: nil, elapsed: nil), .sending)
         XCTAssertEqual(SendGate.claudeSdk(.working).interrupt(agent)?["claude_sdk_command"], .string("interrupt"))
     }
 

@@ -60,11 +60,11 @@ final class ComposerTests: XCTestCase {
     func testNothingThatWillNotTakeAMessageDrawsAComposer() {
         let closed: [SendGate] = [
             .claudePty(.exited), .claudePty(.readOnly), .claudePty(.replaying),
-            .claudePty(.needsYou), .claudePty(.unknown), .claudePty(.sendInFlight),
+            .claudePty(.needsYou), .claudePty(.unknown),
             .claudePty(.unavailable),
             .codex(.exited), .codex(.closed), .codex(.replaying), .codex(.needsYou),
             .codex(.observerReadOnly), .codex(.readOnly), .codex(.unknown),
-            .codex(.inputInFlight), .codex(.unavailable),
+            .codex(.unavailable),
             .unavailable,
         ]
         for gate in closed {
@@ -72,6 +72,20 @@ final class ComposerTests: XCTestCase {
                 ComposerState(gate: gate, tail: nil, elapsed: nil),
                 "\(gate) offered a composer nobody can write in")
         }
+    }
+
+    /// The box that sent a message is the box that waits for it to arrive.
+    /// Replacing it for that moment put the keyboard down mid-send.
+    func testAMessageOnItsWayKeepsTheBoxAndHoldsTheButton() {
+        for gate in [SendGate.claudePty(.sendInFlight), .claudeSdk(.inputInFlight),
+                     .codex(.inputInFlight)] {
+            let state = ComposerState(gate: gate, tail: nil, elapsed: nil)
+            XCTAssertEqual(state, .sending, "\(gate)")
+            XCTAssertEqual(state?.sends, false, "\(gate)")
+            XCTAssertEqual(state?.busy, false, "\(gate)")
+            XCTAssertEqual(state?.placeholder(agent: "refactor-auth"), "Message refactor-auth")
+        }
+        XCTAssertEqual(ComposerState.writing.sends, true)
     }
 
     func testTheEmptyFieldNamesTheAgentUntilATurnIsRunning() {

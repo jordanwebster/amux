@@ -61,7 +61,7 @@ final class RowStateTests: XCTestCase {
         XCTAssertEqual(state, .working)
         XCTAssertEqual(state.word, "Working")
         XCTAssertNil(state.elaboration)
-        XCTAssertEqual(state.attentionMark, .idle, "working draws no mark")
+        XCTAssertFalse(state.needsYou, "working is not drawn in the accent")
     }
 
     func testAnIdleAgentKeepsItsWord() {
@@ -101,18 +101,18 @@ final class RowStateTests: XCTestCase {
         XCTAssertEqual(state.spoken, "gemini, update amux to open it")
     }
 
-    /// The one mark left in the vocabulary, for the one state that wants you.
-    func testOnlyADemandDrawsAMark() {
+    /// The one accent left in the vocabulary, for the one state that wants you.
+    func testOnlyADemandIsDrawnInTheAccent() {
         for why in [Why.permission, .question] {
-            XCTAssertEqual(state(.needsYou(why: why)).attentionMark, .needsYou(why: why))
-            XCTAssertNil(state(.needsYou(why: why)).word, "the mark has already said it")
+            XCTAssertTrue(state(.needsYou(why: why)).needsYou)
+            XCTAssertNil(state(.needsYou(why: why)).word, "the row says what is wanted instead")
         }
         for quiet in [Attention.idle, .working, .unknown] {
-            XCTAssertEqual(state(quiet).attentionMark, .idle, "\(quiet) draws nothing")
+            XCTAssertFalse(state(quiet).needsYou, "\(quiet) draws nothing")
         }
-        XCTAssertEqual(
-            state(.needsYou(why: .finished)).attentionMark, .idle,
-            "a finished turn says so in words, not with a tick")
+        XCTAssertFalse(
+            state(.needsYou(why: .finished)).needsYou,
+            "a finished turn says so in words, not in the accent")
     }
 
     // MARK: - The state that deliberately says nothing
@@ -129,7 +129,7 @@ final class RowStateTests: XCTestCase {
         XCTAssertNil(state.word)
         XCTAssertNil(state.elaboration)
         XCTAssertNil(state.spoken)
-        XCTAssertEqual(state.attentionMark, .idle)
+        XCTAssertFalse(state.needsYou)
     }
 
     // MARK: - The order they are read in

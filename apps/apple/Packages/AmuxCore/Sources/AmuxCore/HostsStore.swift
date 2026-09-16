@@ -140,7 +140,7 @@ public final class HostsStore {
             self.roster = roster
         case .cloudState(let state):
             cloud = state
-        case .feed, .session, .opResult, .diff, .tokenRequest, .invariant, .attention:
+        case .feed, .session, .opResult, .diff, .tokenRequest, .invariant, .attention, .unreadable:
             break
         }
     }

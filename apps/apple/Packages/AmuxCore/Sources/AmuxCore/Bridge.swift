@@ -44,6 +44,6 @@ extension Bridge {
         guard let json = amux_app_cached_fleet(directory.path, account.value) else { return [] }
         defer { amux_app_free(json) }
         let data = Data(String(cString: json).utf8)
-        return (try? AmuxJSON.decoder.decode([Event].self, from: data)) ?? []
+        return (try? Event.batch(from: data, decoder: AmuxJSON.decoder).events) ?? []
     }
 }

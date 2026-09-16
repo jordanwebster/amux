@@ -295,7 +295,7 @@ final class AccessibilityTests: JourneyCase {
     private func theMachinesThisPhoneWorksOn() throws {
         pressTab(app, "Hosts")
         waitFor(app, "hosts", "the Hosts tab drew nothing")
-        record["hosts"] = try audited("hosts", reaching: ["hosts.pair"])
+        record["hosts"] = try audited("hosts", reaching: ["hosts.row.\(desktop.identity)"])
         let listed = identifiers(app, startingWith: "hosts.row.")
         record["hostsListed"] = listed
         XCTAssertEqual(listed.count, 2,

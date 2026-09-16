@@ -6,9 +6,9 @@ import SwiftUI
 /// nothing; it says what the person did and the shell decides where that leads.
 public enum HostsAction: Equatable, Sendable {
     case open(HostId)
-    /// Start pairing with a machine, or — from the header, where no machine
-    /// has been pointed at — with whichever one is on offer.
-    case pair(HostId?)
+    /// Start pairing with a machine this phone has found. Pairing is always
+    /// with one machine: a code typed for no machine has nowhere to go.
+    case pair(HostId)
     case newAgent
     /// Stop trusting a machine. Destructive and immediate: what it ends is
     /// the access this phone granted, not a preference.
@@ -89,16 +89,10 @@ public struct HostsTab: View {
                     .identified("hosts.subtitle", value: subtitle)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Pairing, not New Agent. The plus on a screen adds one of the
-            // things the screen lists, and what this screen lists is machines.
-            Button { actions(.pair(model.discovered.count == 1 ? model.discovered[0].id : nil)) } label: {
-                GlassIcon(glyph: "plus", prominent: true)
-                    .thumbTarget(x: 5, y: 5)
-            }
-            .buttonStyle(.amuxControl)
-            .accessibilityLabel("Pair a Host")
-            .identified("hosts.pair", label: "Pair a Host")
-            .reclaimingThumbTarget(x: 5, y: 5)
+            // No add button. What this screen lists is machines, and a machine
+            // is added by pairing with that machine: one found here carries
+            // its own Pair button, and one that is not found prints a code to
+            // scan. A plus that opened a keypad for no machine led nowhere.
         }
         .padding(.horizontal, design.metrics.gutter)
         .padding(.vertical, 10)
@@ -347,15 +341,9 @@ public struct HostsTab: View {
             Text("No hosts yet")
                 .designFont(.bodyEmphasis, design)
                 .foregroundStyle(design.ink.color)
-            Explain("""
-                Run amux on a computer on this network and it appears here. Pair with a \
-                host by the code it prints.
-                """)
-            Button { actions(.pair(model.discovered.first?.id)) } label: {
-                ActionLabel("Pair a Host", kind: .outline)
-            }
-            .buttonStyle(.amuxControl)
-            .identified("hosts.empty.pair", label: "Pair a Host")
+            Explain("Run amux on a computer on this network and it appears here.")
+            PairingHint()
+                .identified("hosts.empty.howToPair")
         }
         .identified("hosts.empty", value: "No hosts yet")
     }
@@ -387,7 +375,7 @@ public struct HostsTab: View {
             .padding(.vertical, 12)
             .frame(minHeight: 44)
         }
-        .buttonStyle(.amuxRow)
+        .buttonStyle(.amuxPush)
         .accessibilityLabel(spoken(host, reach))
         .identified(
             "hosts.row.\(host.id)", label: spoken(host, reach), value: reach.name)

@@ -101,6 +101,23 @@ final class AskPanelTests: XCTestCase {
         XCTAssertEqual(approval.choices.map(\.decision), ["accept", nil, "cancel"])
     }
 
+    // MARK: - What a list row says
+
+    /// A row on the home has one line for what an agent wants, so the kind
+    /// and the thing are said together, verbatim where the thing is a command.
+    func testEveryAskHasOneLineAListRowCanSay() throws {
+        XCTAssertEqual(
+            try XCTUnwrap(pinned("permission").panel).need,
+            "Wants to run printf allow-scoped > allow-scoped.txt; printf allow-scoped")
+        XCTAssertEqual(
+            try XCTUnwrap(pinned("question").panel).need,
+            "Asks: Which tools would you like to use?")
+        XCTAssertEqual(try XCTUnwrap(pinned("plan").panel).need, "Wants a plan approved")
+        XCTAssertEqual(
+            try XCTUnwrap(pinned("codex-approval").panel).need,
+            "Wants to run /bin/zsh -lc '/usr/bin/touch <MACHINE_PATH>'")
+    }
+
     // MARK: - What an answer becomes
 
     private var agent: AgentId { AgentId("00000000-0000-0000-0000-000000000001")! }

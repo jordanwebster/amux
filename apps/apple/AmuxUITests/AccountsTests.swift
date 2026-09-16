@@ -161,7 +161,9 @@ final class AccountsTests: JourneyCase {
     private func aPhoneNobodyHasSignedInOn() throws {
         waitFor(app, "home", "the home never appeared")
         record["gateAtLaunch"] = try says("home")
-        record["homeOffersAtLaunch"] = try called("home.empty.pair")
+        // Pairing is offered as how to do it, not as a button: a code is typed
+        // for a machine this phone has found, and there is none yet.
+        record["homeOffersAtLaunch"] = element(app, "home.empty.howToPair").exists
         record["homeOffersAccountAtLaunch"] = try called("home.empty.signIn")
         record["homeSaysAtLaunch"] = try says("home.empty.firstRun")
         // New Agent needs a machine to start one on, and this phone has not
@@ -214,7 +216,7 @@ final class AccountsTests: JourneyCase {
         // Pairing, not subscribing. An account with nothing bought has lost
         // nothing on the network this phone is on, so the empty home offers
         // the machine it would pair with and never a purchase.
-        record["homeOffersAfterSigningIn"] = try called("home.empty.pair")
+        record["homeOffersAfterSigningIn"] = element(app, "home.empty.howToPair").exists
         record["homeNewAgentAfterSigningIn"] = element(app, "home.newAgent").exists
         XCTAssertFalse(element(app, "home.newAgent").exists,
                        "the home offered New Agent with no machine to start one on")

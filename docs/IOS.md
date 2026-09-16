@@ -234,7 +234,7 @@ just ios goldens-reference
 just ios goldens-perturb
 ```
 
-The unfiltered manifest covers 33 reference screens and 29 additional states,
+The unfiltered manifest covers 33 reference screens and 42 additional states,
 each in light and dark. The door waits for the app's view tree, then the Mac
 captures the simulator's composited display through `simctl io screenshot`,
 checking successive frames for stability. This includes the render server's

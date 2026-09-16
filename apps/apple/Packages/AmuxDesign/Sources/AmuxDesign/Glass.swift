@@ -20,26 +20,43 @@ public struct Ground: View {
     }
 }
 
-/// Glass, over a wash of the ground.
+/// What floats over content, in one of the two finishes this app uses.
 ///
-/// The material samples what is behind it, and over a dense transcript that
-/// backdrop stays legible — you could read a mirrored copy of the conversation
-/// through the composer, which is a surface pretending to be a mirror. A wash
-/// of the ground underneath stops the backdrop resolving into words while
-/// leaving the rim and the edge lensing, which are the part of the material
-/// that says "this floats". Everything that floats over content uses this;
-/// nothing uses bare glass.
+/// Glass is for small controls: the conversation's pill, the round icon
+/// buttons, the changes chip, the tab bar. On something that size the rim and
+/// the edge lensing are what say "this floats and can be pressed", and there
+/// is too little of it to be read through.
+///
+/// A panel that carries content — the composer, an ask, a card, a menu, the
+/// home's groups of rows — is frosted material with a hairline rim instead.
+/// Glass over something that size is a sheet of highlights with words under
+/// it; the rim and lensing that read as "control" on a button read as gloss
+/// on a card, and the design stops looking like a place to read.
+///
+/// Either way the ground is washed in behind it. The material samples what is
+/// behind it, and over a dense transcript that backdrop stays legible — you
+/// could read a mirrored copy of the conversation through the composer, which
+/// is a surface pretending to be a mirror. A wash stops the backdrop resolving
+/// into words.
 ///
 /// A reader who has asked the system to reduce transparency gets none of it:
 /// the surface fills solid and states that it floats with a hairline rim
 /// instead of with a sampled backdrop. The rim is what carries the meaning
-/// once the lensing is gone — without it a solid panel over a solid ground is
-/// two flat areas with no edge between them.
+/// once the blur is gone — without it a solid panel over a solid ground is two
+/// flat areas with no edge between them.
+public enum Frost: Sendable {
+    /// Liquid glass, for small controls.
+    case control
+    /// Frosted material with a hairline rim, for panels that carry content.
+    case panel
+}
+
 private struct Frosted<S: Shape>: ViewModifier {
     @Environment(\.design) private var design
     @Environment(\.reducesTransparency) private var reduceTransparency
     let shape: S
     let wash: Double
+    let finish: Frost
 
     func body(content: Content) -> some View {
         if reduceTransparency {
@@ -50,17 +67,33 @@ private struct Frosted<S: Shape>: ViewModifier {
                                  lineWidth: design.metrics.hairline)
                 }
         } else {
-            content
-                .background { shape.fill(design.ground.color.opacity(wash)) }
-                .glassEffect(.regular, in: shape)
+            switch finish {
+            case .control:
+                content
+                    .background { shape.fill(design.ground.color.opacity(wash)) }
+                    .glassEffect(.regular, in: shape)
+            case .panel:
+                content
+                    .background {
+                        shape.fill(.regularMaterial)
+                            .overlay { shape.fill(design.raised.color.opacity(wash)) }
+                    }
+                    .overlay {
+                        shape.stroke(design.hairline.color,
+                                     lineWidth: design.metrics.hairline)
+                    }
+            }
         }
     }
 }
 
 extension View {
-    /// Glass with the ground washed in behind it.
-    public func frosted<S: Shape>(_ shape: S, wash: Double = Glass.wash) -> some View {
-        modifier(Frosted(shape: shape, wash: wash))
+    /// A floating surface with the ground washed in behind it: frosted
+    /// material for a panel, which is most of them, or glass for a control.
+    public func frosted<S: Shape>(
+        _ shape: S, wash: Double = Glass.wash, as finish: Frost = .panel
+    ) -> some View {
+        modifier(Frosted(shape: shape, wash: wash, finish: finish))
     }
 }
 
@@ -148,7 +181,7 @@ public struct Surface<Content: View>: View {
             let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
             switch prominence == .subject ? .glass : design.surfaces.separation {
             case .glass:
-                Color.clear.frosted(shape)
+                Color.clear.frosted(shape, as: .panel)
             case .card:
                 card(shape)
             case .rule:

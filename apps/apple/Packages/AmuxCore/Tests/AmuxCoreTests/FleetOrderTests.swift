@@ -5,7 +5,9 @@ import XCTest
 final class FleetOrderTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
-    func testActionableAsksArePinnedNewestFirst() {
+    func testAsksAreNotPinnedButSortByWhenTheyHappened() {
+        // One list. An ask is something the agent did, so it sits where its
+        // time puts it, and the row itself says it needs you.
         let cards = [
             Made.card(1, name: "recent-ask", attention: .needsYou(why: .permission), minutesAgo: 5, now: now),
             Made.card(2, name: "busy", attention: .working, minutesAgo: 1, now: now),
@@ -13,11 +15,22 @@ final class FleetOrderTests: XCTestCase {
             Made.card(4, name: "middle-ask", attention: .needsYou(why: .finished), minutesAgo: 30, now: now),
         ]
         let sections = fleetOrder(cards, now: now, unread: UnreadWeights())
-        XCTAssertEqual(sections.first?.kind, .needsYou)
-        XCTAssertEqual(sections.first?.rows.map(\.name), ["recent-ask", "old-ask"])
-        XCTAssertEqual(sections.first?.title, "Needs you")
-        XCTAssertEqual(sections[1].title, "Everything else")
-        XCTAssertEqual(sections[1].rows.map(\.name), ["busy", "middle-ask"])
+        XCTAssertEqual(sections.map(\.kind), [.agents])
+        XCTAssertEqual(sections[0].title, "Agents")
+        XCTAssertEqual(
+            sections[0].rows.map(\.name), ["busy", "recent-ask", "middle-ask", "old-ask"])
+    }
+
+    func testAnAgentWaitingOnYouNeverFoldsAway() {
+        let cards = [
+            Made.card(1, name: "asked-yesterday", attention: .needsYou(why: .question),
+                      minutesAgo: 60 * 30, now: now),
+        ]
+        var read = UnreadWeights()
+        read.opened(Made.agentId(1), at: now)
+        let sections = fleetOrder(cards, now: now, unread: read)
+        XCTAssertEqual(sections.map(\.kind), [.agents])
+        XCTAssertEqual(sections[0].rows.map(\.name), ["asked-yesterday"])
     }
 
     func testEverythingElseIsOneRecencyList() {
@@ -43,7 +56,7 @@ final class FleetOrderTests: XCTestCase {
         var read = UnreadWeights()
         for card in cards { read.opened(card.id, at: now) }
         let sections = fleetOrder(cards, now: now, unread: read)
-        XCTAssertEqual(sections.map(\.kind), [.everythingElse, .older])
+        XCTAssertEqual(sections.map(\.kind), [.agents, .older])
         XCTAssertEqual(sections[0].rows.map(\.name), ["today"])
         XCTAssertEqual(sections[1].rows.map(\.name), ["yesterday", "last-week"])
         XCTAssertTrue(sections[1].folded)

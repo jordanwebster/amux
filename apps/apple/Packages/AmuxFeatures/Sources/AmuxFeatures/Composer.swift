@@ -47,7 +47,7 @@ struct ComposerBox: View {
             field
                 .padding(.horizontal, 14)
                 .padding(.top, 13)
-                .padding(.bottom, 4)
+                .padding(.bottom, 8)
             if let sentence = dictation.sentence {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(sentence)
@@ -204,13 +204,14 @@ struct ComposerBox: View {
             .identified("composer.interrupt", label: "Stop")
         } else {
             Button { actions(.send) } label: {
-                RoundButton(glyph: "arrow.up", filled: written)
+                RoundButton(glyph: "arrow.up", filled: written && state.sends)
             }
             .buttonStyle(.amuxControl)
-            .disabled(!written)
+            .disabled(!written || !state.sends)
             .accessibilityLabel(state.busy ? "Queue" : "Send")
             .identified(
-                "composer.send", label: state.busy ? "Queue" : "Send", enabled: written)
+                "composer.send", label: state.busy ? "Queue" : "Send",
+                enabled: written && state.sends)
         }
     }
 }

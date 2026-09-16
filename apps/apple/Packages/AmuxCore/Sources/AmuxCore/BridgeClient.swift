@@ -167,10 +167,17 @@ public final class BridgeClient: Sendable {
                 let data = Data(
                     bytesNoCopy: UnsafeMutableRawPointer(mutating: json),
                     count: strlen(json), deallocator: .none)
-                guard let batch = try? decoder.decode([Event].self, from: data) else {
+                // Event by event, so one event this build cannot read stands
+                // in its place as unreadable and the rest still arrive. Only a
+                // callback that is not a JSON array at all is lost whole.
+                guard let decoded = try? Event.batch(from: data, decoder: decoder) else {
                     lock.withLock { unreadable.append(String(decoding: data, as: UTF8.self)) }
                     return
                 }
+                if !decoded.unreadable.isEmpty {
+                    lock.withLock { unreadable.append(contentsOf: decoded.unreadable) }
+                }
+                let batch = decoded.events
                 batches.yield(batch)
                 for event in batch {
                     guard case .tokenRequest(let request, let account) = event else { continue }

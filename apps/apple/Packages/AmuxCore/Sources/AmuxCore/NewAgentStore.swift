@@ -94,6 +94,15 @@ public final class NewAgentStore {
     /// agent yet has none, and the card says the machine's default instead of
     /// offering a list made up here.
     public private(set) var codexModels: [ModelInfo] = []
+    /// What was typed into the name field, or nothing while the field is
+    /// still showing the suggestion. Kept apart from the suggestion so that
+    /// choosing another directory renames an agent nobody has named yet, and
+    /// never one somebody has.
+    public private(set) var typedName: String?
+    /// The names already taken on each machine, as the fleet reports them. A
+    /// machine refuses a second agent under a name it already has, so the
+    /// suggestion steps around them rather than walking into the refusal.
+    private var taken: [HostId: Set<String>] = [:]
     /// A request is with the machine.
     public private(set) var starting = false
     /// What the machine said when it would not start the agent. One sentence,
@@ -119,6 +128,7 @@ public final class NewAgentStore {
         directory = ""
         query = ""
         typed = ""
+        typedName = nil
         browsing = false
         provider = .claude
         model = nil
@@ -205,17 +215,41 @@ public final class NewAgentStore {
         typed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// What this agent will be called. The directory's own last component,
-    /// which is what a person calls the thing they are working on; the machine
-    /// keeps the name and the fleet redraws from what it answers.
-    public var name: String {
+    /// What this agent will be called: whatever was typed, or the suggestion.
+    /// The machine keeps the name and the fleet redraws from what it answers.
+    public var name: String { typedName ?? suggestedName }
+
+    /// The directory's own last component, which is what a person calls the
+    /// thing they are working on — made unique on the chosen machine the way
+    /// the terminal numbers a second Claude: `amux`, then `amux-2`, `amux-3`.
+    /// A machine refuses a name it already has, and every agent started in
+    /// the same repository would otherwise ask for the same one.
+    public var suggestedName: String {
         let trimmed = directory.hasSuffix("/") ? String(directory.dropLast()) : directory
         let last = trimmed.split(separator: "/").last.map(String.init)
-        return last.flatMap { $0.isEmpty ? nil : $0 } ?? "agent"
+        let base = last.flatMap { $0.isEmpty ? nil : $0 } ?? "agent"
+        let names = machine.flatMap { taken[$0] } ?? []
+        guard names.contains(base) else { return base }
+        var number = 2
+        while names.contains("\(base)-\(number)") { number += 1 }
+        return "\(base)-\(number)"
     }
 
-    /// Whether there is enough to start: a machine and a directory.
-    public var ready: Bool { machine != nil && !directory.isEmpty && !starting }
+    /// Names the agent. An empty field is a name nobody has chosen, not an
+    /// agent called nothing, so it stays empty and holds the start button
+    /// until something is written.
+    public func choose(name written: String) {
+        typedName = written
+        failure = nil
+    }
+
+    /// The name as it will be sent.
+    public var chosenName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Whether there is enough to start: a machine, a directory and a name.
+    public var ready: Bool {
+        machine != nil && !directory.isEmpty && !chosenName.isEmpty && !starting
+    }
 
     /// What the create request says about the layer.
     public var kind: NewAgentKind {
@@ -236,8 +270,11 @@ public final class NewAgentStore {
         case .opResult(let result):
             if result.op == awaitingListing { listed(result.outcome) }
             if result.op == awaitingCreate { started(result.outcome) }
-        case .feed, .fleet, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices,
-             .attention, .cloudState:
+        case .fleet(let fleet):
+            taken = Dictionary(grouping: fleet.agents, by: \.agent.hostId)
+                .mapValues { Set($0.map { $0.agent.name ?? $0.displayName }) }
+        case .feed, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices,
+             .attention, .cloudState, .unreadable:
             break
         }
     }

@@ -24,6 +24,29 @@ public enum PairingAction: Equatable, Sendable {
     case subscribe
 }
 
+/// How a machine gets paired, for a screen that has no machine to offer.
+///
+/// Pairing is always with one particular machine, so it is never a button on
+/// its own: a machine on this network is offered by name where it is found,
+/// and one that is not found prints a code for the camera. The commands are
+/// set in mono because they are typed exactly as written.
+public struct PairingHint: View {
+    @Environment(\.design) private var design
+
+    public init() {}
+
+    public var body: some View {
+        Text("Run \(command("amux pair")) on a host on this network, or scan the code from \(command("amux pair --qr")) with the camera.")
+            .designFont(.detail, design)
+            .foregroundStyle(design.inkMuted.color)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func command(_ text: String) -> Text {
+        Text(verbatim: text).font(design.font(.monoSmall))
+    }
+}
+
 /// A pairing invitation for a machine this phone cannot see.
 ///
 /// An invitation carrying addresses is dialled on the network this phone is
@@ -336,7 +359,7 @@ private struct Keypad: View {
                 .foregroundStyle(enabled ? design.ink.color : design.inkFaint.color)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
-                .frosted(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .frosted(RoundedRectangle(cornerRadius: 14, style: .continuous), as: .control)
         }
         .buttonStyle(.amuxControl)
         .disabled(!enabled)

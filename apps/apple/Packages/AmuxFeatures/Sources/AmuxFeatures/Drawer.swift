@@ -87,16 +87,13 @@ public struct AgentsDrawer: View {
     private var list: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                group("Needs you", groups.needsYou)
-                group("Everything else", groups.everythingElse)
+                group("Agents", DrawerRows(model.sections).rows)
             }
             .padding(.horizontal, design.metrics.gutter)
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
     }
-
-    private var groups: DrawerGroups { DrawerGroups(model.sections) }
 
     @ViewBuilder
     private func group(_ title: String, _ rows: [AgentRow]) -> some View {
@@ -111,7 +108,7 @@ public struct AgentsDrawer: View {
                         let content = DrawerRow(
                             row: row,
                             state: state,
-                            host: model.host(row.hostId)?.name,
+                            host: model.host(row.hostId).map { PlaceNames.host($0.name) },
                             open: row.id == current)
                         // The panel is a way to switch conversations, so an
                         // agent whose provider this build has no case for is
@@ -120,7 +117,7 @@ public struct AgentsDrawer: View {
                         // the panel disagree with the list it came from.
                         if row.readable {
                             Button { actions(.open(row.id)) } label: { content }
-                                .buttonStyle(.amuxRow)
+                                .buttonStyle(.amuxPush)
                                 .accessibilityLabel(spoken(row, state))
                                 .accessibilityAddTraits(row.id == current ? [.isSelected] : [])
                                 .identified(
@@ -198,26 +195,25 @@ public struct AgentsDrawer: View {
     }
 }
 
-/// The drawer's two buckets, taken from the home's own grouping.
+/// The drawer's list, taken from the home's own ordering.
 ///
-/// The home has a third: work that has been quiet for a day, folded into a
-/// line naming what is in it. The fold exists to keep a home short enough to
-/// scan, and a panel you are already scrolling with your thumb is not a home,
-/// so the folded work is simply the tail of everything else here. Nothing is
-/// dropped and nothing needs opening twice.
-public struct DrawerGroups: Equatable, Sendable {
-    public let needsYou: [AgentRow]
-    public let everythingElse: [AgentRow]
+/// The home folds work that has been quiet for a day into a line naming what
+/// is in it. The fold exists to keep a home short enough to scan, and a panel
+/// you are already scrolling with your thumb is not a home, so the folded work
+/// is simply the tail of the list here. Nothing is dropped and nothing needs
+/// opening twice.
+public struct DrawerRows: Equatable, Sendable {
+    public let rows: [AgentRow]
 
     public init(_ sections: [FleetSection]) {
-        needsYou = sections.first { $0.kind == .needsYou }?.rows ?? []
-        everythingElse = sections.filter { $0.kind != .needsYou }.flatMap(\.rows)
+        rows = sections.flatMap(\.rows)
     }
 }
 
-/// One agent in the panel: the mark, the name, and one line of what it is
-/// doing or where it runs. No age and no arithmetic — you are switching, not
-/// deciding, and the row you are switching away from is right above it.
+/// One agent in the panel: the name, and one line of what it is doing or where
+/// it runs. No age and no arithmetic — you are switching, not deciding, and
+/// the row you are switching away from is right above it. A row waiting on you
+/// carries the accent dot and says what it wants, as it does on the home.
 struct DrawerRow: View {
     @Environment(\.design) private var design
     let row: AgentRow
@@ -227,17 +223,19 @@ struct DrawerRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            AttentionMark(attention: state.attentionMark, size: 17)
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.name)
                     .designFont(row.unread ? .identifierUnread : .identifier, design)
                     .foregroundStyle(design.ink.color)
                 Text(second)
                     .designFont(.monoSmall, design)
-                    .foregroundStyle(design.inkFaint.color)
+                    .foregroundStyle(state.needsYou ? design.accent.color : design.inkFaint.color)
                     .lineLimit(1)
+                    // Only a place gives up its middle; words give up their end.
+                    .truncationMode(showsPlace ? .middle : .tail)
             }
             Spacer(minLength: 4)
+            if state.needsYou { NeedsYouDot() }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
@@ -250,15 +248,25 @@ struct DrawerRow: View {
         }
     }
 
+    /// Whether the second line is where the agent runs rather than words.
+    private var showsPlace: Bool {
+        switch state {
+        case .needsYou, .hostOffline, .unsupported: false
+        default: row.headline == nil
+        }
+    }
+
     /// What it is doing, or where it runs — unless something outranks both.
     /// An offline machine and a provider this build cannot open are the two
     /// reasons not to switch to a row, and they belong where the eye is.
     private var second: String {
         switch state {
+        case .needsYou(let why):
+            row.need ?? why.spoken
         case .hostOffline, .unsupported:
             [state.word, state.elaboration].compactMap { $0 }.joined(separator: " · ")
         default:
-            row.headline ?? host ?? row.workingDirectory
+            row.headline ?? PlaceNames.place(host: host, directory: row.workingDirectory)
         }
     }
 }

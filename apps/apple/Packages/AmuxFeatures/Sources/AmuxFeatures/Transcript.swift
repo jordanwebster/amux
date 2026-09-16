@@ -89,9 +89,19 @@ struct PendingTranscriptFeed: View {
 
     var body: some View {
         ForEach(model.unacknowledged) { pending in
-            PromptSurface(text: pending.text)
-                .padding(.bottom, 15)
-                .padding(.horizontal, design.metrics.gutter)
+            VStack(alignment: .trailing, spacing: 4) {
+                PromptSurface(text: pending.text)
+                // The one thing a pending prompt says that a confirmed one
+                // does not, in the quietest words there are. The composer
+                // under it keeps its keyboard and holds its button, so this
+                // line is where the wait is stated.
+                Text("Sending")
+                    .designFont(.caption, design)
+                    .foregroundStyle(design.inkFaint.color)
+                    .identified("transcript.prompt.sending", value: "Sending")
+            }
+            .padding(.bottom, 15)
+            .padding(.horizontal, design.metrics.gutter)
         }
     }
 }
@@ -227,10 +237,20 @@ struct TranscriptContainer<Content: View>: View {
         // size, so a feed already resting on its tail is left that inset's
         // height above it. Only the one number is read, so this runs when the
         // reserved space changes and not while the feed is measuring itself.
+        // A feed whose tail is still in view after the change is left alone:
+        // asking it to scroll to where it already is restarts the scroll
+        // view's own settling, which is a visible stutter under a send.
+        //
+        // Only the inset is the watched value. Whether the tail is hidden
+        // changes with every row a stream adds, and watching it would ask for
+        // an update several times a frame; it is noted on the page instead,
+        // which nothing draws from.
         .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            geometry.contentInsets.bottom
+            page.tailHidden = geometry.contentOffset.y + geometry.containerSize.height
+                - geometry.contentInsets.bottom < geometry.contentSize.height - 0.5
+            return geometry.contentInsets.bottom
         } action: { _, _ in
-            guard resting == nil, !readerMoved,
+            guard page.tailHidden, resting == nil, !readerMoved,
                   page.tailScrolls < TranscriptPage.tailScrolls
             else { return }
             page.tailScrolls += 1
@@ -348,6 +368,11 @@ private final class TranscriptPage {
 
     /// How many of those have been spent.
     var tailScrolls = 0
+
+    /// Whether the feed's last row is under the space reserved beneath it, as
+    /// of the latest geometry. A feed whose tail is still in view is not sent
+    /// back to it.
+    var tailHidden = true
 
     /// Where the readable top of the page is: below the chrome that floats
     /// over it, in the same measure the entries answer in.

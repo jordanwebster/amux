@@ -2965,7 +2965,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("gateAtLaunch") == "signed-out",
                        f"a phone nobody had signed in on drew {seen.get('gateAtLaunch')!r}")
         journey.expect(seen.get("homeSaysAtLaunch") == "No agents yet"
-                       and seen.get("homeOffersAtLaunch") == "Pair a Host"
+                       and seen.get("homeOffersAtLaunch") is True
                        and seen.get("homeOffersAccountAtLaunch") == "Sign In",
                        f"the first launch says {seen.get('homeSaysAtLaunch')!r} and offers "
                        f"{seen.get('homeOffersAtLaunch')!r} and "
@@ -2989,7 +2989,7 @@ def accounts(journey: Journey, udid: str, ready: dict) -> None:
         journey.expect(seen.get("afterCancelling") == "ready",
                        f"cancelling left the page at {seen.get('afterCancelling')!r}")
         journey.expect(seen.get("gateAfterSigningIn") == "unsubscribed"
-                       and seen.get("homeOffersAfterSigningIn") == "Pair a Host",
+                       and seen.get("homeOffersAfterSigningIn") is True,
                        f"an account with nothing bought drew {seen.get('gateAfterSigningIn')!r} "
                        f"offering {seen.get('homeOffersAfterSigningIn')!r}")
         journey.expect(seen.get("accountsAfterSigningIn")

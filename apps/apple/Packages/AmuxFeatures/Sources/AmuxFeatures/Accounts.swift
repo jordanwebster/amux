@@ -426,7 +426,7 @@ public struct YouScreen: View {
         Button(action: press) {
             FieldRow(label: title, value: value, mono: mono)
         }
-        .buttonStyle(.amuxRow)
+        .buttonStyle(.amuxPush)
         .accessibilityElement(children: .combine)
         .identified("you.\(id)", label: title, value: value)
     }
