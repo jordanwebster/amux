@@ -17,13 +17,15 @@ const ABSENT_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
 pub struct Budget {
     pub retired_rows_per_table: usize,
     pub vacuum_steps: usize,
+    pub store_target_bytes: u64,
 }
 
 impl Default for Budget {
     fn default() -> Self {
         Self {
             retired_rows_per_table: 1_024,
-            vacuum_steps: 1,
+            vacuum_steps: usize::MAX,
+            store_target_bytes: STORE_TARGET_BYTES,
         }
     }
 }
@@ -47,6 +49,7 @@ pub(crate) fn run(
     connection: &Connection,
     budget: Budget,
     deadline: Duration,
+    mut command_queued: impl FnMut() -> bool,
 ) -> Result<MaintenanceReport, StoreError> {
     if deadline.is_zero() {
         return Ok(MaintenanceReport {
@@ -65,7 +68,7 @@ pub(crate) fn run(
         }
     });
 
-    let result = run_inner(connection, budget, deadline, started);
+    let result = run_inner(connection, budget, deadline, started, &mut command_queued);
     finished.store(true, Ordering::Release);
     result
 }
@@ -75,30 +78,60 @@ fn run_inner(
     budget: Budget,
     deadline: Duration,
     started: Instant,
+    command_queued: &mut impl FnMut() -> bool,
 ) -> Result<MaintenanceReport, StoreError> {
     let mut report = MaintenanceReport::default();
-    match chat::maintain(connection) {
-        Ok(chat) => {
-            report.entries_evicted = chat.entries_evicted;
-            report.empty_segments_collapsed = chat.empty_segments_collapsed;
-            report.retirement_rows_deleted = chat.retirement_rows_deleted;
-            report.retirements_completed = chat.retirements_completed;
-        }
-        Err(StoreError::Io) if expired(started, deadline) => {
-            report.deadline_reached = true;
-            return Ok(report);
-        }
-        Err(StoreError::Busy) => return Err(StoreError::Busy),
-        Err(error) => return Err(error),
-    }
-    if budget.retired_rows_per_table > 0 {
-        match sweep_absent_agents(connection, budget.retired_rows_per_table) {
-            Ok(deleted) => report.absent_agents_deleted = deleted,
-            Err(error) if is_interrupted(&error) => {
+    let store_was_over_target = store_bytes(connection)? > budget.store_target_bytes;
+    // Leave one percent of headroom for the WAL/SHM sidecars and page rounding so
+    // the complete store remains at or below the 90% restoration contract.
+    let restore_target = budget.store_target_bytes.saturating_mul(89) / 100;
+
+    loop {
+        let reclaim_for_store =
+            store_was_over_target && live_database_bytes(connection)? > restore_target;
+        let chat = match chat::maintain(connection, reclaim_for_store) {
+            Ok(chat) => chat,
+            Err(StoreError::Io) if expired(started, deadline) => {
                 report.deadline_reached = true;
                 return Ok(report);
             }
-            Err(error) => return Err(map_sqlite_error(error)),
+            Err(StoreError::Busy) => return Err(StoreError::Busy),
+            Err(error) => return Err(error),
+        };
+        report.entries_evicted += chat.entries_evicted;
+        report.empty_segments_collapsed += chat.empty_segments_collapsed;
+        report.retirement_rows_deleted += chat.retirement_rows_deleted;
+        report.retirements_completed += chat.retirements_completed;
+        if stop_between_transactions(started, deadline, command_queued, &mut report) {
+            return Ok(report);
+        }
+        let progressed = chat.entries_evicted > 0
+            || chat.empty_segments_collapsed > 0
+            || chat.retirement_rows_deleted > 0
+            || chat.retirements_completed > 0;
+        if !progressed {
+            break;
+        }
+    }
+
+    if budget.retired_rows_per_table > 0 {
+        loop {
+            match sweep_absent_agents(connection, budget.retired_rows_per_table) {
+                Ok(deleted) => {
+                    report.absent_agents_deleted += deleted;
+                    if stop_between_transactions(started, deadline, command_queued, &mut report) {
+                        return Ok(report);
+                    }
+                    if deleted < budget.retired_rows_per_table {
+                        break;
+                    }
+                }
+                Err(error) if is_interrupted(&error) => {
+                    report.deadline_reached = true;
+                    return Ok(report);
+                }
+                Err(error) => return Err(map_sqlite_error(error)),
+            }
         }
     }
     let retired_tables = match retired_table_names(connection) {
@@ -111,37 +144,27 @@ fn run_inner(
     };
 
     for table in retired_tables {
-        if expired(started, deadline) {
-            report.deadline_reached = true;
-            return Ok(report);
-        }
         if budget.retired_rows_per_table == 0 {
             continue;
         }
-        let sql = format!(
-            "DELETE FROM {} WHERE rowid IN (SELECT rowid FROM {} LIMIT ?1)",
-            quote_identifier(&table),
-            quote_identifier(&table)
-        );
-        let deleted = match execute_retry_busy(connection, &sql, budget.retired_rows_per_table) {
-            Ok(deleted) => deleted,
-            Err(error) if is_interrupted(&error) => {
-                report.deadline_reached = true;
+        loop {
+            let (deleted, dropped) =
+                match reclaim_retired_table(connection, &table, budget.retired_rows_per_table) {
+                    Ok(result) => result,
+                    Err(error) if is_interrupted(&error) => {
+                        report.deadline_reached = true;
+                        return Ok(report);
+                    }
+                    Err(error) => return Err(map_sqlite_error(error)),
+                };
+            report.retired_rows_deleted += deleted;
+            report.retired_tables_dropped += usize::from(dropped);
+            if stop_between_transactions(started, deadline, command_queued, &mut report) {
                 return Ok(report);
             }
-            Err(error) => return Err(map_sqlite_error(error)),
-        };
-        report.retired_rows_deleted += deleted;
-        if deleted < budget.retired_rows_per_table {
-            match connection.execute_batch(&format!("DROP TABLE {}", quote_identifier(&table))) {
-                Ok(()) => {}
-                Err(error) if is_interrupted(&error) => {
-                    report.deadline_reached = true;
-                    return Ok(report);
-                }
-                Err(error) => return Err(map_sqlite_error(error)),
+            if dropped {
+                break;
             }
-            report.retired_tables_dropped += 1;
         }
     }
 
@@ -181,11 +204,11 @@ fn run_inner(
     }
 
     for _ in 0..budget.vacuum_steps {
-        if expired(started, deadline) {
-            report.deadline_reached = true;
+        let before = freelist_pages(connection)?;
+        if before == 0 {
             break;
         }
-        match connection.execute_batch("PRAGMA incremental_vacuum(200)") {
+        match incremental_vacuum_step(connection) {
             Ok(()) => report.vacuum_steps += 1,
             Err(error) if is_interrupted(&error) => {
                 report.deadline_reached = true;
@@ -193,11 +216,71 @@ fn run_inner(
             }
             Err(error) => return Err(map_sqlite_error(error)),
         }
+        if stop_between_transactions(started, deadline, command_queued, &mut report) {
+            return Ok(report);
+        }
+        if freelist_pages(connection)? >= before {
+            break;
+        }
     }
-    if store_bytes(connection)? > STORE_TARGET_BYTES {
+    if report.vacuum_steps > 0 && !report.deadline_reached {
+        let checkpoint = connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            row.get::<_, i64>(0)
+        });
+        match checkpoint {
+            Ok(busy) => report.checkpoint_complete &= busy == 0,
+            Err(error) if is_interrupted(&error) => report.deadline_reached = true,
+            Err(error) => return Err(map_sqlite_error(error)),
+        }
+    }
+    if !report.deadline_reached
+        && !command_queued()
+        && store_bytes(connection)? > budget.store_target_bytes
+    {
         return Err(StoreError::OverBudget);
     }
     Ok(report)
+}
+
+fn live_database_bytes(connection: &Connection) -> Result<u64, StoreError> {
+    let page_size = connection
+        .query_row("PRAGMA page_size", [], |row| row.get::<_, i64>(0))
+        .map_err(map_sqlite_error)?;
+    let page_size = u64::try_from(page_size).map_err(|_| StoreError::Corrupt)?;
+    let pages = connection
+        .query_row("PRAGMA page_count", [], |row| row.get::<_, i64>(0))
+        .map_err(map_sqlite_error)?;
+    let pages = u64::try_from(pages).map_err(|_| StoreError::Corrupt)?;
+    let free = freelist_pages(connection)?;
+    Ok(pages.saturating_sub(free).saturating_mul(page_size))
+}
+
+fn freelist_pages(connection: &Connection) -> Result<u64, StoreError> {
+    let pages = connection
+        .query_row("PRAGMA freelist_count", [], |row| row.get::<_, i64>(0))
+        .map_err(map_sqlite_error)?;
+    u64::try_from(pages).map_err(|_| StoreError::Corrupt)
+}
+
+fn incremental_vacuum_step(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA incremental_vacuum(200)")?;
+    let mut rows = statement.query([])?;
+    while rows.next()?.is_some() {}
+    Ok(())
+}
+
+fn stop_between_transactions(
+    started: Instant,
+    deadline: Duration,
+    command_queued: &mut impl FnMut() -> bool,
+    report: &mut MaintenanceReport,
+) -> bool {
+    if expired(started, deadline) {
+        report.deadline_reached = true;
+        true
+    } else {
+        command_queued()
+    }
 }
 
 fn quick_check(connection: &Connection) -> rusqlite::Result<bool> {
@@ -226,12 +309,52 @@ fn sweep_absent_agents(connection: &Connection, limit: usize) -> rusqlite::Resul
             .collect::<Result<Vec<_>, _>>()?
     };
     for id in &ids {
+        for table in [
+            "claude_pty_tip",
+            "claude_pty_entry",
+            "claude_pty_tombstone",
+            "claude_pty_alias",
+            "claude_sdk_tip",
+            "claude_sdk_entry",
+            "claude_sdk_tombstone",
+            "claude_sdk_alias",
+            "codex_tip",
+            "codex_entry",
+            "codex_tombstone",
+            "codex_alias",
+            "chat_head",
+            "segment",
+            "eviction_frontier",
+            "chat_state",
+        ] {
+            transaction.execute(&format!("DELETE FROM {table} WHERE agent_id=?1"), [id])?;
+        }
         transaction.execute("DELETE FROM host_summary WHERE agent_id=?1", [id])?;
         transaction.execute("DELETE FROM progress WHERE agent_id=?1", [id])?;
         transaction.execute("DELETE FROM agent WHERE id=?1", [id])?;
     }
     transaction.commit()?;
     Ok(ids.len())
+}
+
+fn reclaim_retired_table(
+    connection: &Connection,
+    table: &str,
+    limit: usize,
+) -> rusqlite::Result<(usize, bool)> {
+    let transaction = connection.unchecked_transaction()?;
+    let sql = format!(
+        "DELETE FROM {} WHERE rowid IN (SELECT rowid FROM {} LIMIT ?1)",
+        quote_identifier(table),
+        quote_identifier(table)
+    );
+    let deleted = execute_retry_busy(&transaction, &sql, limit)?;
+    let dropped = deleted < limit;
+    if dropped {
+        transaction.execute_batch(&format!("DROP TABLE {}", quote_identifier(table)))?;
+    }
+    transaction.commit()?;
+    Ok((deleted, dropped))
 }
 
 fn retired_table_names(connection: &Connection) -> rusqlite::Result<Vec<String>> {

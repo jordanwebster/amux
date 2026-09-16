@@ -83,6 +83,9 @@ struct HeadMeta {
 }
 
 const METADATA_BUDGET_BYTES: u64 = 256 * 1024;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub(crate) const ENTRIES_PER_CHAT: usize = 20_000;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub(crate) const ENTRIES_PER_CHAT: usize = 50_000;
 const EVICTION_ROWS: usize = 1_000;
 const EVICTION_BYTES: u64 = 8 * 1024 * 1024;
@@ -96,7 +99,10 @@ pub(crate) struct Maintenance {
     pub retirements_completed: usize,
 }
 
-pub(crate) fn maintain(connection: &Connection) -> Result<Maintenance, StoreError> {
+pub(crate) fn maintain(
+    connection: &Connection,
+    evict_below_chat_limit: bool,
+) -> Result<Maintenance, StoreError> {
     let transaction = connection
         .unchecked_transaction()
         .map_err(map_sqlite_error)?;
@@ -108,16 +114,7 @@ pub(crate) fn maintain(connection: &Connection) -> Result<Maintenance, StoreErro
     let retirement = reclaim_retiring_chats(&transaction, &mut budget)?;
     report.retirement_rows_deleted = retirement.0;
     report.retirements_completed = retirement.1;
-    for tables in [
-        ProviderTables::for_fold::<fold::claude_pty::ClaudeFold>(),
-        ProviderTables::for_fold::<fold::claude_sdk::ClaudeSdkFold>(),
-        ProviderTables::for_fold::<fold::codex::CodexFold>(),
-    ] {
-        report.entries_evicted += evict_provider_pages(&transaction, tables, &mut budget)?;
-        if budget.rows == 0 || budget.bytes == 0 {
-            break;
-        }
-    }
+    report.entries_evicted += evict_oldest_chat(&transaction, &mut budget, evict_below_chat_limit)?;
     report.empty_segments_collapsed = collapse_empty_segments(&transaction)?;
     transaction.commit().map_err(map_sqlite_error)?;
     Ok(report)
@@ -248,106 +245,163 @@ fn delete_retirement_rows(
 fn evict_provider_pages(
     transaction: &Transaction<'_>,
     tables: ProviderTables,
+    agent: &str,
+    count: usize,
+    evict_below_chat_limit: bool,
     budget: &mut EvictionBudget,
 ) -> Result<usize, StoreError> {
-    let mut counts = transaction
+    if budget.rows == 0 || budget.bytes == 0 {
+        return Ok(0);
+    }
+    let excess = if evict_below_chat_limit {
+        count.min(budget.rows)
+    } else {
+        count.saturating_sub(ENTRIES_PER_CHAT).min(budget.rows)
+    };
+    if excess == 0 {
+        return Ok(0);
+    }
+    let mut oldest = transaction
         .prepare(&format!(
-            "SELECT agent_id,COUNT(*) FROM {} GROUP BY agent_id HAVING COUNT(*)>?1 ORDER BY agent_id",
+            "SELECT key,segment,order_seq,order_slot,bytes FROM {} WHERE agent_id=?1
+                 ORDER BY segment,order_seq,order_slot,key LIMIT ?2",
             tables.entry
         ))
         .map_err(map_sqlite_error)?;
-    let over = counts
-        .query_map([ENTRIES_PER_CHAT as i64], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })
+    let candidates = oldest
+        .query_map(
+            params![agent, i64::try_from(excess).unwrap_or(i64::MAX)],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )
         .map_err(map_sqlite_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(map_sqlite_error)?;
-    let mut total = 0usize;
-    for (agent, count) in over {
-        if budget.rows == 0 || budget.bytes == 0 {
+    let mut selected = Vec::new();
+    let mut bytes = 0u64;
+    for candidate in candidates {
+        let row_bytes = u64::try_from(candidate.4).map_err(|_| StoreError::Corrupt)?;
+        if !selected.is_empty() && bytes.saturating_add(row_bytes) > budget.bytes {
             break;
         }
-        let excess = usize::try_from(count)
-            .map_err(|_| StoreError::Corrupt)?
-            .saturating_sub(ENTRIES_PER_CHAT)
-            .min(budget.rows);
-        let mut oldest = transaction
-            .prepare(&format!(
-                "SELECT key,segment,order_seq,order_slot,bytes FROM {} WHERE agent_id=?1
-                 ORDER BY segment,order_seq,order_slot,key LIMIT ?2",
-                tables.entry
-            ))
-            .map_err(map_sqlite_error)?;
-        let candidates = oldest
-            .query_map(
-                params![agent, i64::try_from(excess).unwrap_or(i64::MAX)],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
-                },
-            )
-            .map_err(map_sqlite_error)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(map_sqlite_error)?;
-        let mut selected = Vec::new();
-        let mut bytes = 0u64;
-        for candidate in candidates {
-            let row_bytes = u64::try_from(candidate.4).map_err(|_| StoreError::Corrupt)?;
-            if !selected.is_empty() && bytes.saturating_add(row_bytes) > budget.bytes {
-                break;
-            }
-            bytes = bytes.saturating_add(row_bytes);
-            selected.push(candidate);
-        }
-        let Some(frontier) = selected.last().cloned() else {
-            continue;
-        };
-        for (key, _, _, _, _) in &selected {
-            transaction
-                .execute(
-                    &format!("DELETE FROM {} WHERE agent_id=?1 AND key=?2", tables.entry),
-                    params![agent, key],
-                )
-                .map_err(map_sqlite_error)?;
-            transaction
-                .execute(
-                    &format!(
-                        "DELETE FROM {} WHERE agent_id=?1 AND (from_key=?2 OR to_key=?2)",
-                        tables.alias
-                    ),
-                    params![agent, key],
-                )
-                .map_err(map_sqlite_error)?;
-        }
+        bytes = bytes.saturating_add(row_bytes);
+        selected.push(candidate);
+    }
+    let Some(frontier) = selected.last().cloned() else {
+        return Ok(0);
+    };
+    for (key, _, _, _, _) in &selected {
         transaction
             .execute(
-                "INSERT INTO eviction_frontier(agent_id,segment,order_seq,order_slot,key)
+                &format!("DELETE FROM {} WHERE agent_id=?1 AND key=?2", tables.entry),
+                params![agent, key],
+            )
+            .map_err(map_sqlite_error)?;
+        transaction
+            .execute(
+                &format!(
+                    "DELETE FROM {} WHERE agent_id=?1 AND (from_key=?2 OR to_key=?2)",
+                    tables.alias
+                ),
+                params![agent, key],
+            )
+            .map_err(map_sqlite_error)?;
+    }
+    transaction
+        .execute(
+            "INSERT INTO eviction_frontier(agent_id,segment,order_seq,order_slot,key)
                  VALUES (?1,?2,?3,?4,?5)
                  ON CONFLICT(agent_id) DO UPDATE SET segment=excluded.segment,
                     order_seq=excluded.order_seq,order_slot=excluded.order_slot,key=excluded.key
                  WHERE (excluded.segment,excluded.order_seq,excluded.order_slot,excluded.key) >
                        (eviction_frontier.segment,eviction_frontier.order_seq,
                         eviction_frontier.order_slot,eviction_frontier.key)",
-                params![agent, frontier.1, frontier.2, frontier.3, frontier.0],
-            )
-            .map_err(map_sqlite_error)?;
-        transaction
-            .execute(
-                "UPDATE chat_state SET content_revision=content_revision+1 WHERE agent_id=?1",
-                [&agent],
-            )
-            .map_err(map_sqlite_error)?;
-        total += selected.len();
-        budget.rows = budget.rows.saturating_sub(selected.len());
-        budget.bytes = budget.bytes.saturating_sub(bytes);
-    }
+            params![agent, frontier.1, frontier.2, frontier.3, frontier.0],
+        )
+        .map_err(map_sqlite_error)?;
+    transaction
+        .execute(
+            "UPDATE chat_state SET content_revision=content_revision+1 WHERE agent_id=?1",
+            [&agent],
+        )
+        .map_err(map_sqlite_error)?;
+    let total = selected.len();
+    budget.rows = budget.rows.saturating_sub(selected.len());
+    budget.bytes = budget.bytes.saturating_sub(bytes);
     Ok(total)
+}
+
+fn evict_oldest_chat(
+    transaction: &Transaction<'_>,
+    budget: &mut EvictionBudget,
+    evict_below_chat_limit: bool,
+) -> Result<usize, StoreError> {
+    let threshold = if evict_below_chat_limit {
+        0
+    } else {
+        ENTRIES_PER_CHAT as i64
+    };
+    let union = [
+        (
+            ProviderTables::for_fold::<fold::claude_pty::ClaudeFold>(),
+            0i64,
+        ),
+        (
+            ProviderTables::for_fold::<fold::claude_sdk::ClaudeSdkFold>(),
+            1i64,
+        ),
+        (ProviderTables::for_fold::<fold::codex::CodexFold>(), 2i64),
+    ]
+    .into_iter()
+    .map(|(tables, protocol)| {
+        format!(
+            "SELECT e.agent_id,{protocol} AS protocol,COUNT(*) AS entry_count,a.last_opened_at
+             FROM {} e LEFT JOIN agent a ON a.id=e.agent_id
+             GROUP BY e.agent_id HAVING COUNT(*)>?1",
+            tables.entry
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(" UNION ALL ");
+    let sql = format!(
+        "SELECT agent_id,protocol,entry_count FROM ({union})
+         ORDER BY last_opened_at IS NOT NULL,last_opened_at,agent_id,protocol LIMIT 1"
+    );
+    let candidate = transaction
+        .query_row(&sql, [threshold], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .optional()
+        .map_err(map_sqlite_error)?;
+    let Some((agent, protocol, count)) = candidate else {
+        return Ok(0);
+    };
+    let count = usize::try_from(count).map_err(|_| StoreError::Corrupt)?;
+    let tables = match protocol {
+        0 => ProviderTables::for_fold::<fold::claude_pty::ClaudeFold>(),
+        1 => ProviderTables::for_fold::<fold::claude_sdk::ClaudeSdkFold>(),
+        2 => ProviderTables::for_fold::<fold::codex::CodexFold>(),
+        _ => return Err(StoreError::Corrupt),
+    };
+    evict_provider_pages(
+        transaction,
+        tables,
+        &agent,
+        count,
+        evict_below_chat_limit,
+        budget,
+    )
 }
 
 fn collapse_empty_segments(transaction: &Transaction<'_>) -> Result<usize, StoreError> {

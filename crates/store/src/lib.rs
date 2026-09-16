@@ -281,6 +281,23 @@ impl Store {
         reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
     }
 
+    pub async fn record_chat_opened(&self, agent: AgentId) -> Result<(), StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.send_run(move |connection| {
+            let result = connection
+                .execute(
+                    "UPDATE agent SET last_opened_at=?2 WHERE id=?1",
+                    rusqlite::params![agent.to_string(), chrono::Utc::now().timestamp_millis()],
+                )
+                .map(|_| ())
+                .map_err(db::map_sqlite_error);
+            let corrupt = matches!(result, Err(StoreError::Corrupt));
+            let _ = reply_sender.send(result);
+            corrupt
+        })?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
     pub async fn dump(&self, agent: AgentId) -> Result<String, StoreError> {
         let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
         self.send_run(move |connection| {
@@ -368,7 +385,15 @@ fn worker(
     }
 
     let mut corrupt = false;
-    while let Ok(command) = receiver.recv() {
+    let mut pending = None;
+    loop {
+        let command = match pending.take() {
+            Some(command) => command,
+            None => match receiver.recv() {
+                Ok(command) => command,
+                Err(_) => break,
+            },
+        };
         match command {
             Command::Run(run) => {
                 corrupt = run(&mut connection);
@@ -401,12 +426,19 @@ fn worker(
                 deadline,
                 reply,
             } => {
-                let result = maintain::run(&connection, budget, deadline);
+                let mut queued = None;
+                let result = maintain::run(&connection, budget, deadline, || {
+                    if queued.is_none() {
+                        queued = receiver.try_recv().ok();
+                    }
+                    queued.is_some()
+                });
                 corrupt = result == Err(StoreError::Corrupt);
                 let _ = reply.send(result);
                 if corrupt {
                     break;
                 }
+                pending = queued;
             }
             Command::Close => break,
         }

@@ -1,3 +1,13 @@
+2026-09-16 — **One maintenance run restores cache budgets.**
+Maintenance now repeats bounded transcript eviction, metadata retirement,
+retired-table deletion and incremental vacuum work until it converges, reaches
+its deadline or yields to a queued store request. Whole-store pressure evicts
+least-recently-opened chats to below the restoration target, while desktop and
+phone per-chat caps remain 50,000 and 20,000 entries respectively. Explicit
+chat opens alone update eviction recency, and sweeping a long-absent agent now
+removes all of its derived chat rows while preserving its durable removal
+fence.
+
 2026-09-16 — **Stored history keeps exact page and boundary positions.**
 Backward paging now advances from each page's oldest entry, returns every row
 once, and carries all segment markers crossed by that page. Invalidation marks

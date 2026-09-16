@@ -220,29 +220,21 @@ fn lifecycle_renames_dependency_closure_and_maintains_in_batches() {
     assert_eq!(fresh_index_table, "segment");
     drop(inspection);
 
-    let first = runtime()
+    let report = runtime()
         .block_on(store.maintain(
             Budget {
                 retired_rows_per_table: 100,
-                vacuum_steps: 0,
-            },
-            Duration::from_secs(5),
-        ))
-        .expect("first maintenance");
-    assert_eq!(first.retired_rows_deleted, 100);
-    let second = runtime()
-        .block_on(store.maintain(
-            Budget {
-                retired_rows_per_table: 1_000,
                 vacuum_steps: 1,
+                ..Budget::default()
             },
             Duration::from_secs(5),
         ))
-        .expect("second maintenance");
-    assert!(second.retired_tables_dropped >= 1);
-    assert!(second.quick_check_complete);
-    assert!(second.checkpoint_complete);
-    assert_eq!(second.vacuum_steps, 1);
+        .expect("maintenance");
+    assert_eq!(report.retired_rows_deleted, 250);
+    assert!(report.retired_tables_dropped >= 1);
+    assert!(report.quick_check_complete);
+    assert!(report.checkpoint_complete);
+    assert_eq!(report.vacuum_steps, 1);
     runtime().block_on(store.close());
 }
 

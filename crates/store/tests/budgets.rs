@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 use chrono::{TimeZone, Utc};
@@ -13,6 +14,10 @@ use store::{Budget, Store};
 use tempfile::TempDir;
 
 const AGENT: u128 = 901;
+#[cfg(any(target_os = "ios", target_os = "android"))]
+const EXPECTED_ENTRY_LIMIT: i64 = 20_000;
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+const EXPECTED_ENTRY_LIMIT: i64 = 50_000;
 
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
@@ -99,6 +104,18 @@ fn resumed_transition(through: u64) -> SegmentTransition {
 
 fn interest() -> WindowInterest {
     WindowInterest::all(0, 8 * 1024 * 1024)
+}
+
+fn store_disk_bytes(path: &std::path::Path) -> u64 {
+    [
+        path.to_path_buf(),
+        PathBuf::from(format!("{}-wal", path.display())),
+        PathBuf::from(format!("{}-shm", path.display())),
+    ]
+    .into_iter()
+    .filter_map(|path| std::fs::metadata(path).ok())
+    .map(|metadata| metadata.len())
+    .sum()
 }
 
 #[test]
@@ -306,19 +323,12 @@ fn metadata_budget_retires_aliases_and_tombstones_with_an_evicted_boundary() {
                 refused_while_reclaiming,
                 CommitOutcome::Refused(StoreError::OverBudget)
             ));
-            let mut completed = false;
-            for _ in 0..10 {
-                let report = store
-                    .maintain(Budget::default(), Duration::from_secs(10))
-                    .await
-                    .unwrap();
-                assert!(report.retirement_rows_deleted <= 1_000);
-                if report.retirements_completed == 1 {
-                    completed = true;
-                    break;
-                }
-            }
-            assert!(completed, "bounded retirement did not complete");
+            let report = store
+                .maintain(Budget::default(), Duration::from_secs(10))
+                .await
+                .unwrap();
+            assert!(report.retirement_rows_deleted > 1_000);
+            assert_eq!(report.retirements_completed, 1);
             let resumed_mutations = [("resumed-2", 2, "two"), ("resumed-3", 3, "three")]
                 .into_iter()
                 .map(|(key, seq, text)| Mutation::Upsert {
@@ -405,8 +415,8 @@ fn maintenance_evicts_the_oldest_page_inside_a_live_segment() {
                 agent_id(),
                 generations(&store),
                 ExpectedHead::Absent { fence: 0 },
-                head(50_001),
-                Some(transition(50_001)),
+                head(52_500),
+                Some(transition(52_500)),
                 vec![Mutation::Upsert {
                     key,
                     order: fold::Order::new(1, 0).unwrap(),
@@ -420,7 +430,7 @@ fn maintenance_evicts_the_oldest_page_inside_a_live_segment() {
 
         let raw = Connection::open(&path).unwrap();
         raw.execute_batch(
-            "WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<=50001)
+            "WITH RECURSIVE n(x) AS (VALUES(2) UNION ALL SELECT x+1 FROM n WHERE x<=52500)
              INSERT INTO claude_sdk_entry(
                 agent_id,key,segment,order_seq,order_slot,revision_seq,revision_fence,
                 revision_ordinal,kind,text,bytes,body)
@@ -434,7 +444,17 @@ fn maintenance_evicts_the_oldest_page_inside_a_live_segment() {
             .maintain(Budget::default(), Duration::from_secs(20))
             .await
             .unwrap();
-        assert_eq!(report.entries_evicted, 2);
+        assert_eq!(
+            report.entries_evicted,
+            52_501 - EXPECTED_ENTRY_LIMIT as usize
+        );
+        let remaining: i64 = Connection::open(&path)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM claude_sdk_entry", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(remaining, EXPECTED_ENTRY_LIMIT);
         let loaded = store
             .load::<ClaudeSdkFold>(
                 agent_id(),
@@ -448,13 +468,184 @@ fn maintenance_evicts_the_oldest_page_inside_a_live_segment() {
             .unwrap();
         assert!(loaded.boundaries.iter().any(|boundary| {
             boundary.boundary == Boundary::Evicted
-                && boundary
-                    .before
-                    .as_ref()
-                    .is_some_and(|(order, _)| order.seq() == 3)
+                && boundary.before.as_ref().is_some_and(|(order, _)| {
+                    order.seq() == (52_501 - EXPECTED_ENTRY_LIMIT as u64 + 1)
+                })
         }));
         store.close().await;
     });
+}
+
+#[test]
+fn recording_a_chat_open_only_changes_its_recency() {
+    runtime().block_on(async {
+        let temp = TempDir::new().unwrap();
+        let path = database(&temp);
+        let store = Store::open(&path).await.unwrap();
+        let id = agent_id().to_string();
+        let raw = Connection::open(&path).unwrap();
+        raw.execute(
+            "INSERT INTO agent(id,host_id,kind,protocol,name,command,working_dir,args,readonly,
+                created_at,membership,revision,absent_since,last_opened_at)
+             VALUES (?1,'host',X'01',1,'name','command','/work',X'02',0,123,0,9,NULL,NULL)",
+            [&id],
+        )
+        .unwrap();
+        let unchanged = "quote(host_id)||'|'||quote(kind)||'|'||quote(protocol)||'|'||
+            quote(name)||'|'||quote(command)||'|'||quote(working_dir)||'|'||quote(args)||'|'||
+            quote(readonly)||'|'||quote(parent_host_id)||'|'||quote(parent_id)||'|'||
+            quote(created_at)||'|'||quote(working_on)||'|'||quote(working_on_at)||'|'||
+            quote(membership)||'|'||quote(revision)||'|'||quote(absent_since)";
+        let before: String = raw
+            .query_row(
+                &format!("SELECT {unchanged} FROM agent WHERE id=?1"),
+                [&id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(raw);
+
+        store.record_chat_opened(agent_id()).await.unwrap();
+
+        let raw = Connection::open(&path).unwrap();
+        let after: String = raw
+            .query_row(
+                &format!("SELECT {unchanged} FROM agent WHERE id=?1"),
+                [&id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let opened: Option<i64> = raw
+            .query_row(
+                "SELECT last_opened_at FROM agent WHERE id=?1",
+                [&id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(after, before);
+        assert!(opened.is_some());
+        store.close().await;
+    });
+}
+
+#[test]
+fn maintenance_restores_a_small_store_target_in_lru_order() {
+    runtime().block_on(async {
+        let temp = TempDir::new().unwrap();
+        let path = database(&temp);
+        let store = Store::open(&path).await.unwrap();
+        let raw = Connection::open(&path).unwrap();
+        for (index, opened) in [(910u128, None), (911, Some(10i64)), (912, Some(20i64))] {
+            let id = model::AgentId::from_u128(index).to_string();
+            raw.execute(
+                "INSERT INTO agent(id,host_id,kind,protocol,command,working_dir,args,readonly,
+                    created_at,membership,revision,last_opened_at)
+                 VALUES (?1,'host',X'01',1,'command','/work',X'02',0,0,0,1,?2)",
+                params![id, opened],
+            )
+            .unwrap();
+            raw.execute(
+                "INSERT INTO chat_state(agent_id,revision,content_revision,segment_high_water,
+                    previous_through,needs_baseline,retiring) VALUES (?1,0,0,1,NULL,0,0)",
+                [&id],
+            )
+            .unwrap();
+            raw.execute(
+                "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1800)
+                 INSERT INTO claude_sdk_entry(agent_id,key,segment,order_seq,order_slot,
+                    revision_seq,revision_fence,revision_ordinal,kind,text,bytes,body)
+                 SELECT ?1,printf('%s-%05d',?1,x),1,x,0,x,0,0,'prompt',NULL,4096,
+                    zeroblob(4096) FROM n",
+                [&id],
+            )
+            .unwrap();
+        }
+        let page_size: u64 = raw
+            .query_row("PRAGMA page_size", [], |row| row.get::<_, i64>(0))
+            .map(|value| value as u64)
+            .unwrap();
+        let page_count: u64 = raw
+            .query_row("PRAGMA page_count", [], |row| row.get::<_, i64>(0))
+            .map(|value| value as u64)
+            .unwrap();
+        drop(raw);
+        let target = page_size.saturating_mul(page_count).saturating_mul(55) / 100;
+        let report = store
+            .maintain(
+                Budget {
+                    store_target_bytes: target,
+                    ..Budget::default()
+                },
+                Duration::from_secs(20),
+            )
+            .await
+            .unwrap();
+        assert!(report.entries_evicted > 1_000);
+        assert!(report.vacuum_steps > 0);
+        assert!(store_disk_bytes(&path) <= target.saturating_mul(9) / 10);
+
+        let raw = Connection::open(&path).unwrap();
+        let counts = [910u128, 911, 912].map(|value| {
+            raw.query_row(
+                "SELECT COUNT(*) FROM claude_sdk_entry WHERE agent_id=?1",
+                [model::AgentId::from_u128(value).to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+        });
+        assert_eq!(counts[0], 0, "never-opened chat should be reclaimed first");
+        assert!(
+            counts[2] > 0,
+            "most recently opened chat should remain last"
+        );
+        store.close().await;
+    });
+}
+
+#[test]
+fn maintenance_yields_after_a_bounded_transaction() {
+    let temp = TempDir::new().unwrap();
+    let path = database(&temp);
+    let store = runtime().block_on(Store::open(&path)).unwrap();
+    let raw = Connection::open(&path).unwrap();
+    let id = agent_id().to_string();
+    raw.execute(
+        "INSERT INTO chat_state(agent_id,revision,content_revision,segment_high_water,
+            previous_through,needs_baseline,retiring) VALUES (?1,0,0,1,NULL,0,0)",
+        [&id],
+    )
+    .unwrap();
+    raw.execute(
+        "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000)
+         INSERT INTO claude_sdk_entry(agent_id,key,segment,order_seq,order_slot,revision_seq,
+            revision_fence,revision_ordinal,kind,text,bytes,body)
+         SELECT ?1,printf('queued-%06d',x),1,x,0,x,0,0,'prompt',NULL,1,X'00' FROM n",
+        [&id],
+    )
+    .unwrap();
+    drop(raw);
+
+    let store = Arc::new(store);
+    let barrier = Arc::new(Barrier::new(2));
+    let maintainer = Arc::clone(&store);
+    let start = Arc::clone(&barrier);
+    let handle = std::thread::spawn(move || {
+        start.wait();
+        runtime()
+            .block_on(maintainer.maintain(Budget::default(), Duration::from_secs(20)))
+            .unwrap()
+    });
+    barrier.wait();
+    std::thread::sleep(Duration::from_millis(5));
+    let started = Instant::now();
+    runtime().block_on(store.data_version()).unwrap();
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let report = handle.join().unwrap();
+    assert!(report.entries_evicted < 50_000);
+    let store = Arc::try_unwrap(store)
+        .ok()
+        .expect("maintenance reference released");
+    runtime().block_on(store.close());
 }
 
 #[test]

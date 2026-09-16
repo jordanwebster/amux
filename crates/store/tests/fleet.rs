@@ -542,14 +542,70 @@ fn fleet_sweep_removes_absent_rows_but_keeps_the_removal_fence() {
     runtime().block_on(store.close());
 
     let raw = Connection::open(&path).expect("raw database");
+    let removed = model::AgentId::from_u128(AGENT_X).to_string();
     raw.execute(
         "UPDATE agent SET absent_since=?2 WHERE id=?1",
-        rusqlite::params![
-            model::AgentId::from_u128(AGENT_X).to_string(),
-            (Utc::now() - Duration::days(8)).timestamp_millis(),
-        ],
+        rusqlite::params![removed, (Utc::now() - Duration::days(8)).timestamp_millis(),],
     )
     .expect("age absence");
+    raw.execute(
+        "INSERT INTO chat_state(agent_id,revision,content_revision,segment_high_water,
+            previous_through,needs_baseline,retiring) VALUES (?1,1,1,1,NULL,0,0)",
+        [&removed],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO chat_head(agent_id,version,protocol,segment,baseline_kind,baseline_seq,
+            through,tip_version,entry_version,observed_at,tip_bytes,summary)
+         VALUES (?1,1,0,1,0,NULL,1,1,1,0,1,X'00')",
+        [&removed],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO segment(agent_id,id,predecessor,baseline_kind,baseline_seq,first_seq,
+            last_seq,closed_by,opened_at) VALUES (?1,1,NULL,0,NULL,1,1,NULL,0)",
+        [&removed],
+    )
+    .unwrap();
+    raw.execute(
+        "INSERT INTO eviction_frontier(agent_id,segment,order_seq,order_slot,key)
+         VALUES (?1,1,1,0,'key')",
+        [&removed],
+    )
+    .unwrap();
+    for prefix in ["claude_pty", "claude_sdk", "codex"] {
+        raw.execute(
+            &format!("INSERT INTO {prefix}_tip(agent_id,tip) VALUES (?1,X'00')"),
+            [&removed],
+        )
+        .unwrap();
+        raw.execute(
+            &format!(
+                "INSERT INTO {prefix}_entry(agent_id,key,segment,order_seq,order_slot,
+                    revision_seq,revision_fence,revision_ordinal,kind,text,bytes,body)
+                 VALUES (?1,'key',1,1,0,1,0,0,'kind',NULL,1,X'00')"
+            ),
+            [&removed],
+        )
+        .unwrap();
+        raw.execute(
+            &format!(
+                "INSERT INTO {prefix}_tombstone(agent_id,key,revision_seq,revision_fence,
+                    revision_ordinal) VALUES (?1,'gone',1,0,0)"
+            ),
+            [&removed],
+        )
+        .unwrap();
+        raw.execute(
+            &format!(
+                "INSERT INTO {prefix}_alias(agent_id,from_key,to_key,revision_seq,
+                    revision_fence,revision_ordinal,promotion)
+                 VALUES (?1,'from','to',1,0,0,NULL)"
+            ),
+            [&removed],
+        )
+        .unwrap();
+    }
     drop(raw);
 
     let store = runtime().block_on(Store::open(&path)).expect("reopen");
@@ -558,6 +614,35 @@ fn fleet_sweep_removes_absent_rows_but_keeps_the_removal_fence() {
         .block_on(store.maintain(Budget::default(), std::time::Duration::from_secs(5)))
         .expect("sweep maintenance");
     assert_eq!(report.absent_agents_deleted, 1);
+    let raw = Connection::open(&path).expect("inspect swept chat rows");
+    for table in [
+        "chat_state",
+        "chat_head",
+        "segment",
+        "eviction_frontier",
+        "claude_pty_tip",
+        "claude_pty_entry",
+        "claude_pty_tombstone",
+        "claude_pty_alias",
+        "claude_sdk_tip",
+        "claude_sdk_entry",
+        "claude_sdk_tombstone",
+        "claude_sdk_alias",
+        "codex_tip",
+        "codex_entry",
+        "codex_tombstone",
+        "codex_alias",
+    ] {
+        let count: i64 = raw
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE agent_id=?1"),
+                [&removed],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "{table} retained removed agent state");
+    }
+    drop(raw);
     assert!(
         runtime()
             .block_on(store.fleet(generations))
