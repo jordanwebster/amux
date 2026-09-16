@@ -1229,10 +1229,11 @@ impl Runtime {
                 protocol,
                 attempt,
                 query,
+                paused: initially_paused,
             } => {
                 let client = self.client.clone();
                 let tx = self.msg_sink.clone();
-                let (paused, paused_rx) = watch::channel(false);
+                let (paused, paused_rx) = watch::channel(initially_paused);
                 let task = tokio::spawn(store_stream_task(
                     client, agent, protocol, attempt, query, paused_rx, tx,
                 ));
@@ -2925,6 +2926,30 @@ mod tests {
             discarded_late_count: 0,
             reported_violations: HashSet::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn a_replacement_store_stream_starts_with_reducer_backpressure() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(directory.path().to_path_buf());
+        let agent = AgentId::from_u128(1);
+
+        runtime.run_effect(Effect::OpenStoreStream {
+            agent,
+            protocol: StructuredProtocol::ClaudePtyTranscript,
+            attempt: ui_state::StreamAttempt(2),
+            query: StoreStreamQuery::After {
+                after: 10,
+                tail_bound: Some(1_000),
+            },
+            paused: true,
+        });
+
+        let stream = runtime
+            .store_streams
+            .get(&agent)
+            .expect("replacement stream task");
+        assert!(*stream.paused.borrow());
     }
 
     #[tokio::test]

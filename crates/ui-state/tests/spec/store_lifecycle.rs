@@ -609,6 +609,160 @@ fn recorded_batch(stream: fold::StreamAttempt, from: u64) -> Msg {
     }
 }
 
+fn large_recorded_batch(stream: fold::StreamAttempt, from: u64) -> Msg {
+    Msg::ChatStream {
+        agent: agent_id("stored"),
+        attempt: stream,
+        event: ChatStreamMsg::Batch {
+            at: t0_plus(3),
+            entries: (0..30)
+                .map(|offset| {
+                    let seq = from + offset;
+                    let content = (0..5)
+                        .map(|slot| {
+                            serde_json::json!({
+                                "type": "text",
+                                "text": format!("{slot}:{}", "x".repeat(80 * 1024)),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    StreamEntry::observed(
+                        seq,
+                        t0_plus(3),
+                        serde_json::json!({
+                            "type": "assistant",
+                            "uuid": uuid::Uuid::from_u128(u128::from(seq)).to_string(),
+                            "sessionId": "22222222-2222-4222-8222-222222222222",
+                            "timestamp": "2025-10-09T08:53:23.000Z",
+                            "message": {
+                                "id": format!("large-message-{seq:04}"),
+                                "role": "assistant",
+                                "stop_reason": "end_turn",
+                                "content": content,
+                            },
+                        }),
+                    )
+                })
+                .collect(),
+        },
+    }
+}
+
+#[test]
+fn oversized_catch_up_reaches_replay_completion_before_backpressure_pauses_it() {
+    let mut model = inventory_model();
+    let (attempt, op) = begin_open(&mut model);
+    let effects = load(&mut model, attempt, op, empty_loaded(HeadState::None));
+    let stream = stream_attempt(&effects);
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: continuous(100),
+                at: t0_plus(1),
+            },
+        },
+    );
+
+    let effects = update(&mut model, large_recorded_batch(stream, 1));
+    let chat = model.chat(agent_id("stored")).unwrap();
+    assert!(
+        effects.is_empty(),
+        "the transition waits for replay: {effects:?}"
+    );
+    assert!(chat.pending_bytes() > ui_state::store::PENDING_COMMIT_MAX_BYTES);
+    assert!(!chat.paused, "the completion marker must remain readable");
+
+    let effects = update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: stream,
+            event: ChatStreamMsg::ReplayComplete { at: t0_plus(4) },
+        },
+    );
+    let [
+        Effect::Store(StoreOp::Commit {
+            op,
+            transition: Some(_),
+            ..
+        }),
+        Effect::PauseStream(agent),
+    ] = effects.as_slice()
+    else {
+        panic!("replay completion must dispatch the transition before pausing: {effects:?}");
+    };
+    let commit_op = *op;
+    assert_eq!(*agent, agent_id("stored"));
+
+    let effects = update(
+        &mut model,
+        Msg::Store(StoreMsg::Committed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: commit_op,
+            agent: agent_id("stored"),
+            result: commit_result(ExpectedHead::Present {
+                fence: 7,
+                version: 1,
+            }),
+        }),
+    );
+    assert!(
+        matches!(effects.as_slice(), [Effect::ResumeStream(agent)] if *agent == agent_id("stored"))
+    );
+    assert!(!model.chat(agent_id("stored")).unwrap().paused);
+}
+
+#[test]
+fn an_oversized_canonical_commit_result_reloads_instead_of_going_live_only() {
+    let mut model = inventory_model();
+    let (attempt, stream) = live_empty(&mut model);
+    let effects = update(&mut model, recorded_batch(stream, 1));
+    let [Effect::Store(StoreOp::Commit { op, .. })] = effects.as_slice() else {
+        panic!("the stream batch must begin a commit: {effects:?}");
+    };
+    let effects = update(
+        &mut model,
+        Msg::Store(StoreMsg::Committed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: *op,
+            agent: agent_id("stored"),
+            result: CommitResult {
+                expected: ExpectedHead::Present {
+                    fence: 7,
+                    version: 2,
+                },
+                content_revision: 11,
+                placed: Vec::new(),
+                bodies: vec![Stored {
+                    key: fold::EntryKey::new("message:oversized").unwrap(),
+                    segment: 1,
+                    order: fold::Order::new(1, 0).unwrap(),
+                    revision: fold::Revision::row(1),
+                    entry: JsonBytes(vec![0; ui_state::store::COMMIT_RESULT_MAX_BYTES + 1]),
+                }],
+                deleted: Vec::new(),
+                redirected: Vec::new(),
+                boundaries: Vec::new(),
+            },
+        }),
+    );
+    let chat = model.chat(agent_id("stored")).unwrap();
+    assert_eq!(chat.state, ChatState::Reloading);
+    assert!(!chat.live_only);
+    assert!(matches!(
+        effects.as_slice(),
+        [
+            Effect::CloseStream { .. },
+            Effect::Store(StoreOp::Load { .. })
+        ]
+    ));
+}
+
 #[test]
 fn a_persisted_stream_never_grows_the_visible_window_past_its_budget() {
     let mut model = inventory_model();
@@ -906,6 +1060,55 @@ fn a_needs_baseline_head_invalidates_once_then_opens_from_the_previous_cut() {
     assert_eq!(transition.predecessor, Some(2));
     assert_eq!(transition.successor, 3);
     assert_eq!(transition.previous_through, 31);
+}
+
+#[test]
+fn every_invalidation_storage_failure_falls_back_to_a_live_tail() {
+    for error in [
+        StoreError::Busy,
+        StoreError::Io,
+        StoreError::DiskFull,
+        StoreError::OverBudget,
+        StoreError::UnsupportedFormat,
+    ] {
+        let mut model = inventory_model();
+        let (attempt, load_op) = begin_open(&mut model);
+        let effects = load(
+            &mut model,
+            attempt,
+            load_op,
+            empty_loaded(HeadState::NeedsBaseline {
+                previous_through: 31,
+                reason: BaselineReason::TipVersion,
+            }),
+        );
+        let [Effect::Store(StoreOp::Invalidate { op, .. })] = effects.as_slice() else {
+            panic!("needs-baseline must invalidate: {effects:?}");
+        };
+        let effects = update(
+            &mut model,
+            Msg::Store(StoreMsg::Failed {
+                profile: ProfileGeneration(0),
+                attempt,
+                op: *op,
+                agent: Some(agent_id("stored")),
+                kind: StoreOpKind::Invalidate,
+                error,
+            }),
+        );
+        let chat = model.chat(agent_id("stored")).unwrap();
+        assert_eq!(chat.state, ChatState::Painted, "{error:?}");
+        assert!(chat.live_only, "{error:?}");
+        assert_eq!(chat.persistence_error, Some(error));
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::OpenStoreStream {
+                query: StoreStreamQuery::TailCount { .. },
+                paused: false,
+                ..
+            }]
+        ));
+    }
 }
 
 #[test]
@@ -1352,6 +1555,150 @@ fn dirty_close_waits_for_the_in_flight_commit_and_abandons_at_five_seconds() {
     let chat = model.chat(agent_id("stored")).unwrap();
     assert_eq!(chat.state, ChatState::Absent);
     assert!(chat.abandoned_flush);
+}
+
+#[test]
+fn closing_during_catch_up_never_commits_an_incomplete_transition_or_reopens() {
+    let mut model = inventory_model();
+    let (attempt, op) = begin_open(&mut model);
+    let effects = load(&mut model, attempt, op, empty_loaded(HeadState::None));
+    let stream = stream_attempt(&effects);
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: continuous(100),
+                at: t0_plus(1),
+            },
+        },
+    );
+    assert!(update(&mut model, recorded_batch(stream, 1)).is_empty());
+
+    let effects = update(
+        &mut model,
+        Msg::Chat(ChatCommand::Close {
+            agent: agent_id("stored"),
+            now: t0_plus(10),
+        }),
+    );
+    assert!(matches!(effects.as_slice(), [Effect::CloseStream { .. }]));
+    assert_eq!(
+        model.chat(agent_id("stored")).unwrap().state,
+        ChatState::Flushing
+    );
+
+    let effects = update(
+        &mut model,
+        Msg::Chat(ChatCommand::FlushDeadline {
+            agent: agent_id("stored"),
+            now: t0_plus(15),
+        }),
+    );
+    assert!(effects.is_empty());
+    let chat = model.chat(agent_id("stored")).unwrap();
+    assert_eq!(chat.state, ChatState::Absent);
+    assert!(chat.abandoned_flush);
+}
+
+#[test]
+fn store_conflicts_and_failures_while_flushing_never_reopen_the_chat() {
+    let mut conflicted = inventory_model();
+    let (attempt, stream) = live_empty(&mut conflicted);
+    let effects = update(&mut conflicted, recorded_batch(stream, 1));
+    let [Effect::Store(StoreOp::Commit { op, .. })] = effects.as_slice() else {
+        panic!("the stream batch must begin a commit: {effects:?}");
+    };
+    let commit_op = *op;
+    update(
+        &mut conflicted,
+        Msg::Chat(ChatCommand::Close {
+            agent: agent_id("stored"),
+            now: t0_plus(10),
+        }),
+    );
+    let effects = update(
+        &mut conflicted,
+        Msg::Store(StoreMsg::Conflict {
+            profile: ProfileGeneration(0),
+            attempt,
+            op: commit_op,
+            agent: agent_id("stored"),
+            loaded: Box::new(empty_loaded(usable_head(1))),
+        }),
+    );
+    assert!(effects.is_empty());
+    assert_eq!(
+        conflicted.chat(agent_id("stored")).unwrap().state,
+        ChatState::Absent
+    );
+
+    for error in [StoreError::GenerationMoved, StoreError::Io] {
+        let mut failed = inventory_model();
+        let (attempt, stream) = live_empty(&mut failed);
+        let effects = update(&mut failed, recorded_batch(stream, 1));
+        let [Effect::Store(StoreOp::Commit { op, .. })] = effects.as_slice() else {
+            panic!("the stream batch must begin a commit: {effects:?}");
+        };
+        let commit_op = *op;
+        update(
+            &mut failed,
+            Msg::Chat(ChatCommand::Close {
+                agent: agent_id("stored"),
+                now: t0_plus(10),
+            }),
+        );
+        let effects = update(
+            &mut failed,
+            Msg::Store(StoreMsg::Failed {
+                profile: ProfileGeneration(0),
+                attempt,
+                op: commit_op,
+                agent: Some(agent_id("stored")),
+                kind: StoreOpKind::Commit,
+                error,
+            }),
+        );
+        assert!(effects.is_empty(), "{error:?} must not reopen a stream");
+        assert_eq!(
+            failed.chat(agent_id("stored")).unwrap().state,
+            ChatState::Absent,
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn reconnect_starts_a_replacement_stream_with_existing_backpressure() {
+    let mut model = inventory_model();
+    let (_, stream) = live_empty(&mut model);
+    let effects = update(&mut model, large_recorded_batch(stream, 1));
+    assert!(matches!(
+        effects.as_slice(),
+        [
+            Effect::Store(StoreOp::Commit { .. }),
+            Effect::PauseStream(_)
+        ]
+    ));
+    assert!(model.chat(agent_id("stored")).unwrap().paused);
+
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: stream,
+            event: ChatStreamMsg::Closed {
+                at: t0_plus(4),
+                reason: StreamCloseReason::HostUnreachable,
+            },
+        },
+    );
+    let effects = update(&mut model, connected("nova"));
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::OpenStoreStream { paused: true, .. }]
+    ));
 }
 
 #[test]

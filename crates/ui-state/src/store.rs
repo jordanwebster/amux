@@ -815,6 +815,7 @@ pub(crate) fn update_store(state: &mut StoreState, msg: StoreMsg) -> StoreUpdate
                             count: crate::REPLAY_TAIL,
                             tail_bound: Some(crate::REPLAY_TAIL),
                         },
+                        chat.paused,
                     ));
                 }
             }
@@ -893,6 +894,7 @@ fn loaded_result(
                     after: through,
                     tail_bound: Some(crate::REPLAY_TAIL),
                 },
+                chat.paused,
             )])
         }
         LoadedBranch::None => {
@@ -906,6 +908,7 @@ fn loaded_result(
                     count: crate::REPLAY_TAIL,
                     tail_bound: Some(crate::REPLAY_TAIL),
                 },
+                chat.paused,
             )])
         }
         LoadedBranch::NeedsBaseline {
@@ -1046,6 +1049,14 @@ fn conflict_result(
     if !valid {
         return StoreUpdate::default();
     }
+    if state
+        .chats
+        .get(&agent)
+        .is_some_and(|chat| chat.state == ChatState::Flushing)
+    {
+        abandon_flush(state, agent);
+        return StoreUpdate::default();
+    }
     let new_attempt = state.attempt();
     let Some(chat) = state.chats.get_mut(&agent) else {
         return StoreUpdate::default();
@@ -1095,6 +1106,7 @@ fn committed_result(
                 after,
                 tail_bound: Some(crate::REPLAY_TAIL),
             },
+            chat.paused,
         )]);
     }
 
@@ -1106,6 +1118,10 @@ fn committed_result(
         return StoreUpdate::default();
     }
     if reconcile(chat, &result).is_err() {
+        if chat.state == ChatState::Flushing {
+            abandon_flush(state, agent);
+            return StoreUpdate::default();
+        }
         return reload(state, agent);
     }
     chat.expected = result.expected;
@@ -1314,6 +1330,10 @@ fn failed_result(
     if !active_op {
         return StoreUpdate::default();
     }
+    if chat.state == ChatState::Flushing {
+        abandon_flush(state, agent);
+        return StoreUpdate::default();
+    }
     if error == StoreError::GenerationMoved {
         return reload(state, agent);
     }
@@ -1348,6 +1368,27 @@ fn failed_result(
                     count: crate::REPLAY_TAIL,
                     tail_bound: Some(crate::REPLAY_TAIL),
                 },
+                chat.paused,
+            ));
+            StoreUpdate::effects(effects)
+        }
+        (StoreOpKind::Invalidate, error) => {
+            let was_paused = make_live_only(chat, error);
+            chat.state = ChatState::Painted;
+            chat.stream_attempt = StreamAttempt(chat.stream_attempt.0.saturating_add(1));
+            let mut effects = Vec::new();
+            if was_paused {
+                effects.push(Effect::ResumeStream(agent));
+            }
+            effects.push(open_effect(
+                agent,
+                chat.protocol,
+                chat.stream_attempt,
+                StoreStreamQuery::TailCount {
+                    count: crate::REPLAY_TAIL,
+                    tail_bound: Some(crate::REPLAY_TAIL),
+                },
+                chat.paused,
             ));
             StoreUpdate::effects(effects)
         }
@@ -1444,6 +1485,7 @@ pub(crate) fn reconnect(state: &mut StoreState) -> Vec<Effect> {
             chat.protocol,
             chat.stream_attempt,
             query,
+            chat.paused,
         ));
     }
     effects
@@ -1677,6 +1719,7 @@ fn enqueue(state: &mut StoreState, agent: AgentId, mutations: MutationBatchDto) 
     };
     if let Some(chat) = state.chats.get_mut(&agent)
         && chat.pending_bytes() > PENDING_COMMIT_MAX_BYTES
+        && !replay_waiting
         && !chat.paused
     {
         chat.paused = true;
@@ -1850,7 +1893,9 @@ pub(crate) fn close_chat(
     chat.state = ChatState::Flushing;
     chat.flush_deadline = Some(now + FLUSH_DEADLINE);
     let mut effects = vec![Effect::CloseStream { agent }];
-    effects.extend(dispatch_next(state, agent));
+    if chat.transition.is_none() {
+        effects.extend(dispatch_next(state, agent));
+    }
     finish_flush_if_clean(state, agent, &mut effects);
     effects
 }
@@ -1889,6 +1934,20 @@ fn finish_flush_if_clean(state: &mut StoreState, agent: AgentId, effects: &mut V
             effects.push(Effect::CloseStream { agent });
         }
     }
+}
+
+fn abandon_flush(state: &mut StoreState, agent: AgentId) {
+    let Some(chat) = state.chats.get_mut(&agent) else {
+        return;
+    };
+    chat.abandoned_flush = chat.in_flight.is_some() || !chat.pending.is_empty();
+    chat.pending.clear();
+    chat.in_flight = None;
+    chat.transition = None;
+    chat.page_request = None;
+    chat.flush_deadline = None;
+    chat.paused = false;
+    chat.state = ChatState::Absent;
 }
 
 fn reload(state: &mut StoreState, agent: AgentId) -> StoreUpdate {
@@ -1935,12 +1994,14 @@ fn open_effect(
     protocol: StructuredProtocol,
     attempt: StreamAttempt,
     query: StoreStreamQuery,
+    paused: bool,
 ) -> Effect {
     Effect::OpenStoreStream {
         agent,
         protocol,
         attempt,
         query,
+        paused,
     }
 }
 

@@ -56,6 +56,9 @@ pub enum Effect {
         protocol: StructuredProtocol,
         attempt: fold::StreamAttempt,
         query: StoreStreamQuery,
+        /// Start the replacement reader paused when reducer backpressure is
+        /// still active across a transport reconnect.
+        paused: bool,
     },
     /// Close a previously opened stream.
     CloseStream { agent: AgentId },

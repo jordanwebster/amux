@@ -1,3 +1,10 @@
+2026-09-16 — **Store-backed chat recovery no longer deadlocks.** Catch-up keeps
+reading until its replay transition can be committed before applying stream
+backpressure. Closing fences conflicts and storage failures instead of
+reopening the chat, failed invalidation falls back to a live tail, replacement
+streams inherit an existing pause, and oversized canonical results reload from
+SQLite.
+
 2026-09-16 — **Stored chats page through history without growing forever.**
 Reaching the oldest visible row now fetches the preceding SQLite page. The
 bounded chat window retains the end being viewed while paging or streaming,
