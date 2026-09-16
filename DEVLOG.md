@@ -1,3 +1,11 @@
+2026-09-16 — **Client stores maintain themselves after launch.**
+The UI store worker now waits until the first frame is clear, then runs bounded
+maintenance whenever it is idle, no more than once an hour. Maintenance runs
+concurrently with the operation edge so a newly queued read or commit reaches
+the store and makes reclamation yield. Explicit chat opens update eviction
+recency, while remembered startup and reconnect loads leave that user signal
+untouched.
+
 2026-09-16 — **Stored chats recover in place across invalidation and quarantine.**
 Invalidating an obsolete or unreadable chat tip now opens a successor segment
 from the exact stored high-water and previous cursor, so the store accepts the

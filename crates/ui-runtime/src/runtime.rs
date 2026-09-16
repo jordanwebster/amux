@@ -436,6 +436,7 @@ pub struct Runtime {
     streams: HashMap<AgentId, JoinHandle<()>>,
     store_streams: HashMap<AgentId, StoreStreamTask>,
     store_worker: Option<StoreWorker>,
+    store_first_frame_seen: bool,
     startup_gate: Arc<StartupGate>,
     report_dir: Option<PathBuf>,
     log_path: Option<PathBuf>,
@@ -693,6 +694,7 @@ impl Runtime {
             streams: HashMap::new(),
             store_streams: HashMap::new(),
             store_worker,
+            store_first_frame_seen: false,
             startup_gate,
             report_dir: options.report_dir,
             log_path: options.log_path,
@@ -753,6 +755,9 @@ impl Runtime {
 
     /// Open one structured conversation through its persisted lifecycle.
     pub fn open_chat(&mut self, agent: AgentId) {
+        if let Some(worker) = &self.store_worker {
+            worker.record_chat_opened(agent);
+        }
         self.process(Msg::Chat(ChatCommand::Open { agent }));
     }
 
@@ -788,6 +793,15 @@ impl Runtime {
             return false;
         }
         self.drain();
+        // Interactive callers draw before they await the next input. The
+        // first completed wait is therefore the store worker's safe signal
+        // that launch-critical reads no longer share the first-frame path.
+        if !self.store_first_frame_seen {
+            self.store_first_frame_seen = true;
+            if let Some(worker) = &self.store_worker {
+                worker.after_first_frame();
+            }
+        }
         true
     }
 
@@ -2786,6 +2800,7 @@ mod tests {
             streams: HashMap::new(),
             store_streams: HashMap::new(),
             store_worker: None,
+            store_first_frame_seen: false,
             startup_gate: Arc::new(StartupGate::default()),
             report_dir: Some(report_dir),
             log_path: Some(log_path),
@@ -2921,7 +2936,7 @@ mod tests {
         panic!("store runtime did not reach the expected state");
     }
 
-    async fn seed_recovery_chat(path: &Path, agent: AgentId, host: HostId) {
+    async fn seed_recovery_fleet(path: &Path, agent: AgentId, host: HostId) {
         let store = store::Store::open(path).await.expect("seed store");
         let generations = store
             .generations()
@@ -2957,6 +2972,10 @@ mod tests {
             .await
             .expect("seed agent");
         store.close().await;
+    }
+
+    async fn seed_recovery_chat(path: &Path, agent: AgentId, host: HostId) {
+        seed_recovery_fleet(path, agent, host).await;
 
         let mut runtime = Runtime::start(
             Box::new(|| Box::pin(std::future::pending())),
@@ -3044,6 +3063,133 @@ mod tests {
         })
         .await;
         assert!(!runtime.model().chat(agent).expect("seed chat").live_only);
+    }
+
+    fn stored_last_opened_at(path: &Path, agent: AgentId) -> Option<i64> {
+        rusqlite::Connection::open(path)
+            .expect("open store for recency inspection")
+            .query_row(
+                "SELECT last_opened_at FROM agent WHERE id=?1",
+                [agent.to_string()],
+                |row| row.get(0),
+            )
+            .expect("read chat recency")
+    }
+
+    #[tokio::test]
+    async fn store_maintenance_starts_after_the_first_frame_and_is_hourly() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut runtime = Runtime::start(
+            Box::new(|| Box::pin(std::future::pending())),
+            RuntimeOptions {
+                store_path: Some(directory.path().join("store.sqlite")),
+                ..RuntimeOptions::default()
+            },
+        );
+        assert_eq!(
+            runtime
+                .store_worker
+                .as_ref()
+                .expect("store worker")
+                .maintenance_runs(),
+            0
+        );
+
+        tokio::time::timeout(Duration::from_secs(5), runtime.next())
+            .await
+            .expect("startup message timed out");
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while runtime
+                .store_worker
+                .as_ref()
+                .expect("store worker")
+                .maintenance_runs()
+                == 0
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("maintenance did not run after the first frame");
+        assert_eq!(
+            runtime
+                .store_worker
+                .as_ref()
+                .expect("store worker")
+                .maintenance_runs(),
+            1
+        );
+
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
+        assert_eq!(
+            runtime
+                .store_worker
+                .as_ref()
+                .expect("store worker")
+                .maintenance_runs(),
+            1,
+            "idle polling must not repeat maintenance inside the hour"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_open_records_recency_but_a_remembered_reconnect_does_not() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("store.sqlite");
+        let agent = AgentId::from_u128(598);
+        let host = HostId::from_u128(599);
+        seed_recovery_fleet(&path, agent, host).await;
+        assert_eq!(stored_last_opened_at(&path, agent), None);
+
+        let options = || RuntimeOptions {
+            store_path: Some(path.clone()),
+            ..RuntimeOptions::default()
+        };
+        let mut runtime = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
+        for _ in 0..3 {
+            next_store_runtime_message(&mut runtime).await;
+        }
+        runtime.open_chat(agent);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while stored_last_opened_at(&path, agent).is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("explicit user open did not record recency");
+        drop(runtime);
+
+        let connection = rusqlite::Connection::open(&path).expect("open store recency marker");
+        connection
+            .execute(
+                "UPDATE agent SET last_opened_at=7 WHERE id=?1",
+                [agent.to_string()],
+            )
+            .expect("install exact recency marker");
+        drop(connection);
+
+        let mut reopened = Runtime::start(Box::new(|| Box::pin(std::future::pending())), options());
+        wait_for_store_runtime(&mut reopened, |runtime| {
+            runtime
+                .model()
+                .chat(agent)
+                .is_some_and(|chat| chat.state == ui_state::ChatState::Painted)
+        })
+        .await;
+        reopened.process(Msg::Server(ServerMsg::Disconnected {
+            reason: DisconnectReason::TransportError {
+                message: "test reconnect".to_owned(),
+            },
+        }));
+        reopened.process(Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host),
+        }));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            stored_last_opened_at(&path, agent),
+            Some(7),
+            "remembered startup and reconnect must not look like user opens"
+        );
     }
 
     #[tokio::test]

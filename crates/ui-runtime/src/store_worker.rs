@@ -5,9 +5,12 @@
 //! corresponding recorded message with the original freshness envelope.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use store::{CommitOutcome, Store};
 use ui_state::{
@@ -18,10 +21,14 @@ use ui_state::{
 use crate::runtime::MsgSink;
 
 const DATA_VERSION_POLL: Duration = Duration::from_secs(1);
+const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const MAINTENANCE_DEADLINE: Duration = Duration::from_millis(100);
 
 pub(crate) struct StoreWorker {
     handle: StoreWorkerHandle,
     thread: Option<JoinHandle<()>>,
+    #[cfg(test)]
+    maintenance_runs: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -29,12 +36,20 @@ pub(crate) struct StoreWorkerHandle(Sender<Command>);
 
 enum Command {
     Execute(Box<StoreOp>),
+    RecordChatOpened(model::AgentId),
+    AfterFirstFrame,
+    MaintenanceFinished(Result<store::MaintenanceReport, store::StoreError>),
     Shutdown,
 }
 
 impl StoreWorker {
     pub(crate) fn spawn(path: PathBuf, profile: ProfileGeneration, sink: MsgSink) -> Self {
         let (sender, receiver) = mpsc::channel();
+        let worker_sender = sender.clone();
+        #[cfg(test)]
+        let maintenance_runs = Arc::new(AtomicUsize::new(0));
+        #[cfg(test)]
+        let worker_maintenance_runs = Arc::clone(&maintenance_runs);
         let thread = std::thread::Builder::new()
             .name("amux-ui-store".to_owned())
             .spawn(move || {
@@ -60,12 +75,13 @@ impl StoreWorker {
                             .blocking_send(Msg::Store(StoreMsg::Unavailable { profile, error }));
                         while let Ok(command) = receiver.recv() {
                             match command {
-                                Command::Execute(_) => {
+                                Command::Execute(_) | Command::RecordChatOpened(_) => {
                                     let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
                                         profile,
                                         error,
                                     }));
                                 }
+                                Command::AfterFirstFrame | Command::MaintenanceFinished(_) => {}
                                 Command::Shutdown => break,
                             }
                         }
@@ -73,6 +89,7 @@ impl StoreWorker {
                     }
                 };
 
+                let store = Arc::new(store);
                 let generations = store
                     .generations()
                     .for_provider("codex")
@@ -82,12 +99,39 @@ impl StoreWorker {
                     generations,
                 });
                 let mut data_version = runtime.block_on(store.data_version()).ok();
+                let mut maintenance_enabled = false;
+                let mut last_maintenance = None;
+                let mut maintenance_thread: Option<JoinHandle<()>> = None;
 
                 loop {
                     match receiver.recv_timeout(DATA_VERSION_POLL) {
                         Ok(Command::Execute(op)) => {
                             let message = runtime.block_on(execute(&store, *op));
                             let _ = sink.blocking_send(Msg::Store(message));
+                        }
+                        Ok(Command::RecordChatOpened(agent)) => {
+                            if let Err(error) = runtime.block_on(store.record_chat_opened(agent))
+                                && error == store::StoreError::Corrupt
+                            {
+                                let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
+                                    profile,
+                                    error,
+                                }));
+                            }
+                        }
+                        Ok(Command::AfterFirstFrame) => maintenance_enabled = true,
+                        Ok(Command::MaintenanceFinished(result)) => {
+                            if let Some(thread) = maintenance_thread.take() {
+                                let _ = thread.join();
+                            }
+                            #[cfg(test)]
+                            worker_maintenance_runs.fetch_add(1, Ordering::Release);
+                            if result == Err(store::StoreError::Corrupt) {
+                                let _ = sink.blocking_send(Msg::Store(StoreMsg::Unavailable {
+                                    profile,
+                                    error: store::StoreError::Corrupt,
+                                }));
+                            }
                         }
                         Ok(Command::Shutdown) | Err(RecvTimeoutError::Disconnected) => break,
                         Err(RecvTimeoutError::Timeout) => {
@@ -100,15 +144,49 @@ impl StoreWorker {
                                 }
                                 data_version = Some(current);
                             }
+                            let maintenance_due = maintenance_enabled
+                                && maintenance_thread.is_none()
+                                && last_maintenance.is_none_or(|last: Instant| {
+                                    last.elapsed() >= MAINTENANCE_INTERVAL
+                                });
+                            if maintenance_due {
+                                let maintenance_store = Arc::clone(&store);
+                                let completion = worker_sender.clone();
+                                let spawned = std::thread::Builder::new()
+                                    .name("amux-ui-store-maintenance".to_owned())
+                                    .spawn(move || {
+                                        let runtime = tokio::runtime::Builder::new_current_thread()
+                                            .enable_all()
+                                            .build()
+                                            .expect("store maintenance runtime");
+                                        let result = runtime.block_on(maintenance_store.maintain(
+                                            store::Budget::default(),
+                                            MAINTENANCE_DEADLINE,
+                                        ));
+                                        let _ =
+                                            completion.send(Command::MaintenanceFinished(result));
+                                    });
+                                if let Ok(thread) = spawned {
+                                    last_maintenance = Some(Instant::now());
+                                    maintenance_thread = Some(thread);
+                                }
+                            }
                         }
                     }
                 }
-                runtime.block_on(store.close());
+                if let Some(thread) = maintenance_thread {
+                    let _ = thread.join();
+                }
+                if let Ok(store) = Arc::try_unwrap(store) {
+                    runtime.block_on(store.close());
+                }
             })
             .expect("spawn profile store executor");
         Self {
             handle: StoreWorkerHandle(sender),
             thread: Some(thread),
+            #[cfg(test)]
+            maintenance_runs,
         }
     }
 
@@ -118,6 +196,19 @@ impl StoreWorker {
 
     pub(crate) fn handle(&self) -> StoreWorkerHandle {
         self.handle.clone()
+    }
+
+    pub(crate) fn after_first_frame(&self) {
+        let _ = self.handle.0.send(Command::AfterFirstFrame);
+    }
+
+    pub(crate) fn record_chat_opened(&self, agent: model::AgentId) {
+        let _ = self.handle.0.send(Command::RecordChatOpened(agent));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn maintenance_runs(&self) -> usize {
+        self.maintenance_runs.load(Ordering::Acquire)
     }
 }
 
