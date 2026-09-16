@@ -1,3 +1,9 @@
+2026-09-16 — **Store qualification reports its SQLite identity.**
+Before accepting or refusing a SQLite library, the store now records its
+version, source ID and compile options. The same values are emitted by a
+cross-platform test, giving simulator and release checks durable evidence of
+the exact system library they qualified.
+
 2026-09-16 — **The shared store enforces its cache and disk budgets.**
 Bounded maintenance now evicts old transcript pages behind a monotonic,
 positioned boundary, collapses excess empty segments, and reports when durable

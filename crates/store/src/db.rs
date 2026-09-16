@@ -161,6 +161,13 @@ pub fn qualify_library(connection: &Connection) -> Result<LibraryReport, StoreEr
         .collect::<Result<Vec<_>, _>>()
         .map_err(map_sqlite_error)?;
 
+    tracing::info!(
+        sqlite_version = version,
+        sqlite_source_id = source_id,
+        compile_options = ?compile_options,
+        "qualifying SQLite library"
+    );
+
     let tuple = parse_version(&version).ok_or(StoreError::UnsupportedFormat)?;
     let has_wal_fix = tuple >= (3, 51, 3) || tuple == (3, 50, 7) || tuple == (3, 44, 6);
     let omitted_required = ["OMIT_AUTOVACUUM", "OMIT_FOREIGN_KEY", "OMIT_WAL"]
@@ -636,5 +643,26 @@ mod tests {
     fn lifecycle_parses_sqlite_versions() {
         assert_eq!(parse_version("3.53.2"), Some((3, 53, 2)));
         assert_eq!(parse_version("3.44"), None);
+    }
+
+    #[test]
+    fn lifecycle_reports_the_runtime_sqlite_library() {
+        let connection = Connection::open_in_memory().expect("connection");
+        let version: String = connection
+            .query_row("SELECT sqlite_version()", [], |row| row.get(0))
+            .expect("version");
+        let source_id: String = connection
+            .query_row("SELECT sqlite_source_id()", [], |row| row.get(0))
+            .expect("source id");
+        let options = connection
+            .prepare("PRAGMA compile_options")
+            .expect("compile options statement")
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("compile options")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("compile option rows");
+        println!("sqlite_version={version}");
+        println!("sqlite_source_id={source_id}");
+        println!("sqlite_compile_options={}", options.join(","));
     }
 }
