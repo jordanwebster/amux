@@ -29,7 +29,8 @@ mod update;
 pub use ::model::{
     Agent, AgentId, AgentKind, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef,
     BaseIdentity, Capabilities, ClaudeDriver, DiffBase, DiffFile, DiffResponse, HostEntry, HostId,
-    HostTrustStatus, ProfileId, Protocol, WorkingOn,
+    HostTrustStatus, ProfileId, Progress, Protocol, Summary, SummaryEnvelope, SummaryField,
+    WorkingOn,
 };
 pub use attachments::{
     ARTIFACT_SIZE_CAP, AttachmentIndex, AttachmentKind, AttachmentLine, DIFF_MIME, DraftAttachment,

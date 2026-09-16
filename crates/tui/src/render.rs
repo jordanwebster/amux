@@ -447,12 +447,12 @@ fn filter_line(
 }
 
 fn badge_for(model: &Model, card: &ui_state::AgentCard, theme: Theme) -> (&'static str, Style) {
-    if let AgentPhase::Exited { .. } = card.phase
+    if let AgentPhase::Exited { .. } = model.effective_phase(card)
         && model.host_online(card.agent.host_id)
     {
         return (" ", theme.text());
     }
-    badge_glyph(model.effective_attention(card), theme)
+    badge_glyph(model.fleet_attention(card), theme)
 }
 
 /// The badge an attention wears. A folded family's row wears the loudest
@@ -556,7 +556,10 @@ fn fleet_row_line(
             push_span(
                 &mut line,
                 AGE_COL,
-                clip(&format_relative_age(ctx.now, card.last_activity), AGE_WIDTH),
+                clip(
+                    &format_relative_age(ctx.now, model.effective_summary_age(card)),
+                    AGE_WIDTH,
+                ),
                 detail,
             );
             if show_status {

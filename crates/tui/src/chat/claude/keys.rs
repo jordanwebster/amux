@@ -981,9 +981,8 @@ mod tests {
                 entries: payloads
                     .into_iter()
                     .enumerate()
-                    .map(|(offset, payload)| StreamEntry {
-                        seq: first_seq + offset as u64,
-                        payload,
+                    .map(|(offset, payload)| {
+                        StreamEntry::observed(first_seq + offset as u64, t(at), payload)
                     })
                     .collect(),
             },

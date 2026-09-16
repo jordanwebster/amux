@@ -73,13 +73,14 @@ fn claude_model() -> Model {
     })
 }
 fn row(model: &mut Model, seq: u64, payload: Value) {
+    let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
     update(
         model,
         Msg::Stream {
             agent: AGENT,
             event: StreamMsg::Batch {
-                at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
-                entries: vec![StreamEntry { seq, payload }],
+                at,
+                entries: vec![StreamEntry::observed(seq, at, payload)],
             },
         },
     );
@@ -441,17 +442,19 @@ async fn mobile_projection_streaming_bench_1000_rows_at_50_per_second() {
                 dirty = false;
             } else {
                 tokio::time::sleep_until(next_row).await;
+                let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap()
+                    + chrono::TimeDelta::milliseconds(id as i64 * 20);
                 update(
                     &mut model,
                     Msg::Stream {
                         agent: AGENT,
                         event: StreamMsg::Batch {
-                            at: DateTime::from_timestamp(1_700_000_000, 0).unwrap()
-                                + chrono::TimeDelta::milliseconds(id as i64 * 20),
-                            entries: vec![StreamEntry {
-                                seq: id + 1,
-                                payload: message(id as usize, &format!("row {id:04}")),
-                            }],
+                            at,
+                            entries: vec![StreamEntry::observed(
+                                id + 1,
+                                at,
+                                message(id as usize, &format!("row {id:04}")),
+                            )],
                         },
                     },
                 );

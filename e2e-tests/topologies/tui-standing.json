@@ -1,0 +1,11 @@
+{
+  "cloud_url": "https://amux.sh",
+  "users": ["alice"],
+  "daemons": [{"name":"host","user":"alice","repository_roots":["."]}],
+  "paired": [],
+  "agents": [
+    {"name":"first-chat","daemon":"host","working_dir":".","provider":{"Claude":{"script":"scripted-agent.json"}}},
+    {"name":"second-chat","daemon":"host","working_dir":".","provider":{"Claude":{"script":"scripted-agent.json"}}},
+    {"name":"fleet-only","daemon":"host","working_dir":".","provider":{"Claude":{"script":"scripted-agent.json"}}}
+  ]
+}

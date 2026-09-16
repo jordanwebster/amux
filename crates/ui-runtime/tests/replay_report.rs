@@ -59,10 +59,11 @@ fn sequence() -> Vec<Msg> {
             agent,
             event: StreamMsg::Batch {
                 at: Utc.timestamp_opt(1, 0).unwrap(),
-                entries: vec![StreamEntry {
-                    seq: 1,
-                    payload: serde_json::json!({"type": "user", "text": "hello"}),
-                }],
+                entries: vec![StreamEntry::observed(
+                    1,
+                    Utc.timestamp_opt(1, 0).unwrap(),
+                    serde_json::json!({"type": "user", "text": "hello"}),
+                )],
             },
         },
         Msg::Server(ServerMsg::Disconnected {

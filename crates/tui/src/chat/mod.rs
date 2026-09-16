@@ -1063,10 +1063,16 @@ mod tests {
                     entries: vec![
                         StreamEntry {
                             seq: 1,
+                            published_at: at(3),
+                            activity_at: Some(at(3)),
+                            historical: false,
                             payload: json!({"type": "amux.transcript_ready"}),
                         },
                         StreamEntry {
                             seq: 2,
+                            published_at: at(3),
+                            activity_at: Some(at(3)),
+                            historical: false,
                             payload: json!({
                                 "type": "user",
                                 "uuid": "dddddddd-0000-4000-8000-000000000001",
@@ -1079,6 +1085,9 @@ mod tests {
                         },
                         StreamEntry {
                             seq: 3,
+                            published_at: at(3),
+                            activity_at: Some(at(3)),
+                            historical: false,
                             payload: json!({
                                 "type": "hook.permission_request",
                                 "tool_name": "ExitPlanMode",
@@ -1120,10 +1129,16 @@ mod tests {
                     entries: vec![
                         StreamEntry {
                             seq: 1,
+                            published_at: at(3),
+                            activity_at: Some(at(3)),
+                            historical: false,
                             payload: json!({"type": "amux.transcript_ready"}),
                         },
                         StreamEntry {
                             seq: 2,
+                            published_at: at(3),
+                            activity_at: Some(at(3)),
+                            historical: false,
                             payload: json!({
                                 "type": "amux.attachments",
                                 "input_id": null,
@@ -1138,6 +1153,9 @@ mod tests {
                         },
                         StreamEntry {
                             seq: 3,
+                            published_at: at(3),
+                            activity_at: Some(at(3)),
+                            historical: false,
                             payload: json!({
                                 "type": "user",
                                 "uuid": "dddddddd-0000-4000-8000-000000000001",
@@ -1770,6 +1788,9 @@ mod tests {
                     at: at(10),
                     entries: vec![StreamEntry {
                         seq: 1,
+                        published_at: at(10),
+                        activity_at: Some(at(10)),
+                        historical: false,
                         payload: json!({
                             "type": "user",
                             "uuid": "dddddddd-0000-4000-8000-000000000001",

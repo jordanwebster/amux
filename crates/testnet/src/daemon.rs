@@ -202,7 +202,7 @@ pub(crate) async fn start_daemon_runtime(
         None,
         None,
         None,
-        Listeners::InProcessOnly,
+        Listeners::ClientSocket,
         Some(Arc::new(agent_runtime::AgentRuntimeFactory)),
     );
     options.fixtures = RuntimeFixtures {

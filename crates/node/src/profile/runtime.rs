@@ -56,6 +56,10 @@ pub struct InstallationSettings {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Listeners {
     InProcessOnly,
+    /// Expose the local profile socket without also binding the configured
+    /// direct-TCP port. Test harnesses use this while supplying their own
+    /// pre-bound, tracked TCP listener.
+    ClientSocket,
     Sockets,
 }
 
@@ -63,7 +67,7 @@ impl Listeners {
     pub(crate) fn has_sockets(self) -> bool {
         match self {
             Self::InProcessOnly => false,
-            Self::Sockets => true,
+            Self::ClientSocket | Self::Sockets => true,
         }
     }
 }
@@ -340,7 +344,7 @@ async fn build(
     }
 
     let mut background_tasks = Vec::new();
-    if options.listeners.has_sockets() {
+    if options.listeners == Listeners::Sockets {
         background_tasks.extend(services.spawn_reachability_links());
         if let Some(task) = crate::server::spawn_periodic_update_check(
             reporters.update.clone(),
@@ -352,7 +356,7 @@ async fn build(
         }
     }
 
-    if options.listeners == Listeners::InProcessOnly && options.fixtures.tracked_tcp.is_some() {
+    if options.listeners != Listeners::Sockets && options.fixtures.tracked_tcp.is_some() {
         background_tasks.extend(services.spawn_reachability_links());
     }
 
@@ -645,7 +649,9 @@ impl BoundListeners {
             #[cfg(unix)]
             socket_ownership,
         };
-        if let Some(port) = options.config.tcp_port {
+        if options.listeners == Listeners::Sockets
+            && let Some(port) = options.config.tcp_port
+        {
             bound.tcp_listener =
                 Some(TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port))).await?);
         }

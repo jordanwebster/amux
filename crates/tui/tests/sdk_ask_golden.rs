@@ -117,7 +117,7 @@ fn batch(seq: u64, row: Value) -> Msg {
         agent: agent_id(),
         event: StreamMsg::Batch {
             at: at("2026-08-12T09:12:00Z"),
-            entries: vec![StreamEntry { seq, payload: row }],
+            entries: vec![StreamEntry::observed(seq, at("2026-08-12T09:12:00Z"), row)],
         },
     }
 }

@@ -16,7 +16,7 @@ use tui::{
 };
 use ui_runtime::{ConnectFailure, Connector, Runtime, RuntimeOptions};
 
-use crate::client_common::get_client;
+use crate::client_common::{get_client, open_daemon};
 use crate::init::{self, InitContext};
 use crate::update::MarkerFileReporter;
 
@@ -47,7 +47,11 @@ async fn run_inner(
     if init::needs_init(&config) {
         init::run_init(&mut config, InitContext::implicit(), false).await?;
     }
-    crate::profiles::remember_selection(&config)?;
+    let direct_debug_profile =
+        cfg!(debug_assertions) && std::env::var_os("AMUX_TUI_DIRECT_PROFILE").is_some();
+    if !direct_debug_profile {
+        crate::profiles::remember_selection(&config)?;
+    }
 
     let config_dir = config
         .path
@@ -76,9 +80,15 @@ async fn run_inner(
         Box::new(move || {
             let config = config.clone();
             Box::pin(async move {
-                // get_client spawns the daemon when absent; while it runs
-                // the TUI shows the "Starting daemon…" state.
-                get_client(&config).await.map_err(|error| ConnectFailure {
+                // Production goes through the installation front door and
+                // starts the daemon when absent. The debug test route opens
+                // the fixture's already-running profile socket directly.
+                let result = if direct_debug_profile {
+                    open_daemon(&config).await.map_err(anyhow::Error::new)
+                } else {
+                    get_client(&config).await
+                };
+                result.map_err(|error| ConnectFailure {
                     message: format!("{error:#}"),
                     auth_required: false,
                     subscription_required: false,
@@ -110,33 +120,37 @@ async fn run_inner(
     // profile's own configuration: its reports, its artifact cache, its
     // device identity. Reusing this profile's would file a report about the
     // account the person had just left.
-    let installation = crate::front_door::configuration(config.path.as_deref())?;
-    let profiles = Some(tui::run::ProfileSwitching {
-        front_door: installation.front_door_socket.clone(),
-        current: config.socket_path.clone(),
-        options: {
-            #[cfg(debug_assertions)]
-            let trace = trace.clone();
-            Box::new(move |entry: &ui_runtime::ProfileEntry| {
-                let selected = crate::profiles::load(&crate::profiles::config_path_for(
-                    &installation,
-                    entry.id.0,
-                ))?;
-                crate::profiles::remember(
-                    &crate::profiles::last_used(&installation),
-                    &entry.id.0.to_string(),
-                )?;
-                Ok(tui::run::ProfileOptions {
-                    runtime: runtime_options(
-                        &selected,
-                        #[cfg(debug_assertions)]
-                        trace.clone(),
-                    ),
-                    diagnostics: profile_diagnostics(&selected),
+    let profiles = if direct_debug_profile {
+        None
+    } else {
+        let installation = crate::front_door::configuration(config.path.as_deref())?;
+        Some(tui::run::ProfileSwitching {
+            front_door: installation.front_door_socket.clone(),
+            current: config.socket_path.clone(),
+            options: {
+                #[cfg(debug_assertions)]
+                let trace = trace.clone();
+                Box::new(move |entry: &ui_runtime::ProfileEntry| {
+                    let selected = crate::profiles::load(&crate::profiles::config_path_for(
+                        &installation,
+                        entry.id.0,
+                    ))?;
+                    crate::profiles::remember(
+                        &crate::profiles::last_used(&installation),
+                        &entry.id.0.to_string(),
+                    )?;
+                    Ok(tui::run::ProfileOptions {
+                        runtime: runtime_options(
+                            &selected,
+                            #[cfg(debug_assertions)]
+                            trace.clone(),
+                        ),
+                        diagnostics: profile_diagnostics(&selected),
+                    })
                 })
-            })
-        },
-    });
+            },
+        })
+    };
 
     let tui_config = TuiConfig {
         working_dir: std::env::current_dir()?,
@@ -199,6 +213,17 @@ fn runtime_options(
     // does not mark the local host (see docs/UI.md, subscription policy).
     let local_host_id = amux::setup::local_host_id(config);
     let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
+    #[cfg(debug_assertions)]
+    let eager_subscription_exclusions = std::env::var("AMUX_TUI_EAGER_EXCLUDE")
+        .ok()
+        .into_iter()
+        .flat_map(|value| {
+            value
+                .split(',')
+                .filter_map(|id| id.parse().ok())
+                .collect::<Vec<_>>()
+        })
+        .collect();
     // The fold order is the runtime's to report. Reconstructing it from
     // outside would mean guessing how a drain batched, and a wrong guess is
     // a replay that diverges for no visible reason.
@@ -210,6 +235,8 @@ fn runtime_options(
     });
     RuntimeOptions {
         local_host_id,
+        #[cfg(debug_assertions)]
+        eager_subscription_exclusions,
         report_dir: Some(config.reports_dir()),
         log_path: Some(amux::diagnostics::resolved_log_path()),
         git_sha: GIT_SHA,

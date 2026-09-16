@@ -1469,9 +1469,10 @@ mod tests {
                 agent: agent_id(),
                 event: StreamMsg::Batch {
                     at: chrono::DateTime::from_timestamp(1_754_697_601, 0).expect("epoch"),
-                    entries: vec![StreamEntry {
-                        seq: 1,
-                        payload: json!({
+                    entries: vec![StreamEntry::observed(
+                        1,
+                        chrono::DateTime::from_timestamp(1_754_697_601, 0).expect("epoch"),
+                        json!({
                             "type": "user",
                             "uuid": "11111111-1111-4111-8111-111111111111",
                             "sessionId": "22222222-2222-4222-8222-222222222222",
@@ -1480,7 +1481,7 @@ mod tests {
                             "origin": {"kind": "human"},
                             "promptSource": "typed"
                         }),
-                    }],
+                    )],
                 },
             },
         ] {

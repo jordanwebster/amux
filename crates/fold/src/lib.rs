@@ -420,6 +420,120 @@ pub struct SummaryChanges {
     pub summary: Summary,
 }
 
+/// The summary a client should present after comparing its open-chat fold
+/// with the daemon's advisory envelope.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Effective {
+    pub through: Seq,
+    pub summary: Summary,
+    /// The time to use when the selected summary has no known activity time.
+    pub observed_at: Option<DateTime<Utc>>,
+    /// The selected daemon envelope has fallen behind its source.
+    pub stale: bool,
+    /// A daemon envelope was present but produced by an incompatible fold,
+    /// and there was no client-local candidate to replace it.
+    pub incompatible: bool,
+}
+
+/// Select one whole summary, then fill only fields that winner explicitly
+/// marks unknown from the losing candidate.
+pub fn select_summary(
+    host: Option<&SummaryEnvelope>,
+    local: Option<&(Seq, Summary)>,
+    producer_version: u32,
+) -> Option<Effective> {
+    let compatible_host = host.filter(|candidate| candidate.producer_version == producer_version);
+
+    let (through, mut summary, observed_at, stale) = match (compatible_host, local) {
+        (Some(host), Some((local_through, local_summary))) if *local_through > host.through => (
+            *local_through,
+            local_summary.clone(),
+            local_summary.last_activity,
+            false,
+        ),
+        (Some(host), Some((_, local_summary))) => (
+            host.through,
+            fill_unknowns(host.summary.clone(), local_summary),
+            Some(host.observed_at),
+            host.stale,
+        ),
+        (Some(host), None) => (
+            host.through,
+            host.summary.clone(),
+            Some(host.observed_at),
+            host.stale,
+        ),
+        (None, Some((through, summary))) => {
+            (*through, summary.clone(), summary.last_activity, false)
+        }
+        (None, None) => {
+            let excluded = host?;
+            return Some(Effective {
+                through: excluded.through,
+                summary: unknown_summary(),
+                observed_at: Some(excluded.observed_at),
+                stale: false,
+                incompatible: true,
+            });
+        }
+    };
+
+    // A local winner still gets knowledge that it explicitly lacks from the
+    // compatible host. The guarded arm above handles the opposite direction.
+    if let (Some(host), Some((local_through, _))) = (compatible_host, local)
+        && *local_through > host.through
+    {
+        summary = fill_unknowns(summary, &host.summary);
+    }
+
+    Some(Effective {
+        through,
+        summary,
+        observed_at,
+        stale,
+        incompatible: false,
+    })
+}
+
+fn fill_unknowns(mut winner: Summary, loser: &Summary) -> Summary {
+    for field in winner.unknown.clone() {
+        if loser.unknown.contains(&field) {
+            continue;
+        }
+        match field {
+            SummaryField::Attention => winner.attention = loser.attention,
+            SummaryField::Phase => winner.phase = loser.phase.clone(),
+            SummaryField::LastActivity => winner.last_activity = loser.last_activity,
+            SummaryField::Todo => winner.todo = loser.todo.clone(),
+            SummaryField::Context => winner.context = loser.context.clone(),
+            SummaryField::Model => winner.model = loser.model.clone(),
+            SummaryField::Outstanding => {}
+        }
+        winner.unknown.retain(|unknown| *unknown != field);
+    }
+    winner
+}
+
+fn unknown_summary() -> Summary {
+    Summary {
+        attention: Attention::Unknown,
+        phase: AgentPhase::Running,
+        last_activity: None,
+        todo: None,
+        context: None,
+        model: None,
+        unknown: vec![
+            SummaryField::Attention,
+            SummaryField::Phase,
+            SummaryField::LastActivity,
+            SummaryField::Todo,
+            SummaryField::Context,
+            SummaryField::Model,
+            SummaryField::Outstanding,
+        ],
+    }
+}
+
 impl AgentFold {
     pub fn for_protocol(protocol: StructuredProtocol) -> Self {
         match protocol {
@@ -1433,6 +1547,78 @@ mod tests {
             model: Some("test-model".into()),
             unknown: vec![SummaryField::Outstanding],
         }
+    }
+
+    #[test]
+    fn summary_selection_uses_position_host_ties_and_unknown_fill_only() {
+        let mut host_summary = sample_summary();
+        host_summary.attention = Attention::Working;
+        host_summary.todo = None;
+        host_summary.unknown = vec![SummaryField::Todo, SummaryField::Model];
+        let host = SummaryEnvelope {
+            through: 10,
+            producer_version: 7,
+            observed_at: at(10),
+            stale: true,
+            revision: 12,
+            summary: host_summary,
+        };
+
+        let mut local_summary = sample_summary();
+        local_summary.attention = Attention::Idle;
+        local_summary.todo = Some(TodoProgress {
+            done: 0,
+            total: 0,
+            current: None,
+        });
+        local_summary.model = None;
+        local_summary.unknown = vec![SummaryField::Context, SummaryField::Model];
+
+        let tied = select_summary(Some(&host), Some(&(10, local_summary.clone())), 7)
+            .expect("host tie is selected");
+        assert_eq!(tied.through, 10);
+        assert_eq!(tied.summary.attention, Attention::Working);
+        assert_eq!(tied.summary.todo, local_summary.todo);
+        assert!(
+            !tied.summary.unknown.contains(&SummaryField::Todo),
+            "a known empty todo is knowledge and fills the host"
+        );
+        assert!(tied.summary.unknown.contains(&SummaryField::Model));
+        assert!(tied.stale);
+        assert!(!tied.incompatible);
+
+        let ahead = select_summary(Some(&host), Some(&(11, local_summary.clone())), 7)
+            .expect("local fold is selected when ahead");
+        assert_eq!(ahead.through, 11);
+        assert_eq!(ahead.summary.attention, Attention::Idle);
+        assert_eq!(ahead.summary.context, host.summary.context);
+        assert!(!ahead.summary.unknown.contains(&SummaryField::Context));
+        assert!(!ahead.stale);
+    }
+
+    #[test]
+    fn incompatible_host_summary_is_unknown_with_envelope_age() {
+        let host = SummaryEnvelope {
+            through: 20,
+            producer_version: 8,
+            observed_at: at(20),
+            stale: true,
+            revision: 30,
+            summary: sample_summary(),
+        };
+
+        let effective = select_summary(Some(&host), None, 7).expect("excluded summary is visible");
+        assert_eq!(effective.summary.attention, Attention::Unknown);
+        assert_eq!(effective.observed_at, Some(at(20)));
+        assert!(effective.incompatible);
+        assert!(!effective.stale);
+
+        let local = (19, sample_summary());
+        let effective = select_summary(Some(&host), Some(&local), 7)
+            .expect("compatible local summary replaces excluded host");
+        assert_eq!(effective.through, 19);
+        assert_eq!(effective.summary, local.1);
+        assert!(!effective.incompatible);
     }
 
     fn sample_agent() -> Agent {

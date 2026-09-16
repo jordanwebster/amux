@@ -198,6 +198,14 @@ pub enum ServerMsg {
     AgentUpserted {
         agent: Agent,
     },
+    AgentSummary {
+        agent: AgentId,
+        envelope: model::SummaryEnvelope,
+    },
+    AgentProgress {
+        agent: AgentId,
+        progress: model::Progress,
+    },
     AgentRemoved {
         id: AgentId,
     },
@@ -383,11 +391,35 @@ pub enum StreamMsg {
     },
 }
 
-/// One structured entry: an opaque JSON row plus its stream sequence number.
+/// One structured entry with the source timestamps needed by the shared fold.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StreamEntry {
     pub seq: u64,
+    #[serde(default = "default_published_at")]
+    pub published_at: DateTime<Utc>,
+    #[serde(default)]
+    pub activity_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub historical: bool,
     pub payload: serde_json::Value,
+}
+
+fn default_published_at() -> DateTime<Utc> {
+    DateTime::UNIX_EPOCH
+}
+
+impl StreamEntry {
+    /// Test and replay convenience for rows whose activity and publication
+    /// times are the same observed instant.
+    pub fn observed(seq: u64, at: DateTime<Utc>, payload: serde_json::Value) -> Self {
+        Self {
+            seq,
+            published_at: at,
+            activity_at: Some(at),
+            historical: false,
+            payload,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

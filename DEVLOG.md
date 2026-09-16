@@ -1,3 +1,12 @@
+2026-09-16 — **Fleet rows consume daemon standing without opening every chat.**
+The UI now selects one effective summary by fold version and structured-log
+position, preferring the daemon on ties and filling only fields the winner
+explicitly does not know. Stale and incompatible summaries remain visibly
+aged instead of becoming fresh guesses, while an open chat can win with its
+own shared fold when it moves ahead. A two-terminal tmux scenario proves both
+clients observe an unattended agent finish even when neither client subscribes
+to that agent's transcript.
+
 2026-09-16 — **Daemon-folded agent standing now travels with the fleet.**
 Every local Claude and Codex session subscribes to its structured log before
 the provider starts, folds standing without materializing entries, and emits

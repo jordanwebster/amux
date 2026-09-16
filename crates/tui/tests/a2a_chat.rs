@@ -141,9 +141,8 @@ fn batch(name: &str, arrived: i64, rows: Vec<Value>) -> Msg {
             entries: rows
                 .into_iter()
                 .enumerate()
-                .map(|(offset, payload)| StreamEntry {
-                    seq: 10 + offset as u64,
-                    payload,
+                .map(|(offset, payload)| {
+                    StreamEntry::observed(10 + offset as u64, at(arrived), payload)
                 })
                 .collect(),
         },

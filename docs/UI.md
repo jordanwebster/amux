@@ -424,10 +424,13 @@ review notes in the devlog).
   a property.
 - **Actor-fragmented state.** Cross-actor ordering is nondeterministic;
   reproducibility dies. Actors are fine at the shell's edges only.
-- **Host-side derived attention on the wire.** Interpreted state
-  advertised authoritatively fleet-wide, with clearing-rule iteration at
-  daemon-deploy speed and no client-side escape hatch. Facts on the wire,
-  folds at observation time.
+- **Host-side derived attention on the wire as authority.** Facts on the wire
+  and folds at observation time remain the rule. The one named exception is
+  the daemon's advisory fleet summary: it carries its fold position, producer
+  version, observation time, completeness, and staleness so clients can draw
+  agents they have not opened. A client with an open chat still runs the same
+  fold and selects the higher position (ties to the daemon), rejecting foreign
+  producer versions and filling only fields the winner marks unknown.
 - **Writing chrome output to terminal scrollback.** Buys native
   scroll/search at the price of resize reflow, cell consolidation, and
   render caches — past frames become immutable state outside the Model.

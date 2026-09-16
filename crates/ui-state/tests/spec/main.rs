@@ -70,6 +70,8 @@ mod a2a_fleet; // Chapter 19 — Families: parent edges folded into fleet rows
 
 mod fleet_mixed; // One fleet: both Claude drivers rank, sort and group alike
 
+mod fleet_summary; // Host/local summary selection and visible freshness
+
 mod a2a_claude_inbound; // Chapter 20 — Claude inbound: a message from another agent
 
 mod a2a_claude_send_row; // Chapter 21 — Claude outbound: sending to another agent

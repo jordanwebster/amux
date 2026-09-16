@@ -125,6 +125,8 @@ pub struct DaemonIdentity {
     pub name: String,
     pub host_id: Uuid,
     pub fingerprint: String,
+    /// Direct profile configuration for local client boundary tests.
+    pub profile_config: PathBuf,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -199,6 +201,10 @@ pub enum Control {
     AgentObserve {
         agent: String,
     },
+    DebugDump {
+        daemon: String,
+        verbose: bool,
+    },
     /// What is connected to what, as the far side sees it.
     ///
     /// A machine, by name, answers with the links it is holding. A cloud user,
@@ -264,6 +270,7 @@ pub enum Reply {
         agents: Vec<InventoryAgent>,
         /// What a machine says it trusts, for an `Inventory`.
         devices: Vec<InventoryDevice>,
+        diagnostics: Option<serde_json::Value>,
     },
     Error {
         message: String,
@@ -281,6 +288,7 @@ impl Reply {
             links: Vec::new(),
             agents: Vec::new(),
             devices: Vec::new(),
+            diagnostics: None,
         }
     }
 }
@@ -508,6 +516,7 @@ async fn start(topology: &Topology, control: SocketAddr) -> Result<(TestNet, Rea
                 name: decl.name.clone(),
                 host_id,
                 fingerprint: format!("{:x}", Sha256::digest(public_key)),
+                profile_config: daemon.inner.data_dir.join("config.yaml"),
             }
         })
         .collect();
@@ -718,6 +727,14 @@ async fn apply(
                     }
                     *sdk_inputs = found.context("no scripted SDK session has this identity")?;
                 }
+            }
+        }
+        Control::DebugDump {
+            daemon: name,
+            verbose,
+        } => {
+            if let Reply::Ack { diagnostics, .. } = &mut reply {
+                *diagnostics = Some(daemon(&name)?.debug_dump(verbose).await);
             }
         }
         Control::AgentSpawnChild { agent, child } => {

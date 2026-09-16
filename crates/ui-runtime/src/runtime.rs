@@ -8,6 +8,8 @@
 //! resources only (sockets, reconnect backoff, buffers).
 
 use std::collections::{HashMap, HashSet};
+#[cfg(debug_assertions)]
+use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -353,6 +355,9 @@ pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
     pub local_host_id: Option<HostId>,
+    /// Boundary-test exceptions to the current eager inventory policy.
+    #[cfg(debug_assertions)]
+    pub eager_subscription_exclusions: BTreeSet<AgentId>,
     /// Owner inventory for an embedded profile, including cloud pairing
     /// candidates. Without it, host presence comes from the trusted-only
     /// client subscription.
@@ -386,6 +391,8 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             local_host_id: None,
+            #[cfg(debug_assertions)]
+            eager_subscription_exclusions: BTreeSet::new(),
             host_inventory: None,
             report_dir: None,
             log_path: None,
@@ -568,6 +575,10 @@ impl Runtime {
         generation: Generation,
     ) -> Self {
         let model = Model::default();
+        #[cfg(debug_assertions)]
+        let mut model = model;
+        #[cfg(debug_assertions)]
+        model.set_eager_subscription_exclusions(options.eager_subscription_exclusions);
         let recorder = Arc::new(StdMutex::new(Recorder::new(
             options.recorder_capacity,
             &model,
@@ -1821,7 +1832,18 @@ fn agent_server_msgs(event: model::AgentEvent) -> Vec<ServerMsg> {
             vec![ServerMsg::AgentRemoved { id: agent_id }]
         }
         model::AgentEvent::SnapshotComplete { .. } => vec![ServerMsg::AgentsSynchronized],
-        model::AgentEvent::Summary { .. } | model::AgentEvent::Progress { .. } => Vec::new(),
+        model::AgentEvent::Summary {
+            agent_id, envelope, ..
+        } => vec![ServerMsg::AgentSummary {
+            agent: agent_id,
+            envelope,
+        }],
+        model::AgentEvent::Progress {
+            agent_id, progress, ..
+        } => vec![ServerMsg::AgentProgress {
+            agent: agent_id,
+            progress,
+        }],
         model::AgentEvent::HostInventory {
             host_id, agents, ..
         } => {
@@ -2021,12 +2043,37 @@ fn structured_stream_args(protocol: StructuredProtocol, tail: u64) -> SessionArg
 }
 
 fn stream_entry(row: model::StructuredRow) -> Result<StreamEntry, StreamCloseReason> {
+    let published_at =
+        DateTime::from_timestamp_millis(row.published_at_unix_ms).ok_or_else(|| {
+            StreamCloseReason::InternalError {
+                detail: format!(
+                    "structured entry {} has invalid publication timestamp {}",
+                    row.seq, row.published_at_unix_ms
+                ),
+            }
+        })?;
+    let activity_at = row
+        .activity_at_unix_ms
+        .map(|timestamp| {
+            DateTime::from_timestamp_millis(timestamp).ok_or_else(|| {
+                StreamCloseReason::InternalError {
+                    detail: format!(
+                        "structured entry {} has invalid activity timestamp {timestamp}",
+                        row.seq
+                    ),
+                }
+            })
+        })
+        .transpose()?;
     let payload =
         serde_json::from_slice(&row.payload).map_err(|error| StreamCloseReason::InternalError {
             detail: format!("structured entry {} is not JSON: {error}", row.seq),
         })?;
     Ok(StreamEntry {
         seq: row.seq,
+        published_at,
+        activity_at,
+        historical: row.historical,
         payload,
     })
 }
@@ -2082,6 +2129,9 @@ mod tests {
             .unwrap(),
             StreamEntry {
                 seq: 7,
+                published_at: DateTime::from_timestamp_millis(1).unwrap(),
+                activity_at: None,
+                historical: false,
                 payload: serde_json::from_slice(row).unwrap()
             }
         );
@@ -2115,6 +2165,50 @@ mod tests {
                     agent_ids: vec![AgentId::from_u128(1), AgentId::from_u128(2)],
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn live_summary_and_progress_events_reach_the_reducer() {
+        let agent = AgentId::from_u128(1);
+        let host = HostId::from_u128(2);
+        let envelope = model::SummaryEnvelope {
+            through: 8,
+            producer_version: 1,
+            observed_at: Utc::now(),
+            stale: false,
+            revision: 12,
+            summary: model::Summary {
+                attention: model::Attention::Working,
+                phase: model::AgentPhase::Running,
+                last_activity: None,
+                todo: None,
+                context: None,
+                model: None,
+                unknown: vec![model::SummaryField::LastActivity],
+            },
+        };
+        assert_eq!(
+            agent_server_msgs(model::AgentEvent::Summary {
+                host_id: host,
+                agent_id: agent,
+                envelope: envelope.clone(),
+            }),
+            vec![ServerMsg::AgentSummary { agent, envelope }]
+        );
+
+        let progress = model::Progress {
+            through: 9,
+            at: Utc::now(),
+            revision: 13,
+        };
+        assert_eq!(
+            agent_server_msgs(model::AgentEvent::Progress {
+                host_id: host,
+                agent_id: agent,
+                progress: progress.clone(),
+            }),
+            vec![ServerMsg::AgentProgress { agent, progress }]
         );
     }
 
@@ -2276,14 +2370,16 @@ mod tests {
                 event: StreamMsg::Batch {
                     at: now,
                     entries: vec![
-                        ui_state::StreamEntry {
-                            seq: 1,
-                            payload: serde_json::json!({"type":"amux.transcript_ready"}),
-                        },
-                        ui_state::StreamEntry {
-                            seq: 2,
-                            payload: serde_json::json!({"type":"user", "uuid":"00000000-0000-0000-0000-000000000001", "origin":{"kind":"human"}, "timestamp":now, "message":{"role":"user", "content":"work"}}),
-                        },
+                        ui_state::StreamEntry::observed(
+                            1,
+                            now,
+                            serde_json::json!({"type":"amux.transcript_ready"}),
+                        ),
+                        ui_state::StreamEntry::observed(
+                            2,
+                            now,
+                            serde_json::json!({"type":"user", "uuid":"00000000-0000-0000-0000-000000000001", "origin":{"kind":"human"}, "timestamp":now, "message":{"role":"user", "content":"work"}}),
+                        ),
                     ],
                 },
             },
@@ -2802,10 +2898,11 @@ mod tests {
                 agent,
                 event: StreamMsg::Batch {
                     at: DateTime::from_timestamp(1_754_697_601, 0).expect("valid fixture time"),
-                    entries: vec![StreamEntry {
-                        seq: 1,
-                        payload: serde_json::json!({"type":"amux.codex_ready"}),
-                    }],
+                    entries: vec![StreamEntry::observed(
+                        1,
+                        DateTime::from_timestamp(1_754_697_601, 0).expect("valid fixture time"),
+                        serde_json::json!({"type":"amux.codex_ready"}),
+                    )],
                 },
             },
         );
@@ -2866,24 +2963,27 @@ mod tests {
                 event: StreamMsg::Batch {
                     at: DateTime::from_timestamp(1_754_697_601, 0).expect("valid fixture time"),
                     entries: vec![
-                        StreamEntry {
-                            seq: 1,
-                            payload: serde_json::json!({"type":"amux.codex_ready"}),
-                        },
-                        StreamEntry {
-                            seq: 2,
-                            payload: serde_json::json!({
+                        StreamEntry::observed(
+                            1,
+                            DateTime::from_timestamp(1_754_697_601, 0).expect("valid fixture time"),
+                            serde_json::json!({"type":"amux.codex_ready"}),
+                        ),
+                        StreamEntry::observed(
+                            2,
+                            DateTime::from_timestamp(1_754_697_601, 0).expect("valid fixture time"),
+                            serde_json::json!({
                                 "type":"turn/started",
                                 "turn":{"id":"resumed-turn","status":"inProgress"}
                             }),
-                        },
-                        StreamEntry {
-                            seq: 3,
-                            payload: serde_json::json!({
+                        ),
+                        StreamEntry::observed(
+                            3,
+                            DateTime::from_timestamp(1_754_697_601, 0).expect("valid fixture time"),
+                            serde_json::json!({
                                 "type":"turn/completed",
                                 "turn":{"id":"resumed-turn","status":"completed"}
                             }),
-                        },
+                        ),
                     ],
                 },
             },

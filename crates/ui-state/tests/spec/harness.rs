@@ -230,9 +230,8 @@ pub fn batch(agent: &str, at_seconds: i64, rows: Vec<serde_json::Value>) -> Msg 
             entries: rows
                 .into_iter()
                 .enumerate()
-                .map(|(offset, payload)| StreamEntry {
-                    seq: base + offset as u64,
-                    payload,
+                .map(|(offset, payload)| {
+                    StreamEntry::observed(base + offset as u64, t0_plus(at_seconds), payload)
                 })
                 .collect(),
         },

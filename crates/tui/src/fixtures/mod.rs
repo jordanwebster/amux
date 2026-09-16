@@ -790,9 +790,8 @@ fn model(protocol: StructuredProtocol, name: &str, rows: Vec<Value>) -> Model {
             entries: rows
                 .into_iter()
                 .enumerate()
-                .map(|(offset, payload)| StreamEntry {
-                    seq: offset as u64 + 1,
-                    payload,
+                .map(|(offset, payload)| {
+                    StreamEntry::observed(offset as u64 + 1, at("2026-08-12T09:12:20Z"), payload)
                 })
                 .collect(),
         },
@@ -1139,9 +1138,12 @@ fn fleet_stream_rows(agent: AgentId, rows: Vec<Value>) -> Vec<Msg> {
                 entries: rows
                     .into_iter()
                     .enumerate()
-                    .map(|(offset, payload)| StreamEntry {
-                        seq: offset as u64 + 1,
-                        payload,
+                    .map(|(offset, payload)| {
+                        StreamEntry::observed(
+                            offset as u64 + 1,
+                            at("2026-08-12T09:12:20Z"),
+                            payload,
+                        )
                     })
                     .collect(),
             },

@@ -146,9 +146,8 @@ fn stream_rows(agent: &str, at_seconds: i64, rows: Vec<serde_json::Value>) -> Ve
                 entries: rows
                     .into_iter()
                     .enumerate()
-                    .map(|(offset, payload)| StreamEntry {
-                        seq: 2 + offset as u64,
-                        payload,
+                    .map(|(offset, payload)| {
+                        StreamEntry::observed(2 + offset as u64, at(at_seconds), payload)
                     })
                     .collect(),
             },
@@ -454,6 +453,58 @@ fn fleet_offline_host_rows() {
     }));
     let rendered = render_frame(&fold(msgs), &view_default(), 68, 11);
     assert_golden("fleet_offline_host_rows", &rendered);
+}
+
+#[test]
+fn fleet_rows_draw_daemon_summary_freshness_and_incompatible_age() {
+    let mut stale = an_agent("stale-agent", "claude", "nova");
+    stale.summary = Some(ui_state::SummaryEnvelope {
+        through: 7,
+        producer_version: 1,
+        observed_at: at(NOW - 20),
+        stale: true,
+        revision: 4,
+        summary: ui_state::Summary {
+            attention: ui_state::Attention::Working,
+            phase: ui_state::AgentPhase::Running,
+            last_activity: Some(at(NOW - 30)),
+            todo: None,
+            context: None,
+            model: None,
+            unknown: vec![ui_state::SummaryField::Todo],
+        },
+    });
+    let mut foreign = an_agent("foreign-agent", "claude", "nova");
+    foreign.summary = Some(ui_state::SummaryEnvelope {
+        through: 8,
+        producer_version: 99,
+        observed_at: at(NOW - 120),
+        stale: false,
+        revision: 5,
+        summary: stale.summary.as_ref().expect("summary").summary.clone(),
+    });
+    let rendered = render_frame(
+        &fold(vec![
+            server(ServerMsg::Connected {
+                local_host_id: Some(host_id("nova")),
+            }),
+            server(ServerMsg::HostUpserted {
+                host: a_host("nova"),
+            }),
+            agent_up(&stale),
+            agent_up(&foreign),
+        ]),
+        &view_default(),
+        120,
+        10,
+    );
+    let text = rendered;
+    assert!(text.contains("stale-agent"));
+    assert!(text.contains("30s"));
+    assert!(text.contains("stale"));
+    assert!(text.contains("foreign-agent"));
+    assert!(text.contains("2m"));
+    assert!(text.contains("unknown"));
 }
 
 /// Cloud-auth expiry is a degraded banner over a working fleet — never a
@@ -788,12 +839,31 @@ fn family_msgs() -> Vec<Msg> {
     working_on(&mut runner, "run the tunnel suite end to end", NOW - 60);
     msgs.push(agent_up(&runner));
 
-    msgs.push(agent_up(&a_child(
-        "flake-hunter",
-        "codex",
-        "nova",
-        "test-runner",
-    )));
+    let mut flake = a_child("flake-hunter", "codex", "nova", "test-runner");
+    flake.summary = Some(ui_state::SummaryEnvelope {
+        through: 6,
+        producer_version: 1,
+        observed_at: at(NOW - 20),
+        stale: false,
+        revision: 1,
+        summary: ui_state::Summary {
+            attention: ui_state::Attention::NeedsYou {
+                why: ui_state::Why::Permission,
+            },
+            phase: ui_state::AgentPhase::Running,
+            last_activity: Some(at(NOW - 20)),
+            todo: None,
+            context: None,
+            model: None,
+            unknown: vec![
+                ui_state::SummaryField::Todo,
+                ui_state::SummaryField::Context,
+                ui_state::SummaryField::Model,
+                ui_state::SummaryField::Outstanding,
+            ],
+        },
+    });
+    msgs.push(agent_up(&flake));
 
     msgs.extend(stream_rows(
         "write-the-docs",

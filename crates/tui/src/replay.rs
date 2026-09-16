@@ -472,9 +472,10 @@ pub(crate) mod tests {
             agent: CLAUDE_AGENT,
             event: StreamMsg::Batch {
                 at: "2026-08-12T09:13:00Z".parse().expect("timestamp"),
-                entries: vec![StreamEntry {
+                entries: vec![StreamEntry::observed(
                     seq,
-                    payload: serde_json::json!({
+                    "2026-08-12T09:13:00Z".parse().expect("timestamp"),
+                    serde_json::json!({
                         "type": "assistant",
                         "uuid": format!("eeeeeeee-0000-4000-8000-{seq:012}"),
                         "sessionId": "22222222-2222-4222-8222-222222222222",
@@ -486,7 +487,7 @@ pub(crate) mod tests {
                             "stop_reason": "end_turn",
                         },
                     }),
-                }],
+                )],
             },
         }
     }

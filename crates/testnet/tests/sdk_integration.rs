@@ -82,22 +82,20 @@ fn issue(model: &mut Model, n: u128, command: Command) -> Vec<Effect> {
     )
 }
 fn pump(model: &mut Model, host: &ClaudeSdkBackendHarness, consumed: &mut usize) -> Vec<Effect> {
+    let at = now();
     let entries = host
         .rows()
         .iter()
         .enumerate()
         .skip(*consumed)
-        .map(|(index, payload)| StreamEntry {
-            seq: index as u64 + 1,
-            payload: payload.clone(),
-        })
+        .map(|(index, payload)| StreamEntry::observed(index as u64 + 1, at, payload.clone()))
         .collect();
     *consumed = host.rows().len();
     update(
         model,
         Msg::Stream {
             agent: AGENT,
-            event: StreamMsg::Batch { at: now(), entries },
+            event: StreamMsg::Batch { at, entries },
         },
     )
 }
@@ -411,16 +409,14 @@ async fn journey(with_catalogue: bool) {
             .unwrap()
             .clone();
         let mut reopened = self::model();
+        let at = now();
         update(
             &mut reopened,
             Msg::Stream {
                 agent: AGENT,
                 event: StreamMsg::Batch {
-                    at: now(),
-                    entries: vec![StreamEntry {
-                        seq: 1,
-                        payload: snapshot,
-                    }],
+                    at,
+                    entries: vec![StreamEntry::observed(1, at, snapshot)],
                 },
             },
         );

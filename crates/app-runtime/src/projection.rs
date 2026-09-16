@@ -604,9 +604,9 @@ impl Projection {
                 .map(|card| AgentCardDto {
                     agent: card.agent.clone(),
                     display_name: card.display_name(),
-                    attention: model.effective_attention(card),
-                    phase: card.phase.clone(),
-                    last_activity: card.last_activity,
+                    attention: model.fleet_attention(card),
+                    phase: model.effective_phase(card),
+                    last_activity: model.effective_summary_age(card),
                     outcome: None,
                     // Live rows come from the model the connection filled, so
                     // they are confirmed by definition; only the cache adds

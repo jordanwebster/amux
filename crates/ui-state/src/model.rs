@@ -19,6 +19,12 @@ pub use crate::claude_sdk::ClaudeSdkLayer;
 use crate::codex::{CodexLayer, CodexViolation};
 use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LocalSummary {
+    pub fold: fold::AgentFold,
+    pub through: model::Seq,
+}
+
 /// How many finished ops the Model retains (retention is explicitly bounded;
 /// old outcomes age out, pending obligations never do — they live in
 /// `pending_ops` until resolved).
@@ -190,6 +196,9 @@ pub struct AgentCard {
     /// the creation time.
     pub last_activity: DateTime<Utc>,
     pub phase: AgentPhase,
+    /// The shared provider fold for this device's currently open stream.
+    /// Fleet selection compares this whole summary with the host envelope.
+    pub(crate) local_summary: Option<LocalSummary>,
     /// Typed native layer state. `None` until the structured stream
     /// produces evidence; unsupported agents honestly stay `Unknown`.
     pub(crate) layer: Option<AgentLayer>,
@@ -253,8 +262,8 @@ impl AgentCard {
     /// Keeping these words in the Model is a deliberate exception while the
     /// terminal fleet is their only consumer. When a second consumer needs
     /// status labels, precedence stays here and each renderer owns its words.
-    pub(crate) fn status_label(&self, attention: Attention) -> String {
-        match (&attention, &self.phase) {
+    pub(crate) fn status_label(&self, attention: Attention, phase: &AgentPhase) -> String {
+        match (&attention, phase) {
             (_, AgentPhase::Exited { exit_code }) => match exit_code {
                 Some(code) => format!("exited({code})"),
                 None => "exited".to_string(),
@@ -534,6 +543,10 @@ pub struct Model {
     /// Last authoritative remote membership; disconnection does not mean deletion.
     pub(crate) remote_inventories: BTreeMap<HostId, BTreeSet<AgentId>>,
     pub(crate) streams: BTreeMap<AgentId, StreamState>,
+    /// Explicit harness-only exceptions to the eager inventory policy. User
+    /// attachments still open these streams normally.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(crate) eager_subscription_exclusions: BTreeSet<AgentId>,
     /// User-opened conversations outlive the temporary inventory removal of
     /// an unreachable host. Its next inventory re-establishes these streams.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -559,6 +572,7 @@ impl Default for Model {
             agents: BTreeMap::new(),
             remote_inventories: BTreeMap::new(),
             streams: BTreeMap::new(),
+            eager_subscription_exclusions: BTreeSet::new(),
             attached: BTreeMap::new(),
             queues: BTreeMap::new(),
             pending_ops: BTreeMap::new(),
@@ -570,6 +584,13 @@ impl Default for Model {
 }
 
 impl Model {
+    /// Install explicit eager-subscription exceptions before inventory starts.
+    /// This is used by boundary tests to prove fleet summaries do not depend
+    /// on opening a chat; deliberate user attachment is unaffected.
+    pub fn set_eager_subscription_exclusions(&mut self, agents: impl IntoIterator<Item = AgentId>) {
+        self.eager_subscription_exclusions = agents.into_iter().collect();
+    }
+
     pub fn queued(&self, agent: AgentId) -> Option<&crate::QueuedMessage> {
         self.queues.get(&agent)
     }
@@ -767,6 +788,52 @@ impl Model {
         card.attention
     }
 
+    /// Attention specifically for fleet presentation. Unlike chat gates and
+    /// native projections, this resolves the daemon's advisory envelope.
+    pub fn fleet_attention(&self, card: &AgentCard) -> Attention {
+        if !self.host_online(card.agent.host_id) {
+            return Attention::Unknown;
+        }
+        if let Some(effective) = self.effective_summary(card) {
+            if effective.stale || effective.incompatible {
+                return Attention::Unknown;
+            }
+            return effective.summary.attention;
+        }
+        self.effective_attention(card)
+    }
+
+    /// The advisory host fold and this client's open-chat fold resolved by
+    /// position. Agents without either retain the legacy projection until
+    /// eager subscriptions are removed in the store milestone.
+    pub fn effective_summary(&self, card: &AgentCard) -> Option<fold::Effective> {
+        let protocol = card.structured_protocol()?;
+        let producer_version = fold::AgentFold::for_protocol(protocol).tip_version();
+        let local = card
+            .local_summary
+            .as_ref()
+            .map(|local| (local.through, local.fold.summary()));
+        fold::select_summary(
+            card.agent.summary.as_ref(),
+            local.as_ref(),
+            producer_version,
+        )
+    }
+
+    pub fn effective_phase(&self, card: &AgentCard) -> AgentPhase {
+        self.effective_summary(card)
+            .map(|effective| effective.summary.phase)
+            .unwrap_or_else(|| card.phase.clone())
+    }
+
+    /// Age drawn by the fleet. Activity time wins; an incompatible envelope
+    /// has no trusted activity but still retains its observation age.
+    pub fn effective_summary_age(&self, card: &AgentCard) -> DateTime<Utc> {
+        self.effective_summary(card)
+            .and_then(|effective| effective.summary.last_activity.or(effective.observed_at))
+            .unwrap_or(card.last_activity)
+    }
+
     /// The fleet status word with read-time policy applied: offline rows
     /// show `–`, and the word derives from the SAME effective attention as
     /// the badge — one derivation, so a staleness-degraded Unknown badge
@@ -776,7 +843,16 @@ impl Model {
         if !self.host_online(card.agent.host_id) {
             return "–".to_string();
         }
-        card.status_label(self.effective_attention(card))
+        if let Some(effective) = self.effective_summary(card) {
+            if effective.incompatible {
+                return "unknown".to_string();
+            }
+            if effective.stale {
+                return "stale".to_string();
+            }
+            return card.status_label(effective.summary.attention, &effective.summary.phase);
+        }
+        card.status_label(self.effective_attention(card), &card.phase)
     }
 
     /// Every descendant of an agent, ranked exactly as the fleet ranks a
@@ -906,26 +982,26 @@ impl Model {
     ) -> (u8, DateTime<Utc>, AgentId, FleetItem<'m>) {
         let key = parent.agent.id;
         if children.is_empty() {
-            let attention = self.effective_attention(parent);
+            let attention = self.fleet_attention(parent);
             return (
                 attention_rank(attention),
-                parent.last_activity,
+                self.effective_summary_age(parent),
                 key,
                 FleetItem::Agent(parent),
             );
         }
         let highest_attention = children
             .iter()
-            .map(|member| self.effective_attention(member.card))
-            .chain(std::iter::once(self.effective_attention(parent)))
+            .map(|member| self.fleet_attention(member.card))
+            .chain(std::iter::once(self.fleet_attention(parent)))
             .min_by_key(|attention| attention_severity(*attention))
             .unwrap_or(Attention::Unknown);
         let recency = children
             .iter()
-            .map(|member| member.card.last_activity)
-            .chain(std::iter::once(parent.last_activity))
+            .map(|member| self.effective_summary_age(member.card))
+            .chain(std::iter::once(self.effective_summary_age(parent)))
             .max()
-            .unwrap_or(parent.last_activity);
+            .unwrap_or_else(|| self.effective_summary_age(parent));
         (
             attention_rank(highest_attention),
             recency,
@@ -943,9 +1019,12 @@ impl Model {
     /// fleet applies at top level, so an expanded family reads like the
     /// list it sits in.
     fn rank_order(&self, a: &AgentCard, b: &AgentCard) -> std::cmp::Ordering {
-        attention_rank(self.effective_attention(a))
-            .cmp(&attention_rank(self.effective_attention(b)))
-            .then(b.last_activity.cmp(&a.last_activity))
+        attention_rank(self.fleet_attention(a))
+            .cmp(&attention_rank(self.fleet_attention(b)))
+            .then(
+                self.effective_summary_age(b)
+                    .cmp(&self.effective_summary_age(a)),
+            )
             .then(a.agent.id.cmp(&b.agent.id))
     }
 
@@ -1480,10 +1559,11 @@ mod tests {
             StreamMsg::Opened { truncated: false },
             StreamMsg::Batch {
                 at: t0(),
-                entries: vec![crate::msg::StreamEntry {
-                    seq: 1,
-                    payload: serde_json::json!({"type":"amux.codex_ready"}),
-                }],
+                entries: vec![crate::msg::StreamEntry::observed(
+                    1,
+                    t0(),
+                    serde_json::json!({"type":"amux.codex_ready"}),
+                )],
             },
             StreamMsg::ReplayComplete,
         ] {

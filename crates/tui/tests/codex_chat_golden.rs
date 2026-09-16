@@ -91,9 +91,12 @@ fn batch(first_seq: u64, rows: Vec<Value>) -> Msg {
             entries: rows
                 .into_iter()
                 .enumerate()
-                .map(|(offset, payload)| StreamEntry {
-                    seq: first_seq + offset as u64,
-                    payload,
+                .map(|(offset, payload)| {
+                    StreamEntry::observed(
+                        first_seq + offset as u64,
+                        at("2026-08-12T09:12:00Z"),
+                        payload,
+                    )
                 })
                 .collect(),
         },

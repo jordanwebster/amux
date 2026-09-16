@@ -370,10 +370,11 @@ fn every_msg_variant_round_trips_through_serde() {
             "fix-auth-bug",
             StreamMsg::Batch {
                 at: t0_plus(1),
-                entries: vec![StreamEntry {
-                    seq: 1,
-                    payload: serde_json::json!({"type": "hook.stop", "session_id": "s"}),
-                }],
+                entries: vec![StreamEntry::observed(
+                    1,
+                    t0_plus(1),
+                    serde_json::json!({"type": "hook.stop", "session_id": "s"}),
+                )],
             },
         ),
         stream("fix-auth-bug", StreamMsg::ReplayComplete),

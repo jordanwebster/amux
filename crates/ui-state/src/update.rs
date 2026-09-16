@@ -8,7 +8,7 @@
 use crate::effect::{DumpReason, Effect, InputPayload};
 use crate::model::{
     AgentCard, AgentLayer, AgentPhase, Attention, Connection, FINISHED_OPS_RETAINED, FinishedOp,
-    HostState, Model, PendingOp, StreamPhase, StreamState,
+    HostState, LocalSummary, Model, PendingOp, StreamPhase, StreamState,
 };
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
 
@@ -45,6 +45,12 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
         }
         Msg::Tick { now } => {
             model.now = Some(now);
+            for card in model.agents.values_mut() {
+                if let Some(local) = card.local_summary.as_mut() {
+                    let changes = local.fold.apply_summary(fold::Input::Tick { now });
+                    local.through = changes.through;
+                }
+            }
             Vec::new()
         }
     };
@@ -100,6 +106,11 @@ fn ensure_stream(
     // stream) — but a user opening one (the read-only chat, F1) is
     // exactly the interaction the policy widens for.
     if card.agent.readonly && wanted == StreamWanted::InventoryPolicy {
+        return None;
+    }
+    if wanted == StreamWanted::InventoryPolicy
+        && model.eager_subscription_exclusions.contains(&agent_id)
+    {
         return None;
     }
     let protocol = AgentLayer::from_kind(&card.agent.kind)?.protocol();
@@ -582,6 +593,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                         provider_label: None,
                         attention: Attention::Unknown,
                         phase: AgentPhase::Running,
+                        local_summary: None,
                         layer: None,
                         epoch,
                         agent,
@@ -602,6 +614,24 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             } else {
                 Vec::new()
             }
+        }
+        ServerMsg::AgentSummary { agent, envelope } => {
+            if !model.is_connected() {
+                return tripwire("agent summary while not connected");
+            }
+            if let Some(card) = model.agents.get_mut(&agent) {
+                card.agent.summary = Some(envelope);
+            }
+            Vec::new()
+        }
+        ServerMsg::AgentProgress { agent, progress } => {
+            if !model.is_connected() {
+                return tripwire("agent progress while not connected");
+            }
+            if let Some(card) = model.agents.get_mut(&agent) {
+                card.agent.progress = Some(progress);
+            }
+            Vec::new()
         }
         ServerMsg::AgentRemoved { id } => {
             if !model.is_connected() {
@@ -670,6 +700,19 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
             // the chat layer folds from scratch too — its window carries
             // the same truncation fact (B9's honest boundary).
             with_layer(model, agent, |layer| layer.begin_window(truncated));
+            if let Some(card) = model.agents.get_mut(&agent)
+                && let Some(protocol) =
+                    AgentLayer::from_kind(&card.agent.kind).map(|layer| layer.protocol())
+            {
+                let mut fold = fold::AgentFold::for_protocol(protocol);
+                let baseline = if truncated {
+                    fold::Baseline::Truncated { from: 1 }
+                } else {
+                    fold::Baseline::Start
+                };
+                fold.begin(1, baseline);
+                card.local_summary = Some(LocalSummary { fold, through: 0 });
+            }
         }
         StreamMsg::Batch { at, entries } => {
             if let Some(card) = model.agents.get_mut(&agent) {
@@ -680,6 +723,24 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
                     layer.observe(entry.seq, at, &entry.payload);
                 }
             });
+            if let Some(local) = model
+                .agents
+                .get_mut(&agent)
+                .and_then(|card| card.local_summary.as_mut())
+            {
+                for entry in &entries {
+                    let payload = serde_json::to_vec(&entry.payload)
+                        .expect("a serde_json::Value always serializes as JSON");
+                    let changes = local.fold.apply_summary(fold::Input::Row {
+                        seq: entry.seq,
+                        published_at: entry.published_at,
+                        activity_at: entry.activity_at,
+                        historical: entry.historical,
+                        payload: &payload,
+                    });
+                    local.through = changes.through;
+                }
+            }
         }
         StreamMsg::ReplayComplete => {
             if let Some(stream) = model.streams.get_mut(&agent) {
@@ -704,6 +765,13 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
                     let exit_code = *exit_code;
                     if let Some(card) = model.agents.get_mut(&agent) {
                         card.phase = AgentPhase::Exited { exit_code };
+                        if let Some(local) = card.local_summary.as_mut() {
+                            let at = model.now.unwrap_or(card.last_activity);
+                            let changes = local
+                                .fold
+                                .apply_summary(fold::Input::ProcessExited { exit_code, at });
+                            local.through = changes.through;
+                        }
                     }
                     // Nothing is left to need: obligations do not outlive
                     // the process that owned them.
@@ -712,7 +780,16 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
                 StreamCloseReason::AgentDeleted => {}
                 // The stream died underneath us: whatever the fold knew is
                 // stale. Degrade to Unknown, never to a wrong badge.
-                _ => with_layer(model, agent, AgentLayer::invalidate),
+                _ => {
+                    with_layer(model, agent, AgentLayer::invalidate);
+                    if let Some(card) = model.agents.get_mut(&agent)
+                        && let Some(local) = card.local_summary.as_mut()
+                    {
+                        let at = model.now.unwrap_or(card.last_activity);
+                        let changes = local.fold.apply_summary(fold::Input::ObserverLost { at });
+                        local.through = changes.through;
+                    }
+                }
             }
             if let Some(stream) = model.streams.get_mut(&agent) {
                 stream.phase = StreamPhase::Closed { reason };
