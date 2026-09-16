@@ -1,3 +1,11 @@
+2026-09-16 — **Stored history keeps exact page and boundary positions.**
+Backward paging now advances from each page's oldest entry, returns every row
+once, and carries all segment markers crossed by that page. Invalidation marks
+the position where its successor will open. Empty-segment collapse consults
+actual entry rows and retains one ordered marker inside each collapsed run, and
+an Evicted marker from metadata retirement remains visible after caching
+resumes, even when the successor has no older retained entry.
+
 2026-09-16 — **Recoverable store data no longer triggers quarantine.**
 Unreadable derived fleet rows now report an incompatible cache format while
 leaving durable views available, and unreadable chat tips or summaries enter a

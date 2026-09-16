@@ -353,9 +353,15 @@ fn evict_provider_pages(
 fn collapse_empty_segments(transaction: &Transaction<'_>) -> Result<usize, StoreError> {
     let mut agents = transaction
         .prepare(
-            "SELECT agent_id,COUNT(*) FROM segment
-             WHERE first_seq IS NULL AND last_seq IS NOT NULL
-             GROUP BY agent_id HAVING COUNT(*)>?1 ORDER BY agent_id",
+            "SELECT s.agent_id,COUNT(*) FROM segment s
+             WHERE s.last_seq IS NOT NULL
+               AND NOT EXISTS(SELECT 1 FROM claude_pty_entry e
+                              WHERE e.agent_id=s.agent_id AND e.segment=s.id)
+               AND NOT EXISTS(SELECT 1 FROM claude_sdk_entry e
+                              WHERE e.agent_id=s.agent_id AND e.segment=s.id)
+               AND NOT EXISTS(SELECT 1 FROM codex_entry e
+                              WHERE e.agent_id=s.agent_id AND e.segment=s.id)
+             GROUP BY s.agent_id HAVING COUNT(*)>?1 ORDER BY s.agent_id",
         )
         .map_err(map_sqlite_error)?;
     let over = agents
@@ -367,39 +373,73 @@ fn collapse_empty_segments(transaction: &Transaction<'_>) -> Result<usize, Store
         .map_err(map_sqlite_error)?;
     let mut collapsed = 0usize;
     for (agent, count) in over {
-        let remove = usize::try_from(count)
+        let mut remaining = usize::try_from(count)
             .map_err(|_| StoreError::Corrupt)?
             .saturating_sub(EMPTY_SEGMENTS_PER_CHAT);
         let mut statement = transaction
             .prepare(
-                "SELECT id FROM segment WHERE agent_id=?1 AND first_seq IS NULL AND last_seq IS NOT NULL
-                 ORDER BY id LIMIT ?2",
+                "SELECT s.id,s.predecessor FROM segment s
+                 WHERE s.agent_id=?1 AND s.last_seq IS NOT NULL
+                   AND NOT EXISTS(SELECT 1 FROM claude_pty_entry e
+                                  WHERE e.agent_id=s.agent_id AND e.segment=s.id)
+                   AND NOT EXISTS(SELECT 1 FROM claude_sdk_entry e
+                                  WHERE e.agent_id=s.agent_id AND e.segment=s.id)
+                   AND NOT EXISTS(SELECT 1 FROM codex_entry e
+                                  WHERE e.agent_id=s.agent_id AND e.segment=s.id)
+                 ORDER BY s.id",
             )
             .map_err(map_sqlite_error)?;
-        let ids = statement
-            .query_map(
-                params![agent, i64::try_from(remove).unwrap_or(i64::MAX)],
-                |row| row.get::<_, i64>(0),
-            )
+        let segments = statement
+            .query_map([&agent], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+            })
             .map_err(map_sqlite_error)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(map_sqlite_error)?;
-        for id in &ids {
-            transaction
-                .execute(
-                    "DELETE FROM segment WHERE agent_id=?1 AND id=?2",
-                    params![agent, id],
-                )
-                .map_err(map_sqlite_error)?;
+
+        let mut runs = Vec::<Vec<(i64, Option<i64>)>>::new();
+        for segment in segments {
+            if runs
+                .last()
+                .is_some_and(|run| segment.1 == run.last().map(|(id, _)| *id))
+            {
+                runs.last_mut().expect("run exists").push(segment);
+            } else {
+                runs.push(vec![segment]);
+            }
         }
-        if !ids.is_empty() {
+        let before = collapsed;
+        for run in runs {
+            if remaining == 0 {
+                break;
+            }
+            let selected = run.len().min(remaining.saturating_add(1));
+            if selected < 2 {
+                continue;
+            }
+            let predecessor = run[0].1;
+            let marker = run[selected - 1].0;
+            for (id, _) in &run[..selected - 1] {
+                transaction
+                    .execute(
+                        "DELETE FROM segment WHERE agent_id=?1 AND id=?2",
+                        params![agent, id],
+                    )
+                    .map_err(map_sqlite_error)?;
+            }
             transaction
                 .execute(
-                    "UPDATE segment SET baseline_kind=4,baseline_seq=NULL,predecessor=NULL
-                     WHERE agent_id=?1 AND id=(SELECT MIN(id) FROM segment WHERE agent_id=?1)",
-                    [&agent],
+                    "UPDATE segment SET baseline_kind=4,baseline_seq=NULL,predecessor=?3,
+                        first_seq=NULL,closed_by=4
+                     WHERE agent_id=?1 AND id=?2",
+                    params![agent, marker, predecessor],
                 )
                 .map_err(map_sqlite_error)?;
+            let removed = selected - 1;
+            collapsed += removed;
+            remaining = remaining.saturating_sub(removed);
+        }
+        if collapsed > before {
             transaction
                 .execute(
                     "UPDATE chat_state SET content_revision=content_revision+1 WHERE agent_id=?1",
@@ -407,7 +447,6 @@ fn collapse_empty_segments(transaction: &Transaction<'_>) -> Result<usize, Store
                 )
                 .map_err(map_sqlite_error)?;
         }
-        collapsed += ids.len();
     }
     Ok(collapsed)
 }
@@ -445,13 +484,14 @@ pub(crate) fn page<F: ProviderFold>(
 
     let mut entries =
         load_entries_before::<F::Entry>(&transaction, tables, agent, &token.before, n)?;
+    let oldest = entries.last();
     let has_older = entries
-        .first()
+        .last()
         .map(|entry| has_entry_before(&transaction, tables, agent, position(entry)))
         .transpose()?
         .unwrap_or(false);
     let next = if has_older {
-        entries.first().map(|entry| PageToken {
+        oldest.map(|entry| PageToken {
             generations,
             content_revision: state.content_revision,
             view_epoch: token.view_epoch,
@@ -460,9 +500,7 @@ pub(crate) fn page<F: ProviderFold>(
     } else {
         None
     };
-    let first_segment = entries
-        .first()
-        .map_or(token.before.0, |entry| entry.segment);
+    let first_segment = oldest.map_or(token.before.0, |entry| entry.segment);
     let boundaries = load_boundaries(&transaction, tables, agent, first_segment, token.before.0)?;
     entries.sort_by_key(position);
     transaction.commit().map_err(map_sqlite_error)?;
@@ -835,7 +873,10 @@ fn invalidate_inner<F: ProviderFold>(
         },
     )?;
     let boundary_at = BoundaryAt {
-        segment: head.segment,
+        segment: state
+            .segment_high_water
+            .checked_add(1)
+            .ok_or(StoreError::UnsupportedFormat)?,
         before: None,
         boundary,
     };
@@ -924,7 +965,10 @@ fn load_in_transaction<F: ProviderFold>(
             .transpose()?;
         if let Some(boundary) = pending {
             let marker = BoundaryAt {
-                segment: state.segment_high_water,
+                segment: state
+                    .segment_high_water
+                    .checked_add(1)
+                    .ok_or(StoreError::UnsupportedFormat)?,
                 before: None,
                 boundary,
             };
@@ -1381,16 +1425,35 @@ fn load_boundaries(
             _ => return Err(StoreError::Corrupt),
         }
     }
+    let evicted_predecessor = transaction
+        .query_row(
+            "SELECT predecessor.id FROM segment current
+             JOIN segment predecessor
+               ON predecessor.agent_id=current.agent_id AND predecessor.id=current.predecessor
+             WHERE current.agent_id=?1 AND current.id=?2 AND predecessor.baseline_kind=4",
+            params![agent.to_string(), i64::from(first_segment)],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(map_sqlite_error)?
+        .map(u32::try_from)
+        .transpose()
+        .map_err(|_| StoreError::Corrupt)?;
+    if let Some(segment) = evicted_predecessor {
+        let evicted = boundary_for_segment(transaction, tables, agent, segment, Boundary::Evicted)?;
+        if !boundaries.contains(&evicted) {
+            boundaries.push(evicted);
+        }
+    }
     if let Some(evicted) = eviction_boundary(transaction, tables, agent)?
         && evicted.segment >= first_segment
         && evicted.segment <= last_segment
         && !boundaries.contains(&evicted)
     {
         boundaries.push(evicted);
-        boundaries.sort_by(|left, right| {
-            (left.segment, &left.before).cmp(&(right.segment, &right.before))
-        });
     }
+    boundaries
+        .sort_by(|left, right| (left.segment, &left.before).cmp(&(right.segment, &right.before)));
     Ok(boundaries)
 }
 

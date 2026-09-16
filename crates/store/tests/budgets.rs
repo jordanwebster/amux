@@ -319,6 +319,22 @@ fn metadata_budget_retires_aliases_and_tombstones_with_an_evicted_boundary() {
                 }
             }
             assert!(completed, "bounded retirement did not complete");
+            let resumed_mutations = [("resumed-2", 2, "two"), ("resumed-3", 3, "three")]
+                .into_iter()
+                .map(|(key, seq, text)| Mutation::Upsert {
+                    key: EntryKey::new(key).unwrap(),
+                    order: fold::Order::new(seq, 0).unwrap(),
+                    revision: Revision::row(seq),
+                    entry: fold::claude_sdk::ClaudeSdkPartial {
+                        kind: fold::Patch::set(
+                            fold::claude_sdk::ClaudeSdkEntryKind::Prompt,
+                            Revision::row(seq),
+                        ),
+                        text: fold::Patch::set(text.to_owned(), Revision::row(seq)),
+                        ..Default::default()
+                    },
+                })
+                .collect();
             let resumed = store
                 .commit(
                     agent_id(),
@@ -326,13 +342,44 @@ fn metadata_budget_retires_aliases_and_tombstones_with_an_evicted_boundary() {
                     ExpectedHead::Absent {
                         fence: loaded.fence,
                     },
-                    resumed_head(2),
-                    Some(resumed_transition(2)),
-                    Vec::new(),
+                    resumed_head(3),
+                    Some(resumed_transition(3)),
+                    resumed_mutations,
                     interest(),
                 )
                 .await;
             assert!(matches!(resumed, CommitOutcome::Committed(_)));
+            let resumed_load = store
+                .load::<ClaudeSdkFold>(
+                    agent_id(),
+                    WindowBudget {
+                        max_entries: 1,
+                        max_bytes: 1024 * 1024,
+                        view_epoch: 0,
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(resumed_load.boundaries.iter().any(|boundary| {
+                boundary.segment == 1 && boundary.boundary == Boundary::Evicted
+            }));
+            assert!(
+                resumed_load.boundaries.iter().any(|boundary| {
+                    boundary.segment == 2 && boundary.boundary == Boundary::Gap
+                })
+            );
+            let page = store
+                .page::<ClaudeSdkFold>(
+                    agent_id(),
+                    resumed_load.first_page.expect("older successor entry"),
+                    10,
+                )
+                .await
+                .unwrap();
+            assert!(page.next.is_none());
+            assert!(page.boundaries.iter().any(|boundary| {
+                boundary.segment == 1 && boundary.boundary == Boundary::Evicted
+            }));
             store.close().await;
         });
     }
@@ -465,19 +512,51 @@ fn maintenance_collapses_empty_segments_after_the_cap() {
         let temp = TempDir::new().unwrap();
         let path = database(&temp);
         let store = Store::open(&path).await.unwrap();
+        let partial = fold::claude_sdk::ClaudeSdkPartial {
+            kind: fold::Patch::set(
+                fold::claude_sdk::ClaudeSdkEntryKind::Prompt,
+                Revision::row(1),
+            ),
+            text: fold::Patch::set("live entry".to_owned(), Revision::row(1)),
+            ..Default::default()
+        };
+        assert!(matches!(
+            store
+                .commit(
+                    agent_id(),
+                    generations(&store),
+                    ExpectedHead::Absent { fence: 0 },
+                    head(1),
+                    Some(transition(1)),
+                    vec![Mutation::Upsert {
+                        key: EntryKey::new("live-entry").unwrap(),
+                        order: fold::Order::new(1, 0).unwrap(),
+                        revision: Revision::row(1),
+                        entry: partial,
+                    }],
+                    interest(),
+                )
+                .await,
+            CommitOutcome::Committed(_)
+        ));
         let raw = Connection::open(&path).unwrap();
         raw.execute(
-            "INSERT INTO chat_state(agent_id,revision,content_revision,segment_high_water,previous_through,needs_baseline)
-             VALUES (?1,1,1,65,65,1)",
+            "UPDATE chat_state SET segment_high_water=66 WHERE agent_id=?1",
             [agent_id().to_string()],
         )
         .unwrap();
-        for id in 1..=65i64 {
+        raw.execute(
+            "UPDATE segment SET first_seq=NULL,last_seq=1,closed_by=2
+             WHERE agent_id=?1 AND id=1",
+            [agent_id().to_string()],
+        )
+        .unwrap();
+        for id in 2..=66i64 {
             raw.execute(
                 "INSERT INTO segment(agent_id,id,predecessor,baseline_kind,baseline_seq,
                     first_seq,last_seq,closed_by,opened_at)
                  VALUES (?1,?2,?3,2,?4,NULL,?4,2,0)",
-                params![agent_id().to_string(), id, (id > 1).then_some(id - 1), id],
+                params![agent_id().to_string(), id, id - 1, id],
             )
             .unwrap();
         }
@@ -495,6 +574,20 @@ fn maintenance_collapses_empty_segments_after_the_cap() {
                 |row| row.get(0),
             )
             .unwrap();
+        let entry_count: i64 = raw
+            .query_row(
+                "SELECT COUNT(*) FROM claude_sdk_entry WHERE agent_id=?1",
+                [agent_id().to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let live_segment_exists: bool = raw
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM segment WHERE agent_id=?1 AND id=1)",
+                [agent_id().to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
         let oldest_kind: i64 = raw
             .query_row(
                 "SELECT baseline_kind FROM segment WHERE agent_id=?1 ORDER BY id LIMIT 1",
@@ -502,8 +595,32 @@ fn maintenance_collapses_empty_segments_after_the_cap() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 64);
-        assert_eq!(oldest_kind, 4);
+        let marker_kind: i64 = raw
+            .query_row(
+                "SELECT baseline_kind FROM segment WHERE agent_id=?1 AND id=3",
+                [agent_id().to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 65);
+        assert_eq!(entry_count, 1);
+        assert!(live_segment_exists);
+        assert_eq!(oldest_kind, 0);
+        assert_eq!(marker_kind, 4);
+        drop(raw);
+        let loaded = store
+            .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(0))
+            .await
+            .unwrap();
+        assert_eq!(loaded.window.len(), 1);
+        assert_eq!(loaded.boundaries[0].segment, 3);
+        assert_eq!(loaded.boundaries[0].boundary, Boundary::Evicted);
+        assert!(
+            loaded
+                .boundaries
+                .windows(2)
+                .all(|pair| pair[0].segment <= pair[1].segment)
+        );
         store.close().await;
     });
 }

@@ -271,11 +271,22 @@ fn chat_writer_conflict_reload_and_invalidation_are_fenced() {
         let (absent, invalidated_revision) = match invalidated {
             CommitOutcome::Committed(result) => {
                 assert_eq!(result.boundaries.len(), 1);
+                assert_eq!(result.boundaries[0].segment, 2);
+                assert_eq!(result.boundaries[0].before, None);
                 (result.expected, result.content_revision)
             }
             _ => panic!("invalidation was not accepted"),
         };
         assert!(matches!(absent, ExpectedHead::Absent { .. }));
+        let pending_boundary = store
+            .load::<ClaudeSdkFold>(agent_id(), WindowBudget::desktop(7))
+            .await
+            .unwrap();
+        assert!(pending_boundary.boundaries.iter().any(|boundary| {
+            boundary.segment == 2
+                && boundary.before.is_none()
+                && boundary.boundary == fold::Boundary::VersionGap
+        }));
 
         let repeated = store
             .invalidate::<ClaudeSdkFold>(
@@ -861,6 +872,170 @@ fn chat_load_pages_boundaries_and_matches_the_fold_oracle() {
         ));
         assert!(
             invalidated_load.boundaries.iter().any(|boundary| {
+                boundary.segment == 3 && boundary.boundary == fold::Boundary::Gap
+            })
+        );
+        store.close().await;
+    });
+}
+
+#[test]
+fn chat_pages_to_exhaustion_without_overlapping_entries() {
+    runtime().block_on(async {
+        let temp = TempDir::new().unwrap();
+        let store = Store::open(&database(&temp)).await.unwrap();
+        let generations = store_generations(&store);
+        let mut fold = ClaudeSdkFold::default();
+        fold.begin(1, Baseline::Start);
+        let mutations = fold_rows(
+            &mut fold,
+            &[
+                (1, "u1", "one"),
+                (2, "u2", "two"),
+                (3, "u3", "three"),
+                (4, "u4", "four"),
+                (5, "u5", "five"),
+                (6, "u6", "six"),
+            ],
+        );
+        assert!(matches!(
+            store
+                .commit(
+                    agent_id(),
+                    generations,
+                    ExpectedHead::Absent { fence: 0 },
+                    head(fold, 1, Baseline::Start, 6),
+                    Some(transition(None, 1, Baseline::Start, 0, Some(1), 6)),
+                    mutations,
+                    all_interest(),
+                )
+                .await,
+            CommitOutcome::Committed(_)
+        ));
+        let loaded = store
+            .load::<ClaudeSdkFold>(
+                agent_id(),
+                WindowBudget {
+                    max_entries: 1,
+                    max_bytes: 1024 * 1024,
+                    view_epoch: 9,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(loaded.window[0].order.seq(), 6);
+        let first = store
+            .page::<ClaudeSdkFold>(agent_id(), loaded.first_page.unwrap(), 3)
+            .await
+            .unwrap();
+        assert_eq!(
+            first
+                .entries
+                .iter()
+                .map(|entry| entry.order.seq())
+                .collect::<Vec<_>>(),
+            vec![3, 4, 5]
+        );
+        let second = store
+            .page::<ClaudeSdkFold>(agent_id(), first.next.unwrap(), 3)
+            .await
+            .unwrap();
+        assert_eq!(
+            second
+                .entries
+                .iter()
+                .map(|entry| entry.order.seq())
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(second.next.is_none());
+        let mut all = loaded
+            .window
+            .iter()
+            .chain(first.entries.iter())
+            .chain(second.entries.iter())
+            .map(|entry| entry.order.seq())
+            .collect::<Vec<_>>();
+        all.sort_unstable();
+        assert_eq!(all, vec![1, 2, 3, 4, 5, 6]);
+        store.close().await;
+    });
+}
+
+#[test]
+fn chat_page_spanning_segments_carries_every_crossed_boundary() {
+    runtime().block_on(async {
+        let temp = TempDir::new().unwrap();
+        let store = Store::open(&database(&temp)).await.unwrap();
+        let generations = store_generations(&store);
+        let mut fold = ClaudeSdkFold::default();
+        fold.begin(1, Baseline::Truncated { from: 1 });
+        let first = fold_rows(&mut fold, &[(1, "u1", "one"), (2, "u2", "two")]);
+        let expected = match store
+            .commit(
+                agent_id(),
+                generations,
+                ExpectedHead::Absent { fence: 0 },
+                head(fold.clone(), 1, Baseline::Truncated { from: 1 }, 2),
+                Some(transition(
+                    None,
+                    1,
+                    Baseline::Truncated { from: 1 },
+                    0,
+                    Some(1),
+                    2,
+                )),
+                first,
+                all_interest(),
+            )
+            .await
+        {
+            CommitOutcome::Committed(result) => result.expected,
+            _ => panic!("first segment failed"),
+        };
+        fold.begin(2, Baseline::Gap { after: 2 });
+        let second = fold_rows(&mut fold, &[(3, "u3", "three"), (4, "u4", "four")]);
+        assert!(matches!(
+            store
+                .commit(
+                    agent_id(),
+                    generations,
+                    expected,
+                    head(fold, 2, Baseline::Gap { after: 2 }, 4),
+                    Some(transition(
+                        Some(1),
+                        2,
+                        Baseline::Gap { after: 2 },
+                        2,
+                        Some(3),
+                        4,
+                    )),
+                    second,
+                    all_interest(),
+                )
+                .await,
+            CommitOutcome::Committed(_)
+        ));
+        let loaded = store
+            .load::<ClaudeSdkFold>(
+                agent_id(),
+                WindowBudget {
+                    max_entries: 1,
+                    max_bytes: 1024 * 1024,
+                    view_epoch: 0,
+                },
+            )
+            .await
+            .unwrap();
+        let page = store
+            .page::<ClaudeSdkFold>(agent_id(), loaded.first_page.unwrap(), 10)
+            .await
+            .unwrap();
+        assert!(page.boundaries.iter().any(|boundary| {
+            boundary.segment == 1 && boundary.boundary == fold::Boundary::Truncated
+        }));
+        assert!(
+            page.boundaries.iter().any(|boundary| {
                 boundary.segment == 2 && boundary.boundary == fold::Boundary::Gap
             })
         );
