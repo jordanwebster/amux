@@ -83,7 +83,7 @@ def cargo_build(triple: str, *, profile: str, features: tuple[str, ...], log: Pa
     build, so the header is never selected by globbing a possibly stale tree.
     """
     command = [
-        "cargo", "build", "--locked", "-p", CRATE, "--no-default-features", "--lib",
+        "cargo", "build", "--locked", "-p", CRATE, "--lib",
         "--profile", profile, "--target", triple, "--message-format=json-render-diagnostics",
     ]
     if features:

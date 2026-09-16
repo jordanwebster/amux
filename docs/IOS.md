@@ -26,6 +26,12 @@ and fills from remembered state while the host reconciles. See the
 [bridge contract](../crates/app-ffi/README.md) for ownership, shutdown,
 token refresh and the generated C interface.
 
+Every app build carries the workspace's pinned SQLite library, including both
+device and simulator builds. Store open still qualifies its SQLite version,
+the WAL-reset fix and required capabilities, so an accidental fallback to the
+system library is refused. Consequently, SQLite security fixes reach installed
+phones through an amux app update rather than through an iOS update.
+
 App startup restores the selected account and its cached fleet before asking
 the account service for a connect token. The runtime dials the relay named by
 that token, using system TLS. Only debug builds allow plaintext for loopback

@@ -9,7 +9,7 @@ publish = false
 crate-type = ["staticlib", "rlib"]
 
 [features]
-default = []
+default = ["bundled"]
 bundled = ["app-runtime/bundled"]
 debug-tools = ["app-embedded/debug-tools"]
 

@@ -6,7 +6,7 @@ description = "Account sessions, presentation projection, fleet cache and the fr
 publish = false
 
 [features]
-default = []
+default = ["bundled"]
 bundled = ["store/bundled"]
 
 [dependencies]

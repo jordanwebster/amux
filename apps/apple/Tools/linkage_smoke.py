@@ -9,6 +9,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 import ios_simulators
+import sqlite_linkage
 
 RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 DEVICE_TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
@@ -81,6 +82,7 @@ def main() -> None:
     directory = framework / simulator_slice["LibraryIdentifier"]
     executable = output / "app-ffi-linkage"
     compile_swift(directory, directory / simulator_slice["HeadersPath"], Path(__file__).with_name("LinkageSmoke.swift"), executable)
+    print(sqlite_linkage.inspect(executable).render(), end="", flush=True)
     device_id, already_booted = simulator()
     try:
         if not already_booted:

@@ -168,17 +168,12 @@ pub fn qualify_library(connection: &Connection) -> Result<LibraryReport, StoreEr
         "qualifying SQLite library"
     );
 
-    let tuple = parse_version(&version).ok_or(StoreError::UnsupportedFormat)?;
-    let has_wal_fix = tuple >= (3, 51, 3) || tuple == (3, 50, 7) || tuple == (3, 44, 6);
-    let omitted_required = ["OMIT_AUTOVACUUM", "OMIT_FOREIGN_KEY", "OMIT_WAL"]
-        .iter()
-        .any(|required| compile_options.iter().any(|option| option == required));
     let json_works: i64 = connection
         .query_row("SELECT json_valid('{\"qualified\":true}')", [], |row| {
             row.get(0)
         })
         .map_err(map_sqlite_error)?;
-    if tuple < (3, 43, 0) || !has_wal_fix || omitted_required || json_works != 1 {
+    if !library_is_qualified(&version, &compile_options, json_works == 1) {
         return Err(StoreError::UnsupportedFormat);
     }
 
@@ -187,6 +182,17 @@ pub fn qualify_library(connection: &Connection) -> Result<LibraryReport, StoreEr
         source_id,
         compile_options,
     })
+}
+
+fn library_is_qualified(version: &str, compile_options: &[String], json_works: bool) -> bool {
+    let Some(tuple) = parse_version(version) else {
+        return false;
+    };
+    let has_wal_fix = tuple >= (3, 51, 3) || tuple == (3, 50, 7) || tuple == (3, 44, 6);
+    let omitted_required = ["OMIT_AUTOVACUUM", "OMIT_FOREIGN_KEY", "OMIT_WAL"]
+        .iter()
+        .any(|required| compile_options.iter().any(|option| option == required));
+    tuple >= (3, 43, 0) && has_wal_fix && !omitted_required && json_works
 }
 
 fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
@@ -643,6 +649,22 @@ mod tests {
     fn lifecycle_parses_sqlite_versions() {
         assert_eq!(parse_version("3.53.2"), Some((3, 53, 2)));
         assert_eq!(parse_version("3.44"), None);
+    }
+
+    #[test]
+    fn lifecycle_qualifies_only_sqlite_with_the_wal_fix_and_required_capabilities() {
+        let options = Vec::new();
+        assert!(library_is_qualified("3.53.2", &options, true));
+        assert!(library_is_qualified("3.50.7", &options, true));
+        assert!(library_is_qualified("3.44.6", &options, true));
+        assert!(!library_is_qualified("3.51.2", &options, true));
+        assert!(!library_is_qualified("3.42.0", &options, true));
+        assert!(!library_is_qualified("3.53.2", &options, false));
+        assert!(!library_is_qualified(
+            "3.53.2",
+            &["OMIT_WAL".to_owned()],
+            true,
+        ));
     }
 
     #[test]

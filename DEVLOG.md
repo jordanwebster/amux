@@ -1,3 +1,11 @@
+2026-09-16 — **Every client carries one qualified SQLite build.**
+SQLite is now bundled by default through the store, app runtime and iPhone
+bridge, so desktop and mobile clients use the same pinned library with the
+WAL-reset fix. Release checks reject a dynamic SQLite dependency or an
+undefined open symbol, and the complete store suite now cross-compiles and
+runs on the leased iOS simulator while reporting the linked and runtime
+library identities. SQLite fixes therefore ship to phones in app updates.
+
 2026-09-16 — **The TUI restores each profile before it connects.**
 Each selected profile now opens its shared SQLite store on a dedicated worker,
 records the cached fleet and remembered-chat results before the first daemon

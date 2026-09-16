@@ -63,4 +63,6 @@ if "$binary" new test-agent >/dev/null 2>&1; then
     exit 1
 fi
 
+scripts/python -B scripts/sqlite_linkage.py "$binary"
+
 echo "release policy excludes diagnostics and development agents"

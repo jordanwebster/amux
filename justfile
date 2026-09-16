@@ -6,8 +6,8 @@ export AMUX_GIT_SHA := `git rev-parse HEAD`
 
 # Wall-clock bound for every recipe; portable where GNU timeout is absent.
 bounded := "scripts/bounded"
-# Each desktop root forwards this opt-in to store. Mobile recipes omit it and
-# therefore keep using the system SQLite library.
+# Desktop roots keep naming the feature explicitly so an invocation that
+# disables defaults cannot silently switch the SQLite linkage policy.
 desktop_features := "--features bundled"
 
 # List the available repository tasks.
@@ -40,6 +40,11 @@ test-fold *ARGS:
 # Exercise the shared SQLite lifecycle and materialisation contract.
 test-store *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p store --features bundled "$@"
+
+# Cross-compile every store test and run it against bundled SQLite on the
+# leased, booted iOS simulator, including linkage and runtime identity proof.
+test-store-ios:
+    scripts/with iphone -- {{bounded}} 2300 scripts/python -B scripts/ios-store-test.py
 
 # Exercise the pure store-backed reducer lifecycle and recorded UI specs.
 test-ui *ARGS:

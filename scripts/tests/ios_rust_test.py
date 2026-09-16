@@ -81,7 +81,9 @@ class DevelopmentBuildTests(unittest.TestCase):
             driving = output / bridge.DRIVING_FRAMEWORK / bridge.DRIVING_SLICE
             driving.mkdir(parents=True)
             (driving / bridge.LIBRARY).write_bytes(b"a")
-            (output / bridge.FRAMEWORK).mkdir()
+            shipping = output / bridge.FRAMEWORK / bridge.DRIVING_SLICE
+            shipping.mkdir(parents=True)
+            (shipping / bridge.LIBRARY).write_bytes(b"a")
             stamp = output / "rust-stamp.json"
             stamp.write_text("same\n")
             with mock.patch.object(bridge, "OUTPUT", output), \
