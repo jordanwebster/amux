@@ -8,6 +8,8 @@ use rusqlite::Connection;
 use crate::db::{is_interrupted, map_sqlite_error, quote_identifier};
 use crate::families::REGISTRY;
 
+const ABSENT_RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Budget {
     pub retired_rows_per_table: usize,
@@ -25,6 +27,7 @@ impl Default for Budget {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MaintenanceReport {
+    pub absent_agents_deleted: usize,
     pub retired_rows_deleted: usize,
     pub retired_tables_dropped: usize,
     pub quick_check_complete: bool,
@@ -67,6 +70,16 @@ fn run_inner(
     started: Instant,
 ) -> Result<MaintenanceReport, StoreError> {
     let mut report = MaintenanceReport::default();
+    if budget.retired_rows_per_table > 0 {
+        match sweep_absent_agents(connection, budget.retired_rows_per_table) {
+            Ok(deleted) => report.absent_agents_deleted = deleted,
+            Err(error) if is_interrupted(&error) => {
+                report.deadline_reached = true;
+                return Ok(report);
+            }
+            Err(error) => return Err(map_sqlite_error(error)),
+        }
+    }
     let retired_tables = match retired_table_names(connection) {
         Ok(tables) => tables,
         Err(error) if is_interrupted(&error) => {
@@ -171,6 +184,30 @@ fn quick_check(connection: &Connection) -> rusqlite::Result<bool> {
         ok &= row.get::<_, String>(0)? == "ok";
     }
     Ok(ok)
+}
+
+fn sweep_absent_agents(connection: &Connection, limit: usize) -> rusqlite::Result<usize> {
+    let cutoff = chrono::Utc::now().timestamp_millis() - ABSENT_RETENTION_SECONDS * 1_000;
+    let transaction = connection.unchecked_transaction()?;
+    let ids = {
+        let mut statement = transaction.prepare(
+            "SELECT id FROM agent
+             WHERE membership=1 AND absent_since<=?1
+             ORDER BY absent_since,id LIMIT ?2",
+        )?;
+        statement
+            .query_map(rusqlite::params![cutoff, limit as i64], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for id in &ids {
+        transaction.execute("DELETE FROM host_summary WHERE agent_id=?1", [id])?;
+        transaction.execute("DELETE FROM progress WHERE agent_id=?1", [id])?;
+        transaction.execute("DELETE FROM agent WHERE id=?1", [id])?;
+    }
+    transaction.commit()?;
+    Ok(ids.len())
 }
 
 fn retired_table_names(connection: &Connection) -> rusqlite::Result<Vec<String>> {

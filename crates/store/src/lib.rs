@@ -8,6 +8,7 @@
 
 mod db;
 mod families;
+mod fleet;
 mod maintain;
 mod quarantine;
 
@@ -22,7 +23,8 @@ pub use families::{
     CHAT, CHAT_SHAPE, CLAUDE_PTY, CLAUDE_SDK, CODEX, FLEET, FLEET_SHAPE, Family, META, Migration,
     REGISTRY, Regime, Registry, VIEW,
 };
-pub use fold::StoreError;
+pub use fleet::{Fleet, FleetAgent, FleetChange, FleetHost};
+pub use fold::{FleetDelta, FleetSnapshot, Membership, StoreError};
 pub use maintain::{Budget, MaintenanceReport};
 use rustix::fs::{FlockOperation, flock};
 
@@ -85,6 +87,37 @@ impl Store {
         reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
     }
 
+    pub async fn apply_fleet(
+        &self,
+        generations: fold::Generations,
+        delta: FleetDelta,
+    ) -> Result<FleetChange, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.sender
+            .as_ref()
+            .ok_or(StoreError::Corrupt)?
+            .send(Command::ApplyFleet {
+                generations,
+                delta: Box::new(delta),
+                reply: reply_sender,
+            })
+            .map_err(|_| StoreError::Corrupt)?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
+    pub async fn fleet(&self, generations: fold::Generations) -> Result<Fleet, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.sender
+            .as_ref()
+            .ok_or(StoreError::Corrupt)?
+            .send(Command::Fleet {
+                generations,
+                reply: reply_sender,
+            })
+            .map_err(|_| StoreError::Corrupt)?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
     pub async fn close(mut self) {
         self.close_inner();
     }
@@ -106,6 +139,15 @@ impl Drop for Store {
 }
 
 enum Command {
+    ApplyFleet {
+        generations: fold::Generations,
+        delta: Box<FleetDelta>,
+        reply: mpsc::SyncSender<Result<FleetChange, StoreError>>,
+    },
+    Fleet {
+        generations: fold::Generations,
+        reply: mpsc::SyncSender<Result<Fleet, StoreError>>,
+    },
     Maintain {
         budget: Budget,
         deadline: Duration,
@@ -125,7 +167,7 @@ fn worker(
     ready: mpsc::SyncSender<Result<Ready, StoreError>>,
 ) {
     let opened = open_on_worker(&path);
-    let (connection, lock_file, metadata) = match opened {
+    let (mut connection, lock_file, metadata) = match opened {
         Ok(opened) => opened,
         Err(error) => {
             if error == StoreError::Corrupt {
@@ -142,6 +184,26 @@ fn worker(
     let mut corrupt = false;
     while let Ok(command) = receiver.recv() {
         match command {
+            Command::ApplyFleet {
+                generations,
+                delta,
+                reply,
+            } => {
+                let result = fleet::apply(&mut connection, generations, *delta, chrono::Utc::now());
+                corrupt = result == Err(StoreError::Corrupt);
+                let _ = reply.send(result);
+                if corrupt {
+                    break;
+                }
+            }
+            Command::Fleet { generations, reply } => {
+                let result = fleet::load(&mut connection, generations);
+                corrupt = result == Err(StoreError::Corrupt);
+                let _ = reply.send(result);
+                if corrupt {
+                    break;
+                }
+            }
             Command::Maintain {
                 budget,
                 deadline,

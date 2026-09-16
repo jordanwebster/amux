@@ -1,3 +1,13 @@
+2026-09-16 — **The shared store keeps fleet membership ordered across clients.**
+Fleet host facts, agent facts, folded standing and progress now materialize in
+one SQLite transaction per delta behind durable host cutoffs and per-agent
+removal fences. Complete snapshots confirm their members without replacing
+newer facts, remove unseen older members, and converge across processes in
+either arrival order. Absent rows retain their first removal time for a
+seven-day sweep while their durable fences continue rejecting delayed events;
+reachability remains an online-only update and cached fleet reads return every
+host and agent row.
+
 2026-09-16 — **The shared store opens through a fenced SQLite lifecycle.**
 Each profile store now holds a shared sidecar lease on its dedicated worker,
 qualifies and configures SQLite before reading schema state, verifies the

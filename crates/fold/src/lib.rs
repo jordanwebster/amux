@@ -775,6 +775,7 @@ pub struct FleetSnapshot {
 pub enum FleetDelta {
     Host {
         host: HostEntry,
+        revision: u64,
     },
     Reachability {
         host_id: HostId,
@@ -1980,6 +1981,7 @@ mod tests {
         for delta in [
             FleetDelta::Host {
                 host: sample_host(),
+                revision: 10,
             },
             FleetDelta::Reachability {
                 host_id: HostId::from_u128(2),

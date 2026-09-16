@@ -10,6 +10,7 @@ default = []
 bundled = ["rusqlite/bundled"]
 
 [dependencies]
+chrono = { workspace = true }
 fold = { workspace = true }
 model = { workspace = true }
 postcard = { workspace = true }

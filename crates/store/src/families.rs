@@ -1,6 +1,6 @@
 use fold::ProviderFold;
 
-pub const FLEET_SHAPE: u32 = 1;
+pub const FLEET_SHAPE: u32 = 2;
 pub const CHAT_SHAPE: u32 = 1;
 
 #[derive(Clone, Copy, Debug)]
@@ -151,7 +151,7 @@ CREATE TABLE agent (
     host_id TEXT NOT NULL,
     kind BLOB NOT NULL,
     protocol INTEGER,
-    name TEXT NOT NULL,
+    name TEXT,
     command TEXT,
     working_dir TEXT,
     args BLOB,
