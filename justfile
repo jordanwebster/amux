@@ -33,6 +33,10 @@ test *ARGS:
 test-crate CRATE *ARGS:
     crate=$1; shift; if [ "${1-}" = -- ]; then shift; fi; feature=; if cargo tree --locked -p "$crate" -e normal --prefix none --format '{p}' | grep -q '^store v'; then feature='{{desktop_features}}'; fi; {{bounded}} 900 cargo test --locked -p "$crate" $feature "$@"
 
+# Exercise the shared merge algebra and provider folds.
+test-fold *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p fold "$@"
+
 # Compile every ordinary workspace test target without running it.
 test-build:
     {{bounded}} 1200 cargo test --locked --workspace --lib --tests --no-run {{desktop_features}}

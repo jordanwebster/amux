@@ -1,3 +1,11 @@
+2026-09-16 — **Transcript mutations share one deterministic merge algebra.**
+Provider entries can now merge independently revisioned fields, idempotent
+source-keyed components and authoritative final replacements through reusable
+postcard-safe primitives. A store-free oracle applies coalesced atomic groups
+with canonical alias placement, promotion, tombstone precedence, cycle
+rejection, lifecycle fence provenance and the entry budgets that the future
+SQLite materialiser and client windows must match.
+
 2026-09-16 — **Provider semantics stay beside their extracted owners.**
 The shared Claude folds again document which feed facts are authoritative,
 which are inferred, and how provider block, subagent, task and form identities

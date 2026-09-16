@@ -7,15 +7,20 @@
 
 #![forbid(unsafe_code)]
 
+mod algebra;
 pub mod claude_pty;
 pub mod claude_sdk;
 pub mod codex;
 pub mod diff;
+mod oracle;
 
 use std::error::Error;
 use std::fmt;
 use std::path::PathBuf;
 
+pub use algebra::{
+    Component, ComponentSource, Components, FieldPatch, MutationGroup, VersionedField, coalesce,
+};
 use chrono::{DateTime, Utc};
 use model::{
     Agent, AgentId, AgentKind, AgentParent, AgentPhase, Attention, Capabilities, ClaudeDriver,
@@ -23,11 +28,19 @@ use model::{
     StructuredProtocol, Summary, SummaryEnvelope, SummaryField, SupportedAgentType, TodoProgress,
     Why, WorkingOn,
 };
+pub use oracle::{LifecycleRevisions, MutationOracle};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// The largest complete encoded entry key accepted by the fold and store.
 pub const ENTRY_KEY_MAX_BYTES: usize = 512;
+pub const ORDER_SLOT_MAX: u16 = 1023;
+pub const TIP_MAX_BYTES: usize = 1024 * 1024;
+pub const STREAMING_BLOCK_MAX_BYTES: usize = 64 * 1024;
+pub const TIP_MAX_OPEN_ENTRIES: usize = 256;
+pub const ENTRY_MAX_COMPONENTS: usize = 256;
+pub const DESKTOP_ENTRY_MAX_BYTES: usize = 512 * 1024;
+pub const PHONE_ENTRY_MAX_BYTES: usize = 256 * 1024;
 
 /// A segment number within one agent. Zero means that no segment exists yet.
 pub type SegmentId = u32;
@@ -166,10 +179,68 @@ impl fmt::Display for EntryKeyTooLong {
 impl Error for EntryKeyTooLong {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "OrderRepr", into = "OrderRepr")]
 pub struct Order {
-    pub seq: Seq,
+    seq: Seq,
+    slot: u16,
+}
+
+impl Order {
+    pub fn new(seq: Seq, slot: u16) -> Result<Self, OrderSlotTooLarge> {
+        if slot > ORDER_SLOT_MAX {
+            return Err(OrderSlotTooLarge { slot });
+        }
+        Ok(Self { seq, slot })
+    }
+
+    pub fn seq(self) -> Seq {
+        self.seq
+    }
+
+    pub fn slot(self) -> u16 {
+        self.slot
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct OrderRepr {
+    seq: Seq,
+    slot: u16,
+}
+
+impl TryFrom<OrderRepr> for Order {
+    type Error = OrderSlotTooLarge;
+
+    fn try_from(value: OrderRepr) -> Result<Self, Self::Error> {
+        Self::new(value.seq, value.slot)
+    }
+}
+
+impl From<Order> for OrderRepr {
+    fn from(value: Order) -> Self {
+        Self {
+            seq: value.seq,
+            slot: value.slot,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OrderSlotTooLarge {
     pub slot: u16,
 }
+
+impl fmt::Display for OrderSlotTooLarge {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "entry slot is {}; the maximum is {ORDER_SLOT_MAX}",
+            self.slot
+        )
+    }
+}
+
+impl Error for OrderSlotTooLarge {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Revision {
@@ -178,12 +249,27 @@ pub struct Revision {
     pub ordinal: u32,
 }
 
+impl Revision {
+    pub const fn row(seq: Seq) -> Self {
+        Self {
+            seq,
+            fence: 0,
+            ordinal: 0,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Patch<T> {
     #[default]
     Unchanged,
-    Set(T),
-    Clear,
+    Set {
+        value: T,
+        revision: Revision,
+    },
+    Clear {
+        revision: Revision,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,8 +279,24 @@ pub enum Promotion {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MergeDefect {
-    EqualRevisionDisagreement { field: String, revision: Revision },
-    AliasCycle { from: EntryKey, to: EntryKey },
+    EqualRevisionDisagreement {
+        field: String,
+        revision: Revision,
+    },
+    ComponentDisagreement {
+        source: String,
+    },
+    AliasCycle {
+        from: EntryKey,
+        to: EntryKey,
+    },
+    InvalidLifecycleFence,
+    RevisionExhausted,
+    EntryOverBudget {
+        key: EntryKey,
+        encoded_bytes: usize,
+        budget: usize,
+    },
 }
 
 impl fmt::Display for MergeDefect {
@@ -208,6 +310,24 @@ impl fmt::Display for MergeDefect {
             Self::AliasCycle { from, to } => {
                 write!(formatter, "alias from {from} to {to} would form a cycle")
             }
+            Self::ComponentDisagreement { source } => {
+                write!(
+                    formatter,
+                    "component {source} disagrees with its retransmission"
+                )
+            }
+            Self::InvalidLifecycleFence => {
+                formatter.write_str("lifecycle revisions require an accepted nonzero fence")
+            }
+            Self::RevisionExhausted => formatter.write_str("revision ordinal exhausted"),
+            Self::EntryOverBudget {
+                key,
+                encoded_bytes,
+                budget,
+            } => write!(
+                formatter,
+                "entry {key} remains {encoded_bytes} bytes after clipping to {budget} bytes"
+            ),
         }
     }
 }
@@ -227,7 +347,16 @@ pub trait Entry: Serialize + DeserializeOwned + Clone + PostcardSafe {
     fn kind(&self) -> &'static str;
     fn text(&self) -> Option<&str>;
     fn merge(&mut self, patch: &Self::Partial) -> Result<(), MergeDefect>;
-    fn from_partial(patch: &Self::Partial) -> Self;
+    fn from_partial(patch: &Self::Partial) -> Result<Self, MergeDefect>;
+    /// Merge an aliased source into this target. Target fields win when both
+    /// are present unless the named promotion defines a provider exception.
+    fn merge_alias(
+        &mut self,
+        source: &Self,
+        promotion: Option<Promotion>,
+    ) -> Result<(), MergeDefect>;
+    /// Apply a promotion when only one side of an alias currently exists.
+    fn promote(&mut self, promotion: Option<Promotion>) -> Result<(), MergeDefect>;
     fn clip(&mut self, budget: usize);
     fn bytes(&self) -> usize;
 }
@@ -800,7 +929,7 @@ model_struct_safe!(
 composite_safe!(EntryKey => [String]);
 composite_safe!(Order => [u64, u16]);
 composite_safe!(Revision => [u64, u64, u32]);
-composite_safe!(MergeDefect => [String, Revision, EntryKey]);
+composite_safe!(MergeDefect => [String, Revision, EntryKey, usize]);
 composite_safe!(JsonBytes => [Vec<u8>]);
 composite_safe!(Generations => [u64]);
 composite_safe!(AttemptId => [u64]);
@@ -868,9 +997,40 @@ impl<A: PostcardSafe, B: PostcardSafe, C: PostcardSafe> PostcardSafe for (A, B, 
 impl<T: PostcardSafe> private::Sealed for Patch<T> {
     fn assert_fields_are_postcard_safe() {
         assert_postcard_safe::<T>();
+        assert_postcard_safe::<Revision>();
     }
 }
 impl<T: PostcardSafe> PostcardSafe for Patch<T> {}
+
+impl<T: PostcardSafe> private::Sealed for VersionedField<T> {
+    fn assert_fields_are_postcard_safe() {
+        assert_postcard_safe::<T>();
+        assert_postcard_safe::<Revision>();
+    }
+}
+impl<T: PostcardSafe> PostcardSafe for VersionedField<T> {}
+
+composite_safe!(ComponentSource => [u64, u16, String]);
+
+impl<T: PostcardSafe> private::Sealed for Component<T> {
+    fn assert_fields_are_postcard_safe() {
+        assert_postcard_safe::<ComponentSource>();
+        assert_postcard_safe::<u64>();
+        assert_postcard_safe::<Vec<ComponentSource>>();
+        assert_postcard_safe::<T>();
+    }
+}
+impl<T: PostcardSafe> PostcardSafe for Component<T> {}
+
+impl<T: PostcardSafe> private::Sealed for Components<T> {
+    fn assert_fields_are_postcard_safe() {
+        assert_postcard_safe::<Component<T>>();
+        assert_postcard_safe::<Revision>();
+        assert_postcard_safe::<u64>();
+        assert_postcard_safe::<bool>();
+    }
+}
+impl<T: PostcardSafe> PostcardSafe for Components<T> {}
 
 impl<E: Entry> private::Sealed for Mutation<E> {
     fn assert_fields_are_postcard_safe() {
@@ -882,6 +1042,14 @@ impl<E: Entry> private::Sealed for Mutation<E> {
     }
 }
 impl<E: Entry> PostcardSafe for Mutation<E> {}
+
+impl<E: Entry> private::Sealed for MutationGroup<E> {
+    fn assert_fields_are_postcard_safe() {
+        assert_postcard_safe::<EntryKey>();
+        assert_postcard_safe::<Mutation<E>>();
+    }
+}
+impl<E: Entry> PostcardSafe for MutationGroup<E> {}
 
 impl<E: Entry> private::Sealed for Changes<E> {
     fn assert_fields_are_postcard_safe() {
@@ -965,15 +1133,31 @@ mod tests {
 
     #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct TestEntry {
-        text: String,
+        description: VersionedField<String>,
+        status: VersionedField<String>,
+        components: Components<String>,
+        promoted: bool,
+        clipped: bool,
     }
 
     #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     struct TestPartial {
-        text: Patch<String>,
+        description: FieldPatch<String>,
+        status: FieldPatch<String>,
+        components: Vec<Component<String>>,
+        final_components: Option<(Seq, Revision, Vec<Component<String>>)>,
     }
 
-    leaf_safe!(TestEntry, TestPartial);
+    composite_safe!(TestEntry => [
+        VersionedField<String>,
+        Components<String>,
+        bool,
+    ]);
+    composite_safe!(TestPartial => [
+        FieldPatch<String>,
+        Vec<Component<String>>,
+        Option<(Seq, Revision, Vec<Component<String>>)>,
+    ]);
 
     impl Entry for TestEntry {
         type Partial = TestPartial;
@@ -983,30 +1167,83 @@ mod tests {
         }
 
         fn text(&self) -> Option<&str> {
-            Some(&self.text)
+            self.description.value().map(String::as_str)
         }
 
         fn merge(&mut self, patch: &Self::Partial) -> Result<(), MergeDefect> {
-            match &patch.text {
-                Patch::Unchanged => {}
-                Patch::Set(text) => self.text.clone_from(text),
-                Patch::Clear => self.text.clear(),
+            self.description.merge("description", &patch.description)?;
+            self.status.merge("status", &patch.status)?;
+            for component in &patch.components {
+                self.components.merge(component.clone())?;
+            }
+            if let Some((through, revision, replacement)) = &patch.final_components {
+                self.components
+                    .replace_final(*through, *revision, replacement.clone())?;
             }
             Ok(())
         }
 
-        fn from_partial(patch: &Self::Partial) -> Self {
+        fn from_partial(patch: &Self::Partial) -> Result<Self, MergeDefect> {
             let mut entry = Self::default();
-            entry.merge(patch).expect("test merge cannot fail");
-            entry
+            entry.merge(patch)?;
+            Ok(entry)
+        }
+
+        fn merge_alias(
+            &mut self,
+            source: &Self,
+            promotion: Option<Promotion>,
+        ) -> Result<(), MergeDefect> {
+            self.description.fill_unknown_from(&source.description);
+            self.status.fill_unknown_from(&source.status);
+            for component in source.components.values() {
+                self.components.merge(component.clone())?;
+            }
+            self.promote(promotion)
+        }
+
+        fn promote(&mut self, promotion: Option<Promotion>) -> Result<(), MergeDefect> {
+            self.promoted |= promotion == Some(Promotion::ToolToTask);
+            Ok(())
         }
 
         fn clip(&mut self, budget: usize) {
-            self.text.truncate(budget.min(self.text.len()));
+            self.components.clip_by(
+                ENTRY_MAX_COMPONENTS,
+                budget.saturating_sub(32),
+                |component| component.value.len() + 24,
+            );
+            self.clipped |= self.components.is_clipped();
+            while self.bytes() > budget {
+                if self
+                    .description
+                    .value_mut()
+                    .is_some_and(|description| description.pop().is_some())
+                {
+                    self.clipped = true;
+                    continue;
+                }
+                if self
+                    .status
+                    .value_mut()
+                    .is_some_and(|status| status.pop().is_some())
+                {
+                    self.clipped = true;
+                    continue;
+                }
+                break;
+            }
         }
 
         fn bytes(&self) -> usize {
-            self.text.len()
+            32 + self.description.value().map_or(0, String::len)
+                + self.status.value().map_or(0, String::len)
+                + self
+                    .components
+                    .values()
+                    .iter()
+                    .map(|component| component.value.len() + 24)
+                    .sum::<usize>()
         }
     }
 
@@ -1127,6 +1364,32 @@ mod tests {
         assert_eq!(*value, decoded);
     }
 
+    fn revision(seq: Seq) -> Revision {
+        Revision::row(seq)
+    }
+
+    fn order(seq: Seq, slot: u16) -> Order {
+        Order::new(seq, slot).expect("valid test order")
+    }
+
+    fn component(seq: Seq, text: &str) -> Component<String> {
+        Component {
+            source: ComponentSource::Sequence { seq, slot: 0 },
+            observed_at: seq,
+            after: Vec::new(),
+            value: text.to_owned(),
+        }
+    }
+
+    fn upsert(key_value: &str, seq: Seq, entry: TestPartial) -> Mutation<TestEntry> {
+        Mutation::Upsert {
+            key: key(key_value),
+            order: order(seq, 0),
+            revision: revision(seq),
+            entry,
+        }
+    }
+
     #[test]
     fn complete_vocabulary_round_trips_through_postcard() {
         let segment: SegmentId = 1;
@@ -1171,8 +1434,17 @@ mod tests {
             ordinal: 6,
         });
         roundtrip(&Patch::<String>::Unchanged);
-        roundtrip(&Patch::Set("value".to_string()));
-        roundtrip(&Patch::<String>::Clear);
+        roundtrip(&Patch::set("value".to_string(), revision(3)));
+        roundtrip(&Patch::<String>::clear(revision(3)));
+        roundtrip(&FieldPatch::set("value".to_string(), revision(4)));
+        roundtrip(&FieldPatch::<String>::clear(revision(5)));
+        roundtrip(&VersionedField::<String>::default());
+        roundtrip(&component(4, "delta"));
+        let mut components = Components::default();
+        components
+            .merge(component(4, "delta"))
+            .expect("component merge");
+        roundtrip(&components);
         roundtrip(&Promotion::ToolToTask);
         roundtrip(&MergeDefect::EqualRevisionDisagreement {
             field: "status".into(),
@@ -1194,7 +1466,8 @@ mod tests {
                 order: Order { seq: 9, slot: 0 },
                 revision,
                 entry: TestPartial {
-                    text: Patch::Set("hello".into()),
+                    description: FieldPatch::set("hello".into(), revision),
+                    ..TestPartial::default()
                 },
             },
             Mutation::Delete {
@@ -1210,6 +1483,10 @@ mod tests {
         ];
         for mutation in &mutations {
             roundtrip(mutation);
+        }
+        let groups = coalesce(&mutations, &[]).expect("coalesced sample mutations");
+        for group in &groups {
+            roundtrip(group);
         }
         roundtrip(&Changes::<TestEntry> {
             summary: Some(sample_summary()),
@@ -1279,9 +1556,11 @@ mod tests {
             segment: 1,
             order: Order { seq: 9, slot: 0 },
             revision,
-            entry: TestEntry {
-                text: "hello".into(),
-            },
+            entry: TestEntry::from_partial(&TestPartial {
+                description: FieldPatch::set("hello".into(), revision),
+                ..TestPartial::default()
+            })
+            .expect("valid sample entry"),
         };
         roundtrip(&boundary);
         roundtrip(&stored);
@@ -1438,7 +1717,12 @@ mod tests {
         assert_safe::<TestEntry>();
         assert_safe::<TestPartial>();
         assert_safe::<TestFold>();
+        assert_safe::<FieldPatch<String>>();
+        assert_safe::<VersionedField<String>>();
+        assert_safe::<Component<String>>();
+        assert_safe::<Components<String>>();
         assert_safe::<Mutation<TestEntry>>();
+        assert_safe::<MutationGroup<TestEntry>>();
         assert_safe::<Changes<TestEntry>>();
         assert_safe::<AgentFold>();
         assert_safe::<JsonBytes>();
@@ -1481,5 +1765,344 @@ mod tests {
             EntryKey::new(unicode).unwrap_err(),
             EntryKeyTooLong { encoded_bytes: 514 }
         );
+    }
+
+    #[test]
+    fn order_rejects_slots_beyond_the_row_budget_in_construction_and_postcard() {
+        assert_eq!(order(1, ORDER_SLOT_MAX).slot(), ORDER_SLOT_MAX);
+        assert_eq!(
+            Order::new(1, ORDER_SLOT_MAX + 1).unwrap_err(),
+            OrderSlotTooLarge {
+                slot: ORDER_SLOT_MAX + 1
+            }
+        );
+
+        let encoded = postcard::to_allocvec(&OrderRepr {
+            seq: 1,
+            slot: ORDER_SLOT_MAX + 1,
+        })
+        .expect("encode unchecked representation");
+        assert!(postcard::from_bytes::<Order>(&encoded).is_err());
+    }
+
+    #[test]
+    fn fields_merge_independently_by_revision_and_clear_records_knowledge() {
+        let mut entry = TestEntry::default();
+        entry
+            .merge(&TestPartial {
+                description: FieldPatch::set("draft".into(), revision(10)),
+                ..TestPartial::default()
+            })
+            .unwrap();
+        entry
+            .merge(&TestPartial {
+                status: FieldPatch::set("done".into(), revision(30)),
+                ..TestPartial::default()
+            })
+            .unwrap();
+        entry
+            .merge(&TestPartial {
+                description: FieldPatch::set("revised".into(), revision(20)),
+                ..TestPartial::default()
+            })
+            .unwrap();
+
+        assert_eq!(
+            entry.description.value().map(String::as_str),
+            Some("revised")
+        );
+        assert_eq!(entry.description.revision(), Some(revision(20)));
+        assert_eq!(entry.status.value().map(String::as_str), Some("done"));
+        assert_eq!(entry.status.revision(), Some(revision(30)));
+
+        let clear = TestPartial {
+            description: FieldPatch::clear(revision(40)),
+            ..TestPartial::default()
+        };
+        entry.merge(&clear).unwrap();
+        entry.merge(&clear).unwrap();
+        assert!(entry.description.is_known());
+        assert_eq!(entry.description.value(), None);
+
+        let defect = entry
+            .merge(&TestPartial {
+                description: FieldPatch::set("disagrees".into(), revision(40)),
+                ..TestPartial::default()
+            })
+            .unwrap_err();
+        assert_eq!(
+            defect,
+            MergeDefect::EqualRevisionDisagreement {
+                field: "description".into(),
+                revision: revision(40),
+            }
+        );
+    }
+
+    #[test]
+    fn components_union_idempotently_and_final_replacement_supersedes_deltas() {
+        let mut components = Components::default();
+        assert!(components.merge(component(10, "hel")).unwrap());
+        assert!(!components.merge(component(10, "hel")).unwrap());
+        assert_eq!(components.values().len(), 1);
+
+        let final_component = Component {
+            source: ComponentSource::Native {
+                id: "final-row".into(),
+                slot: 0,
+            },
+            observed_at: 20,
+            after: Vec::new(),
+            value: "hello".into(),
+        };
+        assert!(
+            components
+                .replace_final(20, revision(20), vec![final_component.clone()])
+                .unwrap()
+        );
+        assert!(
+            !components
+                .replace_final(20, revision(20), vec![final_component])
+                .unwrap()
+        );
+        assert_eq!(components.values().len(), 1);
+        assert_eq!(components.values()[0].value, "hello");
+        assert!(!components.merge(component(12, "stale")).unwrap());
+    }
+
+    #[test]
+    fn coalescing_keeps_compound_alias_work_in_one_ordered_group() {
+        let mutations = vec![
+            upsert(
+                "tool:1",
+                10,
+                TestPartial {
+                    description: FieldPatch::set("launch".into(), revision(10)),
+                    ..TestPartial::default()
+                },
+            ),
+            Mutation::Alias {
+                from: key("tool:1"),
+                to: key("task:1"),
+                revision: revision(20),
+                promote: Some(Promotion::ToolToTask),
+            },
+            upsert(
+                "task:1",
+                20,
+                TestPartial {
+                    status: FieldPatch::set("running".into(), revision(20)),
+                    ..TestPartial::default()
+                },
+            ),
+        ];
+
+        let groups = coalesce(&mutations, &[]).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].canonical, key("task:1"));
+        assert_eq!(groups[0].mutations.len(), 3);
+    }
+
+    #[test]
+    fn oracle_enforces_tombstones_identity_alias_placement_and_cycles() {
+        let mut oracle = MutationOracle::<TestEntry>::default();
+        oracle
+            .apply(&[upsert(
+                "tool:1",
+                10,
+                TestPartial {
+                    description: FieldPatch::set("launch".into(), revision(10)),
+                    ..TestPartial::default()
+                },
+            )])
+            .unwrap();
+        oracle
+            .apply(&[upsert(
+                "task:1",
+                20,
+                TestPartial {
+                    status: FieldPatch::set("running".into(), revision(20)),
+                    ..TestPartial::default()
+                },
+            )])
+            .unwrap();
+        oracle
+            .apply(&[Mutation::Alias {
+                from: key("tool:1"),
+                to: key("task:1"),
+                revision: revision(30),
+                promote: Some(Promotion::ToolToTask),
+            }])
+            .unwrap();
+
+        let entries = oracle.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].key, key("task:1"));
+        assert_eq!(entries[0].order, order(20, 0), "target placement wins");
+        assert_eq!(
+            entries[0].entry.description.value().map(String::as_str),
+            Some("launch")
+        );
+        assert_eq!(
+            entries[0].entry.status.value().map(String::as_str),
+            Some("running")
+        );
+        assert!(entries[0].entry.promoted);
+
+        let before_cycle = oracle.entries();
+        assert_eq!(
+            oracle
+                .apply(&[Mutation::Alias {
+                    from: key("task:1"),
+                    to: key("tool:1"),
+                    revision: revision(31),
+                    promote: None,
+                }])
+                .unwrap_err(),
+            MergeDefect::AliasCycle {
+                from: key("task:1"),
+                to: key("tool:1"),
+            }
+        );
+        assert_eq!(
+            oracle.entries(),
+            before_cycle,
+            "defects roll back atomically"
+        );
+
+        oracle
+            .apply(&[Mutation::Delete {
+                key: key("task:1"),
+                revision: revision(40),
+            }])
+            .unwrap();
+        oracle
+            .apply(&[upsert(
+                "tool:1",
+                40,
+                TestPartial {
+                    status: FieldPatch::set("stale".into(), revision(40)),
+                    ..TestPartial::default()
+                },
+            )])
+            .unwrap();
+        assert!(oracle.entries().is_empty(), "delete wins at equal revision");
+        oracle
+            .apply(&[upsert(
+                "tool:1",
+                41,
+                TestPartial {
+                    status: FieldPatch::set("revived".into(), revision(41)),
+                    ..TestPartial::default()
+                },
+            )])
+            .unwrap();
+        assert_eq!(oracle.entries().len(), 1, "strictly newer upsert revives");
+
+        let mut delete_before_alias = MutationOracle::<TestEntry>::default();
+        delete_before_alias
+            .apply(&[upsert(
+                "tool:deleted",
+                10,
+                TestPartial {
+                    description: FieldPatch::set("launch".into(), revision(10)),
+                    ..TestPartial::default()
+                },
+            )])
+            .unwrap();
+        delete_before_alias
+            .apply(&[Mutation::Delete {
+                key: key("task:deleted"),
+                revision: revision(20),
+            }])
+            .unwrap();
+        delete_before_alias
+            .apply(&[Mutation::Alias {
+                from: key("tool:deleted"),
+                to: key("task:deleted"),
+                revision: revision(20),
+                promote: Some(Promotion::ToolToTask),
+            }])
+            .unwrap();
+        assert!(
+            delete_before_alias.entries().is_empty(),
+            "a target delete wins over an equal-revision alias"
+        );
+    }
+
+    #[test]
+    fn oracle_continuation_matches_uninterrupted_materialisation() {
+        let prefix = vec![upsert(
+            "msg:stable",
+            10,
+            TestPartial {
+                description: FieldPatch::set("first".into(), revision(10)),
+                components: vec![component(10, "a")],
+                ..TestPartial::default()
+            },
+        )];
+        let suffix = vec![upsert(
+            "msg:stable",
+            30,
+            TestPartial {
+                status: FieldPatch::set("complete".into(), revision(30)),
+                description: FieldPatch::set("late".into(), revision(20)),
+                components: vec![component(10, "a"), component(30, "b")],
+                ..TestPartial::default()
+            },
+        )];
+
+        let mut continued = MutationOracle::<TestEntry>::default();
+        continued.apply(&prefix).unwrap();
+        let mut restored = continued.clone();
+        restored.apply(&suffix).unwrap();
+
+        let mut uninterrupted = MutationOracle::<TestEntry>::default();
+        uninterrupted.apply(&prefix).unwrap();
+        uninterrupted.apply(&suffix).unwrap();
+
+        assert_eq!(restored.entries(), uninterrupted.entries());
+        assert_eq!(restored.redirects(), uninterrupted.redirects());
+        assert_eq!(restored.tombstones(), uninterrupted.tombstones());
+        assert_eq!(restored.entries()[0].order, order(10, 0));
+        assert_eq!(restored.entries()[0].entry.components.values().len(), 2);
+    }
+
+    #[test]
+    fn lifecycle_revisions_follow_rows_and_keep_accepted_fence_provenance() {
+        assert_eq!(
+            LifecycleRevisions::new(30, 0).unwrap_err(),
+            MergeDefect::InvalidLifecycleFence
+        );
+        let mut lifecycle = LifecycleRevisions::new(30, 7).unwrap();
+        let first = lifecycle.next_revision().unwrap();
+        let second = lifecycle.next_revision().unwrap();
+        assert!(first > revision(30));
+        assert_eq!(first.fence, 7);
+        assert_eq!(first.ordinal, 0);
+        assert_eq!(second.ordinal, 1);
+    }
+
+    #[test]
+    fn oracle_clips_whole_entries_and_component_counts_to_the_configured_budget() {
+        let mut oracle = MutationOracle::<TestEntry>::new(1, 256);
+        let components = (0..300)
+            .map(|seq| component(seq, &"x".repeat(32)))
+            .collect();
+        oracle
+            .apply(&[upsert(
+                "msg:large",
+                1,
+                TestPartial {
+                    description: FieldPatch::set("y".repeat(512), revision(1)),
+                    components,
+                    ..TestPartial::default()
+                },
+            )])
+            .unwrap();
+        let entry = &oracle.entries()[0].entry;
+        assert!(entry.bytes() <= 256);
+        assert!(entry.components.values().len() <= ENTRY_MAX_COMPONENTS);
+        assert!(entry.clipped);
     }
 }
