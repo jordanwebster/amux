@@ -86,6 +86,13 @@ pub(super) fn observe(layer: &mut ClaudeSdkLayer, row: &Value) {
     }
 }
 
+/// A dialog payload a person can answer from a chat: a message and the
+/// labelled choices it offers, in the payload's own order.
+///
+/// No dialog kind has ever been recorded, so this is deliberately the one
+/// shape the answer encoder can express. Deriving it here rather than in each
+/// panel keeps a dialog from being offered as answerable on screen and then
+/// refused at dispatch.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DialogChoices {
     pub message: String,
@@ -98,6 +105,8 @@ pub struct DialogChoice {
     pub description: Option<String>,
 }
 
+/// The choices a dialog payload offers, or `None` when its shape is not one
+/// this build can answer.
 pub fn dialog_choices(payload: &Value) -> Option<DialogChoices> {
     let message = payload["message"].as_str()?;
     let options = payload["options"].as_array().filter(|options| {
@@ -118,6 +127,9 @@ pub fn dialog_choices(payload: &Value) -> Option<DialogChoices> {
     })
 }
 
+/// What an unanswerable payload holds, in bounded words. Raw JSON is never
+/// shown: a person deciding whether to cancel needs to know the shape of what
+/// they are declining, not its bytes.
 pub fn dialog_payload_summary(payload: &Value) -> String {
     match payload {
         Value::Object(fields) if fields.is_empty() => "an empty object".to_string(),
@@ -143,6 +155,7 @@ pub fn dialog_payload_summary(payload: &Value) -> String {
     }
 }
 
+/// One bounded, control-free fragment of a provider's own words.
 fn sanitize(text: &str) -> String {
     let cleaned: String = text
         .chars()

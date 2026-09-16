@@ -109,14 +109,25 @@ pub struct Progress {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct HostRevision(pub u64);
 
-/// Why an agent message was sent, as its carrier stated it.
+/// Why an agent message was sent, as its carrier stated it. This is amux's
+/// envelope vocabulary rather than either provider layer's: both layers read
+/// the same fact off carriers that merely spell it differently. What each
+/// layer keeps to itself is the entry — Claude's is what a transcript could
+/// recover, while Codex's names the carrier that accepted it — because those
+/// are provider-specific facts.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "message_kind", rename_all = "snake_case")]
 pub enum AgentMessageKind {
     Message,
+    /// The sender finished a turn.
     Completed,
+    /// The sender's session ended.
     Exited,
-    Other { label: String },
+    /// A kind this build does not know.
+    Other {
+        label: String,
+    },
+    /// The carrier stated none.
     Unstated,
 }
 
@@ -133,10 +144,17 @@ impl AgentMessageKind {
         }
     }
 
+    /// What kind of row this makes. Decided here because the kind is decided
+    /// here: a completion that wore a finished mark in one provider's chat and
+    /// read as an ordinary message in another's would be one envelope
+    /// vocabulary presented as two.
     pub fn presentation(&self) -> AgentMessagePresentation {
         match self {
             Self::Completed => AgentMessagePresentation::Finished,
             Self::Exited => AgentMessagePresentation::Notice,
+            // A kind this build does not know is shown as the message it plainly
+            // is, body and all: the unknown is in the label, not in the words
+            // someone sent.
             Self::Message | Self::Other { .. } | Self::Unstated => {
                 AgentMessagePresentation::Inbound
             }
@@ -144,11 +162,20 @@ impl AgentMessageKind {
     }
 }
 
+/// How a delivered message occupies a chat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "presentation", rename_all = "snake_case")]
 pub enum AgentMessagePresentation {
+    /// A sender marker, then the body: another agent is talking to this one.
     Inbound,
+    /// The same, with a finished mark, over a body that closes to its first
+    /// line. A completion carries the sender's whole last message, so it is as
+    /// long as that message was and a chat that always spent its full height on
+    /// one would bury the conversation it belongs to.
     Finished,
+    /// One line, no body to open. The envelope reports an event rather than
+    /// carrying words — an exit's body is empty by construction, and a row
+    /// that offered to expand nothing would misstate what is there.
     Notice,
 }
 

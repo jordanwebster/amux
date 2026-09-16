@@ -1,4 +1,6 @@
-//! Claude SDK stream observation shared by clients and the daemon.
+//! Claude SDK stream observation shared by clients and the daemon. Provider
+//! block identity and task lifecycle are preserved independently of the
+//! terminal transcript's inferred turns.
 //!
 //! Reducer commands, optimistic input, answer dispatch, attachments, and
 //! renderer state deliberately remain outside this module. The observation
@@ -17,6 +19,7 @@ use crate::claude_pty::facts::{
 use crate::claude_pty::{ClaudeTodos, TodoDisposition};
 
 pub const FEED_RETAINED: usize = 1000;
+/// A single streaming block cannot grow without bound while the feed is idle.
 pub const CONTENT_BYTES_RETAINED: usize = 64 * 1024;
 const ID_BYTES_RETAINED: usize = 512;
 
@@ -25,13 +28,21 @@ pub struct FeedEntry {
     pub id: u64,
     pub seq: u64,
     pub kind: FeedEntryKind,
+    /// The provider message and block this entry represents, when applicable.
     pub block: Option<BlockId>,
+    /// The tool use whose subagent produced this entry, when it was not the
+    /// session's own. Stream-JSON carries a subagent's rows on the parent's
+    /// stream with this id set. Kept apart from `block` so a row that arrives
+    /// without its block — a result-only tail — still says whose it was.
     pub parent_tool_use_id: Option<String>,
+    /// Payload clipping is separate from missing earlier feed entries.
     pub content_truncated: bool,
     final_row_id: Option<String>,
 }
 
 impl FeedEntry {
+    /// The tool use whose subagent produced this entry, when it was not the
+    /// session's own.
     pub fn parent_tool_use_id(&self) -> Option<&str> {
         self.parent_tool_use_id.as_deref()
     }
@@ -64,6 +75,7 @@ pub enum FeedEntryKind {
 #[serde(rename_all = "snake_case")]
 pub enum Finality {
     Streaming,
+    /// The block stopped; its authoritative assistant row may still follow.
     Stopped,
     Complete,
     Interrupted,
@@ -124,6 +136,9 @@ pub enum TaskState {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TaskEntry {
     pub task_id: String,
+    /// The `Task`/`Agent` tool use that launched it. The lifecycle rows carry
+    /// it, so the launch row and the task are one entry rather than two rows
+    /// naming the same subagent.
     pub tool_use_id: Option<String>,
     pub description: String,
     pub subagent_type: Option<String>,
@@ -405,6 +420,11 @@ pub fn observe_ask(row: &Value) -> Option<AskObservation> {
     })
 }
 
+/// One field per property of the schema, ordered by field name. A JSON
+/// object's keys do not keep the order they were written in once the row has
+/// been read, so the declaration order the server intended is not available
+/// here; name order is the one order stable across every reading of the same
+/// schema.
 fn elicitation_fields(schema: &Value) -> Result<Vec<ElicitationField>, String> {
     let root = schema.as_object().ok_or("form schema is not an object")?;
     if schema["type"] != "object" {

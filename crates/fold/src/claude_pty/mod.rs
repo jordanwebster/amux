@@ -93,16 +93,25 @@ pub struct SessionFacts {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentMessageEntry {
+    /// The envelope id, verbatim. Kept as the carrier wrote it rather than
+    /// re-typed: the only thing the client does with it is match it against
+    /// another envelope's `context`, and an unparseable id is better shown
+    /// than dropped.
     pub id: Option<String>,
+    /// The envelope this one answers or continues.
     pub context: Option<String>,
+    /// Who sent it: `name/host`, or `human`.
     pub from: String,
     pub kind: AgentMessageKind,
     pub text: String,
 }
 
+/// One feed entry: a single rendered unit (`docs/CHAT.md` §Vocabulary).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FeedEntry<C> {
+    /// Monotonic within a transcript epoch; the canonical feed order.
     pub id: u64,
+    /// Stream sequence of the row that created the entry (provenance).
     pub seq: u64,
     pub kind: FeedEntryKind<C>,
 }
@@ -110,44 +119,76 @@ pub struct FeedEntry<C> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "entry", rename_all = "snake_case")]
 pub enum FeedEntryKind<C> {
+    /// A user prompt (B1).
     Prompt(PromptEntry<C>),
+    /// An assistant message's text, upserted by `message.id` (B2).
     Message(MessageEntry<C>),
+    /// Retroactive `~ thought for Ns` marker (B3, INFERRED from FACT
+    /// timestamps).
     Thinking(ThinkingEntry),
+    /// Turn closure rule (B3).
     Turn(TurnEntry),
+    /// Compaction boundary (B3, FACT).
     Compaction(CompactionEntry),
+    /// The post-compaction summary row, flagged transcript-only in the source
+    /// (semantics §16).
     CompactSummary(CompactSummaryEntry),
+    /// One tool use, paired by `tool_use.id` (B4).
     Tool(ToolEntry),
+    /// A background-subagent completion notice (B7, FACT it finished; content
+    /// is prose).
     TaskNotification(TaskNotificationEntry),
+    /// A message another amux agent sent to this one, read out of the
+    /// recipient's own row (no synthetic provenance exists anywhere).
     AgentMessage(AgentMessageEntry),
+    /// Interruption marker (B8, FACT rows).
     Interruption(InterruptionEntry),
+    /// `isApiErrorMessage:true` row (B8, FACT).
     ApiError(ApiErrorEntry),
+    /// A row shape this build does not know. Retained and rendered explicitly,
+    /// never silently dropped (G1).
     Unrecognized(UnrecognizedEntry),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PromptEntry<C> {
     pub text: String,
+    /// Parsed message content, with attachment mentions left as typed segments.
     pub content: Vec<C>,
     pub source: PromptSource,
+    /// Groups the turn's rows and reconciles an optimistic echo.
     pub prompt_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MessageEntry<C> {
+    /// The API message id (`msg_*`) — the upsert key (B2).
     pub message_id: String,
+    /// Markdown source segments, one per `text` block, in file order.
     pub segments: Vec<String>,
+    /// The joined message text split into presentation content.
     pub content: Vec<C>,
     pub finality: MessageFinality,
 }
 
+/// How the prompt reached the session, from the row's own discriminators
+/// (`origin.kind` / `promptSource`, ≥2.1.22x — FACT; absent on older rows and
+/// on bare local-command records).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum PromptSource {
     Typed,
     Queued,
     SuggestionAccepted,
+    /// `origin.kind:"human"` without a known `promptSource`.
     Human,
-    Other { label: String },
+    /// A `promptSource` value this build does not know.
+    Other {
+        label: String,
+    },
+    /// No discriminator on the row (older versions; bare local-command records
+    /// such as `/compact`). Rendered as a prompt, but never treated as a turn
+    /// start.
     Unstated,
 }
 
@@ -165,18 +206,31 @@ pub fn prompt_source(row: &Value) -> PromptSource {
     }
 }
 
+/// "Streaming" is not a state (B2): a message is Open only until a closing
+/// fact or closing inference arrives, and is never rendered as streaming.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "finality", rename_all = "snake_case")]
 pub enum MessageFinality {
+    /// Newest row still carries a null `stop_reason`.
     Open,
+    /// Some row carried a non-null `stop_reason` (FACT).
     Final { stop_reason: String },
+    /// Closed by an interrupt row (§17 — FACT-paired via
+    /// `interruptedMessageId` where present).
     Interrupted,
+    /// Closed because a new message, prompt, or user row arrived while the
+    /// `stop_reason` was still null (INFERRED; upgraded to `Final` if the fact
+    /// lands later).
     Abandoned,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThinkingEntry {
+    /// `thinking_row.ts − previous_row.ts`, clamped at zero (INFERRED from FACT
+    /// timestamps; includes API latency). `None` when the chain is broken —
+    /// never computed across an interrupt or compaction (B3).
     pub duration_ms: Option<i64>,
+    /// `redacted_thinking` renders the same marker flagged redacted.
     pub redacted: bool,
 }
 
@@ -197,14 +251,21 @@ pub fn thinking_entry(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnEntry {
     pub duration: TurnDuration,
+    /// Cumulative conversation messages (`turn_duration.messageCount`).
     pub message_count: Option<u64>,
+    /// FACT count of still-running background subagents at turn end (B7).
     pub pending_background_agents: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "duration", rename_all = "snake_case")]
 pub enum TurnDuration {
+    /// `system/turn_duration.durationMs` — the authority (FACT,
+    /// wall-time-verified).
     Measured { ms: u64 },
+    /// Interrupt-ended turns have no `turn_duration`; elapsed from the prompt
+    /// row's timestamp (INFERRED). Reconciled in place to `Measured` if the
+    /// authority lands after all (observed on tool-use denials).
     SincePrompt { ms: i64 },
 }
 
@@ -222,6 +283,7 @@ pub fn measured_turn(row: &Value) -> Option<TurnEntry> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompactionEntry {
+    /// `"manual"` or `"auto"` (FACT).
     pub trigger: Option<String>,
     pub pre_tokens: Option<u64>,
     pub post_tokens: Option<u64>,
@@ -244,10 +306,17 @@ pub struct CompactSummaryEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolEntry {
     pub tool_use_id: String,
+    /// `None` only for an orphan `tool_result` whose `tool_use` fell outside
+    /// the window (truncated history).
     pub name: Option<String>,
     pub invocation: facts::ToolInvocation,
     pub outcome: ToolOutcome,
+    /// The carrying message reached a non-null `stop_reason`: an unpaired tool
+    /// in a final message renders as running (INFERRED-pending, B4).
     pub message_final: bool,
+    /// Grouping fact (B4): this and the immediately preceding entry are both
+    /// read/search one-liners. Computed here, never by renderer layout
+    /// introspection.
     pub group_with_previous: bool,
     pub message_id: Option<String>,
 }
@@ -255,39 +324,48 @@ pub struct ToolEntry {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum ToolOutcome {
+    /// No paired `tool_result` yet. With `message_final`, renders as running
+    /// (INFERRED-pending; FACT once the result lands).
     Pending,
+    /// Non-error `tool_result` (FACT the tool ran; B5's allow source).
     Success { facts: SuccessFacts },
+    /// `is_error:true` with a `toolDenialKind` — a typed denial fact, never an
+    /// error-string sniff (B5).
     Denied { kind: Option<String> },
+    /// `is_error:true` without a denial kind.
     Failed { message: Option<String> },
 }
 
+/// Typed result facts per family, from the `toolUseResult` sidecar where the
+/// semantics spec names its shape (§12), generic output head otherwise.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "facts", rename_all = "snake_case")]
 pub enum SuccessFacts {
+    /// File change magnitude from `filePath` + `structuredPatch` (FACT) — Edit
+    /// and Write sidecars both carry it.
     Edit {
         file_path: String,
         added: u64,
         removed: u64,
         document: crate::diff::Document,
     },
-    Answers {
-        answers: Vec<QuestionAnswer>,
-    },
+    /// AskUserQuestion answers, keyed by the question TEXT (capture
+    /// correction), multi-select joined into one string.
+    Answers { answers: Vec<QuestionAnswer> },
+    /// Synchronous subagent completion (B7, FACT).
     TaskCompleted {
         agent_id: Option<String>,
         duration_ms: Option<u64>,
         tool_count: Option<u64>,
     },
-    TaskLaunched {
-        agent_id: Option<String>,
-    },
-    PlanApproved {
-        plan_file_path: Option<String>,
-    },
-    Output {
-        head: String,
-        truncated: bool,
-    },
+    /// Background subagent launch acknowledged (B7, FACT it launched).
+    TaskLaunched { agent_id: Option<String> },
+    /// ExitPlanMode approval (B6): non-error result with the plan sidecar.
+    PlanApproved { plan_file_path: Option<String> },
+    /// Generic bounded head of the result content; the full text stays behind
+    /// the source seam (B4).
+    Output { head: String, truncated: bool },
+    /// A result with no retainable content.
     None,
 }
 
@@ -317,6 +395,7 @@ pub fn task_notification_entry(text: &str) -> TaskNotificationEntry {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InterruptionEntry {
     pub kind: InterruptionKind,
+    /// `interruptedMessageId` — FACT pairing to the message it cut off.
     pub interrupted_message_id: Option<String>,
 }
 
@@ -330,13 +409,18 @@ pub fn interruption_entry(kind: InterruptionKind, row: &Value) -> InterruptionEn
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterruptionKind {
+    /// `[Request interrupted by user]` — cut a generating message.
     Turn,
+    /// `[Request interrupted by user for tool use]` — a tool approval was
+    /// rejected by interrupt.
     ToolUse,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiErrorEntry {
+    /// The row's typed `error` string (for example, `"server_error"`).
     pub error: Option<String>,
+    /// The synthetic message's text content.
     pub text: Option<String>,
 }
 
@@ -357,7 +441,9 @@ pub fn api_error_entry(row: &Value) -> ApiErrorEntry {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnrecognizedEntry {
+    /// The row's `type`, when it had one.
     pub row_type: Option<String>,
+    /// The unknown discriminant below the type (subtype, block type, …).
     pub detail: Option<String>,
 }
 

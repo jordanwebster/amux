@@ -1,3 +1,10 @@
+2026-09-16 — **Provider semantics stay beside their extracted owners.**
+The shared Claude folds again document which feed facts are authoritative,
+which are inferred, and how provider block, subagent, task and form identities
+are interpreted. Codex classification and write-state narrowing, shared agent
+message presentation, and answerable-dialog sanitization retain their design
+rationale beside the code that now owns each decision.
+
 2026-09-16 — **Bare Claude commands keep their unstated provenance.**
 Coverage now pins that a provider-recorded slash command without human origin
 or prompt-source facts remains an unstated prompt without opening a turn, even

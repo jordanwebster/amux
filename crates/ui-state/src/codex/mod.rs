@@ -1,7 +1,9 @@
-//! Codex UI facade.
-//!
-//! Provider-derived feed and standing facts live in `fold`; this layer keeps
-//! reducer-local input, attachment, provider-settings, and connection overlays.
+//! The Codex chat layer: native `codex_sdk_v1` rows become Codex-owned view
+//! state without a Claude-shaped or generic content model between the provider
+//! and its fold. Provider-derived feed and standing facts live in `fold`; this
+//! facade keeps reducer-local input, attachment, provider-settings, connection,
+//! and write-gate overlays. The kernel sees only the layer's `Attention`
+//! summary.
 
 pub(crate) mod update;
 
@@ -481,6 +483,9 @@ fn input_id(row: &Value) -> Option<Vec<u8>> {
     })
 }
 
+/// One ordered interpretation of the layer's phase and attention facts. Public
+/// projections deliberately lose different details, so those details live
+/// here instead of being independently rediscovered by each projection.
 #[derive(Clone, Debug, PartialEq)]
 struct Situation {
     state: SituationState,
@@ -596,6 +601,9 @@ impl Situation {
     }
 }
 
+/// The one ordered Codex classification. This is the only Codex-layer code
+/// that reads kernel `StreamPhase`; every projection consumes its lossless
+/// result.
 fn classify(
     layer: Option<&CodexLayer>,
     stream_phase: Option<&StreamPhase>,
@@ -657,6 +665,8 @@ fn classify_model(model: &Model, agent: model::AgentId) -> Situation {
     )
 }
 
+/// Cache attention by projecting the same classification used by phase and
+/// every write gate.
 pub(crate) fn projected_attention(
     layer: &CodexLayer,
     stream_phase: Option<&StreamPhase>,
@@ -692,6 +702,9 @@ impl WritePermission {
     }
 }
 
+/// The situation states in which the session itself can still accept some
+/// write. `session_state` narrows into this, so session-level refusal states
+/// are stated once and an action rule cannot observe or restate them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LiveState {
     AwaitingApproval,
@@ -744,6 +757,12 @@ pub(super) fn write_permission(
     }
 }
 
+/// The single statement of which situations refuse every write because the
+/// session cannot accept one, versus the live states an action rule then
+/// judges. Returning the narrowed `LiveState` rather than an `Option<&str>`
+/// makes the compiler enforce the boundary: move a state across it and every
+/// action rule stops compiling instead of reaching a runtime panic in a UI
+/// reducer.
 fn session_state(situation: &Situation) -> Result<LiveState, &'static str> {
     let live = match &situation.state {
         SituationState::Unavailable => return Err(REFUSAL_UNAVAILABLE),
