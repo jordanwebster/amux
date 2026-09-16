@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod chat;
 mod db;
 mod families;
 mod fleet;
@@ -24,8 +25,13 @@ pub use families::{
     REGISTRY, Regime, Registry, VIEW,
 };
 pub use fleet::{Fleet, FleetAgent, FleetChange, FleetHost};
+use fold::{
+    CommitOutcome, Entry, ExpectedHead, Generations, Head, Mutation, Page, PageToken, ProviderFold,
+    SegmentTransition, WindowBudget, WindowInterest,
+};
 pub use fold::{FleetDelta, FleetSnapshot, Membership, StoreError};
 pub use maintain::{Budget, MaintenanceReport};
+use model::AgentId;
 use rustix::fs::{FlockOperation, flock};
 
 const LEASE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -118,6 +124,121 @@ impl Store {
         reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
     }
 
+    pub async fn load<F>(
+        &self,
+        agent: AgentId,
+        window: WindowBudget,
+    ) -> Result<fold::Loaded<F>, StoreError>
+    where
+        F: ProviderFold + Send + 'static,
+        F::Entry: Send,
+    {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.send_run(move |connection| {
+            let result = chat::load::<F>(connection, agent, window);
+            let corrupt = matches!(result, Err(StoreError::Corrupt));
+            let _ = reply_sender.send(result);
+            corrupt
+        })?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the public store API mirrors the complete optimistic commit contract"
+    )]
+    pub async fn commit<F>(
+        &self,
+        agent: AgentId,
+        generations: Generations,
+        expected: ExpectedHead,
+        head: Head<F>,
+        transition: Option<SegmentTransition>,
+        mutations: Vec<Mutation<F::Entry>>,
+        interest: WindowInterest,
+    ) -> CommitOutcome<F>
+    where
+        F: ProviderFold + Send + 'static,
+        F::Entry: Send,
+        <F::Entry as Entry>::Partial: Send,
+    {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        if let Err(error) = self.send_run(move |connection| {
+            let result = chat::commit(
+                connection,
+                agent,
+                generations,
+                expected,
+                head,
+                transition,
+                mutations,
+                interest,
+            );
+            let _ = reply_sender.send(result);
+            false
+        }) {
+            return CommitOutcome::Refused(error);
+        }
+        reply_receiver
+            .recv()
+            .unwrap_or(CommitOutcome::Refused(StoreError::Corrupt))
+    }
+
+    pub async fn page<F>(
+        &self,
+        agent: AgentId,
+        token: PageToken,
+        n: usize,
+    ) -> Result<Page<F::Entry>, StoreError>
+    where
+        F: ProviderFold + Send + 'static,
+        F::Entry: Send,
+    {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        self.send_run(move |connection| {
+            let result = chat::page::<F>(connection, agent, token, n);
+            let corrupt = matches!(result, Err(StoreError::Corrupt));
+            let _ = reply_sender.send(result);
+            corrupt
+        })?;
+        reply_receiver.recv().map_err(|_| StoreError::Corrupt)?
+    }
+
+    pub async fn invalidate<F>(
+        &self,
+        agent: AgentId,
+        generations: Generations,
+        expected: ExpectedHead,
+        reason: fold::BaselineReason,
+    ) -> CommitOutcome<F>
+    where
+        F: ProviderFold + Send + 'static,
+        F::Entry: Send,
+    {
+        let (reply_sender, reply_receiver) = mpsc::sync_channel(1);
+        if let Err(error) = self.send_run(move |connection| {
+            let result = chat::invalidate::<F>(connection, agent, generations, expected, reason);
+            let _ = reply_sender.send(result);
+            false
+        }) {
+            return CommitOutcome::Refused(error);
+        }
+        reply_receiver
+            .recv()
+            .unwrap_or(CommitOutcome::Refused(StoreError::Corrupt))
+    }
+
+    fn send_run(
+        &self,
+        run: impl FnOnce(&mut rusqlite::Connection) -> bool + Send + 'static,
+    ) -> Result<(), StoreError> {
+        self.sender
+            .as_ref()
+            .ok_or(StoreError::Corrupt)?
+            .send(Command::Run(Box::new(run)))
+            .map_err(|_| StoreError::Corrupt)
+    }
+
     pub async fn close(mut self) {
         self.close_inner();
     }
@@ -139,6 +260,7 @@ impl Drop for Store {
 }
 
 enum Command {
+    Run(Box<dyn FnOnce(&mut rusqlite::Connection) -> bool + Send>),
     ApplyFleet {
         generations: fold::Generations,
         delta: Box<FleetDelta>,
@@ -184,6 +306,12 @@ fn worker(
     let mut corrupt = false;
     while let Ok(command) = receiver.recv() {
         match command {
+            Command::Run(run) => {
+                corrupt = run(&mut connection);
+                if corrupt {
+                    break;
+                }
+            }
             Command::ApplyFleet {
                 generations,
                 delta,

@@ -1,7 +1,7 @@
 use fold::ProviderFold;
 
 pub const FLEET_SHAPE: u32 = 2;
-pub const CHAT_SHAPE: u32 = 1;
+pub const CHAT_SHAPE: u32 = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Migration {
@@ -237,7 +237,7 @@ macro_rules! provider_ddl {
             "CREATE TABLE ", $prefix, "_entry (agent_id TEXT NOT NULL, key TEXT NOT NULL, segment INTEGER NOT NULL, order_seq INTEGER NOT NULL, order_slot INTEGER NOT NULL, revision_seq INTEGER NOT NULL, revision_fence INTEGER NOT NULL, revision_ordinal INTEGER NOT NULL, kind TEXT NOT NULL, text TEXT, bytes INTEGER NOT NULL, body BLOB NOT NULL, PRIMARY KEY (agent_id, key));",
             "CREATE INDEX ", $prefix, "_entry_order_g$GEN ON ", $prefix, "_entry(agent_id, segment, order_seq, order_slot, key);",
             "CREATE TABLE ", $prefix, "_tombstone (agent_id TEXT NOT NULL, key TEXT NOT NULL, revision_seq INTEGER NOT NULL, revision_fence INTEGER NOT NULL, revision_ordinal INTEGER NOT NULL, PRIMARY KEY (agent_id, key));",
-            "CREATE TABLE ", $prefix, "_alias (agent_id TEXT NOT NULL, from_key TEXT NOT NULL, to_key TEXT NOT NULL, revision_seq INTEGER NOT NULL, PRIMARY KEY (agent_id, from_key));"
+            "CREATE TABLE ", $prefix, "_alias (agent_id TEXT NOT NULL, from_key TEXT NOT NULL, to_key TEXT NOT NULL, revision_seq INTEGER NOT NULL, revision_fence INTEGER NOT NULL, revision_ordinal INTEGER NOT NULL, promotion INTEGER, PRIMARY KEY (agent_id, from_key));"
         )
     };
 }

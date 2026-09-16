@@ -1,3 +1,13 @@
+2026-09-16 — **Chats resume from canonical SQLite windows.**
+The shared store now loads one bounded transcript window with its continuation
+head, fleet standing, progress, redirects, positioned gap markers and paging
+token. Optimistic writers commit against generation, fence and head-version
+tokens in one immediate transaction; provider entries use the shared merge and
+alias algebra, and each result returns the canonical bodies and placements the
+visible window needs. Concurrent writers reload on conflict, stale pages are
+rejected after any content change, and idempotent invalidation preserves stored
+history while closing only the live segment.
+
 2026-09-16 — **The shared store keeps fleet membership ordered across clients.**
 Fleet host facts, agent facts, folded standing and progress now materialize in
 one SQLite transaction per delta behind durable host cutoffs and per-agent

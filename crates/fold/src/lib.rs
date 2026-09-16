@@ -28,7 +28,7 @@ use model::{
     StructuredProtocol, Summary, SummaryEnvelope, SummaryField, SupportedAgentType, TodoProgress,
     Why, WorkingOn,
 };
-pub use oracle::{LifecycleRevisions, MutationOracle};
+pub use oracle::{LifecycleRevisions, MutationOracle, RedirectState};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -660,6 +660,44 @@ pub struct PageToken {
     pub before: (SegmentId, Order, EntryKey),
 }
 
+/// Bounds the remembered window returned by a store load.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowBudget {
+    pub max_entries: usize,
+    pub max_bytes: usize,
+    pub view_epoch: u64,
+}
+
+impl WindowBudget {
+    pub const fn desktop(view_epoch: u64) -> Self {
+        Self {
+            max_entries: 400,
+            max_bytes: 16 * 1024 * 1024,
+            view_epoch,
+        }
+    }
+}
+
+/// The part of a visible window for which a commit must return canonical state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowInterest {
+    pub held_keys: Vec<EntryKey>,
+    pub feed_from: Option<(SegmentId, Order, EntryKey)>,
+    pub view_epoch: u64,
+    pub result_max_bytes: usize,
+}
+
+impl WindowInterest {
+    pub const fn all(view_epoch: u64, result_max_bytes: usize) -> Self {
+        Self {
+            held_keys: Vec::new(),
+            feed_from: None,
+            view_epoch,
+            result_max_bytes,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Page<E> {
     pub entries: Vec<Stored<E>>,
@@ -1170,6 +1208,8 @@ composite_safe!(AttemptId => [u64]);
 composite_safe!(OpId => [u64]);
 composite_safe!(StreamAttempt => [u64]);
 composite_safe!(SegmentTransition => [Option<u32>, u32, Baseline, u64, Option<u64>, DateTime<Utc>]);
+composite_safe!(WindowBudget => [usize, usize, u64]);
+composite_safe!(WindowInterest => [Vec<EntryKey>, Option<(u32, Order, EntryKey)>, u64, usize]);
 composite_safe!(ExpectedHead => [u64]);
 composite_safe!(BoundaryAt => [u32, Option<(Order, EntryKey)>, Boundary]);
 composite_safe!(PageToken => [Generations, u64, (u32, Order, EntryKey)]);
@@ -1886,6 +1926,17 @@ mod tests {
             next: Some(token.clone()),
             content_revision: 4,
         });
+        roundtrip(&WindowBudget {
+            max_entries: 400,
+            max_bytes: 16 * 1024 * 1024,
+            view_epoch: 5,
+        });
+        roundtrip(&WindowInterest {
+            held_keys: vec![key("msg:1")],
+            feed_from: Some((1, Order { seq: 9, slot: 0 }, key("msg:1"))),
+            view_epoch: 5,
+            result_max_bytes: 8 * 1024 * 1024,
+        });
 
         roundtrip(&HeadState::Usable(1, head));
         for reason in [
@@ -2042,6 +2093,8 @@ mod tests {
         assert_safe::<Stored<TestEntry>>();
         assert_safe::<PageToken>();
         assert_safe::<Page<TestEntry>>();
+        assert_safe::<WindowBudget>();
+        assert_safe::<WindowInterest>();
         assert_safe::<HeadState<TestFold>>();
         assert_safe::<Loaded<TestFold>>();
         assert_safe::<Placement>();

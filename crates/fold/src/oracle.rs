@@ -15,6 +15,14 @@ struct Redirect {
     promote: Option<Promotion>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RedirectState {
+    pub from: EntryKey,
+    pub to: EntryKey,
+    pub revision: Revision,
+    pub promote: Option<Promotion>,
+}
+
 /// Reference implementation of the mutation algebra used by tests, the
 /// reducer window and the SQLite store.
 #[derive(Clone, Debug)]
@@ -41,6 +49,45 @@ impl<E: Entry> MutationOracle<E> {
             tombstones: BTreeMap::new(),
             redirects: BTreeMap::new(),
         }
+    }
+
+    /// Restore the canonical materialiser from persisted rows.
+    pub fn from_state(
+        segment: SegmentId,
+        entry_budget: usize,
+        entries: Vec<Stored<E>>,
+        tombstones: Vec<(EntryKey, Revision)>,
+        redirects: Vec<RedirectState>,
+    ) -> Result<Self, MergeDefect> {
+        let entries = entries
+            .into_iter()
+            .map(|entry| (entry.key.clone(), entry))
+            .collect::<BTreeMap<_, _>>();
+        let tombstones = tombstones.into_iter().collect::<BTreeMap<_, _>>();
+        let redirects = redirects
+            .into_iter()
+            .map(|redirect| {
+                (
+                    redirect.from,
+                    Redirect {
+                        to: redirect.to,
+                        revision: redirect.revision,
+                        promote: redirect.promote,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let oracle = Self {
+            segment,
+            entry_budget,
+            entries,
+            tombstones,
+            redirects,
+        };
+        for key in oracle.redirects.keys() {
+            oracle.resolve_key(key)?;
+        }
+        Ok(oracle)
     }
 
     /// Apply one atomic ordered group. Any defect restores the prior state.
@@ -87,6 +134,18 @@ impl<E: Entry> MutationOracle<E> {
         self.redirects
             .iter()
             .map(|(from, redirect)| (from.clone(), redirect.to.clone()))
+            .collect()
+    }
+
+    pub fn redirect_states(&self) -> Vec<RedirectState> {
+        self.redirects
+            .iter()
+            .map(|(from, redirect)| RedirectState {
+                from: from.clone(),
+                to: redirect.to.clone(),
+                revision: redirect.revision,
+                promote: redirect.promote,
+            })
             .collect()
     }
 
