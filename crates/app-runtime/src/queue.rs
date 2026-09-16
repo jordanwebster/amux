@@ -543,6 +543,7 @@ pub async fn run(
 /// An agent nothing on the account being read has ever heard of. Folding it
 /// would be visible in the fleet, which is what makes refusing it provable.
 fn late_agent() -> model::Agent {
+    let created_at = chrono::Utc::now();
     model::Agent {
         id: uuid::Uuid::from_u128(0x1a7e),
         host_id: uuid::Uuid::from_u128(0x1a7f),
@@ -552,7 +553,8 @@ fn late_agent() -> model::Agent {
         kind: model::AgentKind::TestAgent,
         readonly: false,
         args: Vec::new(),
-        created_at: chrono::Utc::now(),
+        created_at,
+        last_activity: created_at,
         parent: None,
         working_on: None,
     }

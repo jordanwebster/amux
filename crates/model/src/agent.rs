@@ -112,6 +112,10 @@ pub struct Agent {
     pub readonly: bool,
     pub args: Vec<String>,
     pub created_at: DateTime<Utc>,
+    /// When the host last saw this agent do anything, by the host's clock.
+    /// Never earlier than `created_at`; an agent that has done nothing yet
+    /// was last active when it was created.
+    pub last_activity: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<AgentParent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

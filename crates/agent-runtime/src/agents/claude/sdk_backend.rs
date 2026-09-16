@@ -528,7 +528,9 @@ async fn ingest_session(
                     let mut state = runtime.lock().expect("Claude SDK runtime poisoned");
                     state.facts.observe(&message).then(|| state.facts.row())
                 };
+                let activity = is_activity(&message);
                 match serde_json::to_value(message) {
+                    Ok(row) if activity => log.write_activity(row, Utc::now()).await,
                     Ok(row) => log.write(row).await,
                     Err(error) => {
                         tracing::warn!(%agent_id, %error, "failed to serialize Claude SDK row")
@@ -556,7 +558,8 @@ async fn ingest_session(
                     .pending
                     .permissions
                     .insert(id.clone());
-                write_synthesized(
+                // An ask is something the agent did: it stopped to ask.
+                write_synthesized_activity(
                     &log,
                     ClaudeSdkSynthesized::PermissionRequired {
                         request_id: id,
@@ -591,7 +594,7 @@ async fn ingest_session(
                     .pending
                     .elicitations
                     .insert(id.clone());
-                write_synthesized(
+                write_synthesized_activity(
                     &log,
                     ClaudeSdkSynthesized::ElicitationRequired {
                         request_id: id,
@@ -609,7 +612,7 @@ async fn ingest_session(
                     .pending
                     .dialogs
                     .insert(id.clone());
-                write_synthesized(
+                write_synthesized_activity(
                     &log,
                     ClaudeSdkSynthesized::DialogRequired {
                         request_id: id,
@@ -706,6 +709,67 @@ async fn write_synthesized(log: &StructuredLogSource, row: ClaudeSdkSynthesized)
         .await;
 }
 
+async fn write_synthesized_activity(log: &StructuredLogSource, row: ClaudeSdkSynthesized) {
+    log.write_activity(ClaudeSdkV1Row::Synthesized(row).into_json(), Utc::now())
+        .await;
+}
+
+/// Whether a message from Claude is the agent doing something, and so dates
+/// its last activity.
+///
+/// The conversation itself counts: what it says, the tools it runs, its
+/// turns ending, its background work reporting. What Claude says about its
+/// own session does not — the init message it sends on every start, hook
+/// and plugin progress, rate limits, lists of commands, and user turns it
+/// replays on resume — because those arrive when a session starts or a
+/// connection settles, and would make an agent that has been quiet for a day
+/// look as if it had just done something. Matched exhaustively so a new kind
+/// of message has to be decided here.
+fn is_activity(message: &claude::sdk::Message) -> bool {
+    use claude::sdk::Message;
+    match message {
+        Message::Assistant(_)
+        | Message::User(_)
+        | Message::Result(_)
+        | Message::StreamEvent(_)
+        | Message::CompactBoundary(_)
+        | Message::ModelRefusalFallback(_)
+        | Message::ModelRefusalNoFallback(_)
+        | Message::LocalCommandOutput(_)
+        | Message::ToolProgress(_)
+        | Message::TaskNotification(_)
+        | Message::TaskStarted(_)
+        | Message::TaskUpdated(_)
+        | Message::TaskProgress(_)
+        | Message::ThinkingTokens(_)
+        | Message::ToolUseSummary(_)
+        | Message::ElicitationComplete(_)
+        | Message::PermissionDenied(_) => true,
+        Message::UserReplay(_)
+        | Message::System(_)
+        | Message::Status(_)
+        | Message::ApiRetry(_)
+        | Message::ControlRequestProgress(_)
+        | Message::HookStarted(_)
+        | Message::HookProgress(_)
+        | Message::HookResponse(_)
+        | Message::PluginInstall(_)
+        | Message::AuthStatus(_)
+        | Message::BackgroundTasksChanged(_)
+        | Message::SessionStateChanged(_)
+        | Message::CommandsChanged(_)
+        | Message::Notification(_)
+        | Message::FilesPersisted(_)
+        | Message::MemoryRecall(_)
+        | Message::RateLimit(_)
+        | Message::PromptSuggestion(_)
+        | Message::Informational(_)
+        | Message::ConversationReset(_)
+        | Message::UnknownSystem(_)
+        | Message::Unknown(_) => false,
+    }
+}
+
 struct ClaudeSdkInputTarget {
     runtime: Arc<Mutex<Runtime>>,
     input_done: Arc<Notify>,
@@ -759,7 +823,7 @@ impl ClaudeSdkInputTarget {
                     "message": message.message,
                 });
                 control.prompt(message).await?;
-                self.log.write(row).await;
+                self.log.write_activity(row, Utc::now()).await;
             }
             ClaudeSdkV1Input::SetPermissionMode { mode } => {
                 self.runtime
@@ -1200,6 +1264,45 @@ mod tests {
         writer.write_all(b"\n").await.unwrap();
     }
 
+    /// Over a recorded turn: the conversation dates activity, and what Claude
+    /// says about its session as it starts (the init message, rate limits)
+    /// does not.
+    #[test]
+    fn only_the_conversation_counts_as_activity() {
+        let rows =
+            include_str!("../../../../claude-specs/fixtures/claude-sdk/text_turn.rows.jsonl");
+        let mut decided = Vec::new();
+        for line in rows.lines() {
+            let row: Value = serde_json::from_str(line).unwrap();
+            if row["type"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("amux."))
+            {
+                continue;
+            }
+            let message = claude::sdk::Message::parse(row).unwrap();
+            decided.push((message.kind().to_string(), is_activity(&message)));
+        }
+        let decided: Vec<_> = decided
+            .iter()
+            .map(|(kind, activity)| (kind.as_str(), *activity))
+            .collect();
+        assert_eq!(
+            decided,
+            [
+                ("user", true),
+                ("system.init", false),
+                ("rate_limit_event", false),
+                ("system.thinking_tokens", true),
+                ("system.thinking_tokens", true),
+                ("system.thinking_tokens", true),
+                ("assistant", true),
+                ("assistant", true),
+                ("result.success", true),
+            ]
+        );
+    }
+
     pub(super) fn record(id: Uuid) -> AgentRecord {
         AgentRecord {
             id,
@@ -1213,6 +1316,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            last_activity: Utc::now(),
             parent: None,
             working_on: None,
         }
@@ -2135,6 +2239,7 @@ mod tests {
             created_at: restored_created_at,
             parent,
             working_on: _,
+            last_activity: _,
         } = loaded.pop().unwrap()
         else {
             panic!("expected persisted Claude SDK agent");

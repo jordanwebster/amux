@@ -33,6 +33,7 @@ impl From<ClaudeSuspendRecord> for SuspendedAgent {
             session_id: record.session_id,
             parent: record.parent,
             working_on: None,
+            last_activity: None,
         }
     }
 }

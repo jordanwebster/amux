@@ -417,6 +417,10 @@ message Agent {
   int64 created_at_unix_ms = 10;
   optional AgentParent parent = 11;
   optional WorkingOn working_on = 12;
+  // When the host last saw the agent do anything: a transcript row, an ask,
+  // a tool call. Dated by the host where it happened, so every client orders
+  // and ages agents by the same fact whether or not it reads their streams.
+  int64 last_activity_unix_ms = 13;
 }
 
 message AgentParent {

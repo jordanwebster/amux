@@ -2365,6 +2365,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
+            last_activity: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
             parent: None,
             working_on: None,
         }
@@ -2383,6 +2384,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
+            last_activity: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
             parent: None,
             working_on: None,
         }

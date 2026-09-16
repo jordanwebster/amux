@@ -66,13 +66,14 @@ impl AgentDeliveryTarget for ClaudeSdkDeliveryTarget {
             .await
             .map_err(|error| DeliveryError::Failed(error.to_string()))?;
         self.log
-            .write(
+            .write_activity(
                 ClaudeSdkV1Row::Synthesized(ClaudeSdkSynthesized::Message {
                     envelope: serde_json::to_value(envelope)
                         .expect("amux envelopes serialize as JSON"),
                     delivery: Delivery::Stream.carrier().to_string(),
                 })
                 .into_json(),
+                chrono::Utc::now(),
             )
             .await;
         Ok(Delivery::Stream)
@@ -271,6 +272,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            last_activity: Utc::now(),
             parent: None,
             working_on: None,
         };
@@ -334,6 +336,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            last_activity: Utc::now(),
             parent: None,
             working_on: None,
         };

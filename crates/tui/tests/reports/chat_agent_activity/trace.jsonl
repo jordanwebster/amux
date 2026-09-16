@@ -3,7 +3,7 @@
 {"Msg":{"local_host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","msg":"server","server":"connected"}}
 {"Msg":{"carrier":"tcp","cloud":"connected","msg":"server","server":"cloud_state","tier":"pro"}}
 {"Msg":{"host":{"capabilities":{"supported_agent_types":[{"agent_type":"claude"},{"agent_type":"codex"},{"agent_type":"test-agent"}]},"id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","last_dial_error":null,"name":"amux_debugging_aed4fabf","online":true,"signed_in":true,"trust_status":"trusted","version":"0.6.0","via":"direct"},"msg":"server","server":"host_upserted"}}
-{"Msg":{"agent":{"args":[],"command":"test-agent","created_at":"2026-09-02T23:29:20.260Z","host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","id":"37e20043-7250-4cde-8fab-85668704f4de","kind":{"kind":"test_agent"},"name":"live-qa","readonly":false,"working_dir":"<MACHINE_PATH>"},"msg":"server","server":"agent_upserted"}}
+{"Msg":{"agent":{"args":[],"command":"test-agent","created_at":"2026-09-02T23:29:20.260Z","last_activity":"2026-09-02T23:29:20.260Z","host_id":"864028b0-6c13-4ae2-9cff-d0784765a8bd","id":"37e20043-7250-4cde-8fab-85668704f4de","kind":{"kind":"test_agent"},"name":"live-qa","readonly":false,"working_dir":"<MACHINE_PATH>"},"msg":"server","server":"agent_upserted"}}
 {"Msg":{"msg":"server","server":"hosts_synchronized"}}
 {"Msg":{"msg":"server","server":"agents_synchronized"}}
 "Drained"

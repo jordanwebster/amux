@@ -24,8 +24,8 @@ use uuid::Uuid;
 use super::lifecycle::{
     CreateAgentError, RenameAgentError, clear_working_on, commit_server_suspend,
     create_agent_record, delete_local_agent, parent_envelope, prepare_server_suspend,
-    rename_local_agent_record, resume_agents, shutdown_server, spawn_session_event_loop,
-    withdraw_agent,
+    rename_local_agent_record, resume_agents, shutdown_server, spawn_activity_publisher,
+    spawn_session_event_loop, withdraw_agent,
 };
 use super::{AgentServiceState, SharedAgentServiceState, session};
 use crate::agents::claude::ClaudeSession;
@@ -129,6 +129,7 @@ impl AgentRuntime {
         let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);
+        spawn_activity_publisher(&state, host_id);
         let artifact_sweeper = crate::agents::spawn_artifact_sweeper(artifact_owners.clone());
         Ok(Arc::new(Self {
             state,
@@ -237,6 +238,7 @@ impl AgentRuntime {
     ) -> Result<Agent, ProtocolError> {
         use crate::agents::codex::CodexBackend;
         use crate::agents::{AgentBackend, AgentKind, AgentRecord};
+        let created_at = chrono::Utc::now();
         let record = AgentRecord {
             id: Uuid::new_v4(),
             host_id: self.host_id,
@@ -246,7 +248,8 @@ impl AgentRuntime {
             kind: AgentKind::Codex,
             readonly: false,
             args: Vec::new(),
-            created_at: chrono::Utc::now(),
+            created_at,
+            last_activity: created_at,
             parent: None,
             working_on: None,
         };

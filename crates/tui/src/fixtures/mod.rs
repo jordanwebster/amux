@@ -738,6 +738,7 @@ fn agent(protocol: StructuredProtocol, name: &str) -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: at("2026-08-12T09:00:00Z"),
+        last_activity: at("2026-08-12T09:00:00Z"),
         parent: None,
         working_on: None,
     }
@@ -1048,6 +1049,7 @@ fn sdk_family_fixture() -> Fixture {
         readonly: false,
         args: Vec::new(),
         created_at: at("2026-08-12T09:00:00Z"),
+        last_activity: at("2026-08-12T09:00:00Z"),
         parent: None,
         working_on: Some(ui_state::WorkingOn {
             text: "split the tunnel supervisor".to_string(),

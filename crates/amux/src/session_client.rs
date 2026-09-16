@@ -1374,6 +1374,7 @@ mod attach {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
+            last_activity: chrono::Utc::now(),
             parent: None,
             working_on: None,
         }
@@ -1879,6 +1880,7 @@ mod attach {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
+            last_activity: chrono::Utc::now(),
             parent: None,
             working_on: None,
         };

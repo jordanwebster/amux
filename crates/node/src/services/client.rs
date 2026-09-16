@@ -2772,6 +2772,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc.timestamp_millis_opt(0).single().unwrap(),
+            last_activity: Utc.timestamp_millis_opt(0).single().unwrap(),
             parent: None,
             working_on: None,
         }

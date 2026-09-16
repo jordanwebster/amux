@@ -241,6 +241,7 @@ mod tests {
                 readonly: false,
                 args: vec![],
                 created_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+                last_activity: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
                 parent: None,
                 working_on: None,
             },

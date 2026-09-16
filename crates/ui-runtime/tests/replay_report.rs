@@ -44,6 +44,7 @@ fn sequence() -> Vec<Msg> {
                 readonly: false,
                 args: Vec::new(),
                 created_at: Utc.timestamp_opt(0, 0).unwrap(),
+                last_activity: Utc.timestamp_opt(0, 0).unwrap(),
                 parent: None,
                 working_on: None,
             },

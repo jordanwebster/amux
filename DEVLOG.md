@@ -1,3 +1,20 @@
+2026-09-16 — **Hosts date agent activity; opening an agent no longer reorders
+the list.** The client reducer stamped every stream batch with the time it
+arrived, including the history a stream replays when an agent is opened, so
+opening an agent made it "active now" and moved it up. An agent nobody opened
+had only its creation time. The host now dates activity where it happens and
+sends it as `last_activity` on every inventory record. A Claude transcript row
+counts at its own timestamp. Hooks, SDK conversation messages and Codex turn
+events count when they arrive. amux's own bookkeeping rows, session and
+connection notices, and history re-read on resume do not count. The value is
+saved with suspended agents, so a restart does not reset it. The host
+re-announces agents whose activity has moved at most every five seconds. A
+client card starts at the host's time and rises with later inventory updates
+and live stream batches, never with replayed ones. The phone's fleet card also
+carries the ask at the head of a waiting agent's queue, so a row can say what the
+agent wants. Renaming an agent now announces the whole record, not the session's
+partial one, which had dropped the status text.
+
 2026-09-16 — **Three chat bugs that did not need the chat rework.** The SDK
 chat layer wrote an unfinished tool's `result`, and a non-edit result's `edit`,
 as `null`. The phone decides "running" and "this was an edit" by whether those

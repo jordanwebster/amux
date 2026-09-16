@@ -301,6 +301,7 @@ impl AgentBackend for TestAgentSession {
             created_at: self.created_at,
             parent: self.parent,
             working_on: None,
+            last_activity: None,
         })
     }
 

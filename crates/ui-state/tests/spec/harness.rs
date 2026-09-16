@@ -92,6 +92,7 @@ pub fn an_agent(name: &str, on: &str) -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
+        last_activity: t0(),
         parent: None,
         working_on: None,
     }
@@ -109,6 +110,7 @@ pub fn a_codex_agent(name: &str, on: &str) -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
+        last_activity: t0(),
         parent: None,
         working_on: None,
     }

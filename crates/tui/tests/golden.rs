@@ -99,6 +99,7 @@ fn an_agent(name: &str, agent_type: &str, on: &str) -> Agent {
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
+        last_activity: t0(),
         parent: None,
         working_on: None,
     }

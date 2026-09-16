@@ -715,6 +715,7 @@ pub(crate) fn agent_to_wire(
         readonly: agent.readonly,
         args: agent.args.clone(),
         created_at_unix_ms: agent.created_at.timestamp_millis(),
+        last_activity_unix_ms: agent.last_activity.timestamp_millis(),
         parent: agent.parent.map(agent_parent_to_wire),
         working_on: agent.working_on.as_ref().map(working_on_to_wire),
     })
@@ -727,6 +728,12 @@ pub(crate) fn agent_from_wire(
         .timestamp_millis_opt(agent.created_at_unix_ms)
         .single()
         .ok_or_else(|| protocol_wire::DecodeError::Invalid("invalid agent created_at".into()))?;
+    let last_activity = Utc
+        .timestamp_millis_opt(agent.last_activity_unix_ms)
+        .single()
+        .ok_or_else(|| {
+            protocol_wire::DecodeError::Invalid("invalid agent last_activity".into())
+        })?;
 
     let parent = agent.parent.map(agent_parent_from_wire).transpose()?;
     let working_on = agent.working_on.map(working_on_from_wire).transpose()?;
@@ -747,6 +754,7 @@ pub(crate) fn agent_from_wire(
         readonly: agent.readonly,
         args: agent.args,
         created_at,
+        last_activity,
         parent,
         working_on,
     })

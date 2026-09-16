@@ -174,6 +174,11 @@ connection and auth state (including "authentication required" — login
 itself is CLI-owned via `amux init`; the UI layer only renders the
 state), pending operations, parent edges, and timestamped work status.
 
+A card's `last_activity` starts at the host's date in the inventory record and
+only moves forward: a later inventory update raises it, and so does a stream
+batch that arrives live. Batches replayed while a stream catches up never do,
+so opening an agent does not reorder a list sorted by recency.
+
 The Model derives families rather than storing another relationship view. A
 family is ranked by its highest effective attention and shown as one parent
 row until renderer-local expansion reveals the descendants. Likewise,

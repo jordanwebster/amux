@@ -1508,13 +1508,63 @@ fn raw_row(event: &ThreadEvent) -> Value {
     Value::Object(row)
 }
 
+/// Whether a thread event is the agent doing something, and so dates its last
+/// activity.
+///
+/// The turn counts: its items, their streamed output, plans and diffs, the
+/// approvals it stops for, and errors that end it. What Codex says about the
+/// thread and the connection does not — token counts, status and name
+/// changes, warnings, hooks — because those also arrive when a thread is
+/// resumed or a connection settles. Matched exhaustively so a new kind of
+/// event has to be decided here.
+fn is_activity(event: &TurnEvent) -> bool {
+    match event {
+        TurnEvent::ItemStarted(_)
+        | TurnEvent::ItemCompleted(_)
+        | TurnEvent::AgentMessageDelta { .. }
+        | TurnEvent::CommandOutputDelta { .. }
+        | TurnEvent::FileChangeDelta { .. }
+        | TurnEvent::PlanDelta { .. }
+        | TurnEvent::ReasoningSummaryDelta { .. }
+        | TurnEvent::ReasoningTextDelta { .. }
+        | TurnEvent::ReasoningSummaryPartAdded { .. }
+        | TurnEvent::DiffUpdated { .. }
+        | TurnEvent::PlanUpdated { .. }
+        | TurnEvent::TurnStarted { .. }
+        | TurnEvent::TurnCompleted { .. }
+        | TurnEvent::ThreadCompacted { .. }
+        | TurnEvent::ModelRerouted { .. }
+        | TurnEvent::FileChangePatchUpdated { .. }
+        | TurnEvent::ApprovalRequired(_)
+        | TurnEvent::ToolCallRequired(_)
+        | TurnEvent::ServerRequest { .. }
+        | TurnEvent::Error { .. } => true,
+        TurnEvent::TokenUsageUpdated(_)
+        | TurnEvent::ThreadStarted { .. }
+        | TurnEvent::ThreadStatusChanged { .. }
+        | TurnEvent::ThreadNameUpdated { .. }
+        | TurnEvent::ThreadArchived { .. }
+        | TurnEvent::ThreadUnarchived { .. }
+        | TurnEvent::ThreadClosed { .. }
+        | TurnEvent::Warning { .. }
+        | TurnEvent::HookStarted(_)
+        | TurnEvent::HookCompleted(_)
+        | TurnEvent::ApprovalResolved { .. }
+        | TurnEvent::Unknown { .. } => false,
+    }
+}
+
 async fn ingest_event(
     runtime: &Arc<StdMutex<CodexRuntime>>,
     log_source: &StructuredLogSource,
     completion_sink: Option<&CodexCompletionSink>,
     event: ThreadEvent,
 ) {
-    log_source.write(raw_row(&event)).await;
+    if is_activity(&event.event) {
+        log_source.write_activity(raw_row(&event), Utc::now()).await;
+    } else {
+        log_source.write(raw_row(&event)).await;
+    }
     match &event.event {
         TurnEvent::TurnStarted { turn } => {
             update_attached(runtime, |attached| {
@@ -2082,6 +2132,35 @@ mod tests {
     use super::*;
     use crate::agents::AgentType;
 
+    /// The turn dates activity; what Codex says about the thread does not.
+    #[test]
+    fn only_turn_events_are_activity() {
+        let turn = || codex::Turn {
+            id: "turn-1".into(),
+            items: Vec::new(),
+            status: Default::default(),
+            error: None,
+        };
+        for event in [
+            TurnEvent::Warning {
+                message: "resumed".into(),
+            },
+            TurnEvent::ThreadNameUpdated { name: None },
+        ] {
+            assert!(!is_activity(&event));
+        }
+        for event in [
+            TurnEvent::TurnStarted { turn: turn() },
+            TurnEvent::AgentMessageDelta {
+                item_id: "item-1".into(),
+                delta: "hi".into(),
+            },
+            TurnEvent::TurnCompleted { turn: turn() },
+        ] {
+            assert!(is_activity(&event));
+        }
+    }
+
     fn session_request() -> CreateAgentRequest {
         CreateAgentRequest {
             agent_id: Uuid::from_u128(1),
@@ -2209,6 +2288,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            last_activity: Utc::now(),
             parent: None,
             working_on: None,
         };

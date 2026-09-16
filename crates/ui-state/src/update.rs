@@ -620,7 +620,10 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             match model.agents.get_mut(&agent_id) {
                 Some(card) => {
                     // Facts update; UI-layer derived state persists across
-                    // upserts of the same entity.
+                    // upserts of the same entity. Activity only moves
+                    // forward: a live batch this client saw may already be
+                    // later than the host's last announcement.
+                    card.last_activity = card.last_activity.max(agent.last_activity);
                     card.agent = agent;
                     card.epoch = epoch;
                     card.live = live;
@@ -628,7 +631,10 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 None => {
                     let card = AgentCard {
                         live,
-                        last_activity: agent.created_at,
+                        // The host's own date for the agent's last activity,
+                        // so an agent this client never opens still sorts
+                        // and ages by what it actually did.
+                        last_activity: agent.last_activity,
                         provider_label: None,
                         attention: Attention::Unknown,
                         phase: AgentPhase::Running,
@@ -752,7 +758,16 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
             with_layer(model, agent, |layer| layer.begin_window(truncated));
         }
         StreamMsg::Batch { at, entries } => {
-            if let Some(card) = model.agents.get_mut(&agent) {
+            // Only entries arriving live are activity seen now. A replay is
+            // the agent's history being read back — opening a conversation
+            // must not make it look as if the agent just did everything it
+            // ever did — and the host has already dated that history in the
+            // inventory.
+            let live = model
+                .streams
+                .get(&agent)
+                .is_some_and(|stream| stream.phase == StreamPhase::Live);
+            if live && let Some(card) = model.agents.get_mut(&agent) {
                 card.last_activity = card.last_activity.max(at);
             }
             with_layer(model, agent, |layer| {

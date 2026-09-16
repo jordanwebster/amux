@@ -52,6 +52,7 @@ fn model() -> Model {
                 readonly: false,
                 args: vec![],
                 created_at: now(),
+                last_activity: now(),
                 parent: None,
                 working_on: None,
             },

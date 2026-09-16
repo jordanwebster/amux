@@ -266,8 +266,9 @@ pub struct AgentCard {
     /// consults it.
     pub provider_label: Option<String>,
     pub attention: Attention,
-    /// Recency for fleet ranking: stream activity when observed, otherwise
-    /// the creation time.
+    /// Recency for fleet ranking: the host's date for the agent's last
+    /// activity, raised by live stream entries this client sees before the
+    /// host next announces it. Replayed history never raises it.
     pub last_activity: DateTime<Utc>,
     pub phase: AgentPhase,
     /// Typed native layer state. `None` until the structured stream
@@ -1554,6 +1555,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: t0(),
+            last_activity: t0(),
             parent: None,
             working_on: None,
         }

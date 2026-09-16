@@ -26,6 +26,8 @@ pub(crate) struct AgentRecord {
     pub(crate) readonly: bool,
     pub(crate) args: Vec<String>,
     pub(crate) created_at: DateTime<Utc>,
+    /// When the agent last did anything, never earlier than `created_at`.
+    pub(crate) last_activity: DateTime<Utc>,
     pub(crate) parent: Option<AgentParent>,
     pub(crate) working_on: Option<WorkingOn>,
 }
@@ -56,6 +58,7 @@ impl From<&AgentRecord> for Agent {
             readonly: agent.readonly,
             args: agent.args.clone(),
             created_at: agent.created_at,
+            last_activity: agent.last_activity,
             parent: agent.parent,
             working_on: agent.working_on.clone(),
         }
@@ -74,6 +77,7 @@ impl From<AgentRecord> for Agent {
             readonly: agent.readonly,
             args: agent.args,
             created_at: agent.created_at,
+            last_activity: agent.last_activity,
             parent: agent.parent,
             working_on: agent.working_on,
         }

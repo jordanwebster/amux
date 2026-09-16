@@ -38,6 +38,12 @@ pub struct AgentCardDto {
     /// machine on the account.
     #[serde(default, skip_serializing_if = "is_false")]
     pub awaiting: bool,
+    /// The ask at the head of the agent's queue while it is waiting on a
+    /// person, so a list row can say what is wanted: the question, the
+    /// command. Absent when nothing is asked, and whenever this device is not
+    /// folding the agent's stream and so cannot know what the ask is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<AskDto>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -710,6 +716,7 @@ impl Projection {
                 .map(|card| AgentCardDto {
                     agent: card.agent.clone(),
                     display_name: card.display_name(),
+                    ask: waiting_ask(model, card),
                     attention: model.effective_attention(card),
                     phase: card.phase.clone(),
                     last_activity: card.last_activity,
@@ -853,6 +860,40 @@ fn keeps_its_rows(model: &Model, agent: AgentId, host: Option<model::HostId>) ->
         // The machine that owned it has stopped answering. Nothing has said
         // this agent is gone, only that nobody can be asked about it.
         None => host.is_some_and(|host| !model.host_online(host)),
+    }
+}
+
+/// The ask a fleet row names, when the agent is stopped on a permission or a
+/// question. A finished turn also reads as needing you, but asks nothing.
+fn waiting_ask(model: &Model, card: &ui_state::AgentCard) -> Option<AskDto> {
+    if !matches!(
+        model.effective_attention(card),
+        Attention::NeedsYou {
+            why: Why::Permission | Why::Question
+        }
+    ) {
+        return None;
+    }
+    let agent = card.agent.id;
+    match card.structured_protocol()? {
+        StructuredProtocol::Claude => model
+            .claude(agent)?
+            .asks()
+            .next()
+            .cloned()
+            .map(AskDto::ClaudePty),
+        StructuredProtocol::Codex => model
+            .codex(agent)?
+            .asks()
+            .next()
+            .cloned()
+            .map(AskDto::Codex),
+        StructuredProtocol::ClaudeSdk => model
+            .claude_sdk(agent)?
+            .asks()
+            .next()
+            .cloned()
+            .map(AskDto::ClaudeSdk),
     }
 }
 

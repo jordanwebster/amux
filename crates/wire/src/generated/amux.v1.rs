@@ -986,6 +986,11 @@ pub struct Agent {
     pub parent: ::core::option::Option<AgentParent>,
     #[prost(message, optional, tag = "12")]
     pub working_on: ::core::option::Option<WorkingOn>,
+    /// When the host last saw the agent do anything: a transcript row, an ask,
+    /// a tool call. Dated by the host where it happened, so every client orders
+    /// and ages agents by the same fact whether or not it reads their streams.
+    #[prost(int64, tag = "13")]
+    pub last_activity_unix_ms: i64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct AgentParent {

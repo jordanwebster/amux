@@ -716,6 +716,7 @@ pub(crate) fn agent_to_wire(
         readonly: agent.readonly,
         args: agent.args.clone(),
         created_at_unix_ms: agent.created_at.timestamp_millis(),
+        last_activity_unix_ms: agent.last_activity.timestamp_millis(),
         parent: agent.parent.map(agent_parent_to_wire),
         working_on: agent.working_on.as_ref().map(working_on_to_wire),
     })
@@ -726,6 +727,10 @@ pub fn agent_from_wire(agent: protocol_wire::Agent) -> Result<Agent, protocol_wi
         .timestamp_millis_opt(agent.created_at_unix_ms)
         .single()
         .ok_or_else(|| protocol_wire::DecodeError::Invalid("invalid agent created_at".into()))?;
+    let last_activity = Utc
+        .timestamp_millis_opt(agent.last_activity_unix_ms)
+        .single()
+        .ok_or_else(|| protocol_wire::DecodeError::Invalid("invalid agent last_activity".into()))?;
 
     let parent = agent.parent.map(agent_parent_from_wire).transpose()?;
     let working_on = agent.working_on.map(working_on_from_wire).transpose()?;
@@ -746,6 +751,7 @@ pub fn agent_from_wire(agent: protocol_wire::Agent) -> Result<Agent, protocol_wi
         readonly: agent.readonly,
         args: agent.args,
         created_at,
+        last_activity,
         parent,
         working_on,
     })
@@ -871,6 +877,7 @@ mod tests {
             readonly: false,
             args: vec!["--model".to_string(), "gpt-5.6".to_string()],
             created_at: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
+            last_activity: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
             parent: Some(parent),
             working_on: Some(WorkingOn {
                 text: "implement the record".to_string(),
@@ -1047,6 +1054,7 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            last_activity: Utc::now(),
             parent: None,
             working_on: None,
         };

@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use model::ShutdownReason;
 use model::envelope::Envelope;
 use tokio::sync::RwLock;
@@ -33,13 +34,29 @@ pub(crate) struct AgentServiceState {
 pub(crate) struct LocalAgentContext {
     pub(crate) session: AgentSession,
     pub(crate) working_on: Option<WorkingOn>,
+    /// The last activity a previous daemon recorded for this agent. A resumed
+    /// session starts with an empty log, and without this every restarted
+    /// agent would report its creation time as its last activity.
+    pub(crate) remembered_activity: Option<DateTime<Utc>>,
+    /// The last activity announced to inventory subscribers, so the activity
+    /// publisher re-announces only agents whose activity has moved since.
+    pub(crate) published_activity: DateTime<Utc>,
 }
 
 impl LocalAgentContext {
     pub(crate) fn record(&self, host_id: Uuid) -> AgentRecord {
         let mut record = self.session.to_agent(host_id);
         record.working_on.clone_from(&self.working_on);
+        record.last_activity = self.last_activity();
         record
+    }
+
+    /// When this agent last did anything: the latest of its creation, what a
+    /// previous daemon remembered, and what this session has seen.
+    pub(crate) fn last_activity(&self) -> DateTime<Utc> {
+        let session = self.session.active_at();
+        self.remembered_activity
+            .map_or(session, |remembered| remembered.max(session))
     }
 }
 
@@ -88,7 +105,7 @@ impl AgentServiceState {
         agent_id: Uuid,
         session: AgentSession,
     ) -> Result<AgentEvent, String> {
-        self.register_local_agent_context_with_status(host_id, agent_id, session, None)
+        self.register_local_agent_context_with_status(host_id, agent_id, session, None, None)
     }
 
     pub(crate) fn register_local_agent_context_with_status(
@@ -97,6 +114,7 @@ impl AgentServiceState {
         agent_id: Uuid,
         session: AgentSession,
         working_on: Option<WorkingOn>,
+        remembered_activity: Option<DateTime<Utc>>,
     ) -> Result<AgentEvent, String> {
         if self.contains_agent_id(&agent_id) {
             return Err(format!("Agent already exists: {agent_id}"));
@@ -107,18 +125,18 @@ impl AgentServiceState {
             return Err(format!("Agent already exists: {name}"));
         }
 
-        let mut record = session.to_agent(host_id);
-        record.working_on.clone_from(&working_on);
+        let mut context = LocalAgentContext {
+            session,
+            working_on,
+            remembered_activity,
+            published_activity: DateTime::<Utc>::MIN_UTC,
+        };
+        let record = context.record(host_id);
+        context.published_activity = record.last_activity;
         self.recent_projects
             .record(&record.working_dir, record.created_at);
         let event = record.agent_event();
-        self.local_agents.insert(
-            agent_id,
-            LocalAgentContext {
-                session,
-                working_on,
-            },
-        );
+        self.local_agents.insert(agent_id, context);
         Ok(event)
     }
 

@@ -38,6 +38,7 @@ fn upsert(kind: model::AgentKind) -> Msg {
             readonly: false,
             args: vec![],
             created_at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            last_activity: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
             parent: None,
             working_on: None,
         },
@@ -861,6 +862,56 @@ fn mobile_projection_ask_snapshot() {
     } else {
         assert_eq!(actual, include_str!("asks.json"));
     }
+}
+
+fn fleet_card(projection: &mut Projection, model: &Model) -> AgentCardDto {
+    collect(projection, model)
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Fleet { agents, .. } => agents.into_iter().find(|card| card.agent.id == AGENT),
+            _ => None,
+        })
+        .expect("the fleet names the agent")
+}
+
+/// A row that needs you says what is wanted, so the fleet card carries the
+/// ask at the head of the queue — and a calm agent's card carries none.
+#[test]
+fn mobile_projection_fleet_cards_carry_the_waiting_ask() {
+    for (name, kind, fixture) in ASK_FIXTURES {
+        let mut model = self::model(*kind);
+        let mut projection = Projection::default();
+        assert_eq!(fleet_card(&mut projection, &model).ask, None, "{name}");
+        for (index, line) in fixture.lines().enumerate() {
+            row(
+                &mut model,
+                index as u64 + 1,
+                serde_json::from_str(line).unwrap(),
+            );
+            if !pending_asks(&model).is_empty() {
+                break;
+            }
+        }
+        let card = fleet_card(&mut projection, &model);
+        assert!(
+            matches!(
+                card.attention,
+                Attention::NeedsYou {
+                    why: Why::Permission | Why::Question
+                }
+            ),
+            "{name}: {:?}",
+            card.attention
+        );
+        assert_eq!(card.ask.as_ref(), pending_asks(&model).first(), "{name}");
+        let json = serde_json::to_value(&card).unwrap();
+        assert!(json["ask"]["layer"].is_string(), "{name}: {json}");
+    }
+
+    let calm = claude_model();
+    let card = fleet_card(&mut Projection::default(), &calm);
+    assert_eq!(card.ask, None);
+    assert!(serde_json::to_value(&card).unwrap().get("ask").is_none());
 }
 
 #[test]

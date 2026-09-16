@@ -433,6 +433,15 @@ peer's last stated `signed_in` fact and `last_dial_error`. Presence is derived
 from routing claims rather than probes. A relay route on a free cloud link is
 shown as away; no route and no relay presence is offline.
 
+Each agent record carries `last_activity`, dated by the owning host where the
+activity happened: a Claude transcript row at its own timestamp, a hook, SDK
+conversation message or Codex turn event when it arrives. Bookkeeping amux
+writes itself, session and connection notices, and history re-read on resume
+are not activity, so a restarted daemon does not make every agent look active.
+The value is persisted with suspended agents. Clients that do not stream an
+agent learn about new activity from inventory updates, which the host sends
+for agents whose activity has moved, at most every five seconds.
+
 `AgentService` is the peer-facing API: a peer lists another daemon's
 agents, creates or deletes them, delivers daemon-authored message envelopes,
 updates work status, attaches to a session, round-trips terminal I/O, and

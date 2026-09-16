@@ -12,6 +12,10 @@ pub fn agent_from_wire(agent: wire::Agent) -> Result<model::Agent, DecodeError> 
         .timestamp_millis_opt(agent.created_at_unix_ms)
         .single()
         .ok_or_else(|| DecodeError::Invalid("invalid agent created_at".into()))?;
+    let last_activity = Utc
+        .timestamp_millis_opt(agent.last_activity_unix_ms)
+        .single()
+        .ok_or_else(|| DecodeError::Invalid("invalid agent last_activity".into()))?;
     let parent = agent.parent.map(agent_parent_from_wire).transpose()?;
     let working_on = agent.working_on.map(working_on_from_wire).transpose()?;
     let kind = wire::agent_kind_from_wire(
@@ -29,6 +33,7 @@ pub fn agent_from_wire(agent: wire::Agent) -> Result<model::Agent, DecodeError> 
         readonly: agent.readonly,
         args: agent.args,
         created_at,
+        last_activity,
         parent,
         working_on,
     })

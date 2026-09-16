@@ -209,6 +209,7 @@ fn fixture_record(id: Uuid, name: &str, kind: AgentKind) -> AgentRecord {
         readonly: false,
         args: Vec::new(),
         created_at: Utc.timestamp_opt(0, 0).single().expect("Unix epoch exists"),
+        last_activity: Utc.timestamp_opt(0, 0).single().expect("Unix epoch exists"),
         parent: None,
         working_on: None,
     }
@@ -262,6 +263,7 @@ pub async fn register_sdk_fixture(
         readonly: false,
         args: Vec::new(),
         created_at: Utc.timestamp_opt(0, 0).single().expect("Unix epoch exists"),
+        last_activity: Utc.timestamp_opt(0, 0).single().expect("Unix epoch exists"),
         parent,
         working_on: None,
     };

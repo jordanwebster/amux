@@ -80,6 +80,7 @@ fn an_agent(name: &str, kind: &str, protocol: &str, parent: Option<&str>) -> Age
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
+        last_activity: t0(),
         parent: parent.map(|name| AgentParent {
             agent_id: agent_id(name),
             host_id: host_id(),

@@ -84,6 +84,52 @@ fn stream_batches_advance_last_activity() {
     assert_eq!(card.last_activity, t0_plus(30));
 }
 
+/// Reading an agent's history back is not the agent doing anything. Opening
+/// a conversation replays its tail, and dating those rows by when they
+/// arrived would move the agent to the top of every list the moment someone
+/// looked at it.
+#[test]
+fn replayed_history_does_not_advance_last_activity() {
+    let model = fold(seq([
+        stream_base(),
+        vec![
+            stream("refactor-tunnels", StreamMsg::Opened { truncated: false }),
+            batch(
+                "refactor-tunnels",
+                600,
+                vec![serde_json::json!({"type": "assistant", "message": "old"})],
+            ),
+            stream("refactor-tunnels", StreamMsg::ReplayComplete),
+        ],
+    ]));
+    let card = model.agent(agent_id("refactor-tunnels")).expect("card");
+    assert_eq!(card.last_activity, t0());
+}
+
+/// An agent this client never opens is dated by its host: the inventory
+/// carries when it last did anything, and a later announcement moves it.
+#[test]
+fn unopened_agents_carry_the_hosts_last_activity() {
+    let mut agent = an_agent("quiet", "nova");
+    agent.last_activity = t0_plus(120);
+    let announced = seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&agent),
+        ],
+        synced(),
+    ]);
+    let model = fold(announced.clone());
+    let card = model.agent(agent_id("quiet")).expect("card");
+    assert_eq!(card.last_activity, t0_plus(120));
+
+    agent.last_activity = t0_plus(300);
+    let model = fold(seq([announced, vec![agent_up(&agent)]]));
+    let card = model.agent(agent_id("quiet")).expect("card");
+    assert_eq!(card.last_activity, t0_plus(300));
+}
+
 /// Replay and live are distinct stream phases, separated by an explicit
 /// marker — a late-joining fold can tell catch-up from now.
 #[test]
