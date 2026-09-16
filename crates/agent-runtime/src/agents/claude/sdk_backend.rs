@@ -794,38 +794,24 @@ fn history_coverage(rows: &[claude::history::HistoricalRow]) -> Vec<SummaryField
         coverage.push(SummaryField::LastActivity);
     }
 
-    let todo_writes = rows
-        .iter()
-        .flat_map(|row| {
-            row.payload
-                .pointer("/message/content")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-        })
-        .filter(|block| {
-            block.get("type").and_then(Value::as_str) == Some("tool_use")
-                && block.get("name").and_then(Value::as_str) == Some("TodoWrite")
-        })
-        .filter_map(|block| block.get("id").and_then(Value::as_str))
-        .collect::<HashSet<_>>();
-    let successful_results = rows
-        .iter()
-        .flat_map(|row| {
-            row.payload
-                .pointer("/message/content")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-        })
-        .filter(|block| {
-            block.get("type").and_then(Value::as_str) == Some("tool_result")
-                && block.get("is_error").and_then(Value::as_bool) != Some(true)
-        })
-        .filter_map(|block| block.get("tool_use_id").and_then(Value::as_str));
-    if successful_results
-        .into_iter()
-        .any(|tool_use_id| todo_writes.contains(tool_use_id))
+    let mut todo_fold = fold::claude_sdk::ClaudeSdkFold::default();
+    fold::ProviderFold::begin(&mut todo_fold, 1, fold::Baseline::Start);
+    for (index, row) in rows.iter().enumerate() {
+        let payload = serde_json::to_vec(&row.payload).expect("history row serializes");
+        fold::ProviderFold::apply(
+            &mut todo_fold,
+            fold::Input::Row {
+                seq: index as u64 + 1,
+                published_at: row.activity_at.unwrap_or(DateTime::UNIX_EPOCH),
+                activity_at: row.activity_at,
+                historical: true,
+                payload: &payload,
+            },
+        );
+    }
+    if !fold::ProviderFold::summary(&todo_fold)
+        .unknown
+        .contains(&SummaryField::Todo)
     {
         coverage.push(SummaryField::Todo);
     }
@@ -1440,6 +1426,83 @@ mod tests {
                 "clipped":true,
                 "partial_tail":true,
                 "coverage":["last_activity","todo"]
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn daemon_sdk_task_tool_history_restores_todo_through_ready() {
+        let captured = include_str!("../../../../fold/fixtures/claude-task-tools-2.1.273.jsonl")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(captured.iter().all(|row| row["version"] == "2.1.273"));
+
+        let log = StructuredLogSource::with_policy(RingPolicy::claude_sdk());
+        let mut reader = log.subscribe().await.unwrap();
+        write_history(
+            &log,
+            ResumeHistory {
+                file: PathBuf::from("/transcripts/task-tools.jsonl"),
+                tail: claude::history::TailRead {
+                    rows: captured,
+                    cut_bytes: 4_096,
+                    clipped: false,
+                    partial_tail: false,
+                    unmappable: 0,
+                },
+            },
+        )
+        .await;
+
+        let begin = reader.read().await.unwrap();
+        assert_eq!(begin.payload["type"], "amux.claude_sdk.history_begin");
+        let mut history = Vec::new();
+        for _ in 0..6 {
+            let row = reader.read().await.unwrap();
+            assert!(row.historical);
+            history.push(row);
+        }
+        let complete = reader.read().await.unwrap();
+        assert_eq!(
+            complete.payload["coverage"],
+            json!(["last_activity", "todo"])
+        );
+
+        let mut todo_fold = ClaudeSdkFold::default();
+        todo_fold.begin(1, Baseline::Start);
+        let mut oracle = MutationOracle::default();
+        for row in history {
+            let payload = serde_json::to_vec(&row.payload).unwrap();
+            let changes = todo_fold.apply(Input::Row {
+                seq: row.seq,
+                published_at: DateTime::UNIX_EPOCH,
+                activity_at: row
+                    .activity_at_unix_ms
+                    .and_then(DateTime::<Utc>::from_timestamp_millis),
+                historical: true,
+                payload: &payload,
+            });
+            oracle.apply_changes(&changes).unwrap();
+        }
+        let ready = serde_json::to_vec(
+            &json!({"type":"amux.claude_sdk.ready","session_id":"captured","resumed":true}),
+        )
+        .unwrap();
+        todo_fold.apply(Input::Row {
+            seq: 8,
+            published_at: DateTime::UNIX_EPOCH,
+            activity_at: None,
+            historical: false,
+            payload: &ready,
+        });
+        assert_eq!(
+            todo_fold.summary().todo,
+            Some(model::TodoProgress {
+                done: 0,
+                total: 1,
+                current: Some("Resuming from the live checklist".into()),
             })
         );
     }

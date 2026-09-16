@@ -1,3 +1,11 @@
+2026-09-16 — **Claude task tools now drive fleet todo progress.** Both Claude
+folds recognize successful `TaskCreate` and `TaskUpdate` pairs from current
+Claude Code transcripts, retain a bounded resumable task registry, and keep
+the first active task visible through history replay and provider readiness.
+Legacy `TodoWrite` sessions remain supported, while conversation resets clear
+both forms of todo state. The contract is pinned by an authenticated Claude
+Code 2.1.273 capture that also includes an automatically denied write.
+
 2026-09-16 — **Desktop store journeys prove their visible boundaries.** The
 warm-start recording now keeps one client alive from a genuinely stopped
 daemon through confirmation, chat scroll-back records the SQLite page and its

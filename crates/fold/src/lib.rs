@@ -10,6 +10,7 @@
 mod algebra;
 pub mod claude_pty;
 pub mod claude_sdk;
+mod claude_tasks;
 pub mod codex;
 pub mod diff;
 mod oracle;

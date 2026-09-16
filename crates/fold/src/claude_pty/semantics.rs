@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{RowKind, classify_row, facts, prompt_source};
+use crate::claude_tasks::TaskRegistry;
 use crate::{
     Baseline, Changes, Component, ComponentSource, Components, Entry, EntryKey, FieldPatch, Input,
     JsonBytes, MergeDefect, Mutation, Order, Patch, PostcardSafe, ProviderFold, RestoreRow,
@@ -293,6 +294,7 @@ pub struct ClaudeFold {
     messages: Vec<OpenMessage>,
     open_tools: Vec<(String, EntryKey, Option<String>)>,
     pending_todos: Vec<PendingTodo>,
+    tasks: TaskRegistry,
     asks: Vec<PendingAsk>,
     inferred_turn: Option<EntryKey>,
     previous_row_at: Option<DateTime<Utc>>,
@@ -324,6 +326,7 @@ impl Default for ClaudeFold {
             messages: Vec::new(),
             open_tools: Vec::new(),
             pending_todos: Vec::new(),
+            tasks: TaskRegistry::default(),
             asks: Vec::new(),
             inferred_turn: None,
             previous_row_at: None,
@@ -947,6 +950,8 @@ impl ClaudeFold {
             }
             return;
         }
+        self.tasks
+            .observe_invocation(&id, name.as_deref().unwrap_or_default(), input);
         let ask_key = stable_hash(
             format!("{}\u{1f}{}", name.as_deref().unwrap_or_default(), input).as_bytes(),
         );
@@ -1040,6 +1045,10 @@ impl ClaudeFold {
         };
         self.asks
             .retain(|ask| ask.tool_use_id.as_deref() != Some(id.as_str()));
+        if let Some(progress) = self.tasks.observe_result(&id, block) {
+            self.todo = Some(progress);
+            self.known_todo = true;
+        }
         if let Some(index) = self
             .pending_todos
             .iter()
@@ -1245,7 +1254,7 @@ impl ProviderFold for ClaudeFold {
 
     const PROTOCOL: StructuredProtocol = StructuredProtocol::ClaudePtyTranscript;
     const ENTRY_VERSION: u32 = 1;
-    const TIP_VERSION: u32 = 2;
+    const TIP_VERSION: u32 = 3;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
 
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
@@ -1255,6 +1264,7 @@ impl ProviderFold for ClaudeFold {
         self.messages.clear();
         self.open_tools.clear();
         self.pending_todos.clear();
+        self.tasks.clear_pending();
         self.asks.clear();
         self.inferred_turn = None;
         self.previous_row_at = None;
@@ -1275,6 +1285,7 @@ impl ProviderFold for ClaudeFold {
             self.known_context = false;
             self.known_model = false;
             self.known_outstanding = true;
+            self.tasks.clear();
         } else {
             self.attention = Attention::Unknown;
             self.known_attention = false;
@@ -1329,6 +1340,7 @@ impl ProviderFold for ClaudeFold {
                 self.messages.clear();
                 self.open_tools.clear();
                 self.pending_todos.clear();
+                self.tasks.clear_pending();
                 self.asks.clear();
                 Vec::new()
             }
@@ -1431,6 +1443,7 @@ impl ProviderFold for ClaudeFold {
             + self.messages.capacity() * size_of::<OpenMessage>()
             + self.open_tools.capacity() * size_of::<(String, EntryKey, Option<String>)>()
             + self.pending_todos.capacity() * size_of::<PendingTodo>()
+            + self.tasks.tip_bytes()
             + self.asks.capacity() * size_of::<PendingAsk>()
             + self
                 .asks
@@ -1807,6 +1820,7 @@ impl crate::private::Sealed for ClaudeFold {
                      messages,
                      open_tools,
                      pending_todos,
+                     tasks,
                      asks,
                      inferred_turn,
                      previous_row_at,
@@ -1834,6 +1848,7 @@ impl crate::private::Sealed for ClaudeFold {
             crate::assert_value_safe(&messages);
             crate::assert_value_safe(&open_tools);
             crate::assert_value_safe(&pending_todos);
+            crate::assert_value_safe(&tasks);
             crate::assert_value_safe(&asks);
             crate::assert_value_safe(&inferred_turn);
             crate::assert_value_safe(&previous_row_at);
@@ -1884,6 +1899,7 @@ mod tests {
             include_str!("../../../claude-specs/fixtures/claude-pty/compact.rows.jsonl"),
         ),
     ];
+    const TASK_TOOL_CAPTURE: &str = include_str!("../../fixtures/claude-task-tools-2.1.273.jsonl");
 
     fn rows(raw: &str) -> Vec<Vec<u8>> {
         raw.lines()
@@ -2124,6 +2140,61 @@ mod tests {
             serde_json::to_vec(&json!({"type":"assistant","uuid":format!("use-{label}"),"message":{"id":format!("msg-{label}"),"content":[{"type":"tool_use","id":format!("todo-{label}"),"name":"TodoWrite","input":{"todos":[{"content":label,"activeForm":format!("doing {label}"),"status":"in_progress"}]}}],"stop_reason":"tool_use"}})).unwrap(),
             serde_json::to_vec(&json!({"type":"user","uuid":format!("result-{label}"),"message":{"content":[{"type":"tool_result","tool_use_id":format!("todo-{label}"),"content":"ok"}]}})).unwrap(),
         ]
+    }
+
+    #[test]
+    fn claude_pty_real_task_tool_capture_derives_todo_and_keeps_denied_write() {
+        let input = rows(TASK_TOOL_CAPTURE);
+        assert!(
+            input.iter().all(|row| {
+                serde_json::from_slice::<Value>(row).unwrap()["version"] == "2.1.273"
+            })
+        );
+
+        let mut fold = ClaudeFold::default();
+        fold.begin(1, Baseline::Start);
+        let mut oracle = MutationOracle::default();
+        for (index, payload) in input.iter().take(2).enumerate() {
+            apply_row(&mut fold, &mut oracle, index as u64 + 1, payload);
+        }
+        let bytes = postcard::to_allocvec(&fold).unwrap();
+        let mut fold: ClaudeFold = postcard::from_bytes(&bytes).unwrap();
+        for (index, payload) in input.iter().enumerate().skip(2) {
+            apply_row(&mut fold, &mut oracle, index as u64 + 1, payload);
+        }
+        apply_row(
+            &mut fold,
+            &mut oracle,
+            input.len() as u64 + 1,
+            br#"{"type":"amux.transcript_ready"}"#,
+        );
+
+        assert_eq!(
+            fold.summary().todo,
+            Some(TodoProgress {
+                done: 0,
+                total: 1,
+                current: Some("Resuming from the live checklist".into()),
+            })
+        );
+        let denied = oracle
+            .entries()
+            .into_iter()
+            .find(|entry| entry.entry.tool_name() == Some("Write"))
+            .expect("captured Write remains visible");
+        let outcome: Value =
+            serde_json::from_slice(&denied.entry.tool_outcome().unwrap().0).unwrap();
+        assert_eq!(outcome["is_error"], true);
+        assert!(
+            outcome["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("Permission for this tool use was denied")
+        );
+
+        fold.begin(2, Baseline::Start);
+        assert!(fold.summary().todo.is_none());
+        assert!(fold.summary().unknown.contains(&SummaryField::Todo));
     }
 
     #[test]
