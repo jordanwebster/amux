@@ -675,7 +675,7 @@ impl ClaudeSdkFold {
                 .map(|index| self.cursors[index].next_final_index)
                 .unwrap_or(0)
         };
-        let retained = blocks.len().min(1024);
+        let retained = retained_block_count(blocks.len());
         for (slot, block) in blocks.iter().take(retained).enumerate() {
             let slot = slot as u16;
             let block_index = if blocks.len() == 1 {
@@ -1084,13 +1084,23 @@ impl ClaudeSdkFold {
         let content = row.pointer("/message/content").unwrap_or(&Value::Null);
         let mut text = String::new();
         let mut images = 0usize;
+        let mut prompt_slot = 0;
+        let mut prompt_slot_known = false;
         if let Some(value) = content.as_str() {
             append_text(&mut text, value, TEXT_MAX_BYTES);
         }
         if let Some(blocks) = content.as_array() {
-            for (slot, block) in blocks.iter().take(1024).enumerate() {
+            for (slot, block) in blocks
+                .iter()
+                .take(retained_block_count(blocks.len()))
+                .enumerate()
+            {
                 match block.get("type").and_then(Value::as_str) {
                     Some("text") => {
+                        if !prompt_slot_known {
+                            prompt_slot = slot as u16;
+                            prompt_slot_known = true;
+                        }
                         if !text.is_empty() {
                             append_text(&mut text, "\n", TEXT_MAX_BYTES);
                         }
@@ -1098,7 +1108,13 @@ impl ClaudeSdkFold {
                             append_text(&mut text, part, TEXT_MAX_BYTES);
                         }
                     }
-                    Some("image") => images += 1,
+                    Some("image") => {
+                        if !prompt_slot_known {
+                            prompt_slot = slot as u16;
+                            prompt_slot_known = true;
+                        }
+                        images += 1;
+                    }
                     Some("tool_result") => self.tool_result(
                         (seq, slot as u16, revision),
                         row,
@@ -1136,8 +1152,10 @@ impl ClaudeSdkFold {
             let key = message
                 .id
                 .as_deref()
-                .map(|id| namespaced_key("env", id, seq, 0))
-                .unwrap_or_else(|| namespaced_or_delivery("user", uuid.as_deref(), seq, 0));
+                .map(|id| namespaced_key("env", id, seq, prompt_slot))
+                .unwrap_or_else(|| {
+                    namespaced_or_delivery("user", uuid.as_deref(), seq, prompt_slot)
+                });
             let body = ClaudeSdkBody::AgentMessage {
                 id: message.id,
                 context: message.context,
@@ -1148,7 +1166,7 @@ impl ClaudeSdkFold {
             mutations.push(upsert(
                 key,
                 seq,
-                0,
+                prompt_slot,
                 revision,
                 partial(
                     ClaudeSdkEntryKind::AgentMessage,
@@ -1163,11 +1181,11 @@ impl ClaudeSdkFold {
             text.as_str(),
             "[Request interrupted by user]" | "[Request interrupted by user for tool use]"
         ) {
-            let key = occurrence_key("interrupt", row, seq, 0);
+            let key = occurrence_key("interrupt", row, seq, prompt_slot);
             mutations.push(upsert(
                 key,
                 seq,
-                0,
+                prompt_slot,
                 revision,
                 partial(
                     ClaudeSdkEntryKind::Status,
@@ -1186,7 +1204,7 @@ impl ClaudeSdkFold {
             }
             return;
         }
-        let key = namespaced_or_delivery("user", uuid.as_deref(), seq, 0);
+        let key = namespaced_or_delivery("user", uuid.as_deref(), seq, prompt_slot);
         let body = ClaudeSdkBody::Prompt {
             uuid: uuid.map(bounded_id),
             image_count: images,
@@ -1196,7 +1214,7 @@ impl ClaudeSdkFold {
         mutations.push(upsert(
             key,
             seq,
-            0,
+            prompt_slot,
             revision,
             partial(ClaudeSdkEntryKind::Prompt, body, Some(text), revision),
         ));
@@ -1828,6 +1846,10 @@ fn clipped_marker(seq: u64, revision: Revision, detail: &str) -> Mutation<Claude
     );
     patch.clipped = Patch::set(true, revision);
     upsert(delivery_key(seq, 1023), seq, 1023, revision, patch)
+}
+
+fn retained_block_count(blocks: usize) -> usize {
+    if blocks > 1024 { 1023 } else { blocks }
 }
 
 fn delivery_key(seq: u64, slot: u16) -> EntryKey {
@@ -2494,6 +2516,40 @@ mod tests {
                 "claude_sdk.occurrence_without_uuid"
             ]
         );
+    }
+
+    #[test]
+    fn claude_sdk_delivery_slots_are_unique_with_mixed_and_clipped_user_blocks() {
+        let mixed = serde_json::to_vec(&json!({
+            "type": "user",
+            "message": {"content": [
+                {"type": "future_block"},
+                {"type": "text", "text": "hello"}
+            ]}
+        }))
+        .unwrap();
+        let (_, mixed_oracle) = fold_rows(&[mixed]);
+        assert_eq!(keys(&mixed_oracle), ["d:1:0", "d:1:1"]);
+
+        let clipped = serde_json::to_vec(&json!({
+            "type": "user",
+            "message": {
+                "content": (0..1025)
+                    .map(|_| json!({"type": "future_block"}))
+                    .collect::<Vec<_>>()
+            }
+        }))
+        .unwrap();
+        let (_, clipped_oracle) = fold_rows(&[clipped]);
+        let entries = clipped_oracle.entries();
+        assert_eq!(entries.len(), 1024);
+        assert_eq!(entries[1022].key.as_str(), "d:1:1022");
+        assert_eq!(entries[1023].key.as_str(), "d:1:1023");
+        assert!(matches!(
+            entries[1023].entry.body(),
+            Some(ClaudeSdkBody::Unrecognized { row_type, detail })
+                if row_type == "clipped" && detail == "user row clipped"
+        ));
     }
 
     #[test]

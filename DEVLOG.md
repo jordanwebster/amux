@@ -1,3 +1,11 @@
+2026-09-16 — **Claude SDK rows assign every emitted entry a unique slot.**
+Prompts assembled from content arrays now use the first text or image block's
+slot, so earlier unknown blocks cannot collide with them when the row has no
+native identity. Oversized rows reserve the last admissible slot for their
+clipped-row marker. Every delivery key remains derivable from that row alone,
+and applying either mixed or oversized rows can no longer produce an
+equal-revision merge disagreement.
+
 2026-09-16 — **Final Claude SDK blocks retain their streamed placement.**
 When a final assistant row proves which provisional text or thinking block it
 completes, the authoritative content now amends that provisional entry before
