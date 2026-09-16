@@ -626,11 +626,9 @@ fn classify(
         }) => {}
         _ => return situation,
     }
-    if layer.stale {
-        return situation.with_state(SituationState::Unknown);
-    }
     let state = match layer.observation().activity() {
         Activity::Closed => SituationState::Closed,
+        _ if layer.stale => SituationState::Unknown,
         Activity::Unknown => SituationState::Unknown,
         Activity::ReadOnly => SituationState::ReadOnly,
         Activity::Replaying => SituationState::Replaying,
@@ -820,5 +818,30 @@ pub(crate) fn check_projection_invariant(
             attention,
             send_gate,
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::msg::StreamCloseReason;
+
+    #[test]
+    fn authoritative_thread_close_outranks_stale_overlay() {
+        let mut layer = CodexLayer::default();
+        layer.observe(1, Utc::now(), &json!({"type": "amux.codex_ready"}));
+        layer.observe(2, Utc::now(), &json!({"type": "thread/closed"}));
+        layer.invalidate();
+
+        let stream_phase = StreamPhase::Closed {
+            reason: StreamCloseReason::AgentDeleted,
+        };
+        let situation = classify(Some(&layer), Some(&stream_phase), None, false);
+
+        assert_eq!(situation.state, SituationState::Closed);
+        assert_eq!(situation.phase(), CodexPhase::Idle);
+        assert_eq!(situation.send_gate(), SendGate::Closed);
     }
 }

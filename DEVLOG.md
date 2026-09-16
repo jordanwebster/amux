@@ -1,3 +1,8 @@
+2026-09-16 — **Authoritative Codex closure survives a stale observer.**
+A provider-confirmed closed thread now keeps its closed send gate after the
+session stream becomes stale, while other stale Codex observations still
+degrade to unknown.
+
 2026-09-16 — **Codex observations now live behind a bounded shared window.**
 Codex feed construction, row correlation, approval obligations, token usage and
 activity classification now belong to `fold`. A serializable bounded window
