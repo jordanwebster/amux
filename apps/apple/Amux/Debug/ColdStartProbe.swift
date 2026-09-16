@@ -29,7 +29,7 @@ enum ColdStartProbe {
         // drawing something else, so a mistyped argument fails the run
         // instead of producing a number about the wrong screen.
         if name == "probe-home" {
-            ProbeHomeScreen(rows: cachedRows())
+            ProbeHomeScreen(rows: cachedRows)
                 .onAppear { record() }
         } else if name == "probe-store" {
             Color.clear.onAppear { writeStore() }
@@ -43,13 +43,17 @@ enum ColdStartProbe {
         .appendingPathComponent("probe-store", isDirectory: true)
     private static let storeAccount = AccountId("probe")
 
-    private static func cachedRows() -> [AgentRow] {
+    /// Read once per launch, as a real launch reads its cache once. The root
+    /// view's body runs again when the scene becomes active, often before the
+    /// first frame is presented, and a read there would time a second store
+    /// read no launch performs.
+    private static let cachedRows: [AgentRow] = {
         let store = FleetStore(now: Workloads.now)
         for event in Bridge.cachedFleet(in: storeCache, for: storeAccount) {
             store.apply(event)
         }
         return store.rows
-    }
+    }()
 
     /// Writes the pinned fleet into the store the measured launches read, then
     /// says so where the recipe is waiting.

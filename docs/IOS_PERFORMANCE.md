@@ -253,9 +253,20 @@ two launches paying for a cold file cache. The cold first frame read 494, 508,
 earlier run the same evening read a median of 463 ms. Loading the app (about
 300 ms against 287) and drawing the first frame (about 175 ms against 151) both
 grew by more than the store read, so the store explains only part of the miss,
-and the miss is a defect to explain, not a number to adopt. A launch reads the
-store again after its first frame; the split reports only the first read,
-because only that one stands between a launch and its first frame.
+and the miss is a defect to explain, not a number to adopt.
+
+Two of those launches' reads were not the launch's. The probe read the store
+while building its view, so the root view's second pass — the scene becoming
+active, sometimes before the first frame — read it again; and the app itself
+read the account's fleet once in its composition and once more when the
+runtime started, into the same stores. Each launch now reads the store once.
+Measured again the same night, the five launches read 464, 462, 474, 469 and
+451 ms, a median of 464 ms and still over the budget: loading 300 ms, drawing
+167 ms, the one store read 4.6 ms. Loading, which the store adds almost
+nothing to, is 13 ms slower than the table above, and the drawing around the
+read about 11 ms slower, so the same machine running the same launch has
+slowed by more than the four milliseconds the budget is missed by. Whether to
+win back the store read itself or re-derive the floor on this machine is open.
 
 Carrying the pinned SQLite rather than the system's (see `docs/IOS.md`) has a
 size cost. In the size-optimised

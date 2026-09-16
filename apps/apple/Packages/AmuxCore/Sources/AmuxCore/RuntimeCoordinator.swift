@@ -64,7 +64,8 @@ public final class RuntimeCoordinator {
         pump?.cancel()
     }
 
-    /// Runs after the synchronous cache read, so the first frame needs no network.
+    /// Reads the selected account's remembered fleet off disk before dialing,
+    /// so the first frame has rows and needs no network.
     public func start() {
         accountsChanged()
     }
@@ -78,6 +79,9 @@ public final class RuntimeCoordinator {
            configured.accounts.map(\.id) != registry.accounts.filter(\.signedIn).map({ $0.id.value }) {
             stopRuntime()
         }
+        // A launch and an account switch both land here, so this is the one
+        // read of what that account saw last time: every row arrives marked
+        // as remembered and goes solid when its machine answers.
         if replaced, let stores = registry.stores {
             stores.apply(Bridge.cachedFleet(in: cache, for: stores.account))
             storesChanged?(stores)

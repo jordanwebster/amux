@@ -132,7 +132,8 @@ final class Composition {
         conversations = nil
         #endif
         router.loads(with: self)
-        rememberedFleet()
+        // Starting the runtime reads the account's remembered fleet off disk
+        // before it dials, so the first frame has rows and needs no network.
         runtime.start()
         settleOutstandingPurchases()
     }
@@ -163,24 +164,6 @@ final class Composition {
     }
     #endif
 
-    /// Puts the fleet the account on screen saw last time in front of it,
-    /// before anything has been reached.
-    ///
-    /// Read straight off disk by the shared library rather than by starting the
-    /// runtime first: a launch has rows to draw long before it has a network,
-    /// and a person opening the app to check on an agent should not watch an
-    /// empty screen while a connection is negotiated. Every row arrives marked
-    /// as remembered, and each one goes solid when the machine that owns it
-    /// answers.
-    ///
-    /// What is remembered belongs to an account, so nobody signed in has
-    /// nothing to remember, and changing which account is on screen reads that
-    /// account's own rows rather than leaving the last one's up.
-    private func rememberedFleet() {
-        guard let account = accounts.selected, accounts.selectedAccount?.signedIn == true else { return }
-        stores.apply(Bridge.cachedFleet(in: AppFiles.cache, for: account))
-    }
-
     /// What the shell asks for that it cannot do itself.
     func handle(_ action: ShellAction) {
         switch action {
@@ -191,7 +174,6 @@ final class Composition {
         case .selectAccount(let id):
             guard accounts.selected != id else { break }
             accounts.select(id)
-            rememberedFleet()
             for tab in Tab.allCases { router.setPath([], for: tab) }
         // Signing in is a page, pushed onto whichever stack asked for it so
         // going back leads where the person came from. Adding an account is

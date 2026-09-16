@@ -1,3 +1,12 @@
+2026-09-17 — **A phone launch reads its store once.** The app read the
+selected account's remembered fleet in its composition and again when the
+runtime started, into the same stores, both before the first frame; switching
+account did the same. The runtime's read is now the only one. The cold-start
+probe also stopped re-reading the store on every pass of the root view. Cold
+first frame now measures a median of 464 ms with one 4.6 ms read per launch,
+still over the 460 ms budget on a machine whose unrelated launch phases have
+slowed by more than the miss.
+
 2026-09-17 — **The performance document records what the store costs a
 launch.** A cold launch's first store read takes a median of 4.6 ms, and the
 store brings at most 1.5 MiB of object code to the phone bridge, most of it the
