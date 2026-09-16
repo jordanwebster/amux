@@ -1,3 +1,16 @@
+2026-09-16 — **Three chat bugs that did not need the chat rework.** The SDK
+chat layer wrote an unfinished tool's `result`, and a non-edit result's `edit`,
+as `null`. The phone decides "running" and "this was an edit" by whether those
+fields are present, so every SDK tool drew as a +0/−0 edit and none ever drew
+as running; absent values are now left out of the JSON. Codex never sends a
+list of decisions with a file-change approval (the request type has no such
+field), and the fold read the missing list as "no choices", so every
+file-change approval was unanswerable; it now offers that request's own four
+decisions: accept, accept for session, decline and cancel. And the terminal's
+SDK chat said "plan approved" for any answered plan, including one whose tool
+came back with an error; only a successful answer says that now, and a failed
+plan shows the tool and its reason as the terminal Claude chat does.
+
 2026-09-16 — **The Mac and the phone test against the same advertisement.**
 The Mac's advertisement and the phone's reading of it were each tested only
 against their own spelling of the record, which is how a host-ID format the

@@ -131,6 +131,42 @@ fn dynamic_tool_calls_supply_the_backends_binary_actions() {
 }
 
 #[test]
+fn file_change_approvals_offer_their_request_types_decisions() {
+    // Codex's file-change request carries no availableDecisions; its answer
+    // is always one of the four file-change decisions.
+    let model = model(vec![
+        json!({"type":"amux.codex_ready"}),
+        json!({"type":"turn/started","turn":{"id":"t","status":"inProgress"}}),
+        json!({"type":"item/fileChange/requestApproval","itemId":"file-1",
+            "reason":"write the fix"}),
+        json!({"type":"amux.codex_approval_required","request_id":"file-request",
+            "availableDecisions":null}),
+    ]);
+    let ask = codex_layer(&model, AGENT)
+        .ask_head()
+        .expect("file-change ask");
+    assert!(
+        matches!(&ask.context, AskContext::FileChange { item_id, reason, .. }
+        if item_id == "file-1" && reason.as_deref() == Some("write the fix"))
+    );
+    assert_eq!(
+        ask.actions
+            .iter()
+            .map(|action| (action.wire.clone(), action.decision()))
+            .collect::<Vec<_>>(),
+        vec![
+            (json!("accept"), Some(CodexDecision::Accept)),
+            (
+                json!("acceptForSession"),
+                Some(CodexDecision::AcceptForSession)
+            ),
+            (json!("decline"), Some(CodexDecision::Decline)),
+            (json!("cancel"), Some(CodexDecision::Cancel)),
+        ],
+    );
+}
+
+#[test]
 fn object_decisions_are_classified_against_typed_command_proposals() {
     let rows = vec![
         json!({"type":"amux.codex_ready"}),

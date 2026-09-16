@@ -154,6 +154,10 @@ pub struct ToolEntry {
     pub input: Option<Value>,
     pub input_json: String,
     pub finality: Finality,
+    /// Absent until the tool has answered. Omitted rather than written as
+    /// `null`, because a reader tells a running tool from a finished one by
+    /// whether this field is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<ToolResult>,
     /// Grouping fact: this and the entry immediately before it are both
     /// read-only exploration. Stated by the fold from the tool's own
@@ -165,10 +169,15 @@ pub struct ToolEntry {
 pub struct ToolResult {
     pub text: String,
     pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<Value>,
     /// Set when the result is an Edit's or a Write's: which file moved,
     /// by how much, and the patch. Read from the same provider JSON the
-    /// terminal chat reads.
+    /// terminal chat reads. Omitted rather than written as `null` when
+    /// absent: a reader decides whether a result is an edit by whether
+    /// this field is present, so a `null` would draw every other tool as
+    /// an empty edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edit: Option<crate::claude::facts::LandedEdit>,
 }
 
@@ -431,5 +440,49 @@ fn finality_mut(kind: &mut FeedEntryKind) -> Option<&mut Finality> {
         FeedEntryKind::Thinking(entry) => Some(&mut entry.finality),
         FeedEntryKind::Tool(entry) => Some(&mut entry.finality),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// A reader tells a running tool from a finished one, and an edit from
+    /// any other result, by whether the field is there. Written as `null`,
+    /// every finished tool read as an empty edit and none read as running.
+    #[test]
+    fn absent_tool_results_and_edits_are_omitted_rather_than_null() {
+        let mut tool = ToolEntry {
+            tool_use_id: "toolu_1".to_string(),
+            name: "Bash".to_string(),
+            invocation: crate::claude::facts::ToolInvocation::Bash {
+                command: Some("ls".to_string()),
+                description: None,
+            },
+            input: None,
+            input_json: String::new(),
+            finality: Finality::Complete,
+            result: None,
+            group_with_previous: false,
+        };
+        let running = serde_json::to_value(&tool).unwrap();
+        assert!(running.get("result").is_none(), "{running}");
+
+        tool.result = Some(ToolResult {
+            text: "Cargo.toml".to_string(),
+            is_error: false,
+            details: None,
+            edit: None,
+        });
+        let finished = serde_json::to_value(&tool).unwrap();
+        assert_eq!(
+            finished["result"],
+            json!({"text": "Cargo.toml", "is_error": false})
+        );
+
+        let round_trip: ToolEntry = serde_json::from_value(finished).unwrap();
+        assert_eq!(round_trip, tool);
     }
 }
