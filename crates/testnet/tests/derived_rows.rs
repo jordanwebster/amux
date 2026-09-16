@@ -628,8 +628,13 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
             first.wait_for_type("result").await?;
             harnesses.push(first);
         }
-        "text_turn" | "streamed_turn" | "subagent_task" | "cleared" => {
+        "text_turn" | "streamed_turn" | "subagent_task" => {
             first.wait_for_type("result").await?;
+            harnesses.push(first);
+        }
+        "cleared" => {
+            first.resubscribe_after_reset().await?;
+            first.wait_for_type("conversation_reset").await?;
             harnesses.push(first);
         }
         "permission_callback" | "max_turns" => {
@@ -766,26 +771,34 @@ async fn derive_claude_sdk(recording_name: &str, recording_dir: &Path) -> Result
         .enumerate()
         .filter(|(_, row)| row["type"] == "user" && row["input_id"].is_string())
         .collect();
-    assert_eq!(
-        accepted.len(),
-        prompts.len(),
-        "one accepted row per submitted prompt"
-    );
-    for (turn, ((index, row), prompt)) in accepted.iter().zip(&prompts).enumerate() {
-        assert_eq!(row["message"]["content"], *prompt);
+    if recording_name == "cleared" {
+        assert!(accepted.is_empty(), "reset retained an accepted prompt");
         assert_eq!(
-            row["uuid"],
-            uuid::Uuid::from_u128((turn + 1) as u128).to_string()
+            rows.first().map(|row| &row["type"]),
+            Some(&json!("conversation_reset"))
         );
-        let end = accepted
-            .get(turn + 1)
-            .map_or(rows.len(), |(index, _)| *index);
-        assert!(
-            rows[index + 1..end]
-                .iter()
-                .any(|row| row["type"] == "result"),
-            "accepted prompt must precede its turn result for {recording_name}"
+    } else {
+        assert_eq!(
+            accepted.len(),
+            prompts.len(),
+            "one accepted row per submitted prompt"
         );
+        for (turn, ((index, row), prompt)) in accepted.iter().zip(&prompts).enumerate() {
+            assert_eq!(row["message"]["content"], *prompt);
+            assert_eq!(
+                row["uuid"],
+                uuid::Uuid::from_u128((turn + 1) as u128).to_string()
+            );
+            let end = accepted
+                .get(turn + 1)
+                .map_or(rows.len(), |(index, _)| *index);
+            assert!(
+                rows[index + 1..end]
+                    .iter()
+                    .any(|row| row["type"] == "result"),
+                "accepted prompt must precede its turn result for {recording_name}"
+            );
+        }
     }
     for pair in rows.windows(2) {
         if matches!(

@@ -124,6 +124,13 @@ impl ClaudeSdkBackendHarness {
         .await
     }
 
+    pub async fn resubscribe_after_reset(&mut self) -> Result<()> {
+        self.backend.resubscribe_after_reset().await?;
+        self.rows.clear();
+        self.cursor = 0;
+        Ok(())
+    }
+
     pub async fn finish(mut self) -> Result<Vec<Value>> {
         wait_for_ingest(&self.backend, "Claude SDK").await?;
         self.backend.stop().await;

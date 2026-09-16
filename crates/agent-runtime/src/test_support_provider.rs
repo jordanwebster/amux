@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use chrono::{TimeZone as _, Utc};
@@ -17,7 +18,7 @@ use crate::agents::claude::{ClaudeSdkBackend, ClaudeSession as ClaudePtyBackend}
 use crate::agents::codex::CodexBackend;
 use crate::agents::{
     AgentBackend, AgentRecord, McpLaunchRoute, MultiplexStructuredReader, Plane, SessionEvent,
-    StopPolicy, StructuredInput, StructuredInputEvent,
+    StopPolicy, StructuredInput, StructuredInputEvent, StructuredLogSource,
 };
 use crate::host::AgentRuntime;
 
@@ -49,6 +50,7 @@ impl Backend {
 pub struct StructuredBackendAdapter {
     backend: Backend,
     input: Box<dyn StructuredInput>,
+    log: StructuredLogSource,
     reader: MultiplexStructuredReader,
     ingest: Option<tokio::task::JoinHandle<()>>,
     _events: mpsc::Receiver<SessionEvent>,
@@ -71,6 +73,7 @@ impl StructuredBackendAdapter {
         Ok(Self {
             backend,
             input,
+            log,
             reader,
             ingest: Some(ingest),
             _events: events,
@@ -158,6 +161,24 @@ impl StructuredBackendAdapter {
 
     pub async fn read_row(&mut self) -> Option<Value> {
         self.reader.read().await.map(|row| row.payload)
+    }
+
+    pub async fn resubscribe_after_reset(&mut self) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while self.reader.read().await.is_some() {}
+            let (reader, facts) = self
+                .log
+                .subscribe_with_query(None)
+                .await
+                .context("fixture backend log was closed after reset")?;
+            if facts.reset_at == 0 {
+                bail!("fixture backend subscription ended without a semantic reset");
+            }
+            self.reader = reader;
+            Ok(())
+        })
+        .await
+        .context("timed out waiting for the fixture backend semantic reset")?
     }
 
     pub fn ingest_finished(&self) -> bool {
