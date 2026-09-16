@@ -223,7 +223,8 @@ impl LinkRegistry {
     }
 
     /// Registers a link and names the direct links it superseded, or refuses
-    /// it where a preferred direct link to the same peer is already held.
+    /// a fallback link where a preferred direct link to the same peer is
+    /// already held.
     pub(crate) async fn register_displacing(
         &self,
         link: LinkId,
@@ -263,9 +264,16 @@ impl LinkRegistry {
                 })
                 .map(|(id, writer)| (*id, writer.direct_order.unwrap()))
                 .collect::<Vec<_>>();
-            if duplicates
-                .iter()
-                .any(|(_, existing)| *existing == DirectLinkOrder::Preferred || *existing == order)
+            // Only a crossed dial is refused: the fallback loses to the
+            // preferred link the other direction already brought up. A second
+            // link in the same direction is the peer dialling again because it
+            // no longer has one — it restarted, or its network changed — while
+            // this side has not yet noticed the old link is dead. Refusing it
+            // would leave the peer unreachable until that link timed out.
+            if order == DirectLinkOrder::Fallback
+                && duplicates
+                    .iter()
+                    .any(|(_, existing)| *existing == DirectLinkOrder::Preferred)
             {
                 return None;
             }
@@ -854,6 +862,38 @@ mod tests {
             registry.links_per_peer().await,
             vec![(Uuid::from_u128(2), 1)]
         );
+    }
+
+    #[tokio::test]
+    async fn a_redial_in_the_same_direction_replaces_the_link_its_peer_abandoned() {
+        for order in [DirectLinkOrder::Fallback, DirectLinkOrder::Preferred] {
+            let registry = LinkRegistry::default();
+            let peer = host(2);
+            let properties = LinkProperties {
+                role: LinkRole::Peer,
+                admission: LinkAdmission::PinnedKey,
+                carrier: LinkCarrier::Direct,
+                direct_order: Some(order),
+            };
+            let abandoned = link(2, 1);
+            let (abandoned_tx, _) = mpsc::channel(8);
+            let mut abandoned_close = registry
+                .register_with_details(abandoned, peer.clone(), abandoned_tx, properties, &[], None)
+                .await
+                .expect("a lone link is usable");
+
+            let (redial_tx, _) = mpsc::channel(8);
+            let registration = registry
+                .register_displacing(link(2, 2), peer.clone(), redial_tx, properties, &[], None)
+                .await
+                .unwrap_or_else(|| panic!("a {order:?} redial was refused"));
+            assert_eq!(registration.displaced, vec![abandoned]);
+            assert_eq!(
+                abandoned_close.recv().await,
+                Some(LinkCloseRequest::Superseded)
+            );
+            assert_eq!(registry.links_per_peer().await, vec![(peer.id, 1)]);
+        }
     }
 
     #[tokio::test]

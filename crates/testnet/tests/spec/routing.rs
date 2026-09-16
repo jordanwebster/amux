@@ -214,6 +214,33 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
     laptop.can_call(&desktop).await;
 }
 
+/// A machine killed without closing its links comes straight back. The peer
+/// it dialled cannot tell the old link is dead until it idles out, so the
+/// relaunched machine's dial arrives while that link is still registered, in
+/// the same direction; it has to replace the dead link rather than be refused
+/// until the timeout. This is a phone swiped away and reopened.
+#[tokio::test]
+async fn a_relaunched_machine_reconnects_while_its_peer_still_holds_the_dead_link() {
+    let net = TestNet::builder()
+        .direct_idle_timeout(Duration::from_secs(60))
+        .daemon("phone")
+        .daemon("laptop")
+        .paired("phone", "laptop", Via::Direct)
+        .outside_discovery("phone")
+        .outside_discovery("laptop")
+        .start()
+        .await;
+    let [phone, laptop] = net.daemons(["phone", "laptop"]);
+    phone.can_call(&laptop).await;
+
+    phone.kill_and_relaunch().await;
+
+    phone.connects_to(&laptop).via_direct().await;
+    phone.can_call(&laptop).await;
+    laptop.can_call(&phone).await;
+    assert_eq!(laptop.links_to(&phone).await, 1);
+}
+
 /// Revocation: the moment one side unpairs, the revoked peer's fresh calls
 /// fail over every route — direct mTLS re-dials are refused by the live
 /// trust check, and cloud tunnels die at the end-to-end handshake. Trust

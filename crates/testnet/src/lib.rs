@@ -651,6 +651,7 @@ pub struct TestNetBuilder {
     stale_direct_pairs: std::collections::HashSet<(String, String)>,
     trusted: Vec<(String, String)>,
     undiscoverable: std::collections::HashSet<String>,
+    direct_idle_timeout: Option<std::time::Duration>,
 }
 
 impl TestNetBuilder {
@@ -837,6 +838,15 @@ impl TestNetBuilder {
         self
     }
 
+    /// Sets how long a direct QUIC connection on this network goes unanswered
+    /// before either end declares it dead. Lengthened past an assertion's
+    /// patience, a link whose far end vanished stays registered for the whole
+    /// test instead of timing out underneath it.
+    pub fn direct_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.direct_idle_timeout = Some(timeout);
+        self
+    }
+
     /// Shortens how long the selected daemon remembers a UDP-blocked relay
     /// network. Intended for deterministic fallback expiry specifications.
     pub fn udp_blocked_memory(mut self, duration: std::time::Duration) -> Self {
@@ -936,7 +946,9 @@ impl TestNetBuilder {
             .expect("create testnet data root");
         let discovery = ScriptedDiscovery::new();
         let discovery_events = discovery.browse();
-        let udp_proxy = UdpProxy::new();
+        let udp_proxy = self
+            .direct_idle_timeout
+            .map_or_else(UdpProxy::new, UdpProxy::with_idle_timeout);
 
         let mut cloud = if self.cloud {
             Some(

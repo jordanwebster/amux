@@ -551,7 +551,7 @@ fn fixture_factory(
                 listener,
                 quic_client_socket: None,
                 advertised_addr: fixture.direct_addr,
-                quic_transport: Some(super::udp_proxy::transport_config()),
+                quic_transport: Some(udp_proxy.transport_config()),
                 discovery: Some(Arc::new(discovery) as Arc<dyn Discovery>),
                 host_factory: Some(Arc::new(
                     agent_runtime::test_support::Factory::new(fixture.clock.clone())

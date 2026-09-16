@@ -1,3 +1,21 @@
+2026-09-17 — **A machine that comes back redials past its own dead link.**
+A phone swiped away and reopened reconnected to the laptop only about one launch
+in three. Killing the app sends no close, so the laptop keeps the old link
+registered until QUIC's idle timeout, 60 to 90 seconds later. The rule for
+crossed dials refused any second direct link whose direction matched the one
+already held, so every relaunch inside that window completed its handshake and
+was closed at once. The phone then redialled in a tight loop until the laptop's
+handshake rate limit stopped it. Ten cold launches of a simulator paired with a
+real laptop connected twice, each about three seconds after the laptop timed out
+the previous launch's link. Now only a fallback link is refused, and only while
+the preferred link from the other direction is held. A second link in the same
+direction means the peer is dialling because it has no link, so the new link
+replaces the old one. A spec kills a daemon with its datagrams dropped, relaunches
+it on a network whose idle timeout outlasts every assertion, and requires the
+reconnect. Without the fix it times out.
+A restarted machine whose new link is a fallback can still be refused while its
+peer holds a dead preferred link from the old process.
+
 2026-09-16 — **A call survives the direct link it chose being superseded.**
 Two paired daemons that start together dial each other, and the rule for
 crossed dials closes the losing link as soon as the preferred one registers. A
