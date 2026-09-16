@@ -7,6 +7,7 @@ publish = false
 
 [features]
 default = []
+bundled = ["app-runtime/bundled"]
 # Driving affordances a test harness needs and a shipping build must not
 # carry: a plaintext loopback relay, and the served test network as a
 # development dependency of this crate's own suite.

@@ -7,6 +7,12 @@ sealed compile-time postcard-safety check that excludes JSON value trees.
 Existing human-readable model JSON keeps its wire shape while the persisted
 binary form uses external enum tags that postcard can decode.
 
+2026-09-16 — **Desktop SQLite selection resolves at every Cargo boundary.**
+Every desktop root forwards an explicit bundled feature to `store`, including
+the product, embedded runtime, test harness and screenshot tool. Mobile checks
+omit that feature, leaving `store`'s bundled feature default-off and linking the
+qualified system SQLite library.
+
 2026-09-16 — **Structured observations have one vocabulary below every client.**
 The daemon, shared store and UI reducers now meet on sequence, protocol,
 attention, lifecycle and summary types owned by `model`; `ui-state` re-exports

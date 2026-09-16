@@ -6,6 +6,8 @@ description = "amux chrome TUI: the fleet around raw attach"
 publish = false
 
 [features]
+default = []
+bundled = ["ui-runtime/bundled"]
 fixtures = []
 
 # Rendering consumes pure UI state; the event loop uses ui-runtime for effects.

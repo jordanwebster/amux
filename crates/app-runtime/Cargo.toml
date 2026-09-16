@@ -5,6 +5,10 @@ edition.workspace = true
 description = "Account sessions, presentation projection, fleet cache and the frame-coalesced event queue any rich amux client reuses"
 publish = false
 
+[features]
+default = []
+bundled = ["store/bundled"]
+
 [dependencies]
 artifacts = { workspace = true }
 client = { workspace = true }

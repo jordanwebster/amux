@@ -10,6 +10,7 @@ crate-type = ["staticlib", "rlib"]
 
 [features]
 default = []
+bundled = ["app-runtime/bundled"]
 debug-tools = ["app-embedded/debug-tools"]
 
 [dependencies]

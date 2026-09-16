@@ -6,7 +6,9 @@ export AMUX_GIT_SHA := `git rev-parse HEAD`
 
 # Wall-clock bound for every recipe; portable where GNU timeout is absent.
 bounded := "scripts/bounded"
-desktop_features := "--features store/bundled"
+# Each desktop root forwards this opt-in to store. Mobile recipes omit it and
+# therefore keep using the system SQLite library.
+desktop_features := "--features bundled"
 
 # List the available repository tasks.
 default:

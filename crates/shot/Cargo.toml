@@ -5,6 +5,10 @@ edition.workspace = true
 description = "Deterministic PNG renderer for named amux TUI states"
 publish = false
 
+[features]
+default = []
+bundled = ["tui/bundled"]
+
 [dependencies]
 ui-state = { workspace = true }
 tui = { workspace = true, features = ["fixtures"] }

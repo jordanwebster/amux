@@ -5,6 +5,10 @@ edition.workspace = true
 description = "Resource-owning effect runtime for amux UI state"
 publish = false
 
+[features]
+default = []
+bundled = ["store/bundled"]
+
 [dependencies]
 client = { workspace = true }
 artifacts = { workspace = true }

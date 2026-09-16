@@ -30,7 +30,7 @@ esac
 cd "$repo_root"
 
 shot() {
-    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot --features store/bundled -- "$@"
+    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot --features bundled -- "$@"
 }
 
 capture() {
@@ -91,20 +91,20 @@ shot record-scroll codex --out "$evidence_dir/scroll"
 
 echo "Capturing screenshot-tool commands"
 capture "$evidence_dir/tool/help.txt" \
-    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot --features store/bundled -- --help
+    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot --features bundled -- --help
 capture "$evidence_dir/tool/list.txt" \
-    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot --features store/bundled -- list
+    "$(dirname "$0")/bounded" 600 cargo run --locked --quiet -p shot --bin amux-shot --features bundled -- list
 repeatability
 
 echo "Capturing mechanical demonstrations"
 capture "$evidence_dir/perf/perf-debug.txt" \
-    "$(dirname "$0")/bounded" 900 cargo test --locked -p tui --features fixtures,store/bundled --test perf -- --nocapture
+    "$(dirname "$0")/bounded" 900 cargo test --locked -p tui --features fixtures,bundled --test perf -- --nocapture
 capture "$evidence_dir/perf/perf-release.txt" \
-    "$(dirname "$0")/bounded" 900 cargo test --locked -p tui --features fixtures,store/bundled --release --test perf -- --nocapture
+    "$(dirname "$0")/bounded" 900 cargo test --locked -p tui --features fixtures,bundled --release --test perf -- --nocapture
 capture "$evidence_dir/themes/theme-loader-tests.txt" \
-    "$(dirname "$0")/bounded" 600 cargo test --locked -p tui --features store/bundled theme:: -- --nocapture
+    "$(dirname "$0")/bounded" 600 cargo test --locked -p tui --features bundled theme:: -- --nocapture
 capture "$evidence_dir/copy/osc52-transcript.txt" \
-    "$(dirname "$0")/bounded" 600 cargo test --locked -p tui --features store/bundled osc52 -- --nocapture
+    "$(dirname "$0")/bounded" 600 cargo test --locked -p tui --features bundled osc52 -- --nocapture
 
 for required_file in \
     "$evidence_dir/scroll/claude-wheel.gif" \
