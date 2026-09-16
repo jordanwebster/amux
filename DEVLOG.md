@@ -1,3 +1,13 @@
+2026-09-16 — **Codex streams now fold into durable native entries.**
+Items, turn snapshots, completed turns, steer echoes and agent envelopes use
+their provider identities across replay and late amendments, while the small
+set of rows without native identity remains explicitly delivery-keyed. The
+persisted tip carries only bounded approval obligations and summary knowledge;
+completed text replaces streamed components, token usage supplies context, and
+ready session facts supply the model. Recorded-corpus tests now prove postcard
+continuation at every cut, deterministic enriched approval and steer rows,
+bounded lifecycle behavior and the complete cross-provider duplicate list.
+
 2026-09-16 — **Claude SDK streams now converge on durable final entries.**
 Streamed blocks retain provisional provider identities only while their message
 cursor is known, then alias into row-UUID final keys whose authoritative

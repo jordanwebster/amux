@@ -405,8 +405,12 @@ pub trait ProviderFold: Default + Serialize + DeserializeOwned + PostcardSafe {
 }
 
 /// The closed provider fold. Provider variants are added only as they land.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum AgentFold {}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentFold {
+    Claude(claude_pty::ClaudeFold),
+    ClaudeSdk(claude_sdk::ClaudeSdkFold),
+    Codex(codex::CodexFold),
+}
 
 /// Opaque provider JSON in a persisted value.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -708,7 +712,16 @@ impl PostcardSafe for Baseline {}
 fieldless_enum_safe!(Promotion, value => match value {
     Promotion::ToolToTask => {}
 });
-fieldless_enum_safe!(AgentFold, value => match value {});
+impl private::Sealed for AgentFold {
+    fn assert_fields_are_postcard_safe() {
+        let _ = |value: AgentFold| match value {
+            AgentFold::Claude(fold) => assert_value_safe(&fold),
+            AgentFold::ClaudeSdk(fold) => assert_value_safe(&fold),
+            AgentFold::Codex(fold) => assert_value_safe(&fold),
+        };
+    }
+}
+impl PostcardSafe for AgentFold {}
 fieldless_enum_safe!(Boundary, value => match value {
     Boundary::Truncated | Boundary::Gap | Boundary::VersionGap | Boundary::Evicted => {}
 });

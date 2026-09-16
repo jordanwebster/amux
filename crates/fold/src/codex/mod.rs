@@ -1,6 +1,11 @@
 //! Codex stream observation shared by clients and the daemon.
 
 mod fold;
+mod semantics;
+
+pub use semantics::{
+    CodexBody, CodexEntry, CodexEntryKind, CodexFold, CodexPartial, DELIVERY_KEYED_VARIANTS,
+};
 
 use std::collections::{BTreeMap, VecDeque};
 

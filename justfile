@@ -35,7 +35,7 @@ test-crate CRATE *ARGS:
 
 # Exercise the shared merge algebra and provider folds.
 test-fold *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p fold "$@"
+    if [ "${1-}" = -- ]; then shift; fi; if [ "${2-}" = --nocapture ]; then filter=$1; shift 2; {{bounded}} 1200 cargo test --locked -p fold "$filter" -- --nocapture "$@"; else {{bounded}} 1200 cargo test --locked -p fold "$@"; fi
 
 # Compile every ordinary workspace test target without running it.
 test-build:
