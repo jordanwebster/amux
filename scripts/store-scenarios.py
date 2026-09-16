@@ -762,7 +762,7 @@ def gap(output: Path) -> None:
         journey.tmux("send-keys", "-t", pane, "C-End")
         gap_dump = journey.wait_dump("gap-chat", "boundary=Gap", timeout=90)
         journey.tmux("send-keys", "-t", pane, "C-Home")
-        missing = journey.page_until(pane, "missing history", older=False)
+        missing = journey.page_until(pane, "missing history")
         journey.frame(pane, "offline past ring shows missing-history boundary", missing)
         if "old-history-00029" not in gap_dump:
             raise RuntimeError("gap recovery discarded the old stored segment")
@@ -784,8 +784,8 @@ def gap(output: Path) -> None:
             )
         journey.open_chat(pane, "gap-chat")
         version_dump = journey.wait_dump("gap-chat", "boundary=VersionGap", timeout=90)
-        journey.tmux("send-keys", "-t", pane, "C-Home")
-        version = journey.page_until(pane, "history version changed", older=False)
+        journey.tmux("send-keys", "-t", pane, "C-End")
+        version = journey.wait_frame(pane, "history version changed", timeout=90)
         journey.frame(pane, "tip-version bump keeps history behind boundary", version)
         if "old-history-00029" not in version_dump:
             raise RuntimeError("tip-version recovery discarded stored history")
@@ -856,10 +856,12 @@ def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
         raise RuntimeError("the real Claude Code binary is unavailable")
     target = journey.scratch / "permission-request-target.txt"
     prompt = (
-        "Create a small resume-history fixture. First call TodoWrite with exactly one "
-        "in_progress item whose content is 'Resume from the live checklist'. Then attempt "
+        "Create a small resume-history fixture. First call TaskCreate with subject "
+        "'Resume from the live checklist', description 'Fixture task for live capture test', "
+        "and activeForm 'Resuming from the live checklist'. Then call TaskUpdate for the "
+        "created task with status in_progress. Then attempt "
         f"to use the Write tool to write LIVE_PERMISSION_REQUEST to {target}. The permission "
-        "may be denied; do not use another tool instead. After both tool attempts, reply "
+        "may be denied; do not use another tool instead. After all three tool attempts, reply "
         "exactly SDK_LIVE_CAPTURE_OK."
     )
     command = [
@@ -871,7 +873,10 @@ def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
         "--session-id",
         session,
         "--tools",
-        "TodoWrite,Write",
+        "TaskCreate,TaskUpdate,Write",
+        "--strict-mcp-config",
+        "--mcp-config",
+        '{"mcpServers":{}}',
         "--permission-mode",
         "manual",
         "--permission-prompts",
@@ -909,8 +914,8 @@ def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
         )
     source = candidates[0]
     rows = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
-    tool_names = {
-        block.get("name")
+    tool_uses = [
+        block
         for item in rows
         for block in (
             item.get("message", {}).get("content", [])
@@ -918,12 +923,28 @@ def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
             else []
         )
         if isinstance(block, dict) and block.get("type") == "tool_use"
+    ]
+    by_name = {
+        name: [block for block in tool_uses if block.get("name") == name]
+        for name in ("TaskCreate", "TaskUpdate", "Write")
     }
-    if "TodoWrite" not in tool_names or "Write" not in tool_names:
+    if any(not blocks for blocks in by_name.values()):
         raise RuntimeError(
-            "the authenticated Claude Code binary did not produce the required TodoWrite "
-            f"and permission request; observed tools were {sorted(name for name in tool_names if name)}"
+            "the authenticated Claude Code binary did not produce the required task and "
+            "permission tools; observed tools were "
+            f"{sorted({block.get('name') for block in tool_uses if block.get('name')})}"
         )
+    create_input = by_name["TaskCreate"][0].get("input", {})
+    if create_input.get("subject") != "Resume from the live checklist" or not create_input.get(
+        "activeForm"
+    ):
+        raise RuntimeError(f"TaskCreate did not carry the live checklist fields: {create_input}")
+    update_input = by_name["TaskUpdate"][0].get("input", {})
+    if not update_input.get("taskId") or update_input.get("status") != "in_progress":
+        raise RuntimeError(f"TaskUpdate did not activate the created task: {update_input}")
+    write_input = by_name["Write"][0].get("input", {})
+    if write_input.get("file_path") != str(target):
+        raise RuntimeError(f"Write did not request the capture target: {write_input}")
     if "SDK_LIVE_CAPTURE_OK" not in source.read_text():
         raise RuntimeError("the real Claude Code session did not finish its capture marker")
     source.unlink()
@@ -955,8 +976,8 @@ def sdk_resume(output: Path) -> None:
         history = journey.wait_frame(pane, "SDK_LIVE_CAPTURE_OK", timeout=90)
         journey.frame(pane, "real Claude Code transcript restored on resume", history)
         before = journey.wait_dump("sdk-history", "SDK_LIVE_CAPTURE_OK", timeout=90)
-        if 'todo=0/1 current="Resume from the live checklist"' not in before:
-            raise RuntimeError("historical TodoWrite did not restore the checklist")
+        if 'todo=0/1 current="Resuming from the live checklist"' not in before:
+            raise RuntimeError("historical task tools did not restore the checklist")
         diagnostics = journey.diagnostics()
         if "Write" not in history or '"pending_permissions": 0' not in json.dumps(diagnostics):
             raise RuntimeError("the historical permission was absent or remained answerable")
@@ -989,8 +1010,8 @@ def sdk_resume(output: Path) -> None:
             after,
             diagnostics,
             [
-                "the claude binary produced the TodoWrite and Write permission rows itself",
-                "the real historical TodoWrite restored its checklist visibly",
+                "the claude binary produced the TaskCreate, TaskUpdate and Write permission rows itself",
+                "the real historical task tools restored their active checklist visibly",
                 "the old Write permission painted without answer controls or a pending obligation",
                 "after the source file was removed, a second SDK resume still painted stored history",
             ],

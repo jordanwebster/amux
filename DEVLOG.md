@@ -12,8 +12,8 @@ daemon through confirmation, chat scroll-back records the SQLite page and its
 bounded window, subscription diagnostics attribute open chats to each terminal
 across relaunch, and entry-family rebuilding is observed by a restarted client
 while another provider survives. SDK resume capture now requires transcript
-rows produced by an authenticated Claude Code binary and rejects synthetic
-substitutes.
+rows produced by an authenticated Claude Code binary using its current task
+tools under an isolated MCP configuration, and rejects synthetic substitutes.
 
 2026-09-16 — **Profile switches leave store work behind immediately.** Retiring
 a profile no longer joins its SQLite worker on the UI thread, even when that
