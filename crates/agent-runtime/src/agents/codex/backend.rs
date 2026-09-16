@@ -185,14 +185,22 @@ fn capture_dir() -> Option<PathBuf> {
 }
 
 fn codex_log_source() -> StructuredLogSource {
+    codex_log_source_resuming(0)
+}
+
+fn codex_log_source_resuming(last_seq: u64) -> StructuredLogSource {
     let Some(dir) = capture_dir() else {
-        return StructuredLogSource::with_policy(RingPolicy::codex());
+        return StructuredLogSource::resuming_with_policy(RingPolicy::codex(), last_seq);
     };
-    match StructuredLogSource::recording_with_policy(RingPolicy::codex(), &dir.join("rows.jsonl")) {
+    match StructuredLogSource::recording_resuming_with_policy(
+        RingPolicy::codex(),
+        last_seq,
+        &dir.join("rows.jsonl"),
+    ) {
         Ok(source) => source,
         Err(error) => {
             tracing::warn!(%error, path = %dir.display(), "failed to enable Codex row capture");
-            StructuredLogSource::with_policy(RingPolicy::codex())
+            StructuredLogSource::resuming_with_policy(RingPolicy::codex(), last_seq)
         }
     }
 }
@@ -592,6 +600,7 @@ impl CodexBackend {
         mcp_launch_route: McpLaunchRoute,
         daemon_mode: Option<String>,
         created_at: DateTime<Utc>,
+        sealed_through: u64,
     ) -> Self {
         let session = Self::new(req, shared_client, mcp_launch_route);
         {
@@ -603,6 +612,7 @@ impl CodexBackend {
         }
         Self {
             created_at,
+            log_source: codex_log_source_resuming(sealed_through),
             ..session
         }
     }
@@ -2205,6 +2215,7 @@ mod tests {
             route.clone(),
             Some("spawned-private".to_string()),
             Utc::now(),
+            0,
         );
 
         assert_eq!(fresh.mcp_launch_route, Some(route.clone()));

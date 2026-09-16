@@ -11,6 +11,7 @@ use std::time::Duration;
 use model::{ReplayFacts, ReplayOutcome};
 use serde_json::Value;
 use tokio::sync::Notify;
+use uuid::Uuid;
 
 use crate::agents::{
     MultiplexStructuredBuffer, MultiplexStructuredReader, OutputDebug, SequencedReplayQuery,
@@ -19,6 +20,176 @@ use crate::agents::{
 
 const RECENT_SUBSCRIPTION_LIMIT: usize = 8;
 const ROW_ADMISSION_BYTES: usize = 4 * 1024 * 1024;
+
+/// The durable authority to continue one agent's sequence after suspension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SealedAt {
+    pub(crate) id: Uuid,
+    pub(crate) through: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum LogClosed {
+    #[cfg(test)]
+    #[error("structured log is sealed")]
+    Sealed,
+    #[error("structured log is closed")]
+    Closed,
+    #[error("structured log sequence is exhausted")]
+    Exhausted,
+}
+
+#[derive(Default)]
+struct PublicationState {
+    parked: bool,
+    active: usize,
+    seal: Option<SealedAt>,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct PublicationGate {
+    state: Mutex<PublicationState>,
+    changed: Notify,
+}
+
+struct PublicationPermit<'a>(&'a PublicationGate);
+
+impl Drop for PublicationPermit<'_> {
+    fn drop(&mut self) {
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.active = state
+            .active
+            .checked_sub(1)
+            .expect("publication permit count is balanced");
+        drop(state);
+        self.0.changed.notify_waiters();
+    }
+}
+
+impl PublicationGate {
+    #[cfg(test)]
+    async fn enter(&self) -> Result<PublicationPermit<'_>, LogClosed> {
+        loop {
+            let changed = self.changed.notified();
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if state.closed {
+                    return Err(LogClosed::Closed);
+                }
+                if state.seal.is_some() {
+                    return Err(LogClosed::Sealed);
+                }
+                if !state.parked {
+                    state.active = state
+                        .active
+                        .checked_add(1)
+                        .expect("active publisher count exhausted");
+                    return Ok(PublicationPermit(self));
+                }
+            }
+            changed.await;
+        }
+    }
+
+    async fn enter_waiting(&self) -> Result<PublicationPermit<'_>, LogClosed> {
+        loop {
+            let changed = self.changed.notified();
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if state.closed {
+                    return Err(LogClosed::Closed);
+                }
+                if !state.parked && state.seal.is_none() {
+                    state.active = state
+                        .active
+                        .checked_add(1)
+                        .expect("active publisher count exhausted");
+                    return Ok(PublicationPermit(self));
+                }
+            }
+            changed.await;
+        }
+    }
+
+    async fn park(&self) -> Result<Option<SealedAt>, LogClosed> {
+        loop {
+            let changed = self.changed.notified();
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if state.closed {
+                    return Err(LogClosed::Closed);
+                }
+                if let Some(seal) = state.seal {
+                    return Ok(Some(seal));
+                }
+                state.parked = true;
+                if state.active == 0 {
+                    return Ok(None);
+                }
+            }
+            changed.await;
+        }
+    }
+
+    fn seal(&self, through: u64) -> Result<SealedAt, LogClosed> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if state.closed {
+            return Err(LogClosed::Closed);
+        }
+        if let Some(seal) = state.seal {
+            return Ok(seal);
+        }
+        assert!(state.parked, "a structured log is parked before sealing");
+        assert_eq!(state.active, 0, "all publishers acknowledge before sealing");
+        let seal = SealedAt {
+            id: Uuid::new_v4(),
+            through,
+        };
+        state.seal = Some(seal);
+        Ok(seal)
+    }
+
+    fn abort(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if state.closed {
+            return;
+        }
+        state.seal = None;
+        state.parked = false;
+        drop(state);
+        self.changed.notify_waiters();
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.closed = true;
+        drop(state);
+        self.changed.notify_waiters();
+    }
+}
 
 /// Byte and row ceilings for one provider's in-memory structured log.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +231,7 @@ impl RingPolicy {
 #[derive(Clone)]
 pub(crate) struct StructuredLogSource {
     buffer: MultiplexStructuredBuffer,
+    publication: Arc<PublicationGate>,
     recording: Option<Arc<Mutex<File>>>,
     recent_subscriptions: Arc<Mutex<VecDeque<SubscriptionRecord>>>,
     idle_monitor_started: Arc<AtomicBool>,
@@ -75,6 +247,7 @@ impl StructuredLogSource {
     pub(crate) fn with_policy(policy: RingPolicy) -> Self {
         Self {
             buffer: MultiplexStructuredBuffer::with_policy(policy),
+            publication: Arc::new(PublicationGate::default()),
             recording: None,
             recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
             idle_monitor_started: Arc::new(AtomicBool::new(false)),
@@ -82,11 +255,7 @@ impl StructuredLogSource {
         }
     }
 
-    pub(crate) fn recording_with_policy(policy: RingPolicy, path: &Path) -> std::io::Result<Self> {
-        Self::recording_resuming_with_policy(policy, 0, path)
-    }
-
-    fn recording_resuming_with_policy(
+    pub(crate) fn recording_resuming_with_policy(
         policy: RingPolicy,
         last_seq: u64,
         path: &Path,
@@ -100,11 +269,24 @@ impl StructuredLogSource {
             .open(path)?;
         Ok(Self {
             buffer: MultiplexStructuredBuffer::with_policy_and_last_seq(policy, last_seq),
+            publication: Arc::new(PublicationGate::default()),
             recording: Some(Arc::new(Mutex::new(file))),
             recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
             idle_monitor_started: Arc::new(AtomicBool::new(false)),
             idle_monitor_wake: Arc::new(Notify::new()),
         })
+    }
+
+    /// Create an empty resumed ring whose next publication follows `last_seq`.
+    pub(crate) fn resuming_with_policy(policy: RingPolicy, last_seq: u64) -> Self {
+        Self {
+            buffer: MultiplexStructuredBuffer::with_policy_and_last_seq(policy, last_seq),
+            publication: Arc::new(PublicationGate::default()),
+            recording: None,
+            recent_subscriptions: Arc::new(Mutex::new(VecDeque::new())),
+            idle_monitor_started: Arc::new(AtomicBool::new(false)),
+            idle_monitor_wake: Arc::new(Notify::new()),
+        }
     }
 
     /// Subscribe to the structured log buffer immediately.
@@ -152,9 +334,31 @@ impl StructuredLogSource {
 
     /// Write a structured output entry.
     pub(crate) async fn write(&self, payload: Value) {
+        let Ok(permit) = self.publication.enter_waiting().await else {
+            return;
+        };
+        let _ = self.publish(permit, payload).await;
+    }
+
+    /// Write a row, refusing publication while the log is sealed or closed.
+    #[cfg(test)]
+    pub(crate) async fn try_write(&self, payload: Value) -> Result<u64, LogClosed> {
+        let permit = self.publication.enter().await?;
+        self.publish(permit, payload).await
+    }
+
+    async fn publish(
+        &self,
+        _permit: PublicationPermit<'_>,
+        payload: Value,
+    ) -> Result<u64, LogClosed> {
         self.ensure_idle_monitor();
         let payload = clip_oversized_row(payload);
-        self.buffer.write(payload.clone()).await;
+        let item = self
+            .buffer
+            .write(payload.clone())
+            .await
+            .ok_or(LogClosed::Exhausted)?;
         self.idle_monitor_wake.notify_waiters();
         if let Some(recording) = &self.recording
             && let Ok(mut file) = recording.lock()
@@ -162,14 +366,20 @@ impl StructuredLogSource {
             let _ = writeln!(file, "{payload}");
             let _ = file.flush();
         }
+        Ok(item.seq)
     }
 
     /// Atomically cut the old semantic generation and retain its marker as the
     /// first row of the new one. Existing readers are told to resubscribe.
     pub(crate) async fn semantic_reset(&self, marker: Value) -> u64 {
+        let Ok(_permit) = self.publication.enter_waiting().await else {
+            return self.current_seq().await;
+        };
         self.ensure_idle_monitor();
         let marker = clip_oversized_row(marker);
-        let item = self.buffer.semantic_reset(marker.clone()).await;
+        let Some(item) = self.buffer.semantic_reset(marker.clone()).await else {
+            return u64::MAX;
+        };
         self.idle_monitor_wake.notify_waiters();
         if let Some(recording) = &self.recording
             && let Ok(mut file) = recording.lock()
@@ -178,6 +388,25 @@ impl StructuredLogSource {
             let _ = file.flush();
         }
         item.seq
+    }
+
+    /// Wait for every in-flight publisher, block new ones, and seal the next
+    /// sequence behind a single-use token.
+    pub(crate) async fn prepare_suspend(&self) -> Result<SealedAt, LogClosed> {
+        if let Some(seal) = self.publication.park().await? {
+            return Ok(seal);
+        }
+        let through = self.buffer.current_seq().await;
+        if through == u64::MAX {
+            self.publication.abort();
+            return Err(LogClosed::Exhausted);
+        }
+        self.publication.seal(through)
+    }
+
+    /// Re-open a prepared source after its durable seal has been invalidated.
+    pub(crate) fn abort_suspend(&self) {
+        self.publication.abort();
     }
 
     /// Return the current sequence number.
@@ -201,6 +430,7 @@ impl StructuredLogSource {
 
     /// Close the source and all current subscriptions.
     pub(crate) async fn close(&self) {
+        self.publication.close();
         self.buffer.close().await;
         self.idle_monitor_wake.notify_waiters();
     }
@@ -657,6 +887,65 @@ mod tests {
             old_reader.read_event().await.unwrap(),
             BroadcastRead::Reset
         ));
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_parks_publishers_and_reuses_one_token() {
+        let log = StructuredLogSource::new(16);
+        log.write(json!({"type": "before"})).await;
+
+        let seal = log.prepare_suspend().await.unwrap();
+        assert_eq!(seal.through, 1);
+        assert_eq!(log.prepare_suspend().await.unwrap(), seal);
+        assert_eq!(
+            log.try_write(json!({"type": "sealed"})).await,
+            Err(LogClosed::Sealed)
+        );
+        assert_eq!(log.current_seq().await, 1);
+
+        log.abort_suspend();
+        assert_eq!(log.try_write(json!({"type": "after"})).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_close_releases_a_parked_publisher_without_numbering_it() {
+        let log = StructuredLogSource::new(16);
+        let publication = log.publication.clone();
+        {
+            let mut state = publication
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            state.parked = true;
+        }
+        let writer_log = log.clone();
+        let writer =
+            tokio::spawn(async move { writer_log.try_write(json!({"type": "waiting"})).await });
+        tokio::task::yield_now().await;
+        log.close().await;
+
+        assert_eq!(writer.await.unwrap(), Err(LogClosed::Closed));
+        assert_eq!(log.current_seq().await, 0);
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_abort_releases_an_emitting_publisher_after_the_barrier() {
+        let log = StructuredLogSource::new(16);
+        log.write(json!({"type": "before-seal"})).await;
+        let seal = log.prepare_suspend().await.unwrap();
+
+        let emitting_log = log.clone();
+        let emitting = tokio::spawn(async move {
+            emitting_log
+                .write(json!({"type": "held-during-seal"}))
+                .await;
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(log.current_seq().await, seal.through);
+
+        log.abort_suspend();
+        emitting.await.unwrap();
+        assert_eq!(log.current_seq().await, seal.through + 1);
     }
 
     #[tokio::test]

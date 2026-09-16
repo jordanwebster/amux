@@ -1,3 +1,4 @@
+use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 #[cfg(unix)]
@@ -8,12 +9,17 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::agents::{AgentParent, ClaudeDriver, TerminalSize, WorkingOn};
+use crate::agents::{AgentParent, ClaudeDriver, SealedAt, TerminalSize, WorkingOn};
 
 /// All suspended agent sessions, serialized to disk across server restarts.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct SuspendedServerState {
     pub(crate) agents: Vec<SuspendedAgent>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ConsumedSeals {
+    ids: BTreeSet<Uuid>,
 }
 
 /// Persisted source for a Claude agent's display name.
@@ -43,6 +49,8 @@ pub(crate) enum SuspendedAgent {
         parent: Option<AgentParent>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         working_on: Option<WorkingOn>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seal: Option<SealedAt>,
     },
     #[cfg(unix)]
     Codex {
@@ -60,6 +68,8 @@ pub(crate) enum SuspendedAgent {
         parent: Option<AgentParent>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         working_on: Option<WorkingOn>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seal: Option<SealedAt>,
     },
     #[cfg(any(debug_assertions, test))]
     TestAgent {
@@ -73,6 +83,8 @@ pub(crate) enum SuspendedAgent {
         parent: Option<AgentParent>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         working_on: Option<WorkingOn>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seal: Option<SealedAt>,
     },
 }
 
@@ -114,6 +126,42 @@ impl SuspendedAgent {
             Self::Codex { working_on, .. } => *working_on = value,
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent { working_on, .. } => *working_on = value,
+        }
+    }
+
+    pub(crate) fn seal(&self) -> Option<SealedAt> {
+        match self {
+            Self::Claude { seal, .. } => *seal,
+            #[cfg(unix)]
+            Self::Codex { seal, .. } => *seal,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent { seal, .. } => *seal,
+        }
+    }
+
+    pub(crate) fn set_seal(&mut self, value: Option<SealedAt>) {
+        match self {
+            Self::Claude { seal, .. } => *seal = value,
+            #[cfg(unix)]
+            Self::Codex { seal, .. } => *seal = value,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent { seal, .. } => *seal = value,
+        }
+    }
+
+    pub(crate) fn recreate_under(&mut self, agent_id: Uuid) {
+        match self {
+            Self::Claude {
+                agent_id: current, ..
+            } => *current = agent_id,
+            #[cfg(unix)]
+            Self::Codex {
+                agent_id: current, ..
+            } => *current = agent_id,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent {
+                agent_id: current, ..
+            } => *current = agent_id,
         }
     }
 }
@@ -196,8 +244,106 @@ pub(crate) fn remove_suspended(state_path: &Path) -> Result<(), std::io::Error> 
     }
 }
 
+/// Durably consume every supplied seal before any resumed publisher starts.
+///
+/// The returned ids were already consumed by an earlier attempt and therefore
+/// must be recreated under a new agent identity without continuing their old
+/// sequence.
+pub(crate) fn consume_seals(
+    state_path: &Path,
+    agents: &[SuspendedAgent],
+) -> Result<HashSet<Uuid>, std::io::Error> {
+    let path = consumed_seals_path(state_path);
+    let mut consumed = match fs::read_to_string(&path) {
+        Ok(yaml) => serde_yaml::from_str::<ConsumedSeals>(&yaml).map_err(std::io::Error::other)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ConsumedSeals::default(),
+        Err(error) => return Err(error),
+    };
+    let mut already = HashSet::new();
+    let mut changed = false;
+    for agent in agents {
+        let Some(seal) = agent.seal() else {
+            already.insert(agent.agent_id());
+            continue;
+        };
+        if !consumed.ids.insert(seal.id) {
+            already.insert(agent.agent_id());
+        } else {
+            changed = true;
+        }
+    }
+    if changed {
+        save_consumed_seals(&path, &consumed)?;
+    }
+    Ok(already)
+}
+
+/// Permanently invalidate prepared seals before their live sources unpark.
+pub(crate) fn invalidate_seals(
+    state_path: &Path,
+    agents: &[SuspendedAgent],
+) -> Result<(), std::io::Error> {
+    consume_seals(state_path, agents).map(|_| ())
+}
+
+/// Remove only the prepared records named by these seals, preserving older
+/// failed resumes that share the same state file.
+pub(crate) fn remove_prepared(
+    state_path: &Path,
+    agents: &[SuspendedAgent],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let seals = agents
+        .iter()
+        .filter_map(SuspendedAgent::seal)
+        .map(|seal| seal.id)
+        .collect::<HashSet<_>>();
+    let mut retained = load_suspended(state_path)?;
+    let before = retained.agents.len();
+    retained
+        .agents
+        .retain(|agent| agent.seal().is_none_or(|seal| !seals.contains(&seal.id)));
+    if retained.agents.len() == before {
+        return Ok(());
+    }
+    if retained.agents.is_empty() {
+        remove_suspended(state_path)?;
+    } else {
+        save_suspended(state_path, &retained)?;
+    }
+    Ok(())
+}
+
+fn save_consumed_seals(path: &Path, state: &ConsumedSeals) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let yaml = serde_yaml::to_string(state).map_err(std::io::Error::other)?;
+    let temp_path = path.with_extension("yaml.tmp");
+    let mut opts = OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut file = opts.open(&temp_path)?;
+    file.write_all(yaml.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&temp_path, path)?;
+    #[cfg(unix)]
+    fs::File::open(
+        path.parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new(".")),
+    )?
+    .sync_all()?;
+    Ok(())
+}
+
 fn suspended_path(state_path: &Path) -> PathBuf {
     state_path.with_file_name("suspended.yaml")
+}
+
+fn consumed_seals_path(state_path: &Path) -> PathBuf {
+    state_path.with_file_name("consumed-seals.yaml")
 }
 
 #[cfg(test)]
@@ -231,6 +377,7 @@ mod tests {
                         text: "reviewing protocol".to_string(),
                         updated_at: Utc::now(),
                     }),
+                    seal: None,
                 },
                 #[cfg(unix)]
                 SuspendedAgent::Codex {
@@ -245,6 +392,7 @@ mod tests {
                     created_at: Utc::now(),
                     parent: None,
                     working_on: None,
+                    seal: None,
                 },
                 #[cfg(any(debug_assertions, test))]
                 SuspendedAgent::TestAgent {
@@ -256,6 +404,7 @@ mod tests {
                     created_at: Utc::now(),
                     parent: None,
                     working_on: None,
+                    seal: None,
                 },
             ],
         };
@@ -303,6 +452,7 @@ mod tests {
                 created_at: Utc::now(),
                 parent: None,
                 working_on: None,
+                seal: None,
             }],
         };
         let yaml = serde_yaml::to_string(&state).unwrap();

@@ -235,12 +235,29 @@ impl Inner {
         let mut journal = if let Some(journal) = previous.filter(|journal| journal.pending()) {
             journal
         } else {
-            let mut profiles = Vec::new();
+            let mut profiles: Vec<PreparedProfile> = Vec::new();
             for target in &targets {
                 let host_state = match &target.host {
-                    Some(host) => host.prepare_update().await.map_err(|error| {
-                        InstallationError::Unavailable(format!("profile {}: {error}", target.id))
-                    })?,
+                    Some(host) => match host.prepare_update().await {
+                        Ok(state) => state,
+                        Err(error) => {
+                            for prepared in &profiles {
+                                if let Some(prepared_host) = targets
+                                    .iter()
+                                    .find(|candidate| candidate.id == prepared.id)
+                                    .and_then(|candidate| candidate.host.as_ref())
+                                {
+                                    let _ = prepared_host
+                                        .abort_update(prepared.host_state.clone())
+                                        .await;
+                                }
+                            }
+                            return Err(InstallationError::Unavailable(format!(
+                                "profile {}: {error}",
+                                target.id
+                            )));
+                        }
+                    },
                     None => PreparedHostState {
                         agent_ids: Vec::new(),
                         payload: Vec::new(),
@@ -259,7 +276,18 @@ impl Inner {
                 resume_operation: None,
                 resume_report: None,
             };
-            journal.save(&self.root)?;
+            if let Err(error) = journal.save(&self.root) {
+                for prepared in &journal.profiles {
+                    if let Some(host) = targets
+                        .iter()
+                        .find(|target| target.id == prepared.id)
+                        .and_then(|target| target.host.as_ref())
+                    {
+                        let _ = host.abort_update(prepared.host_state.clone()).await;
+                    }
+                }
+                return Err(error);
+            }
             journal
         };
         for target in &targets {

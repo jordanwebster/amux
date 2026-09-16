@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use model::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use thiserror::Error;
@@ -337,7 +338,7 @@ pub(crate) async fn prepare_server_suspend(
 
     let state = agent_state.read().await;
     for (id, context) in &state.local_agents {
-        match context.session.suspended_state() {
+        match context.session.prepare_suspend().await {
             Ok(mut sa) => {
                 sa.set_working_on(context.working_on.clone());
                 suspended.push(sa);
@@ -347,6 +348,12 @@ pub(crate) async fn prepare_server_suspend(
                 errors.push(format!("agent {id}: {e}"));
             }
         }
+    }
+    if !errors.is_empty() {
+        for context in state.local_agents.values() {
+            context.session.abort_suspend();
+        }
+        suspended.clear();
     }
     (SuspendedServerState { agents: suspended }, errors)
 }
@@ -373,11 +380,31 @@ pub(crate) async fn commit_server_suspend(agent_state: &SharedAgentServiceState)
     }
 }
 
+/// Invalidate prepared seals durably before allowing any publisher to proceed.
+pub(crate) async fn abort_server_suspend(
+    agent_state: &SharedAgentServiceState,
+    state_path: &Path,
+    prepared: &[SuspendedAgent],
+) -> Result<(), String> {
+    crate::suspend::invalidate_seals(state_path, prepared)
+        .map_err(|error| format!("failed to invalidate prepared seals: {error}"))?;
+    let cleanup = crate::suspend::remove_prepared(state_path, prepared)
+        .map_err(|error| format!("failed to remove prepared state: {error}"));
+    let state = agent_state.read().await;
+    for agent in prepared {
+        if let Some(context) = state.local_agents.get(&agent.agent_id()) {
+            context.session.abort_suspend();
+        }
+    }
+    cleanup
+}
+
 /// Resume agents from suspended state and keep failed records retryable.
 pub(crate) struct ResumeAgentsResult {
     pub(crate) resumed_count: usize,
     pub(crate) failed_count: usize,
     pub(crate) failed_agents: Vec<SuspendedAgent>,
+    pub(crate) resumed_agents: Vec<(Uuid, Uuid)>,
 }
 
 pub(crate) async fn resume_agents(
@@ -387,13 +414,39 @@ pub(crate) async fn resume_agents(
     host_id: Uuid,
     operations: &host_api::OperationGate,
     updating: bool,
+    state_path: &Path,
 ) -> ResumeAgentsResult {
     let mut resumed = 0usize;
     let mut failed = 0usize;
     let mut failed_agents = Vec::new();
+    let mut resumed_agents = Vec::new();
     let deps = agent_state.read().await.deps.clone();
+    let already_consumed = match crate::suspend::consume_seals(state_path, &suspended) {
+        Ok(consumed) => consumed,
+        Err(error) => {
+            tracing::error!(%error, "failed to consume suspended agent seals");
+            let failed_count = suspended.len();
+            return ResumeAgentsResult {
+                resumed_count: 0,
+                failed_count,
+                failed_agents: suspended,
+                resumed_agents,
+            };
+        }
+    };
 
-    for sa in suspended {
+    for mut sa in suspended {
+        let seal_id = sa.seal().map(|seal| seal.id);
+        let continued = !already_consumed.contains(&sa.agent_id());
+        if !continued {
+            let previous = sa.agent_id();
+            sa.recreate_under(Uuid::new_v4());
+            tracing::warn!(
+                previous_agent_id = %previous,
+                replacement_agent_id = %sa.agent_id(),
+                "recreating agent because its suspend seal was already consumed"
+            );
+        }
         let original = sa.clone();
         let working_on = sa.working_on().cloned();
         let agent_id = sa.agent_id();
@@ -427,7 +480,12 @@ pub(crate) async fn resume_agents(
             failed_agents.push(original);
             continue;
         }
-        let mut session = agent_from_suspended(sa, &spawn_deps);
+        let sealed_through = if continued {
+            sa.seal().map_or(0, |seal| seal.through)
+        } else {
+            0
+        };
+        let mut session = agent_from_suspended(sa, &spawn_deps, sealed_through);
         drop(operation);
         match session.start(event_tx) {
             Ok(exit_handle) => {
@@ -489,6 +547,9 @@ pub(crate) async fn resume_agents(
                 monitor_session_exit(exit_handle, event_tx.clone(), agent_id);
 
                 resumed += 1;
+                if let Some(seal_id) = seal_id {
+                    resumed_agents.push((seal_id, agent_id));
+                }
             }
             Err(e) => {
                 tracing::error!(agent_id = %agent_id, error = %e, "failed to resume agent");
@@ -503,6 +564,7 @@ pub(crate) async fn resume_agents(
         resumed_count: resumed,
         failed_count: failed,
         failed_agents,
+        resumed_agents,
     }
 }
 
@@ -698,6 +760,19 @@ mod tests {
     };
     use crate::suspend::SuspendedAgent;
 
+    fn empty_state() -> SharedAgentServiceState {
+        Arc::new(RwLock::new(AgentServiceState::new(
+            AgentDeps::new(
+                std::env::temp_dir(),
+                std::env::temp_dir(),
+                std::env::temp_dir().join(format!("amux-test-codex-{}.sock", Uuid::new_v4())),
+                crate::agents::mcp_launch_route_for_tests(Uuid::new_v4()),
+                std::env::temp_dir().join("amux-test-keymaps"),
+            )
+            .unwrap(),
+        )))
+    }
+
     #[tokio::test]
     async fn resume_registration_failure_does_not_replace_existing_agent_session() {
         let agent_state = Arc::new(RwLock::new(AgentServiceState::new(
@@ -734,6 +809,10 @@ mod tests {
             created_at: Utc::now(),
             parent: None,
             working_on: None,
+            seal: Some(crate::agents::SealedAt {
+                id: Uuid::new_v4(),
+                through: 0,
+            }),
         };
 
         let result = resume_agents(
@@ -743,6 +822,7 @@ mod tests {
             host_id,
             &host_api::OperationGate::default(),
             false,
+            &std::env::temp_dir().join(format!("amux-resume-test-{agent_id}.yaml")),
         )
         .await;
 
@@ -804,5 +884,171 @@ mod tests {
         assert!(suspended.agents.is_empty());
         assert_eq!(errors.len(), 1);
         assert!(agent_state.read().await.contains_agent_id(&agent_id));
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_crash_injection_consumes_once_and_recreates_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state.yaml");
+        let original_id = Uuid::new_v4();
+        let seal = crate::agents::SealedAt {
+            id: Uuid::new_v4(),
+            through: 41,
+        };
+        let suspended = SuspendedAgent::TestAgent {
+            agent_id: original_id,
+            name: Some("emitting-scripted-provider".to_string()),
+            command: TEST_ECHO_COMMAND.to_string(),
+            working_dir: directory.path().to_path_buf(),
+            terminal_size: None,
+            created_at: Utc::now(),
+            parent: None,
+            working_on: None,
+            seal: Some(seal),
+        };
+        let (event_tx, _event_rx) = mpsc::channel(16);
+
+        // Crash before consumption: the first attempt keeps the identity and
+        // its first publication follows the sealed watermark.
+        let first_state = empty_state();
+        let first = resume_agents(
+            &first_state,
+            &event_tx,
+            vec![suspended.clone()],
+            Uuid::new_v4(),
+            &host_api::OperationGate::default(),
+            false,
+            &state_path,
+        )
+        .await;
+        assert_eq!(first.resumed_count, 1);
+        let first_log = first_state
+            .read()
+            .await
+            .local_agents
+            .get(&original_id)
+            .unwrap()
+            .session
+            .attachment_log()
+            .unwrap();
+        assert_eq!(
+            first_log
+                .try_write(serde_json::json!({"type": "first-resumed-publication"}))
+                .await
+                .unwrap(),
+            seal.through + 1
+        );
+
+        // Crashes at publisher start and after the first publication both
+        // replay the same durable record. Its token is already consumed, so
+        // neither path may start the old identity or continue its sequence.
+        let second_state = empty_state();
+        let second = resume_agents(
+            &second_state,
+            &event_tx,
+            vec![suspended.clone()],
+            Uuid::new_v4(),
+            &host_api::OperationGate::default(),
+            false,
+            &state_path,
+        )
+        .await;
+        assert_eq!(second.resumed_count, 1);
+        let second_id = *second_state
+            .read()
+            .await
+            .local_agents
+            .keys()
+            .next()
+            .unwrap();
+        assert_ne!(second_id, original_id);
+        let second_log = second_state
+            .read()
+            .await
+            .local_agents
+            .get(&second_id)
+            .unwrap()
+            .session
+            .attachment_log()
+            .unwrap();
+        assert_eq!(
+            second_log
+                .try_write(serde_json::json!({"type": "replacement-publication"}))
+                .await
+                .unwrap(),
+            1
+        );
+
+        let third_state = empty_state();
+        let third = resume_agents(
+            &third_state,
+            &event_tx,
+            vec![suspended],
+            Uuid::new_v4(),
+            &host_api::OperationGate::default(),
+            false,
+            &state_path,
+        )
+        .await;
+        assert_eq!(third.resumed_count, 1);
+        let third_id = *third_state.read().await.local_agents.keys().next().unwrap();
+        assert_ne!(third_id, original_id);
+        assert_ne!(third_id, second_id);
+
+        shutdown_server(&first_state).await;
+        shutdown_server(&second_state).await;
+        shutdown_server(&third_state).await;
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_failed_start_retries_only_under_a_new_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state.yaml");
+        let original_id = Uuid::new_v4();
+        let suspended = SuspendedAgent::TestAgent {
+            agent_id: original_id,
+            name: Some("provider-that-cannot-start".to_string()),
+            command: directory
+                .path()
+                .join("missing-provider")
+                .display()
+                .to_string(),
+            working_dir: directory.path().to_path_buf(),
+            terminal_size: None,
+            created_at: Utc::now(),
+            parent: None,
+            working_on: None,
+            seal: Some(crate::agents::SealedAt {
+                id: Uuid::new_v4(),
+                through: 9,
+            }),
+        };
+        let (event_tx, _event_rx) = mpsc::channel(16);
+
+        let first = resume_agents(
+            &empty_state(),
+            &event_tx,
+            vec![suspended],
+            Uuid::new_v4(),
+            &host_api::OperationGate::default(),
+            false,
+            &state_path,
+        )
+        .await;
+        assert_eq!(first.failed_count, 1);
+        assert_eq!(first.failed_agents[0].agent_id(), original_id);
+
+        let second = resume_agents(
+            &empty_state(),
+            &event_tx,
+            first.failed_agents,
+            Uuid::new_v4(),
+            &host_api::OperationGate::default(),
+            false,
+            &state_path,
+        )
+        .await;
+        assert_eq!(second.failed_count, 1);
+        assert_ne!(second.failed_agents[0].agent_id(), original_id);
     }
 }

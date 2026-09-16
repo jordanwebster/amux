@@ -5,6 +5,7 @@
 //! core→runtime call as a [`LocalAgentHost`] method. The rest of the core
 //! holds an `Option<Arc<dyn LocalAgentHost>>` and never names these types.
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,10 +23,10 @@ use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 use super::lifecycle::{
-    CreateAgentError, RenameAgentError, clear_working_on, commit_server_suspend,
-    create_agent_record, delete_local_agent, parent_envelope, prepare_server_suspend,
-    rename_local_agent_record, resume_agents, shutdown_server, spawn_session_event_loop,
-    withdraw_agent,
+    CreateAgentError, RenameAgentError, abort_server_suspend, clear_working_on,
+    commit_server_suspend, create_agent_record, delete_local_agent, parent_envelope,
+    prepare_server_suspend, rename_local_agent_record, resume_agents, shutdown_server,
+    spawn_session_event_loop, withdraw_agent,
 };
 use super::{AgentServiceState, SharedAgentServiceState, session};
 use crate::agents::claude::ClaudeSession;
@@ -45,6 +46,7 @@ pub struct AgentRuntime {
     repository_roots: Vec<PathBuf>,
     state_path: PathBuf,
     resume_lock: tokio::sync::Mutex<()>,
+    resume_attempts: std::sync::Mutex<HashMap<Uuid, Uuid>>,
     artifact_owners: Arc<ArtifactOwners>,
     artifact_sweeper: tokio::task::JoinHandle<()>,
     pub(crate) test_cleanup: Option<PathBuf>,
@@ -137,6 +139,7 @@ impl AgentRuntime {
             repository_roots,
             state_path,
             resume_lock: tokio::sync::Mutex::new(()),
+            resume_attempts: std::sync::Mutex::new(HashMap::new()),
             artifact_owners,
             artifact_sweeper,
             test_cleanup: None,
@@ -355,6 +358,19 @@ pub(crate) fn restore_prepared_at(
         })?;
     }
     Ok(())
+}
+
+async fn abort_prepared_after_error(
+    agent_state: &SharedAgentServiceState,
+    state_path: &Path,
+    agents: &[suspend::SuspendedAgent],
+    primary: String,
+) -> ProtocolError {
+    let message = match abort_server_suspend(agent_state, state_path, agents).await {
+        Ok(()) => primary,
+        Err(abort) => format!("{primary}; abort also failed: {abort}"),
+    };
+    ProtocolError::ServerError { message }
 }
 
 fn codex_private_socket_path(server_socket_path: &Path) -> io::Result<PathBuf> {
@@ -877,15 +893,41 @@ impl LocalAgentHost for AgentRuntime {
                 message: format!("failed to load state: {error}"),
             })?;
         drop(operation);
+        let mut pending = Vec::new();
+        let mut already_running = 0usize;
+        for agent in suspended.agents {
+            let previous_attempt = agent.seal().and_then(|seal| {
+                self.resume_attempts
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .get(&seal.id)
+                    .copied()
+            });
+            if let Some(attempt) = previous_attempt
+                && self.state().read().await.contains_agent_id(&attempt)
+            {
+                already_running += 1;
+            } else {
+                pending.push(agent);
+            }
+        }
         let result = resume_agents(
             self.state(),
             self.event_tx(),
-            suspended.agents,
+            pending,
             self.host_id(),
             operations,
             false,
+            &state_path,
         )
         .await;
+        if !result.resumed_agents.is_empty() {
+            let mut attempts = self
+                .resume_attempts
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            attempts.extend(result.resumed_agents.iter().copied());
+        }
         let _operation = operations.admit_mutation().await?;
         if result.failed_agents.is_empty() {
             suspend::remove_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
@@ -902,7 +944,10 @@ impl LocalAgentHost for AgentRuntime {
                 message: format!("failed to save remaining state: {error}"),
             })?;
         }
-        Ok((result.resumed_count as u64, result.failed_count as u64))
+        Ok((
+            (result.resumed_count + already_running) as u64,
+            result.failed_count as u64,
+        ))
     }
 
     async fn prepare_update(&self) -> Result<PreparedHostState, ProtocolError> {
@@ -913,13 +958,37 @@ impl LocalAgentHost for AgentRuntime {
                 message: errors.join("; "),
             });
         }
+        let agent_ids = state
+            .agents
+            .iter()
+            .map(suspend::SuspendedAgent::agent_id)
+            .collect();
+        let payload = match serde_json::to_vec(&state.agents) {
+            Ok(payload) => payload,
+            Err(error) => {
+                return Err(abort_prepared_after_error(
+                    self.state(),
+                    &self.state_path,
+                    &state.agents,
+                    format!("failed to encode prepared agent state: {error}"),
+                )
+                .await);
+            }
+        };
         // The runtime owns its persistence format. Retain older failed
         // sessions and replace only records that are live again.
-        let mut retained = suspend::load_suspended(&self.state_path).map_err(|error| {
-            ProtocolError::ServerError {
-                message: format!("failed to load retained state: {error}"),
+        let mut retained = match suspend::load_suspended(&self.state_path) {
+            Ok(retained) => retained,
+            Err(error) => {
+                return Err(abort_prepared_after_error(
+                    self.state(),
+                    &self.state_path,
+                    &state.agents,
+                    format!("failed to load retained state: {error}"),
+                )
+                .await);
             }
-        })?;
+        };
         if !state.agents.is_empty() {
             let active: std::collections::HashSet<_> = state
                 .agents
@@ -930,22 +999,28 @@ impl LocalAgentHost for AgentRuntime {
                 .agents
                 .retain(|agent| !active.contains(&agent.agent_id()));
             retained.agents.extend(state.agents.clone());
-            suspend::save_suspended(&self.state_path, &retained).map_err(|error| {
-                ProtocolError::ServerError {
-                    message: format!("failed to save retained state: {error}"),
-                }
-            })?;
+            if let Err(error) = suspend::save_suspended(&self.state_path, &retained) {
+                return Err(abort_prepared_after_error(
+                    self.state(),
+                    &self.state_path,
+                    &state.agents,
+                    format!("failed to save retained state: {error}"),
+                )
+                .await);
+            }
         }
-        let agent_ids = state
-            .agents
-            .iter()
-            .map(suspend::SuspendedAgent::agent_id)
-            .collect();
-        let payload =
-            serde_json::to_vec(&state.agents).map_err(|error| ProtocolError::ServerError {
-                message: format!("failed to encode prepared agent state: {error}"),
-            })?;
         Ok(PreparedHostState { agent_ids, payload })
+    }
+
+    async fn abort_update(&self, state: PreparedHostState) -> Result<(), ProtocolError> {
+        let _resume = self.resume_lock.lock().await;
+        let agents: Vec<suspend::SuspendedAgent> =
+            serde_json::from_slice(&state.payload).map_err(|error| ProtocolError::ServerError {
+                message: format!("failed to decode prepared host state: {error}"),
+            })?;
+        abort_server_suspend(self.state(), &self.state_path, &agents)
+            .await
+            .map_err(|message| ProtocolError::ServerError { message })
     }
 
     async fn resume_update(
@@ -973,9 +1048,22 @@ impl LocalAgentHost for AgentRuntime {
         };
         for agent in &agents {
             let agent_id = agent.agent_id();
+            let previous_attempt = agent.seal().and_then(|seal| {
+                self.resume_attempts
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .get(&seal.id)
+                    .copied()
+            });
+            let previous_attempt_running = match previous_attempt {
+                Some(attempt) => self.state().read().await.contains_agent_id(&attempt),
+                None => false,
+            };
             // Recovery may repeat after a process started but before its result
             // was persisted. Never construct or start that identity twice.
-            let status = if self.state().read().await.contains_agent_id(&agent_id) {
+            let status = if previous_attempt_running
+                || self.state().read().await.contains_agent_id(&agent_id)
+            {
                 HostResumeStatus::AlreadyRunning
             } else {
                 let result = resume_agents(
@@ -985,8 +1073,16 @@ impl LocalAgentHost for AgentRuntime {
                     self.host_id(),
                     operations,
                     true,
+                    &self.state_path,
                 )
                 .await;
+                if !result.resumed_agents.is_empty() {
+                    let mut attempts = self
+                        .resume_attempts
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner());
+                    attempts.extend(result.resumed_agents.iter().copied());
+                }
                 if result.failed_count == 0 {
                     HostResumeStatus::Resumed
                 } else {
@@ -1049,11 +1145,18 @@ impl LocalAgentHost for AgentRuntime {
             // A failed resume can leave older sessions on disk. Keep them when
             // preparing the live sessions, replacing only stale copies of an
             // agent that is running again under the same identity.
-            let mut retained = suspend::load_suspended(&state_path).map_err(|error| {
-                ProtocolError::ServerError {
-                    message: format!("failed to load retained state: {error}"),
+            let mut retained = match suspend::load_suspended(&state_path) {
+                Ok(retained) => retained,
+                Err(error) => {
+                    return Err(abort_prepared_after_error(
+                        self.state(),
+                        &state_path,
+                        &suspended.agents,
+                        format!("failed to load retained state: {error}"),
+                    )
+                    .await);
                 }
-            })?;
+            };
             let active: std::collections::HashSet<_> = suspended
                 .agents
                 .iter()
@@ -1062,12 +1165,16 @@ impl LocalAgentHost for AgentRuntime {
             retained
                 .agents
                 .retain(|agent| !active.contains(&agent.agent_id()));
-            retained.agents.extend(suspended.agents);
-            suspend::save_suspended(&state_path, &retained).map_err(|error| {
-                ProtocolError::ServerError {
-                    message: format!("failed to save state: {error}"),
-                }
-            })?;
+            retained.agents.extend(suspended.agents.clone());
+            if let Err(error) = suspend::save_suspended(&state_path, &retained) {
+                return Err(abort_prepared_after_error(
+                    self.state(),
+                    &state_path,
+                    &suspended.agents,
+                    format!("failed to save state: {error}"),
+                )
+                .await);
+            }
         }
         Ok(count)
     }
@@ -1367,6 +1474,100 @@ mod suspend_tests {
 
         assert_eq!(host.prepare_suspend(state_path).await.unwrap(), 0);
         assert_eq!(std::fs::read(&saved_path).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_abort_invalidates_before_emitting_provider_unparks() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let agent_id = Uuid::new_v4();
+        register(&host, agent_id).await;
+        let log = host
+            .state
+            .read()
+            .await
+            .local_agents
+            .get(&agent_id)
+            .unwrap()
+            .session
+            .attachment_log()
+            .unwrap();
+        assert_eq!(
+            log.try_write(serde_json::json!({"type": "pre-seal"}))
+                .await
+                .unwrap(),
+            1
+        );
+
+        let prepared = host.prepare_update().await.unwrap();
+        let agents: Vec<SuspendedAgent> = serde_json::from_slice(&prepared.payload).unwrap();
+        let seal = agents[0].seal().unwrap();
+        assert_eq!(seal.through, 1);
+
+        let emitting_log = log.clone();
+        let emitting = tokio::spawn(async move {
+            emitting_log
+                .write(serde_json::json!({"type": "held-input-result"}))
+                .await;
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(log.current_seq().await, seal.through);
+
+        host.abort_update(prepared).await.unwrap();
+        emitting.await.unwrap();
+        assert_eq!(log.current_seq().await, seal.through + 1);
+        assert!(
+            suspend::load_suspended(&host.state_path)
+                .unwrap()
+                .agents
+                .is_empty()
+        );
+        assert!(
+            suspend::consume_seals(&host.state_path, &agents)
+                .unwrap()
+                .contains(&agent_id)
+        );
+
+        host.stop_all().await;
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_seal_replayed_resume_does_not_start_publishers_twice() {
+        let root = tempfile::tempdir().unwrap();
+        let host = host(root.path());
+        let original_id = Uuid::new_v4();
+        let agent = SuspendedAgent::TestAgent {
+            agent_id: original_id,
+            name: Some("consumed-before-start".to_string()),
+            command: crate::agents::TEST_ECHO_COMMAND.to_string(),
+            working_dir: root.path().to_path_buf(),
+            terminal_size: None,
+            created_at: chrono::Utc::now(),
+            parent: None,
+            working_on: None,
+            seal: Some(crate::agents::SealedAt {
+                id: Uuid::new_v4(),
+                through: 12,
+            }),
+        };
+        suspend::consume_seals(&host.state_path, std::slice::from_ref(&agent)).unwrap();
+        let prepared = PreparedHostState {
+            agent_ids: vec![original_id],
+            payload: serde_json::to_vec(&vec![agent]).unwrap(),
+        };
+        let operations = host_api::OperationGate::default();
+
+        let first = host.resume_update(prepared.clone(), &operations).await;
+        assert_eq!(first.agents[0].status, HostResumeStatus::Resumed);
+        let replacement = *host.state.read().await.local_agents.keys().next().unwrap();
+        assert_ne!(replacement, original_id);
+
+        let repeated = host.resume_update(prepared, &operations).await;
+        assert_eq!(repeated.agents[0].status, HostResumeStatus::AlreadyRunning);
+        assert_eq!(host.agent_count().await, 1);
+        assert!(host.state.read().await.contains_agent_id(&replacement));
+
+        host.stop_all().await;
     }
 }
 

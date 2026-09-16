@@ -125,6 +125,7 @@ impl ClaudePtyBackend {
         session_id: Uuid,
         created_at: DateTime<Utc>,
         deps: &AgentDeps,
+        sealed_through: u64,
     ) -> Self {
         let mut backend = Self::new(
             req,
@@ -137,6 +138,8 @@ impl ClaudePtyBackend {
         backend.name_source = name_source;
         backend.created_at = created_at;
         backend.artifact_root = deps.artifact_root(req.agent_id);
+        backend.log =
+            StructuredLogSource::resuming_with_policy(RingPolicy::claude_pty(), sealed_through);
         backend
             .runtime
             .lock()

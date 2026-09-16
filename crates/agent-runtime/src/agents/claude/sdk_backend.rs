@@ -195,12 +195,15 @@ impl ClaudeSdkBackend {
         session_id: Uuid,
         created_at: DateTime<Utc>,
         launch_route: McpLaunchRoute,
+        sealed_through: u64,
     ) -> Self {
         let mut backend = Self::new(req, launch_route);
         backend.args = sanitize_resume_args(backend.args);
         backend.name_source = name_source;
         backend.created_at = created_at;
         backend.resumed = true;
+        backend.log =
+            StructuredLogSource::resuming_with_policy(RingPolicy::claude_sdk(), sealed_through);
         backend
             .runtime
             .lock()
@@ -2202,6 +2205,7 @@ mod tests {
             created_at: restored_created_at,
             parent,
             working_on: _,
+            seal: _,
         } = loaded.pop().unwrap()
         else {
             panic!("expected persisted Claude SDK agent");
@@ -2227,6 +2231,7 @@ mod tests {
             restored_session_id,
             restored_created_at,
             mcp_launch_route_for_tests(Uuid::new_v4()),
+            0,
         );
         let options = resumed.query_options().unwrap();
         assert_eq!(

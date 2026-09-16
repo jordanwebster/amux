@@ -33,6 +33,7 @@ impl From<CodexSuspendRecord> for SuspendedAgent {
             created_at: record.created_at,
             parent: record.parent,
             working_on: None,
+            seal: None,
         }
     }
 }

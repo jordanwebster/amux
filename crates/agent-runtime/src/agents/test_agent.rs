@@ -114,7 +114,7 @@ impl TestAgentSession {
             working_dir: std::env::temp_dir(),
             parent: None,
             pty: Some(PtyHandle::test_echo()),
-            log_source: None,
+            log_source: Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION)),
             delivery_ready: Arc::new(AtomicBool::new(true)),
             terminal_size: None,
             created_at: Utc::now(),
@@ -125,6 +125,7 @@ impl TestAgentSession {
         req: &CreateAgentRequest,
         cmd: String,
         created_at: DateTime<Utc>,
+        sealed_through: u64,
     ) -> Self {
         Self {
             agent_id: req.agent_id,
@@ -133,7 +134,10 @@ impl TestAgentSession {
             working_dir: req.working_dir.clone(),
             parent: req.parent,
             pty: None,
-            log_source: None,
+            log_source: Some(StructuredLogSource::resuming_with_policy(
+                super::RingPolicy::test(STRUCTURED_LOG_RETENTION),
+                sealed_through,
+            )),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             terminal_size: req.terminal_size,
             created_at,
@@ -145,7 +149,9 @@ impl TestAgentSession {
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         if self.command == io::TEST_ECHO_COMMAND {
             self.pty = Some(PtyHandle::test_echo());
-            self.log_source = Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
+            if self.log_source.is_none() {
+                self.log_source = Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
+            }
             self.delivery_ready.store(true, Ordering::Release);
             return Ok(tokio::spawn(std::future::pending::<()>()));
         }
@@ -175,7 +181,10 @@ impl TestAgentSession {
             &[],
             self.terminal_size,
         )?;
-        let log_source = StructuredLogSource::new(STRUCTURED_LOG_RETENTION);
+        let log_source = self
+            .log_source
+            .clone()
+            .unwrap_or_else(|| StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
         let exit_log_source = log_source.clone();
         self.pty = Some(pty);
         self.delivery_ready.store(true, Ordering::Release);
@@ -301,6 +310,7 @@ impl AgentBackend for TestAgentSession {
             created_at: self.created_at,
             parent: self.parent,
             working_on: None,
+            seal: None,
         })
     }
 

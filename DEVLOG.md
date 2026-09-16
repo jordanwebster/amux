@@ -1,3 +1,12 @@
+2026-09-16 — **A suspended sequence can authorize one continuation only.**
+Suspend preparation now drains and parks every path into an agent's structured
+log before sealing its watermark. The saved record carries a unique seal that
+is durably consumed before a resumed provider starts; replaying a consumed
+record recreates the provider under a new agent id instead of reusing its
+sequence. Aborting a preparation first records the seal as invalid, then
+unparks publishers, so provider output held at the barrier is either published
+after abort or discarded only when the agent shuts down.
+
 2026-09-16 — **Structured replay keeps a bounded, explicit semantic cut.**
 Each provider log now applies its row and byte ceilings, clips an oversized row
 to identity plus a visible marker, and trims an idle ring to its smaller memory

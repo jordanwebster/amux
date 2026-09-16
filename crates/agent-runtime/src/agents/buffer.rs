@@ -226,10 +226,7 @@ impl BufferPolicy for StructuredPolicy {
         input: Value,
         capacity: usize,
     ) -> Option<StructuredOutput> {
-        storage.last_seq = storage
-            .last_seq
-            .checked_add(1)
-            .expect("structured sequence number exhausted");
+        storage.last_seq = storage.last_seq.checked_add(1)?;
         let encoded_len = serde_json::to_vec(&input).map_or(0, |encoded| encoded.len());
         let item = StructuredOutput {
             seq: storage.last_seq,
@@ -722,11 +719,13 @@ impl BroadcastBuffer<StructuredPolicy> {
 
     /// Cut the semantic generation, publish its marker and disconnect every
     /// subscriber under the same publication lock used by writes and opens.
-    pub(crate) async fn semantic_reset(&self, marker: Value) -> StructuredOutput {
+    pub(crate) async fn semantic_reset(&self, marker: Value) -> Option<StructuredOutput> {
         let mut storage = self.inner.storage.write().await;
+        if storage.last_seq == u64::MAX {
+            return None;
+        }
         StructuredPolicy::clear(&mut storage);
-        let item = StructuredPolicy::publish(&mut storage, marker, self.inner.capacity)
-            .expect("structured reset markers are always published");
+        let item = StructuredPolicy::publish(&mut storage, marker, self.inner.capacity)?;
         storage.reset_at = item.seq;
         let mut subscribers = self.inner.subscribers.write().await;
         for subscriber in subscribers.iter() {
@@ -734,7 +733,7 @@ impl BroadcastBuffer<StructuredPolicy> {
         }
         subscribers.clear();
         self.inner.epoch.fetch_add(1, Ordering::Relaxed);
-        item
+        Some(item)
     }
 
     pub(crate) async fn idle_check_after(&self) -> std::time::Duration {

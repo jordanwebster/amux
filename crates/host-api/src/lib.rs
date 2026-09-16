@@ -204,6 +204,7 @@ pub trait LocalAgentHost: Send + Sync {
         operations: &OperationGate,
     ) -> Result<(u64, u64), ProtocolError>;
     async fn prepare_update(&self) -> Result<PreparedHostState, ProtocolError>;
+    async fn abort_update(&self, state: PreparedHostState) -> Result<(), ProtocolError>;
     async fn resume_update(
         &self,
         state: PreparedHostState,

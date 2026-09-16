@@ -47,7 +47,7 @@ spec *ARGS:
 
 # Exercise the structured daemon replay, ring and semantic-reset contract.
 test-daemon-protocol *ARGS:
-    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p agent-runtime daemon_protocol "$@"
+    if [ "${1-}" = -- ]; then shift; fi; filter=daemon_protocol; if [ "$#" -gt 0 ]; then filter="daemon_protocol_$1"; shift; fi; {{bounded}} 1200 cargo test --locked -p agent-runtime "$filter" "$@"
 
 # Lint every workspace target with warnings denied.
 lint:

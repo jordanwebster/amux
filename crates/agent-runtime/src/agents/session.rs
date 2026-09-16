@@ -417,6 +417,37 @@ pub(crate) trait AgentBackend: Send + Sync {
 
     fn suspended_state(&self) -> Result<SuspendedAgent>;
 
+    /// Park every path into the structured log before capturing the one seal
+    /// that may continue this agent identity.
+    async fn prepare_suspend(&self) -> Result<SuspendedAgent> {
+        let log = self.attachment_log();
+        let seal = match &log {
+            Some(log) => log.prepare_suspend().await?,
+            None => super::SealedAt {
+                id: Uuid::new_v4(),
+                through: 0,
+            },
+        };
+        let mut suspended = match self.suspended_state() {
+            Ok(suspended) => suspended,
+            Err(error) => {
+                if let Some(log) = log {
+                    log.abort_suspend();
+                }
+                return Err(error);
+            }
+        };
+        suspended.set_seal(Some(seal));
+        Ok(suspended)
+    }
+
+    /// Called only after the prepared seal has been durably invalidated.
+    fn abort_suspend(&self) {
+        if let Some(log) = self.attachment_log() {
+            log.abort_suspend();
+        }
+    }
+
     async fn debug_json(&self, verbose: bool) -> serde_json::Result<Value>;
 }
 
@@ -467,7 +498,11 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
     }
 }
 
-pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) -> AgentSession {
+pub(crate) fn agent_from_suspended(
+    suspended: SuspendedAgent,
+    deps: &AgentDeps,
+    sealed_through: u64,
+) -> AgentSession {
     match suspended {
         SuspendedAgent::Claude {
             driver,
@@ -481,6 +516,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             created_at,
             parent,
             working_on: _,
+            seal: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -500,6 +536,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                     session_id,
                     created_at,
                     deps,
+                    sealed_through,
                 )),
                 ClaudeDriver::Sdk => Box::new(
                     ClaudeSdkBackend::from_suspended(
@@ -508,6 +545,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                         session_id,
                         created_at,
                         deps.mcp_launch_route.clone(),
+                        sealed_through,
                     )
                     .with_artifact_root(deps.artifact_root(agent_id)),
                 ),
@@ -526,6 +564,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             created_at,
             parent,
             working_on: _,
+            seal: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -549,6 +588,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 deps.mcp_launch_route.clone(),
                 daemon_mode,
                 created_at,
+                sealed_through,
             ))
         }
         #[cfg(any(debug_assertions, test))]
@@ -561,6 +601,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             created_at,
             parent,
             working_on: _,
+            seal: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -575,7 +616,12 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 parent,
                 initial_prompt: None,
             };
-            Box::new(TestAgentSession::from_suspended(&req, command, created_at))
+            Box::new(TestAgentSession::from_suspended(
+                &req,
+                command,
+                created_at,
+                sealed_through,
+            ))
         }
     }
 }
@@ -801,6 +847,7 @@ mod tests {
                 created_at: Utc::now(),
                 parent: None,
                 working_on: None,
+                seal: None,
             };
 
             let deps = AgentDeps::new(
@@ -811,7 +858,7 @@ mod tests {
                 std::env::temp_dir().join("amux-test-keymaps"),
             )
             .unwrap();
-            let session = agent_from_suspended(sa, &deps);
+            let session = agent_from_suspended(sa, &deps, 0);
 
             assert_eq!(session.kind(), AgentKind::Claude { driver });
 
@@ -846,6 +893,7 @@ mod tests {
             created_at,
             parent: None,
             working_on: None,
+            seal: None,
         };
         let deps = AgentDeps::new(
             std::env::temp_dir(),
@@ -856,7 +904,7 @@ mod tests {
         )
         .unwrap();
 
-        let session = agent_from_suspended(suspended, &deps);
+        let session = agent_from_suspended(suspended, &deps, 0);
         let restored = session.suspended_state().unwrap();
 
         assert!(matches!(
