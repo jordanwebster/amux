@@ -1,3 +1,8 @@
+2026-09-16 — **Bare Claude commands keep their unstated provenance.**
+Coverage now pins that a provider-recorded slash command without human origin
+or prompt-source facts remains an unstated prompt without opening a turn, even
+after a sequence of measured turns.
+
 2026-09-16 — **Codex extraction retains its structural tripwires.**
 Unit coverage now follows Codex state into the shared fold for feed bounds,
 identity indexes, pending asks and network-policy fallback parsing, while the UI

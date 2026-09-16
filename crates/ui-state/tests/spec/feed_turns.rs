@@ -9,8 +9,8 @@
 //! pre-signal, reconciled when the authority lands.
 
 use serde_json::json;
-use ui_state::Msg;
 use ui_state::claude::{FeedEntryKind, MessageFinality, PromptSource, ToolOutcome, TurnDuration};
+use ui_state::{Attention, Msg, Why};
 
 use crate::harness::*;
 
@@ -381,6 +381,137 @@ fn compaction_folds_to_boundary_plus_summary() {
     assert_eq!(compaction.trigger.as_deref(), Some("manual"));
     assert_eq!(compaction.pre_tokens, Some(34695));
     assert_eq!(compaction.post_tokens, Some(2587));
+}
+
+/// A slash command can be recorded as a bare user row without either human
+/// origin fact. It remains visible as an unstated prompt, but cannot claim a
+/// new turn after the preceding measured turns have ended.
+#[test]
+fn bare_local_command_is_unstated_without_starting_a_turn() {
+    let rows = vec![
+        review_row(
+            0x8300,
+            "2026-08-11T22:00:00.000Z",
+            json!({
+                "type": "user",
+                "message": {"role": "user", "content": "first"},
+                "origin": {"kind": "human"},
+                "promptSource": "typed"
+            }),
+        ),
+        review_row(
+            0x8301,
+            "2026-08-11T22:00:01.000Z",
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": "msg_measured_1",
+                    "role": "assistant",
+                    "stop_reason": "end_turn",
+                    "content": [
+                        {"type": "thinking", "thinking": "one"},
+                        {"type": "text", "text": "first reply"}
+                    ]
+                }
+            }),
+        ),
+        review_row(
+            0x8302,
+            "2026-08-11T22:00:02.000Z",
+            json!({
+                "type": "system",
+                "subtype": "turn_duration",
+                "durationMs": 2000,
+                "messageCount": 3
+            }),
+        ),
+        review_row(
+            0x8303,
+            "2026-08-11T22:00:03.000Z",
+            json!({
+                "type": "user",
+                "message": {"role": "user", "content": "second"},
+                "origin": {"kind": "human"},
+                "promptSource": "typed"
+            }),
+        ),
+        review_row(
+            0x8304,
+            "2026-08-11T22:00:04.000Z",
+            json!({
+                "type": "assistant",
+                "message": {
+                    "id": "msg_measured_2",
+                    "role": "assistant",
+                    "stop_reason": "end_turn",
+                    "content": [
+                        {"type": "thinking", "thinking": "two"},
+                        {"type": "text", "text": "second reply"}
+                    ]
+                }
+            }),
+        ),
+        review_row(
+            0x8305,
+            "2026-08-11T22:00:05.000Z",
+            json!({
+                "type": "system",
+                "subtype": "turn_duration",
+                "durationMs": 2000,
+                "messageCount": 3
+            }),
+        ),
+        review_row(
+            0x8306,
+            "2026-08-11T22:00:06.000Z",
+            json!({
+                "type": "user",
+                "message": {"role": "user", "content": "/compact"}
+            }),
+        ),
+    ];
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch("fix-auth-bug", 10, rows)],
+    ]));
+
+    assert_eq!(
+        kind_words(&model, "fix-auth-bug"),
+        vec![
+            "prompt", "thinking", "message", "turn", "prompt", "thinking", "message", "turn",
+            "prompt",
+        ]
+    );
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let turns: Vec<_> = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Turn(turn) => Some(turn.duration.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        turns,
+        vec![
+            TurnDuration::Measured { ms: 2000 },
+            TurnDuration::Measured { ms: 2000 }
+        ]
+    );
+    let bare = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Prompt(prompt) => Some(prompt),
+            _ => None,
+        })
+        .nth(2)
+        .expect("the bare local command prompt");
+    assert_eq!(bare.text, "/compact");
+    assert_eq!(bare.source, PromptSource::Unstated);
+    assert_eq!(
+        layer.attention(),
+        Attention::NeedsYou { why: Why::Finished },
+        "the bare command must not replace the completed-turn standing with working"
+    );
 }
 
 /// Durations are never computed across a compaction (B3): a thinking row
