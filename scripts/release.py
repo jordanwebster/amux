@@ -3,11 +3,13 @@
 
 Everything a release needs is here and nothing beyond it: this script bumps
 the two version numbers, archives the app against the distribution
-configuration, exports it, has Apple validate it, and only then commits the
-numbers and cuts the tag that records them. It never pushes and
-never uploads: Apple sees the build only as a validation, which spends no
-build number and shows the build to nobody. docs/RELEASE.md explains why each
-rule is what it is; this is the rule enforced.
+configuration, exports it, has Apple validate it, uploads it, and only then
+commits the numbers and cuts the tag that records them. It never pushes and
+never submits anything for review. A rehearsal stops at the validation, which
+spends no build number and shows the build to nobody, and is what makes it
+free to run as often as anybody likes; `--no-upload` stops a real run there
+too. docs/RELEASE.md explains why each rule is what it is; this is the rule
+enforced.
 
 Three ways to run it:
 
@@ -488,6 +490,28 @@ def validate(package: Path, facts: dict) -> None:
     ], check=True, timeout=1800)
 
 
+def upload(package: Path, facts: dict) -> None:
+    """Deliver the validated build to App Store Connect.
+
+    Runs only after validation has answered on this exact package, so a build
+    Apple would refuse never reaches the upload. It is the one step here that
+    cannot be taken back: the build number is spent permanently whether or not
+    anything is ever submitted, and the build becomes visible to everyone on
+    the team as soon as processing finishes. Everything before it is local and
+    undone with one `git checkout`.
+
+    It runs before the commit and the tag for the same reason validation does:
+    the tree should record a build that reached Apple, not one that failed on
+    the way."""
+    print("uploading to App Store Connect", flush=True)
+    subprocess.run([
+        "xcrun", "altool", "--upload-app",
+        "-f", str(package), "-t", "ios",
+        "--api-key", facts["key"], "--api-issuer", facts["issuer"],
+    ], check=True, timeout=3600)
+    print("uploaded; TestFlight shows it once Apple has processed it", flush=True)
+
+
 def commit_and_tag(version: str, build: int, message: str) -> None:
     """The permanent half, run only after Apple has accepted the build.
 
@@ -521,6 +545,9 @@ def main() -> int:
                         help="the build number, which may only be raised")
     parser.add_argument("--notes-file", default="",
                         help="release notes, instead of the drafted ones")
+    parser.add_argument("--no-upload", action="store_true",
+                        help="stop at validation, as every run did before "
+                             "uploading was part of a release")
     arguments = parser.parse_args()
     if arguments.preflight and arguments.rehearse:
         parser.error("--preflight and --rehearse are different runs")
@@ -586,6 +613,11 @@ def main() -> int:
         print(f"release notes beside it in {written}")
         step = "validate"
         validate(exported, facts)
+        # A rehearsal never delivers: that is what lets it run as often as
+        # anybody likes, since validation spends no build number.
+        if not arguments.rehearse and not arguments.no_upload:
+            step = "upload"
+            upload(exported, facts)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as failed:
         reason = "timed out" if isinstance(failed, subprocess.TimeoutExpired) else "failed"
         if arguments.rehearse:
@@ -609,7 +641,11 @@ def main() -> int:
             return 1
         print("rehearsal: git status --porcelain is what it was before the "
               "run, so nothing was written to the tree, and no tag was cut")
-    print("nothing was uploaded and nothing was pushed")
+    if arguments.rehearse or arguments.no_upload:
+        print("nothing was uploaded and nothing was pushed")
+    else:
+        print("uploaded to App Store Connect; nothing was pushed and nothing "
+              "was submitted for review")
     return 0
 
 

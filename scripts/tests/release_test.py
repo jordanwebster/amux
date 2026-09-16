@@ -458,6 +458,7 @@ class TheOrderOfARelease(unittest.TestCase):
                 "archive": step("archive"),
                 "export": step("export", package),
                 "validate": step("validate"),
+                "upload": step("upload"),
                 "commit_and_tag": step("commit_and_tag"),
             }
             if not real_numbers:
@@ -476,10 +477,25 @@ class TheOrderOfARelease(unittest.TestCase):
                 return recipe.main(), called
 
     def test_the_tag_is_cut_after_apple_has_answered(self):
+        # Upload sits between the two for a reason: a build Apple would refuse
+        # never reaches it, and the tag records a build that actually arrived.
         code, called = self.drive()
         self.assertEqual(0, code)
         self.assertEqual(["write_numbers", "archive", "export", "validate",
-                          "commit_and_tag"], called)
+                          "upload", "commit_and_tag"], called)
+
+    def test_an_upload_failure_leaves_no_commit_and_no_tag(self):
+        # The build number is spent either way, but the tree should not claim
+        # a release that never arrived.
+        code, called = self.drive(breaks="upload")
+        self.assertEqual(1, code)
+        self.assertNotIn("commit_and_tag", called)
+
+    def test_no_upload_stops_where_every_run_used_to(self):
+        code, called = self.drive(argv=("release.py", "--no-upload"))
+        self.assertEqual(0, code)
+        self.assertNotIn("upload", called)
+        self.assertIn("commit_and_tag", called)
 
     def test_a_validation_failure_leaves_no_commit_and_no_tag(self):
         # The state this ordering exists for: the numbers are in the working
@@ -506,19 +522,20 @@ class TheOrderOfARelease(unittest.TestCase):
         code, called = self.drive(argv=("release.py", "--rehearse"),
                                   real_numbers=True)
         self.assertEqual(0, code)
+        # Stops at the validation, which is what keeps a rehearsal free to run
+        # as often as anybody likes: an upload would spend a build number
+        # permanently and show the build to the whole team.
         self.assertEqual(["archive", "export", "validate"], called)
 
 
 class WhatItNeverDoes(unittest.TestCase):
-    def test_no_upload_verb_is_anywhere_in_the_recipe(self):
-        # The boundary the recipe promises: it stops at a local export. An
-        # upload consumes a build number permanently and shows the build to
-        # the whole team, so it is a change somebody makes on purpose.
+    def test_the_recipe_still_pushes_nothing(self):
+        # Uploading is now part of a release; pushing a commit or a tag is
+        # not, and neither is submitting anything for review.
         source = (SCRIPTS / "release.py").read_text()
-        self.assertNotIn("--upload-app", source)
-        self.assertNotIn("--upload-package", source)
         self.assertNotIn("git push", source)
         self.assertNotIn('"push"', source)
+        self.assertNotIn("--notarize-app", source)
 
 
 if __name__ == "__main__":
