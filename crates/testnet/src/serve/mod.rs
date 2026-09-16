@@ -151,6 +151,12 @@ pub enum Control {
     RestartDaemon {
         name: String,
     },
+    StopDaemon {
+        name: String,
+    },
+    RestartSdkDaemon {
+        name: String,
+    },
     SuspendRestart {
         name: String,
     },
@@ -647,6 +653,44 @@ async fn apply(
             }
             agents.retain(|_, agent| agent.daemon != name);
         }
+        Control::StopDaemon { name } => {
+            daemon(&name)?.stop().await;
+        }
+        Control::RestartSdkDaemon { name } => {
+            let host = daemon(&name)?;
+            net.restart_daemon(&host).await;
+            let names = agents
+                .iter()
+                .filter(|(_, agent)| agent.daemon == name)
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            for agent_name in names {
+                let prior = &agents[&agent_name];
+                ensure!(
+                    matches!(prior.provider, AgentProvider::ClaudeSdk),
+                    "RestartSdkDaemon requires only SDK agents on the host"
+                );
+                let record = prior.agent.clone();
+                let recreated = host
+                    .admin_client()
+                    .await
+                    .create_agent(node::CreateAgentRequest {
+                        agent_id: record.id,
+                        host_id: None,
+                        name: record.name,
+                        agent_type: node::AgentType::Claude {
+                            driver: model::ClaudeDriver::Sdk,
+                        },
+                        working_dir: record.working_dir,
+                        terminal_size: None,
+                        args: record.args,
+                        parent: record.parent,
+                        initial_prompt: None,
+                    })
+                    .await?;
+                agents.get_mut(&agent_name).unwrap().agent = recreated;
+            }
+        }
         Control::SuspendRestart { name } => {
             let (resumed, failed) = daemon(&name)?.suspend_restart_agents().await?;
             if let Reply::Ack { diagnostics, .. } = &mut reply {
@@ -1099,6 +1143,14 @@ mod tests {
                 .await;
             assert_eq!(count(&mut second, "b").await, 2);
             let stream = b.open_event_stream_to(&a).await;
+            control.ack(json!({"StopDaemon":{"name":"a"}})).await;
+            assert!(
+                control
+                    .request(json!({"DebugDump":{"daemon":"a","verbose":false}}))
+                    .await
+                    .get("Error")
+                    .is_some()
+            );
             control.ack(json!({"RestartDaemon":{"name":"a"}})).await;
             stream.expect_disconnect().await;
             assert_eq!(a.identity_on_disk(), identity);

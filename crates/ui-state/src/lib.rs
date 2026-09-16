@@ -67,7 +67,8 @@ pub use queue::{Draft, DraftSegment, QueueCommand, QueueDelivery, QueuedMessage}
 pub use store::{
     AttemptId, ChatCommand, ChatState, ChatStreamMsg, ChatWindow, FLUSH_DEADLINE, HeadDto,
     LoadedDto, MutationBatchDto, PageDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto,
-    StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto, WINDOW_PAGE_ENTRIES, behind,
+    StoreMsg, StoreOp, StoreOpKind, StoreStreamQuery, StoredDto, WINDOW_MAX_BYTES,
+    WINDOW_MAX_ENTRIES, WINDOW_PAGE_ENTRIES, behind,
 };
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
 

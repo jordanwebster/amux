@@ -24,10 +24,6 @@ AMUX = ROOT / "target/debug/amux"
 TESTNET = ROOT / "target/debug/testnet"
 WRITING = ROOT / "e2e-tests/scripts/writing.json"
 SDK_SCRIPT = ROOT / "e2e-tests/scripts/sdk-sessions.json"
-REAL_SDK_CAPTURE = (
-    ROOT
-    / "crates/agent-runtime/src/agents/claude/fixtures/sdk-resume-identity.json"
-)
 SCENARIOS = ("warm-start", "chat", "two-terminal", "gap", "sdk-resume")
 
 
@@ -81,6 +77,7 @@ def row(number: int, text: str, session: str) -> dict:
             "id": f"message-{number:05d}",
             "role": "assistant",
             "content": [{"type": "text", "text": text}],
+            "stop_reason": "end_turn",
         },
     }
 
@@ -118,6 +115,13 @@ def recent_subscriptions(value: object, agent_name: str) -> list[dict]:
             if found:
                 return found
     return []
+
+
+def chat_subscription_count(value: object, agent_name: str) -> int:
+    return sum(
+        record.get("query") != "tail 0"
+        for record in recent_subscriptions(value, agent_name)
+    )
 
 
 class Journey:
@@ -219,13 +223,19 @@ class Journey:
             f"{pane} did not show {terms!r}; final frame:\n{last[-4000:]}"
         )
 
-    def page_until(self, pane: str, term: str, timeout: float = 90.0) -> str:
+    def page_until(
+        self, pane: str, term: str, timeout: float = 90.0, older: bool = True
+    ) -> str:
         deadline = time.monotonic() + timeout
         last = self.capture(pane)
         while time.monotonic() < deadline:
             if term in last:
                 return last
-            self.tmux("send-keys", "-t", pane, "NPage")
+            if older:
+                self.tmux("send-keys", "-t", pane, "C-Home")
+                self.tmux("send-keys", "-t", pane, "PPage")
+            else:
+                self.tmux("send-keys", "-t", pane, "NPage")
             changed_by = min(deadline, time.monotonic() + 1.0)
             while time.monotonic() < changed_by:
                 frame = self.capture(pane)
@@ -248,6 +258,7 @@ class Journey:
                 "env",
                 "TERM=xterm-256color",
                 "AMUX_TUI_DIRECT_PROFILE=1",
+                "RUST_LOG=amux=debug,ui_runtime=debug",
                 f"AMUX_LOG={shlex.quote(str(self.scratch / f'{session}.log'))}",
                 shlex.quote(str(AMUX)),
                 "--config",
@@ -299,6 +310,18 @@ class Journey:
         else:
             raise RuntimeError(f"{pane} offered no chat entry for {name!r}:\n{selected[-4000:]}")
         return self.wait_frame(pane, name, "Type a message")
+
+    def wait_log(self, session: str, term: str, timeout: float = 60.0) -> str:
+        path = self.scratch / f"{session}.log"
+        deadline = time.monotonic() + timeout
+        last = ""
+        while time.monotonic() < deadline:
+            if path.exists():
+                last = path.read_text(errors="replace")
+                if term in last:
+                    return last
+            time.sleep(0.1)
+        raise RuntimeError(f"{session} log did not contain {term!r}; final log:\n{last[-4000:]}")
 
     def fleet(self, pane: str) -> str:
         self.tmux("send-keys", "-t", pane, "C-a", "s")
@@ -436,54 +459,80 @@ class Journey:
 
 
 def warm_start(output: Path) -> None:
-    journey = Journey("warm-start", output, [("remembered-agent", "pty")])
+    journey = Journey("warm-start", output, [("remembered-agent", "sdk")])
     try:
         pane = journey.launch("seed")
-        journey.wait_frame(pane, "remembered-agent")
-        journey.control_request(
-            {
-                "AgentPlay": {
-                    "agent": "remembered-agent",
-                    "steps": [
-                        {"Prompt": {"text": "Persist this standing."}},
-                        {"Markdown": {"text": "Standing is stored."}},
-                        "EndTurn",
-                    ],
-                }
-            }
+        journey.open_chat(pane, "remembered-agent")
+        journey.wait_frame(pane, "enter send", timeout=90)
+        journey.send(pane, "Persist this standing.")
+        journey.wait_frame(pane, "The SDK session received your prompt.", timeout=90)
+        seed = journey.fleet(pane)
+        journey.frame(pane, "online seed", seed)
+        journey.wait_dump(
+            "remembered-agent", "The SDK session received your prompt.", timeout=90
         )
-        journey.wait_frame(pane, "remembered-agent", "finished")
-        journey.frame(pane, "online seed")
         journey.kill("seed")
-
-        offline = journey.scratch / "offline.yaml"
-        text = journey.config.read_text()
-        text = re.sub(
-            r"(?m)^socket_path:.*$",
-            f"socket_path: '{journey.scratch / 'unreachable.sock'}'",
-            text,
+        journey.control_request({"StopDaemon": {"name": "host"}}, 120)
+        pane = journey.launch("warm-client")
+        remembered = journey.wait_frame(
+            pane, "remembered-agent", "remembered", "last finished", "daemon unreachable"
         )
-        offline.write_text(text)
-        pane = journey.launch("offline", offline)
-        remembered = journey.wait_frame(pane, "remembered-agent", "remembered")
-        if "disconnected" not in remembered:
-            raise RuntimeError("offline remembered fleet did not report its disconnected route")
-        journey.frame(pane, "daemon unreachable remembered fleet", remembered)
-        journey.kill("offline")
+        before = journey.dump("remembered-agent")
+        remembered_row = next(
+            (line for line in remembered.splitlines() if "remembered-agent" in line), ""
+        )
+        if "host" not in remembered_row or not re.search(r"\b\d+[smhd]\b", remembered_row):
+            raise RuntimeError(
+                f"remembered fleet row omitted its host or standing age: {remembered_row!r}"
+            )
+        journey.frame(pane, "same client paints remembered standing while daemon is stopped", remembered)
 
-        pane = journey.launch("confirmed")
-        confirmed = journey.wait_frame(pane, "remembered-agent", "finished")
-        journey.frame(pane, "daemon reachable confirmed fleet", confirmed)
+        if "o chat" in remembered or "enter chat" in remembered:
+            raise RuntimeError("the remembered offline card exposed a send-capable chat action")
+        journey.tmux("send-keys", "-t", pane, "o")
+        refused = journey.wait_frame(pane, "Type a message", "chat input unavailable")
+        journey.tmux("send-keys", "-t", pane, "-l", "must-not-send")
+        journey.tmux("send-keys", "-t", pane, "Enter")
+        time.sleep(0.5)
+        if "must-not-send" in journey.dump("remembered-agent"):
+            raise RuntimeError("the unavailable offline composer accepted a send")
+        journey.frame(
+            pane,
+            "daemon-stopped remembered chat shows its send gate is unavailable",
+            refused,
+        )
+        journey.tmux("send-keys", "-t", pane, "C-a", "s")
+        journey.wait_frame(pane, "remembered-agent", "daemon unreachable")
+
+        journey.control_request({"RestartSdkDaemon": {"name": "host"}}, 120)
+        deadline = time.monotonic() + 90
+        confirmed = ""
+        while time.monotonic() < deadline:
+            confirmed = journey.capture(pane)
+            confirmed_row = next(
+                (line for line in confirmed.splitlines() if "remembered-agent" in line), ""
+            )
+            if "connected" in confirmed and confirmed_row and " remembered last " not in confirmed_row:
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError(
+                "the same client did not replace remembered standing with confirmation:\n"
+                + confirmed[-4000:]
+            )
+        journey.frame(pane, "same client confirms the card after daemon restart", confirmed)
         diagnostics = journey.diagnostics()
-        dump = journey.dump("remembered-agent")
+        after = journey.dump("remembered-agent")
         journey.finish(
-            dump,
-            dump,
+            before,
+            after,
             diagnostics,
             [
-                "the unreachable profile painted its remembered fleet row",
-                "the remembered frame stayed visible while the route was disconnected",
-                "the reachable profile confirmed the stored standing",
+                "one TUI process stayed alive across the daemon stop and restart",
+                "the stopped-daemon frame showed host, age, and last finished standing",
+                "the stopped-daemon chat showed an unavailable send gate and persisted no attempted send",
+                "the same process replaced remembered state with a confirmed card",
+                "dump-before and dump-after came from separate boundary reads",
             ],
         )
     except Exception as error:
@@ -507,6 +556,15 @@ def chat(output: Path) -> None:
         time.sleep(6)
         journey.kill("seed")
 
+        pane = journey.launch("catch-up")
+        journey.open_chat(pane, "long-chat")
+        opening = journey.wait_frame(pane, "stored-row-04999", timeout=90)
+        if "stored-row-04999" not in opening or "live-row-" in opening:
+            raise RuntimeError("the first reopened frame was not an unambiguous store-only paint")
+        if "stored-row-00000" in opening:
+            raise RuntimeError("the older paging target was already in the loaded window")
+        journey.frame(pane, "stored rows paint before any new stream row exists", opening)
+
         failure: list[BaseException] = []
 
         def stream() -> None:
@@ -517,9 +575,6 @@ def chat(output: Path) -> None:
 
         producer = threading.Thread(target=stream, name="scripted-2000rps")
         producer.start()
-        pane = journey.launch("catch-up")
-        opening = journey.open_chat(pane, "long-chat")
-        journey.frame(pane, "disk paint while scripted stream runs", opening)
         producer.join(timeout=180)
         if producer.is_alive():
             raise RuntimeError("scripted 2,000 rows/s producer did not finish")
@@ -529,11 +584,35 @@ def chat(output: Path) -> None:
         journey.wait_frame(pane, "live-row-10999", timeout=90)
         journey.frame(pane, "caught up at stream tip")
         journey.tmux("send-keys", "-t", pane, "C-Home")
-        scrolled = journey.page_until(pane, "stored-row-04599")
+        scrolled = journey.page_until(pane, "stored-row-00000")
         journey.frame(pane, "scroll-back paged older entries", scrolled)
-        journey.tmux("send-keys", "-t", pane, "C-End")
-        returned = journey.wait_frame(pane, "live-row-10999", timeout=90)
-        journey.frame(pane, "returned to the streamed tip", returned)
+        journey.fleet(pane)
+        journey.tmux("send-keys", "-t", pane, "q")
+        journey.wait_frame(pane, "AMUX_EXIT_0", timeout=30)
+        log = journey.wait_log("catch-up", "store page installed in bounded chat window")
+        page_line = next(
+            (
+                line
+                for line in reversed(log.splitlines())
+                if "store page installed in bounded chat window" in line
+            ),
+            "",
+        )
+        page_fields = {
+            name: re.search(rf"\b{name}=(\d+)", page_line)
+            for name in ("entries", "encoded_bytes", "max_entries", "max_bytes")
+        }
+        if not page_line or not all(page_fields.values()):
+            raise RuntimeError("the client log did not expose the completed store page read")
+        entries, encoded_bytes, max_entries, max_bytes = (
+            int(page_fields[name].group(1))
+            for name in ("entries", "encoded_bytes", "max_entries", "max_bytes")
+        )
+        if entries > max_entries or encoded_bytes > max_bytes:
+            raise RuntimeError(
+                f"paged window exceeded its bound: {entries}/{max_entries} entries, "
+                f"{encoded_bytes}/{max_bytes} bytes"
+            )
         diagnostics = journey.diagnostics()
         encoded = json.dumps(diagnostics)
         if '"after"' not in encoded and "after " not in encoded:
@@ -544,9 +623,11 @@ def chat(output: Path) -> None:
             diagnostics,
             [
                 "the store held at least 5,000 entries before reopen",
-                "the reopened chat painted while a 2,000 rows/s producer ran",
-                "the chat paged to a row older than its initial 400-entry window",
-                "returning to the tip restored the final streamed row",
+                "the reopened chat painted stored rows before the producer emitted a new row",
+                "the client then caught up while a 2,000 rows/s producer ran",
+                "scroll-back made a row outside the loaded window visible via a logged store page read",
+                f"the visible window remained bounded at {entries}/{max_entries} entries and {encoded_bytes}/{max_bytes} encoded bytes",
+                "the caught-up frame showed the final streamed row before scroll-back",
                 "subscription diagnostics recorded an exact after-cursor query",
             ],
         )
@@ -562,19 +643,45 @@ def two_terminal(output: Path) -> None:
     journey = Journey("two-terminal", output, [(name, "pty") for name in names])
     try:
         one = journey.launch("one")
-        two = journey.launch("two")
-        for pane in (one, two):
-            journey.wait_frame(pane, *names)
+        journey.wait_frame(one, *names)
         journey.open_chat(one, "first-chat")
+        one_only = journey.diagnostics()
+        if chat_subscription_count(one_only, "first-chat") != 1:
+            raise RuntimeError("terminal one did not open exactly one first-chat subscription")
+        if chat_subscription_count(one_only, "second-chat") != 0:
+            raise RuntimeError("terminal one subscribed to the unopened second chat")
+
+        two = journey.launch("two")
+        journey.wait_frame(two, *names)
         journey.open_chat(two, "second-chat")
         journey.frame(one, "terminal one subscribed to first chat")
         journey.frame(two, "terminal two subscribed to second chat")
 
-        diagnostics = journey.diagnostics()
-        fleet_only = json.dumps(diagnostics)
-        records = recent_subscriptions(diagnostics, "fleet-only")
+        split = journey.diagnostics()
+        if chat_subscription_count(split, "first-chat") != 1:
+            raise RuntimeError("terminal two changed terminal one's first-chat subscriptions")
+        if chat_subscription_count(split, "second-chat") != 1:
+            raise RuntimeError("terminal two did not open exactly one second-chat subscription")
+        fleet_only = json.dumps(split)
+        records = recent_subscriptions(split, "fleet-only")
         if not records or any(record.get("query") != "tail 0" for record in records):
             raise RuntimeError(f"fleet-only opened a client chat subscription: {records}; {fleet_only[:2000]}")
+
+        journey.kill("one")
+        one = journey.launch("one-relaunch")
+        remembered = journey.wait_frame(one, *names)
+        journey.frame(one, "relaunched terminal remembers the fleet without eager chat subscription", remembered)
+        relaunched_idle = journey.diagnostics()
+        if chat_subscription_count(relaunched_idle, "first-chat") != 1:
+            raise RuntimeError("relaunch eagerly resubscribed to its remembered chat")
+        if chat_subscription_count(relaunched_idle, "second-chat") != 1:
+            raise RuntimeError("relaunch disturbed the other terminal's open chat")
+        journey.open_chat(one, "first-chat")
+        relaunched_open = journey.diagnostics()
+        if chat_subscription_count(relaunched_open, "first-chat") != 2:
+            raise RuntimeError("relaunched terminal did not subscribe only when its chat reopened")
+        if chat_subscription_count(relaunched_open, "second-chat") != 1:
+            raise RuntimeError("relaunched terminal subscribed to the other terminal's chat")
 
         journey.fleet(one)
         journey.fleet(two)
@@ -609,9 +716,17 @@ def two_terminal(output: Path) -> None:
         journey.finish(
             "state none\n",
             after,
-            diagnostics,
+            {
+                "terminal_one_only": one_only,
+                "split_open_chats": split,
+                "relaunch_before_open": relaunched_idle,
+                "relaunch_after_open": relaunched_open,
+                "after_shared_writes": diagnostics,
+            },
             [
-                "each terminal initially subscribed only to its open chat",
+                "diagnostic deltas attribute terminal one only to first-chat and terminal two only to second-chat",
+                "relaunching a terminal with remembered state opened no eager chat subscription",
+                "the relaunched terminal subscribed only after first-chat was explicitly reopened",
                 "fleet-only had only its daemon summarizer tail-0 subscription",
                 "both fleets observed the unopened third agent finish",
                 "both writers landed exactly once in one stored transcript",
@@ -625,9 +740,16 @@ def two_terminal(output: Path) -> None:
 
 
 def gap(output: Path) -> None:
-    journey = Journey("gap", output, [("gap-chat", "pty")])
+    journey = Journey("gap", output, [("gap-chat", "pty"), ("sdk-survivor", "sdk")])
     try:
         pane = journey.launch("seed")
+        journey.open_chat(pane, "sdk-survivor")
+        journey.wait_frame(pane, "enter send", timeout=90)
+        journey.send(pane, "survivor-provider-entry")
+        survivor_before = journey.wait_dump(
+            "sdk-survivor", "The SDK session received your prompt.", timeout=90
+        )
+        journey.fleet(pane)
         journey.open_chat(pane, "gap-chat")
         journey.emit_paced("gap-chat", 0, 30, "old-history")
         before = journey.wait_dump("gap-chat", "old-history-00029")
@@ -640,12 +762,18 @@ def gap(output: Path) -> None:
         journey.tmux("send-keys", "-t", pane, "C-End")
         gap_dump = journey.wait_dump("gap-chat", "boundary=Gap", timeout=90)
         journey.tmux("send-keys", "-t", pane, "C-Home")
-        old = journey.wait_frame(pane, "old-history-00000", timeout=90)
-        journey.frame(pane, "old stored history remains scrollable behind the gap", old)
-        missing = journey.page_until(pane, "missing history")
+        missing = journey.page_until(pane, "missing history", older=False)
         journey.frame(pane, "offline past ring shows missing-history boundary", missing)
         if "old-history-00029" not in gap_dump:
             raise RuntimeError("gap recovery discarded the old stored segment")
+        journey.fleet(pane)
+        time.sleep(6)
+        journey.kill("seed")
+        pane = journey.launch("gap-reopen")
+        journey.open_chat(pane, "gap-chat")
+        journey.tmux("send-keys", "-t", pane, "C-Home")
+        old = journey.page_until(pane, "old-history-00000", timeout=90)
+        journey.frame(pane, "reopened client scrolls stored history behind the gap", old)
         journey.fleet(pane)
         time.sleep(6)
 
@@ -657,23 +785,50 @@ def gap(output: Path) -> None:
         journey.open_chat(pane, "gap-chat")
         version_dump = journey.wait_dump("gap-chat", "boundary=VersionGap", timeout=90)
         journey.tmux("send-keys", "-t", pane, "C-Home")
-        version = journey.page_until(pane, "history version changed")
+        version = journey.page_until(pane, "history version changed", older=False)
         journey.frame(pane, "tip-version bump keeps history behind boundary", version)
         if "old-history-00029" not in version_dump:
             raise RuntimeError("tip-version recovery discarded stored history")
         journey.fleet(pane)
         time.sleep(6)
+        journey.kill("gap-reopen")
 
         with sqlite3.connect(journey.store, timeout=30) as database:
             database.execute(
                 "UPDATE family_shape SET shape=0 WHERE family='claude_pty'"
             )
+        pane = journey.launch("entry-version-restart")
+        journey.wait_frame(pane, "gap-chat", "sdk-survivor")
         journey.open_chat(pane, "gap-chat")
         time.sleep(1)
-        journey.frame(pane, "entry-version bump rebuilds only provider entries")
-        after = journey.dump("gap-chat")
-        if "old-history-00029" in after:
+        rebuilt_frame = journey.frame(
+            pane, "restarted client observes the entry-version rebuild"
+        )
+        gap_after = journey.dump("gap-chat")
+        if "old-history-00029" in gap_after:
             raise RuntimeError("entry-version bump retained an incompatible provider entry")
+        journey.fleet(pane)
+        survivor_frame = journey.open_chat(pane, "sdk-survivor")
+        if "The SDK session received your prompt." not in survivor_frame:
+            survivor_frame = journey.wait_frame(
+                pane, "The SDK session received your prompt.", timeout=90
+            )
+        journey.frame(
+            pane,
+            "other provider remains visible after the restarted client rebuilds Claude PTY",
+            survivor_frame,
+        )
+        survivor_after = journey.dump("sdk-survivor")
+        if "The SDK session received your prompt." not in survivor_after:
+            raise RuntimeError("entry-version bump discarded the unaffected SDK provider")
+        if "The SDK session received your prompt." not in survivor_before:
+            raise RuntimeError("the unaffected provider was not stored before the bump")
+        after = (
+            "===== gap-chat (rebuilt provider) =====\n"
+            + gap_after
+            + "\n===== sdk-survivor (unaffected provider) =====\n"
+            + survivor_after
+        )
         diagnostics = journey.diagnostics()
         journey.finish(
             before,
@@ -683,7 +838,9 @@ def gap(output: Path) -> None:
                 "falling more than the 2,000-row PTY ring behind showed a gap boundary",
                 "old stored history remained behind the gap",
                 "a tip-version bump showed a version boundary and kept entries",
-                "an entry-shape bump removed the incompatible provider entries",
+                "a restarted client, not the dump command, observed the entry-shape bump",
+                "the bump removed only incompatible Claude PTY entries",
+                "the second SDK provider remained visible and present in dump-after",
             ],
         )
     except Exception as error:
@@ -693,89 +850,101 @@ def gap(output: Path) -> None:
         journey.close()
 
 
+def real_claude_transcript(journey: Journey, session: str) -> list[dict]:
+    claude = shutil.which("claude")
+    if claude is None:
+        raise RuntimeError("the real Claude Code binary is unavailable")
+    target = journey.scratch / "permission-request-target.txt"
+    prompt = (
+        "Create a small resume-history fixture. First call TodoWrite with exactly one "
+        "in_progress item whose content is 'Resume from the live checklist'. Then attempt "
+        f"to use the Write tool to write LIVE_PERMISSION_REQUEST to {target}. The permission "
+        "may be denied; do not use another tool instead. After both tool attempts, reply "
+        "exactly SDK_LIVE_CAPTURE_OK."
+    )
+    command = [
+        claude,
+        "-p",
+        "--safe-mode",
+        "--model",
+        "haiku",
+        "--session-id",
+        session,
+        "--tools",
+        "TodoWrite,Write",
+        "--permission-mode",
+        "manual",
+        "--permission-prompts",
+        "none",
+        "--max-budget-usd",
+        "0.25",
+        "--output-format",
+        "json",
+        prompt,
+    ]
+    env = os.environ.copy()
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=240,
+    )
+    journey.actions.append("real Claude Code capture: " + shlex.join(command[:-1]) + " <prompt>")
+    journey.actions.append("real Claude Code output: " + completed.stdout.strip())
+    if completed.returncode != 0 or "Not logged in" in completed.stdout:
+        raise RuntimeError(
+            "the real Claude Code capture could not authenticate; do not substitute scripted rows: "
+            + completed.stdout[-2000:]
+        )
+
+    config_root = Path.home() / ".claude"
+    candidates = list((config_root / "projects").glob(f"**/{session}.jsonl"))
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"real Claude Code did not leave one transcript for {session}: {candidates}"
+        )
+    source = candidates[0]
+    rows = [json.loads(line) for line in source.read_text().splitlines() if line.strip()]
+    tool_names = {
+        block.get("name")
+        for item in rows
+        for block in (
+            item.get("message", {}).get("content", [])
+            if isinstance(item.get("message"), dict)
+            else []
+        )
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    }
+    if "TodoWrite" not in tool_names or "Write" not in tool_names:
+        raise RuntimeError(
+            "the authenticated Claude Code binary did not produce the required TodoWrite "
+            f"and permission request; observed tools were {sorted(name for name in tool_names if name)}"
+        )
+    if "SDK_LIVE_CAPTURE_OK" not in source.read_text():
+        raise RuntimeError("the real Claude Code session did not finish its capture marker")
+    source.unlink()
+    return rows
+
+
 def sdk_resume(output: Path) -> None:
-    if not REAL_SDK_CAPTURE.is_file():
-        raise RuntimeError(f"real Claude Code capture is missing: {REAL_SDK_CAPTURE}")
     journey = Journey("sdk-resume", output, [("sdk-history", "sdk")])
     try:
         pane = journey.launch("sdk")
         journey.open_chat(pane, "sdk-history")
         journey.frame(pane, "fresh SDK session before resume")
 
-        captured = json.loads(REAL_SDK_CAPTURE.read_text())
-        real_row = captured["transcript_row"]
         session = journey.ids["sdk-history"]
+        historical = real_claude_transcript(journey, session)
         slug = "".join(
             character if character.isalnum() and character.isascii() else "-"
             for character in str(ROOT.resolve())
         )
         transcript = journey.scratch / "claude-config" / "projects" / slug / f"{session}.jsonl"
         transcript.parent.mkdir(parents=True, exist_ok=True)
-        real_row = json.loads(json.dumps(real_row))
-        real_row["sessionId"] = session
-        historical = [
-            {
-                "type": "assistant",
-                "uuid": "00000000-0000-0000-0000-00000000aa01",
-                "sessionId": session,
-                "timestamp": "2026-09-16T10:00:00.000Z",
-                "message": {
-                    "id": "todo-history-message",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "todo-history",
-                            "name": "TodoWrite",
-                            "input": {
-                                "todos": [
-                                    {
-                                        "content": "Resume from the stored checklist",
-                                        "status": "in_progress",
-                                        "activeForm": "Resuming from the stored checklist",
-                                    }
-                                ]
-                            },
-                        }
-                    ],
-                },
-            },
-            {
-                "type": "user",
-                "uuid": "00000000-0000-0000-0000-00000000aa03",
-                "sessionId": session,
-                "timestamp": "2026-09-16T10:00:00.500Z",
-                "message": {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "todo-history",
-                            "content": "Todos updated",
-                            "is_error": False,
-                        }
-                    ],
-                },
-            },
-            {
-                "type": "assistant",
-                "uuid": "00000000-0000-0000-0000-00000000aa02",
-                "sessionId": session,
-                "timestamp": "2026-09-16T10:00:01.000Z",
-                "message": {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "old-permission",
-                            "name": "Write",
-                            "input": {"file_path": "/tmp/old", "content": "old"},
-                        }
-                    ],
-                },
-            },
-            real_row,
-        ]
         transcript.write_text("".join(json.dumps(item) + "\n" for item in historical))
 
         resumed = journey.control_request({"SuspendRestart": {"name": "host"}}, 120)["diagnostics"]
@@ -783,34 +952,47 @@ def sdk_resume(output: Path) -> None:
             raise RuntimeError(f"SDK resume counts were not 1/0: {resumed}")
         journey.fleet(pane)
         journey.open_chat(pane, "sdk-history")
-        history = journey.wait_frame(pane, "SDK_PROMPT_OK", timeout=90)
+        history = journey.wait_frame(pane, "SDK_LIVE_CAPTURE_OK", timeout=90)
         journey.frame(pane, "real Claude Code transcript restored on resume", history)
-        before = journey.wait_dump("sdk-history", "SDK_PROMPT_OK", timeout=90)
-        if 'todo=0/1 current="Resuming from the stored checklist"' not in before:
+        before = journey.wait_dump("sdk-history", "SDK_LIVE_CAPTURE_OK", timeout=90)
+        if 'todo=0/1 current="Resume from the live checklist"' not in before:
             raise RuntimeError("historical TodoWrite did not restore the checklist")
         diagnostics = journey.diagnostics()
-        if "tool:old-permission" not in before or '"pending_permissions": 0' not in json.dumps(diagnostics):
+        if "Write" not in history or '"pending_permissions": 0' not in json.dumps(diagnostics):
             raise RuntimeError("the historical permission was absent or remained answerable")
+        if any(term in history for term in ("allow once", "allow always", "deny request")):
+            raise RuntimeError("the historical permission rendered live answer controls")
 
         transcript.unlink()
         if transcript.exists():
             raise RuntimeError("the real Claude Code transcript could not be removed")
-        after = journey.dump("sdk-history")
-        if "SDK_PROMPT_OK" not in after:
+        resumed_without_file = journey.control_request(
+            {"SuspendRestart": {"name": "host"}}, 120
+        )["diagnostics"]
+        if resumed_without_file != {"resumed": 1, "failed": 0}:
+            raise RuntimeError(
+                f"SDK missing-file resume counts were not 1/0: {resumed_without_file}"
+            )
+        journey.fleet(pane)
+        journey.open_chat(pane, "sdk-history")
+        stored = journey.wait_frame(pane, "SDK_LIVE_CAPTURE_OK", timeout=90)
+        after = journey.wait_dump("sdk-history", "SDK_LIVE_CAPTURE_OK", timeout=90)
+        if "SDK_LIVE_CAPTURE_OK" not in after:
             raise RuntimeError("removing the source transcript discarded stored history")
         journey.frame(
             pane,
-            "source transcript removed after resume; stored history remains readable",
+            "second resume has no source transcript but stored history still paints",
+            stored,
         )
         journey.finish(
             before,
             after,
             diagnostics,
             [
-                "a transcript row captured from real Claude Code painted after SDK resume",
-                "the historical TodoWrite restored its checklist",
-                "the old permission was history rather than an answerable obligation",
-                "the source transcript was removed after resume without discarding stored history",
+                "the claude binary produced the TodoWrite and Write permission rows itself",
+                "the real historical TodoWrite restored its checklist visibly",
+                "the old Write permission painted without answer controls or a pending obligation",
+                "after the source file was removed, a second SDK resume still painted stored history",
             ],
         )
     except Exception as error:

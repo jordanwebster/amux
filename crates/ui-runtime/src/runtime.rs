@@ -956,6 +956,10 @@ impl Runtime {
                 })
         )
         .then(|| msg.clone());
+        let paged_agent = match &msg {
+            Msg::Store(StoreMsg::Paged { agent, .. }) => Some(*agent),
+            _ => None,
+        };
         // Shell-side resource bookkeeping keyed on an observed Msg (allowed:
         // the shell manages resources, never decides semantics): a stream
         // task always ends by sending `Closed`, so drop its finished
@@ -986,6 +990,19 @@ impl Runtime {
             self.store_streams.remove(agent);
         }
         let effects = update(&mut self.model, msg);
+        if let Some(agent) = paged_agent
+            && let Some(chat) = self.model.chat(agent)
+        {
+            tracing::debug!(
+                target: "amux::store",
+                %agent,
+                entries = chat.entries.len(),
+                encoded_bytes = chat.encoded_window_bytes(),
+                max_entries = ui_state::WINDOW_MAX_ENTRIES,
+                max_bytes = ui_state::WINDOW_MAX_BYTES,
+                "store page installed in bounded chat window"
+            );
+        }
         self.enforce_invariants();
         for effect in effects {
             self.run_effect(effect);

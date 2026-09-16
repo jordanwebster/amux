@@ -54,6 +54,8 @@
 //! | `CloudOffline`, `CloudOnline` | [`TestNet::cloud_offline`], [`TestNet::cloud_online`] |
 //! | `SeverDirect`, `EstablishDirect` | [`TestNet::sever_direct`], [`TestNet::establish_direct`] (the door uses the `try_` form so the driver sees the error) |
 //! | `RestartDaemon` | [`TestNet::restart_daemon`] |
+//! | `StopDaemon` | [`Daemon::stop`] |
+//! | `RestartSdkDaemon` | [`TestNet::restart_daemon`] plus recreation of declared SDK agents with their original identities |
 //! | `Latency` | [`TestNet::latency`] |
 //! | `Connections` (by user) | [`TestNet::connections`] |
 //! | `Connections` (by daemon) | [`Daemon::connections`] |
