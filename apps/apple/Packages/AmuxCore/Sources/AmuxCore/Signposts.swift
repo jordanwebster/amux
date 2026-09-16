@@ -29,6 +29,11 @@ public enum Signpost: String, Sendable, CaseIterable, Codable {
     /// is starting up and getting as far as building the scene that asks for
     /// the app's first view.
     case appEntered
+    /// Opening the account's store and reading its remembered fleet began.
+    case storeReadBegan
+    /// The remembered fleet is read and the store closed again. With
+    /// `storeReadBegan`, the store's share of a launch before its first frame.
+    case storeReadEnded
     /// The first frame the display has actually shown carrying cached rows.
     case firstCachedFrame
     case streamConnected

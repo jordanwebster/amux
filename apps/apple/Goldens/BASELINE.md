@@ -311,6 +311,18 @@ Added state using the `home-unreadable` fixture. An agent run by a provider this
 
 Added state using the `home-offline` fixture. The two row states an ordinary fleet keeps below the fold: an agent whose machine is not answering, which names the machine in words instead of drawing a mark, and one whose working inference has expired, which is the only row in the app that draws neither a mark nor a state word. It follows the same visual system as its parent screen.
 
+## cached-fleet-unreachable
+
+Added state using the `cached-fleet-unreachable` fixture. A launch drawn from the account's SQLite store while Studio is not answering: every remembered agent is listed, unconfirmed and waiting for its machine, and nothing can be sent until it answers. It follows the same visual system as its parent screen.
+
+## cached-fleet-removal
+
+Added state using the `cached-fleet-removal` fixture. The same launch after Studio said two of its agents were gone before the phone lost its connection: the store no longer remembers them, so they are not drawn. It follows the same visual system as its parent screen.
+
+## cached-chat
+
+Added state using the `cached-chat` fixture. A conversation opened before anything has connected, painted from the window its store kept rather than from a live stream. It follows the same visual system as its parent screen.
+
 ## small-home
 
 Added state using the `home` fixture. The home screen on the narrowest supported display. It follows the same visual system as its parent screen.

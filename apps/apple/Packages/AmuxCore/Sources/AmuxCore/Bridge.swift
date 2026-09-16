@@ -41,7 +41,10 @@ extension Bridge {
     /// machine and one account's agent, and a phone signed in to two of them
     /// keeps a fleet for each.
     public static func cachedFleet(in directory: URL, for account: AccountId) -> [Event] {
-        guard let json = amux_app_cached_fleet(directory.path, account.value) else { return [] }
+        Signposts.emit(.storeReadBegan)
+        let json = amux_app_cached_fleet(directory.path, account.value)
+        Signposts.emit(.storeReadEnded)
+        guard let json else { return [] }
         defer { amux_app_free(json) }
         let data = Data(String(cString: json).utf8)
         return (try? AmuxJSON.decoder.decode([Event].self, from: data)) ?? []

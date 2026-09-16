@@ -11,7 +11,7 @@ crate-type = ["staticlib", "rlib"]
 [features]
 default = ["bundled"]
 bundled = ["app-runtime/bundled"]
-debug-tools = ["app-embedded/debug-tools"]
+debug-tools = ["app-embedded/debug-tools", "app-runtime/debug-tools"]
 
 [dependencies]
 app-embedded = { workspace = true }

@@ -12,6 +12,8 @@ pub mod command;
 pub mod compose;
 pub mod projection;
 pub mod queue;
+#[cfg(any(test, feature = "debug-tools"))]
+pub mod seed;
 pub mod session;
 
 // The few values the C boundary spells without a runtime of its own.

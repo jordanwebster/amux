@@ -8,6 +8,8 @@ publish = false
 [features]
 default = ["bundled"]
 bundled = ["store/bundled"]
+# Writes remembered states into a store so a driving build can open them.
+debug-tools = []
 
 [dependencies]
 artifacts = { workspace = true }

@@ -20,7 +20,8 @@ DEBUG_SYMBOLS = (
     "ReportCapture", "ReportFreeze", "ReportAssembly", "ReportStore", "ReportScreen",
     "FreezeOnScreenshot", "DebugReports", "FrozenFrame", "ColdStartProbe", "PerfRun",
     "Workloads", "BudgetTable",
-    "amux_app_report_snapshot", "amux_app_replay_report", "+debug-tools",
+    "amux_app_report_snapshot", "amux_app_replay_report", "amux_app_seed_store",
+    "amux_app_cached_chat", "+debug-tools",
 )
 FORBIDDEN_APIS = (
     "UNUserNotificationCenter", "requestAuthorizationWithOptions",

@@ -20,6 +20,7 @@ final class DoorHost {
     static let shared = DoorHost()
 
     private init() {
+        RememberedStoreBridge.install()
         if let json = Self.said("amux-cloud-script"),
            let script = try? AmuxJSON.decoder.decode(CloudScript.self, from: Data(json.utf8)) {
             cloud.scripted = script.state

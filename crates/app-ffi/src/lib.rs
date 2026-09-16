@@ -97,19 +97,10 @@ pub unsafe extern "C" fn amux_app_cached_fleet(
     catch_unwind(AssertUnwindSafe(|| {
         let directory = unsafe { read_string(cache_dir) }?;
         let account = unsafe { read_string(account) }?;
-        let read = || {
-            let executor = tokio::runtime::Builder::new_current_thread().build().ok()?;
-            Some(executor.block_on(app_runtime::cache::read_cached_fleet(
-                std::path::Path::new(directory),
-                account,
-            )))
-        };
-        // A caller already inside an async runtime cannot block on another
-        // one from its own thread; the read then runs on a thread of its own.
-        let fleet = match tokio::runtime::Handle::try_current() {
-            Ok(_) => std::thread::scope(|scope| scope.spawn(read).join().ok().flatten()),
-            Err(_) => read(),
-        }?;
+        let fleet = blocking(app_runtime::cache::read_cached_fleet(
+            std::path::Path::new(directory),
+            account,
+        ))?;
         owned(&[fleet])
     }))
     .ok()
@@ -434,6 +425,98 @@ pub unsafe extern "C" fn amux_app_replay_report(path: *const c_char) -> *mut c_c
     .ok()
     .flatten()
     .unwrap_or(std::ptr::null_mut())
+}
+
+/// Replaces an account's store with one remembering the hosts, agents,
+/// removals and conversation rows `remembered_json` describes, written through
+/// the store and runtime a phone uses. Returns owned JSON `{"ok":true}`, or
+/// `{"error":"…"}`; free it with amux_app_free. Debug-tools builds only.
+///
+/// # Safety
+/// cache_dir, account and remembered_json must be readable NUL-terminated
+/// UTF-8 strings for this call.
+#[cfg(feature = "debug-tools")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_app_seed_store(
+    cache_dir: *const c_char,
+    account: *const c_char,
+    remembered_json: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let directory = unsafe { read_string(cache_dir) }?;
+        let account = unsafe { read_string(account) }?;
+        let remembered = unsafe { read_string(remembered_json) }?;
+        let json = match serde_json::from_str(remembered) {
+            Ok(remembered) => match blocking(app_runtime::seed::seed(
+                std::path::Path::new(directory),
+                account,
+                remembered,
+            ))? {
+                Ok(()) => serde_json::json!({ "ok": true }),
+                Err(error) => serde_json::json!({ "error": error }),
+            },
+            Err(error) => serde_json::json!({ "error": error.to_string() }),
+        };
+        owned(&json)
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
+/// Opens one conversation of an account's store the way a phone does before
+/// anything has connected, and returns what its runtime projects as owned JSON
+/// `{"events":[…]}`, or `{"error":"…"}`; free it with amux_app_free.
+/// Debug-tools builds only.
+///
+/// # Safety
+/// cache_dir, account and agent must be readable NUL-terminated UTF-8 strings
+/// for this call.
+#[cfg(feature = "debug-tools")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amux_app_cached_chat(
+    cache_dir: *const c_char,
+    account: *const c_char,
+    agent: *const c_char,
+) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        let directory = unsafe { read_string(cache_dir) }?;
+        let account = unsafe { read_string(account) }?;
+        let agent = unsafe { read_string(agent) }?.parse().ok()?;
+        let json = match blocking(app_runtime::seed::cached_chat(
+            std::path::Path::new(directory),
+            account,
+            agent,
+        ))? {
+            Ok(events) => serde_json::json!({ "events": events }),
+            Err(error) => serde_json::json!({ "error": error }),
+        };
+        owned(&json)
+    }))
+    .ok()
+    .flatten()
+    .unwrap_or(std::ptr::null_mut())
+}
+
+/// Runs a future to completion from a synchronous caller.
+///
+/// A caller already inside an async runtime cannot block on another one from
+/// its own thread; the future then runs on a thread of its own.
+fn blocking<F: std::future::Future + Send>(future: F) -> Option<F::Output>
+where
+    F::Output: Send,
+{
+    let run = || {
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok()?;
+        Some(executor.block_on(future))
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(_) => std::thread::scope(|scope| scope.spawn(run).join().ok().flatten()),
+        Err(_) => run(),
+    }
 }
 
 unsafe fn snapshot(

@@ -6,10 +6,14 @@ import SwiftUI
 ///
 /// Cold start cannot be measured from inside a test that is already running in
 /// the process, so the app measures its own: told at launch to be the probe
-/// home, it fills the fleet from the pinned workload exactly as a real cold
-/// start fills it from the cache, draws the plain rows, and once the frame
-/// carrying them has been shown writes what it took beside the other samples.
-/// The recipe then terminates it and launches it again.
+/// home, it reads the pinned workload's fleet from an account store through
+/// the same entry point a real cold start reads its cache through, draws the
+/// plain rows, and once the frame carrying them has been shown writes what it
+/// took beside the other samples. The recipe then terminates it and launches
+/// it again.
+///
+/// The store is written by a launch of its own before any measured one, so a
+/// measured launch only ever reads it.
 @MainActor
 enum ColdStartProbe {
     /// The launch argument, as `-amux-probe probe-home`.
@@ -27,15 +31,37 @@ enum ColdStartProbe {
         if name == "probe-home" {
             ProbeHomeScreen(rows: cachedRows())
                 .onAppear { record() }
+        } else if name == "probe-store" {
+            Color.clear.onAppear { writeStore() }
         } else {
             EmptyView()
         }
     }
 
+    private static let storeCache = FileManager.default
+        .urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("probe-store", isDirectory: true)
+    private static let storeAccount = AccountId("probe")
+
     private static func cachedRows() -> [AgentRow] {
         let store = FleetStore(now: Workloads.now)
-        store.apply(.fleet(Workloads.cachedFleet()))
+        for event in Bridge.cachedFleet(in: storeCache, for: storeAccount) {
+            store.apply(event)
+        }
         return store.rows
+    }
+
+    /// Writes the pinned fleet into the store the measured launches read, then
+    /// says so where the recipe is waiting.
+    private static func writeStore() {
+        let fleet = Workloads.cachedFleet()
+        let remembered = Remembered(
+            hosts: fleet.hosts.map(\.entry), agents: fleet.agents.map(\.agent))
+        guard RememberedStoreBridge.seed(remembered, in: storeCache, for: storeAccount) else {
+            return
+        }
+        PerfFiles.ensure()
+        try? Data().write(to: PerfFiles.probeStoreWritten)
     }
 
     /// Waits for the mark the fleet store leaves when its first rows have been

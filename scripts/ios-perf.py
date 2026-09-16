@@ -271,6 +271,21 @@ def cold_starts(udid: str, perf: Path) -> None:
     on a slow machine and keeps the run short on a fast one.
     """
     samples = perf / "cold-samples.jsonl"
+    # The fleet a cold launch draws is read from an account store, which one
+    # unmeasured launch writes first so that no measured launch pays for it.
+    written = perf / "probe-store-written"
+    written.unlink(missing_ok=True)
+    subprocess.run(
+        ["xcrun", "simctl", "launch", udid, BUNDLE_ID, "-amux-probe", "probe-store"],
+        check=True, text=True, capture_output=True, timeout=300)
+    deadline = time.monotonic() + 120
+    while not written.is_file():
+        if time.monotonic() > deadline:
+            raise SystemExit("the probe never wrote the store its cold launches read")
+        time.sleep(0.2)
+    subprocess.run(
+        ["xcrun", "simctl", "terminate", udid, BUNDLE_ID],
+        check=True, text=True, capture_output=True, timeout=300)
     for attempt in range(COLD_LAUNCHES):
         before = len(samples.read_text().splitlines()) if samples.is_file() else 0
         subprocess.run(
@@ -569,7 +584,7 @@ def split(marks: Path) -> str:
     """
     if not marks.is_file():
         return "nothing recorded where the time went; this build marks no entry"
-    loading, starting, drawing = [], [], []
+    loading, starting, drawing, reading = [], [], [], []
     for line in marks.read_text().splitlines():
         moments = {mark["signpost"]: mark["sinceProcessStart"] for mark in json.loads(line)}
         loaded = moments.get("imagesLoaded")
@@ -579,11 +594,19 @@ def split(marks: Path) -> str:
         loading.append(loaded * 1000)
         starting.append((entered - loaded) * 1000)
         drawing.append((drawn - entered) * 1000)
+        began, ended = moments.get("storeReadBegan"), moments.get("storeReadEnded")
+        if began is not None and ended is not None:
+            reading.append((ended - began) * 1000)
     if not loading:
         return "nothing recorded where the time went; no launch marked every moment"
+    # Opening the account's store and reading its fleet is part of drawing
+    # the first frame, and the part the store itself is answerable for.
+    store = (f", of which reading the store: {median(reading):.1f} ms"
+             if len(reading) == len(loading) else
+             ", with no store read marked in every launch")
     return (f"loading the app: {median(loading):.0f} ms; "
             f"starting it: {median(starting):.0f} ms; "
-            f"drawing the first frame: {median(drawing):.0f} ms "
+            f"drawing the first frame: {median(drawing):.0f} ms{store} "
             f"(medians of {len(loading)} launches)")
 
 

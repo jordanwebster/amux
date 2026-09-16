@@ -1,3 +1,14 @@
+2026-09-16 — **The phone's cached screens are photographed from real
+stores.** Driving builds gain two bridge entry points that write an account
+store through the phone's own store, runtime and reducer and open one of its
+conversations before anything connects. Three new states use them: a fleet
+whose machine is not answering, the same fleet after the machine removed two
+agents, and a conversation painted from its stored window; app-hosted tests
+assert each and the goldens manifest catalogues them. Reading the cached fleet
+now marks store-read signposts, the cold-start probe reads its forty-agent
+fleet from a store an unmeasured launch writes first, and the cold-start
+report states the store's share of drawing the first frame.
+
 2026-09-16 — **Phone conversations open through the store.** Opening a
 structured conversation on the phone now opens its store-backed chat, so the
 reader paints the entries the device kept and then catches up from the stored

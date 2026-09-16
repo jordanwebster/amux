@@ -32,6 +32,11 @@ public enum PerfFiles {
     public static var lifecycleSamples: URL {
         directory.appendingPathComponent("lifecycle-samples.jsonl")
     }
+    /// Left by the unmeasured launch that writes the store the cold launches
+    /// read, once that store is written.
+    public static var probeStoreWritten: URL {
+        directory.appendingPathComponent("probe-store-written")
+    }
     public static var samples: URL { directory.appendingPathComponent("samples.json") }
     public static var verdict: URL { directory.appendingPathComponent("verdict.json") }
     public static var cadence: URL { directory.appendingPathComponent("cadence.json") }

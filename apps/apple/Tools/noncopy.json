@@ -12,7 +12,10 @@
     ],
     "apps/apple/Amux/Debug/ColdStartProbe.swift": [
       {"literal": "\"amux-probe\"", "context": "static let argument = \"amux-probe\"", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
-      {"literal": "\"probe-home\"", "context": "if name == \"probe-home\" {", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1}
+      {"literal": "\"probe-home\"", "context": "if name == \"probe-home\" {", "reason": "Debug driving/replay protocol or harness diagnostic; not app interface copy.", "count": 1},
+      {"literal": "\"probe-store\"", "context": "} else if name == \"probe-store\" {", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"probe-store\"", "context": ".appendingPathComponent(\"probe-store\", isDirectory: true)", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1},
+      {"literal": "\"probe\"", "context": "private static let storeAccount = AccountId(\"probe\")", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1}
     ],
     "apps/apple/Amux/Debug/DoorHost.swift": [
       {"literal": "\"amux-cloud-script\"", "context": "if let json = Self.said(\"amux-cloud-script\"),", "reason": "Debug driving protocol, scripted credential, or harness diagnostic; not app interface copy.", "count": 1},
@@ -1069,7 +1072,8 @@
       {"literal": "\"lifecycle-samples.jsonl\"", "context": "directory.appendingPathComponent(\"lifecycle-samples.jsonl\")", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"samples.json\"", "context": "public static var samples: URL { directory.appendingPathComponent(\"samples.json\") }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
       {"literal": "\"verdict.json\"", "context": "public static var verdict: URL { directory.appendingPathComponent(\"verdict.json\") }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
-      {"literal": "\"cadence.json\"", "context": "public static var cadence: URL { directory.appendingPathComponent(\"cadence.json\") }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1}
+      {"literal": "\"cadence.json\"", "context": "public static var cadence: URL { directory.appendingPathComponent(\"cadence.json\") }", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
+      {"literal": "\"probe-store-written\"", "context": "directory.appendingPathComponent(\"probe-store-written\")", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxCore/Sources/Instrumentation/Workloads.swift": [
       {"literal": "\"studio\"", "context": "name: [\"studio\", \"mini\", \"air\"][index],", "reason": "Performance workload, metric or harness output; not app interface copy.", "count": 1},
@@ -2056,7 +2060,13 @@
       {"literal": "\"Check the reconnect path before you squash it.\"", "context": "\"Check the reconnect path before you squash it.\"", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"\"\"\n            {\"error\":\"general\",\"message\":\"the session is replaying history\",\\\n            \"auth_required\":false,\"subscription_required\":false}\n            \"\"\"", "context": "let json = Data(\"\"\"\n            {\"error\":\"general\",\"message\":\"the session is replaying history\",\\\n            \"auth_required\":false,\"subscription_required\":false}\n            \"\"\".utf8)", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"thinking\"", "context": "gate: .working, phase: \"thinking\",", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 2},
-      {"literal": "\"spec-suite\"", "context": "agent: Scenario.agentId(\"spec-suite\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+      {"literal": "\"spec-suite\"", "context": "agent: Scenario.agentId(\"spec-suite\"),", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"cached-fleet-unreachable\"", "context": "Built(.home, \"cached-fleet-unreachable\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
+      {"literal": "\"cached-fleet-removal\"", "context": "Built(.home, \"cached-fleet-removal\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
+      {"literal": "\"cached-chat\"", "context": "Built(.run, \"cached-chat\"),", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
+      {"literal": "\"cached-fleet-unreachable\"", "context": "Fixture(id: \"cached-fleet-unreachable\", screen: .home) { bundle in", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
+      {"literal": "\"cached-fleet-removal\"", "context": "Fixture(id: \"cached-fleet-removal\", screen: .home) { bundle in", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1},
+      {"literal": "\"cached-chat\"", "context": "Fixture(id: \"cached-chat\", screen: .run) { bundle in", "reason": "Stable fixture or capture identity, not interface copy.", "count": 1}
     ],
     "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/Report.swift": [
       {"literal": "\"ladybug\"", "context": "Image(systemName: \"ladybug\")", "reason": "SF Symbol asset name, not a displayed label.", "count": 1},
@@ -2828,6 +2838,18 @@
       {"literal": "\"5c0a91de\"", "context": "[\"crates/amux-ui/tests/spec/pairing.rs\", \"5c0a91de\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"docs/PROTOCOL.md\"", "context": "[\"docs/PROTOCOL.md\", \"8f13c7a2\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
       {"literal": "\"8f13c7a2\"", "context": "[\"docs/PROTOCOL.md\", \"8f13c7a2\"],", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
+    ],
+    "apps/apple/Amux/Debug/RememberedStoreBridge.swift": [
+      {"literal": "\"remembered-stores\"", "context": ".appendingPathComponent(\"remembered-stores\", isDirectory: true)", "reason": "SF Symbol name or stable driving identifier, not displayed copy.", "count": 1}
+    ],
+    "apps/apple/Packages/AmuxTestSupport/Sources/AmuxTestSupport/RememberedStores.swift": [
+      {"literal": "\"door\"", "context": "public static let account = AccountId(\"door\")", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"chats\"", "context": "object[\"chats\"] = chats", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"docs-pass\"", "context": "remembered.removed = [Scenario.agentId(\"docs-pass\"), Scenario.agentId(\"ios-bridge\")]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "\"ios-bridge\"", "context": "remembered.removed = [Scenario.agentId(\"docs-pass\"), Scenario.agentId(\"ios-bridge\")]", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "#\"{\"type\":\"amux.transcript_ready\"}\"#", "context": "#\"{\"type\":\"amux.transcript_ready\"}\"#,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "#\"{\"type\":\"user\",\"uuid\":\"dddddddd-0000-4000-8000-000000000001\",\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"timestamp\":\"2025-12-01T09:10:00.000Z\",\"message\":{\"role\":\"user\",\"content\":\"Why does the reconnect loop back off twice?\"},\"origin\":{\"kind\":\"human\"},\"promptSource\":\"typed\"}\"#", "context": "#\"{\"type\":\"user\",\"uuid\":\"dddddddd-0000-4000-8000-000000000001\",\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"timestamp\":\"2025-12-01T09:10:00.000Z\",\"message\":{\"role\":\"user\",\"content\":\"Why does the reconnect loop back off twice?\"},\"origin\":{\"kind\":\"human\"},\"promptSource\":\"typed\"}\"#,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1},
+      {"literal": "#\"{\"type\":\"assistant\",\"uuid\":\"dddddddd-0000-4000-8000-000000000002\",\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"timestamp\":\"2025-12-01T09:10:05.000Z\",\"message\":{\"id\":\"message-1\",\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Both the relay dialer and the session retry wait before trying again, so a dropped link waits for each in turn.\"}]}}\"#", "context": "#\"{\"type\":\"assistant\",\"uuid\":\"dddddddd-0000-4000-8000-000000000002\",\"sessionId\":\"22222222-2222-4222-8222-222222222222\",\"timestamp\":\"2025-12-01T09:10:05.000Z\",\"message\":{\"id\":\"message-1\",\"role\":\"assistant\",\"stop_reason\":\"end_turn\",\"content\":[{\"type\":\"text\",\"text\":\"Both the relay dialer and the session retry wait before trying again, so a dropped link waits for each in turn.\"}]}}\"#,", "reason": "Controlled fixture data or provider/user content, preserved verbatim.", "count": 1}
     ]
   }
 }

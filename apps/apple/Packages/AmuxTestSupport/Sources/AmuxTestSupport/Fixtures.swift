@@ -75,6 +75,9 @@ public enum Fixtures {
         Built(.typing, "composer-accessibility"),
         Built(.home, "home-unreadable"),
         Built(.home, "home-offline"),
+        Built(.home, "cached-fleet-unreachable"),
+        Built(.home, "cached-fleet-removal"),
+        Built(.run, "cached-chat"),
         Built(.homeQuiet, "home-quiet"),
         Built(.drawer, "drawer"),
         Built(.run, "run"),
@@ -629,6 +632,21 @@ public enum Fixtures {
         // able to look at rather than only read about.
         Fixture(id: "home-offline", screen: .home) { bundle in
             States.open(bundle, agents: Scenario.darkMachine)
+        },
+        // A launch with a machine not answering, drawn from the account's
+        // store: every remembered agent listed and waiting for its machine.
+        Fixture(id: "cached-fleet-unreachable", screen: .home) { bundle in
+            States.remembered(bundle, .unreachable)
+        },
+        // The same launch after the machine said two agents were gone: the
+        // store no longer remembers them, so the launch never draws them.
+        Fixture(id: "cached-fleet-removal", screen: .home) { bundle in
+            States.remembered(bundle, .removal)
+        },
+        // A conversation opened before anything has connected, painted from
+        // the window its store kept.
+        Fixture(id: "cached-chat", screen: .run) { bundle in
+            States.remembered(bundle, .chat, chat: Scenario.focus)
         },
         // Nothing yet: one action, and no list pretending to be loading.
         Fixture(id: "home-empty", screen: .home) { bundle in

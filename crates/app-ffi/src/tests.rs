@@ -1052,6 +1052,65 @@ async fn mobile_cache_offline_restart_reconciles_in_place_and_exports_report() {
     net.shutdown().await;
 }
 
+/// A driving build writes a remembered state through the C boundary and reads
+/// it back the way a launch does: the fleet through the cached-fleet entry
+/// point, and a conversation on its stored window. A state that cannot be
+/// written says why instead of drawing nothing.
+#[test]
+fn a_seeded_store_is_what_a_launch_and_a_cached_conversation_read() {
+    let root = test_root();
+    let host = uuid::Uuid::from_u128(1);
+    let agent = uuid::Uuid::from_u128(11);
+    let remembered = json!({
+        "local": uuid::Uuid::from_u128(9),
+        "hosts": [{"id": host, "name": "studio", "online": false, "trust_status": "trusted"}],
+        "agents": [{"id": agent, "host_id": host, "name": "kept", "command": "claude",
+                    "working_dir": "/work", "kind": {"kind": "claude", "driver": "pty"},
+                    "readonly": false, "args": [], "created_at": "2026-09-16T12:00:00.000Z"}],
+        "chats": {agent.to_string(): [
+            {"type": "amux.transcript_ready"},
+            {"type": "user", "uuid": "dddddddd-0000-4000-8000-000000000001",
+             "sessionId": "22222222-2222-4222-8222-222222222222",
+             "timestamp": "2026-09-16T12:00:00.000Z",
+             "message": {"role": "user", "content": "kept on the phone"},
+             "origin": {"kind": "human"}, "promptSource": "typed"}
+        ]}
+    });
+    let directory = CString::new(root.path().to_str().unwrap()).unwrap();
+    let account = CString::new("personal").unwrap();
+    let seed = |json: &str| {
+        let json = CString::new(json).unwrap();
+        owned_json(unsafe {
+            amux_app_seed_store(directory.as_ptr(), account.as_ptr(), json.as_ptr())
+        })
+    };
+    assert_eq!(seed(&remembered.to_string()), json!({"ok": true}));
+    assert!(seed("{}")["error"].is_string());
+
+    let fleet = cached_fleet(root.path(), "personal");
+    assert_eq!(
+        fleet["Fleet"]["agents"][0]["agent"]["id"],
+        json!(agent),
+        "{fleet}"
+    );
+    assert_eq!(fleet["Fleet"]["agents"][0]["awaiting"], true);
+
+    let chat = CString::new(agent.to_string()).unwrap();
+    let opened = owned_json(unsafe {
+        amux_app_cached_chat(directory.as_ptr(), account.as_ptr(), chat.as_ptr())
+    });
+    let feed = opened["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|event| event.get("Feed"))
+        .unwrap_or_else(|| panic!("no stored conversation: {opened}"));
+    assert!(
+        feed["append"].to_string().contains("kept on the phone"),
+        "{feed}"
+    );
+}
+
 #[test]
 fn mobile_cache_missing_corrupt_and_unwritable_are_nonfatal() {
     let root = test_root();
