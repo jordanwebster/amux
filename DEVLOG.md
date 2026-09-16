@@ -1,3 +1,9 @@
+2026-09-16 — **Codex correlation is verified at its provider boundaries.**
+Approval requests now have protocol coverage through event ingestion for both
+provider item and call identifiers, including ordinary resolution and transport
+loss. Steering coverage drives the live Codex control path and verifies that
+the resulting row repeats its stable input id and accepted text.
+
 2026-09-16 — **Trust removal withdraws the peer's fleet inventory.**
 Unpairing a host now removes every agent learned from that host, emits their
 withdrawals and forgets the host's inventory watermark so a later pairing can

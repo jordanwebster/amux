@@ -3911,47 +3911,175 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_protocol_revision_codex_rows_are_self_describing_for_every_observer() {
+    async fn daemon_protocol_revision_codex_approval_rows_preserve_provider_correlation() {
         let source = StructuredLogSource::new(16);
-        let event = ThreadEvent {
+        let runtime = Arc::new(StdMutex::new(CodexRuntime {
+            desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
+            attached: Some(CodexAttached {
+                thread_id: "thread-1".into(),
+                daemon_mode: Some("test".into()),
+                live: None,
+                active_turn_id: Some("turn-3".into()),
+                last_agent_messages: HashMap::new(),
+                pending: HashMap::new(),
+                applied_name_generation: Some(0),
+            }),
+            resume_daemon_mode: None,
+            startup_error: None,
+            ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
+        }));
+        let (mut live_rows, initial) = source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(initial.through, 0);
+
+        let item_approval = ThreadEvent {
             method: "item/commandExecution/requestApproval".into(),
             params: json!({"itemId":"item-7","availableDecisions":["accept","decline"]}),
             turn_id: Some("turn-3".into()),
-            event: TurnEvent::Warning {
-                message: "fixture".into(),
-            },
+            event: TurnEvent::ApprovalRequired(codex::ApprovalRequest::FileChange {
+                thread_id: "thread-1".into(),
+                turn_id: "turn-3".into(),
+                item_id: "provider-request-item".into(),
+                request_id: RequestId::Integer(41),
+                reason: None,
+                grant_root: None,
+            }),
         };
-        let request_id = RequestId::Integer(41);
-        write_approval_ask(&source, &event, &request_id, "item-7").await;
-        write_resolution(&source, &request_id, "item-7", "answered").await;
-        let (mut reader, facts) = source.subscribe_with_query(None).await.unwrap();
-        assert_eq!(facts.through, 2);
-        let rows = vec![
-            reader.read().await.unwrap().payload,
-            reader.read().await.unwrap().payload,
-        ];
+        ingest_event(&runtime, &source, None, item_approval).await;
+        ingest_event(
+            &runtime,
+            &source,
+            None,
+            ThreadEvent {
+                method: "item/commandExecution/requestApproval/resolved".into(),
+                params: json!({"itemId":"item-7"}),
+                turn_id: Some("turn-3".into()),
+                event: TurnEvent::ApprovalResolved {
+                    request_id: RequestId::Integer(41),
+                },
+            },
+        )
+        .await;
+
+        let call_approval = ThreadEvent {
+            method: "item/commandExecution/requestApproval".into(),
+            params: json!({"callId":"call-8","availableDecisions":["accept","decline"]}),
+            turn_id: Some("turn-3".into()),
+            event: TurnEvent::ApprovalRequired(codex::ApprovalRequest::FileChange {
+                thread_id: "thread-1".into(),
+                turn_id: "turn-3".into(),
+                item_id: "another-provider-request-item".into(),
+                request_id: RequestId::String("approval-42".into()),
+                reason: None,
+                grant_root: None,
+            }),
+        };
+        ingest_event(&runtime, &source, None, call_approval).await;
+        resolve_pending(
+            &source,
+            mark_disconnected(&runtime, None),
+            "connection_lost",
+        )
+        .await;
+
+        let (mut replay_rows, facts) = source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 7);
+        let mut live = Vec::new();
+        let mut replay = Vec::new();
+        for _ in 0..facts.through {
+            live.push(live_rows.read().await.unwrap().payload);
+            replay.push(replay_rows.read().await.unwrap().payload);
+        }
+        assert_eq!(live, replay);
 
         let fold = |rows: &[Value]| {
-            let mut items = HashMap::new();
+            let mut approvals = HashMap::new();
             for row in rows {
-                items.insert(
-                    row["item_id"].as_str().unwrap().to_string(),
-                    row.get("resolution")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                );
+                let Some(row_type) = row.get("type").and_then(Value::as_str) else {
+                    continue;
+                };
+                let request_id = row["request_id"].to_string();
+                match row_type {
+                    "amux.codex_approval_required" => {
+                        let item_id = row["item_id"]
+                            .as_str()
+                            .expect("approval row must carry its provider item id");
+                        assert!(
+                            approvals
+                                .insert(request_id, (item_id.to_string(), None))
+                                .is_none(),
+                            "approval request ids must be unique"
+                        );
+                    }
+                    "amux.codex_approval_resolved" => {
+                        let item_id = row["item_id"]
+                            .as_str()
+                            .expect("resolution row must repeat its provider item id");
+                        let resolution = row["resolution"]
+                            .as_str()
+                            .expect("resolution row must carry its outcome");
+                        let approval = approvals
+                            .get_mut(&request_id)
+                            .expect("resolution must follow its approval row");
+                        assert_eq!(approval.0, item_id);
+                        approval.1 = Some(resolution.to_string());
+                    }
+                    _ => {}
+                }
             }
-            items
+            approvals
         };
-        let replayed: Vec<Value> =
-            serde_json::from_slice(&serde_json::to_vec(&rows).unwrap()).unwrap();
-        assert_eq!(fold(&rows), fold(&replayed));
-        assert_eq!(fold(&rows)["item-7"], Some("answered".into()));
+        let approvals = fold(&replay);
+        assert_eq!(
+            approvals["41"],
+            ("item-7".into(), Some("answered_elsewhere".into()))
+        );
+        assert_eq!(
+            approvals["\"approval-42\""],
+            ("call-8".into(), Some("connection_lost".into()))
+        );
+    }
 
-        let steer = input_result_row(b"stable-input-9".to_vec(), Ok(Some("accepted".into())));
-        assert_eq!(steer["input_id"], json!(b"stable-input-9"));
-        assert_eq!(steer["ok"]["input_id"], json!(b"stable-input-9"));
-        assert_eq!(steer["ok"]["text"], "accepted");
+    #[tokio::test]
+    async fn daemon_protocol_revision_codex_steer_publishes_stable_input_result() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let session = session();
+        let _events = attach_runtime(&session.runtime, &client, thread).await;
+        let steer = tokio::spawn({
+            let target = session.input_target();
+            async move {
+                target
+                    .send(
+                        b"stable-input-9".to_vec(),
+                        CodexSdkV1Input::Steer {
+                            turn_id: "turn-3".into(),
+                            input: serde_json::to_vec(&vec![InputItem::text("accepted")]).unwrap(),
+                        },
+                    )
+                    .await;
+            }
+        });
+
+        let request = read_request(&mut reader).await;
+        assert_eq!(request["method"], "turn/steer");
+        assert_eq!(request["params"]["expectedTurnId"], "turn-3");
+        assert_eq!(request["params"]["input"][0]["text"], "accepted");
+        write_response(&mut writer, &request, json!({"turnId":"turn-3"})).await;
+        steer.await.unwrap();
+
+        let (mut rows, facts) = session.log_source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 1);
+        let row = rows.read().await.unwrap().payload;
+        assert_eq!(row["type"], "amux.input_result");
+        assert_eq!(row["input_id"], json!(b"stable-input-9"));
+        assert_eq!(row["ok"]["input_id"], json!(b"stable-input-9"));
+        assert_eq!(row["ok"]["text"], "accepted");
+        client.close().await;
     }
 
     #[tokio::test]
