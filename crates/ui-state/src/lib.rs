@@ -19,6 +19,7 @@ mod model;
 mod msg;
 pub mod provider;
 pub mod queue;
+pub mod restored;
 pub mod review;
 pub mod store;
 mod update;

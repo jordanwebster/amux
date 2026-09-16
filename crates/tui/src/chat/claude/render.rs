@@ -12,9 +12,7 @@ use std::collections::HashMap;
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use serde_json::Value;
 use ui_state::Model;
-use ui_state::attachments::Segment;
 use ui_state::claude::{
     ChatPhase, FeedEntry, FeedEntryKind, FeedItem, InterruptionKind, SuccessFacts, ToolEntry,
     ToolInvocation, ToolOutcome, TurnDuration,
@@ -869,193 +867,7 @@ pub(crate) fn stored_entry_block(
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    use ui_state::{
-        DurableEntry as _, StoredClaudeBody as ClaudeBody, StoredClaudeEntryKind as ClaudeEntryKind,
-    };
-
-    let body = entry.body().cloned().unwrap_or_default();
-    let text = entry.text().unwrap_or_default().to_string();
-    let kind = match entry.entry_kind().unwrap_or_default() {
-        ClaudeEntryKind::Prompt => {
-            let (source, prompt_id) = match body {
-                ClaudeBody::Prompt { source, prompt_id } => (source, prompt_id),
-                _ => (String::new(), None),
-            };
-            let source = match source.as_str() {
-                "Typed" => ui_state::claude::PromptSource::Typed,
-                "Queued" => ui_state::claude::PromptSource::Queued,
-                "SuggestionAccepted" => ui_state::claude::PromptSource::SuggestionAccepted,
-                "Human" => ui_state::claude::PromptSource::Human,
-                "Unstated" | "" => ui_state::claude::PromptSource::Unstated,
-                label => ui_state::claude::PromptSource::Other {
-                    label: label.to_string(),
-                },
-            };
-            FeedEntryKind::Prompt(ui_state::claude::PromptEntry {
-                text: text.clone(),
-                content: vec![Segment::Prose(text)],
-                source,
-                prompt_id,
-            })
-        }
-        ClaudeEntryKind::Message => FeedEntryKind::Message(ui_state::claude::MessageEntry {
-            message_id: String::new(),
-            segments: vec![text.clone()],
-            content: vec![Segment::Prose(text)],
-            finality: match entry.finality() {
-                Some("interrupted") => ui_state::claude::MessageFinality::Interrupted,
-                Some("abandoned") => ui_state::claude::MessageFinality::Abandoned,
-                Some("open") | None => ui_state::claude::MessageFinality::Open,
-                Some(stop_reason) => ui_state::claude::MessageFinality::Final {
-                    stop_reason: stop_reason.to_string(),
-                },
-            },
-        }),
-        ClaudeEntryKind::Thinking => {
-            let (duration_ms, redacted) = match body {
-                ClaudeBody::Thinking {
-                    duration_ms,
-                    redacted,
-                } => (duration_ms, redacted),
-                _ => (None, false),
-            };
-            FeedEntryKind::Thinking(ui_state::claude::ThinkingEntry {
-                duration_ms,
-                redacted,
-            })
-        }
-        ClaudeEntryKind::Tool => {
-            let tool_use_id = match body {
-                ClaudeBody::Tool { tool_use_id } => tool_use_id,
-                _ => String::new(),
-            };
-            let input = entry
-                .tool_input()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes.0).ok())
-                .unwrap_or(Value::Null);
-            let name = entry.tool_name().map(str::to_string);
-            let invocation = name
-                .as_deref()
-                .map(|name| ui_state::claude::facts::invocation(name, &input))
-                .unwrap_or(ui_state::claude::facts::ToolInvocation::Other);
-            let outcome = entry.tool_outcome().map_or(ToolOutcome::Pending, |bytes| {
-                let block = serde_json::from_slice::<Value>(&bytes.0).unwrap_or(Value::Null);
-                if block.get("is_error").and_then(Value::as_bool) == Some(true) {
-                    ToolOutcome::Failed {
-                        message: stored_result_text(&block),
-                    }
-                } else {
-                    ToolOutcome::Success {
-                        facts: SuccessFacts::Output {
-                            head: stored_result_text(&block).unwrap_or_default(),
-                            truncated: false,
-                        },
-                    }
-                }
-            });
-            FeedEntryKind::Tool(ToolEntry {
-                tool_use_id,
-                name,
-                invocation,
-                outcome,
-                message_final: entry.message_final(),
-                group_with_previous: false,
-                message_id: None,
-            })
-        }
-        ClaudeEntryKind::Turn => {
-            let (duration, message_count, pending_background_agents) = match body {
-                ClaudeBody::Turn {
-                    duration_ms,
-                    inferred,
-                    message_count,
-                    pending_background_agents,
-                } => (
-                    if inferred {
-                        TurnDuration::SincePrompt { ms: duration_ms }
-                    } else {
-                        TurnDuration::Measured {
-                            ms: duration_ms.max(0) as u64,
-                        }
-                    },
-                    message_count,
-                    pending_background_agents,
-                ),
-                _ => (TurnDuration::SincePrompt { ms: 0 }, None, None),
-            };
-            FeedEntryKind::Turn(ui_state::claude::TurnEntry {
-                duration,
-                message_count,
-                pending_background_agents,
-            })
-        }
-        ClaudeEntryKind::Compaction => {
-            let (trigger, pre_tokens, post_tokens) = match body {
-                ClaudeBody::Compaction {
-                    trigger,
-                    pre_tokens,
-                    post_tokens,
-                } => (trigger, pre_tokens, post_tokens),
-                _ => (None, None, None),
-            };
-            FeedEntryKind::Compaction(ui_state::claude::CompactionEntry {
-                trigger,
-                pre_tokens,
-                post_tokens,
-            })
-        }
-        ClaudeEntryKind::CompactSummary => {
-            FeedEntryKind::CompactSummary(ui_state::claude::CompactSummaryEntry { text })
-        }
-        ClaudeEntryKind::TaskNotification => {
-            FeedEntryKind::TaskNotification(ui_state::claude::TaskNotificationEntry { text })
-        }
-        ClaudeEntryKind::Interruption => {
-            FeedEntryKind::Interruption(ui_state::claude::InterruptionEntry {
-                kind: ui_state::claude::InterruptionKind::Turn,
-                interrupted_message_id: None,
-            })
-        }
-        ClaudeEntryKind::AgentMessage => {
-            let (id, context, from, kind) = match body {
-                ClaudeBody::AgentMessage {
-                    id,
-                    context,
-                    from,
-                    kind,
-                } => (id, context, from, kind),
-                _ => (
-                    None,
-                    None,
-                    "unknown".into(),
-                    ui_state::AgentMessageKind::Unstated,
-                ),
-            };
-            FeedEntryKind::AgentMessage(ui_state::claude::AgentMessageEntry {
-                id,
-                context,
-                from,
-                kind,
-                text,
-            })
-        }
-        ClaudeEntryKind::ApiError => FeedEntryKind::ApiError(ui_state::claude::ApiErrorEntry {
-            error: None,
-            text: (!text.is_empty()).then_some(text),
-        }),
-        ClaudeEntryKind::Unrecognized => {
-            let (row_type, detail) = match body {
-                ClaudeBody::Unrecognized { row_type, detail } => (row_type, detail),
-                _ => (None, None),
-            };
-            FeedEntryKind::Unrecognized(ui_state::claude::UnrecognizedEntry { row_type, detail })
-        }
-    };
-    let presentation = FeedEntry {
-        id: key.0,
-        seq: 0,
-        kind,
-    };
+    let presentation = ui_state::restored::claude::feed_entry(key.0, entry);
     entry_block(
         &presentation,
         &ui_state::attachments::AttachmentIndex::default(),
@@ -1064,17 +876,6 @@ pub(crate) fn stored_entry_block(
         true,
         message_view,
     )
-}
-
-fn stored_result_text(block: &Value) -> Option<String> {
-    match block.get("content") {
-        Some(Value::String(text)) => Some(text.clone()),
-        Some(Value::Array(parts)) => parts
-            .iter()
-            .find_map(|part| part.get("text").and_then(Value::as_str))
-            .map(str::to_string),
-        _ => None,
-    }
 }
 
 // --- tool lines -------------------------------------------------------------

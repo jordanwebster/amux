@@ -422,6 +422,86 @@ struct FeedState {
     /// agent was known, so a machine that has gone away can be told apart
     /// from an agent that has really been removed.
     host: Option<model::HostId>,
+    stored: StoredFeed,
+}
+
+/// How a chat's store window maps onto the append-only positions a feed
+/// reports.
+///
+/// A store window slides: new entries join its tail, the oldest leave its
+/// head, and a merge rewrites an entry in place. Each entry keeps the position
+/// it was first given for as long as the window stays one continuous run of
+/// the keys already projected. A window that stops being that run (paging
+/// toward older history, or a reload after a gap) starts a new run, which the
+/// feed reports as a new window rather than as rows edited out of order.
+#[derive(Default)]
+struct StoredFeed {
+    run: u64,
+    base: u64,
+    keys: Vec<ui_state::EntryKey>,
+    converted: BTreeMap<ui_state::EntryKey, (ui_state::StoredDto, Restored)>,
+}
+
+enum Restored {
+    Claude(claude::FeedEntry),
+    ClaudeSdk(claude_sdk::FeedEntry),
+    Codex(codex::FeedEntry),
+}
+
+impl StoredFeed {
+    /// The window's entries as renderer rows with their stable positions, and
+    /// the identity of the run they belong to.
+    fn rows(&mut self, window: &ui_state::ChatWindow) -> (u64, Vec<(u64, &Restored)>) {
+        let keys: Vec<_> = window
+            .entries
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+        let continues = keys.first().and_then(|first| {
+            let start = self.keys.iter().position(|key| key == first)?;
+            let held = &self.keys[start..];
+            (held.len() <= keys.len() && held.iter().zip(&keys).all(|(a, b)| a == b))
+                .then_some(start)
+        });
+        match continues {
+            Some(start) => {
+                self.base += start as u64;
+                self.keys = keys;
+            }
+            None => {
+                self.run += 1;
+                self.base = 0;
+                self.keys = keys;
+            }
+        }
+        let mut converted = BTreeMap::new();
+        for entry in &window.entries {
+            let key = entry.key().clone();
+            let restored = match self.converted.remove(&key) {
+                Some((held, restored)) if held == *entry => restored,
+                _ => match entry {
+                    ui_state::StoredDto::Claude(stored) => {
+                        Restored::Claude(ui_state::restored::claude::feed_entry(0, &stored.entry))
+                    }
+                    ui_state::StoredDto::ClaudeSdk(stored) => Restored::ClaudeSdk(
+                        ui_state::restored::claude_sdk::feed_entry(0, &stored.entry),
+                    ),
+                    ui_state::StoredDto::Codex(stored) => {
+                        Restored::Codex(ui_state::restored::codex::feed_entry(0, &stored.entry))
+                    }
+                },
+            };
+            converted.insert(key, (entry.clone(), restored));
+        }
+        self.converted = converted;
+        let rows = self
+            .keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| (self.base + index as u64, &self.converted[key].1))
+            .collect();
+        (self.run, rows)
+    }
 }
 
 // Compare borrowed native rows; clone only rows that will cross the callback.
@@ -430,7 +510,15 @@ enum RowRef<'a> {
     ClaudeSdk(&'a claude_sdk::FeedEntry),
     Codex(&'a codex::FeedEntry),
 }
-impl RowRef<'_> {
+impl<'a> RowRef<'a> {
+    fn of(row: &'a FeedEntryDto) -> Self {
+        match row {
+            FeedEntryDto::ClaudePty(row) => Self::Claude(row),
+            FeedEntryDto::ClaudeSdk(row) => Self::ClaudeSdk(row),
+            FeedEntryDto::Codex(row) => Self::Codex(row),
+        }
+    }
+
     fn id(&self) -> u64 {
         match self {
             Self::Claude(row) => row.id,
@@ -665,7 +753,41 @@ impl Projection {
             if let Some(card) = model.agent(*agent) {
                 state.host = Some(card.agent.host_id);
             }
-            let feed = if let Some(layer) = model.claude(*agent) {
+            let stored = model
+                .chat(*agent)
+                .filter(|chat| !chat.live_only && !chat.entries.is_empty());
+            let feed = if let Some(chat) = stored {
+                // The chat's store window is what this device knows of the
+                // conversation, remembered rows and live ones alike, so it is
+                // what the reader sees whenever it holds anything.
+                let protocol = chat.protocol;
+                let (run, rows) = state.stored.rows(chat);
+                let evicted = rows.first().map_or(0, |(id, _)| *id);
+                let rows: Vec<_> = rows
+                    .into_iter()
+                    .map(|(id, restored)| match restored {
+                        Restored::Claude(entry) => FeedEntryDto::ClaudePty(claude::FeedEntry {
+                            id,
+                            ..entry.clone()
+                        }),
+                        Restored::ClaudeSdk(entry) => {
+                            let mut entry = entry.clone();
+                            entry.id = id;
+                            FeedEntryDto::ClaudeSdk(entry)
+                        }
+                        Restored::Codex(entry) => FeedEntryDto::Codex(codex::FeedEntry {
+                            id,
+                            ..entry.clone()
+                        }),
+                    })
+                    .collect();
+                state.project(
+                    *agent,
+                    (protocol, Some(format!("store:{run}"))),
+                    evicted,
+                    rows.iter().map(RowRef::of),
+                )
+            } else if let Some(layer) = model.claude(*agent) {
                 // A fold that has not begun replaces nothing: an agent whose
                 // machine has just come back holds an empty layer until its
                 // replay arrives, and a transcript that emptied itself for

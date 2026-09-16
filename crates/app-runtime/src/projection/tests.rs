@@ -932,3 +932,124 @@ fn mobile_projection_sdk_keeps_native_rows_gates_asks_and_reconnect_history() {
             .any(|row| row.to_string().contains("Replayed SDK reply"))
     );
 }
+
+/// A conversation opened through the store, holding the rows the chat stream
+/// has folded so far.
+fn stored_claude_model(rows: usize) -> (Model, ui_state::StreamAttempt) {
+    use ui_state::{ChatCommand, Effect, ProfileGeneration, StoreMsg, StoreOp, StoreOpKind};
+    let mut model = claude_model();
+    let effects = update(&mut model, Msg::Chat(ChatCommand::Open { agent: AGENT }));
+    let (attempt, op) = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::Store(StoreOp::Load { attempt, op, .. }) => Some((*attempt, *op)),
+            _ => None,
+        })
+        .expect("opening a chat loads it from the store");
+    let effects = update(
+        &mut model,
+        Msg::Store(StoreMsg::Failed {
+            profile: ProfileGeneration(0),
+            attempt,
+            op,
+            agent: Some(AGENT),
+            kind: StoreOpKind::Load,
+            error: ui_state::StoreError::UnsupportedFormat,
+        }),
+    );
+    let stream = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::OpenStoreStream { attempt, .. } => Some(*attempt),
+            _ => None,
+        })
+        .expect("the chat opens its stream");
+    update(
+        &mut model,
+        Msg::ChatStream {
+            agent: AGENT,
+            attempt: stream,
+            event: ui_state::ChatStreamMsg::Opened {
+                facts: ui_state::ReplayFactsDto {
+                    retained_from: 1,
+                    through: rows as u64,
+                    selected_from: 1,
+                    reset_at: 0,
+                    outcome: ui_state::ReplayOutcomeDto::Continuous,
+                },
+                at: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            },
+        },
+    );
+    for id in 0..rows {
+        chat_row(&mut model, stream, id as u64 + 1, message(id, "stored"));
+    }
+    (model, stream)
+}
+/// The same window as a healthy store holds it before any live fold exists:
+/// what a phone has to paint a remembered conversation from. The failed load
+/// only avoids building a durable load by hand.
+fn persisted(model: &Model) -> Model {
+    let mut value = serde_json::to_value(model).unwrap();
+    value["store"]["chats"][AGENT.to_string()]["live_only"] = Value::Bool(false);
+    value["agents"][AGENT.to_string()]["layer"] = Value::Null;
+    serde_json::from_value(value).unwrap()
+}
+fn chat_row(model: &mut Model, stream: ui_state::StreamAttempt, seq: u64, payload: Value) {
+    let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    update(
+        model,
+        Msg::ChatStream {
+            agent: AGENT,
+            attempt: stream,
+            event: ui_state::ChatStreamMsg::Batch {
+                at,
+                entries: vec![StreamEntry::observed(seq, at, payload)],
+            },
+        },
+    );
+}
+
+/// A chat opened through the store is read from its window: every stored
+/// entry reaches the phone once, in order, and a new entry joining the window
+/// appends after them instead of rewriting what the phone already drew.
+#[test]
+fn mobile_projection_paints_a_stored_chat_window_and_appends_to_it() {
+    let (mut live, stream) = stored_claude_model(3);
+    let model = persisted(&live);
+    let chat = model.chat(AGENT).expect("the chat is open");
+    assert!(!chat.live_only);
+    assert_eq!(chat.entries.len(), 3);
+    assert!(model.claude(AGENT).is_none());
+    let mut projection = subscribed();
+    let mut phone = PhoneFeed::default();
+    assert_eq!(phone.apply_events(&collect(&mut projection, &model)), 3);
+    let texts = |phone: &PhoneFeed| -> Vec<Value> {
+        phone
+            .rows
+            .values()
+            .map(|row| row["row"]["kind"]["segments"][0].clone())
+            .collect()
+    };
+    assert_eq!(texts(&phone), vec![json!("stored"); 3]);
+
+    chat_row(&mut live, stream, 4, message(3, "fresh"));
+    let model = persisted(&live);
+    let events = collect(&mut projection, &model);
+    let feed = events
+        .iter()
+        .find_map(|event| match event {
+            Event::Feed {
+                base,
+                append,
+                replace,
+                ..
+            } => Some((*base, append.len(), replace.len())),
+            _ => None,
+        })
+        .expect("the new entry reaches the phone");
+    assert_eq!(feed, (3, 1, 0));
+    phone.apply_events(&events);
+    assert_eq!(texts(&phone).last(), Some(&json!("fresh")));
+    assert!(collect(&mut projection, &model).is_empty());
+}

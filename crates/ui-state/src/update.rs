@@ -683,7 +683,18 @@ fn update_chat_command(model: &mut Model, command: ChatCommand) -> Vec<Effect> {
         }
         ChatCommand::PageOlder { agent, n } => crate::store::page_older(&mut model.store, agent, n),
         ChatCommand::FollowTip { agent } => crate::store::follow_tip(&mut model.store, agent),
-        ChatCommand::Close { agent, now } => crate::store::close_chat(&mut model.store, agent, now),
+        ChatCommand::Close { agent, now } => {
+            // The close lets go of the chat's stream task, so the mirrored
+            // stream state goes with it rather than lingering as live.
+            let effects = crate::store::close_chat(&mut model.store, agent, now);
+            let closes = effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CloseStream { agent: id } if *id == agent));
+            if closes && model.streams.remove(&agent).is_some() {
+                refresh_attention(model, agent);
+            }
+            effects
+        }
         ChatCommand::FlushDeadline { agent, now } => {
             crate::store::flush_deadline(&mut model.store, agent, now)
         }

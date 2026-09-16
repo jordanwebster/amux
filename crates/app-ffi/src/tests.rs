@@ -1553,8 +1553,11 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
     let open = |snapshot: &Value, agent: uuid::Uuid| -> bool {
         !snapshot["streams"][agent.to_string()].is_null()
     };
+    // A structured conversation is held open through its store lifecycle.
     let attached = |snapshot: &Value, agent: uuid::Uuid| -> bool {
-        !snapshot["attached"][agent.to_string()].is_null()
+        snapshot["store"]["chats"][agent.to_string()]["state"]
+            .as_str()
+            .is_some_and(|state| !matches!(state, "Absent" | "Flushing"))
     };
 
     until(&mut receive, running.handle, &token, |e| {
@@ -1635,9 +1638,11 @@ async fn mobile_unsubscribe_releases_the_stream_a_closed_conversation_asked_for(
             .as_array()
             .unwrap()
             .iter()
-            .any(|msg| msg.as_str().is_some_and(
-                |line| line.contains("user_detached") && line.contains(&closed.to_string())
-            )),
+            .any(|msg| msg
+                .as_str()
+                .is_some_and(|line| line.contains(r#""msg":"chat""#)
+                    && line.contains("Close")
+                    && line.contains(&closed.to_string()))),
         "the recorder never saw the conversation close"
     );
 

@@ -1,3 +1,13 @@
+2026-09-16 — **Phone conversations open through the store.** Opening a
+structured conversation on the phone now opens its store-backed chat, so the
+reader paints the entries the device kept and then catches up from the stored
+cursor; closing it flushes and releases the stream. The feed a phone receives
+is projected from that chat window, with positions that stay stable while the
+window slides and a new window when it stops being one continuous run. The
+translation from stored entries to renderer rows moved into the shared UI
+state crate, so the terminal and the phone paint a remembered conversation
+from the same code.
+
 2026-09-16 — **The phone's remembered fleet is read from its SQLite store.**
 The per-account JSON fleet file is gone: each signed-in account on screen now
 keeps its fleet in its own store, and the cached-fleet entry point reads it

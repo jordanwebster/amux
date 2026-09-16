@@ -256,7 +256,15 @@ pub async fn run(
                             let outcome = match command {
                                 SubscriptionCommand::Subscribe { agent } => {
                                     projection.subscribe(agent);
-                                    sessions.ui.note_attached(agent);
+                                    // A structured conversation opens through its
+                                    // store: its window paints from what this
+                                    // device kept, then catches up from the
+                                    // stored cursor.
+                                    if structured(sessions, agent) {
+                                        sessions.ui.open_chat(agent);
+                                    } else {
+                                        sessions.ui.note_attached(agent);
+                                    }
                                     SubscriptionOutcome::Subscribed { agent }
                                 }
                                 SubscriptionCommand::Unsubscribe { agent } => {
@@ -268,7 +276,11 @@ pub async fn run(
                                     // every reconnection for the rest of the
                                     // session.
                                     projection.unsubscribe(agent);
-                                    sessions.ui.note_detached(agent);
+                                    if sessions.ui.model().chat(agent).is_some() {
+                                        sessions.ui.close_chat(agent);
+                                    } else {
+                                        sessions.ui.note_detached(agent);
+                                    }
                                     SubscriptionOutcome::Unsubscribed { agent }
                                 }
                             };
@@ -435,6 +447,16 @@ pub async fn run(
     drop(pending);
     drop(watchers);
     Ok(())
+}
+
+/// Whether an agent's conversation has a structured transcript a store keeps.
+fn structured(sessions: &Sessions, agent: ui_state::AgentId) -> bool {
+    sessions
+        .ui
+        .model()
+        .agent(agent)
+        .and_then(|card| card.structured_protocol())
+        .is_some()
 }
 
 /// An agent nothing on the account being read has ever heard of. Folding it
