@@ -98,9 +98,7 @@ pub unsafe extern "C" fn amux_app_cached_fleet(
         let directory = unsafe { read_string(cache_dir) }?;
         let account = unsafe { read_string(account) }?;
         let read = || {
-            let executor = tokio::runtime::Builder::new_current_thread()
-                .build()
-                .ok()?;
+            let executor = tokio::runtime::Builder::new_current_thread().build().ok()?;
             Some(executor.block_on(app_runtime::cache::read_cached_fleet(
                 std::path::Path::new(directory),
                 account,

@@ -217,12 +217,7 @@ impl TaskRegistry {
                 .tasks
                 .iter()
                 .find(|task| task.status == TaskStatus::InProgress)
-                .map(|task| {
-                    task.active_form
-                        .as_ref()
-                        .unwrap_or(&task.subject)
-                        .clone()
-                }),
+                .map(|task| task.active_form.as_ref().unwrap_or(&task.subject).clone()),
         }
     }
 }

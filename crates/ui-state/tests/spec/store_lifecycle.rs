@@ -11,8 +11,8 @@ use fold::{
 use serde_json::json;
 use ui_state::{
     AttemptId, ChatCommand, ChatState, ChatStreamMsg, Effect, LoadedDto, Model, Msg,
-    MutationBatchDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto, StoreMsg, StoreOp,
-    ServerMsg, StoreOpKind, StoreStreamQuery, StreamCloseReason, StreamEntry, update,
+    MutationBatchDto, ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto, ServerMsg, StoreMsg,
+    StoreOp, StoreOpKind, StoreStreamQuery, StreamCloseReason, StreamEntry, update,
 };
 
 use crate::harness::*;

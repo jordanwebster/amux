@@ -562,7 +562,13 @@ fn failed(
 fn record_local_host(runtime: &tokio::runtime::Runtime, store: &Store, host: model::HostId) {
     let (kind, key) = LOCAL_HOST_VIEW;
     let value = host.to_string();
-    if runtime.block_on(store.view_get(kind, key)).ok().flatten().as_deref() != Some(&value) {
+    if runtime
+        .block_on(store.view_get(kind, key))
+        .ok()
+        .flatten()
+        .as_deref()
+        != Some(&value)
+    {
         let _ = runtime.block_on(store.view_set(kind, key, &value));
     }
 }

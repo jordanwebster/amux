@@ -2786,7 +2786,8 @@ async fn mobile_profiles_give_each_account_its_own_device_identity_and_trust() {
     };
     let saved = profile_files(root.path());
     assert_eq!(saved.len(), 6, "both profile namespaces must survive");
-    let cached = ["personal", "work"].map(|account| cached_fleet(&root.path().join("cache"), account));
+    let cached =
+        ["personal", "work"].map(|account| cached_fleet(&root.path().join("cache"), account));
     let moved = test_root();
     std::fs::remove_dir(moved.path()).unwrap();
     std::fs::rename(root.path(), moved.path()).unwrap();

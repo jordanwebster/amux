@@ -205,10 +205,7 @@ mod tests {
             store.apply_fleet(generations, delta).await.unwrap();
         }
         let (kind, key) = ui_runtime::LOCAL_HOST_VIEW;
-        store
-            .view_set(kind, key, &PHONE.to_string())
-            .await
-            .unwrap();
+        store.view_set(kind, key, &PHONE.to_string()).await.unwrap();
         store.close().await;
     }
 
