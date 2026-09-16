@@ -1,3 +1,8 @@
+2026-09-16 — **Codex extraction retains its structural tripwires.**
+Unit coverage now follows Codex state into the shared fold for feed bounds,
+identity indexes, pending asks and network-policy fallback parsing, while the UI
+facade keeps coverage for stream classification and duplicate in-flight input.
+
 2026-09-16 — **Authoritative Codex closure survives a stale observer.**
 A provider-confirmed closed thread now keeps its closed send gate after the
 session stream becomes stale, while other stale Codex observations still

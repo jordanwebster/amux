@@ -1020,4 +1020,114 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn detects_retention_and_feed_arithmetic_failures() {
+        let mut observation = Observation::<String>::default();
+        for id in 0..=FEED_RETAINED as u64 {
+            observation.window.entries.push_back(FeedEntry {
+                id,
+                seq: id,
+                kind: FeedEntryKind::Unrecognized(UnrecognizedEntry {
+                    method: "test".to_string(),
+                    detail: None,
+                }),
+            });
+        }
+        observation.next_entry_id = FEED_RETAINED as u64 + 1;
+        assert!(matches!(
+            observation.invariants().as_slice(),
+            [Invariant::RetentionOverflow { store: "feed", .. }]
+        ));
+
+        observation.next_entry_id += 1;
+        let invariants = observation.invariants();
+        assert!(
+            invariants
+                .iter()
+                .any(|invariant| matches!(invariant, Invariant::FeedOrder))
+        );
+    }
+
+    #[test]
+    fn detects_an_index_ahead_of_the_feed() {
+        let mut observation = Observation::<String>::default();
+        observation.item_entries.insert("ghost".to_string(), 9);
+
+        assert!(observation.invariants().iter().any(|invariant| matches!(
+            invariant,
+            Invariant::IndexAhead {
+                index: "items",
+                entry: 9,
+                next: 0,
+            }
+        )));
+    }
+
+    #[test]
+    fn detects_duplicate_ask_identity() {
+        let mut observation = Observation::<String>::default();
+        for _ in 0..2 {
+            observation.asks.push_back(Ask {
+                seq: 1,
+                request_id: json!("same"),
+                context: AskContext::Command {
+                    item_id: "item".to_string(),
+                    command: "true".to_string(),
+                    cwd: None,
+                    reason: None,
+                    proposed_execpolicy_amendment: None,
+                    proposed_network_policy_amendments: Vec::new(),
+                },
+                actions: Vec::new(),
+            });
+        }
+
+        assert!(
+            observation
+                .invariants()
+                .iter()
+                .any(|invariant| matches!(invariant, Invariant::DuplicateAsk))
+        );
+    }
+
+    #[test]
+    fn network_amendment_edge_cases_preserve_contextual_fallback_facts() {
+        let command = AskContext::Command {
+            item_id: "command".to_string(),
+            command: "cargo test".to_string(),
+            cwd: None,
+            reason: None,
+            proposed_execpolicy_amendment: None,
+            proposed_network_policy_amendments: Vec::new(),
+        };
+        let malformed = json!({
+            "applyNetworkPolicyAmendment": {"network_policy_amendment": {"host": 7}}
+        });
+        assert_eq!(
+            classify_ask_action(&malformed, &command),
+            AskActionMeaning::UnknownObject {
+                kind: "applyNetworkPolicyAmendment".to_string(),
+                scalar_details: Vec::new(),
+            }
+        );
+
+        let file_change = AskContext::FileChange {
+            item_id: "patch".to_string(),
+            reason: None,
+            changes: Vec::new(),
+        };
+        let parseable = json!({
+            "applyNetworkPolicyAmendment": {
+                "network_policy_amendment": {"host": "crates.io", "action": "allow"}
+            }
+        });
+        assert_eq!(
+            classify_ask_action(&parseable, &file_change),
+            AskActionMeaning::UnknownObject {
+                kind: "applyNetworkPolicyAmendment".to_string(),
+                scalar_details: vec!["crates.io".to_string(), "allow".to_string()],
+            }
+        );
+    }
 }

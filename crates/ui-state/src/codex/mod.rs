@@ -824,9 +824,20 @@ pub(crate) fn check_projection_invariant(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use uuid::Uuid;
 
     use super::*;
     use crate::msg::StreamCloseReason;
+
+    fn agent() -> model::AgentId {
+        Uuid::from_u128(77)
+    }
+
+    fn violation_kinds(layer: &CodexLayer) -> Vec<&'static str> {
+        let mut violations = Vec::new();
+        layer.check_invariants(agent(), &mut violations);
+        violations.iter().map(Violation::kind).collect()
+    }
 
     #[test]
     fn authoritative_thread_close_outranks_stale_overlay() {
@@ -843,5 +854,82 @@ mod tests {
         assert_eq!(situation.state, SituationState::Closed);
         assert_eq!(situation.phase(), CodexPhase::Idle);
         assert_eq!(situation.send_gate(), SendGate::Closed);
+    }
+
+    #[test]
+    fn detects_duplicate_input_identity() {
+        let mut layer = CodexLayer::default();
+        for n in 0..2 {
+            layer.inputs.push_back(InFlightInput {
+                op: OpId(Uuid::from_u128(100 + n)),
+                input_id: vec![1, 2, 3],
+                kind: InFlightKind::Prompt,
+            });
+        }
+
+        assert!(violation_kinds(&layer).contains(&"codex-duplicate-input"));
+    }
+
+    #[test]
+    fn classifier_covers_every_kernel_stream_branch_and_exit_attention() {
+        let mut layer = CodexLayer::default();
+        layer.observe(1, Utc::now(), &json!({"type": "amux.codex_ready"}));
+        let cases = [
+            (Some(StreamPhase::Opening), SituationState::Replaying),
+            (Some(StreamPhase::Replaying), SituationState::Replaying),
+            (Some(StreamPhase::Live), SituationState::Idle),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::AgentExited { exit_code: Some(0) },
+                }),
+                SituationState::Idle,
+            ),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::AgentDeleted,
+                }),
+                SituationState::Idle,
+            ),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::HostUnreachable,
+                }),
+                SituationState::Unknown,
+            ),
+            (None, SituationState::Unknown),
+        ];
+        for (stream, expected) in cases {
+            assert_eq!(
+                classify(Some(&layer), stream.as_ref(), None, false).state,
+                expected
+            );
+        }
+
+        let exited = classify(
+            Some(&layer),
+            Some(&StreamPhase::Live),
+            Some(&AgentPhase::Exited { exit_code: Some(1) }),
+            false,
+        );
+        assert_eq!(exited.state, SituationState::Exited);
+        assert_eq!(exited.attention(), Attention::Unknown);
+
+        layer.observe(
+            2,
+            Utc::now(),
+            &json!({"type": "turn/started", "turn": {"id": "turn-live"}}),
+        );
+        layer.inputs.push_back(InFlightInput {
+            op: OpId(Uuid::from_u128(200)),
+            input_id: vec![2],
+            kind: InFlightKind::Steer {
+                text: "keep going".to_string(),
+            },
+        });
+        let active_with_input = classify(Some(&layer), Some(&StreamPhase::Live), None, false);
+        assert!(active_with_input.active_turn);
+        assert!(active_with_input.input_in_flight);
+        assert_eq!(active_with_input.attention(), Attention::Working);
+        assert_eq!(active_with_input.send_gate(), SendGate::InputInFlight);
     }
 }
