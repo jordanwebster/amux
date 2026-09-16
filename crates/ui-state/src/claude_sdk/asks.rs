@@ -1,10 +1,10 @@
 //! Pending SDK obligations with reducer-local answer state.
 
+use ::fold::claude_sdk::{AskKind, AskObservation, AskWhy, observe_ask};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::ClaudeSdkLayer;
-use ::fold::claude_sdk::{AskKind, AskObservation, AskWhy, observe_ask};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Ask {

@@ -1,3 +1,10 @@
+2026-09-16 — **Codex observations now live behind a bounded shared window.**
+Codex feed construction, row correlation, approval obligations, token usage and
+activity classification now belong to `fold`. A serializable bounded window
+keeps the visible entries and eviction offset in the reducer model, while the
+UI facade preserves the feed, paint-watermark and mobile projection APIs and
+retains attachments, provider settings, lifecycle and in-flight input overlays.
+
 2026-09-16 — **Claude SDK observations now live in the shared fold.**
 SDK feed classification, block and message cursors, task and todo progression,
 ask decoding, session model and context facts, and attention transitions now

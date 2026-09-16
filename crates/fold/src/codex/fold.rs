@@ -1,18 +1,21 @@
-//! Pure row fold for the Codex layer.
+//! Pure row fold for Codex observations.
 
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::*;
 
-pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>, row: &Value) {
+pub(super) fn observe<C>(
+    layer: &mut Observation<C>,
+    seq: u64,
+    row: &Value,
+    content: &impl Fn(&str) -> C,
+) {
     let Some(method) = row.get("type").and_then(Value::as_str) else {
         push_unrecognized(layer, seq, "<missing type>", Some("row has no string type"));
         return;
     };
 
     if method == "amux.attachments" {
-        layer.attachments_mut().observe_row(row);
         return;
     }
 
@@ -32,32 +35,23 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
 
     match method {
         // Six frozen synthesized rows.
-        "amux.codex_ready" => {
-            if let Some(session) = row.get("session") {
-                layer.provider.observe_codex(session);
-            }
-            fold_ready(layer, seq, row);
-        }
-        "amux.codex_settings" => {
-            if let Some(session) = row.get("session") {
-                layer.provider.observe_codex(session);
-            }
-        }
+        "amux.codex_ready" => fold_ready(layer, seq, row),
+        "amux.codex_settings" => {}
         "amux.codex_gap" => fold_gap(layer, seq, row),
         "amux.codex_reconnect_error" => fold_reconnect_error(layer, seq, row),
         "amux.codex_approval_required" => fold_approval_required(layer, seq, row),
         "amux.codex_approval_resolved" => fold_approval_resolved(layer, row),
-        "amux.input_result" => fold_input_result(layer, seq, row),
+        "amux.input_result" => fold_input_result(layer, seq, row, content),
         "amux.codex_message" => fold_agent_message(layer, seq, row),
 
         // Turn and item lifecycle.
         "turn/started" => fold_turn_started(layer, seq, row),
         "turn/completed" => fold_turn_completed(layer, seq, row),
-        "item/started" => fold_item(layer, seq, row, ItemFinality::Open),
-        "item/completed" => fold_item(layer, seq, row, ItemFinality::Complete),
+        "item/started" => fold_item(layer, seq, row, ItemFinality::Open, content),
+        "item/completed" => fold_item(layer, seq, row, ItemFinality::Complete, content),
 
         // Streaming item deltas.
-        "item/agentMessage/delta" => fold_agent_delta(layer, seq, row),
+        "item/agentMessage/delta" => fold_agent_delta(layer, seq, row, content),
         "item/reasoning/textDelta" => fold_reasoning_text_delta(layer, seq, row),
         "item/reasoning/summaryTextDelta" => fold_reasoning_summary_delta(layer, seq, row),
         "item/reasoning/summaryPartAdded" => fold_reasoning_summary_part(layer, seq, row),
@@ -94,14 +88,6 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
             );
         }
         "model/rerouted" => {
-            layer.provider.model = string(row, "toModel");
-            layer.provider.efforts = layer
-                .provider
-                .models
-                .iter()
-                .find(|item| Some(&item.id) == layer.provider.model.as_ref())
-                .map(|item| item.efforts.clone())
-                .unwrap_or_default();
             push(
                 layer,
                 seq,
@@ -151,7 +137,7 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
     }
 }
 
-fn fold_mcp_startup(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_mcp_startup<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(name) = row
         .get("name")
         .and_then(Value::as_str)
@@ -219,7 +205,7 @@ fn fold_mcp_startup(layer: &mut CodexLayer, seq: u64, row: &Value) {
     };
 
     if let Some(entry) = layer
-        .entries
+        .window
         .iter_mut()
         .find(|entry| matches!(&entry.kind, FeedEntryKind::McpStartup(_)))
         && let FeedEntryKind::McpStartup(startup) = &mut entry.kind
@@ -237,11 +223,10 @@ fn fold_mcp_startup(layer: &mut CodexLayer, seq: u64, row: &Value) {
     );
 }
 
-fn fold_ready(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_ready<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let resumed = row.get("resumed").and_then(Value::as_bool) == Some(true);
     let repeated = layer.ready_count > 0;
     layer.ready_count += 1;
-    layer.stale = false;
     layer.gap = false;
     layer.read_only = false;
     layer.thread_closed = false;
@@ -253,7 +238,7 @@ fn fold_ready(layer: &mut CodexLayer, seq: u64, row: &Value) {
     }
 }
 
-fn fold_gap(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_gap<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let reason = str_or(row, "reason", "unknown").to_string();
     layer.gap = true;
     layer.history_loss = true;
@@ -265,7 +250,7 @@ fn fold_gap(layer: &mut CodexLayer, seq: u64, row: &Value) {
     );
 }
 
-fn fold_reconnect_error(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_reconnect_error<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     layer.gap = false;
     layer.read_only = true;
     let message = row
@@ -284,7 +269,7 @@ fn fold_reconnect_error(layer: &mut CodexLayer, seq: u64, row: &Value) {
     );
 }
 
-fn fold_turn_started(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_turn_started<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(turn_id) = row
         .pointer("/turn/id")
         .and_then(Value::as_str)
@@ -299,7 +284,7 @@ fn fold_turn_started(layer: &mut CodexLayer, seq: u64, row: &Value) {
     layer.turn.last = None;
 }
 
-fn fold_turn_completed(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_turn_completed<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(turn) = row.get("turn") else {
         push_unrecognized(layer, seq, "turn/completed", Some("missing turn"));
         return;
@@ -350,7 +335,13 @@ fn fold_turn_completed(layer: &mut CodexLayer, seq: u64, row: &Value) {
     }
 }
 
-fn fold_item(layer: &mut CodexLayer, seq: u64, row: &Value, finality: ItemFinality) {
+fn fold_item<C>(
+    layer: &mut Observation<C>,
+    seq: u64,
+    row: &Value,
+    finality: ItemFinality,
+    content: &impl Fn(&str) -> C,
+) {
     let Some(item) = row.get("item") else {
         push_unrecognized(
             layer,
@@ -384,7 +375,7 @@ fn fold_item(layer: &mut CodexLayer, seq: u64, row: &Value, finality: ItemFinali
                 FeedEntryKind::Prompt(PromptEntry {
                     item_id: item_id.clone(),
                     source: PromptSource::Protocol,
-                    content: layer.attachments().segments(&text),
+                    content: content(&text),
                     parts,
                     finality,
                 }),
@@ -414,7 +405,7 @@ fn fold_item(layer: &mut CodexLayer, seq: u64, row: &Value, finality: ItemFinali
                 &item_id,
                 FeedEntryKind::Message(MessageEntry {
                     item_id: item_id.clone(),
-                    content: layer.attachments().segments(&text),
+                    content: content(&text),
                     text,
                     phase,
                     finality,
@@ -499,8 +490,8 @@ fn fold_item(layer: &mut CodexLayer, seq: u64, row: &Value, finality: ItemFinali
     }
 }
 
-fn fold_command_item(
-    layer: &mut CodexLayer,
+fn fold_command_item<C>(
+    layer: &mut Observation<C>,
     seq: u64,
     item: &Value,
     item_id: &str,
@@ -536,8 +527,8 @@ fn fold_command_item(
     upsert_work(layer, seq, item_id, entry, finality);
 }
 
-fn fold_file_item(
-    layer: &mut CodexLayer,
+fn fold_file_item<C>(
+    layer: &mut Observation<C>,
     seq: u64,
     item: &Value,
     item_id: &str,
@@ -554,8 +545,8 @@ fn fold_file_item(
     upsert_work(layer, seq, item_id, entry, finality);
 }
 
-fn fold_plan_item(
-    layer: &mut CodexLayer,
+fn fold_plan_item<C>(
+    layer: &mut Observation<C>,
     seq: u64,
     item: &Value,
     item_id: &str,
@@ -579,8 +570,8 @@ fn fold_plan_item(
     upsert_work(layer, seq, item_id, entry, finality);
 }
 
-fn fold_mcp_item(
-    layer: &mut CodexLayer,
+fn fold_mcp_item<C>(
+    layer: &mut Observation<C>,
     seq: u64,
     item: &Value,
     item_id: &str,
@@ -645,7 +636,7 @@ fn mcp_tool_success(item: &Value, error: Option<&Value>) -> Option<bool> {
 /// A message another agent sent this one. The native thread shows nothing
 /// for an injected item, so the daemon writes this row; every field here is
 /// its authored fact, read straight off.
-fn fold_agent_message(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_agent_message<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     push(
         layer,
         seq,
@@ -660,8 +651,8 @@ fn fold_agent_message(layer: &mut CodexLayer, seq: u64, row: &Value) {
     );
 }
 
-fn fold_dynamic_item(
-    layer: &mut CodexLayer,
+fn fold_dynamic_item<C>(
+    layer: &mut Observation<C>,
     seq: u64,
     item: &Value,
     item_id: &str,
@@ -671,8 +662,8 @@ fn fold_dynamic_item(
     upsert_work(layer, seq, item_id, entry, finality);
 }
 
-fn fold_web_item(
-    layer: &mut CodexLayer,
+fn fold_web_item<C>(
+    layer: &mut Observation<C>,
     seq: u64,
     item: &Value,
     item_id: &str,
@@ -689,7 +680,12 @@ fn fold_web_item(
     upsert_work(layer, seq, item_id, entry, finality);
 }
 
-fn fold_agent_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_agent_delta<C>(
+    layer: &mut Observation<C>,
+    seq: u64,
+    row: &Value,
+    content: &impl Fn(&str) -> C,
+) {
     let Some(item_id) = row.get("itemId").and_then(Value::as_str) else {
         push_unrecognized(
             layer,
@@ -714,7 +710,7 @@ fn fold_agent_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
         item_id,
         FeedEntryKind::Message(MessageEntry {
             item_id: item_id.to_string(),
-            content: layer.attachments().segments(&text),
+            content: content(&text),
             text,
             phase,
             finality: ItemFinality::Open,
@@ -723,7 +719,7 @@ fn fold_agent_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
     set_active(layer, item_id, ActiveItemKind::Message, ItemFinality::Open);
 }
 
-fn fold_reasoning_text_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_reasoning_text_delta<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(item_id) = row.get("itemId").and_then(Value::as_str) else {
         push_unrecognized(
             layer,
@@ -742,7 +738,7 @@ fn fold_reasoning_text_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_reasoning_from_accumulators(layer, seq, item_id);
 }
 
-fn fold_reasoning_summary_part(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_reasoning_summary_part<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(item_id) = row.get("itemId").and_then(Value::as_str) else {
         push_unrecognized(
             layer,
@@ -762,7 +758,7 @@ fn fold_reasoning_summary_part(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_reasoning_from_accumulators(layer, seq, item_id);
 }
 
-fn fold_reasoning_summary_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_reasoning_summary_delta<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(item_id) = row.get("itemId").and_then(Value::as_str) else {
         push_unrecognized(
             layer,
@@ -783,7 +779,7 @@ fn fold_reasoning_summary_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_reasoning_from_accumulators(layer, seq, item_id);
 }
 
-fn upsert_reasoning_from_accumulators(layer: &mut CodexLayer, seq: u64, item_id: &str) {
+fn upsert_reasoning_from_accumulators<C>(layer: &mut Observation<C>, seq: u64, item_id: &str) {
     upsert_item(
         layer,
         seq,
@@ -813,7 +809,7 @@ fn upsert_reasoning_from_accumulators(layer: &mut CodexLayer, seq: u64, item_id:
     );
 }
 
-fn fold_command_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_command_delta<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(item_id) = row.get("itemId").and_then(Value::as_str) else {
         push_unrecognized(
             layer,
@@ -846,7 +842,7 @@ fn fold_command_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_work(layer, seq, item_id, entry, ItemFinality::Open);
 }
 
-fn fold_file_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_file_delta<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(item_id) = row.get("itemId").and_then(Value::as_str) else {
         push_unrecognized(
             layer,
@@ -878,7 +874,7 @@ fn fold_file_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_work(layer, seq, item_id, entry, ItemFinality::Open);
 }
 
-fn fold_file_patch(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_file_patch<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(item_id) = row.get("itemId").and_then(Value::as_str) else {
         push_unrecognized(
             layer,
@@ -899,7 +895,7 @@ fn fold_file_patch(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_work(layer, seq, item_id, entry, ItemFinality::Open);
 }
 
-fn fold_plan_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_plan_delta<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(item_id) = row.get("itemId").and_then(Value::as_str) else {
         push_unrecognized(layer, seq, "item/plan/delta", Some("missing itemId"));
         return;
@@ -918,7 +914,7 @@ fn fold_plan_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_work(layer, seq, item_id, entry, ItemFinality::Open);
 }
 
-fn fold_plan_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_plan_updated<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(turn_id) = row.get("turnId").and_then(Value::as_str) else {
         push_unrecognized(layer, seq, "turn/plan/updated", Some("missing turnId"));
         return;
@@ -946,7 +942,7 @@ fn fold_plan_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
-fn fold_diff_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_diff_updated<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let item_id = format!(
         "turn-diff:{}",
         row.get("turnId")
@@ -973,7 +969,7 @@ fn fold_diff_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
-fn fold_command_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_command_approval<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let item_id = str_or(row, "itemId", "unknown-command").to_string();
     let proposed_execpolicy_amendment = row
         .get("proposedExecpolicyAmendment")
@@ -1015,7 +1011,7 @@ fn fold_command_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
-fn fold_file_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_file_approval<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let item_id = str_or(row, "itemId", "unknown-file-change").to_string();
     let changes = existing_work(layer, &item_id)
         .and_then(|entry| match entry.kind {
@@ -1038,7 +1034,7 @@ fn fold_file_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
-fn fold_permissions_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_permissions_approval<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let item_id = str_or(row, "itemId", "unknown-permissions").to_string();
     layer.pending_approval_context = Some(AskContext::Permissions {
         item_id: item_id.clone(),
@@ -1056,7 +1052,7 @@ fn fold_permissions_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
-fn fold_dynamic_tool_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_dynamic_tool_approval<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let item_id = row
         .get("callId")
         .or_else(|| row.get("itemId"))
@@ -1074,7 +1070,7 @@ fn fold_dynamic_tool_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
     upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
-fn fold_approval_required(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_approval_required<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let Some(context) = layer.pending_approval_context.take() else {
         push(
             layer,
@@ -1143,7 +1139,7 @@ fn fold_approval_required(layer: &mut CodexLayer, seq: u64, row: &Value) {
     );
 }
 
-fn fold_approval_resolved(layer: &mut CodexLayer, row: &Value) {
+fn fold_approval_resolved<C>(layer: &mut Observation<C>, row: &Value) {
     let request_id = row.get("request_id").cloned().unwrap_or(Value::Null);
     let resolution = ApprovalResolution::from_wire(str_or(row, "reason", "unknown"));
     let Some(index) = layer
@@ -1154,32 +1150,22 @@ fn fold_approval_resolved(layer: &mut CodexLayer, row: &Value) {
         return;
     };
     let ask = layer.asks.remove(index).expect("ask index came from queue");
-    let local_decision = layer.inputs.iter().find_map(|input| match &input.kind {
-        InFlightKind::Answer {
-            request_id: pending,
-            decision,
-        } if *pending == request_id => Some(*decision),
-        _ => None,
-    });
+    let item_id = row
+        .get("item_id")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| ask.context.item_id());
     set_work_state(
         layer,
-        ask.context.item_id(),
+        item_id,
         if resolution.proceeded() {
-            if matches!(
-                local_decision,
-                Some(CodexDecision::Decline | CodexDecision::Cancel)
-            ) {
-                WorkState::Denied
-            } else {
-                WorkState::Running
-            }
+            WorkState::Running
         } else {
             WorkState::Abandoned { reason: resolution }
         },
     );
 }
 
-fn fold_unsupported_user_input(layer: &mut CodexLayer, seq: u64, row: &Value) {
+fn fold_unsupported_user_input<C>(layer: &mut Observation<C>, seq: u64, row: &Value) {
     let item_id = str_or(row, "itemId", "unsupported-user-input").to_string();
     let entry = work_entry(
         &item_id,
@@ -1194,24 +1180,12 @@ fn fold_unsupported_user_input(layer: &mut CodexLayer, seq: u64, row: &Value) {
     }
 }
 
-fn fold_input_result(layer: &mut CodexLayer, seq: u64, row: &Value) {
-    let input_id = row.get("input_id").and_then(Value::as_array).map(|bytes| {
-        bytes
-            .iter()
-            .filter_map(Value::as_u64)
-            .filter_map(|byte| u8::try_from(byte).ok())
-            .collect::<Vec<_>>()
-    });
-    let matched = input_id.as_ref().and_then(|input_id| {
-        layer
-            .inputs
-            .iter()
-            .find(|input| &input.input_id == input_id)
-            .cloned()
-    });
-    if let Some(input_id) = &input_id {
-        layer.inputs.retain(|input| &input.input_id != input_id);
-    }
+fn fold_input_result<C>(
+    layer: &mut Observation<C>,
+    seq: u64,
+    row: &Value,
+    content: &impl Fn(&str) -> C,
+) {
     let error = row
         .pointer("/error/message")
         .and_then(Value::as_str)
@@ -1229,27 +1203,29 @@ fn fold_input_result(layer: &mut CodexLayer, seq: u64, row: &Value) {
                 will_retry: false,
             }),
         );
-    } else if let Some(InFlightInput {
-        op,
-        kind: InFlightKind::Steer { text },
-        ..
-    }) = matched
-    {
+    } else if let Some(text) = row.pointer("/ok/text").and_then(Value::as_str) {
+        let item_id = row
+            .get("echo_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| input_identity(row));
         push(
             layer,
             seq,
             FeedEntryKind::Prompt(PromptEntry {
-                item_id: format!("steer:{}", op.0),
+                item_id,
                 source: PromptSource::SteerEcho,
-                content: layer.attachments().segments(&text),
-                parts: vec![PromptPart::Text { text }],
+                content: content(text),
+                parts: vec![PromptPart::Text {
+                    text: text.to_string(),
+                }],
                 finality: ItemFinality::Complete,
             }),
         );
     }
 }
 
-fn fold_error(layer: &mut CodexLayer, seq: u64, row: &Value, severity: ErrorSeverity) {
+fn fold_error<C>(layer: &mut Observation<C>, seq: u64, row: &Value, severity: ErrorSeverity) {
     let body = row.get("error").unwrap_or(row);
     push(
         layer,
@@ -1269,7 +1245,7 @@ fn fold_error(layer: &mut CodexLayer, seq: u64, row: &Value, severity: ErrorSeve
     );
 }
 
-fn fold_thread_status(layer: &mut CodexLayer, row: &Value) {
+fn fold_thread_status<C>(layer: &mut Observation<C>, row: &Value) {
     layer.turn.status = match row.pointer("/status/type").and_then(Value::as_str) {
         Some("active") => ThreadStatus::Active,
         Some("idle") => ThreadStatus::Idle,
@@ -1331,7 +1307,7 @@ fn work_entry(item_id: &str, kind: WorkKind, state: WorkState) -> WorkEntry {
 
 /// The work entry already folded for this item, or a fresh placeholder the
 /// caller fills in.  A row may describe an item whose start was never seen.
-fn work_so_far(layer: &CodexLayer, item_id: &str) -> WorkEntry {
+fn work_so_far<C>(layer: &Observation<C>, item_id: &str) -> WorkEntry {
     existing_work(layer, item_id).unwrap_or_else(|| {
         work_entry(
             item_id,
@@ -1383,7 +1359,7 @@ fn existing_patch(kind: &WorkKind) -> (String, bool) {
     }
 }
 
-fn attach_command_output(layer: &CodexLayer, item_id: &str, entry: &mut WorkEntry) {
+fn attach_command_output<C>(layer: &Observation<C>, item_id: &str, entry: &mut WorkEntry) {
     entry.stdout_head = layer
         .accumulators
         .command_stdout
@@ -1464,7 +1440,7 @@ fn strings(value: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-fn existing_work(layer: &CodexLayer, item_id: &str) -> Option<WorkEntry> {
+fn existing_work<C>(layer: &Observation<C>, item_id: &str) -> Option<WorkEntry> {
     let id = *layer.item_entries.get(item_id)?;
     match entry_kind(layer, id)? {
         FeedEntryKind::Work(entry) => Some(entry.clone()),
@@ -1472,7 +1448,7 @@ fn existing_work(layer: &CodexLayer, item_id: &str) -> Option<WorkEntry> {
     }
 }
 
-fn existing_message_phase(layer: &CodexLayer, item_id: &str) -> Option<MessagePhase> {
+fn existing_message_phase<C>(layer: &Observation<C>, item_id: &str) -> Option<MessagePhase> {
     let id = *layer.item_entries.get(item_id)?;
     match entry_kind(layer, id)? {
         FeedEntryKind::Message(entry) => Some(entry.phase),
@@ -1480,7 +1456,7 @@ fn existing_message_phase(layer: &CodexLayer, item_id: &str) -> Option<MessagePh
     }
 }
 
-fn plan_text(layer: &CodexLayer, item_id: &str) -> Option<String> {
+fn plan_text<C>(layer: &Observation<C>, item_id: &str) -> Option<String> {
     let work = existing_work(layer, item_id)?;
     match work.kind {
         WorkKind::Plan { text, .. } => Some(text),
@@ -1488,7 +1464,7 @@ fn plan_text(layer: &CodexLayer, item_id: &str) -> Option<String> {
     }
 }
 
-fn set_work_state(layer: &mut CodexLayer, item_id: &str, state: WorkState) {
+pub(super) fn set_work_state<C>(layer: &mut Observation<C>, item_id: &str, state: WorkState) {
     let Some(id) = layer.item_entries.get(item_id).copied() else {
         return;
     };
@@ -1497,7 +1473,12 @@ fn set_work_state(layer: &mut CodexLayer, item_id: &str, state: WorkState) {
     }
 }
 
-fn set_active(layer: &mut CodexLayer, item_id: &str, kind: ActiveItemKind, finality: ItemFinality) {
+fn set_active<C>(
+    layer: &mut Observation<C>,
+    item_id: &str,
+    kind: ActiveItemKind,
+    finality: ItemFinality,
+) {
     layer
         .accumulators
         .active_items
@@ -1528,9 +1509,14 @@ fn append_bounded(target: &mut String, delta: &str, truncated: &mut bool) {
     *truncated = true;
 }
 
-fn upsert_item(layer: &mut CodexLayer, seq: u64, item_id: &str, kind: FeedEntryKind) -> u64 {
+fn upsert_item<C>(
+    layer: &mut Observation<C>,
+    seq: u64,
+    item_id: &str,
+    kind: FeedEntryKind<C>,
+) -> u64 {
     if let Some(id) = layer.item_entries.get(item_id).copied()
-        && let Some(entry) = layer.entries.iter_mut().find(|entry| entry.id == id)
+        && let Some(entry) = layer.window.iter_mut().find(|entry| entry.id == id)
     {
         entry.kind = kind;
         return id;
@@ -1543,8 +1529,8 @@ fn upsert_item(layer: &mut CodexLayer, seq: u64, item_id: &str, kind: FeedEntryK
 /// Upsert a work entry and record whether that item is still open.  Turn-level
 /// snapshots and proposed-but-unstarted work use `upsert_item` directly: they
 /// are not the item the agent is currently executing.
-fn upsert_work(
-    layer: &mut CodexLayer,
+fn upsert_work<C>(
+    layer: &mut Observation<C>,
     seq: u64,
     item_id: &str,
     entry: WorkEntry,
@@ -1554,9 +1540,14 @@ fn upsert_work(
     set_active(layer, item_id, ActiveItemKind::Work, open);
 }
 
-fn upsert_turn(layer: &mut CodexLayer, seq: u64, turn_id: &str, kind: FeedEntryKind) -> u64 {
+fn upsert_turn<C>(
+    layer: &mut Observation<C>,
+    seq: u64,
+    turn_id: &str,
+    kind: FeedEntryKind<C>,
+) -> u64 {
     if let Some(id) = layer.turn_entries.get(turn_id).copied()
-        && let Some(entry) = layer.entries.iter_mut().find(|entry| entry.id == id)
+        && let Some(entry) = layer.window.iter_mut().find(|entry| entry.id == id)
     {
         entry.kind = kind;
         return id;
@@ -1566,21 +1557,17 @@ fn upsert_turn(layer: &mut CodexLayer, seq: u64, turn_id: &str, kind: FeedEntryK
     id
 }
 
-fn push(layer: &mut CodexLayer, seq: u64, kind: FeedEntryKind) -> u64 {
+fn push<C>(layer: &mut Observation<C>, seq: u64, kind: FeedEntryKind<C>) -> u64 {
     let id = layer.next_entry_id;
     layer.next_entry_id += 1;
-    layer.entries.push_back(FeedEntry { id, seq, kind });
-    while layer.entries.len() > FEED_RETAINED {
-        if let Some(evicted) = layer.entries.pop_front() {
-            layer.item_entries.retain(|_, entry| *entry != evicted.id);
-            layer.turn_entries.retain(|_, entry| *entry != evicted.id);
-            layer.evicted += 1;
-        }
+    if let Some(evicted) = layer.window.push(FeedEntry { id, seq, kind }) {
+        layer.item_entries.retain(|_, entry| *entry != evicted.id);
+        layer.turn_entries.retain(|_, entry| *entry != evicted.id);
     }
     id
 }
 
-fn push_unrecognized(layer: &mut CodexLayer, seq: u64, method: &str, detail: Option<&str>) {
+fn push_unrecognized<C>(layer: &mut Observation<C>, seq: u64, method: &str, detail: Option<&str>) {
     push(
         layer,
         seq,
@@ -1591,17 +1578,17 @@ fn push_unrecognized(layer: &mut CodexLayer, seq: u64, method: &str, detail: Opt
     );
 }
 
-fn entry_kind(layer: &CodexLayer, id: u64) -> Option<&FeedEntryKind> {
+fn entry_kind<C>(layer: &Observation<C>, id: u64) -> Option<&FeedEntryKind<C>> {
     layer
-        .entries
+        .window
         .iter()
         .find(|entry| entry.id == id)
         .map(|entry| &entry.kind)
 }
 
-fn entry_kind_mut(layer: &mut CodexLayer, id: u64) -> Option<&mut FeedEntryKind> {
+fn entry_kind_mut<C>(layer: &mut Observation<C>, id: u64) -> Option<&mut FeedEntryKind<C>> {
     layer
-        .entries
+        .window
         .iter_mut()
         .find(|entry| entry.id == id)
         .map(|entry| &mut entry.kind)
@@ -1615,6 +1602,19 @@ fn str_or<'a>(value: &'a Value, key: &str, default: &'a str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or(default)
 }
 
+fn input_identity(row: &Value) -> String {
+    let encoded = row
+        .get("input_id")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .filter_map(|byte| u8::try_from(byte).ok())
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("steer:{encoded}")
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1623,9 +1623,9 @@ mod tests {
 
     #[test]
     fn ask_ring_overflow_is_history_loss_not_a_truncated_replay_fact() {
-        let mut layer = CodexLayer {
+        let mut layer = Observation::<Vec<String>> {
             ready_count: 1,
-            ..CodexLayer::default()
+            ..Observation::default()
         };
         for request in 0..ASKS_RETAINED {
             layer.asks.push_back(Ask {
@@ -1669,6 +1669,9 @@ mod tests {
         assert_eq!(layer.asks.len(), ASKS_RETAINED);
         assert!(layer.history_loss);
         assert!(!layer.truncated_start);
-        assert!(layer.live(), "overflow must not alter replay liveness");
+        assert!(matches!(
+            layer.activity(),
+            Activity::AwaitingApproval { .. }
+        ));
     }
 }

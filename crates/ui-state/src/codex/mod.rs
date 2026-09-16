@@ -1,39 +1,40 @@
-//! The Codex chat layer: a typed child model folding native `codex_sdk_v1`
-//! rows into Codex-owned view state.  The kernel sees only the layer's
-//! `Attention` summary; no Claude-shaped or generic content model sits
-//! between these rows and this fold.
+//! Codex UI facade.
+//!
+//! Provider-derived feed and standing facts live in `fold`; this layer keeps
+//! reducer-local input, attachment, provider-settings, and connection overlays.
 
-mod fold;
 pub(crate) mod update;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
+pub use ::fold::codex::{
+    Activity, AgentMessageEntry, ApprovalResolution, Ask, AskAction, AskActionMeaning, AskContext,
+    BoundaryEntry, CodexDecision, ErrorEntry, ErrorSeverity, FileChange, Invariant, ItemFinality,
+    McpServerStartup, McpStartupEntry, McpStartupStatus, MessagePhase, NetworkPolicyAction,
+    NetworkPolicyAmendment, PlanStep, PromptPart, PromptSource, ReasoningEntry, TokenUsage,
+    TurnEntry, TurnStatus, UnrecognizedEntry, WorkEntry, WorkKind, WorkOutcome, WorkState,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::attachments::{AttachmentIndex, Segment};
 use crate::model::{
-    AgentMessageKind, AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase,
-    Violation, Why, message_digest,
+    AgentMessagePresentation, AgentPhase, Attention, Model, StreamPhase, Violation, Why,
+    message_digest,
 };
 use crate::msg::OpId;
 
-/// The native structured protocol owned by this layer.
-pub const PROTOCOL: &str = "codex_sdk_v1";
+pub type FeedEntry = ::fold::codex::FeedEntry<Vec<Segment>>;
+pub type FeedEntryKind = ::fold::codex::FeedEntryKind<Vec<Segment>>;
+pub type PromptEntry = ::fold::codex::PromptEntry<Vec<Segment>>;
+pub type MessageEntry = ::fold::codex::MessageEntry<Vec<Segment>>;
 
-/// The source tail and the layer retain the same number of entries.
-pub(crate) const FEED_RETAINED: usize = 1000;
-/// Pending obligations live outside the feed window.  This cap matches the
-/// backend's complete Codex row ring rather than the smaller UI tail.
-pub(crate) const ASKS_RETAINED: usize = 8192;
-/// Inputs awaiting their correlated `amux.input_result` row.
+pub const PROTOCOL: &str = ::fold::codex::PROTOCOL;
+pub use ::fold::codex::{ASKS_RETAINED, FEED_RETAINED, OUTPUT_HEAD_MAX};
+
 pub(crate) const INPUTS_RETAINED: usize = 64;
-/// A compact command/patch preview; full content remains behind the stream.
-pub(crate) const OUTPUT_HEAD_MAX: usize = 4096;
 
-/// Codex-native client writes.  Prompt and steer are deliberately distinct:
-/// starting a turn never silently turns into steering an existing one.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "codex_command", rename_all = "snake_case")]
 pub enum CodexCommand {
@@ -55,615 +56,7 @@ pub enum CodexCommand {
     },
 }
 
-/// The four V1 decisions the frozen backend input accepts.  Object-valued
-/// `availableDecisions` remain visible on an ask but are disabled in V1.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum CodexDecision {
-    Accept,
-    AcceptForSession,
-    Decline,
-    Cancel,
-}
-
-impl CodexDecision {
-    pub fn wire_value(self) -> &'static str {
-        match self {
-            Self::Accept => "accept",
-            Self::AcceptForSession => "acceptForSession",
-            Self::Decline => "decline",
-            Self::Cancel => "cancel",
-        }
-    }
-
-    fn from_wire(value: &str) -> Option<Self> {
-        match value {
-            "accept" => Some(Self::Accept),
-            "acceptForSession" => Some(Self::AcceptForSession),
-            "decline" => Some(Self::Decline),
-            "cancel" => Some(Self::Cancel),
-            _ => None,
-        }
-    }
-}
-
-/// Serializable mirror of the frozen Codex protobuf input oneof.
 pub use model::CodexSdkInput as CodexInput;
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FeedEntry {
-    pub id: u64,
-    /// Stream sequence of the row that created this entry.
-    pub seq: u64,
-    pub kind: FeedEntryKind,
-}
-
-/// Ten Codex-native entry kinds.  Work subtypes express Codex's broad item
-/// vocabulary without leaking a generic cross-agent representation.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "entry", rename_all = "snake_case")]
-pub enum FeedEntryKind {
-    Prompt(PromptEntry),
-    Message(MessageEntry),
-    Reasoning(ReasoningEntry),
-    Work(WorkEntry),
-    McpStartup(McpStartupEntry),
-    /// A message another amux agent sent to this one, from the row the
-    /// daemon writes because the native thread shows nothing.
-    AgentMessage(AgentMessageEntry),
-    Turn(TurnEntry),
-    Boundary(BoundaryEntry),
-    Error(ErrorEntry),
-    Unrecognized(UnrecognizedEntry),
-}
-
-/// A message delivered by amux, as the daemon recorded accepting it.
-/// Structurally unlike Claude's: the Codex carrier injects the message
-/// into a thread rather than into text, so the fields are the daemon's own
-/// rather than whatever a transcript could recover — and the carrier that
-/// took it is a fact worth keeping, since three are possible.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentMessageEntry {
-    pub id: Option<String>,
-    pub context: Option<String>,
-    /// Who sent it: `name/host`, or `human`.
-    pub from: String,
-    pub kind: AgentMessageKind,
-    pub text: String,
-    /// Which carrier accepted it: `inject_queued`, `inject_started`, or
-    /// the `turn_started` fallback.
-    pub delivery: Option<String>,
-}
-
-/// Clients aggregate these per-server statuses themselves today. When two
-/// clients need the same counts, add a counts projection beside this type
-/// instead of writing a second aggregation.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpStartupEntry {
-    pub servers: BTreeMap<String, McpServerStartup>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpServerStartup {
-    pub status: McpStartupStatus,
-    pub error: Option<String>,
-    pub failure_reason: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum McpStartupStatus {
-    Starting,
-    Ready,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PromptEntry {
-    pub item_id: String,
-    pub source: PromptSource,
-    pub parts: Vec<PromptPart>,
-    /// Text parts split into prose and attachment mentions.
-    pub content: Vec<Segment>,
-    pub finality: ItemFinality,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PromptSource {
-    Protocol,
-    SteerEcho,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "part", rename_all = "snake_case")]
-pub enum PromptPart {
-    Text {
-        text: String,
-    },
-    Image {
-        url: Option<String>,
-    },
-    LocalImage {
-        path: Option<String>,
-    },
-    Other {
-        item_type: Option<String>,
-        raw: Value,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ItemFinality {
-    Open,
-    Complete,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MessageEntry {
-    pub item_id: String,
-    pub text: String,
-    /// Message text split into prose and attachment mentions.
-    pub content: Vec<Segment>,
-    pub phase: MessagePhase,
-    pub finality: ItemFinality,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MessagePhase {
-    Commentary,
-    FinalAnswer,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReasoningEntry {
-    pub item_id: String,
-    pub text: String,
-    pub summary: Vec<String>,
-    pub finality: ItemFinality,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WorkEntry {
-    pub item_id: String,
-    pub kind: WorkKind,
-    pub state: WorkState,
-    pub stdout_head: String,
-    pub stderr_head: String,
-    pub output_truncated: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "work", rename_all = "snake_case")]
-pub enum WorkKind {
-    Command {
-        command: String,
-        cwd: Option<String>,
-        exit_code: Option<i32>,
-    },
-    FileChange {
-        changes: Vec<FileChange>,
-        patch_head: String,
-        patch_truncated: bool,
-    },
-    Plan {
-        text: String,
-        explanation: Option<String>,
-        steps: Vec<PlanStep>,
-    },
-    McpTool {
-        server: String,
-        tool: String,
-        arguments: Value,
-        result: Option<Value>,
-        error: Option<Value>,
-    },
-    DynamicTool {
-        tool: String,
-        namespace: Option<String>,
-        arguments: Value,
-        success: Option<bool>,
-    },
-    AmuxSend {
-        to: String,
-        text: String,
-        success: Option<bool>,
-    },
-    /// One of amux's own agent tools, reached through the MCP server amux
-    /// runs for the thread. Separated from `McpTool` because these are the
-    /// fleet acting on itself — spawning, stopping and messaging agents the
-    /// human can see — and reading them as calls to some anonymous server
-    /// would bury the only work a chat can explain in the fleet's own words.
-    AmuxTool {
-        tool: String,
-        arguments: Value,
-        success: Option<bool>,
-    },
-    WebSearch {
-        query: String,
-        action: Option<Value>,
-    },
-    UnsupportedUserInput {
-        questions: Value,
-    },
-    Other {
-        item_type: String,
-        raw: Value,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileChange {
-    pub path: String,
-    pub status: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlanStep {
-    pub step: String,
-    pub status: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum WorkState {
-    Proposed,
-    AwaitingApproval { request_id: Value },
-    Running,
-    Done { outcome: WorkOutcome },
-    Denied,
-    Abandoned { reason: ApprovalResolution },
-    BlockedUnsupported,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkOutcome {
-    Succeeded,
-    Failed,
-    Declined,
-    Unknown,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TurnEntry {
-    pub turn_id: String,
-    pub status: TurnStatus,
-    pub token_usage: Option<TokenUsage>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum TurnStatus {
-    Completed,
-    Interrupted,
-    Failed { message: String },
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TokenUsage {
-    pub input_tokens: Option<u64>,
-    /// Input tokens the provider served from its cache. Counted inside
-    /// `input_tokens`, not beside it, so a breakdown states it as a share
-    /// rather than adding it in again.
-    pub cached_input_tokens: Option<u64>,
-    /// Input tokens the provider wrote into its cache this turn. Also a
-    /// share of `input_tokens`; zero in every recording so far, and
-    /// stated so the breakdown reports what the app-server reports.
-    pub cache_write_input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-    pub reasoning_output_tokens: Option<u64>,
-    pub total_tokens: Option<u64>,
-    pub model_context_window: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "boundary", rename_all = "snake_case")]
-pub enum BoundaryEntry {
-    Resumed,
-    Ready,
-    Gap { reason: String },
-    Compacted { turn_id: Option<String> },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ErrorEntry {
-    pub severity: ErrorSeverity,
-    pub message: String,
-    pub will_retry: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ErrorSeverity {
-    Notice,
-    Warning,
-    Error,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UnrecognizedEntry {
-    pub method: String,
-    pub detail: Option<String>,
-}
-
-/// One live, answerable obligation keyed by the opaque JSON request id.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Ask {
-    pub seq: u64,
-    pub request_id: Value,
-    pub context: AskContext,
-    /// Choices interpreted for V1. Dynamic tool calls are the explicit
-    /// exception because upstream sends `null` while the backend accepts the
-    /// layer-supplied binary decisions.
-    pub actions: Vec<AskAction>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "ask", rename_all = "snake_case")]
-pub enum AskContext {
-    Command {
-        item_id: String,
-        command: String,
-        cwd: Option<String>,
-        reason: Option<String>,
-        proposed_execpolicy_amendment: Option<Vec<String>>,
-        proposed_network_policy_amendments: Vec<NetworkPolicyAmendment>,
-    },
-    FileChange {
-        item_id: String,
-        reason: Option<String>,
-        changes: Vec<FileChange>,
-    },
-    Permissions {
-        item_id: String,
-        reason: Option<String>,
-        permissions: Value,
-    },
-    DynamicTool {
-        item_id: String,
-        tool: String,
-        namespace: Option<String>,
-        arguments: Value,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NetworkPolicyAmendment {
-    pub host: String,
-    pub action: NetworkPolicyAction,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum NetworkPolicyAction {
-    Allow,
-    Deny,
-}
-
-impl AskContext {
-    pub fn item_id(&self) -> &str {
-        match self {
-            Self::Command { item_id, .. }
-            | Self::FileChange { item_id, .. }
-            | Self::Permissions { item_id, .. }
-            | Self::DynamicTool { item_id, .. } => item_id,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct AskAction {
-    /// Retained as the opaque provider fact for dumps and agreement checks;
-    /// renderers and answer dispatch use only typed `meaning`.
-    pub wire: Value,
-    pub meaning: AskActionMeaning,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "meaning", rename_all = "snake_case")]
-pub enum AskActionMeaning {
-    Scalar {
-        decision: CodexDecision,
-    },
-    AcceptWithExecpolicyAmendment {
-        matches_proposal: bool,
-    },
-    ApplyNetworkPolicyAmendment {
-        amendment: NetworkPolicyAmendment,
-        proposed: bool,
-    },
-    EmptyObject,
-    UnknownObject {
-        kind: String,
-        scalar_details: Vec<String>,
-    },
-    UnknownScalar {
-        detail: String,
-    },
-}
-
-impl AskAction {
-    pub fn decision(&self) -> Option<CodexDecision> {
-        match self.meaning {
-            AskActionMeaning::Scalar { decision } => Some(decision),
-            AskActionMeaning::AcceptWithExecpolicyAmendment { .. }
-            | AskActionMeaning::ApplyNetworkPolicyAmendment { .. }
-            | AskActionMeaning::EmptyObject
-            | AskActionMeaning::UnknownObject { .. }
-            | AskActionMeaning::UnknownScalar { .. } => None,
-        }
-    }
-
-    pub(crate) fn from_wire(wire: Value, context: &AskContext) -> Self {
-        let meaning = classify_ask_action(&wire, context);
-        Self { wire, meaning }
-    }
-}
-
-fn classify_ask_action(wire: &Value, context: &AskContext) -> AskActionMeaning {
-    if let Some(decision) = wire.as_str().and_then(CodexDecision::from_wire) {
-        return AskActionMeaning::Scalar { decision };
-    }
-    let Some(object) = wire.as_object() else {
-        return AskActionMeaning::UnknownScalar {
-            detail: scalar_details(wire).join(" · "),
-        };
-    };
-    let Some((kind, body)) = object.iter().next() else {
-        return AskActionMeaning::EmptyObject;
-    };
-    if object.len() == 1 {
-        match kind.as_str() {
-            "acceptWithExecpolicyAmendment" => {
-                let amendment = execpolicy_amendment(body);
-                let matches_proposal = match context {
-                    AskContext::Command {
-                        proposed_execpolicy_amendment: Some(proposed),
-                        ..
-                    } => amendment.as_ref() == Some(proposed),
-                    _ => false,
-                };
-                return AskActionMeaning::AcceptWithExecpolicyAmendment { matches_proposal };
-            }
-            "applyNetworkPolicyAmendment" => {
-                let amendment = network_policy_amendment(body);
-                if let AskContext::Command {
-                    proposed_network_policy_amendments,
-                    ..
-                } = context
-                {
-                    if let Some(amendment) = amendment.as_ref() {
-                        let proposed = proposed_network_policy_amendments.contains(amendment);
-                        return AskActionMeaning::ApplyNetworkPolicyAmendment {
-                            amendment: amendment.clone(),
-                            proposed,
-                        };
-                    }
-                    return AskActionMeaning::UnknownObject {
-                        kind: sanitize_decision_text(kind),
-                        scalar_details: Vec::new(),
-                    };
-                }
-                if let Some(amendment) = amendment {
-                    let action = match amendment.action {
-                        NetworkPolicyAction::Allow => "allow",
-                        NetworkPolicyAction::Deny => "deny",
-                    };
-                    return AskActionMeaning::UnknownObject {
-                        kind: sanitize_decision_text(kind),
-                        scalar_details: vec![amendment.host, action.to_string()],
-                    };
-                }
-            }
-            _ => {}
-        }
-    }
-    AskActionMeaning::UnknownObject {
-        kind: sanitize_decision_text(kind),
-        scalar_details: scalar_details(body),
-    }
-}
-
-fn execpolicy_amendment(value: &Value) -> Option<Vec<String>> {
-    value
-        .get("execpolicy_amendment")?
-        .as_array()?
-        .iter()
-        .map(Value::as_str)
-        .map(|value| value.map(str::to_owned))
-        .collect()
-}
-
-fn network_policy_amendment(value: &Value) -> Option<NetworkPolicyAmendment> {
-    let amendment = value.get("network_policy_amendment")?;
-    let host = amendment.get("host")?.as_str()?.to_string();
-    let action = match amendment.get("action")?.as_str()? {
-        "allow" => NetworkPolicyAction::Allow,
-        "deny" => NetworkPolicyAction::Deny,
-        _ => return None,
-    };
-    Some(NetworkPolicyAmendment { host, action })
-}
-
-fn scalar_details(value: &Value) -> Vec<String> {
-    fn collect(value: &Value, scalars: &mut Vec<String>) {
-        match value {
-            Value::Null => {}
-            Value::Bool(value) => scalars.push(value.to_string()),
-            Value::Number(value) => scalars.push(value.to_string()),
-            Value::String(value) => {
-                let value = sanitize_decision_text(value);
-                if !value.is_empty() {
-                    scalars.push(value);
-                }
-            }
-            Value::Array(values) => {
-                for value in values {
-                    collect(value, scalars);
-                }
-            }
-            Value::Object(values) => {
-                for value in values.values() {
-                    collect(value, scalars);
-                }
-            }
-        }
-    }
-
-    let mut scalars = Vec::new();
-    collect(value, &mut scalars);
-    scalars
-}
-
-fn sanitize_decision_text(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| match character {
-            '{' | '}' | '"' => ' ',
-            character if character.is_control() => ' ',
-            character => character,
-        })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalResolution {
-    Answered,
-    AnsweredElsewhere,
-    ResponseFailed,
-    ConnectionLost,
-    QueueOverflow,
-    EventStreamError,
-    SessionStopped,
-    Unknown,
-}
-
-impl ApprovalResolution {
-    fn from_wire(reason: &str) -> Self {
-        match reason {
-            "answered" => Self::Answered,
-            "answered_elsewhere" => Self::AnsweredElsewhere,
-            "response_failed" => Self::ResponseFailed,
-            "connection_lost" => Self::ConnectionLost,
-            "queue_overflow" => Self::QueueOverflow,
-            "event_stream_error" => Self::EventStreamError,
-            "session_stopped" => Self::SessionStopped,
-            _ => Self::Unknown,
-        }
-    }
-
-    fn proceeded(self) -> bool {
-        matches!(self, Self::Answered | Self::AnsweredElsewhere)
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InFlightInput {
@@ -677,9 +70,6 @@ pub struct InFlightInput {
 pub enum InFlightKind {
     Settings,
     Prompt,
-    /// The text is retained because the steer echo is rendered from it once
-    /// the send succeeds; the turn id is not, because `op` already correlates
-    /// the result and `CodexInput::Steer` already carries the id on the wire.
     Steer {
         text: String,
     },
@@ -839,45 +229,258 @@ impl std::fmt::Display for CodexViolation {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-enum ThreadStatus {
-    #[default]
-    Unknown,
-    Active,
-    Idle,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum LastTurn {
-    Completed,
-    Interrupted,
-    Failed,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct TurnState {
-    active_id: Option<String>,
-    status: ThreadStatus,
-    last: Option<LastTurn>,
+pub struct CodexLayer {
+    observation: ::fold::codex::Observation<Vec<Segment>>,
+    provider: Box<crate::ProviderFacts>,
+    attachments: AttachmentIndex,
+    stale: bool,
+    exited: bool,
+    inputs: VecDeque<InFlightInput>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum ActiveItemKind {
-    Prompt,
-    Message,
-    Reasoning,
-    Work,
+impl CodexLayer {
+    pub fn provider_facts(&self) -> &crate::ProviderFacts {
+        &self.provider
+    }
+
+    pub(crate) fn begin_window(&mut self, truncated: bool) {
+        let exited = self.exited;
+        *self = Self::default();
+        self.exited = exited;
+        self.observation.begin_window(truncated);
+    }
+
+    pub(crate) fn observe(&mut self, seq: u64, _arrived: DateTime<Utc>, row: &Value) {
+        self.attachments.observe_row(row);
+        self.observe_provider(row);
+
+        let local_resolution = if row.get("type").and_then(Value::as_str)
+            == Some("amux.codex_approval_resolved")
+        {
+            let request_id = row.get("request_id").cloned().unwrap_or(Value::Null);
+            let item_id = self
+                .observation
+                .asks()
+                .find(|ask| ask.request_id == request_id)
+                .map(|ask| ask.context.item_id().to_string());
+            let denied = self.inputs.iter().any(|input| {
+                matches!(
+                    &input.kind,
+                    InFlightKind::Answer { request_id: pending, decision: CodexDecision::Decline | CodexDecision::Cancel }
+                        if *pending == request_id
+                )
+            });
+            denied.then_some(item_id).flatten()
+        } else {
+            None
+        };
+
+        let mut adapted = None;
+        if row.get("type").and_then(Value::as_str) == Some("amux.input_result") {
+            let input_id = input_id(row);
+            let matched = input_id.as_ref().and_then(|input_id| {
+                self.inputs
+                    .iter()
+                    .find(|input| &input.input_id == input_id)
+                    .cloned()
+            });
+            if row.pointer("/ok/text").is_none()
+                && let Some(InFlightInput {
+                    op,
+                    kind: InFlightKind::Steer { text },
+                    ..
+                }) = matched
+            {
+                let mut value = row.clone();
+                value["ok"]["text"] = Value::String(text);
+                value["echo_id"] = Value::String(format!("steer:{}", op.0));
+                adapted = Some(value);
+            }
+            if let Some(input_id) = input_id {
+                self.inputs.retain(|input| input.input_id != input_id);
+            }
+        }
+
+        let row = adapted.as_ref().unwrap_or(row);
+        let attachments = &self.attachments;
+        self.observation
+            .observe(seq, row, |text| attachments.segments(text));
+        if let Some(item_id) = local_resolution {
+            self.observation.set_work_state(&item_id, WorkState::Denied);
+        }
+    }
+
+    fn observe_provider(&mut self, row: &Value) {
+        match row.get("type").and_then(Value::as_str) {
+            Some("amux.codex_ready" | "amux.codex_settings") => {
+                if let Some(session) = row.get("session") {
+                    self.provider.observe_codex(session);
+                }
+            }
+            Some("model/rerouted") => {
+                self.provider.model = row
+                    .get("toModel")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                self.provider.efforts = self
+                    .provider
+                    .models
+                    .iter()
+                    .find(|item| Some(&item.id) == self.provider.model.as_ref())
+                    .map(|item| item.efforts.clone())
+                    .unwrap_or_default();
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn observe_replay_complete(&mut self) {
+        self.observation.observe_replay_complete();
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        self.stale = true;
+    }
+
+    pub(crate) fn observe_exit(&mut self) {
+        self.observation.observe_exit();
+        self.inputs.clear();
+        self.exited = true;
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
+        self.observation.entries()
+    }
+
+    pub fn token_usage(&self) -> Option<&TokenUsage> {
+        self.observation.token_usage()
+    }
+
+    pub fn attachments(&self) -> &AttachmentIndex {
+        &self.attachments
+    }
+
+    pub(crate) fn attachments_mut(&mut self) -> &mut AttachmentIndex {
+        &mut self.attachments
+    }
+
+    pub fn has_foldable_completion(&self) -> bool {
+        self.entries().any(|entry| match &entry.kind {
+            FeedEntryKind::AgentMessage(message) => {
+                message.kind.presentation() == AgentMessagePresentation::Finished
+                    && message_digest(&message.text).hidden_lines > 0
+            }
+            _ => false,
+        })
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.observation.entry_count()
+    }
+
+    pub fn history_truncated(&self) -> bool {
+        self.observation.history_truncated()
+    }
+
+    pub fn evicted_entries(&self) -> u64 {
+        self.observation.evicted_entries()
+    }
+
+    pub fn asks(&self) -> impl Iterator<Item = &Ask> {
+        self.observation.asks()
+    }
+
+    pub fn ask_head(&self) -> Option<&Ask> {
+        self.observation.ask_head()
+    }
+
+    pub fn ask_count(&self) -> usize {
+        self.observation.ask_count()
+    }
+
+    pub fn active_turn_id(&self) -> Option<&str> {
+        self.observation.active_turn_id()
+    }
+
+    pub fn in_flight_inputs(&self) -> impl Iterator<Item = &InFlightInput> {
+        self.inputs.iter()
+    }
+
+    pub fn attention(&self) -> Attention {
+        classify(Some(self), Some(&StreamPhase::Live), None, false).attention()
+    }
+
+    pub(crate) fn working_is_stale(&self, _now: Option<DateTime<Utc>>) -> bool {
+        false
+    }
+
+    pub(crate) fn note_input(&mut self, input: InFlightInput) {
+        self.inputs.push_back(input);
+        if self.inputs.len() > INPUTS_RETAINED {
+            self.inputs.pop_front();
+        }
+    }
+
+    pub(crate) fn note_input_send_failed(&mut self, op: OpId) {
+        self.inputs.retain(|input| input.op != op);
+    }
+
+    pub(crate) fn check_invariants(&self, agent: model::AgentId, out: &mut Vec<Violation>) {
+        for invariant in self.observation.invariants() {
+            let violation = match invariant {
+                Invariant::RetentionOverflow { store, len, cap } => {
+                    CodexViolation::RetentionOverflow {
+                        agent,
+                        store,
+                        len,
+                        cap,
+                    }
+                }
+                Invariant::FeedOrder => CodexViolation::FeedOrder { agent },
+                Invariant::IndexAhead { index, entry, next } => CodexViolation::IndexAhead {
+                    agent,
+                    index,
+                    entry,
+                    next,
+                },
+                Invariant::DuplicateAsk => CodexViolation::DuplicateAsk { agent },
+            };
+            out.push(Violation::Codex(violation));
+        }
+        if self.inputs.len() > INPUTS_RETAINED {
+            out.push(Violation::Codex(CodexViolation::RetentionOverflow {
+                agent,
+                store: "inputs",
+                len: self.inputs.len(),
+                cap: INPUTS_RETAINED,
+            }));
+        }
+        if self.inputs.iter().enumerate().any(|(i, input)| {
+            self.inputs
+                .iter()
+                .skip(i + 1)
+                .any(|other| input.input_id == other.input_id)
+        }) {
+            out.push(Violation::Codex(CodexViolation::DuplicateInput { agent }));
+        }
+    }
+
+    fn observation(&self) -> &::fold::codex::Observation<Vec<Segment>> {
+        &self.observation
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct ActiveItem {
-    item_id: String,
-    kind: ActiveItemKind,
+fn input_id(row: &Value) -> Option<Vec<u8>> {
+    row.get("input_id").and_then(Value::as_array).map(|bytes| {
+        bytes
+            .iter()
+            .filter_map(Value::as_u64)
+            .filter_map(|byte| u8::try_from(byte).ok())
+            .collect()
+    })
 }
 
-/// One ordered interpretation of the layer's phase/attention facts. Public
-/// projections deliberately lose different details, so those details live
-/// here instead of being independently rediscovered by each projection.
 #[derive(Clone, Debug, PartialEq)]
 struct Situation {
     state: SituationState,
@@ -983,12 +586,7 @@ impl Situation {
                 SendGate::NeedsYou
             }
             SituationState::Finished | SituationState::Idle => SendGate::Ready,
-            SituationState::Unavailable
-            | SituationState::Exited
-            | SituationState::Closed
-            | SituationState::Replaying
-            | SituationState::ReadOnly
-            | SituationState::Unknown => unreachable!("lifecycle states returned above"),
+            _ => unreachable!("lifecycle states returned above"),
         }
     }
 
@@ -998,247 +596,6 @@ impl Situation {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct Accumulators {
-    message_text: BTreeMap<String, String>,
-    reasoning_text: BTreeMap<String, String>,
-    reasoning_summary: BTreeMap<String, Vec<String>>,
-    command_stdout: BTreeMap<String, String>,
-    command_stderr: BTreeMap<String, String>,
-    active_items: VecDeque<ActiveItem>,
-    unsupported: VecDeque<String>,
-}
-
-/// The Codex layer state for one agent.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct CodexLayer {
-    provider: Box<crate::ProviderFacts>,
-    attachments: AttachmentIndex,
-    truncated_start: bool,
-    evicted: u64,
-    history_loss: bool,
-    ready_count: u64,
-    replay_complete: bool,
-    stale: bool,
-    gap: bool,
-    read_only: bool,
-    thread_closed: bool,
-    exited: bool,
-    entries: VecDeque<FeedEntry>,
-    next_entry_id: u64,
-    item_entries: BTreeMap<String, u64>,
-    turn_entries: BTreeMap<String, u64>,
-    asks: VecDeque<Ask>,
-    pending_approval_context: Option<AskContext>,
-    inputs: VecDeque<InFlightInput>,
-    turn: TurnState,
-    accumulators: Accumulators,
-    latest_usage: Option<TokenUsage>,
-}
-
-impl CodexLayer {
-    pub fn provider_facts(&self) -> &crate::ProviderFacts {
-        &self.provider
-    }
-    pub(crate) fn begin_window(&mut self, truncated: bool) {
-        *self = Self {
-            truncated_start: truncated,
-            ..Self::default()
-        };
-    }
-
-    pub(crate) fn observe(&mut self, seq: u64, arrived: DateTime<Utc>, row: &Value) {
-        fold::observe(self, seq, arrived, row);
-    }
-
-    pub(crate) fn observe_replay_complete(&mut self) {
-        self.replay_complete = true;
-    }
-
-    pub(crate) fn invalidate(&mut self) {
-        self.stale = true;
-    }
-
-    pub(crate) fn observe_exit(&mut self) {
-        self.asks.clear();
-        self.inputs.clear();
-        self.accumulators = Accumulators::default();
-        self.turn.active_id = None;
-        self.exited = true;
-    }
-
-    pub fn entries(&self) -> impl Iterator<Item = &FeedEntry> {
-        self.entries.iter()
-    }
-
-    /// What the thread's context holds after the most recent turn, and
-    /// the window it has to spend. Latest-wins across turns, and each
-    /// report states that turn's context rather than adding earlier
-    /// turns in, so this is the size of the context now — never a
-    /// running total that would outgrow the window.
-    pub fn token_usage(&self) -> Option<&TokenUsage> {
-        self.latest_usage.as_ref()
-    }
-
-    /// Attachment facts observed from this agent's structured stream.
-    pub fn attachments(&self) -> &AttachmentIndex {
-        &self.attachments
-    }
-
-    pub(crate) fn attachments_mut(&mut self) -> &mut AttachmentIndex {
-        &mut self.attachments
-    }
-
-    /// Whether closing completion reports would hide any retained content.
-    pub fn has_foldable_completion(&self) -> bool {
-        self.entries.iter().any(|entry| match &entry.kind {
-            FeedEntryKind::AgentMessage(message) => {
-                message.kind.presentation() == AgentMessagePresentation::Finished
-                    && message_digest(&message.text).hidden_lines > 0
-            }
-            _ => false,
-        })
-    }
-
-    pub fn entry_count(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn history_truncated(&self) -> bool {
-        self.truncated_start || self.evicted > 0 || self.history_loss
-    }
-
-    pub fn evicted_entries(&self) -> u64 {
-        self.evicted
-    }
-
-    pub fn asks(&self) -> impl Iterator<Item = &Ask> {
-        self.asks.iter()
-    }
-
-    pub fn ask_head(&self) -> Option<&Ask> {
-        self.asks.front()
-    }
-
-    pub fn ask_count(&self) -> usize {
-        self.asks.len()
-    }
-
-    pub fn active_turn_id(&self) -> Option<&str> {
-        self.turn.active_id.as_deref()
-    }
-
-    pub fn in_flight_inputs(&self) -> impl Iterator<Item = &InFlightInput> {
-        self.inputs.iter()
-    }
-
-    fn live(&self) -> bool {
-        self.ready_count > 0 || self.truncated_start && self.replay_complete
-    }
-
-    /// The layer-only diagnostic projection assumes an admitted live stream.
-    /// Model/card consumers use cached attention, which supplies the real
-    /// kernel lifecycle to the same classifier.
-    pub fn attention(&self) -> Attention {
-        classify(Some(self), Some(&StreamPhase::Live), None, false).attention()
-    }
-
-    pub(crate) fn working_is_stale(&self, _now: Option<DateTime<Utc>>) -> bool {
-        // Codex has authoritative turn lifecycle rows; unlike Claude it does
-        // not need an elapsed-time inference cap.
-        false
-    }
-
-    pub(crate) fn note_input(&mut self, input: InFlightInput) {
-        self.inputs.push_back(input);
-        if self.inputs.len() > INPUTS_RETAINED {
-            self.inputs.pop_front();
-        }
-    }
-
-    pub(crate) fn note_input_send_failed(&mut self, op: OpId) {
-        self.inputs.retain(|input| input.op != op);
-    }
-
-    pub(crate) fn check_invariants(&self, agent: model::AgentId, out: &mut Vec<Violation>) {
-        for (store, len, cap) in [
-            ("feed", self.entries.len(), FEED_RETAINED),
-            ("asks", self.asks.len(), ASKS_RETAINED),
-            ("inputs", self.inputs.len(), INPUTS_RETAINED),
-        ] {
-            if len > cap {
-                out.push(Violation::Codex(CodexViolation::RetentionOverflow {
-                    agent,
-                    store,
-                    len,
-                    cap,
-                }));
-            }
-        }
-
-        let coherent = self.evicted + self.entries.len() as u64 == self.next_entry_id
-            && self
-                .entries
-                .front()
-                .is_none_or(|entry| entry.id == self.evicted)
-            && self
-                .entries
-                .back()
-                .is_none_or(|entry| entry.id + 1 == self.next_entry_id);
-        if !coherent {
-            out.push(Violation::Codex(CodexViolation::FeedOrder { agent }));
-        }
-
-        for (index, entry) in self
-            .item_entries
-            .values()
-            .map(|entry| ("items", *entry))
-            .chain(self.turn_entries.values().map(|entry| ("turns", *entry)))
-        {
-            if entry >= self.next_entry_id {
-                out.push(Violation::Codex(CodexViolation::IndexAhead {
-                    agent,
-                    index,
-                    entry,
-                    next: self.next_entry_id,
-                }));
-            }
-        }
-
-        let duplicate_ask = self.asks.iter().enumerate().any(|(i, ask)| {
-            self.asks
-                .iter()
-                .skip(i + 1)
-                .any(|other| ask.request_id == other.request_id)
-        });
-        if duplicate_ask {
-            out.push(Violation::Codex(CodexViolation::DuplicateAsk { agent }));
-        }
-
-        let duplicate_input = self.inputs.iter().enumerate().any(|(i, input)| {
-            self.inputs
-                .iter()
-                .skip(i + 1)
-                .any(|other| input.input_id == other.input_id)
-        });
-        if duplicate_input {
-            out.push(Violation::Codex(CodexViolation::DuplicateInput { agent }));
-        }
-    }
-}
-
-/// Cache attention by projecting the same classification used by phase and
-/// every write gate.
-pub(crate) fn projected_attention(
-    layer: &CodexLayer,
-    stream_phase: Option<&StreamPhase>,
-) -> Attention {
-    classify(Some(layer), stream_phase, None, false).attention()
-}
-
-/// The one ordered Codex classification. This is the only Codex-layer code
-/// that reads kernel `StreamPhase`; every projection consumes its lossless
-/// result.
 fn classify(
     layer: Option<&CodexLayer>,
     stream_phase: Option<&StreamPhase>,
@@ -1250,11 +607,11 @@ fn classify(
     };
     let situation = Situation {
         state: SituationState::Unknown,
-        active_turn: layer.turn.active_id.is_some(),
+        active_turn: layer.active_turn_id().is_some(),
         input_in_flight: !layer.inputs.is_empty(),
         observer_readonly,
     };
-    if matches!(agent_phase, Some(AgentPhase::Exited { .. })) {
+    if matches!(agent_phase, Some(AgentPhase::Exited { .. })) || layer.exited {
         return situation.with_state(SituationState::Exited);
     }
     match stream_phase {
@@ -1269,53 +626,23 @@ fn classify(
         }) => {}
         _ => return situation,
     }
-
-    let state = if layer.exited {
-        SituationState::Exited
-    } else if layer.thread_closed {
-        SituationState::Closed
-    } else if layer.stale || layer.gap {
-        SituationState::Unknown
-    } else if layer.read_only {
-        SituationState::ReadOnly
-    } else if !layer.live() {
-        SituationState::Replaying
-    } else if let Some(ask) = layer.asks.front() {
-        SituationState::AwaitingApproval {
-            request_id: ask.request_id.clone(),
+    if layer.stale {
+        return situation.with_state(SituationState::Unknown);
+    }
+    let state = match layer.observation().activity() {
+        Activity::Closed => SituationState::Closed,
+        Activity::Unknown => SituationState::Unknown,
+        Activity::ReadOnly => SituationState::ReadOnly,
+        Activity::Replaying => SituationState::Replaying,
+        Activity::AwaitingApproval { request_id } => {
+            SituationState::AwaitingApproval { request_id }
         }
-    } else if let Some(item_id) = layer.accumulators.unsupported.front() {
-        SituationState::BlockedUnsupported {
-            item_id: item_id.clone(),
-        }
-    } else if layer.turn.active_id.is_some() {
-        match layer.accumulators.active_items.back() {
-            Some(ActiveItem {
-                item_id,
-                kind: ActiveItemKind::Message,
-            }) => SituationState::Responding {
-                item_id: item_id.clone(),
-            },
-            Some(ActiveItem {
-                item_id,
-                kind: ActiveItemKind::Work,
-            }) => SituationState::Executing {
-                item_id: item_id.clone(),
-            },
-            _ => SituationState::Working,
-        }
-    } else if layer.turn.status == ThreadStatus::Active {
-        SituationState::Working
-    } else if layer.truncated_start
-        && layer.turn.last.is_none()
-        && layer.turn.status == ThreadStatus::Unknown
-    {
-        SituationState::Unknown
-    } else {
-        match layer.turn.last {
-            Some(LastTurn::Completed | LastTurn::Failed) => SituationState::Finished,
-            Some(LastTurn::Interrupted) | None => SituationState::Idle,
-        }
+        Activity::BlockedUnsupported { item_id } => SituationState::BlockedUnsupported { item_id },
+        Activity::Responding { item_id } => SituationState::Responding { item_id },
+        Activity::Executing { item_id } => SituationState::Executing { item_id },
+        Activity::Working => SituationState::Working,
+        Activity::Finished => SituationState::Finished,
+        Activity::Idle => SituationState::Idle,
     };
     situation.with_state(state)
 }
@@ -1332,7 +659,13 @@ fn classify_model(model: &Model, agent: model::AgentId) -> Situation {
     )
 }
 
-/// Derived Codex phase, wrapped in kernel stream lifecycle facts.
+pub(crate) fn projected_attention(
+    layer: &CodexLayer,
+    stream_phase: Option<&StreamPhase>,
+) -> Attention {
+    classify(Some(layer), stream_phase, None, false).attention()
+}
+
 pub fn phase(model: &Model, agent: model::AgentId) -> CodexPhase {
     classify_model(model, agent).phase()
 }
@@ -1361,10 +694,6 @@ impl WritePermission {
     }
 }
 
-/// The situation states in which the session itself can still accept SOME
-/// write. `session_state` narrows into this, so which states are
-/// session-level refusals is stated once, in one function, and an action rule
-/// literally cannot see (or restate) that membership.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LiveState {
     AwaitingApproval,
@@ -1386,7 +715,6 @@ pub(super) fn write_permission(
         Err(message) => return WritePermission::Refused(message),
         Ok(live) => live,
     };
-
     match action {
         WriteAction::Interrupt if situation.active_turn => WritePermission::Allowed,
         WriteAction::Interrupt => {
@@ -1398,9 +726,7 @@ pub(super) fn write_permission(
             LiveState::AwaitingApproval | LiveState::BlockedUnsupported => {
                 WritePermission::Refused(REFUSAL_NEEDS_YOU)
             }
-            LiveState::Responding | LiveState::Executing | LiveState::Working => {
-                WritePermission::Refused(REFUSAL_ACTIVE)
-            }
+            _ => WritePermission::Refused(REFUSAL_ACTIVE),
         },
         WriteAction::Steer => match live {
             LiveState::Responding | LiveState::Executing | LiveState::Working
@@ -1411,32 +737,15 @@ pub(super) fn write_permission(
             LiveState::AwaitingApproval | LiveState::BlockedUnsupported => {
                 WritePermission::Refused(REFUSAL_NEEDS_YOU)
             }
-            LiveState::Responding
-            | LiveState::Executing
-            | LiveState::Working
-            | LiveState::Finished
-            | LiveState::Idle => WritePermission::Refused("cannot steer without an active turn"),
+            _ => WritePermission::Refused("cannot steer without an active turn"),
         },
         WriteAction::Answer => match live {
             LiveState::AwaitingApproval => WritePermission::Allowed,
-            LiveState::BlockedUnsupported
-            | LiveState::Responding
-            | LiveState::Executing
-            | LiveState::Working
-            | LiveState::Finished
-            | LiveState::Idle => {
-                WritePermission::Refused("cannot answer without a pending Codex approval")
-            }
+            _ => WritePermission::Refused("cannot answer without a pending Codex approval"),
         },
     }
 }
 
-/// The single statement of which situations refuse every write because the
-/// *session* cannot accept one, versus the live states an action rule then
-/// judges. Returning the narrowed `LiveState` rather than an `Option<&str>` is
-/// what makes the compiler the enforcer: move a state across this boundary and
-/// every action rule stops compiling, instead of reaching a runtime panic in a
-/// UI reducer.
 fn session_state(situation: &Situation) -> Result<LiveState, &'static str> {
     let live = match &situation.state {
         SituationState::Unavailable => return Err(REFUSAL_UNAVAILABLE),
@@ -1511,180 +820,5 @@ pub(crate) fn check_projection_invariant(
             attention,
             send_gate,
         }));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-    use uuid::Uuid;
-
-    use super::*;
-
-    fn agent() -> model::AgentId {
-        Uuid::from_u128(77)
-    }
-
-    fn kinds(layer: &CodexLayer) -> Vec<&'static str> {
-        let mut violations = Vec::new();
-        layer.check_invariants(agent(), &mut violations);
-        violations.iter().map(Violation::kind).collect()
-    }
-
-    #[test]
-    fn detects_retention_and_feed_arithmetic_failures() {
-        let mut layer = CodexLayer::default();
-        for id in 0..=FEED_RETAINED as u64 {
-            layer.entries.push_back(FeedEntry {
-                id,
-                seq: id,
-                kind: FeedEntryKind::Unrecognized(UnrecognizedEntry {
-                    method: "test".to_string(),
-                    detail: None,
-                }),
-            });
-        }
-        layer.next_entry_id = FEED_RETAINED as u64 + 1;
-        assert!(kinds(&layer).contains(&"codex-retention-overflow"));
-        layer.next_entry_id += 1;
-        assert!(kinds(&layer).contains(&"codex-feed-order"));
-    }
-
-    #[test]
-    fn detects_an_index_ahead_of_the_feed() {
-        let mut layer = CodexLayer::default();
-        layer.item_entries.insert("ghost".to_string(), 9);
-        assert!(kinds(&layer).contains(&"codex-index-ahead"));
-    }
-
-    #[test]
-    fn detects_duplicate_ask_and_input_identity() {
-        let mut layer = CodexLayer::default();
-        for n in 0..2 {
-            layer.asks.push_back(Ask {
-                seq: 1,
-                request_id: json!("same"),
-                context: AskContext::Command {
-                    item_id: "item".to_string(),
-                    command: "true".to_string(),
-                    cwd: None,
-                    reason: None,
-                    proposed_execpolicy_amendment: None,
-                    proposed_network_policy_amendments: Vec::new(),
-                },
-                actions: Vec::new(),
-            });
-            layer.inputs.push_back(InFlightInput {
-                op: OpId(Uuid::from_u128(100 + n)),
-                input_id: vec![1, 2, 3],
-                kind: InFlightKind::Prompt,
-            });
-        }
-        let kinds = kinds(&layer);
-        assert!(kinds.contains(&"codex-duplicate-ask"));
-        assert!(kinds.contains(&"codex-duplicate-input"));
-    }
-
-    #[test]
-    fn network_amendment_edge_cases_preserve_contextual_fallback_facts() {
-        let command = AskContext::Command {
-            item_id: "command".to_string(),
-            command: "cargo test".to_string(),
-            cwd: None,
-            reason: None,
-            proposed_execpolicy_amendment: None,
-            proposed_network_policy_amendments: Vec::new(),
-        };
-        let malformed = json!({
-            "applyNetworkPolicyAmendment": {"network_policy_amendment": {"host": 7}}
-        });
-        assert_eq!(
-            classify_ask_action(&malformed, &command),
-            AskActionMeaning::UnknownObject {
-                kind: "applyNetworkPolicyAmendment".to_string(),
-                scalar_details: Vec::new(),
-            }
-        );
-
-        let file_change = AskContext::FileChange {
-            item_id: "patch".to_string(),
-            reason: None,
-            changes: Vec::new(),
-        };
-        let parseable = json!({
-            "applyNetworkPolicyAmendment": {
-                "network_policy_amendment": {"host": "crates.io", "action": "allow"}
-            }
-        });
-        assert_eq!(
-            classify_ask_action(&parseable, &file_change),
-            AskActionMeaning::UnknownObject {
-                kind: "applyNetworkPolicyAmendment".to_string(),
-                scalar_details: vec!["crates.io".to_string(), "allow".to_string()],
-            }
-        );
-    }
-
-    #[test]
-    fn classifier_covers_every_kernel_stream_branch_and_exit_attention() {
-        use crate::msg::StreamCloseReason;
-
-        let mut layer = CodexLayer {
-            ready_count: 1,
-            ..CodexLayer::default()
-        };
-        let cases = [
-            (Some(StreamPhase::Opening), SituationState::Replaying),
-            (Some(StreamPhase::Replaying), SituationState::Replaying),
-            (Some(StreamPhase::Live), SituationState::Idle),
-            (
-                Some(StreamPhase::Closed {
-                    reason: StreamCloseReason::AgentExited { exit_code: Some(0) },
-                }),
-                SituationState::Idle,
-            ),
-            (
-                Some(StreamPhase::Closed {
-                    reason: StreamCloseReason::AgentDeleted,
-                }),
-                SituationState::Idle,
-            ),
-            (
-                Some(StreamPhase::Closed {
-                    reason: StreamCloseReason::HostUnreachable,
-                }),
-                SituationState::Unknown,
-            ),
-            (None, SituationState::Unknown),
-        ];
-        for (stream, expected) in cases {
-            assert_eq!(
-                classify(Some(&layer), stream.as_ref(), None, false).state,
-                expected
-            );
-        }
-
-        let exited = classify(
-            Some(&layer),
-            Some(&StreamPhase::Live),
-            Some(&AgentPhase::Exited { exit_code: Some(1) }),
-            false,
-        );
-        assert_eq!(exited.state, SituationState::Exited);
-        assert_eq!(exited.attention(), Attention::Unknown);
-
-        layer.turn.active_id = Some("turn-live".to_string());
-        layer.inputs.push_back(InFlightInput {
-            op: OpId(Uuid::from_u128(200)),
-            input_id: vec![2],
-            kind: InFlightKind::Steer {
-                text: "keep going".to_string(),
-            },
-        });
-        let active_with_input = classify(Some(&layer), Some(&StreamPhase::Live), None, false);
-        assert!(active_with_input.active_turn);
-        assert!(active_with_input.input_in_flight);
-        assert_eq!(active_with_input.attention(), Attention::Working);
-        assert_eq!(active_with_input.send_gate(), SendGate::InputInFlight);
     }
 }

@@ -1,12 +1,12 @@
 //! One classification of session facts; projections never inspect feed content.
 
+use ::fold::claude_sdk::{AttentionInput, AttentionObservation, StreamState, observe_attention};
 use model::AgentId;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{AskWhy, ClaudeSdkLayer};
 use crate::{AgentPhase, Attention, Model, StreamPhase, Violation, Why};
-use ::fold::claude_sdk::{AttentionInput, AttentionObservation, StreamState, observe_attention};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]

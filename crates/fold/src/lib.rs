@@ -9,6 +9,7 @@
 
 pub mod claude_pty;
 pub mod claude_sdk;
+pub mod codex;
 pub mod diff;
 
 use std::error::Error;
