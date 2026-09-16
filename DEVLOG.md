@@ -1,3 +1,9 @@
+2026-09-16 — **Structured row provenance is fixed when the row is published.**
+Provider activity timestamps and historical provenance now live in each retained
+structured row, so live delivery and later replay expose identical facts for the
+same sequence. Claude transcript and SDK messages and Codex events preserve their
+provider-recorded time, while ordinary publications default to live provenance.
+
 2026-09-16 — **Fleet inventory publications have a durable host order.**
 Each host now reserves and synchronizes its next inventory revision before an
 agent appears, changes or leaves. A subscriber opens on one locked

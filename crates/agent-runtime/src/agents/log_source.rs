@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chrono::DateTime;
 use model::{ReplayFacts, ReplayOutcome};
 use serde_json::Value;
 use tokio::sync::Notify;
@@ -15,7 +16,7 @@ use uuid::Uuid;
 
 use crate::agents::{
     MultiplexStructuredBuffer, MultiplexStructuredReader, OutputDebug, SequencedReplayQuery,
-    SubscriptionRecord,
+    StructuredPublication, SubscriptionRecord,
 };
 
 const RECENT_SUBSCRIPTION_LIMIT: usize = 8;
@@ -334,29 +335,47 @@ impl StructuredLogSource {
 
     /// Write a structured output entry.
     pub(crate) async fn write(&self, payload: Value) {
+        self.write_row(payload, None, false).await;
+    }
+
+    /// Write a structured row with facts fixed at publication time.
+    pub(crate) async fn write_row(
+        &self,
+        payload: Value,
+        activity_at_unix_ms: Option<i64>,
+        historical: bool,
+    ) {
         let Ok(permit) = self.publication.enter_waiting().await else {
             return;
         };
-        let _ = self.publish(permit, payload).await;
+        let _ = self
+            .publish(permit, payload, activity_at_unix_ms, historical)
+            .await;
     }
 
     /// Write a row, refusing publication while the log is sealed or closed.
     #[cfg(test)]
     pub(crate) async fn try_write(&self, payload: Value) -> Result<u64, LogClosed> {
         let permit = self.publication.enter().await?;
-        self.publish(permit, payload).await
+        self.publish(permit, payload, None, false).await
     }
 
     async fn publish(
         &self,
         _permit: PublicationPermit<'_>,
         payload: Value,
+        activity_at_unix_ms: Option<i64>,
+        historical: bool,
     ) -> Result<u64, LogClosed> {
         self.ensure_idle_monitor();
         let payload = clip_oversized_row(payload);
         let item = self
             .buffer
-            .write(payload.clone())
+            .write(StructuredPublication {
+                payload: payload.clone(),
+                activity_at_unix_ms,
+                historical,
+            })
             .await
             .ok_or(LogClosed::Exhausted)?;
         self.idle_monitor_wake.notify_waiters();
@@ -372,12 +391,29 @@ impl StructuredLogSource {
     /// Atomically cut the old semantic generation and retain its marker as the
     /// first row of the new one. Existing readers are told to resubscribe.
     pub(crate) async fn semantic_reset(&self, marker: Value) -> u64 {
+        self.semantic_reset_row(marker, None, false).await
+    }
+
+    pub(crate) async fn semantic_reset_row(
+        &self,
+        marker: Value,
+        activity_at_unix_ms: Option<i64>,
+        historical: bool,
+    ) -> u64 {
         let Ok(_permit) = self.publication.enter_waiting().await else {
             return self.current_seq().await;
         };
         self.ensure_idle_monitor();
         let marker = clip_oversized_row(marker);
-        let Some(item) = self.buffer.semantic_reset(marker.clone()).await else {
+        let Some(item) = self
+            .buffer
+            .semantic_reset(StructuredPublication {
+                payload: marker.clone(),
+                activity_at_unix_ms,
+                historical,
+            })
+            .await
+        else {
             return u64::MAX;
         };
         self.idle_monitor_wake.notify_waiters();
@@ -467,6 +503,55 @@ impl StructuredLogSource {
             }
         });
     }
+}
+
+pub(crate) fn provider_activity_at_unix_ms(payload: &Value) -> Option<i64> {
+    fn normalize_number(value: i64) -> Option<i64> {
+        if value.unsigned_abs() < 1_000_000_000_000 {
+            value.checked_mul(1_000)
+        } else {
+            Some(value)
+        }
+    }
+
+    fn parse(value: &Value) -> Option<i64> {
+        match value {
+            Value::Number(number) => number.as_i64().and_then(normalize_number),
+            Value::String(timestamp) => timestamp
+                .parse::<i64>()
+                .ok()
+                .and_then(normalize_number)
+                .or_else(|| {
+                    DateTime::parse_from_rfc3339(timestamp)
+                        .ok()
+                        .map(|timestamp| timestamp.timestamp_millis())
+                }),
+            _ => None,
+        }
+    }
+
+    fn find(value: &Value) -> Option<i64> {
+        match value {
+            Value::Object(object) => {
+                for key in [
+                    "timestamp",
+                    "updatedAt",
+                    "updated_at",
+                    "createdAt",
+                    "created_at",
+                ] {
+                    if let Some(timestamp) = object.get(key).and_then(parse) {
+                        return Some(timestamp);
+                    }
+                }
+                object.values().find_map(find)
+            }
+            Value::Array(values) => values.iter().find_map(find),
+            _ => None,
+        }
+    }
+
+    find(payload)
 }
 
 fn clip_oversized_row(payload: Value) -> Value {

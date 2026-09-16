@@ -360,6 +360,7 @@ impl ClaudePtyBackend {
                     }
                     PtyEvent::Transcript { row, .. } => {
                         let value = row.into_value();
+                        let activity_at = crate::agents::provider_activity_at_unix_ms(&value);
                         version_cache.observe_transcript_row(&value);
                         if value.get("type").and_then(Value::as_str)
                             == Some("amux.transcript_ready")
@@ -375,7 +376,7 @@ impl ClaudePtyBackend {
                                 })
                                 .await;
                         }
-                        log.write(value).await;
+                        log.write_row(value, activity_at, false).await;
                     }
                     PtyEvent::Hook(hook) => {
                         ingest_hook(agent_id, &runtime, &log, &ready, &event_tx, hook).await;
@@ -1504,6 +1505,49 @@ mod tests {
             backend.plane(Protocol::ClaudePtyTranscriptV1),
             Ok(Plane::Structured { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_transcript_timestamp_becomes_row_activity_time() {
+        let (backend, _hooks, rows, ingest) = injected_backend();
+        let after = backend.log.current_seq().await;
+        let (mut reader, _) = backend
+            .log
+            .subscribe_with_query(Some(crate::agents::SequencedReplayQuery::After {
+                after,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert!(matches!(
+            reader.read_event().await.unwrap(),
+            crate::agents::BroadcastRead::ReplayComplete
+        ));
+
+        rows.send((
+            PathBuf::from("/tmp/transcript.jsonl"),
+            claude::transcript::TranscriptRow::parse(json!({
+                "type": "assistant",
+                "uuid": Uuid::new_v4(),
+                "timestamp": "2025-01-15T12:00:00.123Z",
+            })),
+        ))
+        .await
+        .unwrap();
+        let row = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let row = reader.read().await.expect("transcript publisher closed");
+                if row.payload["type"] == "assistant" {
+                    break row;
+                }
+            }
+        })
+        .await
+        .expect("transcript publication timed out");
+
+        assert_eq!(row.activity_at_unix_ms, Some(1_736_942_400_123));
+        assert!(!row.historical);
+        ingest.abort();
     }
 
     #[tokio::test]

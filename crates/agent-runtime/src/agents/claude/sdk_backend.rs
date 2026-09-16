@@ -711,9 +711,13 @@ async fn write_provider_message(
     let conversation_reset = matches!(&message, claude::sdk::Message::ConversationReset(_));
     match serde_json::to_value(message) {
         Ok(row) if conversation_reset => {
-            log.semantic_reset(row).await;
+            let activity_at = crate::agents::provider_activity_at_unix_ms(&row);
+            log.semantic_reset_row(row, activity_at, false).await;
         }
-        Ok(row) => log.write(row).await,
+        Ok(row) => {
+            let activity_at = crate::agents::provider_activity_at_unix_ms(&row);
+            log.write_row(row, activity_at, false).await;
+        }
         Err(error) => {
             tracing::warn!(%agent_id, %error, "failed to serialize Claude SDK row")
         }

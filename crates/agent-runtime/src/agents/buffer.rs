@@ -52,8 +52,26 @@ pub(crate) struct StructuredOutput {
     pub(crate) seq: u64,
     pub(crate) published_at_unix_ms: i64,
     pub(crate) activity_at_unix_ms: Option<i64>,
+    pub(crate) historical: bool,
     pub(crate) payload: Value,
     pub(crate) encoded_len: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct StructuredPublication {
+    pub(crate) payload: Value,
+    pub(crate) activity_at_unix_ms: Option<i64>,
+    pub(crate) historical: bool,
+}
+
+impl From<Value> for StructuredPublication {
+    fn from(payload: Value) -> Self {
+        Self {
+            payload,
+            activity_at_unix_ms: None,
+            historical: false,
+        }
+    }
 }
 
 /// Extra channel capacity beyond the replay snapshot size.
@@ -216,23 +234,24 @@ impl Default for StructuredStorage {
 }
 
 impl BufferPolicy for StructuredPolicy {
-    type Input = Value;
+    type Input = StructuredPublication;
     type Item = StructuredOutput;
     type Storage = StructuredStorage;
     type Filter = Option<SequencedReplayQuery>;
 
     fn publish(
         storage: &mut StructuredStorage,
-        input: Value,
+        input: StructuredPublication,
         capacity: usize,
     ) -> Option<StructuredOutput> {
         storage.last_seq = storage.last_seq.checked_add(1)?;
-        let encoded_len = serde_json::to_vec(&input).map_or(0, |encoded| encoded.len());
+        let encoded_len = serde_json::to_vec(&input.payload).map_or(0, |encoded| encoded.len());
         let item = StructuredOutput {
             seq: storage.last_seq,
             published_at_unix_ms: chrono::Utc::now().timestamp_millis(),
-            activity_at_unix_ms: None,
-            payload: input,
+            activity_at_unix_ms: input.activity_at_unix_ms,
+            historical: input.historical,
+            payload: input.payload,
             encoded_len,
         };
 
@@ -719,7 +738,10 @@ impl BroadcastBuffer<StructuredPolicy> {
 
     /// Cut the semantic generation, publish its marker and disconnect every
     /// subscriber under the same publication lock used by writes and opens.
-    pub(crate) async fn semantic_reset(&self, marker: Value) -> Option<StructuredOutput> {
+    pub(crate) async fn semantic_reset(
+        &self,
+        marker: StructuredPublication,
+    ) -> Option<StructuredOutput> {
         let mut storage = self.inner.storage.write().await;
         if storage.last_seq == u64::MAX {
             return None;
@@ -1079,6 +1101,7 @@ mod tests {
         assert_eq!(actual.payload, user_msg(content, uuid));
         assert!(actual.published_at_unix_ms > 0);
         assert_eq!(actual.activity_at_unix_ms, None);
+        assert!(!actual.historical);
     }
 
     #[tokio::test]
@@ -1087,7 +1110,7 @@ mod tests {
 
         for i in 1..=5 {
             buffer
-                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
                 .await;
         }
 
@@ -1102,9 +1125,9 @@ mod tests {
     async fn test_entry_per_entry_replay() {
         let buffer = MultiplexStructuredBuffer::new(100);
 
-        buffer.write(user_msg("first", "1")).await;
-        buffer.write(user_msg("second", "2")).await;
-        buffer.write(user_msg("third", "3")).await;
+        buffer.write(user_msg("first", "1").into()).await;
+        buffer.write(user_msg("second", "2").into()).await;
+        buffer.write(user_msg("third", "3").into()).await;
 
         // Each entry should arrive as a separate read() call
         let mut reader = buffer.subscribe().await.unwrap();
@@ -1113,7 +1136,7 @@ mod tests {
         assert_envelope(reader.read().await.unwrap(), 3, "third", "3");
 
         // Live writes still work
-        buffer.write(user_msg("fourth", "4")).await;
+        buffer.write(user_msg("fourth", "4").into()).await;
         assert_envelope(reader.read().await.unwrap(), 4, "fourth", "4");
     }
 
@@ -1121,8 +1144,8 @@ mod tests {
     async fn test_clear_resets_storage_keeps_subscribers() {
         let buffer = MultiplexStructuredBuffer::new(100);
 
-        buffer.write(user_msg("before", "1")).await;
-        buffer.write(user_msg("also-before", "2")).await;
+        buffer.write(user_msg("before", "1").into()).await;
+        buffer.write(user_msg("also-before", "2").into()).await;
 
         let mut early = buffer.subscribe().await.unwrap();
         assert_envelope(early.read().await.unwrap(), 1, "before", "1");
@@ -1132,7 +1155,7 @@ mod tests {
 
         let mut late = buffer.subscribe().await.unwrap();
 
-        buffer.write(user_msg("after", "3")).await;
+        buffer.write(user_msg("after", "3").into()).await;
 
         assert_envelope(early.read().await.unwrap(), 3, "after", "3");
         assert_envelope(late.read().await.unwrap(), 3, "after", "3");
@@ -1143,7 +1166,7 @@ mod tests {
         let buffer = MultiplexStructuredBuffer::new(100);
         let mut reader = buffer.subscribe().await.unwrap();
 
-        buffer.write(user_msg("data", "1")).await;
+        buffer.write(user_msg("data", "1").into()).await;
         assert_envelope(reader.read().await.unwrap(), 1, "data", "1");
 
         buffer.close().await;
@@ -1155,13 +1178,13 @@ mod tests {
         let buffer = MultiplexStructuredBuffer::new(100);
         assert_eq!(buffer.current_seq().await, 0);
 
-        buffer.write(user_msg("a", "1")).await;
+        buffer.write(user_msg("a", "1").into()).await;
         assert_eq!(buffer.current_seq().await, 1);
 
-        buffer.write(user_msg("b", "2")).await;
+        buffer.write(user_msg("b", "2").into()).await;
         assert_eq!(buffer.current_seq().await, 2);
 
-        buffer.write(user_msg("c", "3")).await;
+        buffer.write(user_msg("c", "3").into()).await;
         assert_eq!(buffer.current_seq().await, 3);
     }
 
@@ -1169,14 +1192,14 @@ mod tests {
     async fn test_seq_survives_clear() {
         let buffer = MultiplexStructuredBuffer::new(100);
 
-        buffer.write(user_msg("a", "1")).await;
-        buffer.write(user_msg("b", "2")).await;
+        buffer.write(user_msg("a", "1").into()).await;
+        buffer.write(user_msg("b", "2").into()).await;
         assert_eq!(buffer.current_seq().await, 2);
 
         buffer.clear().await;
         assert_eq!(buffer.current_seq().await, 2, "clear must not reset seq");
 
-        buffer.write(user_msg("c", "3")).await;
+        buffer.write(user_msg("c", "3").into()).await;
         assert_eq!(buffer.current_seq().await, 3);
 
         let mut reader = buffer.subscribe().await.unwrap();
@@ -1187,8 +1210,8 @@ mod tests {
     async fn test_subscribers_receive_correct_seq_in_replay_and_live() {
         let buffer = MultiplexStructuredBuffer::new(100);
 
-        buffer.write(user_msg("a", "1")).await;
-        buffer.write(user_msg("b", "2")).await;
+        buffer.write(user_msg("a", "1").into()).await;
+        buffer.write(user_msg("b", "2").into()).await;
 
         // Late subscriber gets replay with correct seq values
         let mut reader = buffer.subscribe().await.unwrap();
@@ -1198,7 +1221,7 @@ mod tests {
         assert_eq!(item2.seq, 2);
 
         // Live write has next seq
-        buffer.write(user_msg("c", "3")).await;
+        buffer.write(user_msg("c", "3").into()).await;
         let item3 = reader.read().await.unwrap();
         assert_eq!(item3.seq, 3);
     }
@@ -1208,7 +1231,7 @@ mod tests {
         let buffer = MultiplexStructuredBuffer::new(100);
         for i in 1..=3 {
             buffer
-                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
                 .await;
         }
 
@@ -1239,7 +1262,7 @@ mod tests {
             reader.read_event().await.unwrap(),
             BroadcastRead::ReplayComplete
         ));
-        buffer.write(user_msg("msg4", "4")).await;
+        buffer.write(user_msg("msg4", "4").into()).await;
         assert!(
             matches!(reader.read_event().await.unwrap(), BroadcastRead::LiveItem(item) if item.seq == 4)
         );
@@ -1274,7 +1297,7 @@ mod tests {
         let buffer = MultiplexStructuredBuffer::new(100);
         for i in 1..=5 {
             buffer
-                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
                 .await;
         }
 
@@ -1306,7 +1329,7 @@ mod tests {
         let buffer = MultiplexStructuredBuffer::new(100);
         for i in 1..=5 {
             buffer
-                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
                 .await;
         }
         let (mut reader, facts) = buffer
@@ -1328,7 +1351,7 @@ mod tests {
         let buffer = MultiplexStructuredBuffer::new(2);
         for i in 1..=5 {
             buffer
-                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .write(user_msg(&format!("msg{i}"), &i.to_string()).into())
                 .await;
         }
         let (mut reader, facts) = buffer
@@ -1347,8 +1370,8 @@ mod tests {
     #[tokio::test]
     async fn tail_zero_replays_nothing_but_keeps_live_delivery() {
         let buffer = MultiplexStructuredBuffer::new(100);
-        buffer.write(user_msg("a", "1")).await;
-        buffer.write(user_msg("b", "2")).await;
+        buffer.write(user_msg("a", "1").into()).await;
+        buffer.write(user_msg("b", "2").into()).await;
         let (mut reader, facts) = buffer
             .subscribe_with_query(Some(SequencedReplayQuery::TailCount {
                 count: 0,
@@ -1358,7 +1381,7 @@ mod tests {
             .unwrap();
         assert_eq!(facts.selected_from, 0);
         assert_eq!(facts.outcome, ReplayOutcome::Truncated { missing_after: 2 });
-        buffer.write(user_msg("c", "3")).await;
+        buffer.write(user_msg("c", "3").into()).await;
         assert_eq!(reader.read().await.unwrap().seq, 3);
     }
 }

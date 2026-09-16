@@ -791,11 +791,11 @@ fn direct_session_response_stream(
                             seq: 0,
                             published_at_unix_ms: chrono::Utc::now().timestamp_millis(),
                             activity_at_unix_ms: None,
+                            historical: true,
                             payload: attachments_row(None, &refs),
                             encoded_len: 0,
                         },
                         protocol,
-                        true,
                     );
                     Some((
                         event.map_err(HostStreamError::from),
@@ -938,8 +938,9 @@ async fn read_session_output_event(
         SessionOutputReader::Structured {
             protocol, reader, ..
         } => reader.read_event().await.map(|event| match event {
-            BroadcastRead::ReplayItem(output) => structured_output_event(output, *protocol, true),
-            BroadcastRead::LiveItem(output) => structured_output_event(output, *protocol, false),
+            BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
+                structured_output_event(output, *protocol)
+            }
             BroadcastRead::ReplayComplete => Ok(HostSessionEvent::ReplayComplete),
             BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
                 message: "session output subscriber queue closed".to_string(),
@@ -954,7 +955,6 @@ async fn read_session_output_event(
 fn structured_output_event(
     output: StructuredOutput,
     protocol: Protocol,
-    historical: bool,
 ) -> Result<HostSessionEvent, ProtocolError> {
     let payload_json =
         serde_json::to_vec(&output.payload).map_err(|error| ProtocolError::ServerError {
@@ -964,7 +964,7 @@ fn structured_output_event(
         seq: output.seq,
         published_at_unix_ms: output.published_at_unix_ms,
         activity_at_unix_ms: output.activity_at_unix_ms,
-        historical,
+        historical: output.historical,
         payload: payload_json,
     };
     let output = match protocol {
@@ -1145,6 +1145,81 @@ mod tests {
                 HostSessionEvent::Output(_)
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn daemon_protocol_row_facts_are_identical_for_live_and_replay_observers() {
+        let agent_id = Uuid::from_u128(92);
+        let log = StructuredLogSource::new(8);
+        let (live_reader, live_replay) = log.subscribe_with_query(None).await.unwrap();
+        let (_live_close_tx, live_close_rx) = mpsc::channel(1);
+        let (_live_shutdown_tx, live_shutdown_rx) = mpsc::channel(1);
+        let mut live = direct_session_response_stream(
+            agent_id,
+            SessionOutputReader::Structured {
+                protocol: Protocol::ClaudeSdkV1,
+                reader: live_reader,
+                replay: live_replay,
+            },
+            live_close_rx,
+            live_shutdown_rx,
+            None,
+            AgentRuntime::new(Uuid::from_u128(1)).state().clone(),
+        );
+        assert!(matches!(
+            live.next().await.unwrap().unwrap(),
+            HostSessionEvent::Opened { .. }
+        ));
+        assert_eq!(
+            live.next().await.unwrap().unwrap(),
+            HostSessionEvent::ReplayComplete
+        );
+
+        log.write_row(
+            serde_json::json!({"type": "assistant", "uuid": "same-row"}),
+            Some(1_736_942_400_123),
+            true,
+        )
+        .await;
+        let HostSessionEvent::Output(SessionOutput::ClaudeSdkV1(live_row)) =
+            live.next().await.unwrap().unwrap()
+        else {
+            panic!("live observer did not receive the structured row");
+        };
+
+        let (replay_reader, replay_facts) = log.subscribe_with_query(None).await.unwrap();
+        let (_replay_close_tx, replay_close_rx) = mpsc::channel(1);
+        let (_replay_shutdown_tx, replay_shutdown_rx) = mpsc::channel(1);
+        let mut replay = direct_session_response_stream(
+            agent_id,
+            SessionOutputReader::Structured {
+                protocol: Protocol::ClaudeSdkV1,
+                reader: replay_reader,
+                replay: replay_facts,
+            },
+            replay_close_rx,
+            replay_shutdown_rx,
+            None,
+            AgentRuntime::new(Uuid::from_u128(1)).state().clone(),
+        );
+        assert!(matches!(
+            replay.next().await.unwrap().unwrap(),
+            HostSessionEvent::Opened { .. }
+        ));
+        let HostSessionEvent::Output(SessionOutput::ClaudeSdkV1(replayed_row)) =
+            replay.next().await.unwrap().unwrap()
+        else {
+            panic!("replay observer did not receive the structured row");
+        };
+
+        assert_eq!(live_row.seq, replayed_row.seq);
+        assert_eq!(
+            live_row.activity_at_unix_ms,
+            replayed_row.activity_at_unix_ms
+        );
+        assert_eq!(live_row.historical, replayed_row.historical);
+        assert_eq!(replayed_row.activity_at_unix_ms, Some(1_736_942_400_123));
+        assert!(replayed_row.historical);
     }
 
     #[tokio::test]

@@ -22,6 +22,7 @@ pub(crate) use attachments::{
 pub(crate) use buffer::{
     BroadcastRead, ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader,
     MultiplexStructuredBuffer, MultiplexStructuredReader, SequencedReplayQuery, StructuredOutput,
+    StructuredPublication,
 };
 #[cfg(unix)]
 pub(crate) use codex::CodexRawPtyLease;
@@ -29,7 +30,9 @@ pub(crate) use debug::{
     BackendState, BufferDebug, ObligationDebug, OutputDebug, SessionDebug, SubscriptionRecord,
 };
 pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
-pub(crate) use log_source::{RingPolicy, SealedAt, StructuredLogSource};
+pub(crate) use log_source::{
+    RingPolicy, SealedAt, StructuredLogSource, provider_activity_at_unix_ms,
+};
 pub use model::{
     Agent, AgentEvent, AgentKind, AgentParent, AgentType, ArtifactRef, ClaudeDriver,
     CreateAgentRequest, Protocol, RenameAgentRequest, SessionCloseReason, TerminalSize, WorkingOn,

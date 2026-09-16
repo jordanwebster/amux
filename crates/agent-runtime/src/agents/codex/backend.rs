@@ -1551,7 +1551,9 @@ async fn ingest_event(
     completion_sink: Option<&CodexCompletionSink>,
     event: ThreadEvent,
 ) {
-    log_source.write(raw_row(&event)).await;
+    let row = raw_row(&event);
+    let activity_at = crate::agents::provider_activity_at_unix_ms(&row);
+    log_source.write_row(row, activity_at, false).await;
     match &event.event {
         TurnEvent::TurnStarted { turn } => {
             update_attached(runtime, |attached| {
