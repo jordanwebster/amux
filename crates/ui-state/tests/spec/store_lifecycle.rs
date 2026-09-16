@@ -1,10 +1,14 @@
 //! Store-backed reducer lifecycle: the A12 table as recorded messages.
 
 use fold::claude_pty::ClaudeFold;
+use fold::claude_sdk::ClaudeSdkFold;
+use fold::codex::CodexFold;
 use fold::{
     Baseline, BaselineReason, CommitResult, ExpectedHead, Fleet, FleetAgent, FleetHost,
-    Generations, Head, HeadState, Loaded, Membership, OpId as StoreOpId, ProviderFold, StoreError,
+    Generations, Head, HeadState, Input, Loaded, Membership, OpId as StoreOpId, ProviderFold,
+    StoreError,
 };
+use serde_json::json;
 use ui_state::{
     AttemptId, ChatCommand, ChatState, ChatStreamMsg, Effect, LoadedDto, Model, Msg,
     ProfileGeneration, ReplayFactsDto, ReplayOutcomeDto, StoreMsg, StoreOp, StoreOpKind,
@@ -86,6 +90,155 @@ fn inventory_model() -> Model {
     model
 }
 
+fn inventory_model_with(agent: model::Agent) -> Model {
+    let mut model = Model::default();
+    for msg in seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&agent),
+        ],
+        synced(),
+    ]) {
+        update(&mut model, msg);
+    }
+    model
+}
+
+fn apply_tip_row<F: ProviderFold>(tip: &mut F, seq: u64, row: serde_json::Value) {
+    let payload = serde_json::to_vec(&row).unwrap();
+    tip.apply(Input::Row {
+        seq,
+        published_at: t0_plus(seq as i64),
+        activity_at: Some(t0_plus(seq as i64)),
+        historical: false,
+        payload: &payload,
+    });
+}
+
+fn sdk_loaded_with_pending_ask() -> LoadedDto {
+    let mut tip = ClaudeSdkFold::default();
+    tip.begin(2, Baseline::Start);
+    apply_tip_row(
+        &mut tip,
+        10,
+        json!({"type":"amux.claude_sdk.permission_required","request_id":"stored-sdk-ask","tool_name":"Write","input":{"file_path":"/tmp/a","content":"hello"},"suggestions":[]}),
+    );
+    LoadedDto::ClaudeSdk(Loaded {
+        generations: GENERATIONS,
+        fence: 7,
+        content_revision: 9,
+        segment_high_water: 2,
+        head: HeadState::Usable(
+            3,
+            Head {
+                segment: 2,
+                baseline: Baseline::Start,
+                through: 10,
+                tip_version: ClaudeSdkFold::TIP_VERSION,
+                entry_version: ClaudeSdkFold::ENTRY_VERSION,
+                summary: tip.summary(),
+                tip,
+                observed_at: t0(),
+            },
+        ),
+        window: Vec::new(),
+        boundaries: Vec::new(),
+        first_page: None,
+        aliases: Vec::new(),
+        host: None,
+        progress: None,
+    })
+}
+
+fn codex_loaded_with_pending_ask() -> LoadedDto {
+    let mut tip = CodexFold::default();
+    tip.begin(2, Baseline::Start);
+    apply_tip_row(
+        &mut tip,
+        9,
+        json!({"type":"item/commandExecution/requestApproval","itemId":"stored-command","command":"cargo test"}),
+    );
+    apply_tip_row(
+        &mut tip,
+        10,
+        json!({"type":"amux.codex_approval_required","item_id":"stored-command","request_id":"stored-codex-ask","availableDecisions":["accept","cancel"]}),
+    );
+    LoadedDto::Codex(Loaded {
+        generations: GENERATIONS,
+        fence: 7,
+        content_revision: 9,
+        segment_high_water: 2,
+        head: HeadState::Usable(
+            3,
+            Head {
+                segment: 2,
+                baseline: Baseline::Start,
+                through: 10,
+                tip_version: CodexFold::TIP_VERSION,
+                entry_version: CodexFold::ENTRY_VERSION,
+                summary: tip.summary(),
+                tip,
+                observed_at: t0(),
+            },
+        ),
+        window: Vec::new(),
+        boundaries: Vec::new(),
+        first_page: None,
+        aliases: Vec::new(),
+        host: None,
+        progress: None,
+    })
+}
+
+fn pty_loaded_with_pending_ask() -> LoadedDto {
+    let mut tip = ClaudeFold::default();
+    tip.begin(2, Baseline::Start);
+    apply_tip_row(
+        &mut tip,
+        10,
+        json!({"type":"hook.permission_request","session_id":"stored-session","tool_name":"Write","tool_input":{"file_path":"/tmp/a","content":"hello"},"permission_suggestions":[]}),
+    );
+    let head = Head {
+        segment: 2,
+        baseline: Baseline::Start,
+        through: 10,
+        tip_version: ClaudeFold::TIP_VERSION,
+        entry_version: ClaudeFold::ENTRY_VERSION,
+        summary: tip.summary(),
+        tip,
+        observed_at: t0(),
+    };
+    empty_loaded(HeadState::Usable(3, head))
+}
+
+fn pty_loaded_with_working_turn() -> LoadedDto {
+    let mut tip = ClaudeFold::default();
+    tip.begin(2, Baseline::Start);
+    apply_tip_row(
+        &mut tip,
+        10,
+        json!({
+            "type":"user",
+            "uuid":"stored-prompt",
+            "timestamp":"2025-10-09T08:53:30Z",
+            "origin":{"kind":"human"},
+            "message":{"content":"keep working"}
+        }),
+    );
+    let head = Head {
+        segment: 2,
+        baseline: Baseline::Start,
+        through: 10,
+        tip_version: ClaudeFold::TIP_VERSION,
+        entry_version: ClaudeFold::ENTRY_VERSION,
+        summary: tip.summary(),
+        tip,
+        observed_at: t0(),
+    };
+    empty_loaded(HeadState::Usable(3, head))
+}
+
 fn begin_open(model: &mut Model) -> (AttemptId, StoreOpId) {
     let effects = update(
         model,
@@ -141,6 +294,158 @@ fn stream_attempt(effects: &[Effect]) -> fold::StreamAttempt {
         panic!("load must open exactly one store stream: {effects:?}");
     };
     *attempt
+}
+
+fn complete_empty_replay(
+    model: &mut Model,
+    stream: fold::StreamAttempt,
+    through: u64,
+    seconds: i64,
+) {
+    update(
+        model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: stream,
+            event: ChatStreamMsg::Opened {
+                facts: continuous(through),
+                at: t0_plus(seconds),
+            },
+        },
+    );
+    update(
+        model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: stream,
+            event: ChatStreamMsg::ReplayComplete {
+                at: t0_plus(seconds + 1),
+            },
+        },
+    );
+}
+
+fn reconnect_empty_replay(model: &mut Model, stream: fold::StreamAttempt, through: u64) {
+    update(
+        model,
+        Msg::ChatStream {
+            agent: agent_id("stored"),
+            attempt: stream,
+            event: ChatStreamMsg::Closed {
+                at: t0_plus(20),
+                reason: StreamCloseReason::HostUnreachable,
+            },
+        },
+    );
+    let effects = update(model, connected("nova"));
+    let reopened = stream_attempt(&effects);
+    complete_empty_replay(model, reopened, through, 21);
+}
+
+#[test]
+fn store_cursor_restores_pty_ask_on_open_and_reconnect_without_new_rows() {
+    let mut model = inventory_model();
+    let (attempt, op) = begin_open(&mut model);
+    let effects = load(&mut model, attempt, op, pty_loaded_with_pending_ask());
+    let stream = stream_attempt(&effects);
+
+    complete_empty_replay(&mut model, stream, 10, 1);
+    assert_eq!(model.claude(agent_id("stored")).unwrap().ask_count(), 1);
+    assert_eq!(
+        ui_state::claude::send_gate(&model, agent_id("stored")),
+        ui_state::SendGate::NeedsYou
+    );
+    assert!(ui_state::claude::allows_answer(&model, agent_id("stored")));
+
+    reconnect_empty_replay(&mut model, stream, 10);
+    assert_eq!(model.claude(agent_id("stored")).unwrap().ask_count(), 1);
+    assert_eq!(
+        ui_state::claude::send_gate(&model, agent_id("stored")),
+        ui_state::SendGate::NeedsYou
+    );
+}
+
+#[test]
+fn store_cursor_restores_sdk_ask_on_open_and_reconnect_without_new_rows() {
+    let mut sdk = an_agent("stored", "nova");
+    sdk.kind = model::AgentKind::Claude {
+        driver: model::ClaudeDriver::Sdk,
+    };
+    let mut model = inventory_model_with(sdk);
+    let (attempt, op) = begin_open(&mut model);
+    let effects = load(&mut model, attempt, op, sdk_loaded_with_pending_ask());
+    let stream = stream_attempt(&effects);
+
+    complete_empty_replay(&mut model, stream, 10, 1);
+    assert_eq!(model.claude_sdk(agent_id("stored")).unwrap().ask_count(), 1);
+    assert_eq!(
+        ui_state::claude_sdk::send_gate(&model, agent_id("stored")),
+        ui_state::claude_sdk::SendGate::NeedsYou
+    );
+
+    reconnect_empty_replay(&mut model, stream, 10);
+    assert_eq!(model.claude_sdk(agent_id("stored")).unwrap().ask_count(), 1);
+    assert_eq!(
+        ui_state::claude_sdk::send_gate(&model, agent_id("stored")),
+        ui_state::claude_sdk::SendGate::NeedsYou
+    );
+}
+
+#[test]
+fn store_cursor_restores_codex_ask_on_open_and_reconnect_without_new_rows() {
+    let mut model = inventory_model_with(a_codex_agent("stored", "nova"));
+    let (attempt, op) = begin_open(&mut model);
+    let effects = load(&mut model, attempt, op, codex_loaded_with_pending_ask());
+    let stream = stream_attempt(&effects);
+
+    complete_empty_replay(&mut model, stream, 10, 1);
+    assert_eq!(model.codex(agent_id("stored")).unwrap().ask_count(), 1);
+    assert_eq!(
+        ui_state::codex::send_gate(&model, agent_id("stored")),
+        ui_state::codex::SendGate::NeedsYou
+    );
+
+    reconnect_empty_replay(&mut model, stream, 10);
+    assert_eq!(model.codex(agent_id("stored")).unwrap().ask_count(), 1);
+    assert_eq!(
+        ui_state::codex::send_gate(&model, agent_id("stored")),
+        ui_state::codex::SendGate::NeedsYou
+    );
+}
+
+#[test]
+fn store_cursor_without_a_head_never_opens_the_pty_send_gate() {
+    let mut model = inventory_model();
+    let (attempt, op) = begin_open(&mut model);
+    let effects = load(&mut model, attempt, op, empty_loaded(HeadState::None));
+    let stream = stream_attempt(&effects);
+
+    complete_empty_replay(&mut model, stream, 0, 1);
+
+    assert_eq!(
+        ui_state::claude::send_gate(&model, agent_id("stored")),
+        ui_state::SendGate::Unknown
+    );
+}
+
+#[test]
+fn store_cursor_keeps_a_working_turn_closed_to_new_prompts_after_reconnect() {
+    let mut model = inventory_model();
+    let (attempt, op) = begin_open(&mut model);
+    let effects = load(&mut model, attempt, op, pty_loaded_with_working_turn());
+    let stream = stream_attempt(&effects);
+
+    complete_empty_replay(&mut model, stream, 10, 1);
+    assert_eq!(
+        ui_state::claude::send_gate(&model, agent_id("stored")),
+        ui_state::SendGate::Working
+    );
+
+    reconnect_empty_replay(&mut model, stream, 10);
+    assert_eq!(
+        ui_state::claude::send_gate(&model, agent_id("stored")),
+        ui_state::SendGate::Working
+    );
 }
 
 fn continuous(through: u64) -> ReplayFactsDto {

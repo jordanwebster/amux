@@ -1097,8 +1097,9 @@ pub(crate) fn stored_entry_block(
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    use ui_state::DurableEntry as _;
-    use ui_state::{StoredCodexBody as CodexBody, StoredCodexEntryKind as CodexEntryKind};
+    use ui_state::{
+        DurableEntry as _, StoredCodexBody as CodexBody, StoredCodexEntryKind as CodexEntryKind,
+    };
 
     let body = entry.body().cloned().unwrap_or_default();
     let text = entry.text().unwrap_or_default().to_string();

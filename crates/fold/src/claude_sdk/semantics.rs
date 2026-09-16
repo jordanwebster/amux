@@ -18,7 +18,7 @@ use super::TaskState;
 use crate::{
     Baseline, Changes, Component, ComponentSource, Components, Entry, EntryKey, FieldPatch, Input,
     JsonBytes, MergeDefect, Mutation, Order, Patch, PostcardSafe, Promotion, ProviderFold,
-    Revision, SegmentId, TIP_MAX_BYTES, TIP_MAX_OPEN_ENTRIES, VersionedField,
+    RestoreRow, Revision, SegmentId, TIP_MAX_BYTES, TIP_MAX_OPEN_ENTRIES, VersionedField,
 };
 
 const TEXT_MAX_BYTES: usize = 64 * 1024;
@@ -398,13 +398,20 @@ struct PendingTodo {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingAsk {
+    channel: String,
+    request_id: String,
+    row: RestoreRow,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaudeSdkFold {
     segment: SegmentId,
     baseline: Baseline,
     through: u64,
     cursors: Vec<MessageCursor>,
     pending_todos: Vec<PendingTodo>,
-    asks: Vec<String>,
+    asks: Vec<PendingAsk>,
     in_history: bool,
     attention: Attention,
     phase: AgentPhase,
@@ -457,6 +464,18 @@ impl ClaudeSdkFold {
 
     pub fn through(&self) -> u64 {
         self.through
+    }
+
+    pub fn restored_attention(&self) -> Option<Attention> {
+        self.known_attention.then_some(self.attention)
+    }
+
+    pub fn restored_outstanding_known(&self) -> bool {
+        self.known_outstanding
+    }
+
+    pub fn restored_obligations(&self) -> impl Iterator<Item = &RestoreRow> {
+        self.asks.iter().map(|ask| &ask.row)
     }
 
     fn row(
@@ -586,10 +605,27 @@ impl ClaudeSdkFold {
             | "amux.claude_sdk.elicitation_required"
             | "amux.claude_sdk.dialog_required" => {
                 if !historical {
+                    let channel = kind
+                        .strip_prefix("amux.claude_sdk.")
+                        .and_then(|kind| kind.strip_suffix("_required"))
+                        .unwrap_or_default();
                     let request =
                         id(row, "request_id").unwrap_or_else(|| format!("delivery:{seq}"));
-                    if !self.asks.contains(&request) {
-                        self.asks.push(request);
+                    if !self
+                        .asks
+                        .iter()
+                        .any(|ask| ask.channel == channel && ask.request_id == request)
+                    {
+                        self.asks.push(PendingAsk {
+                            channel: channel.to_owned(),
+                            request_id: request,
+                            row: RestoreRow {
+                                seq,
+                                payload: JsonBytes(
+                                    serde_json::to_vec(row).unwrap_or_else(|_| b"null".to_vec()),
+                                ),
+                            },
+                        });
                     }
                     self.attention = Attention::NeedsYou {
                         why: if kind == "amux.claude_sdk.permission_required" {
@@ -605,7 +641,12 @@ impl ClaudeSdkFold {
             | "amux.claude_sdk.elicitation_resolved"
             | "amux.claude_sdk.dialog_resolved" => {
                 if !historical && let Some(request_id) = id(row, "request_id") {
-                    self.asks.retain(|ask| ask != &request_id);
+                    let channel = kind
+                        .strip_prefix("amux.claude_sdk.")
+                        .and_then(|kind| kind.strip_suffix("_resolved"))
+                        .unwrap_or_default();
+                    self.asks
+                        .retain(|ask| ask.channel != channel || ask.request_id != request_id);
                     if self.asks.is_empty() {
                         self.attention = Attention::Working;
                         self.known_attention = true;
@@ -1652,7 +1693,7 @@ impl ProviderFold for ClaudeSdkFold {
 
     const PROTOCOL: StructuredProtocol = StructuredProtocol::ClaudeSdk;
     const ENTRY_VERSION: u32 = 1;
-    const TIP_VERSION: u32 = 1;
+    const TIP_VERSION: u32 = 2;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
 
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
@@ -1810,8 +1851,16 @@ impl ProviderFold for ClaudeSdkFold {
         size_of::<Self>()
             + self.cursors.capacity() * size_of::<MessageCursor>()
             + self.pending_todos.capacity() * size_of::<PendingTodo>()
-            + self.asks.capacity() * size_of::<String>()
-            + self.asks.iter().map(String::capacity).sum::<usize>()
+            + self.asks.capacity() * size_of::<PendingAsk>()
+            + self
+                .asks
+                .iter()
+                .map(|ask| {
+                    ask.channel.capacity()
+                        + ask.request_id.capacity()
+                        + ask.row.payload.0.capacity()
+                })
+                .sum::<usize>()
             + self.model.as_ref().map_or(0, String::capacity)
             + cursors
             + todos
@@ -2258,6 +2307,15 @@ impl crate::private::Sealed for PendingTodo {
     }
 }
 impl PostcardSafe for PendingTodo {}
+
+impl crate::private::Sealed for PendingAsk {
+    fn assert_fields_are_postcard_safe() {
+        crate::assert_postcard_safe::<String>();
+        crate::assert_postcard_safe::<String>();
+        crate::assert_postcard_safe::<RestoreRow>();
+    }
+}
+impl PostcardSafe for PendingAsk {}
 
 impl crate::private::Sealed for ClaudeSdkFold {
     fn assert_fields_are_postcard_safe() {

@@ -798,7 +798,13 @@ fn update_stream(model: &mut Model, agent: model::AgentId, event: StreamMsg) -> 
             // A fresh subscription replays the source tail from scratch, so
             // the chat layer folds from scratch too — its window carries
             // the same truncation fact (B9's honest boundary).
-            with_layer(model, agent, |layer| layer.begin_window(truncated));
+            let store_head = model.store.chats.get(&agent).map(|chat| chat.head.clone());
+            with_layer(model, agent, |layer| {
+                layer.begin_window(truncated);
+                if let Some(head) = store_head.as_ref() {
+                    layer.restore_head(head.as_ref());
+                }
+            });
             if let Some(card) = model.agents.get_mut(&agent)
                 && let Some(protocol) =
                     AgentLayer::from_kind(&card.agent.kind).map(|layer| layer.protocol())

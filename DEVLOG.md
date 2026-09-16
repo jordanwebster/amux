@@ -1,3 +1,10 @@
+2026-09-16 — **Reopened chats keep their pending obligations.**
+Provider tips now retain the bounded facts needed to restore answerable Claude
+PTY, Claude SDK and Codex asks at the stored cursor. Opening or reconnecting a
+chat rebuilds those obligations and its last known turn condition before newer
+rows arrive; an unknown pre-cursor state keeps sends closed instead of claiming
+the provider is ready.
+
 2026-09-16 — **Stored conversations use their native chat presentation.**
 Every durable Claude PTY, Claude SDK and Codex entry now passes through the
 same provider renderer as a live stream, preserving prompts, replies, thought,

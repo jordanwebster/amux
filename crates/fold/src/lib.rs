@@ -590,6 +590,14 @@ impl AgentFold {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonBytes(pub Vec<u8>);
 
+/// One bounded provider row retained only to rebuild a pending live
+/// obligation after the durable cursor has skipped its creating row.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreRow {
+    pub seq: Seq,
+    pub payload: JsonBytes,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "", deserialize = ""))]
 pub struct Head<F: ProviderFold> {
@@ -1228,6 +1236,7 @@ composite_safe!(Order => [u64, u16]);
 composite_safe!(Revision => [u64, u64, u32]);
 composite_safe!(MergeDefect => [String, Revision, EntryKey, usize]);
 composite_safe!(JsonBytes => [Vec<u8>]);
+composite_safe!(RestoreRow => [Seq, JsonBytes]);
 composite_safe!(Generations => [u64]);
 composite_safe!(AttemptId => [u64]);
 composite_safe!(OpId => [u64]);

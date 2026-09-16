@@ -1725,13 +1725,14 @@ fn closed(
                 .as_mut()
                 .map(|head| head.apply(Input::ProcessExited { exit_code, at }, at)),
             _ => {
-                let mutations = chat
-                    .head
-                    .as_mut()
-                    .map(|head| head.apply(Input::ObserverLost { at }, at));
                 chat.state = ChatState::Painted;
                 chat.catching_up_since = None;
-                mutations
+                // Transport loss makes the reducer-local observer stale, but
+                // it does not revoke facts already committed at the durable
+                // cursor. The next exact-cursor open must be able to restore
+                // those obligations and the prior turn condition before it
+                // folds any newer rows.
+                None
             }
         }
     };

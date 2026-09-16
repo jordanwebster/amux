@@ -764,6 +764,27 @@ impl ClaudeLayer {
         };
     }
 
+    pub(crate) fn restore_head(&mut self, tip: &::fold::claude_pty::ClaudeFold) {
+        self.cursor = tip.through();
+        if !tip.restored_outstanding_known() {
+            self.stale = true;
+            return;
+        }
+        for (row, tool_use_id) in tip.restored_obligations() {
+            if let Ok(payload) = serde_json::from_slice(&row.payload.0) {
+                fold::restore_permission_request(self, row.seq, &payload, tool_use_id);
+            }
+        }
+        match tip.restored_attention() {
+            Some(Attention::Working) => self.turn.open = true,
+            Some(Attention::NeedsYou {
+                why: Why::Permission | Why::Question,
+            }) if self.asks.is_empty() => self.stale = true,
+            Some(Attention::Unknown) | None => self.stale = true,
+            _ => {}
+        }
+    }
+
     /// Fold one structured row (transcript row, hook row, or amux marker).
     /// `arrived` is the shell's observed arrival time from the batch Msg —
     /// the staleness clock's base (time enters through Msgs).

@@ -254,6 +254,27 @@ impl CodexLayer {
         self.observation.begin_window(truncated);
     }
 
+    pub(crate) fn restore_head(&mut self, tip: &::fold::codex::CodexFold) {
+        let attention = tip.restored_attention();
+        let rows = tip
+            .restored_obligations()
+            .filter_map(|row| {
+                serde_json::from_slice(&row.payload.0)
+                    .ok()
+                    .map(|payload| (row.seq, payload))
+            })
+            .collect::<Vec<_>>();
+        let attachments = &self.attachments;
+        self.observation
+            .restore_condition(attention, rows, |text| attachments.segments(text));
+        if !tip.restored_outstanding_known()
+            || matches!(attention, Some(Attention::NeedsYou { .. }))
+                && self.observation.ask_count() == 0
+        {
+            self.stale = true;
+        }
+    }
+
     pub(crate) fn observe(&mut self, seq: u64, _arrived: DateTime<Utc>, row: &Value) {
         self.attachments.observe_row(row);
         self.observe_provider(row);

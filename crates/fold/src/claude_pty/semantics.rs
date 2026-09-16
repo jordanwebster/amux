@@ -18,8 +18,8 @@ use serde_json::Value;
 use super::{RowKind, classify_row, facts, prompt_source};
 use crate::{
     Baseline, Changes, Component, ComponentSource, Components, Entry, EntryKey, FieldPatch, Input,
-    JsonBytes, MergeDefect, Mutation, Order, Patch, PostcardSafe, ProviderFold, Revision,
-    SegmentId, TIP_MAX_BYTES, TIP_MAX_OPEN_ENTRIES, VersionedField,
+    JsonBytes, MergeDefect, Mutation, Order, Patch, PostcardSafe, ProviderFold, RestoreRow,
+    Revision, SegmentId, TIP_MAX_BYTES, TIP_MAX_OPEN_ENTRIES, VersionedField,
 };
 
 const SEEN_ROWS_MAX: usize = 4096;
@@ -279,6 +279,12 @@ struct PendingTodo {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingAsk {
+    row: RestoreRow,
+    tool_use_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaudeFold {
     segment: SegmentId,
     baseline: Baseline,
@@ -287,6 +293,7 @@ pub struct ClaudeFold {
     messages: Vec<OpenMessage>,
     open_tools: Vec<(String, EntryKey, Option<String>)>,
     pending_todos: Vec<PendingTodo>,
+    asks: Vec<PendingAsk>,
     inferred_turn: Option<EntryKey>,
     previous_row_at: Option<DateTime<Utc>>,
     prompt_at: Option<DateTime<Utc>>,
@@ -317,6 +324,7 @@ impl Default for ClaudeFold {
             messages: Vec::new(),
             open_tools: Vec::new(),
             pending_todos: Vec::new(),
+            asks: Vec::new(),
             inferred_turn: None,
             previous_row_at: None,
             prompt_at: None,
@@ -346,6 +354,20 @@ impl ClaudeFold {
 
     pub fn through(&self) -> u64 {
         self.through
+    }
+
+    pub fn restored_attention(&self) -> Option<Attention> {
+        self.known_attention.then_some(self.attention)
+    }
+
+    pub fn restored_outstanding_known(&self) -> bool {
+        self.known_outstanding
+    }
+
+    pub fn restored_obligations(&self) -> impl Iterator<Item = (&RestoreRow, Option<&str>)> {
+        self.asks
+            .iter()
+            .map(|ask| (&ask.row, ask.tool_use_id.as_deref()))
     }
 
     fn row(
@@ -380,17 +402,28 @@ impl ClaudeFold {
         let mut mutations = Vec::new();
         match kind {
             RowKind::TranscriptReady => {
+                self.asks.clear();
                 self.attention = Attention::Idle;
                 self.known_attention = true;
                 self.known_outstanding = true;
             }
             RowKind::HookStop => {
+                self.asks.clear();
                 self.attention = Attention::NeedsYou { why: Why::Finished };
                 self.known_attention = true;
                 self.known_outstanding = true;
                 self.turn_closed_at = activity_at;
             }
             RowKind::HookPermissionRequest => {
+                self.asks.push(PendingAsk {
+                    row: RestoreRow {
+                        seq,
+                        payload: JsonBytes(
+                            serde_json::to_vec(row).unwrap_or_else(|_| b"null".to_vec()),
+                        ),
+                    },
+                    tool_use_id: string(row, "tool_use_id"),
+                });
                 let why = if string(row, "tool_name").as_deref() == Some("AskUserQuestion") {
                     Why::Question
                 } else {
@@ -517,6 +550,7 @@ impl ClaudeFold {
                 partial(kind, body, Some(text.to_owned()), revision),
             ));
             if kind == ClaudeEntryKind::Prompt {
+                self.asks.clear();
                 self.attention = Attention::Working;
                 self.known_attention = true;
                 self.prompt_at = activity_at;
@@ -610,6 +644,7 @@ impl ClaudeFold {
                         self.inferred_turn = Some(turn);
                     }
                     self.attention = Attention::Idle;
+                    self.asks.clear();
                     self.known_attention = true;
                     self.known_outstanding = true;
                     self.turn_closed_at = activity_at;
@@ -912,6 +947,39 @@ impl ClaudeFold {
             }
             return;
         }
+        let ask_key = stable_hash(
+            format!("{}\u{1f}{}", name.as_deref().unwrap_or_default(), input).as_bytes(),
+        );
+        if let Some(ask) = self.asks.iter_mut().find(|ask| {
+            serde_json::from_slice::<Value>(&ask.row.payload.0)
+                .ok()
+                .is_some_and(|row| {
+                    stable_hash(
+                        format!(
+                            "{}\u{1f}{}",
+                            string(&row, "tool_name").unwrap_or_default(),
+                            row.get("tool_input").unwrap_or(&Value::Null)
+                        )
+                        .as_bytes(),
+                    ) == ask_key
+                })
+        }) {
+            ask.tool_use_id = Some(id.clone());
+        } else if message.1 && matches!(name.as_deref(), Some("AskUserQuestion" | "ExitPlanMode")) {
+            let row = serde_json::json!({
+                "type": "hook.permission_request",
+                "tool_name": name,
+                "tool_input": input,
+                "tool_use_id": id,
+            });
+            self.asks.push(PendingAsk {
+                row: RestoreRow {
+                    seq,
+                    payload: JsonBytes(serde_json::to_vec(&row).expect("synthetic ask serializes")),
+                },
+                tool_use_id: string(&row, "tool_use_id"),
+            });
+        }
         let key = namespaced_or_delivery("tool", Some(&id), seq, slot);
         let mut patch = partial(
             ClaudeEntryKind::Tool,
@@ -970,6 +1038,8 @@ impl ClaudeFold {
             ));
             return;
         };
+        self.asks
+            .retain(|ask| ask.tool_use_id.as_deref() != Some(id.as_str()));
         if let Some(index) = self
             .pending_todos
             .iter()
@@ -1138,7 +1208,7 @@ impl ClaudeFold {
     }
 
     fn enforce_tip(&mut self, mutations: &mut Vec<Mutation<ClaudeEntry>>, revision: Revision) {
-        while self.messages.len() + self.open_tools.len() > TIP_MAX_OPEN_ENTRIES
+        while self.messages.len() + self.open_tools.len() + self.asks.len() > TIP_MAX_OPEN_ENTRIES
             || self.tip_bytes() > TIP_MAX_BYTES
         {
             if !self.messages.is_empty() {
@@ -1156,6 +1226,9 @@ impl ClaudeFold {
                 };
                 mutations.push(upsert(key, revision.seq, 0, revision, patch));
                 self.known_outstanding = false;
+            } else if !self.asks.is_empty() {
+                self.asks.remove(0);
+                self.known_outstanding = false;
             } else if !self.seen_rows.is_empty() {
                 self.seen_rows.remove(0);
             } else {
@@ -1172,7 +1245,7 @@ impl ProviderFold for ClaudeFold {
 
     const PROTOCOL: StructuredProtocol = StructuredProtocol::ClaudePtyTranscript;
     const ENTRY_VERSION: u32 = 1;
-    const TIP_VERSION: u32 = 1;
+    const TIP_VERSION: u32 = 2;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
 
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
@@ -1182,6 +1255,7 @@ impl ProviderFold for ClaudeFold {
         self.messages.clear();
         self.open_tools.clear();
         self.pending_todos.clear();
+        self.asks.clear();
         self.inferred_turn = None;
         self.previous_row_at = None;
         self.prompt_at = None;
@@ -1255,6 +1329,7 @@ impl ProviderFold for ClaudeFold {
                 self.messages.clear();
                 self.open_tools.clear();
                 self.pending_todos.clear();
+                self.asks.clear();
                 Vec::new()
             }
             Input::ObserverLost { .. } => {
@@ -1356,6 +1431,15 @@ impl ProviderFold for ClaudeFold {
             + self.messages.capacity() * size_of::<OpenMessage>()
             + self.open_tools.capacity() * size_of::<(String, EntryKey, Option<String>)>()
             + self.pending_todos.capacity() * size_of::<PendingTodo>()
+            + self.asks.capacity() * size_of::<PendingAsk>()
+            + self
+                .asks
+                .iter()
+                .map(|ask| {
+                    ask.row.payload.0.capacity()
+                        + ask.tool_use_id.as_ref().map_or(0, String::capacity)
+                })
+                .sum::<usize>()
             + strings
     }
 }
@@ -1705,6 +1789,14 @@ impl crate::private::Sealed for PendingTodo {
 }
 impl PostcardSafe for PendingTodo {}
 
+impl crate::private::Sealed for PendingAsk {
+    fn assert_fields_are_postcard_safe() {
+        crate::assert_postcard_safe::<RestoreRow>();
+        crate::assert_postcard_safe::<Option<String>>();
+    }
+}
+impl PostcardSafe for PendingAsk {}
+
 impl crate::private::Sealed for ClaudeFold {
     fn assert_fields_are_postcard_safe() {
         let _ = |ClaudeFold {
@@ -1715,6 +1807,7 @@ impl crate::private::Sealed for ClaudeFold {
                      messages,
                      open_tools,
                      pending_todos,
+                     asks,
                      inferred_turn,
                      previous_row_at,
                      prompt_at,
@@ -1741,6 +1834,7 @@ impl crate::private::Sealed for ClaudeFold {
             crate::assert_value_safe(&messages);
             crate::assert_value_safe(&open_tools);
             crate::assert_value_safe(&pending_todos);
+            crate::assert_value_safe(&asks);
             crate::assert_value_safe(&inferred_turn);
             crate::assert_value_safe(&previous_row_at);
             crate::assert_value_safe(&prompt_at);

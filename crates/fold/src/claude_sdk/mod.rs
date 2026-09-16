@@ -693,6 +693,13 @@ impl Observation {
         };
     }
 
+    /// Restore only the cursor-relative condition carried by a durable tip.
+    /// Feed entries remain owned by the store-backed window.
+    pub fn restore_condition(&mut self, cursor: u64, turn: TurnState) {
+        self.cursor = cursor;
+        self.turn = turn;
+    }
+
     pub fn observe(&mut self, seq: u64, row: &Value) {
         self.cursor = self.cursor.max(seq);
         if row["parent_tool_use_id"].is_null() && row["type"].as_str() == Some("conversation_reset")

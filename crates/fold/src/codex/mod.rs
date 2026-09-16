@@ -5,7 +5,7 @@ mod semantics;
 
 use std::collections::{BTreeMap, VecDeque};
 
-use model::AgentMessageKind;
+use model::{AgentMessageKind, Attention};
 pub use semantics::{
     CodexBody, CodexEntry, CodexEntryKind, CodexFold, CodexPartial, DELIVERY_KEYED_VARIANTS,
 };
@@ -821,6 +821,46 @@ impl<C> Observation<C> {
     pub fn begin_window(&mut self, truncated: bool) {
         *self = Self {
             truncated_start: truncated,
+            ..Self::default()
+        };
+    }
+
+    /// Rebuild answerable obligations from the durable tip without retaining
+    /// a second copy of the transcript entries already painted by the store.
+    pub fn restore_condition(
+        &mut self,
+        attention: Option<Attention>,
+        rows: impl IntoIterator<Item = (u64, Value)>,
+        content: impl Fn(&str) -> C,
+    ) {
+        let truncated_start = self.truncated_start;
+        let mut restored = Self {
+            truncated_start,
+            ..Self::default()
+        };
+        for (seq, row) in rows {
+            restored.observe(seq, &row, &content);
+        }
+        let asks = restored.asks;
+        let mut turn = TurnState::default();
+        match attention {
+            Some(Attention::NeedsYou {
+                why: model::Why::Finished,
+            }) => {
+                turn.status = ThreadStatus::Idle;
+                turn.last = Some(LastTurn::Completed);
+            }
+            Some(Attention::Working) | Some(Attention::NeedsYou { .. }) => {
+                turn.status = ThreadStatus::Active;
+            }
+            Some(Attention::Idle) => turn.status = ThreadStatus::Idle,
+            Some(Attention::Unknown) | None => {}
+        }
+        *self = Self {
+            truncated_start,
+            ready_count: u64::from(attention.is_some()),
+            asks,
+            turn,
             ..Self::default()
         };
     }

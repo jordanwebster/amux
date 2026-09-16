@@ -1188,9 +1188,9 @@ pub(crate) fn stored_entry_block(
     theme: Theme,
     width: usize,
 ) -> Option<PaintedBlock> {
-    use ui_state::DurableEntry as _;
     use ui_state::{
-        StoredClaudeSdkBody as ClaudeSdkBody, StoredClaudeSdkEntryKind as ClaudeSdkEntryKind,
+        DurableEntry as _, StoredClaudeSdkBody as ClaudeSdkBody,
+        StoredClaudeSdkEntryKind as ClaudeSdkEntryKind,
     };
 
     let body = entry.body().cloned().unwrap_or_default();

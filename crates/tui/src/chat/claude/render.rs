@@ -869,8 +869,9 @@ pub(crate) fn stored_entry_block(
     theme: Theme,
     width: usize,
 ) -> PaintedBlock {
-    use ui_state::DurableEntry as _;
-    use ui_state::{StoredClaudeBody as ClaudeBody, StoredClaudeEntryKind as ClaudeEntryKind};
+    use ui_state::{
+        DurableEntry as _, StoredClaudeBody as ClaudeBody, StoredClaudeEntryKind as ClaudeEntryKind,
+    };
 
     let body = entry.body().cloned().unwrap_or_default();
     let text = entry.text().unwrap_or_default().to_string();

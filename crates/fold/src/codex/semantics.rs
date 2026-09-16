@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use crate::{
     Baseline, Changes, Component, ComponentSource, Components, Entry, EntryKey, FieldPatch, Input,
-    JsonBytes, MergeDefect, Mutation, Order, Patch, PostcardSafe, ProviderFold, Revision,
-    SegmentId, TIP_MAX_BYTES, TIP_MAX_OPEN_ENTRIES, VersionedField,
+    JsonBytes, MergeDefect, Mutation, Order, Patch, PostcardSafe, ProviderFold, RestoreRow,
+    Revision, SegmentId, TIP_MAX_BYTES, TIP_MAX_OPEN_ENTRIES, VersionedField,
 };
 
 const VALUE_MAX: usize = 64 * 1024;
@@ -233,7 +233,8 @@ pub struct CodexFold {
     segment: SegmentId,
     baseline: Baseline,
     through: u64,
-    asks: Vec<String>,
+    asks: Vec<PendingAsk>,
+    pending_approval_context: Option<RestoreRow>,
     attention: Attention,
     phase: AgentPhase,
     last_activity: Option<DateTime<Utc>>,
@@ -248,6 +249,12 @@ pub struct CodexFold {
     known_outstanding: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct PendingAsk {
+    request_id: String,
+    rows: Vec<RestoreRow>,
+}
+
 impl Default for CodexFold {
     fn default() -> Self {
         Self {
@@ -255,6 +262,7 @@ impl Default for CodexFold {
             baseline: Baseline::Start,
             through: 0,
             asks: Vec::new(),
+            pending_approval_context: None,
             attention: Attention::Unknown,
             phase: AgentPhase::Running,
             last_activity: None,
@@ -272,6 +280,22 @@ impl Default for CodexFold {
 }
 
 impl CodexFold {
+    pub fn through(&self) -> u64 {
+        self.through
+    }
+
+    pub fn restored_attention(&self) -> Option<Attention> {
+        self.known_attention.then_some(self.attention)
+    }
+
+    pub fn restored_outstanding_known(&self) -> bool {
+        self.known_outstanding
+    }
+
+    pub fn restored_obligations(&self) -> impl Iterator<Item = &RestoreRow> {
+        self.asks.iter().flat_map(|ask| ask.rows.iter())
+    }
+
     fn row(
         &mut self,
         seq: u64,
@@ -289,6 +313,18 @@ impl CodexFold {
         }
         let revision = Revision::row(seq);
         let method = row.get("type").and_then(Value::as_str).unwrap_or("");
+        if method != "amux.codex_approval_required"
+            && !matches!(
+                method,
+                "item/commandExecution/requestApproval"
+                    | "item/fileChange/requestApproval"
+                    | "item/permissions/requestApproval"
+                    | "item/tool/call"
+                    | "item/tool/requestUserInput"
+            )
+        {
+            self.pending_approval_context = None;
+        }
         let mut out = Vec::new();
         match method {
             "amux.attachments"
@@ -416,6 +452,12 @@ impl CodexFold {
             | "item/permissions/requestApproval"
             | "item/tool/call"
             | "item/tool/requestUserInput" => {
+                self.pending_approval_context = Some(RestoreRow {
+                    seq,
+                    payload: JsonBytes(
+                        serde_json::to_vec(row).unwrap_or_else(|_| b"null".to_vec()),
+                    ),
+                });
                 self.row_addressed_work(seq, revision, method, row, &mut out)
             }
             "amux.codex_approval_required" => {
@@ -430,8 +472,24 @@ impl CodexFold {
                 };
                 let key = native_or_delivery("item", Some(&item_id), seq, 0);
                 let request = compact_id(row.get("request_id").unwrap_or(&Value::Null));
-                if !self.asks.contains(&request) {
-                    self.asks.push(request);
+                if !self.asks.iter().any(|ask| ask.request_id == request) {
+                    if let Some(context) = self.pending_approval_context.take() {
+                        self.asks.push(PendingAsk {
+                            request_id: request,
+                            rows: vec![
+                                context,
+                                RestoreRow {
+                                    seq,
+                                    payload: JsonBytes(
+                                        serde_json::to_vec(row)
+                                            .unwrap_or_else(|_| b"null".to_vec()),
+                                    ),
+                                },
+                            ],
+                        });
+                    } else {
+                        self.known_outstanding = false;
+                    }
                 }
                 self.attention = Attention::NeedsYou {
                     why: Why::Permission,
@@ -461,7 +519,7 @@ impl CodexFold {
                 };
                 let key = native_or_delivery("item", Some(&item_id), seq, 0);
                 let request = compact_id(row.get("request_id").unwrap_or(&Value::Null));
-                self.asks.retain(|ask| ask != &request);
+                self.asks.retain(|ask| ask.request_id != request);
                 let state = string(row, "resolution")
                     .or_else(|| string(row, "reason"))
                     .unwrap_or_else(|| "resolved".into());
@@ -520,11 +578,14 @@ impl CodexFold {
             )),
         }
         while self.asks.len() > TIP_MAX_OPEN_ENTRIES || self.tip_bytes() > TIP_MAX_BYTES {
-            if self.asks.is_empty() {
+            if !self.asks.is_empty() {
+                self.asks.remove(0);
+                self.known_outstanding = false;
+            } else if self.pending_approval_context.take().is_some() {
+                self.known_outstanding = false;
+            } else {
                 break;
             }
-            self.asks.remove(0);
-            self.known_outstanding = false;
         }
         out
     }
@@ -766,12 +827,13 @@ impl ProviderFold for CodexFold {
     type Entry = CodexEntry;
     const PROTOCOL: StructuredProtocol = StructuredProtocol::Codex;
     const ENTRY_VERSION: u32 = 2;
-    const TIP_VERSION: u32 = 1;
+    const TIP_VERSION: u32 = 2;
     const TIP_BUDGET: usize = TIP_MAX_BYTES;
     fn begin(&mut self, segment: SegmentId, baseline: Baseline) {
         self.segment = segment;
         self.baseline = baseline;
         self.asks.clear();
+        self.pending_approval_context = None;
         self.ready_seen = false;
         if baseline == Baseline::Start {
             *self = Self {
@@ -863,8 +925,24 @@ impl ProviderFold for CodexFold {
     }
     fn tip_bytes(&self) -> usize {
         size_of::<Self>()
-            + self.asks.capacity() * size_of::<String>()
-            + self.asks.iter().map(String::capacity).sum::<usize>()
+            + self.asks.capacity() * size_of::<PendingAsk>()
+            + self
+                .asks
+                .iter()
+                .map(|ask| {
+                    ask.request_id.capacity()
+                        + ask.rows.capacity() * size_of::<RestoreRow>()
+                        + ask
+                            .rows
+                            .iter()
+                            .map(|row| row.payload.0.capacity())
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+            + self
+                .pending_approval_context
+                .as_ref()
+                .map_or(0, |row| row.payload.0.capacity())
             + self.model.as_ref().map_or(0, String::capacity)
     }
 }
@@ -1167,6 +1245,13 @@ impl crate::private::Sealed for CodexEntry {
     }
 }
 impl PostcardSafe for CodexEntry {}
+impl crate::private::Sealed for PendingAsk {
+    fn assert_fields_are_postcard_safe() {
+        crate::assert_postcard_safe::<String>();
+        crate::assert_postcard_safe::<Vec<RestoreRow>>();
+    }
+}
+impl PostcardSafe for PendingAsk {}
 impl crate::private::Sealed for CodexFold {
     fn assert_fields_are_postcard_safe() {
         let _ = |CodexFold {
@@ -1174,6 +1259,7 @@ impl crate::private::Sealed for CodexFold {
                      baseline,
                      through,
                      asks,
+                     pending_approval_context,
                      attention,
                      phase,
                      last_activity,
@@ -1191,6 +1277,7 @@ impl crate::private::Sealed for CodexFold {
             crate::assert_value_safe(&baseline);
             crate::assert_value_safe(&through);
             crate::assert_value_safe(&asks);
+            crate::assert_value_safe(&pending_approval_context);
             crate::assert_value_safe(&attention);
             crate::assert_value_safe(&phase);
             crate::assert_value_safe(&last_activity);
@@ -1567,13 +1654,21 @@ mod tests {
     #[test]
     fn codex_tip_closes_gates_when_unresolved_asks_overflow() {
         let input = (0..=TIP_MAX_OPEN_ENTRIES)
-            .map(|index| {
-                serde_json::to_vec(&json!({
-                    "type":"amux.codex_approval_required",
-                    "item_id":format!("item-{index}"),
-                    "request_id":format!("request-{index}")
-                }))
-                .unwrap()
+            .flat_map(|index| {
+                [
+                    serde_json::to_vec(&json!({
+                        "type":"item/commandExecution/requestApproval",
+                        "itemId":format!("item-{index}"),
+                        "command":"true"
+                    }))
+                    .unwrap(),
+                    serde_json::to_vec(&json!({
+                        "type":"amux.codex_approval_required",
+                        "item_id":format!("item-{index}"),
+                        "request_id":format!("request-{index}")
+                    }))
+                    .unwrap(),
+                ]
             })
             .collect::<Vec<_>>();
         let (fold, _) = fold_rows(&input);

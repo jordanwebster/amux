@@ -123,6 +123,22 @@ impl AgentLayer {
         }
     }
 
+    pub(crate) fn restore_head(&mut self, head: Option<&crate::store::HeadDto>) {
+        match (self, head) {
+            (Self::Claude(layer), Some(crate::store::HeadDto::Claude(head))) => {
+                layer.restore_head(&head.tip)
+            }
+            (Self::ClaudeSdk(layer), Some(crate::store::HeadDto::ClaudeSdk(head))) => {
+                layer.restore_head(&head.tip)
+            }
+            (Self::Codex(layer), Some(crate::store::HeadDto::Codex(head))) => {
+                layer.restore_head(&head.tip)
+            }
+            (layer, None) => layer.invalidate(),
+            (layer, Some(_)) => layer.invalidate(),
+        }
+    }
+
     pub(crate) fn observe(&mut self, seq: u64, at: DateTime<Utc>, payload: &serde_json::Value) {
         match self {
             Self::Claude(layer) => layer.observe(seq, at, payload),

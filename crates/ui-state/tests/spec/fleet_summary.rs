@@ -1,3 +1,4 @@
+use fold::ProviderFold;
 use model::{AgentPhase, Attention, Summary, SummaryEnvelope, SummaryField, Why};
 use ui_state::{Effect, Model, Msg, ServerMsg, StreamEntry, StreamMsg, update};
 
@@ -64,7 +65,12 @@ fn a_host_summary_wins_a_tie_then_the_open_chat_wins_when_ahead() {
         &mut model,
         Msg::Server(ServerMsg::AgentSummary {
             agent: agent.id,
-            envelope: envelope(1, 1, false, Attention::NeedsYou { why: Why::Finished }),
+            envelope: envelope(
+                1,
+                fold::claude_pty::ClaudeFold::TIP_VERSION,
+                false,
+                Attention::NeedsYou { why: Why::Finished },
+            ),
         }),
     );
     let card = model.agent(agent.id).expect("agent card");
@@ -107,7 +113,12 @@ fn a_host_summary_wins_a_tie_then_the_open_chat_wins_when_ahead() {
 #[test]
 fn stale_and_foreign_host_summaries_keep_their_age_visible() {
     let mut agent = an_agent("summary", "nova");
-    agent.summary = Some(envelope(4, 1, true, Attention::Working));
+    agent.summary = Some(envelope(
+        4,
+        fold::claude_pty::ClaudeFold::TIP_VERSION,
+        true,
+        Attention::Working,
+    ));
     let model = fold([
         connected("nova"),
         host_up(&a_host("nova")),

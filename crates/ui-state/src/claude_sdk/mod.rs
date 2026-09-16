@@ -142,6 +142,30 @@ impl ClaudeSdkLayer {
         self.observation.begin_window(truncated);
     }
 
+    pub(crate) fn restore_head(&mut self, tip: &::fold::claude_sdk::ClaudeSdkFold) {
+        let attention = tip.restored_attention();
+        let turn = match attention {
+            Some(model::Attention::Idle) => ::fold::claude_sdk::TurnState::Idle,
+            Some(model::Attention::Working) => ::fold::claude_sdk::TurnState::Working,
+            Some(model::Attention::NeedsYou {
+                why: model::Why::Finished,
+            }) => ::fold::claude_sdk::TurnState::Finished,
+            Some(model::Attention::NeedsYou { .. }) => ::fold::claude_sdk::TurnState::Working,
+            Some(model::Attention::Unknown) | None => ::fold::claude_sdk::TurnState::Unknown,
+        };
+        self.observation.restore_condition(tip.through(), turn);
+        for row in tip.restored_obligations() {
+            if let Ok(payload) = serde_json::from_slice(&row.payload.0) {
+                asks::observe(self, &payload);
+            }
+        }
+        if !tip.restored_outstanding_known()
+            || matches!(attention, Some(model::Attention::NeedsYou { .. })) && self.asks.is_empty()
+        {
+            self.stale = true;
+        }
+    }
+
     pub(crate) fn observe(&mut self, seq: u64, _at: DateTime<Utc>, row: &Value) {
         self.attachments.observe_row(row);
         self.observe_input(row);

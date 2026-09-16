@@ -396,6 +396,18 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     );
 }
 
+pub(super) fn restore_permission_request(
+    layer: &mut ClaudeLayer,
+    seq: u64,
+    row: &Value,
+    tool_use_id: Option<&str>,
+) {
+    fold_permission_request(layer, seq, row);
+    if let (Some(tool_use_id), Some(ask)) = (tool_use_id, layer.asks.back_mut()) {
+        ask.tool_use_id = Some(tool_use_id.to_owned());
+    }
+}
+
 /// The name the session gives a hook-announced ask, derived here exactly as
 /// the session derives it: the tool_use id the permission hook carries when
 /// it has one, else the prompt id, else a name built from the session and
