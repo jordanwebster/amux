@@ -131,8 +131,8 @@ pub struct HistoricalRow {
     pub activity_at: Option<DateTime<Utc>>,
 }
 
-/// Resolve a session transcript under the current project or one of its
-/// sibling Git worktrees.
+/// Resolve a session transcript under the current project, a sibling Git
+/// worktree, or an unambiguous project-directory fallback.
 pub fn find_session_file(
     config_root: &Path,
     working_dir: &Path,
@@ -159,13 +159,30 @@ pub fn find_session_file(
     worktrees.sort();
     worktrees.dedup();
 
-    worktrees.into_iter().find_map(|worktree| {
-        let path = config_root
-            .join("projects")
-            .join(hash_project_path(&worktree))
+    let projects = config_root.join("projects");
+    if let Some(path) = worktrees.into_iter().find_map(|worktree| {
+        let path = projects
+            .join(project_slug(&worktree))
             .join(format!("{session_id}.jsonl"));
         path.is_file().then_some(path)
-    })
+    }) {
+        return Some(path);
+    }
+
+    let mut found = None;
+    for entry in std::fs::read_dir(projects).ok()?.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let path = entry.path().join(format!("{session_id}.jsonl"));
+        if path.is_file() {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(path);
+        }
+    }
+    found
 }
 
 /// Read a fixed transcript tail. The file length is sampled once and bytes
@@ -884,7 +901,7 @@ async fn project_directories(
         paths.dedup();
         return Ok(paths
             .into_iter()
-            .map(|path| projects.join(hash_project_path(&path)))
+            .map(|path| projects.join(project_slug(&path)))
             .collect());
     }
     if !projects.exists() {
@@ -1011,9 +1028,19 @@ fn absolute_path(path: &Path) -> Result<PathBuf, Error> {
     }
 }
 
-fn hash_project_path(path: &Path) -> String {
+fn project_slug(path: &Path) -> String {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    canonical.to_string_lossy().replace(['/', '_'], "-")
+    canonical
+        .to_string_lossy()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 fn parse_timestamp_millis(timestamp: &str) -> Option<u64> {
@@ -1132,20 +1159,56 @@ mod tests {
     #[test]
     fn session_file_uses_the_configured_project_slug() {
         let root = TempDir::new().unwrap();
-        let project = root.path().join("project");
-        std::fs::create_dir(&project).unwrap();
+        let project = Path::new("/Users/example/project.with_under score");
         let config = root.path().join("claude");
         let session_id = "11111111-1111-1111-1111-111111111111";
         let transcript = config
             .join("projects")
-            .join(hash_project_path(&project))
+            .join("-Users-example-project-with-under-score")
             .join(format!("{session_id}.jsonl"));
         std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
         std::fs::write(&transcript, b"{}\n").unwrap();
 
         assert_eq!(
-            find_session_file(&config, &project, session_id),
+            find_session_file(&config, project, session_id),
             Some(transcript)
+        );
+    }
+
+    #[test]
+    fn session_file_scans_for_one_unambiguous_fallback() {
+        let root = TempDir::new().unwrap();
+        let config = root.path().join("claude");
+        let session_id = "22222222-2222-2222-2222-222222222222";
+        let transcript = config
+            .join("projects")
+            .join("recorded-elsewhere")
+            .join(format!("{session_id}.jsonl"));
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, b"{}\n").unwrap();
+
+        assert_eq!(
+            find_session_file(
+                &config,
+                Path::new("/working/directory/whose-slug-is-absent"),
+                session_id,
+            ),
+            Some(transcript.clone())
+        );
+
+        let duplicate = config
+            .join("projects")
+            .join("duplicate")
+            .join(format!("{session_id}.jsonl"));
+        std::fs::create_dir_all(duplicate.parent().unwrap()).unwrap();
+        std::fs::write(duplicate, b"{}\n").unwrap();
+        assert_eq!(
+            find_session_file(
+                &config,
+                Path::new("/working/directory/whose-slug-is-absent"),
+                session_id,
+            ),
+            None
         );
     }
 

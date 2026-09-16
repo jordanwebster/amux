@@ -427,10 +427,7 @@ fn sdk_integration_todos_share_native_blocks_and_replay_without_feed_rows() {
     let observed = provider::facts(&model, agent_id(AGENT)).todos;
     assert!(observed.is_some());
 
-    update(
-        &mut model,
-        batch(AGENT, 200, vec![rows(STREAM)[0].clone()]),
-    );
+    update(&mut model, batch(AGENT, 200, vec![rows(STREAM)[0].clone()]));
     assert_eq!(
         provider::facts(&model, agent_id(AGENT)).todos,
         observed,

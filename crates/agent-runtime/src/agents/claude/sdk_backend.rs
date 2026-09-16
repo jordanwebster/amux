@@ -2556,14 +2556,14 @@ mod tests {
     #[tokio::test]
     async fn daemon_sdk_resume_publishes_transcript_history_before_ready() {
         let directory = tempfile::tempdir().unwrap();
-        let working_dir = directory.path().join("project");
+        let working_dir = directory.path().join("project.with-dot");
         std::fs::create_dir(&working_dir).unwrap();
         let config_root = directory.path().join("claude");
         let session_id = Uuid::new_v4();
         let project_slug = std::fs::canonicalize(&working_dir)
             .unwrap()
             .to_string_lossy()
-            .replace(['/', '_'], "-");
+            .replace(|character: char| !character.is_ascii_alphanumeric(), "-");
         let transcript = config_root
             .join("projects")
             .join(project_slug)

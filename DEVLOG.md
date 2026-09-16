@@ -1,3 +1,9 @@
+2026-09-16 — **SDK resume finds Claude's exact project directory.**
+Transcript lookup now replaces every non-ASCII-alphanumeric path character in
+the same way as Claude Code, so dotted worktree paths resolve correctly. When
+no current or sibling worktree path matches, one unambiguous session file in
+the project catalogue is accepted as a recovery fallback.
+
 2026-09-16 — **SDK todo specs follow the resume boundary.**
 The UI integration contract now proves that a ready row preserves task state
 recovered from resume history, while a later conversation reset still clears
