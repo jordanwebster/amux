@@ -31,6 +31,7 @@ pub(crate) struct SummaryCut {
 pub(crate) struct SummarizerPublication {
     pub(crate) agent_id: Uuid,
     pub(crate) cut: SummaryCut,
+    pub(crate) publish_summary: bool,
     pub(crate) publish_progress: bool,
     pub(crate) acknowledged: Option<oneshot::Sender<()>>,
 }
@@ -198,6 +199,7 @@ async fn supervise(
     let _ = publisher.send(SummarizerPublication {
         agent_id,
         cut: shared.get(),
+        publish_summary: true,
         publish_progress: false,
         acknowledged: None,
     });
@@ -242,6 +244,7 @@ async fn supervise(
                     let _ = publisher.send(SummarizerPublication {
                         agent_id,
                         cut,
+                        publish_summary: true,
                         publish_progress: false,
                         acknowledged: None,
                     });
@@ -252,6 +255,7 @@ async fn supervise(
                     let _ = publisher.send(SummarizerPublication {
                         agent_id,
                         cut,
+                        publish_summary: true,
                         publish_progress: false,
                         acknowledged: None,
                     });
@@ -277,6 +281,7 @@ async fn supervise(
                 let _ = publisher.send(SummarizerPublication {
                     agent_id,
                     cut: shared.get(),
+                    publish_summary: true,
                     publish_progress: false,
                     acknowledged: None,
                 });
@@ -308,7 +313,9 @@ async fn run_worker(
     mut control_rx: mpsc::UnboundedReceiver<Control>,
     cancel: CancellationToken,
 ) {
-    let mut dirty = false;
+    let mut last_published_summary = shared.get().summary;
+    let mut summary_dirty = false;
+    let mut last_progress_through = replay_through;
     let mut rows_since_progress = 0u64;
     let mut observed_at = shared.get().observed_at;
     let now = tokio::time::Instant::now();
@@ -330,13 +337,20 @@ async fn run_worker(
                 let changes = fold.apply_summary(Input::ProcessExited { exit_code, at: now });
                 observed_at = now;
                 replace_cut(&shared, &fold, changes.through, observed_at);
-                let _ = publisher.send(SummarizerPublication {
-                    agent_id,
-                    cut: shared.get(),
-                    publish_progress: false,
-                    acknowledged: Some(acknowledged),
-                });
-                dirty = false;
+                let cut = shared.get();
+                if cut.summary != last_published_summary {
+                    last_published_summary = cut.summary.clone();
+                    let _ = publisher.send(SummarizerPublication {
+                        agent_id,
+                        cut,
+                        publish_summary: true,
+                        publish_progress: false,
+                        acknowledged: Some(acknowledged),
+                    });
+                } else {
+                    let _ = acknowledged.send(());
+                }
+                summary_dirty = false;
             }
             event = reader.read_event() => {
                 match event {
@@ -354,21 +368,24 @@ async fn run_worker(
                             payload: &payload,
                         });
                         observed_at = published_at;
-                        dirty |= changes.changed;
                         rows_since_progress = rows_since_progress.saturating_add(1);
                         replace_cut(&shared, &fold, changes.through, observed_at);
+                        summary_dirty = shared.get().summary != last_published_summary;
                         if rows_since_progress >= PROGRESS_ROWS {
-                            publish_cut(agent_id, &shared, &publisher, true);
-                            rows_since_progress = 0;
-                            dirty = false;
+                            let through = shared.get().through;
+                            if through > last_progress_through {
+                                publish_cut(agent_id, &shared, &publisher, false, true);
+                                last_progress_through = through;
+                                rows_since_progress = 0;
+                            }
                         }
                     }
                     Some(BroadcastRead::ReplayComplete) => {
                         let now = Utc::now();
                         let changes = fold.apply_summary(Input::ReplayComplete { through: replay_through, at: now });
                         observed_at = now;
-                        dirty |= changes.changed;
                         replace_cut(&shared, &fold, changes.through, observed_at);
+                        summary_dirty = shared.get().summary != last_published_summary;
                     }
                     Some(BroadcastRead::Lagged | BroadcastRead::Reset) | None => {
                         let now = Utc::now();
@@ -380,17 +397,22 @@ async fn run_worker(
             }
             _ = tick.tick() => {
                 let changes = fold.apply_summary(Input::Tick { now: Utc::now() });
-                dirty |= changes.changed;
                 replace_cut(&shared, &fold, changes.through, observed_at);
+                summary_dirty = shared.get().summary != last_published_summary;
             }
-            _ = flush.tick(), if dirty => {
-                publish_cut(agent_id, &shared, &publisher, false);
-                dirty = false;
+            _ = flush.tick(), if summary_dirty => {
+                let cut = shared.get();
+                last_published_summary = cut.summary.clone();
+                publish_cut(agent_id, &shared, &publisher, true, false);
+                summary_dirty = false;
             }
             _ = progress.tick() => {
-                publish_cut(agent_id, &shared, &publisher, true);
-                rows_since_progress = 0;
-                dirty = false;
+                let through = shared.get().through;
+                if through > last_progress_through {
+                    publish_cut(agent_id, &shared, &publisher, false, true);
+                    last_progress_through = through;
+                    rows_since_progress = 0;
+                }
             }
         }
     }
@@ -411,11 +433,13 @@ fn publish_cut(
     agent_id: Uuid,
     shared: &SharedSummary,
     publisher: &mpsc::UnboundedSender<SummarizerPublication>,
+    publish_summary: bool,
     publish_progress: bool,
 ) {
     let _ = publisher.send(SummarizerPublication {
         agent_id,
         cut: shared.get(),
+        publish_summary,
         publish_progress,
         acknowledged: None,
     });
@@ -424,7 +448,7 @@ fn publish_cut(
 #[cfg(test)]
 mod tests {
     use fold::{AgentFold, Baseline, Input};
-    use model::{AgentPhase, StructuredProtocol, SummaryField};
+    use model::{AgentPhase, Attention, StructuredProtocol, SummaryField, Why};
     use serde_json::json;
     use tokio::time::{Duration, timeout};
 
@@ -473,6 +497,119 @@ mod tests {
                 .summary
                 .unknown
                 .contains(&SummaryField::Attention)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn daemon_summarizer_idle_ticks_publish_nothing_without_new_rows() {
+        let source = StructuredLogSource::new(8);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle =
+            SummarizerHandle::attach(Uuid::from_u128(6), StructuredProtocol::Codex, source, tx)
+                .await
+                .unwrap();
+        handle.activate();
+
+        let initial = rx.recv().await.unwrap();
+        assert!(initial.publish_summary);
+        tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            rx.try_recv().is_err(),
+            "idle ticks and unchanged progress must not publish"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn daemon_summarizer_tick_publishes_finished_decay_to_idle() {
+        let source = StructuredLogSource::new(8);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = SummarizerHandle::attach(
+            Uuid::from_u128(7),
+            StructuredProtocol::ClaudePtyTranscript,
+            source.clone(),
+            tx,
+        )
+        .await
+        .unwrap();
+        handle.activate();
+        rx.recv().await.unwrap();
+
+        let closed_at = (Utc::now() - chrono::Duration::seconds(61)).timestamp_millis();
+        source
+            .write_row(json!({"type":"hook.stop"}), Some(closed_at), false)
+            .await;
+        let finished = next_matching(&mut rx, |event| {
+            event.publish_summary
+                && matches!(
+                    event.cut.summary.attention,
+                    Attention::NeedsYou { why: Why::Finished }
+                )
+        })
+        .await;
+        assert!(!finished.publish_progress);
+
+        let idle = next_matching(&mut rx, |event| {
+            event.publish_summary && event.cut.summary.attention == Attention::Idle
+        })
+        .await;
+        assert_eq!(idle.cut.through, finished.cut.through);
+        assert!(!idle.publish_progress);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn daemon_summarizer_steady_rows_coalesce_summaries_and_publish_progress() {
+        let source = StructuredLogSource::new(1_024);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = SummarizerHandle::attach(
+            Uuid::from_u128(8),
+            StructuredProtocol::Codex,
+            source.clone(),
+            tx,
+        )
+        .await
+        .unwrap();
+        handle.activate();
+        rx.recv().await.unwrap();
+
+        for seq in 1..=500 {
+            let turn = format!("turn-{}", (seq - 1) / 2);
+            let row = if seq % 2 == 1 {
+                json!({"type":"turn/started","turn":{"id":turn,"status":"inProgress"}})
+            } else {
+                json!({"type":"turn/completed","turn":{"id":turn,"status":"completed"}})
+            };
+            source.write(row).await;
+            tokio::task::yield_now().await;
+            tokio::time::advance(Duration::from_millis(1)).await;
+        }
+        timeout(Duration::from_secs(2), async {
+            while handle.snapshot().through < 500 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::advance(Duration::from_millis(150)).await;
+        tokio::task::yield_now().await;
+
+        let publications = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+        let summaries = publications
+            .iter()
+            .filter(|publication| publication.publish_summary)
+            .count();
+        let progress = publications
+            .iter()
+            .filter(|publication| publication.publish_progress)
+            .map(|publication| publication.cut.through)
+            .collect::<Vec<_>>();
+        assert!(summaries <= 6, "{summaries} summaries escaped coalescing");
+        assert_eq!(progress, [200, 400]);
+        assert!(
+            publications
+                .iter()
+                .all(|publication| publication.publish_summary != publication.publish_progress),
+            "progress-only cuts must not force summary publication"
         );
     }
 

@@ -1,3 +1,10 @@
+2026-09-16 — **Daemon standing publishes only meaningful cuts.**
+The summarizer now compares each folded summary with the last summary it
+actually published, so unchanged provider rows and one-second lifecycle ticks
+do not create fleet traffic. Progress is independent and advances only after
+new rows, at its two-second or 200-row cadence, without forcing a duplicate
+summary. Health transitions and real lifecycle changes remain immediate.
+
 2026-09-16 — **Fleet rows consume daemon standing without opening every chat.**
 The UI now selects one effective summary by fold version and structured-log
 position, preferring the daemon on ties and filling only fields the winner

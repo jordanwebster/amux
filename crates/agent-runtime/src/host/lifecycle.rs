@@ -56,7 +56,8 @@ pub(crate) fn spawn_summarizer_publication_loop(
                 }
                 continue;
             }
-            let revision_count = if publication.publish_progress { 2 } else { 1 };
+            let revision_count = usize::from(publication.publish_summary)
+                + usize::from(publication.publish_progress);
             let mut revisions = Vec::with_capacity(revision_count);
             for _ in 0..revision_count {
                 match state.reserve_authoritative_revision() {
@@ -72,27 +73,30 @@ pub(crate) fn spawn_summarizer_publication_loop(
                 }
             }
             if revisions.len() == revision_count {
-                let envelope = model::SummaryEnvelope {
-                    through: publication.cut.through,
-                    producer_version: publication.cut.producer_version,
-                    observed_at: publication.cut.observed_at,
-                    stale: publication.cut.stale,
-                    revision: revisions[0],
-                    summary: publication.cut.summary,
-                };
-                if let Some(context) = state.local_agents.get_mut(&publication.agent_id) {
-                    context.summary = Some(envelope.clone());
+                let mut revisions = revisions.into_iter();
+                if publication.publish_summary {
+                    let envelope = model::SummaryEnvelope {
+                        through: publication.cut.through,
+                        producer_version: publication.cut.producer_version,
+                        observed_at: publication.cut.observed_at,
+                        stale: publication.cut.stale,
+                        revision: revisions.next().expect("summary revision was reserved"),
+                        summary: publication.cut.summary,
+                    };
+                    if let Some(context) = state.local_agents.get_mut(&publication.agent_id) {
+                        context.summary = Some(envelope.clone());
+                    }
+                    state.local_agent_events.emit(model::AgentEvent::Summary {
+                        host_id,
+                        agent_id: publication.agent_id,
+                        envelope,
+                    });
                 }
-                state.local_agent_events.emit(model::AgentEvent::Summary {
-                    host_id,
-                    agent_id: publication.agent_id,
-                    envelope,
-                });
                 if publication.publish_progress {
                     let progress = model::Progress {
                         through: publication.cut.through,
                         at: chrono::Utc::now(),
-                        revision: revisions[1],
+                        revision: revisions.next().expect("progress revision was reserved"),
                     };
                     if let Some(context) = state.local_agents.get_mut(&publication.agent_id) {
                         context.progress = Some(progress.clone());
@@ -1023,6 +1027,7 @@ mod tests {
                     unknown: Vec::new(),
                 },
             },
+            publish_summary: true,
             publish_progress: true,
             acknowledged: None,
         })
@@ -1041,6 +1046,40 @@ mod tests {
         let record = state.local_agent_info(host_id, &agent_id).unwrap();
         assert_eq!(record.summary.unwrap(), envelope);
         assert_eq!(record.progress.unwrap(), progress);
+        drop(state);
+
+        tx.send(SummarizerPublication {
+            agent_id,
+            cut: SummaryCut {
+                through: 8,
+                producer_version: 1,
+                observed_at: Utc::now(),
+                stale: false,
+                summary: model::Summary {
+                    attention: model::Attention::Working,
+                    phase: model::AgentPhase::Running,
+                    last_activity: None,
+                    todo: None,
+                    context: None,
+                    model: None,
+                    unknown: Vec::new(),
+                },
+            },
+            publish_summary: false,
+            publish_progress: true,
+            acknowledged: None,
+        })
+        .unwrap();
+        let AgentEvent::Progress { progress, .. } = events.recv().await.unwrap() else {
+            panic!("progress-only cut emitted a summary");
+        };
+        assert_eq!(progress.through, 8);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), events.recv())
+                .await
+                .is_err(),
+            "progress-only cut emitted an extra fleet event"
+        );
     }
 
     #[tokio::test]
