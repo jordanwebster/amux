@@ -133,8 +133,12 @@ struct HumanAgent {
     parent: Option<AgentParent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     working_on: Option<WorkingOn>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     inventory_revision: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Serialize, Deserialize)]

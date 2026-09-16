@@ -4,6 +4,9 @@ fact parsing, todo progression, model and context observation, attention
 transitions, diff facts and the provider-native feed entry vocabulary. The UI
 keeps its existing Claude APIs as aliases and thin adapters while retaining
 asks, optimistic sends, stream gates and renderer-specific attachment content.
+The new inventory revision stays absent from human-readable agent JSON while it
+is zero, preserving existing mobile projections until an authoritative revision
+has actually been observed.
 
 2026-09-16 — **Codex correlation is verified at its provider boundaries.**
 Approval requests now have protocol coverage through event ingestion for both
