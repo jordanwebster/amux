@@ -1781,31 +1781,18 @@ async fn pump_inventory(
     }
 
     loop {
-        let event = tokio::select! {
+        let events = tokio::select! {
             event = hosts_stream.next() => match event {
-                Some(Ok(model::HostEvent::HostUpdated { host })) => ServerMsg::HostUpserted { host },
-                Some(Ok(model::HostEvent::HostRemoved { id })) => ServerMsg::HostRemoved { id },
-                Some(Ok(model::HostEvent::SnapshotComplete)) => ServerMsg::HostsSynchronized,
+                Some(Ok(model::HostEvent::HostUpdated { host })) => vec![ServerMsg::HostUpserted { host }],
+                Some(Ok(model::HostEvent::HostRemoved { id })) => vec![ServerMsg::HostRemoved { id }],
+                Some(Ok(model::HostEvent::SnapshotComplete)) => vec![ServerMsg::HostsSynchronized],
                 Some(Err(error)) => return Some(disconnect_reason(&error)),
                 None => return Some(DisconnectReason::TransportError {
                     message: "host inventory stream ended".into(),
                 }),
             },
             event = agents_stream.recv() => match event {
-                Ok(model::AgentEvent::AgentUp { agent })
-                | Ok(model::AgentEvent::AgentUpdated { agent }) => {
-                    ServerMsg::AgentUpserted { agent }
-                }
-                Ok(model::AgentEvent::AgentDown { agent_id, .. }) => {
-                    ServerMsg::AgentRemoved { id: agent_id }
-                }
-                Ok(model::AgentEvent::SnapshotComplete { .. }) => ServerMsg::AgentsSynchronized,
-                Ok(model::AgentEvent::HostInventory {
-                    host_id, agents, ..
-                }) => ServerMsg::HostInventory {
-                    host_id,
-                    agent_ids: agents.into_iter().map(|agent| agent.id).collect(),
-                },
+                Ok(event) => agent_server_msgs(event),
                 Err(error) => return Some(disconnect_reason(&error)),
             },
             _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {
@@ -1814,11 +1801,36 @@ async fn pump_inventory(
                     continue;
                 }
                 subscription_required = Some(required);
-                ServerMsg::CloudSubscriptionStatus { required }
+                vec![ServerMsg::CloudSubscriptionStatus { required }]
             },
         };
-        if tx.send(Msg::Server(event)).await.is_err() {
-            return None;
+        for event in events {
+            if tx.send(Msg::Server(event)).await.is_err() {
+                return None;
+            }
+        }
+    }
+}
+
+fn agent_server_msgs(event: model::AgentEvent) -> Vec<ServerMsg> {
+    match event {
+        model::AgentEvent::AgentUp { agent } | model::AgentEvent::AgentUpdated { agent } => {
+            vec![ServerMsg::AgentUpserted { agent }]
+        }
+        model::AgentEvent::AgentDown { agent_id, .. } => {
+            vec![ServerMsg::AgentRemoved { id: agent_id }]
+        }
+        model::AgentEvent::SnapshotComplete { .. } => vec![ServerMsg::AgentsSynchronized],
+        model::AgentEvent::HostInventory {
+            host_id, agents, ..
+        } => {
+            let agent_ids = agents.iter().map(|agent| agent.id).collect();
+            let mut messages = agents
+                .into_iter()
+                .map(|agent| ServerMsg::AgentUpserted { agent })
+                .collect::<Vec<_>>();
+            messages.push(ServerMsg::HostInventory { host_id, agent_ids });
+            messages
         }
     }
 }
@@ -2080,6 +2092,29 @@ mod tests {
                 payload: b"{".to_vec(),
             }),
             Err(StreamCloseReason::InternalError { detail }) if detail.contains("entry 7 is not JSON")));
+    }
+
+    #[test]
+    fn host_inventory_forwards_agent_bodies_before_authoritative_membership() {
+        let host_id = HostId::from_u128(7);
+        let first = codex_agent(AgentId::from_u128(1), host_id);
+        let second = claude_agent(AgentId::from_u128(2), host_id);
+
+        assert_eq!(
+            agent_server_msgs(model::AgentEvent::HostInventory {
+                host_id,
+                agents: vec![first.clone(), second.clone()],
+                through_revision: 3,
+            }),
+            vec![
+                ServerMsg::AgentUpserted { agent: first },
+                ServerMsg::AgentUpserted { agent: second },
+                ServerMsg::HostInventory {
+                    host_id,
+                    agent_ids: vec![AgentId::from_u128(1), AgentId::from_u128(2)],
+                },
+            ]
+        );
     }
 
     #[cfg(target_os = "macos")]

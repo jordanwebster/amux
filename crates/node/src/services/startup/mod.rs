@@ -1282,8 +1282,16 @@ mod tests {
             .into_inner();
 
         let first = stream.next().await.unwrap().unwrap();
+        let Some(wire::subscribe_agent_events_response::Event::HostInventory(inventory)) =
+            first.event
+        else {
+            panic!("expected HostInventory");
+        };
+        assert_eq!(inventory.host_id, Uuid::from_u128(1).as_bytes());
+        assert!(inventory.agents.is_empty());
+        let complete = stream.next().await.unwrap().unwrap();
         assert!(matches!(
-            first.event,
+            complete.event,
             Some(wire::subscribe_agent_events_response::Event::SnapshotComplete(_))
         ));
     }
@@ -1291,6 +1299,7 @@ mod tests {
     #[tokio::test]
     async fn pubkey_replacement_revokes_open_tls_trusted_server_connections() {
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
+        let local_host_id = local.host_id;
         let peer = DeviceIdentity::for_test(Uuid::from_u128(2));
         let services =
             test_started_services_with_identity_and_trust(local, trust_store_for(&[&peer])).await;
@@ -1315,8 +1324,16 @@ mod tests {
             .unwrap()
             .into_inner();
         let first = stream.next().await.unwrap().unwrap();
+        let Some(wire::subscribe_agent_events_response::Event::HostInventory(inventory)) =
+            first.event
+        else {
+            panic!("expected HostInventory");
+        };
+        assert_eq!(inventory.host_id, local_host_id.as_bytes());
+        assert!(inventory.agents.is_empty());
+        let complete = stream.next().await.unwrap().unwrap();
         assert!(matches!(
-            first.event,
+            complete.event,
             Some(wire::subscribe_agent_events_response::Event::SnapshotComplete(_))
         ));
 

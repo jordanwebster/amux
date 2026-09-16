@@ -4,6 +4,9 @@ activity classification now belong to `fold`. A serializable bounded window
 keeps the visible entries and eviction offset in the reducer model, while the
 UI facade preserves the feed, paint-watermark and mobile projection APIs and
 retains attachments, provider settings, lifecycle and in-flight input overlays.
+Authoritative host inventories now forward their complete agent records before
+their membership cut, so clients can materialize a fresh remote fleet without
+depending on separate per-agent snapshot events.
 
 2026-09-16 — **Claude SDK observations now live in the shared fold.**
 SDK feed classification, block and message cursors, task and todo progression,
