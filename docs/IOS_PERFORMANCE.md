@@ -273,6 +273,13 @@ the measurement, was wrong. The new gate is about 55 ms above the quiet
 not meant to absorb contention: the check that measures it waits until no other
 simulator suite is running first.
 
+On a quiet machine the same launch clears both budgets with room to spare.
+Measured on 2026-09-17 with no other simulator suite running before, during or
+after the run, five launches read a cold first frame median of 458.5 ms (worst
+474.7 ms) and a store read median of 4.8 ms; loading the app took 296 ms and
+drawing the first frame 159 ms. The worst store read, 15.4 ms, was the first
+launch after the store was written, on a cold file cache.
+
 Two reads in those launches were not the launch's. The probe read the store
 while building its view, so the root view's second pass — the scene becoming
 active, sometimes before the first frame — read it again; and the app itself

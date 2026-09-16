@@ -1,3 +1,9 @@
+2026-09-17 — **The phone's cold start is measured on a quiet machine.** With
+no other simulator suite running, five cold launches read a first frame median
+of 458.5 ms against the 500 ms budget and a store read median of 4.8 ms against
+its 10 ms budget. The performance document records this beside the contended
+runs that read 463 to 484 ms.
+
 2026-09-17 — **The phone's cold start has a store budget of its own.** Each
 cold launch now reports its store read as a measurement beside its first
 frame, held to a median of 10 ms with no baseline drift allowance, and every
