@@ -1,3 +1,18 @@
+2026-09-16 — **Phone journeys find machines with the app's own browser.** The
+onboarding, signed-out, profiles and free-tier journeys used to inject
+already-decoded found machines through the debug door, so no simulator ever read
+a real advertisement. That is how an unreadable host ID passed every journey
+and reached TestFlight. The served test network now also registers each
+announced machine with the Mac's own mDNS responder, using the TXT properties
+the daemon's publisher builds. A simulator browses through that responder and
+ignores services seen only on loopback, which is all a daemon advertising
+`127.0.0.1` would reach. The door command that injected found machines is gone.
+Because a simulator browses the Mac's real network, a driven debug launch now
+finds only the machines named by `-amux-discover-only`. Journeys pass the
+runner's own machines, so a developer's amux server no longer appears in test
+runs. A machine declared `lan` reaches the phone only once a test announces it,
+so a story can still begin with nothing found.
+
 2026-09-16 — **The Mac and the phone test against the same advertisement.**
 The Mac's advertisement and the phone's reading of it were each tested only
 against their own spelling of the record, which is how a host-ID format the

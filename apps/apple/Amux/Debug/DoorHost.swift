@@ -306,10 +306,6 @@ final class DoorHost {
             return attach(to: agent, kind: kind, name: name, mime: mime, base64: base64)
         case .pair(let qr): return await pair(with: qr)
         case .pairByCode(let host, let pin): return await pair(with: pin, on: host)
-        case .found(let hosts):
-            guard let coordinator else { return .error("this app has no runtime of its own") }
-            coordinator.discovered(hosts)
-            return .ack
         case .localNetwork(let permission):
             guard let coordinator else { return .error("this app has no runtime of its own") }
             switch permission {

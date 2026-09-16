@@ -185,16 +185,6 @@ public enum DoorRequest: Sendable, Equatable {
     /// proves possession of one machine's offer, so the machine is found among
     /// the ones the relay is offering before its code is tried against it.
     case pairByCode(host: String, pin: String)
-    /// Hand this phone the whole set of machines a browser can see on the
-    /// network it is on, exactly as its own browser hands one over.
-    ///
-    /// Only the system may browse, and a simulator's browser looks at the
-    /// Mac's real network rather than at the one a test relay is running. So a
-    /// driver that put machines on a test network says here what a browser
-    /// would have resolved on it — the same names, claims and addresses, into
-    /// the same place the app's own browser puts them. The whole set goes over
-    /// each time: a machine that has gone is a machine missing from it.
-    case found(hosts: [FoundHost])
     /// Say what the system answered when this app asked to look at the network.
     ///
     /// iOS asks once. A refusal cannot be provoked a second time, and a
@@ -613,7 +603,7 @@ extension DoorRequest: Codable {
         case attachment, name, mime, base64, host, pin
         case note, marks
         case motion, transparency
-        case hosts, permission, tier
+        case permission, tier
         case bytes
     }
 
@@ -709,8 +699,6 @@ extension DoorRequest: Codable {
             self = .pairByCode(
                 host: try fields.decode(String.self, forKey: .host),
                 pin: try fields.decode(String.self, forKey: .pin))
-        case "found":
-            self = .found(hosts: try fields.decode([FoundHost].self, forKey: .hosts))
         case "localNetwork":
             self = .localNetwork(permission: try fields.decode(String.self, forKey: .permission))
         case "revoke":
@@ -873,9 +861,6 @@ extension DoorRequest: Codable {
             try fields.encode("pairByCode", forKey: .kind)
             try fields.encode(host, forKey: .host)
             try fields.encode(pin, forKey: .pin)
-        case .found(let hosts):
-            try fields.encode("found", forKey: .kind)
-            try fields.encode(hosts, forKey: .hosts)
         case .localNetwork(let permission):
             try fields.encode("localNetwork", forKey: .kind)
             try fields.encode(permission, forKey: .permission)
@@ -1090,6 +1075,16 @@ public enum Door {
     /// accessibility frames instead, avoiding a geometry reader on every
     /// named element.
     public static let elementGeometryArgument = "amux-element-geometry"
+
+    /// `-amux-discover-only ID,ID`: the machines a driven launch's browser may
+    /// report, by host identity.
+    ///
+    /// A simulator browses the Mac's real network, so a driven app would
+    /// otherwise find every amux machine running there — the developer's own
+    /// server included — and a test would read a different screen on every
+    /// Mac. A launch that opens the door and names nothing here finds nothing
+    /// at all.
+    public static let discoverOnlyArgument = "amux-discover-only"
 
     /// `-amux-link URL`: a link the launch was opened with, handed to the app
     /// before its first frame exactly as the system hands one over.

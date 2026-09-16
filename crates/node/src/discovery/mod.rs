@@ -28,6 +28,17 @@ pub use scripted::ScriptedDiscovery;
 /// The DNS-SD service type advertised by an amux LAN listener.
 pub const SERVICE_TYPE: &str = "_amux._udp.local.";
 
+/// The TXT properties an advertisement carries. Everything that publishes one
+/// writes these, so a browser reads the same record whoever put it up.
+pub fn txt_properties(advert: &Advertisement) -> [(&'static str, String); 2] {
+    [
+        ("v", advert.version.to_string()),
+        // Hyphenated: the iPhone app parses this with Foundation's
+        // `UUID(uuidString:)`, which rejects the 32-digit simple form.
+        ("hid", advert.host_id.hyphenated().to_string()),
+    ]
+}
+
 /// A monotonic pause longer than this is treated as a system wake.
 pub const WAKE_GAP: Duration = Duration::from_secs(30);
 

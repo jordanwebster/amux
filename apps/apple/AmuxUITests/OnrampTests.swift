@@ -11,12 +11,12 @@ import XCTest
 /// machine then holds is read back from the machine, because a phone reporting
 /// what it asked for would be quoting its own request.
 ///
-/// Two things a person's phone does are said through the app's door rather
-/// than done to it, because a simulator cannot do them: only the system may
-/// browse, and a simulator's browser looks at the Mac's real network instead
-/// of at the one the runner is running — so what a browser would have resolved
-/// is handed over exactly as the app's own browser hands it over; and iOS asks
-/// about the local network once, so a refusal cannot be provoked twice.
+/// The machine is found by the app's own browser: the runner publishes its
+/// advertisement on this Mac's network, which is the network a simulator
+/// browses, so the record the phone reads is the one the machine wrote. One
+/// thing a person's phone does is said through the app's door rather than done
+/// to it: iOS asks about the local network once, so a refusal cannot be
+/// provoked twice.
 final class OnrampTests: JourneyCase {
     /// The one machine, as the journey named it.
     private struct Cast {
@@ -43,10 +43,6 @@ final class OnrampTests: JourneyCase {
     /// what this story is about is a phone being set up, and quitting between
     /// the steps would be somebody else's story.
     private var app: XCUIApplication!
-    /// What the machine last put on this network, kept so the browsing this
-    /// test stands in for can hand the same set over again.
-    private var advertised: [String: Any] = [:]
-
     /// One act of this journey: what a person does in it, and the cheapest way
     /// to leave behind what doing it leaves behind.
     private struct Act {
@@ -65,7 +61,7 @@ final class OnrampTests: JourneyCase {
     private func script() -> [Act] {
         [
             Act("first-run", aPhoneNobodyHasSignedInOn),
-            Act("found-host", theMachineOnThisNetwork, shortcut: { try self.handOverWhatIsOnTheNetwork() }),
+            Act("found-host", theMachineOnThisNetwork, shortcut: { try self.announce() }),
             Act("code-entry", sixDigitsOffTheMachine, shortcut: { try self.trustThroughTheDoor() }),
             // Confirming is the second half of the same screen the digits are
             // typed on, so re-entering at it without having typed them is
@@ -152,7 +148,7 @@ final class OnrampTests: JourneyCase {
 
     /// A machine puts itself on this network, and the phone offers it.
     private func theMachineOnThisNetwork() throws {
-        try handOverWhatIsOnTheNetwork()
+        try announce()
         waitFor(app, "hosts.offer.\(cast.workstation)",
                 "the machine on this network was never offered")
         let offered = try declared(runner)
@@ -168,19 +164,11 @@ final class OnrampTests: JourneyCase {
         photograph(app, "found-host")
     }
 
-    /// Puts the machine on this network and hands over what a browser would
-    /// have resolved on it.
-    private func handOverWhatIsOnTheNetwork() throws {
-        advertised = try announce()
-        try door(runner, .init(kind: "found", hosts: [advertised]))
-    }
-
-    /// What the machine looks like to a browser, the moment it announces.
-    @discardableResult
-    private func announce() throws -> [String: Any] {
+    /// Puts the machine on this network, where the phone's own browser has
+    /// to find it.
+    private func announce() throws {
         let answer = try control.ask(["Announce": ["daemon": "workstation"]])
-        return try XCTUnwrap((answer["Ack"] as? [String: Any])?["found"] as? [String: Any],
-                             "the runner announced nothing")
+        XCTAssertNotNil((answer["Ack"] as? [String: Any])?["found"], "the runner announced nothing")
     }
 
     // MARK: - Six digits
@@ -262,7 +250,6 @@ final class OnrampTests: JourneyCase {
     private func theMachineLeavesThisNetworkAndComesBack() throws {
         try control.ask(["Withdraw": ["daemon": "workstation"]])
         try control.ask(["UdpBlocked": ["daemon": "workstation", "blocked": true]])
-        try door(runner, .init(kind: "found", hosts: []))
         let gone = waitUntil(within: 120) {
             (try? self.said(self.declared(self.runner, settling: false),
                             "hosts.row.\(self.cast.workstation)")?.value) == "offline"
@@ -272,7 +259,7 @@ final class OnrampTests: JourneyCase {
         XCTAssertTrue(gone, "the machine left this network and the phone still reads it as reachable")
 
         try control.ask(["UdpBlocked": ["daemon": "workstation", "blocked": false]])
-        try handOverWhatIsOnTheNetwork()
+        try announce()
         let back = waitUntil(within: 120) {
             (try? self.said(self.declared(self.runner, settling: false),
                             "hosts.row.\(self.cast.workstation)")?.value) == "on-this-network"

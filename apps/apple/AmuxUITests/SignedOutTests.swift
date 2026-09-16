@@ -10,11 +10,6 @@ import XCTest
 /// the phone keeps what it was told, says the machine is offline, and offers
 /// an account underneath as the thing that would reach it from here — not as
 /// something missing, and never on a phone that can reach everything it owns.
-///
-/// The browsing is said through the app's door rather than done, for the
-/// reason it is in every journey about this network: only the system may
-/// browse, and a simulator's browser looks at this Mac's network instead of at
-/// the one the runner is running.
 final class SignedOutTests: JourneyCase {
     private var runner: Runner!
     /// The machine, as the journey named it. The agent it is running is the
@@ -44,23 +39,18 @@ final class SignedOutTests: JourneyCase {
         app = launch(runner, signedIn: false)
         XCTAssertTrue(waitUntil { (try? self.started()) == true },
                       "a phone with no account started no runtime of its own")
-        try handOverWhatIsOnTheNetwork()
+        try announce()
         try door(runner, .init(kind: "pairByCode", host: machine, pin: try code()))
         waitFor(app, "home.row.\(runner.agent)", "what the machine is running never arrived")
         record["accounts"] = try accountsOnThisPhone()
         XCTAssertEqual(try accountsOnThisPhone(), 0, "this phone signed somebody in")
     }
 
-    /// Puts the machine on this network and hands over what a browser would
-    /// have resolved there.
-    @discardableResult
-    private func handOverWhatIsOnTheNetwork() throws -> [String: Any] {
+    /// Puts the machine on this Mac's network, where the phone's own browser
+    /// finds it.
+    private func announce() throws {
         let answer = try control.ask(["Announce": ["daemon": runner.host]])
-        let advertised = try XCTUnwrap(
-            (answer["Ack"] as? [String: Any])?["found"] as? [String: Any],
-            "the runner announced nothing")
-        try door(runner, .init(kind: "found", hosts: [advertised]))
-        return advertised
+        XCTAssertNotNil((answer["Ack"] as? [String: Any])?["found"], "the runner announced nothing")
     }
 
     // MARK: - The machine leaves
@@ -76,7 +66,6 @@ final class SignedOutTests: JourneyCase {
     private func theMachineLeavesTheNetwork() throws {
         try control.ask(["Withdraw": ["daemon": runner.host]])
         try control.ask(["UdpBlocked": ["daemon": runner.host, "blocked": true]])
-        try door(runner, .init(kind: "found", hosts: []))
         let gone = waitUntil(within: 120) {
             (try? self.said(self.declared(self.runner, settling: false),
                             "home.row.\(self.runner.agent)")?.value)?
@@ -111,7 +100,7 @@ final class SignedOutTests: JourneyCase {
     /// account, because there is nothing an account would add.
     private func andComesBack() throws {
         try control.ask(["UdpBlocked": ["daemon": runner.host, "blocked": false]])
-        try handOverWhatIsOnTheNetwork()
+        try announce()
         let back = waitUntil(within: 120) {
             (try? self.said(self.declared(self.runner, settling: false),
                             "home.row.\(self.runner.agent)")?.value)?
