@@ -225,7 +225,9 @@ final class NewAgentTests: XCTestCase {
     /// Answers the last request this test dispatched, under the identifier the
     /// store is actually waiting on.
     /// A fleet in which the named agents already run on one machine.
-    private func running(_ names: [String], on host: HostId) -> Event {
+    private func running(
+        _ names: [String], on host: HostId, reconciled: Bool = true
+    ) -> Event {
         .fleet(Fleet(
             epoch: 1,
             agents: names.map { name in
@@ -238,7 +240,24 @@ final class NewAgentTests: XCTestCase {
                     lastActivity: Date(timeIntervalSince1970: 1_700_000_000))
             },
             hosts: [HostState(entry: HostEntry(id: host, name: "Studio", online: true), epoch: 1)],
-            reconciled: true))
+            reconciled: reconciled))
+    }
+
+    /// A fleet nobody has confirmed can be missing agents that exist — the
+    /// empty one a runtime sends on launch after the cache filled the list —
+    /// so it frees no name. A confirmed inventory does.
+    func testOnlyAConfirmedFleetFreesAName() {
+        let (stores, sent) = bundle()
+        stores.apply([running(["amux"], on: studio, reconciled: false)])
+        stores.apply([running([], on: studio, reconciled: false)])
+        stores.startNewAgent(on: studio)
+        deliver(stores, sent, .repositories(
+            host: studio, recent: [Project(path: "~/src/amux", name: "amux")],
+            repositories: [], roots: ["~/src"]))
+        XCTAssertEqual(stores.newAgent.name, "amux-2", "an unconfirmed empty fleet freed a name")
+
+        stores.apply([running([], on: studio, reconciled: true)])
+        XCTAssertEqual(stores.newAgent.name, "amux")
     }
 
     /// The folder's name stands in the field, stepped past the names the

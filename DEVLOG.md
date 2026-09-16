@@ -111,6 +111,12 @@ and Send is unavailable, instead of refusing after Send; a signed-out account on
 screen no longer counts as somebody to send as. The release scope audit now
 requires the report surfaces to be present and still refuses the trace, replay
 and door.
+2026-09-16 — **New Agent keeps taken names until a confirmed inventory frees
+them.** On launch the phone can receive an unconfirmed fleet with no agents in
+it just after the cache filled the list. The agents list rightly keeps its
+cached rows, but New Agent rebuilt its taken names from that empty fleet, so it
+could suggest a name the host already has and would refuse. An unconfirmed
+fleet now only adds names. Only a confirmed inventory replaces the list.
 
 2026-09-16 — **New Agent reserves a name as soon as the host accepts it.**
 New Agent suggested names by skipping those in the latest fleet. An agent the

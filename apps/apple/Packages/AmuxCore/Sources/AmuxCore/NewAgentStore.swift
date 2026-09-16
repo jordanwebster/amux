@@ -278,8 +278,17 @@ public final class NewAgentStore {
         case .fleet(let fleet):
             let listed = Set(fleet.agents.map(\.id))
             startedUnlisted = startedUnlisted.filter { !listed.contains($0.key) }
-            taken = Dictionary(grouping: fleet.agents, by: \.agent.hostId)
+            let names = Dictionary(grouping: fleet.agents, by: \.agent.hostId)
                 .mapValues { Set($0.map { $0.agent.name ?? $0.displayName }) }
+            // Only a confirmed inventory says which names are free. A fleet
+            // the runtime has not confirmed can be missing agents that exist —
+            // on launch it arrives empty after the cache has filled the list —
+            // so its names are added and nothing is forgotten on its word.
+            if fleet.reconciled {
+                taken = names
+            } else {
+                taken.merge(names) { $0.union($1) }
+            }
             for agent in startedUnlisted.values { remember(agent) }
         case .feed, .discovered, .connection, .diff, .tokenRequest, .invariant, .devices,
              .attention, .cloudState, .unreadable:
