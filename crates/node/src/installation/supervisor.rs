@@ -3,6 +3,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+// Read only where a development build lets a profile shorten its cloud
+// refresh, so a release build has no use for it.
+#[cfg(debug_assertions)]
 use std::time::Duration;
 
 use client::Client;
