@@ -153,7 +153,7 @@ pub async fn initialize(
     let choose_name = created || reset || requested_name.is_some();
     let mut host_name_changed = false;
     if choose_name {
-        let default = settings::default_host_name();
+        let default = settings::suggested_host_name();
         let stdin = io::stdin();
         let mut input = stdin.lock();
         let stdout = io::stdout();

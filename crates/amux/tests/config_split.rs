@@ -533,7 +533,7 @@ fn profile_selector_cli_fresh_init_and_default_last_used() {
         InstallationConfig::from_file(&installation_path)
             .unwrap()
             .host_name,
-        settings::default_host_name()
+        settings::suggested_host_name()
     );
     let run = |args: &[&str]| {
         let output = command(args).output().unwrap();

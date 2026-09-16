@@ -131,18 +131,26 @@ impl Default for LanConfig {
     }
 }
 
-/// The name a new installation presents to nearby devices.
+/// The host name a configuration falls back to when none is written: the
+/// system hostname without its mDNS `.local` suffix. This runs on every default
+/// and deserialization, so it must stay cheap and free of subprocesses; the
+/// friendlier suggestion is computed once, by setup, and written to the file.
 pub fn default_host_name() -> String {
-    #[cfg(target_os = "macos")]
-    if let Some(name) = macos_computer_name() {
-        return name;
-    }
-
     fallback_host_name(
         &gethostname()
             .into_string()
             .unwrap_or_else(|_| "unknown".to_string()),
     )
+}
+
+/// The name `amux init` suggests for a new host: the Mac's Computer Name where
+/// there is one, otherwise [`default_host_name`].
+pub fn suggested_host_name() -> String {
+    #[cfg(target_os = "macos")]
+    if let Some(name) = macos_computer_name() {
+        return name;
+    }
+    default_host_name()
 }
 
 #[cfg(target_os = "macos")]
