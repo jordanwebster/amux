@@ -420,6 +420,10 @@ mod remediation_tests {
         for index in 0..REPLAY_EVENTS {
             let event = events.next().await.unwrap().expect("staged replay event");
             assert_eq!(event.params["message"], index.to_string());
+            assert!(
+                event.replayed,
+                "history staged before the resume answered is a replay"
+            );
         }
         assert_eq!(
             thread.inner.registration.state(),
@@ -431,6 +435,21 @@ mod remediation_tests {
                 .await
                 .is_err(),
             "the replay ended cleanly without an immediate overflow error"
+        );
+        // What the thread says once the resume has been answered is live.
+        write_json_line(
+            &mut server_writer,
+            serde_json::json!({
+                "method": "warning",
+                "params": {"threadId": "thread-long", "turnId": "turn-new", "message": "live"}
+            }),
+        )
+        .await;
+        let live = events.next().await.unwrap().expect("live event");
+        assert_eq!(live.params["message"], "live");
+        assert!(
+            !live.replayed,
+            "an event after the resume answered is not a replay"
         );
 
         codex.close().await;

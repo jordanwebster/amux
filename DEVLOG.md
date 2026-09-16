@@ -1,3 +1,11 @@
+2026-09-16 — **A Codex resume no longer counts as activity.** When a Codex
+thread is resumed, after a daemon restart or when its link comes back, the
+app-server replays the thread's history before answering the resume. Those
+replayed turn events were dated as activity when they arrived, so idle Codex
+agents jumped to the top of the list each time. Events staged while the resume
+is still being answered are now marked as replayed. They are still logged but
+no longer date the agent.
+
 2026-09-16 — **Settling the papercut pass against the journeys and the perf
 budget.** The home journey expected the pinned "Needs you" row first. It now
 expects the single recency list, and the empty home to say how to pair instead

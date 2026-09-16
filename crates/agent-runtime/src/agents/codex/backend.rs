@@ -1560,7 +1560,10 @@ async fn ingest_event(
     completion_sink: Option<&CodexCompletionSink>,
     event: ThreadEvent,
 ) {
-    if is_activity(&event.event) {
+    // History a resume replays is written to the log like any other row, but
+    // it already happened: dating it now would make an idle agent jump to the
+    // top of every list each time its daemon restarts or its link recovers.
+    if !event.replayed && is_activity(&event.event) {
         log_source.write_activity(raw_row(&event), Utc::now()).await;
     } else {
         log_source.write(raw_row(&event)).await;
@@ -2159,6 +2162,51 @@ mod tests {
         ] {
             assert!(is_activity(&event));
         }
+    }
+
+    /// History a resume replays is logged but does not date the agent; the
+    /// same event arriving live does.
+    #[tokio::test]
+    async fn replayed_turn_events_are_logged_but_are_not_activity() {
+        let source = StructuredLogSource::new(16);
+        let runtime = Arc::new(StdMutex::new(CodexRuntime {
+            desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
+            settings: codex::session::SessionSettings::default(),
+            attached: None,
+            resume_daemon_mode: None,
+            startup_error: None,
+            ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
+        }));
+        let delta = |replayed| ThreadEvent {
+            method: "item/agentMessage/delta".into(),
+            params: json!({"threadId": "thread-1", "delta": "hi"}),
+            turn_id: Some("turn-1".into()),
+            event: TurnEvent::AgentMessageDelta {
+                item_id: "item-1".into(),
+                delta: "hi".into(),
+            },
+            replayed,
+        };
+
+        ingest_event(&runtime, &source, None, delta(true)).await;
+        assert_eq!(
+            source.current_seq().await,
+            1,
+            "the replayed row is still logged"
+        );
+        assert_eq!(source.last_activity(), None);
+
+        let before = Utc::now();
+        ingest_event(&runtime, &source, None, delta(false)).await;
+        assert!(
+            source
+                .last_activity()
+                .is_some_and(|at| at >= before - chrono::Duration::milliseconds(1))
+        );
     }
 
     fn session_request() -> CreateAgentRequest {
@@ -3804,6 +3852,7 @@ mod tests {
                 method: "ignored".into(),
                 params: Value::Null,
             },
+            replayed: false,
         };
         assert_eq!(
             raw_row(&event),
