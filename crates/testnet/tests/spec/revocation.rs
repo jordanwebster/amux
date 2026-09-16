@@ -14,8 +14,9 @@ async fn send(client: &Client, agent: Uuid, text: &str) -> Result<(), client::Cl
         .send_input(SendInputRequest {
             agent: agent.into(),
             input_id: Uuid::new_v4().as_bytes().to_vec(),
-            io_protocol: "test_echo_v1".to_string(),
-            payload: text.to_owned().into(),
+            input: model::SessionInput::TestEchoV1 {
+                payload: text.as_bytes().to_vec(),
+            },
             pin: Vec::new(),
         })
         .await
@@ -106,15 +107,14 @@ async fn revoked_session(via: Via) {
     let client = phone.admin_client().await;
     let request = SubscribeSessionRequest {
         agent: agent.id.into(),
-        io_protocol: "test_echo_v1".to_string(),
-        args: None,
+        args: model::SessionArgs::TestEchoV1,
     };
     let mut stream = client.subscribe_session(request).await.unwrap();
     send(&client, agent.id, "before-revocation").await.unwrap();
     tokio::time::timeout(DEADLINE, async {
         loop {
             match stream.recv().await.unwrap() {
-                SubscribeSessionEvent::Output { payload } => {
+                SubscribeSessionEvent::Output(model::SessionOutput::TestEchoV1 { payload }) => {
                     assert_eq!(payload.as_slice(), b"before-revocation");
                     break;
                 }
@@ -157,7 +157,7 @@ async fn revoked_session(via: Via) {
             match stream.recv().await {
                 Err(error) => break error.to_string(),
                 Ok(SubscribeSessionEvent::Closed { reason }) => break format!("{reason:?}"),
-                Ok(SubscribeSessionEvent::Output { .. }) => {
+                Ok(SubscribeSessionEvent::Output(_)) => {
                     panic!("revoked session delivered new output")
                 }
                 Ok(_) => {}

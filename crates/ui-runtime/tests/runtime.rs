@@ -939,10 +939,11 @@ async fn claude_sdk_attachment_runtime_encodes_prompt_and_preserves_pins() {
     assert_eq!(requests.len(), 1);
     assert_eq!(request.agent, AgentIdentifier::Id(agent));
     assert_eq!(request.input_id, op.0.as_bytes());
-    assert_eq!(request.io_protocol, "claude_sdk_v1");
     assert_eq!(
-        request.payload.as_ref(),
-        &[82, 6, 10, 4, b'l', b'o', b'o', b'k']
+        request.input,
+        model::SessionInput::ClaudeSdkV1(model::ClaudeSdkInput::Prompt {
+            text: "look".into(),
+        })
     );
     assert_eq!(request.pin, vec![draft.id.to_string()]);
 }

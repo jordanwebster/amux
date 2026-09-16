@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 /// Retained output coordinates for one session buffer.
@@ -33,6 +34,17 @@ pub(crate) struct ObligationDebug {
     pub(crate) id: Option<String>,
 }
 
+/// One recently opened structured subscription and the replay it selected.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct SubscriptionRecord {
+    pub(crate) opened_at: DateTime<Utc>,
+    pub(crate) query: String,
+    pub(crate) replayed_first: Option<u64>,
+    pub(crate) replayed_last: Option<u64>,
+    pub(crate) replayed_count: usize,
+    pub(crate) gap: bool,
+}
+
 /// Live per-session state embedded in each backend's debug view.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct SessionDebug {
@@ -41,6 +53,7 @@ pub(crate) struct SessionDebug {
     pub(crate) buffer: Option<BufferDebug>,
     pub(crate) backend: BackendState,
     pub(crate) obligations: Vec<ObligationDebug>,
+    pub(crate) recent_subscriptions: Vec<SubscriptionRecord>,
 }
 
 impl SessionDebug {
@@ -49,6 +62,7 @@ impl SessionDebug {
         subscriber_count: usize,
         backend: BackendState,
         mut obligations: Vec<ObligationDebug>,
+        recent_subscriptions: Vec<SubscriptionRecord>,
     ) -> Self {
         obligations.sort_unstable_by(|left, right| {
             left.kind
@@ -61,6 +75,7 @@ impl SessionDebug {
             buffer: primary.map(|output| output.buffer.clone()),
             backend,
             obligations,
+            recent_subscriptions,
         }
     }
 }

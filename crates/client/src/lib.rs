@@ -55,12 +55,6 @@ pub use connect::ConnectError;
 pub use connect::connect_socket;
 pub use front_door::FrontDoorClient;
 pub use profile::ProfileAdminClient;
-pub use wire::{
-    decode_claude_pty_output, decode_claude_sdk_output, decode_codex_sdk_output,
-    encode_claude_pty_args, encode_claude_pty_input, encode_claude_sdk_args,
-    encode_claude_sdk_input, encode_codex_sdk_args, encode_codex_sdk_input,
-};
-
 pub mod installation_rpc {
     pub use wire::{
         BindProfileRequest, CreateProfileRequest, DeleteProfileRequest, GetInfoRequest,
@@ -572,18 +566,7 @@ impl Client {
         request: SubscribeSessionRequest,
     ) -> Result<SessionStream, ClientError> {
         self.ensure_open()?;
-        let protocol = request
-            .io_protocol
-            .parse()
-            .map_err(|message| ClientError::Encode {
-                method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-                message,
-            })?;
-        let protocol = wire::subscribe_protocol_to_client_wire(protocol, request.args.as_deref())
-            .map_err(|error| ClientError::Encode {
-            method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
-            message: error.to_string(),
-        })?;
+        let protocol = wire::session_args_to_client_wire(&request.args);
         let response = self
             .inner
             .lock()
@@ -604,26 +587,18 @@ impl Client {
 
     pub async fn send_input(&self, request: SendInputRequest) -> Result<(), ClientError> {
         self.ensure_open()?;
-        let protocol = request
-            .io_protocol
-            .parse()
-            .map_err(|message| ClientError::Encode {
+        let event = wire::session_input_to_client_wire(&request.input).map_err(|error| {
+            ClientError::Encode {
                 method: method::CLIENT_SEND_INPUT_NAME,
-                message,
-            })?;
-        let (input_id, event) =
-            wire::send_input_to_client_wire(protocol, request.input_id, &request.payload).map_err(
-                |error| ClientError::Encode {
-                    method: method::CLIENT_SEND_INPUT_NAME,
-                    message: error.to_string(),
-                },
-            )?;
+                message: error.to_string(),
+            }
+        })?;
         self.inner
             .lock()
             .await
             .send_input(wire::ClientSendInputRequest {
                 agent: Some(agent_ref(request.agent)),
-                input_id,
+                input_id: request.input_id,
                 pin: request.pin,
                 event: Some(event),
             })
@@ -1155,19 +1130,24 @@ fn client_service_session_response_to_event(
         message: "missing SubscribeSessionResponse event".to_string(),
     })?;
     let event = match event {
-        wire::subscribe_session_response::Event::Opened(_) => SubscribeSessionEvent::Opened,
-        wire::subscribe_session_response::Event::Output(output) => SubscribeSessionEvent::Output {
-            payload: wire::session_output_payload_from_wire(output).map_err(|error| {
-                ClientError::Decode {
+        wire::subscribe_session_response::Event::Opened(opened) => SubscribeSessionEvent::Opened {
+            replay: opened
+                .replay
+                .map(wire::replay_facts_from_wire)
+                .transpose()
+                .map_err(|error| ClientError::Decode {
                     method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
                     message: error.to_string(),
-                }
-            })?,
+                })?,
         },
-        wire::subscribe_session_response::Event::ReplayComplete(replay_complete) => {
-            SubscribeSessionEvent::ReplayComplete {
-                cursor: replay_complete.cursor,
-            }
+        wire::subscribe_session_response::Event::Output(output) => SubscribeSessionEvent::Output(
+            wire::session_output_from_wire(output).map_err(|error| ClientError::Decode {
+                method: method::CLIENT_SUBSCRIBE_SESSION_NAME,
+                message: error.to_string(),
+            })?,
+        ),
+        wire::subscribe_session_response::Event::ReplayComplete(_) => {
+            SubscribeSessionEvent::ReplayComplete
         }
         wire::subscribe_session_response::Event::Closed(closed) => SubscribeSessionEvent::Closed {
             reason: client_service_session_close_reason(closed)?,
@@ -1516,6 +1496,99 @@ pub fn debug_format_to_wire(format: DebugFormat) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_decodes_opening_replay_facts() {
+        let event = client_service_session_response_to_event(wire::SubscribeSessionResponse {
+            event: Some(wire::subscribe_session_response::Event::Opened(
+                wire::SessionOpened {
+                    replay: Some(wire::ReplayFacts {
+                        retained_from: 12,
+                        through: 20,
+                        selected_from: 16,
+                        reset_at: 9,
+                        outcome: Some(wire::replay_facts::Outcome::Truncated(wire::Truncated {
+                            missing_after: 15,
+                        })),
+                    }),
+                },
+            )),
+        })
+        .unwrap();
+
+        assert_eq!(
+            event,
+            SubscribeSessionEvent::Opened {
+                replay: Some(model::ReplayFacts {
+                    retained_from: 12,
+                    through: 20,
+                    selected_from: 16,
+                    reset_at: 9,
+                    outcome: model::ReplayOutcome::Truncated { missing_after: 15 },
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn client_rejects_opening_replay_facts_without_an_outcome() {
+        let error = client_service_session_response_to_event(wire::SubscribeSessionResponse {
+            event: Some(wire::subscribe_session_response::Event::Opened(
+                wire::SessionOpened {
+                    replay: Some(wire::ReplayFacts {
+                        retained_from: 0,
+                        through: 0,
+                        selected_from: 0,
+                        reset_at: 0,
+                        outcome: None,
+                    }),
+                },
+            )),
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("ReplayFacts missing outcome"));
+    }
+
+    #[test]
+    fn client_decodes_every_session_close_reason() {
+        for (reason, expected) in [
+            (
+                wire::session_closed::Reason::AgentDeleted(wire::AgentDeleted {}),
+                SessionCloseReason::AgentDeleted,
+            ),
+            (
+                wire::session_closed::Reason::AgentExited(wire::AgentExited {
+                    exit_code: Some(17),
+                }),
+                SessionCloseReason::AgentExited {
+                    exit_code: Some(17),
+                },
+            ),
+            (
+                wire::session_closed::Reason::HostUnreachable(wire::HostUnreachable {}),
+                SessionCloseReason::HostUnreachable,
+            ),
+            (
+                wire::session_closed::Reason::InternalError(wire::InternalError {
+                    detail: "stream failed".into(),
+                }),
+                SessionCloseReason::InternalError {
+                    detail: "stream failed".into(),
+                },
+            ),
+        ] {
+            let event = client_service_session_response_to_event(wire::SubscribeSessionResponse {
+                event: Some(wire::subscribe_session_response::Event::Closed(
+                    wire::SessionClosed {
+                        reason: Some(reason),
+                    },
+                )),
+            })
+            .unwrap();
+            assert_eq!(event, SubscribeSessionEvent::Closed { reason: expected });
+        }
+    }
 
     #[test]
     fn client_create_request_encodes_each_claude_driver() {

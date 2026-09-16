@@ -12,23 +12,6 @@ message CodexCreateConfig {
   optional string resume_thread_id = 5;
 }
 
-message CodexSdkV1Args {
-  optional CodexSdkV1ReplayQuery replay_query = 1;
-}
-
-message CodexSdkV1ReplayQuery {
-  oneof query {
-    uint64 since = 1;
-    uint64 tail_count = 2;
-  }
-}
-
-message CodexSdkV1Output {
-  uint64 seq = 1;
-  // One complete opaque JSON row from the Codex app-server event stream.
-  bytes payload = 2;
-}
-
 message CodexSdkV1Input {
   oneof input {
     CodexSdkV1UserTurn user_turn = 1;

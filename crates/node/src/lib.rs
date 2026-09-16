@@ -38,9 +38,7 @@ pub mod user_state;
 /// products, and widened only when a harness verb needs another item.
 #[doc(hidden)]
 pub mod harness {
-    pub use crate::agents::{
-        AgentEvent, Protocol, SendInputRequest, SessionInputEvent, agent_from_wire,
-    };
+    pub use crate::agents::{AgentEvent, Protocol, SendInputRequest, agent_from_wire};
     pub use crate::auth::AuthError;
     pub use crate::config::Config;
     pub use crate::connection::ConnectionManager;

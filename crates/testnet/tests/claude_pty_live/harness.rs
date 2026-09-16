@@ -24,23 +24,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use model::{
-    CLAUDE_PTY_TRANSCRIPT_V1 as PTY_TRANSCRIPT_V1, ClaudePtyIntent as Intent,
-    ClaudePtyTranscriptV1Input, TERMINAL_V1,
+    ClaudePtyIntent as Intent, ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input,
+    SendInputRequest, SessionArgs, SessionInput, SessionOutput, SubscribeSessionEvent,
+    SubscribeSessionRequest, TerminalV1Args,
 };
-use node::{
-    AgentType, Client, Config, CreateAgentRequest, ProtocolError, SendInputRequest,
-    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
-};
+use node::{AgentType, Client, Config, CreateAgentRequest, ProtocolError, TerminalSize};
 use tokio::sync::Mutex;
 use tokio::task::{AbortHandle, JoinHandle};
 use uuid::Uuid;
-use wire::decode_claude_pty_output as decode_pty_transcript_v1_output;
 
 use super::depfile::assert_binary_is_current;
-
-fn encode_pty_transcript_v1_input(input: ClaudePtyTranscriptV1Input) -> Vec<u8> {
-    wire::encode_claude_pty_input(input.expected_seq, input.intent)
-}
 
 #[derive(Default)]
 pub(super) struct RecorderState {
@@ -692,8 +685,10 @@ impl CaptureSession {
             .client
             .subscribe_session(SubscribeSessionRequest {
                 agent: agent_name.as_str().into(),
-                io_protocol: TERMINAL_V1.to_string(),
-                args: None,
+                args: SessionArgs::TerminalV1(TerminalV1Args {
+                    terminal_size: None,
+                    replay_query: None,
+                }),
             })
             .await
             .context("subscribe raw")?;
@@ -711,7 +706,7 @@ impl CaptureSession {
             };
             while let Ok(event) = stream.recv().await {
                 match event {
-                    SubscribeSessionEvent::Output { payload } => {
+                    SubscribeSessionEvent::Output(SessionOutput::TerminalV1 { payload }) => {
                         let _ = file.write_all(&payload);
                         let _ = file.flush();
                         let mut screen = raw_screen_clone.lock().await;
@@ -737,8 +732,10 @@ impl CaptureSession {
             .client
             .subscribe_session(SubscribeSessionRequest {
                 agent: agent_name.as_str().into(),
-                io_protocol: PTY_TRANSCRIPT_V1.to_string(),
-                args: None,
+                args: SessionArgs::ClaudePtyTranscriptV1(ClaudePtyTranscriptV1Args {
+                    terminal_size: None,
+                    replay_query: None,
+                }),
             })
             .await
             .context("subscribe transcript")?;
@@ -756,17 +753,14 @@ impl CaptureSession {
             };
             while let Ok(event) = stream.recv().await {
                 match event {
-                    SubscribeSessionEvent::Output { payload } => {
-                        let Ok(output) = decode_pty_transcript_v1_output(&payload) else {
-                            continue;
-                        };
+                    SubscribeSessionEvent::Output(SessionOutput::ClaudePtyTranscriptV1(output)) => {
                         let raw = String::from_utf8_lossy(&output.payload).to_string();
                         let json: serde_json::Value =
                             serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
                         let _ = writeln!(file, "{raw}");
                         let _ = file.flush();
                         rows_clone.lock().await.push(Row {
-                            seq: output.seq_id,
+                            seq: output.seq,
                             json,
                         });
                     }
@@ -976,17 +970,15 @@ impl CaptureSession {
                 .last()
                 .map(|row| row.seq)
                 .unwrap_or(0);
-            let payload = encode_pty_transcript_v1_input(ClaudePtyTranscriptV1Input {
-                expected_seq,
-                intent: intent.clone(),
-            });
             let result = self
                 .client
                 .send_input(SendInputRequest {
                     agent: self.agent_name.as_str().into(),
                     input_id: input_id.clone(),
-                    io_protocol: PTY_TRANSCRIPT_V1.to_string(),
-                    payload: payload.into(),
+                    input: SessionInput::ClaudePtyTranscriptV1(ClaudePtyTranscriptV1Input {
+                        expected_seq,
+                        intent: intent.clone(),
+                    }),
                     pin: Vec::new(),
                 })
                 .await;
@@ -1018,8 +1010,9 @@ impl CaptureSession {
             .send_input(SendInputRequest {
                 agent: self.agent_name.as_str().into(),
                 input_id: Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: TERMINAL_V1.to_string(),
-                payload: payload.to_vec().into(),
+                input: SessionInput::TerminalV1 {
+                    payload: payload.to_vec(),
+                },
                 pin: Vec::new(),
             })
             .await

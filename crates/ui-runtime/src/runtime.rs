@@ -21,7 +21,8 @@ use client::{Client, ClientError, FrontDoorClient, installation_rpc as rpc};
 use futures_util::{FutureExt, Stream, StreamExt};
 use model::{
     AgentId, AgentIdentifier, ArtifactId, ArtifactKind, ArtifactRef, ClaudePtyIntent,
-    CreateAgentRequest, HostId, ProfileId, ProtocolError, SendInputRequest, SessionCloseReason,
+    CreateAgentRequest, HostId, ProfileId, ProtocolError, ReplayOutcome, ReplayQuery,
+    SendInputRequest, SessionArgs, SessionCloseReason, SessionInput, SessionOutput,
     SubscribeSessionEvent, SubscribeSessionRequest,
 };
 use tokio::sync::mpsc;
@@ -1373,37 +1374,23 @@ pub async fn execute_put_then_send<C: AttachmentClient + ?Sized>(
         }
     }
 
-    let (io_protocol, payload) = match input {
+    let input = match input {
         InputPayload::Claude {
             expected_seq,
             intent,
             ..
-        } => (
-            ui_state::claude::PROTOCOL.to_string(),
-            client::encode_claude_pty_input(expected_seq, intent).into(),
-        ),
-        InputPayload::ClaudeSdk { payload } => (
-            ui_state::claude_sdk::PROTOCOL.to_string(),
-            match encode_claude_sdk_input(payload) {
-                Ok(bytes) => bytes.into(),
-                Err(message) => {
-                    return OpOutcome::Error {
-                        error: OpError::general(message),
-                    };
-                }
-            },
-        ),
-        InputPayload::Codex { payload } => (
-            ui_state::codex::PROTOCOL.to_string(),
-            client::encode_codex_sdk_input(payload).into(),
-        ),
+        } => SessionInput::ClaudePtyTranscriptV1(model::ClaudePtyTranscriptV1Input {
+            expected_seq,
+            intent,
+        }),
+        InputPayload::ClaudeSdk { payload } => SessionInput::ClaudeSdkV1(payload),
+        InputPayload::Codex { payload } => SessionInput::CodexSdkV1(payload),
     };
     match client
         .send_input(SendInputRequest {
             agent: AgentIdentifier::Id(agent),
             input_id: op.0.as_bytes().to_vec(),
-            io_protocol,
-            payload,
+            input,
             pin: pin.into_iter().map(|id| id.to_string()).collect(),
         })
         .await
@@ -1565,20 +1552,11 @@ async fn execute_send_input_with_pin(
             .await
         }
         InputPayload::ClaudeSdk { payload } => {
-            let payload = match encode_claude_sdk_input(payload) {
-                Ok(bytes) => bytes,
-                Err(message) => {
-                    return OpOutcome::Error {
-                        error: OpError::general(message),
-                    };
-                }
-            };
             match client
                 .send_input(SendInputRequest {
                     agent: AgentIdentifier::Id(agent),
                     input_id,
-                    io_protocol: ui_state::claude_sdk::PROTOCOL.to_string(),
-                    payload: payload.into(),
+                    input: SessionInput::ClaudeSdkV1(payload),
                     pin,
                 })
                 .await
@@ -1593,10 +1571,6 @@ async fn execute_send_input_with_pin(
     }
 }
 
-fn encode_claude_sdk_input(input: ui_state::claude_sdk::ClaudeSdkInput) -> Result<Vec<u8>, String> {
-    client::encode_claude_sdk_input(input).map_err(|error| error.to_string())
-}
-
 async fn execute_codex_input(
     client: &Client,
     agent: AgentId,
@@ -1604,13 +1578,11 @@ async fn execute_codex_input(
     input: CodexInput,
     pin: Vec<String>,
 ) -> OpOutcome {
-    let payload = client::encode_codex_sdk_input(input);
     match client
         .send_input(SendInputRequest {
             agent: AgentIdentifier::Id(agent),
             input_id,
-            io_protocol: ui_state::codex::PROTOCOL.to_string(),
-            payload: payload.into(),
+            input: SessionInput::CodexSdkV1(input),
             pin,
         })
         .await
@@ -1632,13 +1604,14 @@ async fn execute_claude_input(
     let mut expected_seq = expected_seq;
     let mut attempts = 0;
     loop {
-        let payload = client::encode_claude_pty_input(expected_seq, intent.clone());
         match client
             .send_input(SendInputRequest {
                 agent: AgentIdentifier::Id(agent),
                 input_id: input_id.clone(),
-                io_protocol: ui_state::claude::PROTOCOL.to_string(),
-                payload: payload.into(),
+                input: SessionInput::ClaudePtyTranscriptV1(model::ClaudePtyTranscriptV1Input {
+                    expected_seq,
+                    intent: intent.clone(),
+                }),
                 pin: pin.clone(),
             })
             .await
@@ -1892,8 +1865,7 @@ async fn pump_structured_stream(
     let mut session = match client
         .subscribe_session(SubscribeSessionRequest {
             agent: AgentIdentifier::Id(agent),
-            io_protocol: protocol.as_str().to_string(),
-            args: args.map(Into::into),
+            args,
         })
         .await
     {
@@ -1901,7 +1873,7 @@ async fn pump_structured_stream(
         Err(error) => return Some(stream_close_from_client_error(&error)),
     };
 
-    let mut sent_opened = false;
+    let mut opened = false;
     let mut batch: Vec<StreamEntry> = Vec::new();
     loop {
         // Block only when there is nothing to flush; otherwise poll
@@ -1915,20 +1887,59 @@ async fn pump_structured_stream(
         };
         match event {
             None => {
-                flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+                flush_stream_batch(tx, agent, &mut batch).await?;
             }
-            Some(Ok(SubscribeSessionEvent::Opened)) => {}
-            Some(Ok(SubscribeSessionEvent::Output { payload })) => {
-                match decode_structured_entry(protocol, &payload) {
+            Some(Ok(SubscribeSessionEvent::Opened { replay })) => {
+                if opened {
+                    return Some(StreamCloseReason::InternalError {
+                        detail: "session opened more than once".to_string(),
+                    });
+                }
+                let Some(facts) = replay else {
+                    return Some(StreamCloseReason::InternalError {
+                        detail: "structured session opened without replay facts".to_string(),
+                    });
+                };
+                tx.send(Msg::Stream {
+                    agent,
+                    event: StreamMsg::Opened {
+                        truncated: !matches!(facts.outcome, ReplayOutcome::Continuous),
+                    },
+                })
+                .await
+                .ok()?;
+                opened = true;
+            }
+            Some(Ok(SubscribeSessionEvent::Output(output))) => {
+                if !opened {
+                    return Some(StreamCloseReason::InternalError {
+                        detail: "structured session emitted output before opening".to_string(),
+                    });
+                }
+                let row = match (protocol, output) {
+                    (
+                        StructuredProtocol::ClaudePtyTranscript,
+                        SessionOutput::ClaudePtyTranscriptV1(row),
+                    )
+                    | (StructuredProtocol::ClaudeSdk, SessionOutput::ClaudeSdkV1(row))
+                    | (StructuredProtocol::Codex, SessionOutput::CodexSdkV1(row)) => row,
+                    _ => {
+                        flush_stream_batch(tx, agent, &mut batch).await?;
+                        return Some(StreamCloseReason::InternalError {
+                            detail: "session emitted output for the wrong protocol".to_string(),
+                        });
+                    }
+                };
+                match stream_entry(row) {
                     Ok(entry) => batch.push(entry),
                     Err(reason) => {
-                        flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+                        flush_stream_batch(tx, agent, &mut batch).await?;
                         return Some(reason);
                     }
                 }
             }
-            Some(Ok(SubscribeSessionEvent::ReplayComplete { .. })) => {
-                flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+            Some(Ok(SubscribeSessionEvent::ReplayComplete)) => {
+                flush_stream_batch(tx, agent, &mut batch).await?;
                 tx.send(Msg::Stream {
                     agent,
                     event: StreamMsg::ReplayComplete,
@@ -1937,36 +1948,23 @@ async fn pump_structured_stream(
                 .ok()?;
             }
             Some(Ok(SubscribeSessionEvent::Closed { reason })) => {
-                flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+                flush_stream_batch(tx, agent, &mut batch).await?;
                 return Some(stream_close_from_session(reason));
             }
             Some(Err(error)) => {
-                flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+                flush_stream_batch(tx, agent, &mut batch).await?;
                 return Some(stream_close_from_client_error(&error));
             }
         }
     }
 }
 
-/// Send the pending batch (and, first time, the `Opened` Msg carrying the
-/// truncation fact: replay beginning past seq 1 means history was bounded
-/// at the source). Returns `None` when the Runtime is gone.
+/// Send the pending batch. Returns `None` when the Runtime is gone.
 async fn flush_stream_batch(
     tx: &MsgSink,
     agent: AgentId,
-    sent_opened: &mut bool,
     batch: &mut Vec<StreamEntry>,
 ) -> Option<()> {
-    if !*sent_opened {
-        let truncated = batch.first().is_some_and(|entry| entry.seq > 1);
-        tx.send(Msg::Stream {
-            agent,
-            event: StreamMsg::Opened { truncated },
-        })
-        .await
-        .ok()?;
-        *sent_opened = true;
-    }
     if batch.is_empty() {
         return Some(());
     }
@@ -1983,72 +1981,34 @@ async fn flush_stream_batch(
     Some(())
 }
 
-fn structured_stream_args(protocol: StructuredProtocol, tail: u64) -> Option<Vec<u8>> {
+fn structured_stream_args(protocol: StructuredProtocol, tail: u64) -> SessionArgs {
+    let replay_query = Some(ReplayQuery::TailCount {
+        count: tail,
+        tail_bound: None,
+    });
     match protocol {
         StructuredProtocol::ClaudePtyTranscript => {
-            client::encode_claude_pty_args(model::ClaudePtyTranscriptV1Args {
+            SessionArgs::ClaudePtyTranscriptV1(model::ClaudePtyTranscriptV1Args {
                 terminal_size: None,
-                replay_query: Some(model::ClaudePtyTranscriptV1ReplayQuery::Tail { count: tail }),
+                replay_query,
             })
         }
-        StructuredProtocol::Codex => client::encode_codex_sdk_args(model::CodexSdkV1Args {
-            replay_query: Some(model::CodexSdkV1ReplayQuery::Tail { count: tail }),
-        }),
-        StructuredProtocol::ClaudeSdk => client::encode_claude_sdk_args(model::ClaudeSdkV1Args {
-            replay_query: Some(model::ClaudeSdkV1ReplayQuery::Tail { count: tail }),
-        }),
+        StructuredProtocol::Codex => {
+            SessionArgs::CodexSdkV1(model::CodexSdkV1Args { replay_query })
+        }
+        StructuredProtocol::ClaudeSdk => {
+            SessionArgs::ClaudeSdkV1(model::ClaudeSdkV1Args { replay_query })
+        }
     }
 }
 
-fn decode_structured_entry(
-    protocol: StructuredProtocol,
-    payload: &[u8],
-) -> Result<StreamEntry, StreamCloseReason> {
-    let output = match protocol {
-        StructuredProtocol::ClaudePtyTranscript => client::decode_claude_pty_output(payload),
-        StructuredProtocol::ClaudeSdk => {
-            let output = client::decode_claude_sdk_output(payload).map_err(|error| {
-                StreamCloseReason::InternalError {
-                    detail: error.to_string(),
-                }
-            })?;
-            let payload = serde_json::from_slice(&output.payload).map_err(|error| {
-                StreamCloseReason::InternalError {
-                    detail: format!("structured entry {} is not JSON: {error}", output.seq_id),
-                }
-            })?;
-            return Ok(StreamEntry {
-                seq: output.seq_id,
-                payload,
-            });
-        }
-        StructuredProtocol::Codex => {
-            let output = client::decode_codex_sdk_output(payload).map_err(|error| {
-                StreamCloseReason::InternalError {
-                    detail: error.to_string(),
-                }
-            })?;
-            let payload = serde_json::from_slice(&output.payload).map_err(|error| {
-                StreamCloseReason::InternalError {
-                    detail: format!("structured entry {} is not JSON: {error}", output.seq),
-                }
-            })?;
-            return Ok(StreamEntry {
-                seq: output.seq,
-                payload,
-            });
-        }
-    }
-    .map_err(|error| StreamCloseReason::InternalError {
-        detail: error.to_string(),
-    })?;
-    let payload = serde_json::from_slice(&output.payload).map_err(|error| {
-        StreamCloseReason::InternalError {
-            detail: format!("structured entry {} is not JSON: {error}", output.seq_id),
-        }
-    })?;
+fn stream_entry(row: model::StructuredRow) -> Result<StreamEntry, StreamCloseReason> {
+    let payload =
+        serde_json::from_slice(&row.payload).map_err(|error| StreamCloseReason::InternalError {
+            detail: format!("structured entry {} is not JSON: {error}", row.seq),
+        })?;
     Ok(StreamEntry {
-        seq: output.seq_id,
+        seq: row.seq,
         payload,
     })
 }
@@ -2084,23 +2044,36 @@ mod tests {
     fn claude_sdk_stream_wire_preserves_tail_sequence_and_json() {
         assert_eq!(
             structured_stream_args(StructuredProtocol::ClaudeSdk, 1000),
-            Some(vec![10, 3, 16, 232, 7])
+            SessionArgs::ClaudeSdkV1(model::ClaudeSdkV1Args {
+                replay_query: Some(ReplayQuery::TailCount {
+                    count: 1000,
+                    tail_bound: None,
+                }),
+            })
         );
         let row = br#"{"type":"amux.claude_sdk.ready","session_id":"s","resumed":false}"#;
-        let mut wire = vec![8, 7, 18, row.len() as u8];
-        wire.extend_from_slice(row);
         assert_eq!(
-            decode_structured_entry(StructuredProtocol::ClaudeSdk, &wire).unwrap(),
+            stream_entry(model::StructuredRow {
+                seq: 7,
+                published_at_unix_ms: 1,
+                activity_at_unix_ms: None,
+                historical: false,
+                payload: row.to_vec(),
+            })
+            .unwrap(),
             StreamEntry {
                 seq: 7,
                 payload: serde_json::from_slice(row).unwrap()
             }
         );
-        assert!(
-            matches!(decode_structured_entry(StructuredProtocol::ClaudeSdk, &[8, 7, 18, 1, b'{']),
-            Err(StreamCloseReason::InternalError { detail }) if detail.contains("entry 7 is not JSON"))
-        );
-        assert!(decode_structured_entry(StructuredProtocol::ClaudeSdk, &[255]).is_err());
+        assert!(matches!(stream_entry(model::StructuredRow {
+                seq: 7,
+                published_at_unix_ms: 1,
+                activity_at_unix_ms: None,
+                historical: false,
+                payload: b"{".to_vec(),
+            }),
+            Err(StreamCloseReason::InternalError { detail }) if detail.contains("entry 7 is not JSON")));
     }
 
     #[cfg(target_os = "macos")]

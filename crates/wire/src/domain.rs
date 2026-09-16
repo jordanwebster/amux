@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use chrono::{TimeZone, Utc};
-use prost::Message;
 use uuid::Uuid;
 
 use crate::{self as wire, DecodeError};
@@ -206,84 +205,6 @@ pub fn capabilities_from_wire(
             })
             .collect::<Result<Vec<_>, DecodeError>>()?,
     })
-}
-
-pub fn subscribe_protocol_to_client_wire(
-    protocol: model::Protocol,
-    args: Option<&[u8]>,
-) -> Result<wire::client_subscribe_session_request::Protocol, DecodeError> {
-    use wire::client_subscribe_session_request::Protocol as P;
-    Ok(match protocol {
-        model::Protocol::TerminalV1 => P::TerminalV1(decode_optional(args, "TerminalV1Args")?),
-        model::Protocol::ClaudePtyTranscriptV1 => {
-            P::ClaudePtyTranscriptV1(decode_optional(args, "ClaudePtyTranscriptV1Args")?)
-        }
-        model::Protocol::ClaudeSdkV1 => P::ClaudeSdkV1(decode_optional(args, "ClaudeSdkV1Args")?),
-        model::Protocol::CodexSdkV1 => P::CodexSdkV1(decode_optional(args, "CodexSdkV1Args")?),
-        model::Protocol::TestEchoV1 => {
-            reject_args(args, "TestEchoV1Args")?;
-            P::TestEchoV1(wire::TestEchoV1Args {})
-        }
-    })
-}
-
-pub fn send_input_to_client_wire(
-    protocol: model::Protocol,
-    input_id: Vec<u8>,
-    payload: &[u8],
-) -> Result<(Vec<u8>, wire::client_send_input_request::Event), DecodeError> {
-    use wire::client_send_input_request::Event;
-    let event = match protocol {
-        model::Protocol::TerminalV1 => Event::TerminalV1(wire::TerminalV1Input {
-            payload: payload.to_vec(),
-        }),
-        model::Protocol::ClaudePtyTranscriptV1 => {
-            Event::ClaudePtyTranscriptV1(decode(payload, "ClaudePtyTranscriptV1Input")?)
-        }
-        model::Protocol::ClaudeSdkV1 => Event::ClaudeSdkV1(decode(payload, "ClaudeSdkV1Input")?),
-        model::Protocol::CodexSdkV1 => Event::CodexSdkV1(decode(payload, "CodexSdkV1Input")?),
-        model::Protocol::TestEchoV1 => Event::TestEchoV1(wire::TestEchoV1Input {
-            payload: payload.to_vec(),
-        }),
-    };
-    Ok((input_id, event))
-}
-
-pub fn session_output_payload_from_wire(
-    output: wire::SessionOutput,
-) -> Result<Vec<u8>, DecodeError> {
-    use wire::session_output::Output;
-    Ok(
-        match output
-            .output
-            .ok_or_else(|| DecodeError::Invalid("SessionOutput missing output".into()))?
-        {
-            Output::TerminalV1(output) => output.payload,
-            Output::ClaudePtyTranscriptV1(output) => output.encode_to_vec(),
-            Output::ClaudeSdkV1(output) => output.encode_to_vec(),
-            Output::CodexSdkV1(output) => output.encode_to_vec(),
-            Output::TestEchoV1(output) => output.payload,
-        },
-    )
-}
-
-fn decode<M: Message + Default>(bytes: &[u8], name: &str) -> Result<M, DecodeError> {
-    M::decode(bytes).map_err(|error| DecodeError::Invalid(format!("invalid {name}: {error}")))
-}
-
-fn decode_optional<M: Message + Default>(
-    bytes: Option<&[u8]>,
-    name: &str,
-) -> Result<M, DecodeError> {
-    bytes.map_or_else(|| Ok(M::default()), |bytes| decode(bytes, name))
-}
-
-fn reject_args(args: Option<&[u8]>, name: &str) -> Result<(), DecodeError> {
-    if args.is_some_and(|args| !args.is_empty()) {
-        Err(DecodeError::Invalid(format!("{name} does not accept args")))
-    } else {
-        Ok(())
-    }
 }
 
 fn uuid_from_bytes(name: &str, bytes: Vec<u8>) -> Result<Uuid, DecodeError> {

@@ -10,8 +10,7 @@
 
 use std::path::Path;
 
-use agent_runtime::test_support::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
-use bytes::Bytes;
+use agent_runtime::test_support::TEST_ECHO_COMMAND;
 use client::{Client, ClientError};
 use node::{
     Agent, AgentParent, AgentType, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
@@ -284,8 +283,9 @@ impl Daemon {
             .send_input(SendInputRequest {
                 agent: agent.id.into(),
                 input_id: Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                payload: Bytes::copy_from_slice(text.as_bytes()),
+                input: model::SessionInput::TestEchoV1 {
+                    payload: text.as_bytes().to_vec(),
+                },
                 pin: pin.into_iter().map(|id| id.to_string()).collect(),
             })
             .await
@@ -304,25 +304,26 @@ impl Daemon {
         let mut stream = client
             .subscribe_session(node::SubscribeSessionRequest {
                 agent: agent.id.into(),
-                io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::ClaudePtyTranscriptV1(
+                    model::ClaudePtyTranscriptV1Args::default(),
+                ),
             })
             .await
             .unwrap_or_else(|error| panic!("subscribe to scripted Claude agent: {error}"));
         let expected_seq = replay_cursor(&mut stream).await;
         let input_id = Uuid::new_v4().as_bytes().to_vec();
-        let payload = wire::encode_claude_pty_input(
-            expected_seq,
-            model::ClaudePtyIntent::Prompt {
-                text: text.to_string(),
-            },
-        );
         client
             .send_input(SendInputRequest {
                 agent: agent.id.into(),
                 input_id: input_id.clone(),
-                io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.to_string(),
-                payload: payload.into(),
+                input: model::SessionInput::ClaudePtyTranscriptV1(
+                    model::ClaudePtyTranscriptV1Input {
+                        expected_seq,
+                        intent: model::ClaudePtyIntent::Prompt {
+                            text: text.to_string(),
+                        },
+                    },
+                ),
                 pin: pin.into_iter().map(|id| id.to_string()).collect(),
             })
             .await
@@ -338,8 +339,9 @@ impl Daemon {
             .await
             .subscribe_session(node::SubscribeSessionRequest {
                 agent: agent.id.into(),
-                io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::ClaudePtyTranscriptV1(
+                    model::ClaudePtyTranscriptV1Args::default(),
+                ),
             })
             .await
             .unwrap_or_else(|error| panic!("subscribe for pinned artifact replay: {error}"));
@@ -393,8 +395,7 @@ impl Daemon {
             .await
             .subscribe_session(node::SubscribeSessionRequest {
                 agent: child.id.into(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::TestEchoV1,
             })
             .await
             .unwrap_or_else(|error| panic!("subscribe to echo child '{name}': {error}"));
@@ -779,8 +780,7 @@ impl Daemon {
         let mut stream = client
             .subscribe_session(node::SubscribeSessionRequest {
                 agent: parent.id.into(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::TestEchoV1,
             })
             .await
             .unwrap_or_else(|error| panic!("subscribe to echo parent '{parent_name}': {error}"));
@@ -855,8 +855,7 @@ impl Daemon {
         let mut stream = client
             .subscribe_session(node::SubscribeSessionRequest {
                 agent: recipient.into(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::TestEchoV1,
             })
             .await
             .unwrap_or_else(|error| {
@@ -943,8 +942,7 @@ impl Daemon {
         let mut stream = client
             .subscribe_session(node::SubscribeSessionRequest {
                 agent: recipient.id.into(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::TestEchoV1,
             })
             .await
             .unwrap_or_else(|error| {
@@ -1113,8 +1111,7 @@ impl Daemon {
         let stream = client
             .subscribe_session(node::SubscribeSessionRequest {
                 agent: agent_name.into(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::TestEchoV1,
             })
             .await
             .unwrap_or_else(|error| panic!("failed to open {description}: {error}"));
@@ -1185,29 +1182,26 @@ impl Daemon {
 
 async fn replay_cursor(stream: &mut node::SessionStream) -> u64 {
     let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
+    let mut through = None;
     loop {
         let event = tokio::time::timeout_at(deadline, stream.recv())
             .await
             .expect("timed out waiting for scripted Claude replay cursor")
             .expect("scripted Claude replay failed");
         match event {
-            SubscribeSessionEvent::ReplayComplete {
-                cursor: Some(cursor),
-            } => {
-                return wire::decode_provider_cursor(
-                    model::Protocol::ClaudePtyTranscriptV1,
-                    &cursor,
-                )
-                .expect("scripted Claude replay cursor decodes")
-                .expect("scripted Claude cursor has a sequence");
+            SubscribeSessionEvent::Opened {
+                replay: Some(facts),
+            } => through = Some(facts.through),
+            SubscribeSessionEvent::Opened { replay: None } => {
+                panic!("scripted Claude replay omitted its facts")
             }
-            SubscribeSessionEvent::ReplayComplete { cursor: None } => {
-                panic!("scripted Claude replay omitted its cursor")
+            SubscribeSessionEvent::ReplayComplete => {
+                return through.expect("scripted Claude replay omitted its opening watermark");
             }
             SubscribeSessionEvent::Closed { reason } => {
                 panic!("scripted Claude session closed during replay: {reason}")
             }
-            SubscribeSessionEvent::Opened | SubscribeSessionEvent::Output { .. } => {}
+            SubscribeSessionEvent::Output(_) => {}
         }
     }
 }
@@ -1224,9 +1218,7 @@ async fn attachment_refs(
             .expect("timed out waiting for an attachment row")
             .expect("attachment row stream failed");
         match event {
-            SubscribeSessionEvent::Output { payload } => {
-                let output =
-                    wire::decode_claude_pty_output(&payload).expect("Claude output decodes");
+            SubscribeSessionEvent::Output(model::SessionOutput::ClaudePtyTranscriptV1(output)) => {
                 let value: serde_json::Value =
                     serde_json::from_slice(&output.payload).expect("Claude output contains JSON");
                 if value.get("type").and_then(serde_json::Value::as_str) != Some("amux.attachments")
@@ -1246,7 +1238,10 @@ async fn attachment_refs(
             SubscribeSessionEvent::Closed { reason } => {
                 panic!("scripted Claude session closed before its attachment row: {reason}")
             }
-            SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
+            SubscribeSessionEvent::Opened { .. } | SubscribeSessionEvent::ReplayComplete => {}
+            SubscribeSessionEvent::Output(_) => {
+                panic!("scripted Claude session emitted output for the wrong protocol")
+            }
         }
     }
 }
@@ -1282,7 +1277,7 @@ async fn echoed_envelope(
             ),
         };
         match event {
-            SubscribeSessionEvent::Output { payload } => {
+            SubscribeSessionEvent::Output(model::SessionOutput::TestEchoV1 { payload }) => {
                 seen.extend_from_slice(&payload);
                 let Some(start) = seen.windows(opening.len()).position(|part| part == opening)
                 else {
@@ -1302,7 +1297,10 @@ async fn echoed_envelope(
             SubscribeSessionEvent::Closed { reason } => {
                 panic!("echo stream for '{recipient}' closed before delivery: {reason:?}")
             }
-            SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
+            SubscribeSessionEvent::Opened { .. } | SubscribeSessionEvent::ReplayComplete => {}
+            SubscribeSessionEvent::Output(_) => {
+                panic!("echo stream emitted output for the wrong protocol")
+            }
         }
     }
 }
@@ -1353,8 +1351,9 @@ impl EchoSession {
             .send_input(SendInputRequest {
                 agent: self.agent_name.as_str().into(),
                 input_id: Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                payload: bytes::Bytes::copy_from_slice(input.as_bytes()),
+                input: model::SessionInput::TestEchoV1 {
+                    payload: input.as_bytes().to_vec(),
+                },
                 pin: Vec::new(),
             })
             .await
@@ -1384,7 +1383,7 @@ impl EchoSession {
                 ),
             };
             match event {
-                SubscribeSessionEvent::Output { payload } => {
+                SubscribeSessionEvent::Output(model::SessionOutput::TestEchoV1 { payload }) => {
                     seen.extend_from_slice(&payload);
                     if seen
                         .windows(expected.len())
@@ -1398,7 +1397,10 @@ impl EchoSession {
                     self.description
                 ),
                 // Stream lifecycle markers carry no echo payload.
-                SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
+                SubscribeSessionEvent::Opened { .. } | SubscribeSessionEvent::ReplayComplete => {}
+                SubscribeSessionEvent::Output(_) => {
+                    panic!("echo stream emitted output for the wrong protocol")
+                }
             }
         }
     }

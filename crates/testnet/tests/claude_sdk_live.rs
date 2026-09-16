@@ -39,10 +39,11 @@ fn main() -> anyhow::Result<()> {
     use std::time::{Duration, Instant};
 
     use anyhow::{Context, Result, anyhow, bail};
-    use bytes::Bytes;
     use claude::sdk::PermissionResult;
     use claude_sdk_live::args;
-    use model::{CLAUDE_SDK_V1, ClaudeDriver, ClaudeSdkInput as ClaudeSdkV1Input};
+    use model::{
+        ClaudeDriver, ClaudeSdkInput as ClaudeSdkV1Input, SessionArgs, SessionInput, SessionOutput,
+    };
     use node::{
         AgentIdentifier, AgentType, Client, Config, CreateAgentRequest, SendInputRequest,
         SendMessageRequest, SubscribeSessionEvent, SubscribeSessionRequest,
@@ -50,10 +51,6 @@ fn main() -> anyhow::Result<()> {
     use serde_json::{Value, json};
     use tempfile::TempDir;
     use uuid::Uuid;
-    use wire::{
-        decode_claude_sdk_output as decode_claude_sdk_v1_output,
-        encode_claude_sdk_input as encode_claude_sdk_v1_input,
-    };
 
     const READY_TIMEOUT: Duration = Duration::from_secs(90);
     const TURN_TIMEOUT: Duration = Duration::from_secs(240);
@@ -294,8 +291,7 @@ fn main() -> anyhow::Result<()> {
                 .client()
                 .subscribe_session(SubscribeSessionRequest {
                     agent: AgentIdentifier::Id(agent),
-                    io_protocol: CLAUDE_SDK_V1.to_string(),
-                    args: None,
+                    args: SessionArgs::ClaudeSdkV1(model::ClaudeSdkV1Args::default()),
                 })
                 .await
                 .context("subscribe Claude SDK structured plane")?;
@@ -336,21 +332,20 @@ fn main() -> anyhow::Result<()> {
                     .await
                     .with_context(|| format!("timed out waiting for {what}"))??;
                 match event {
-                    SubscribeSessionEvent::Output { payload } => {
-                        let output = decode_claude_sdk_v1_output(&payload)?;
+                    SubscribeSessionEvent::Output(SessionOutput::ClaudeSdkV1(output)) => {
                         if let Some(previous) = self.rows.last()
-                            && previous.seq >= output.seq_id
+                            && previous.seq >= output.seq
                         {
                             bail!(
                                 "Claude SDK sequence did not advance: previous={} next={}",
                                 previous.seq,
-                                output.seq_id
+                                output.seq
                             );
                         }
                         let json = serde_json::from_slice(&output.payload)
                             .context("parse Claude SDK structured row")?;
                         self.rows.push(Row {
-                            seq: output.seq_id,
+                            seq: output.seq,
                             json,
                         });
                     }
@@ -368,8 +363,7 @@ fn main() -> anyhow::Result<()> {
                 .send_input(SendInputRequest {
                     agent: AgentIdentifier::Id(self.agent),
                     input_id: input_id.clone(),
-                    io_protocol: CLAUDE_SDK_V1.to_string(),
-                    payload: Bytes::from(encode_claude_sdk_v1_input(input)?),
+                    input: SessionInput::ClaudeSdkV1(input),
                     pin: Vec::new(),
                 })
                 .await?;
@@ -390,12 +384,11 @@ fn main() -> anyhow::Result<()> {
             loop {
                 match tokio::time::timeout(Duration::from_millis(400), self.stream.recv()).await {
                     Err(_) => return Ok(()),
-                    Ok(Ok(SubscribeSessionEvent::Output { payload })) => {
-                        let output = decode_claude_sdk_v1_output(&payload)?;
+                    Ok(Ok(SubscribeSessionEvent::Output(SessionOutput::ClaudeSdkV1(output)))) => {
                         let json = serde_json::from_slice(&output.payload)
                             .context("parse trailing Claude SDK row")?;
                         self.rows.push(Row {
-                            seq: output.seq_id,
+                            seq: output.seq,
                             json,
                         });
                     }

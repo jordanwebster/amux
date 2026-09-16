@@ -17,33 +17,6 @@ pub struct ClaudeCreateConfig {
     #[prost(enumeration = "ClaudeDriver", tag = "11")]
     pub driver: i32,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ClaudePtyTranscriptV1Args {
-    #[prost(message, optional, tag = "1")]
-    pub terminal_size: ::core::option::Option<TerminalSize>,
-    #[prost(message, optional, tag = "2")]
-    pub replay_query: ::core::option::Option<ClaudePtyTranscriptV1ReplayQuery>,
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ClaudePtyTranscriptV1ReplayQuery {
-    #[prost(oneof = "claude_pty_transcript_v1_replay_query::Query", tags = "1, 2")]
-    pub query: ::core::option::Option<claude_pty_transcript_v1_replay_query::Query>,
-}
-/// Nested message and enum types in `ClaudePtyTranscriptV1ReplayQuery`.
-pub mod claude_pty_transcript_v1_replay_query {
-    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Query {
-        #[prost(uint64, tag = "1")]
-        Since(u64),
-        #[prost(uint64, tag = "2")]
-        TailCount(u64),
-    }
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ClaudePtyTranscriptV1Cursor {
-    #[prost(uint64, tag = "1")]
-    pub seq_id: u64,
-}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClaudePtyTranscriptV1Input {
     #[prost(uint64, tag = "1")]
@@ -159,40 +132,6 @@ pub struct ClaudeQuestionAnswer {
     pub selected: ::prost::alloc::vec::Vec<u64>,
     #[prost(string, optional, tag = "2")]
     pub other: ::core::option::Option<::prost::alloc::string::String>,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ClaudePtyTranscriptV1Output {
-    #[prost(uint64, tag = "1")]
-    pub seq_id: u64,
-    #[prost(bytes = "vec", tag = "2")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ClaudeSdkV1Args {
-    #[prost(message, optional, tag = "1")]
-    pub replay_query: ::core::option::Option<ClaudeSdkV1ReplayQuery>,
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ClaudeSdkV1ReplayQuery {
-    #[prost(oneof = "claude_sdk_v1_replay_query::Query", tags = "1, 2")]
-    pub query: ::core::option::Option<claude_sdk_v1_replay_query::Query>,
-}
-/// Nested message and enum types in `ClaudeSdkV1ReplayQuery`.
-pub mod claude_sdk_v1_replay_query {
-    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Query {
-        #[prost(uint64, tag = "1")]
-        Since(u64),
-        #[prost(uint64, tag = "2")]
-        TailCount(u64),
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ClaudeSdkV1Output {
-    #[prost(uint64, tag = "1")]
-    pub seq_id: u64,
-    #[prost(bytes = "vec", tag = "2")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ClaudeSdkV1Input {
@@ -345,34 +284,6 @@ pub struct CodexCreateConfig {
     #[prost(string, optional, tag = "5")]
     pub resume_thread_id: ::core::option::Option<::prost::alloc::string::String>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct CodexSdkV1Args {
-    #[prost(message, optional, tag = "1")]
-    pub replay_query: ::core::option::Option<CodexSdkV1ReplayQuery>,
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct CodexSdkV1ReplayQuery {
-    #[prost(oneof = "codex_sdk_v1_replay_query::Query", tags = "1, 2")]
-    pub query: ::core::option::Option<codex_sdk_v1_replay_query::Query>,
-}
-/// Nested message and enum types in `CodexSdkV1ReplayQuery`.
-pub mod codex_sdk_v1_replay_query {
-    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
-    pub enum Query {
-        #[prost(uint64, tag = "1")]
-        Since(u64),
-        #[prost(uint64, tag = "2")]
-        TailCount(u64),
-    }
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct CodexSdkV1Output {
-    #[prost(uint64, tag = "1")]
-    pub seq: u64,
-    /// One complete opaque JSON row from the Codex app-server event stream.
-    #[prost(bytes = "vec", tag = "2")]
-    pub payload: ::prost::alloc::vec::Vec<u8>,
-}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CodexSdkV1Input {
     #[prost(oneof = "codex_sdk_v1_input::Input", tags = "1, 2, 3, 4, 5, 6, 7, 8")]
@@ -480,13 +391,26 @@ pub struct Empty {}
 /// phase: the neighbor snapshot is a field of Hello/HelloAccepted.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SnapshotComplete {}
-/// In-band marker that a session replay has been flushed.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ReplayComplete {
-    /// Opaque position at the replay boundary when the selected protocol has one.
-    #[prost(bytes = "vec", optional, tag = "1")]
-    pub cursor: ::core::option::Option<::prost::alloc::vec::Vec<u8>>,
+/// Exclusive cursor or bounded tail selection for a sequenced session.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReplayQuery {
+    #[prost(uint64, optional, tag = "3")]
+    pub tail_bound: ::core::option::Option<u64>,
+    #[prost(oneof = "replay_query::Query", tags = "1, 2")]
+    pub query: ::core::option::Option<replay_query::Query>,
 }
+/// Nested message and enum types in `ReplayQuery`.
+pub mod replay_query {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Query {
+        #[prost(uint64, tag = "1")]
+        After(u64),
+        #[prost(uint64, tag = "2")]
+        TailCount(u64),
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReplayComplete {}
 /// Agent-independent raw terminal byte-plane payloads.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TerminalV1Args {
@@ -516,6 +440,36 @@ pub struct TerminalV1Input {
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TerminalV1Output {
     #[prost(bytes = "vec", tag = "1")]
+    pub payload: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudePtyTranscriptV1Args {
+    #[prost(message, optional, tag = "1")]
+    pub terminal_size: ::core::option::Option<TerminalSize>,
+    #[prost(message, optional, tag = "2")]
+    pub replay_query: ::core::option::Option<ReplayQuery>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ClaudeSdkV1Args {
+    #[prost(message, optional, tag = "1")]
+    pub replay_query: ::core::option::Option<ReplayQuery>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CodexSdkV1Args {
+    #[prost(message, optional, tag = "1")]
+    pub replay_query: ::core::option::Option<ReplayQuery>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StructuredRow {
+    #[prost(uint64, tag = "1")]
+    pub seq: u64,
+    #[prost(int64, tag = "2")]
+    pub published_at_unix_ms: i64,
+    #[prost(int64, optional, tag = "3")]
+    pub activity_at_unix_ms: ::core::option::Option<i64>,
+    #[prost(bool, tag = "4")]
+    pub historical: bool,
+    #[prost(bytes = "vec", tag = "5")]
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1320,8 +1274,49 @@ pub mod session_control {
         Resize(super::TerminalSize),
     }
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ReplayFacts {
+    #[prost(uint64, tag = "1")]
+    pub retained_from: u64,
+    #[prost(uint64, tag = "2")]
+    pub through: u64,
+    #[prost(uint64, tag = "3")]
+    pub selected_from: u64,
+    #[prost(uint64, tag = "4")]
+    pub reset_at: u64,
+    #[prost(oneof = "replay_facts::Outcome", tags = "5, 6, 7")]
+    pub outcome: ::core::option::Option<replay_facts::Outcome>,
+}
+/// Nested message and enum types in `ReplayFacts`.
+pub mod replay_facts {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Outcome {
+        #[prost(message, tag = "5")]
+        Continuous(super::Continuous),
+        #[prost(message, tag = "6")]
+        Truncated(super::Truncated),
+        #[prost(message, tag = "7")]
+        Reset(super::Reset),
+    }
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct SessionOpened {}
+pub struct Continuous {}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Truncated {
+    #[prost(uint64, tag = "1")]
+    pub missing_after: u64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Reset {
+    #[prost(string, tag = "1")]
+    pub reason: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SessionOpened {
+    /// Unset for byte-oriented terminal sessions.
+    #[prost(message, optional, tag = "1")]
+    pub replay: ::core::option::Option<ReplayFacts>,
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SessionOutput {
     #[prost(oneof = "session_output::Output", tags = "10, 11, 12, 13, 100")]
@@ -1334,11 +1329,11 @@ pub mod session_output {
         #[prost(message, tag = "10")]
         TerminalV1(super::TerminalV1Output),
         #[prost(message, tag = "11")]
-        ClaudePtyTranscriptV1(super::ClaudePtyTranscriptV1Output),
+        ClaudePtyTranscriptV1(super::StructuredRow),
         #[prost(message, tag = "12")]
-        ClaudeSdkV1(super::ClaudeSdkV1Output),
+        ClaudeSdkV1(super::StructuredRow),
         #[prost(message, tag = "13")]
-        CodexSdkV1(super::CodexSdkV1Output),
+        CodexSdkV1(super::StructuredRow),
         #[prost(message, tag = "100")]
         TestEchoV1(super::TestEchoV1Output),
     }

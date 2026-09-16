@@ -22,22 +22,6 @@ message ClaudeCreateConfig {
   ClaudeDriver driver = 11;
 }
 
-message ClaudePtyTranscriptV1Args {
-  optional TerminalSize terminal_size = 1;
-  optional ClaudePtyTranscriptV1ReplayQuery replay_query = 2;
-}
-
-message ClaudePtyTranscriptV1ReplayQuery {
-  oneof query {
-    uint64 since = 1;
-    uint64 tail_count = 2;
-  }
-}
-
-message ClaudePtyTranscriptV1Cursor {
-  uint64 seq_id = 1;
-}
-
 message ClaudePtyTranscriptV1Input {
   uint64 expected_seq = 1;
   oneof intent {
@@ -106,27 +90,6 @@ message ClaudeQuestionResponse {
 message ClaudeQuestionAnswer {
   repeated uint64 selected = 1;
   optional string other = 2;
-}
-
-message ClaudePtyTranscriptV1Output {
-  uint64 seq_id = 1;
-  bytes payload = 2;
-}
-
-message ClaudeSdkV1Args {
-  optional ClaudeSdkV1ReplayQuery replay_query = 1;
-}
-
-message ClaudeSdkV1ReplayQuery {
-  oneof query {
-    uint64 since = 1;
-    uint64 tail_count = 2;
-  }
-}
-
-message ClaudeSdkV1Output {
-  uint64 seq_id = 1;
-  bytes payload = 2;
 }
 
 message ClaudeSdkV1Input {

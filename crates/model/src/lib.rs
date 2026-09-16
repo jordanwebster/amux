@@ -30,16 +30,17 @@ pub use profile::ProfileId;
 pub use provider::{
     AGENT_TOOL_NAMES, AGENT_TOOL_SERVER_NAME, ApprovalPolicy, AskAnswer, CLAUDE_PTY_TRANSCRIPT_V1,
     CLAUDE_SDK_V1, CODEX_RAW_THREAD_NOT_READY, CODEX_SDK_V1, ClaudePtyIntent,
-    ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input, ClaudePtyTranscriptV1Output,
-    ClaudePtyTranscriptV1ReplayQuery, ClaudeSdkInput, ClaudeSdkV1Args, ClaudeSdkV1Output,
-    ClaudeSdkV1ReplayQuery, CodexSdkInput, CodexSdkV1Args, CodexSdkV1Output, CodexSdkV1ReplayQuery,
-    ContextMeter, ContextMeterSource, ContextUsage, ContextUsageCategory, McpServerFact, ModelFact,
-    PermissionAnswer, PlanAnswer, QuestionAnswer, QuestionResponse, SandboxPolicy, TERMINAL_V1,
-    TerminalV1Args, TerminalV1Control, TerminalV1ReplayQuery,
+    ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input, ClaudeSdkInput, ClaudeSdkV1Args,
+    CodexSdkInput, CodexSdkV1Args, ContextMeter, ContextMeterSource, ContextUsage,
+    ContextUsageCategory, McpServerFact, ModelFact, PermissionAnswer, PlanAnswer, QuestionAnswer,
+    QuestionResponse, SandboxPolicy, TERMINAL_V1, TerminalV1Args, TerminalV1ReplayQuery,
 };
 pub use relay::{DisconnectReason, RelayConnection};
 pub use repositories::{ListRepositoriesRequest, ListRepositoriesResponse, ProjectEntry};
-pub use session::{SessionCloseReason, SubscribeSessionEvent};
+pub use session::{
+    ReplayFacts, ReplayOutcome, ReplayQuery, SessionArgs, SessionCloseReason, SessionControl,
+    SessionInput, SessionOutput, StructuredRow, SubscribeSessionEvent,
+};
 pub use shared::{
     AgentEvent, AgentId, AgentIdentifier, ArtifactRef, BaseIdentity, Capabilities, DebugFormat,
     DiffBase, DiffFile, DiffResponse, Host, HostEntry, HostEvent, HostId, HostTrustStatus,

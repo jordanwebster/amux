@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use model::{ReplayFacts, ReplayOutcome, ReplayQuery};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{RwLock, mpsc};
@@ -20,10 +21,17 @@ use super::{BufferDebug, OutputDebug};
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum SequencedReplayQuery {
-    /// Replay entries with `seq >= seq`.
-    Since { seq: u64 },
-    /// Replay only the last `count` entries.
-    Tail { count: u64 },
+    After { after: u64, tail_bound: Option<u64> },
+    TailCount { count: u64, tail_bound: Option<u64> },
+}
+
+impl SequencedReplayQuery {
+    pub(crate) fn from_replay(query: ReplayQuery) -> Self {
+        match query {
+            ReplayQuery::After { after, tail_bound } => Self::After { after, tail_bound },
+            ReplayQuery::TailCount { count, tail_bound } => Self::TailCount { count, tail_bound },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +48,8 @@ pub(crate) enum ByteReplayQuery {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct StructuredOutput {
     pub(crate) seq: u64,
+    pub(crate) published_at_unix_ms: i64,
+    pub(crate) activity_at_unix_ms: Option<i64>,
     pub(crate) payload: Value,
 }
 
@@ -200,6 +210,8 @@ impl BufferPolicy for StructuredPolicy {
         storage.last_seq += 1;
         let item = StructuredOutput {
             seq: storage.last_seq,
+            published_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+            activity_at_unix_ms: None,
             payload: input,
         };
 
@@ -265,14 +277,80 @@ fn structured_replay_entries<'a>(
 ) -> &'a [StructuredOutput] {
     match filter {
         None => &storage.entries[..],
-        Some(SequencedReplayQuery::Since { seq }) => {
-            let start = storage.entries.partition_point(|e| e.seq < *seq);
-            &storage.entries[start..]
+        Some(SequencedReplayQuery::After { after, tail_bound }) => {
+            if structured_replay_has_gap(storage, *after) {
+                match tail_bound {
+                    Some(count) => structured_tail(&storage.entries, *count),
+                    None => &storage.entries,
+                }
+            } else {
+                let start = storage.entries.partition_point(|entry| entry.seq <= *after);
+                let rows = &storage.entries[start..];
+                match tail_bound {
+                    Some(count) => structured_tail(rows, *count),
+                    None => rows,
+                }
+            }
         }
-        Some(SequencedReplayQuery::Tail { count }) => {
-            let start = storage.entries.len().saturating_sub(*count as usize);
-            &storage.entries[start..]
+        Some(SequencedReplayQuery::TailCount { count, tail_bound }) => structured_tail(
+            &storage.entries,
+            (*count).min(tail_bound.unwrap_or(u64::MAX)),
+        ),
+    }
+}
+
+fn structured_replay_has_gap(storage: &StructuredStorage, after: u64) -> bool {
+    let cursor_is_ahead = after > storage.last_seq;
+    cursor_is_ahead
+        || storage
+            .entries
+            .first()
+            .map_or(storage.last_seq > after, |entry| {
+                after < entry.seq.saturating_sub(1)
+            })
+}
+
+fn structured_tail(entries: &[StructuredOutput], count: u64) -> &[StructuredOutput] {
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    let start = entries.len().saturating_sub(count);
+    &entries[start..]
+}
+
+fn structured_replay_facts(
+    storage: &StructuredStorage,
+    filter: &Option<SequencedReplayQuery>,
+) -> ReplayFacts {
+    let replay = structured_replay_entries(storage, filter);
+    let retained_from = storage.entries.first().map_or(0, |entry| entry.seq);
+    let selected_from = replay.first().map_or(0, |entry| entry.seq);
+    let outcome = match filter {
+        Some(SequencedReplayQuery::After { after, .. })
+            if structured_replay_has_gap(storage, *after) =>
+        {
+            ReplayOutcome::Truncated {
+                missing_after: *after,
+            }
         }
+        Some(SequencedReplayQuery::After { after, .. })
+            if selected_from > after.saturating_add(1) =>
+        {
+            ReplayOutcome::Truncated {
+                missing_after: *after,
+            }
+        }
+        Some(SequencedReplayQuery::TailCount { .. }) if selected_from > 1 => {
+            ReplayOutcome::Truncated {
+                missing_after: selected_from - 1,
+            }
+        }
+        _ => ReplayOutcome::Continuous,
+    };
+    ReplayFacts {
+        retained_from,
+        through: storage.last_seq,
+        selected_from,
+        reset_at: 0,
+        outcome,
     }
 }
 
@@ -549,6 +627,23 @@ impl BroadcastBuffer<BytePolicy> {
 }
 
 impl BroadcastBuffer<StructuredPolicy> {
+    /// Create an empty structured buffer whose next entry continues after
+    /// `last_seq`.
+    pub(crate) fn with_last_seq(capacity: usize, last_seq: u64) -> Self {
+        Self {
+            inner: Arc::new(BroadcastInner {
+                storage: RwLock::new(StructuredStorage {
+                    entries: Vec::new(),
+                    last_seq,
+                }),
+                subscribers: RwLock::new(Vec::new()),
+                capacity,
+                closed: RwLock::new(false),
+                epoch: AtomicU64::new(0),
+            }),
+        }
+    }
+
     /// Return the current structured output sequence number.
     ///
     /// Returns 0 if no entries have been published.
@@ -561,9 +656,12 @@ impl BroadcastBuffer<StructuredPolicy> {
     pub(crate) async fn subscribe_with_query(
         &self,
         query: Option<SequencedReplayQuery>,
-    ) -> Option<(MultiplexStructuredReader, u64)> {
-        self.subscribe_filtered(query, |storage| storage.last_seq)
-            .await
+    ) -> Option<(MultiplexStructuredReader, ReplayFacts)> {
+        let snapshot_query = query.clone();
+        self.subscribe_filtered(query, move |storage| {
+            structured_replay_facts(storage, &snapshot_query)
+        })
+        .await
     }
 }
 
@@ -853,11 +951,11 @@ mod tests {
         })
     }
 
-    fn envelope(seq: u64, content: &str, uuid: &str) -> StructuredOutput {
-        StructuredOutput {
-            seq,
-            payload: user_msg(content, uuid),
-        }
+    fn assert_envelope(actual: StructuredOutput, seq: u64, content: &str, uuid: &str) {
+        assert_eq!(actual.seq, seq);
+        assert_eq!(actual.payload, user_msg(content, uuid));
+        assert!(actual.published_at_unix_ms > 0);
+        assert_eq!(actual.activity_at_unix_ms, None);
     }
 
     #[tokio::test]
@@ -872,9 +970,9 @@ mod tests {
 
         // Late subscriber should see only the last 3 entries (with original seqs)
         let mut reader = buffer.subscribe().await.unwrap();
-        assert_eq!(reader.read().await.unwrap(), envelope(3, "msg3", "3"));
-        assert_eq!(reader.read().await.unwrap(), envelope(4, "msg4", "4"));
-        assert_eq!(reader.read().await.unwrap(), envelope(5, "msg5", "5"));
+        assert_envelope(reader.read().await.unwrap(), 3, "msg3", "3");
+        assert_envelope(reader.read().await.unwrap(), 4, "msg4", "4");
+        assert_envelope(reader.read().await.unwrap(), 5, "msg5", "5");
     }
 
     #[tokio::test]
@@ -887,13 +985,13 @@ mod tests {
 
         // Each entry should arrive as a separate read() call
         let mut reader = buffer.subscribe().await.unwrap();
-        assert_eq!(reader.read().await.unwrap(), envelope(1, "first", "1"));
-        assert_eq!(reader.read().await.unwrap(), envelope(2, "second", "2"));
-        assert_eq!(reader.read().await.unwrap(), envelope(3, "third", "3"));
+        assert_envelope(reader.read().await.unwrap(), 1, "first", "1");
+        assert_envelope(reader.read().await.unwrap(), 2, "second", "2");
+        assert_envelope(reader.read().await.unwrap(), 3, "third", "3");
 
         // Live writes still work
         buffer.write(user_msg("fourth", "4")).await;
-        assert_eq!(reader.read().await.unwrap(), envelope(4, "fourth", "4"));
+        assert_envelope(reader.read().await.unwrap(), 4, "fourth", "4");
     }
 
     #[tokio::test]
@@ -904,8 +1002,8 @@ mod tests {
         buffer.write(user_msg("also-before", "2")).await;
 
         let mut early = buffer.subscribe().await.unwrap();
-        assert_eq!(early.read().await.unwrap(), envelope(1, "before", "1"));
-        assert_eq!(early.read().await.unwrap(), envelope(2, "also-before", "2"));
+        assert_envelope(early.read().await.unwrap(), 1, "before", "1");
+        assert_envelope(early.read().await.unwrap(), 2, "also-before", "2");
 
         buffer.clear().await;
 
@@ -913,8 +1011,8 @@ mod tests {
 
         buffer.write(user_msg("after", "3")).await;
 
-        assert_eq!(early.read().await.unwrap(), envelope(3, "after", "3"));
-        assert_eq!(late.read().await.unwrap(), envelope(3, "after", "3"));
+        assert_envelope(early.read().await.unwrap(), 3, "after", "3");
+        assert_envelope(late.read().await.unwrap(), 3, "after", "3");
     }
 
     #[tokio::test]
@@ -923,7 +1021,7 @@ mod tests {
         let mut reader = buffer.subscribe().await.unwrap();
 
         buffer.write(user_msg("data", "1")).await;
-        assert_eq!(reader.read().await.unwrap(), envelope(1, "data", "1"));
+        assert_envelope(reader.read().await.unwrap(), 1, "data", "1");
 
         buffer.close().await;
         assert!(reader.read().await.is_none());
@@ -959,7 +1057,7 @@ mod tests {
         assert_eq!(buffer.current_seq().await, 3);
 
         let mut reader = buffer.subscribe().await.unwrap();
-        assert_eq!(reader.read().await.unwrap(), envelope(3, "c", "3"));
+        assert_envelope(reader.read().await.unwrap(), 3, "c", "3");
     }
 
     #[tokio::test]
@@ -983,154 +1081,161 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_structured_reader_tags_filtered_replay_boundary() {
+    async fn structured_replay_marks_boundary_and_then_delivers_live_rows() {
         let buffer = MultiplexStructuredBuffer::new(100);
-
         for i in 1..=3 {
             buffer
                 .write(user_msg(&format!("msg{i}"), &i.to_string()))
                 .await;
         }
 
-        let query = Some(SequencedReplayQuery::Tail { count: 2 });
-        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
-        assert_eq!(seq, 3);
-
-        assert!(matches!(
-            reader.read_event().await.unwrap(),
-            BroadcastRead::ReplayItem(item) if item == envelope(2, "msg2", "2")
-        ));
-
-        assert!(matches!(
-            reader.read_event().await.unwrap(),
-            BroadcastRead::ReplayItem(item) if item == envelope(3, "msg3", "3")
-        ));
-
+        let (mut reader, facts) = buffer
+            .subscribe_with_query(Some(SequencedReplayQuery::TailCount {
+                count: 2,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            facts,
+            ReplayFacts {
+                retained_from: 1,
+                through: 3,
+                selected_from: 2,
+                reset_at: 0,
+                outcome: ReplayOutcome::Truncated { missing_after: 1 },
+            }
+        );
+        assert!(
+            matches!(reader.read_event().await.unwrap(), BroadcastRead::ReplayItem(item) if item.seq == 2)
+        );
+        assert!(
+            matches!(reader.read_event().await.unwrap(), BroadcastRead::ReplayItem(item) if item.seq == 3)
+        );
         assert!(matches!(
             reader.read_event().await.unwrap(),
             BroadcastRead::ReplayComplete
         ));
-
         buffer.write(user_msg("msg4", "4")).await;
+        assert!(
+            matches!(reader.read_event().await.unwrap(), BroadcastRead::LiveItem(item) if item.seq == 4)
+        );
+    }
+
+    #[test]
+    fn replay_query_conversion_preserves_exclusive_cursor_and_bounds() {
+        assert_eq!(
+            SequencedReplayQuery::from_replay(ReplayQuery::After {
+                after: 40,
+                tail_bound: Some(8),
+            }),
+            SequencedReplayQuery::After {
+                after: 40,
+                tail_bound: Some(8),
+            }
+        );
+        assert_eq!(
+            SequencedReplayQuery::from_replay(ReplayQuery::TailCount {
+                count: 9,
+                tail_bound: Some(5),
+            }),
+            SequencedReplayQuery::TailCount {
+                count: 9,
+                tail_bound: Some(5),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribing_after_exactly_the_stored_through_replays_no_rows_and_is_continuous() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+        for i in 1..=5 {
+            buffer
+                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .await;
+        }
+
+        let (mut reader, facts) = buffer
+            .subscribe_with_query(Some(SequencedReplayQuery::After {
+                after: 5,
+                tail_bound: Some(2),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            facts,
+            ReplayFacts {
+                retained_from: 1,
+                through: 5,
+                selected_from: 0,
+                reset_at: 0,
+                outcome: ReplayOutcome::Continuous,
+            }
+        );
         assert!(matches!(
             reader.read_event().await.unwrap(),
-            BroadcastRead::LiveItem(item) if item == envelope(4, "msg4", "4")
+            BroadcastRead::ReplayComplete
         ));
     }
 
     #[tokio::test]
-    async fn test_subscribe_with_query_none_replays_all() {
+    async fn after_cursor_selects_only_later_rows() {
         let buffer = MultiplexStructuredBuffer::new(100);
-
-        buffer.write(user_msg("a", "1")).await;
-        buffer.write(user_msg("b", "2")).await;
-
-        let (mut reader, seq) = buffer.subscribe_with_query(None).await.unwrap();
-        assert_eq!(seq, 2);
-        assert_eq!(reader.read().await.unwrap(), envelope(1, "a", "1"));
-        assert_eq!(reader.read().await.unwrap(), envelope(2, "b", "2"));
-    }
-
-    // ── SequencedReplayQuery tests ─────────────────────────────────────
-
-    #[tokio::test]
-    async fn test_query_since_mid_buffer() {
-        let buffer = MultiplexStructuredBuffer::new(100);
-
         for i in 1..=5 {
             buffer
                 .write(user_msg(&format!("msg{i}"), &i.to_string()))
                 .await;
         }
-
-        let query = Some(SequencedReplayQuery::Since { seq: 3 });
-        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
-        assert_eq!(seq, 5);
-        assert_eq!(reader.read().await.unwrap(), envelope(3, "msg3", "3"));
-        assert_eq!(reader.read().await.unwrap(), envelope(4, "msg4", "4"));
-        assert_eq!(reader.read().await.unwrap(), envelope(5, "msg5", "5"));
+        let (mut reader, facts) = buffer
+            .subscribe_with_query(Some(SequencedReplayQuery::After {
+                after: 2,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(facts.selected_from, 3);
+        assert_eq!(facts.outcome, ReplayOutcome::Continuous);
+        for seq in 3..=5 {
+            assert_eq!(reader.read().await.unwrap().seq, seq);
+        }
     }
 
     #[tokio::test]
-    async fn test_query_since_older_than_oldest() {
-        let buffer = MultiplexStructuredBuffer::new(3);
-
+    async fn cursor_behind_retention_gets_bounded_tail_and_truncated_facts() {
+        let buffer = MultiplexStructuredBuffer::new(2);
         for i in 1..=5 {
             buffer
                 .write(user_msg(&format!("msg{i}"), &i.to_string()))
                 .await;
         }
-
-        // seq 1 has been evicted; Since { seq: 1 } replays everything available
-        let query = Some(SequencedReplayQuery::Since { seq: 1 });
-        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
-        assert_eq!(seq, 5);
-        assert_eq!(reader.read().await.unwrap(), envelope(3, "msg3", "3"));
-        assert_eq!(reader.read().await.unwrap(), envelope(4, "msg4", "4"));
-        assert_eq!(reader.read().await.unwrap(), envelope(5, "msg5", "5"));
+        let (mut reader, facts) = buffer
+            .subscribe_with_query(Some(SequencedReplayQuery::After {
+                after: 1,
+                tail_bound: Some(1),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(facts.retained_from, 4);
+        assert_eq!(facts.selected_from, 5);
+        assert_eq!(facts.outcome, ReplayOutcome::Truncated { missing_after: 1 });
+        assert_eq!(reader.read().await.unwrap().seq, 5);
     }
 
     #[tokio::test]
-    async fn test_query_since_beyond_current() {
+    async fn tail_zero_replays_nothing_but_keeps_live_delivery() {
         let buffer = MultiplexStructuredBuffer::new(100);
-
         buffer.write(user_msg("a", "1")).await;
         buffer.write(user_msg("b", "2")).await;
-
-        // seq 10 is beyond current (2); no replay, but live writes still arrive
-        let query = Some(SequencedReplayQuery::Since { seq: 10 });
-        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
-        assert_eq!(seq, 2);
-
+        let (mut reader, facts) = buffer
+            .subscribe_with_query(Some(SequencedReplayQuery::TailCount {
+                count: 0,
+                tail_bound: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(facts.selected_from, 0);
+        assert_eq!(facts.outcome, ReplayOutcome::Continuous);
         buffer.write(user_msg("c", "3")).await;
-        assert_eq!(reader.read().await.unwrap(), envelope(3, "c", "3"));
-    }
-
-    #[tokio::test]
-    async fn test_query_tail_less_than_buffer() {
-        let buffer = MultiplexStructuredBuffer::new(100);
-
-        for i in 1..=5 {
-            buffer
-                .write(user_msg(&format!("msg{i}"), &i.to_string()))
-                .await;
-        }
-
-        let query = Some(SequencedReplayQuery::Tail { count: 2 });
-        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
-        assert_eq!(seq, 5);
-        assert_eq!(reader.read().await.unwrap(), envelope(4, "msg4", "4"));
-        assert_eq!(reader.read().await.unwrap(), envelope(5, "msg5", "5"));
-    }
-
-    #[tokio::test]
-    async fn test_query_tail_greater_than_buffer() {
-        let buffer = MultiplexStructuredBuffer::new(100);
-
-        buffer.write(user_msg("a", "1")).await;
-        buffer.write(user_msg("b", "2")).await;
-
-        // Tail { count: 100 } with only 2 entries replays everything
-        let query = Some(SequencedReplayQuery::Tail { count: 100 });
-        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
-        assert_eq!(seq, 2);
-        assert_eq!(reader.read().await.unwrap(), envelope(1, "a", "1"));
-        assert_eq!(reader.read().await.unwrap(), envelope(2, "b", "2"));
-    }
-
-    #[tokio::test]
-    async fn test_query_tail_zero() {
-        let buffer = MultiplexStructuredBuffer::new(100);
-
-        buffer.write(user_msg("a", "1")).await;
-        buffer.write(user_msg("b", "2")).await;
-
-        // Tail { count: 0 } replays nothing, but live writes still arrive
-        let query = Some(SequencedReplayQuery::Tail { count: 0 });
-        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
-        assert_eq!(seq, 2);
-
-        buffer.write(user_msg("c", "3")).await;
-        assert_eq!(reader.read().await.unwrap(), envelope(3, "c", "3"));
+        assert_eq!(reader.read().await.unwrap().seq, 3);
     }
 }

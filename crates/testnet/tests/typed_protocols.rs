@@ -1,3 +1,6 @@
+//! Integration coverage for the protocol planes each provider backend exposes
+//! and refuses. Value-level input dispatch is covered at the host boundary.
+
 use agent_runtime::test_support::{create_sdk, open_in_process_plane};
 use model::{AgentKind, ClaudeDriver, Protocol, ProtocolError};
 
@@ -77,13 +80,4 @@ async fn every_exposed_provider_protocol_opens_in_process() {
 #[tokio::test]
 async fn sdk_claude_create_constructs_the_provider_backend() {
     create_sdk().await.unwrap();
-}
-
-#[test]
-fn terminal_byte_payload_is_not_a_claude_transcript_intent() {
-    // A valid TerminalV1Input containing the three raw bytes `ESC [ A`.
-    // Field 1 is length-delimited there, while transcript field 1 is the
-    // sequence varint, so the typed transcript decoder must refuse it.
-    let terminal_input = b"\x0a\x03\x1b[A";
-    assert!(wire::decode_claude_pty_input(terminal_input).is_err());
 }

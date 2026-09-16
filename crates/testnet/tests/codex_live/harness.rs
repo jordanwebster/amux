@@ -8,22 +8,16 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use bytes::Bytes;
-use model::{CODEX_SDK_V1, CodexSdkInput as CodexSdkV1Input, TERMINAL_V1, TerminalV1Args};
+use model::{
+    CodexSdkInput as CodexSdkV1Input, CodexSdkV1Args, SendInputRequest, SessionArgs, SessionInput,
+    SessionOutput, SubscribeSessionEvent, SubscribeSessionRequest, TerminalV1Args,
+};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
-use node::{
-    AgentIdentifier, AgentType, Client, Config, CreateAgentRequest, SendInputRequest,
-    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
-};
+use node::{AgentIdentifier, AgentType, Client, Config, CreateAgentRequest, TerminalSize};
 use serde_json::json;
 use tempfile::TempDir;
 use uuid::Uuid;
-use wire::{
-    decode_codex_sdk_output as decode_codex_sdk_v1_output,
-    encode_codex_sdk_input as encode_codex_sdk_v1_input,
-    encode_terminal_args as encode_terminal_v1_args,
-};
 
 use super::depfile::assert_binary_is_current;
 use super::structure::{self, Matcher, Row};
@@ -353,8 +347,7 @@ impl StructuredCapture {
             .client()
             .subscribe_session(SubscribeSessionRequest {
                 agent: AgentIdentifier::Id(agent),
-                io_protocol: CODEX_SDK_V1.into(),
-                args: None,
+                args: SessionArgs::CodexSdkV1(CodexSdkV1Args { replay_query: None }),
             })
             .await
             .context("subscribe Codex structured plane")?;
@@ -395,8 +388,7 @@ impl StructuredCapture {
                 .await
                 .with_context(|| format!("timed out waiting for {what}"))??;
             match event {
-                SubscribeSessionEvent::Output { payload } => {
-                    let output = decode_codex_sdk_v1_output(&payload)?;
+                SubscribeSessionEvent::Output(SessionOutput::CodexSdkV1(output)) => {
                     let row = Row::parse(output.seq, &output.payload)?;
                     if let Some(previous) = self.rows.last()
                         && previous.seq >= row.seq
@@ -436,8 +428,7 @@ impl StructuredCapture {
             .send_input(SendInputRequest {
                 agent: AgentIdentifier::Id(self.agent),
                 input_id: input_id.clone(),
-                io_protocol: CODEX_SDK_V1.into(),
-                payload: Bytes::from(encode_codex_sdk_v1_input(input)),
+                input: SessionInput::CodexSdkV1(input),
                 pin: Vec::new(),
             })
             .await?;
@@ -457,14 +448,13 @@ pub async fn subscribe_raw(harness: &Harness, agent: Uuid) -> Result<node::Sessi
         .client()
         .subscribe_session(SubscribeSessionRequest {
             agent: AgentIdentifier::Id(agent),
-            io_protocol: TERMINAL_V1.into(),
-            args: Some(Bytes::from(encode_terminal_v1_args(TerminalV1Args {
+            args: SessionArgs::TerminalV1(TerminalV1Args {
                 terminal_size: Some(TerminalSize {
                     rows: 45,
                     cols: 140,
                 }),
                 replay_query: None,
-            }))),
+            }),
         })
         .await
         .context("subscribe real Codex terminal")
@@ -501,7 +491,9 @@ pub async fn raw_until(
             }
         };
         match event {
-            SubscribeSessionEvent::Output { payload } => bytes.extend_from_slice(&payload),
+            SubscribeSessionEvent::Output(SessionOutput::TerminalV1 { payload }) => {
+                bytes.extend_from_slice(&payload)
+            }
             SubscribeSessionEvent::Closed { reason } => {
                 let tail = &bytes[bytes.len().saturating_sub(240)..];
                 bail!(
@@ -525,7 +517,9 @@ pub async fn drain_raw(stream: &mut node::SessionStream) -> Result<Vec<u8>> {
         }
         match tokio::time::timeout(Duration::from_millis(250).min(remaining), stream.recv()).await {
             Err(_) => return Ok(bytes),
-            Ok(Ok(SubscribeSessionEvent::Output { payload })) => bytes.extend_from_slice(&payload),
+            Ok(Ok(SubscribeSessionEvent::Output(SessionOutput::TerminalV1 { payload }))) => {
+                bytes.extend_from_slice(&payload)
+            }
             Ok(Ok(SubscribeSessionEvent::Closed { reason })) => {
                 bail!("raw terminal closed while draining: {reason:?}")
             }

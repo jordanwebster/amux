@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use crossterm::terminal;
-use model::{CODEX_RAW_THREAD_NOT_READY, TERMINAL_V1, TerminalV1Args};
+use model::{CODEX_RAW_THREAD_NOT_READY, SessionArgs, SessionInput, SessionOutput, TerminalV1Args};
 use node::{
     AgentIdentifier, AgentType, Client, ClientError, Config, CreateAgentRequest, LeaderKey,
     SendInputRequest, SessionCloseReason, ShutdownReason, SubscribeSessionEvent,
@@ -653,14 +653,10 @@ pub(crate) async fn subscribe_raw(
     let session = rpc
         .subscribe_session(SubscribeSessionRequest {
             agent: agent.clone(),
-            io_protocol: TERMINAL_V1.to_string(),
-            args: Some(
-                wire::encode_terminal_args(TerminalV1Args {
-                    terminal_size,
-                    replay_query: None,
-                })
-                .into(),
-            ),
+            args: SessionArgs::TerminalV1(TerminalV1Args {
+                terminal_size,
+                replay_query: None,
+            }),
         })
         .await
         .map_err(|error| anyhow!("failed to subscribe to session: {error}"))?;
@@ -922,8 +918,7 @@ pub(crate) async fn attach_loop<W: Write>(
                         .send_input(SendInputRequest {
                             agent: agent.clone(),
                             input_id: Uuid::new_v4().as_bytes().to_vec(),
-                            io_protocol: TERMINAL_V1.to_string(),
-                            payload: data.into(),
+                            input: SessionInput::TerminalV1 { payload: data },
                             pin: Vec::new(),
                         })
                         .await
@@ -937,12 +932,15 @@ pub(crate) async fn attach_loop<W: Write>(
                 None => return Ok(AttachOutcome::SessionEnded),
             },
             event = session.recv() => match event {
-                Ok(SubscribeSessionEvent::Output { payload }) => {
+                Ok(SubscribeSessionEvent::Output(SessionOutput::TerminalV1 { payload })) => {
                     output.write_all(&payload).ok();
                     output.flush().ok();
                 }
-                Ok(SubscribeSessionEvent::Opened)
-                | Ok(SubscribeSessionEvent::ReplayComplete { .. }) => {}
+                Ok(SubscribeSessionEvent::Opened { .. })
+                | Ok(SubscribeSessionEvent::ReplayComplete) => {}
+                Ok(SubscribeSessionEvent::Output(_)) => {
+                    return Err(anyhow!("raw session emitted output for the wrong protocol"));
+                }
                 Ok(SubscribeSessionEvent::Closed { reason }) => {
                     tracing::info!(?reason, "session closed");
                     return Ok(AttachOutcome::SessionClosed(reason));

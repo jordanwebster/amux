@@ -133,15 +133,15 @@ async fn testnet_agents_controls_and_runtime_over_authenticated_relay() {
             .send_input(node::SendInputRequest {
                 agent: agent.into(),
                 input_id: Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: model::CLAUDE_PTY_TRANSCRIPT_V1.into(),
                 pin: vec![],
-                payload: wire::encode_claude_pty_input(
-                    u64::MAX,
-                    model::ClaudePtyIntent::Prompt {
-                        text: "This stale input must not reach the provider".into(),
+                input: model::SessionInput::ClaudePtyTranscriptV1(
+                    model::ClaudePtyTranscriptV1Input {
+                        expected_seq: u64::MAX,
+                        intent: model::ClaudePtyIntent::Prompt {
+                            text: "This stale input must not reach the provider".into(),
+                        },
                     },
-                )
-                .into(),
+                ),
             })
             .await;
         assert!(matches!(

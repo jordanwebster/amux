@@ -23,27 +23,10 @@ pub enum TerminalV1ReplayQuery {
     TailBytes { count: u64 },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TerminalV1Control {
-    Resize(crate::TerminalSize),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClaudePtyTranscriptV1Args {
     pub terminal_size: Option<crate::TerminalSize>,
-    pub replay_query: Option<ClaudePtyTranscriptV1ReplayQuery>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaudePtyTranscriptV1ReplayQuery {
-    Since { seq_id: u64 },
-    Tail { count: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaudePtyTranscriptV1Output {
-    pub seq_id: u64,
-    pub payload: Vec<u8>,
+    pub replay_query: Option<crate::ReplayQuery>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,19 +60,7 @@ pub enum ClaudeSdkInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClaudeSdkV1Args {
-    pub replay_query: Option<ClaudeSdkV1ReplayQuery>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaudeSdkV1ReplayQuery {
-    Since { seq_id: u64 },
-    Tail { count: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaudeSdkV1Output {
-    pub seq_id: u64,
-    pub payload: Vec<u8>,
+    pub replay_query: Option<crate::ReplayQuery>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,19 +98,7 @@ pub enum CodexSdkInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CodexSdkV1Args {
-    pub replay_query: Option<CodexSdkV1ReplayQuery>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CodexSdkV1ReplayQuery {
-    Since { seq: u64 },
-    Tail { count: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodexSdkV1Output {
-    pub seq: u64,
-    pub payload: Vec<u8>,
+    pub replay_query: Option<crate::ReplayQuery>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

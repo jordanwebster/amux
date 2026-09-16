@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -153,8 +152,7 @@ impl From<&str> for PeerIdentifier {
 pub struct SendInputRequest {
     pub agent: AgentIdentifier,
     pub input_id: Vec<u8>,
-    pub io_protocol: String,
-    pub payload: Bytes,
+    pub input: crate::SessionInput,
     pub pin: Vec<String>,
 }
 
@@ -175,8 +173,7 @@ pub struct SetAgentStatusRequest {
 #[derive(Clone, Debug)]
 pub struct SubscribeSessionRequest {
     pub agent: AgentIdentifier,
-    pub io_protocol: String,
-    pub args: Option<Bytes>,
+    pub args: crate::SessionArgs,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

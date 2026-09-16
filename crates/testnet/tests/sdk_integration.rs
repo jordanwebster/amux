@@ -110,8 +110,7 @@ async fn send(host: &ClaudeSdkBackendHarness, model: &mut Model, effects: Vec<Ef
     else {
         panic!("one SDK effect expected: {effects:?}");
     };
-    let wire = wire::encode_claude_sdk_input(payload.clone()).unwrap();
-    host.send_encoded(input_id, &wire).await.unwrap();
+    host.send_typed(input_id, payload.clone()).await.unwrap();
     update(
         model,
         Msg::OpResult {

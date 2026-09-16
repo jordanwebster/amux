@@ -102,9 +102,8 @@ impl ClaudeSdkBackendHarness {
         self.backend.send_claude_sdk(input_id, input).await
     }
 
-    /// Exercise the daemon decoder with bytes emitted by a client runtime.
-    pub async fn send_encoded(&self, input_id: &[u8], payload: &[u8]) -> Result<()> {
-        let input = wire::decode_claude_sdk_input(payload)?;
+    /// Exercise the same typed input value used by the client and daemon boundary.
+    pub async fn send_typed(&self, input_id: &[u8], input: model::ClaudeSdkInput) -> Result<()> {
         let input = agent_runtime::test_support::claude_sdk_input_from_model(input)?;
         self.send(input_id, input).await
     }

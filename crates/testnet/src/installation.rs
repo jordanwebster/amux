@@ -664,9 +664,8 @@ impl RetainedProfileWork {
         self.agent
             .send_input(node::harness::SendInputRequest {
                 agent_id: agent.id,
-                protocol: node::harness::Protocol::TestEchoV1,
-                event: node::harness::SessionInputEvent::Input {
-                    input_id: vec![1],
+                input_id: vec![1],
+                input: model::SessionInput::TestEchoV1 {
                     payload: payload.to_vec(),
                 },
                 pin: Vec::new(),

@@ -12,7 +12,6 @@ mod pty;
 mod record;
 mod session;
 mod sources;
-pub(crate) mod terminal_io;
 #[cfg(any(debug_assertions, test))]
 mod test_agent;
 pub use attachments::attachments_row;
@@ -26,7 +25,9 @@ pub(crate) use buffer::{
 };
 #[cfg(unix)]
 pub(crate) use codex::CodexRawPtyLease;
-pub(crate) use debug::{BackendState, BufferDebug, ObligationDebug, OutputDebug, SessionDebug};
+pub(crate) use debug::{
+    BackendState, BufferDebug, ObligationDebug, OutputDebug, SessionDebug, SubscriptionRecord,
+};
 pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
 pub(crate) use log_source::StructuredLogSource;
 pub use model::{

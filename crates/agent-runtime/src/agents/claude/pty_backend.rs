@@ -806,6 +806,7 @@ impl AgentBackend for ClaudePtyBackend {
             subscriber_count,
             backend,
             obligations,
+            self.log.recent_subscriptions(),
         );
         let mut value = serde_json::to_value(DebugView::new(self, verbose))?;
         value
@@ -1364,8 +1365,8 @@ mod tests {
         .await
         .expect("input result row was not ingested");
 
-        let (mut replay, seq) = backend.log.subscribe_with_query(None).await.unwrap();
-        assert_eq!(seq, 2);
+        let (mut replay, facts) = backend.log.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 2);
         let keymap = replay.read().await.unwrap().payload;
         assert_eq!(keymap["type"], "amux.claude.keymap");
         assert_eq!(keymap["keymap"]["name"], "claude-2.1");
@@ -1550,8 +1551,8 @@ mod tests {
         .await
         .unwrap();
 
-        let (mut replay, seq) = backend.log.subscribe_with_query(None).await.unwrap();
-        assert_eq!(seq, 5, "clearing retains the monotonic sequence");
+        let (mut replay, facts) = backend.log.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 5, "clearing retains the monotonic sequence");
         assert_eq!(
             replay.read().await.unwrap().payload["type"],
             "amux.claude.keymap"

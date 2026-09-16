@@ -1,3 +1,13 @@
+2026-09-16 — **Session streams carry typed rows and explicit replay facts.**
+Clients, routed node services and provider runtimes now exchange typed session
+arguments, inputs and outputs instead of re-decoding opaque protocol bytes at
+each boundary. Structured rows carry the daemon publication time, optional
+provider activity time and a replay-versus-live marker. Replay selection uses
+an exclusive `after` cursor or a bounded tail and opens with retained,
+selected, through and reset positions plus a Continuous, Truncated or Reset
+outcome; reconnecting exactly at the current through position replays no rows
+and remains Continuous.
+
 2026-09-16 — **The fold and store share one bounded, postcard-safe contract.**
 Heads, segments, entries, pages, commit results and fleet deltas now use the
 same I/O-free values in `fold`, including the corrected replay cuts, boundary

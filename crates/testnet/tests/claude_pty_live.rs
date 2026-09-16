@@ -1621,8 +1621,7 @@ async fn two_terminal_fanout(
     scratch: &Scratch,
     model: &str,
 ) -> Result<serde_json::Value> {
-    use model::TERMINAL_V1;
-    use node::{SubscribeSessionEvent, SubscribeSessionRequest};
+    use model::{SessionArgs, SessionOutput, SubscribeSessionEvent, SubscribeSessionRequest};
 
     let (mut session, cursor) = open(
         daemon,
@@ -1639,8 +1638,10 @@ async fn two_terminal_fanout(
         .client
         .subscribe_session(SubscribeSessionRequest {
             agent: session.agent_name().into(),
-            io_protocol: TERMINAL_V1.to_owned(),
-            args: None,
+            args: SessionArgs::TerminalV1(model::TerminalV1Args {
+                terminal_size: None,
+                replay_query: None,
+            }),
         })
         .await
         .context("subscribe second terminal")?;
@@ -1656,7 +1657,9 @@ async fn two_terminal_fanout(
             bail!("second terminal subscriber received no PTY output");
         }
         match tokio::time::timeout(remaining, second.recv()).await?? {
-            SubscribeSessionEvent::Output { payload } if !payload.is_empty() => {
+            SubscribeSessionEvent::Output(SessionOutput::TerminalV1 { payload })
+                if !payload.is_empty() =>
+            {
                 break payload.len();
             }
             SubscribeSessionEvent::Closed { .. } => {
@@ -3332,13 +3335,13 @@ async fn subscriptions(
 /// Claude. The transcript and hook CLI both live under the scratch daemon;
 /// no file beneath the user's real ~/.claude is read or written.
 async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<serde_json::Value> {
-    use model::{CLAUDE_PTY_TRANSCRIPT_V1 as PTY_TRANSCRIPT_V1, TERMINAL_V1};
-    use node::{
-        AgentIdentifier, ClientError, ProtocolError, SendInputRequest, SubscribeSessionEvent,
-        SubscribeSessionRequest,
+    use model::{
+        ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input, SendInputRequest, SessionArgs,
+        SessionInput, SessionOutput, SubscribeSessionEvent, SubscribeSessionRequest,
+        TerminalV1Args,
     };
+    use node::{AgentIdentifier, ClientError, ProtocolError};
     use uuid::Uuid;
-    use wire::decode_claude_pty_output as decode_pty_transcript_v1_output;
 
     let cwd = scratch.project_dir("external_readonly")?;
     let external_dir = scratch.root.join("external-session");
@@ -3395,8 +3398,10 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         .client
         .subscribe_session(SubscribeSessionRequest {
             agent: AgentIdentifier::Id(session_id),
-            io_protocol: TERMINAL_V1.to_string(),
-            args: None,
+            args: SessionArgs::TerminalV1(TerminalV1Args {
+                terminal_size: None,
+                replay_query: None,
+            }),
         })
         .await;
     let terminal_error = match terminal_result {
@@ -3415,8 +3420,10 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         .client
         .subscribe_session(SubscribeSessionRequest {
             agent: AgentIdentifier::Id(session_id),
-            io_protocol: PTY_TRANSCRIPT_V1.to_string(),
-            args: None,
+            args: SessionArgs::ClaudePtyTranscriptV1(ClaudePtyTranscriptV1Args {
+                terminal_size: None,
+                replay_query: None,
+            }),
         })
         .await?;
     let deadline = std::time::Instant::now() + READY_TIMEOUT;
@@ -3431,9 +3438,8 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         }
         let event = tokio::time::timeout(remaining, stream.recv()).await??;
         match event {
-            SubscribeSessionEvent::Output { payload } => {
-                let output = decode_pty_transcript_v1_output(&payload)?;
-                latest_seq = output.seq_id;
+            SubscribeSessionEvent::Output(SessionOutput::ClaudePtyTranscriptV1(output)) => {
+                latest_seq = output.seq;
                 let raw = String::from_utf8(output.payload)?;
                 let row: serde_json::Value = serde_json::from_str(&raw)?;
                 ready |= row.get("type").and_then(serde_json::Value::as_str)
@@ -3455,19 +3461,18 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         format!("{}\n", captured.join("\n")),
     )?;
 
-    let payload = wire::encode_claude_pty_input(
-        latest_seq,
-        model::ClaudePtyIntent::Prompt {
+    let input = SessionInput::ClaudePtyTranscriptV1(ClaudePtyTranscriptV1Input {
+        expected_seq: latest_seq,
+        intent: model::ClaudePtyIntent::Prompt {
             text: "readonly sessions refuse semantic input".to_owned(),
         },
-    );
+    });
     let readonly_error = daemon
         .client
         .send_input(SendInputRequest {
             agent: AgentIdentifier::Id(session_id),
             input_id: Uuid::new_v4().as_bytes().to_vec(),
-            io_protocol: PTY_TRANSCRIPT_V1.to_string(),
-            payload: payload.into(),
+            input,
             pin: Vec::new(),
         })
         .await

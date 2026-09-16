@@ -192,7 +192,7 @@ impl TestAgentSession {
     pub(crate) async fn subscribe_with_query(
         &self,
         query: Option<SequencedReplayQuery>,
-    ) -> Option<(MultiplexStructuredReader, u64)> {
+    ) -> Option<(MultiplexStructuredReader, model::ReplayFacts)> {
         self.log_source.as_ref()?.subscribe_with_query(query).await
     }
 
@@ -328,6 +328,10 @@ impl AgentBackend for TestAgentSession {
             subscriber_count,
             backend,
             Vec::new(),
+            self.log_source
+                .as_ref()
+                .map(StructuredLogSource::recent_subscriptions)
+                .unwrap_or_default(),
         );
         let mut value = serde_json::to_value(DebugView::new(self, verbose))?;
         value
@@ -368,7 +372,7 @@ mod tests {
             created_at: Utc::now(),
         };
 
-        let (_reader, seq) = tokio::time::timeout(
+        let (_reader, facts) = tokio::time::timeout(
             std::time::Duration::from_millis(100),
             session.subscribe_with_query(None),
         )
@@ -376,7 +380,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        assert_eq!(seq, 0);
+        assert_eq!(facts.through, 0);
     }
 
     #[tokio::test]

@@ -163,8 +163,8 @@ async fn prompt_publication(fail: bool) {
         assert_eq!(receipt["type"], "amux.claude_sdk.input_result");
         assert_ne!(receipt["outcome"], "ok");
         assert_eq!(second.read().await.unwrap().payload, receipt);
-        let (mut replay, count) = log.subscribe_with_query(None).await.unwrap();
-        for _ in 0..count {
+        let (mut replay, facts) = log.subscribe_with_query(None).await.unwrap();
+        for _ in 0..facts.through {
             assert_ne!(replay.read().await.unwrap().payload["type"], "user");
         }
     } else {
@@ -205,9 +205,9 @@ async fn prompt_publication(fail: bool) {
             })
             .await
             .unwrap();
-        let (mut replay, count) = log.subscribe_with_query(None).await.unwrap();
+        let (mut replay, facts) = log.subscribe_with_query(None).await.unwrap();
         let mut rows = Vec::new();
-        for _ in 0..count {
+        for _ in 0..facts.through {
             rows.push(replay.read().await.unwrap().payload);
         }
         let prompts: Vec<_> = rows.iter().filter(|row| row["type"] == "user").collect();

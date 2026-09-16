@@ -2055,6 +2055,7 @@ impl AgentBackend for CodexBackend {
             subscriber_count,
             backend,
             obligations,
+            self.log_source.recent_subscriptions(),
         );
         let mut value = base;
         value
@@ -2213,8 +2214,8 @@ mod tests {
             working_on: None,
         };
         let mut backend = CodexBackend::with_session(record, provider);
-        let (mut rows, count) = backend.log_source.subscribe_with_query(None).await.unwrap();
-        assert_eq!(count, 0);
+        let (mut rows, facts) = backend.log_source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 0);
         let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
         let ingest = backend.start(&event_tx).unwrap();
 
@@ -2509,12 +2510,12 @@ mod tests {
     }
 
     async fn assert_delivery_row(session: &CodexBackend, delivery: Delivery) {
-        let (mut rows, count) = session
+        let (mut rows, facts) = session
             .log_source
             .subscribe_with_query(None)
             .await
             .expect("structured log subscription");
-        assert_eq!(count, 1);
+        assert_eq!(facts.through, 1);
         assert_eq!(
             rows.read().await.expect("delivery row").payload,
             json!({
@@ -3766,8 +3767,8 @@ mod tests {
             "connection_lost",
         )
         .await;
-        let (mut reader, seq) = source.subscribe_with_query(None).await.unwrap();
-        assert_eq!(seq, 2);
+        let (mut reader, facts) = source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 2);
         let mut ids = Vec::new();
         for _ in 0..2 {
             let row = reader.read().await.unwrap().payload;
@@ -3814,8 +3815,8 @@ mod tests {
             },
         )
         .await;
-        let (mut reader, seq) = source.subscribe_with_query(None).await.unwrap();
-        assert_eq!(seq, 1);
+        let (mut reader, facts) = source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 1);
         let row = reader.read().await.unwrap().payload;
         assert_eq!(row["type"], "amux.input_result");
         assert_eq!(row["input_id"], json!(b"input-unknown"));
@@ -3957,8 +3958,8 @@ mod tests {
         .await;
 
         server.await.unwrap();
-        let (mut rows, count) = source.subscribe_with_query(None).await.unwrap();
-        assert_eq!(count, 1);
+        let (mut rows, facts) = source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(facts.through, 1);
         let row = rows.read().await.unwrap().payload;
         assert_eq!(row["type"], "amux.input_result");
         assert!(row.get("ok").is_some());

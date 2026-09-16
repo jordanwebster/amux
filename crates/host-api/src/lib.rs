@@ -9,70 +9,28 @@ use async_trait::async_trait;
 use futures_util::Stream;
 use model::envelope::Envelope;
 use model::{
-    Agent, AgentEvent, AgentId, ArtifactId, ArtifactKind, ArtifactRef, ClaudePtyTranscriptV1Args,
-    ClaudePtyTranscriptV1Input, ClaudeSdkInput, ClaudeSdkV1Args, CodexSdkInput, CodexSdkV1Args,
-    CreateAgentRequest, HookEnvironment, Protocol, ProtocolError, RenameAgentRequest,
-    SessionCloseReason, ShutdownReason, SpawnInheritance, TerminalV1Args, TerminalV1Control,
+    Agent, AgentEvent, AgentId, ArtifactId, ArtifactKind, ArtifactRef, CreateAgentRequest,
+    HookEnvironment, ProtocolError, RenameAgentRequest, SessionArgs, SessionInput, ShutdownReason,
+    SpawnInheritance,
+};
+pub use model::{
+    SessionArgs as HostSessionArgs, SessionInput as HostSessionInput,
+    SubscribeSessionEvent as HostSessionEvent,
 };
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use uuid::Uuid;
 
-/// Protocol arguments decoded by the node's wire boundary.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HostSessionArgs {
-    Terminal(TerminalV1Args),
-    ClaudePty(ClaudePtyTranscriptV1Args),
-    ClaudeSdk(ClaudeSdkV1Args),
-    Codex(CodexSdkV1Args),
-    TestEcho,
-}
-
-impl HostSessionArgs {
-    pub fn protocol(&self) -> Protocol {
-        match self {
-            Self::Terminal(_) => Protocol::TerminalV1,
-            Self::ClaudePty(_) => Protocol::ClaudePtyTranscriptV1,
-            Self::ClaudeSdk(_) => Protocol::ClaudeSdkV1,
-            Self::Codex(_) => Protocol::CodexSdkV1,
-            Self::TestEcho => Protocol::TestEchoV1,
-        }
-    }
-}
-
-/// Session input decoded before it crosses into the provider runtime.
-#[derive(Clone, Debug, PartialEq)]
-pub enum HostSessionInput {
-    TerminalBytes(Vec<u8>),
-    TerminalControl(TerminalV1Control),
-    ClaudePty(ClaudePtyTranscriptV1Input),
-    ClaudeSdk(ClaudeSdkInput),
-    Codex(CodexSdkInput),
-    TestEcho(Vec<u8>),
-}
-
-impl HostSessionInput {
-    pub fn protocol(&self) -> Protocol {
-        match self {
-            Self::TerminalBytes(_) | Self::TerminalControl(_) => Protocol::TerminalV1,
-            Self::ClaudePty(_) => Protocol::ClaudePtyTranscriptV1,
-            Self::ClaudeSdk(_) => Protocol::ClaudeSdkV1,
-            Self::Codex(_) => Protocol::CodexSdkV1,
-            Self::TestEcho(_) => Protocol::TestEchoV1,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionRequest {
     pub agent_id: AgentId,
-    pub args: HostSessionArgs,
+    pub args: SessionArgs,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionInputRequest {
     pub agent_id: AgentId,
     pub input_id: Vec<u8>,
-    pub input: HostSessionInput,
+    pub input: SessionInput,
     pub pin: Vec<ArtifactId>,
 }
 
@@ -80,21 +38,6 @@ pub struct SessionInputRequest {
 pub struct HostSetAgentStatus {
     pub agent_id: AgentId,
     pub working_on: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum HostSessionEvent {
-    Opened,
-    Output {
-        sequence: Option<u64>,
-        payload: Vec<u8>,
-    },
-    ReplayComplete {
-        sequence: Option<u64>,
-    },
-    Closed {
-        reason: SessionCloseReason,
-    },
 }
 
 #[derive(Clone, Debug)]

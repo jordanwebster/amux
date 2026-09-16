@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures_util::{Stream, StreamExt};
-use host_api::{HostSessionEvent, HostSessionInput, LocalAgentHost};
+use host_api::LocalAgentHost;
 use model::ProtocolError;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -13,7 +13,7 @@ use wire::{self, protocol_status};
 
 use crate::agents::{
     Agent, AgentEvent, ArtifactRef, CreateAgentRpcRequest, RenameAgentRequest, SendInputRequest,
-    SessionInputEvent, SetAgentStatusRequest, SpawnInheritance, SubscribeSessionRequest,
+    SetAgentStatusRequest, SpawnInheritance, SubscribeSessionRequest,
 };
 use crate::envelope::Envelope;
 use crate::server::ShutdownReason;
@@ -214,11 +214,10 @@ impl AgentServiceCtx {
         request: SubscribeSessionRequest,
     ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError> {
         let _operation = self.operations.admit().await?;
-        let protocol = request.protocol;
-        let request = host_session_request(request)?;
+        let request = host_session_request(request);
         drop(_operation);
         let stream = self.require_host()?.subscribe_session(request).await?;
-        Ok(host_stream_to_wire(stream, protocol))
+        Ok(host_stream_to_wire(stream))
     }
 }
 
@@ -483,13 +482,27 @@ fn decode_agent_id(field: &str, bytes: Vec<u8>) -> Result<Uuid, tonic::Status> {
 fn decode_send_input_request(
     request: wire::pb::SendInputRequest,
 ) -> Result<SendInputRequest, tonic::Status> {
-    crate::agents::send_input_request_from_wire(request).map_err(decode_status)
+    let event = request
+        .event
+        .ok_or_else(|| tonic::Status::invalid_argument("SendInputRequest missing event"))?;
+    Ok(SendInputRequest {
+        agent_id: decode_agent_id("SendInputRequest.agent_id", request.agent_id)?,
+        input_id: request.input_id,
+        input: crate::agents::session_input_from_wire(event).map_err(decode_status)?,
+        pin: request.pin,
+    })
 }
 
 fn decode_subscribe_session_request(
     request: wire::pb::SubscribeSessionRequest,
 ) -> Result<SubscribeSessionRequest, tonic::Status> {
-    crate::agents::subscribe_session_request_from_wire(request).map_err(decode_status)
+    let protocol = request.protocol.ok_or_else(|| {
+        tonic::Status::invalid_argument("SubscribeSessionRequest missing protocol")
+    })?;
+    Ok(SubscribeSessionRequest {
+        agent_id: decode_agent_id("SubscribeSessionRequest.agent_id", request.agent_id)?,
+        args: crate::agents::session_args_from_wire(protocol).map_err(decode_status)?,
+    })
 }
 
 fn create_rpc_to_domain_request(
@@ -561,75 +574,16 @@ fn create_rpc_to_domain_request(
     })
 }
 
-fn host_session_request(
-    request: SubscribeSessionRequest,
-) -> Result<host_api::SessionRequest, ProtocolError> {
-    let args = match request.protocol {
-        model::Protocol::TerminalV1 => host_api::HostSessionArgs::Terminal(
-            wire::decode_terminal_args(request.args.as_deref()).map_err(decode_error)?,
-        ),
-        model::Protocol::ClaudePtyTranscriptV1 => host_api::HostSessionArgs::ClaudePty(
-            wire::decode_claude_pty_args(request.args.as_deref()).map_err(decode_error)?,
-        ),
-        model::Protocol::ClaudeSdkV1 => host_api::HostSessionArgs::ClaudeSdk(
-            wire::decode_claude_sdk_args(request.args.as_deref()).map_err(decode_error)?,
-        ),
-        model::Protocol::CodexSdkV1 => host_api::HostSessionArgs::Codex(
-            wire::decode_codex_sdk_args(request.args.as_deref()).map_err(decode_error)?,
-        ),
-        model::Protocol::TestEchoV1 if request.args.is_none() => {
-            host_api::HostSessionArgs::TestEcho
-        }
-        model::Protocol::TestEchoV1 => {
-            return Err(ProtocolError::InvalidArgument {
-                message: "test echo does not accept arguments".into(),
-            });
-        }
-    };
-    Ok(host_api::SessionRequest {
+fn host_session_request(request: SubscribeSessionRequest) -> host_api::SessionRequest {
+    host_api::SessionRequest {
         agent_id: request.agent_id,
-        args,
-    })
+        args: request.args,
+    }
 }
 
 fn host_input_request(
     request: SendInputRequest,
 ) -> Result<host_api::SessionInputRequest, ProtocolError> {
-    let input_id = match &request.event {
-        SessionInputEvent::Input { input_id, .. } => input_id.clone(),
-        SessionInputEvent::Control { .. } => Vec::new(),
-    };
-    let input = match (request.protocol, request.event) {
-        (model::Protocol::TerminalV1, SessionInputEvent::Input { payload, .. }) => {
-            HostSessionInput::TerminalBytes(payload)
-        }
-        (model::Protocol::TerminalV1, SessionInputEvent::Control { payload }) => {
-            HostSessionInput::TerminalControl(
-                wire::decode_terminal_control(&payload).map_err(decode_error)?,
-            )
-        }
-        (model::Protocol::ClaudePtyTranscriptV1, SessionInputEvent::Input { payload, .. }) => {
-            HostSessionInput::ClaudePty(
-                wire::decode_claude_pty_input(&payload).map_err(decode_error)?,
-            )
-        }
-        (model::Protocol::ClaudeSdkV1, SessionInputEvent::Input { payload, .. }) => {
-            HostSessionInput::ClaudeSdk(
-                wire::decode_claude_sdk_input(&payload).map_err(decode_error)?,
-            )
-        }
-        (model::Protocol::CodexSdkV1, SessionInputEvent::Input { payload, .. }) => {
-            HostSessionInput::Codex(wire::decode_codex_sdk_input(&payload).map_err(decode_error)?)
-        }
-        (model::Protocol::TestEchoV1, SessionInputEvent::Input { payload, .. }) => {
-            HostSessionInput::TestEcho(payload)
-        }
-        (protocol, SessionInputEvent::Control { .. }) => {
-            return Err(ProtocolError::InvalidArgument {
-                message: format!("{protocol} does not accept control input"),
-            });
-        }
-    };
     let pin = request
         .pin
         .into_iter()
@@ -641,47 +595,19 @@ fn host_input_request(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(host_api::SessionInputRequest {
         agent_id: request.agent_id,
-        input_id,
-        input,
+        input_id: request.input_id,
+        input: request.input,
         pin,
     })
 }
 
-fn decode_error(error: wire::DecodeError) -> ProtocolError {
-    ProtocolError::InvalidArgument {
-        message: error.to_string(),
-    }
-}
-
 fn host_stream_to_wire(
     stream: host_api::HostSessionStream,
-    protocol: model::Protocol,
 ) -> ResponseStream<wire::SubscribeSessionResponse> {
-    Box::pin(stream.map(move |item| {
-        let event = match item {
-            Ok(HostSessionEvent::Opened) => model::SubscribeSessionEvent::Opened,
-            Ok(HostSessionEvent::Output { sequence, payload }) => {
-                model::SubscribeSessionEvent::Output {
-                    payload: wire::encode_provider_output(protocol, sequence, payload)
-                        .map_err(encode_status)?,
-                }
-            }
-            Ok(HostSessionEvent::ReplayComplete { sequence }) => {
-                model::SubscribeSessionEvent::ReplayComplete {
-                    cursor: wire::encode_provider_cursor(protocol, sequence)
-                        .map_err(encode_status)?,
-                }
-            }
-            Ok(HostSessionEvent::Closed { reason }) => {
-                model::SubscribeSessionEvent::Closed { reason }
-            }
-            Err(host_api::HostStreamError::Protocol(error)) => return Err(protocol_status(error)),
-            Err(host_api::HostStreamError::Shutdown(reason)) => {
-                return Err(server_shutdown_status(reason));
-            }
-        };
-        crate::agents::session_output_event_to_wire(&event, protocol)
-            .map_err(|error| tonic::Status::internal(error.to_string()))
+    Box::pin(stream.map(|item| match item {
+        Ok(event) => Ok(crate::agents::session_event_to_wire(&event)),
+        Err(host_api::HostStreamError::Protocol(error)) => Err(protocol_status(error)),
+        Err(host_api::HostStreamError::Shutdown(reason)) => Err(server_shutdown_status(reason)),
     }))
 }
 

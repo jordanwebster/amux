@@ -29,11 +29,16 @@ message Empty {}
 // phase: the neighbor snapshot is a field of Hello/HelloAccepted.
 message SnapshotComplete {}
 
-// In-band marker that a session replay has been flushed.
-message ReplayComplete {
-  // Opaque position at the replay boundary when the selected protocol has one.
-  optional bytes cursor = 1;
+// Exclusive cursor or bounded tail selection for a sequenced session.
+message ReplayQuery {
+  oneof query {
+    uint64 after = 1;
+    uint64 tail_count = 2;
+  }
+  optional uint64 tail_bound = 3;
 }
+
+message ReplayComplete {}
 
 // Agent-independent raw terminal byte-plane payloads.
 message TerminalV1Args {
@@ -53,6 +58,27 @@ message TerminalV1Input {
 
 message TerminalV1Output {
   bytes payload = 1;
+}
+
+message ClaudePtyTranscriptV1Args {
+  optional TerminalSize terminal_size = 1;
+  optional ReplayQuery replay_query = 2;
+}
+
+message ClaudeSdkV1Args {
+  optional ReplayQuery replay_query = 1;
+}
+
+message CodexSdkV1Args {
+  optional ReplayQuery replay_query = 1;
+}
+
+message StructuredRow {
+  uint64 seq = 1;
+  int64 published_at_unix_ms = 2;
+  optional int64 activity_at_unix_ms = 3;
+  bool historical = 4;
+  bytes payload = 5;
 }
 
 message AgentKind {
@@ -658,14 +684,33 @@ message SessionControl {
   }
 }
 
-message SessionOpened {}
+message ReplayFacts {
+  uint64 retained_from = 1;
+  uint64 through = 2;
+  uint64 selected_from = 3;
+  uint64 reset_at = 4;
+  oneof outcome {
+    Continuous continuous = 5;
+    Truncated truncated = 6;
+    Reset reset = 7;
+  }
+}
+
+message Continuous {}
+message Truncated { uint64 missing_after = 1; }
+message Reset { string reason = 1; }
+
+message SessionOpened {
+  // Unset for byte-oriented terminal sessions.
+  optional ReplayFacts replay = 1;
+}
 
 message SessionOutput {
   oneof output {
     TerminalV1Output terminal_v1 = 10;
-    ClaudePtyTranscriptV1Output claude_pty_transcript_v1 = 11;
-    ClaudeSdkV1Output claude_sdk_v1 = 12;
-    CodexSdkV1Output codex_sdk_v1 = 13;
+    StructuredRow claude_pty_transcript_v1 = 11;
+    StructuredRow claude_sdk_v1 = 12;
+    StructuredRow codex_sdk_v1 = 13;
     TestEchoV1Output test_echo_v1 = 100;
   }
 }

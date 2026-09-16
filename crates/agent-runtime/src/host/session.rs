@@ -5,19 +5,19 @@ use std::sync::Arc;
 
 use artifacts::Owner;
 use host_api::{
-    HostSessionArgs, HostSessionEvent, HostSessionInput, HostSessionStream, HostStreamError,
-    SessionInputRequest, SessionRequest,
+    HostSessionEvent, HostSessionStream, HostStreamError, SessionInputRequest, SessionRequest,
 };
-use model::{ArtifactId, ProtocolError, ShutdownReason};
+use model::{
+    ArtifactId, ProtocolError, ReplayFacts, SessionArgs, SessionControl, SessionInput,
+    SessionOutput, ShutdownReason, StructuredRow, TerminalV1ReplayQuery,
+};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::{AgentRuntime, SharedAgentServiceState};
 #[cfg(unix)]
 use crate::agents::CodexRawPtyLease;
-use crate::agents::claude::io::{self as claude_io, ClaudePtyTranscriptV1ReplayQuery};
 use crate::agents::claude::sdk_io as claude_sdk_io;
-use crate::agents::terminal_io::{TerminalV1Control, TerminalV1ReplayQuery};
 use crate::agents::{
     ArtifactRef, BroadcastRead, ByteReplayQuery, MaterialiseBackend, Plane, Protocol, PtyHandle,
     RawPtyTarget, SessionCloseReason, StructuredInput, StructuredInputEvent, StructuredLogSource,
@@ -55,12 +55,14 @@ pub(super) async fn subscribe_session_stream(
 enum SessionOutputReader {
     Raw(RawSessionOutputReader),
     Structured {
+        protocol: Protocol,
         reader: crate::agents::MultiplexStructuredReader,
-        replay_cursor: Option<u64>,
+        replay: ReplayFacts,
     },
 }
 
 struct RawSessionOutputReader {
+    protocol: Protocol,
     reader: crate::agents::MultiplexByteReader,
     #[cfg(unix)]
     _codex_lease: Option<CodexRawPtyLease>,
@@ -80,25 +82,27 @@ async fn prepare_direct_session_subscription(
     request: &SessionRequest,
     host: &AgentRuntime,
 ) -> Result<PreparedSessionSubscription, ProtocolError> {
-    let protocol = request.args.protocol();
-    match protocol {
-        Protocol::TerminalV1 => {
+    match &request.args {
+        SessionArgs::TerminalV1(_) => {
             let reader = prepare_direct_raw_session_subscription(request, host).await?;
             Ok(PreparedSessionSubscription {
                 output: SessionOutputReader::Raw(reader),
             })
         }
-        Protocol::ClaudePtyTranscriptV1 | Protocol::ClaudeSdkV1 | Protocol::CodexSdkV1 => {
+        SessionArgs::ClaudePtyTranscriptV1(_)
+        | SessionArgs::ClaudeSdkV1(_)
+        | SessionArgs::CodexSdkV1(_) => {
             prepare_direct_structured_session_subscription(request, host)
                 .await
-                .map(|(reader, replay_cursor)| PreparedSessionSubscription {
+                .map(|(reader, replay)| PreparedSessionSubscription {
                     output: SessionOutputReader::Structured {
+                        protocol: request.args.protocol(),
                         reader,
-                        replay_cursor,
+                        replay,
                     },
                 })
         }
-        Protocol::TestEchoV1 => {
+        SessionArgs::TestEchoV1 => {
             let reader = prepare_direct_test_echo_session_subscription(request, host).await?;
             Ok(PreparedSessionSubscription {
                 output: SessionOutputReader::Raw(reader),
@@ -111,9 +115,9 @@ async fn prepare_direct_raw_session_subscription(
     request: &SessionRequest,
     host: &AgentRuntime,
 ) -> Result<RawSessionOutputReader, ProtocolError> {
-    let HostSessionArgs::Terminal(args) = &request.args else {
+    let SessionArgs::TerminalV1(args) = &request.args else {
         return Err(ProtocolError::InvalidArgument {
-            message: "terminal subscription requires terminal arguments".into(),
+            message: format!("{} is not a terminal protocol", request.args.protocol()),
         });
     };
     let replay_query = args
@@ -138,6 +142,7 @@ async fn prepare_direct_raw_session_subscription(
         .await
         .ok_or(ProtocolError::NoAgentFound)?;
     Ok(RawSessionOutputReader {
+        protocol: Protocol::TerminalV1,
         reader,
         #[cfg(unix)]
         _codex_lease: subscription.codex_lease,
@@ -155,6 +160,7 @@ async fn prepare_direct_test_echo_session_subscription(
         .await
         .ok_or(ProtocolError::NoAgentFound)?;
     Ok(RawSessionOutputReader {
+        protocol: Protocol::TestEchoV1,
         reader,
         #[cfg(unix)]
         _codex_lease: subscription.codex_lease,
@@ -229,8 +235,8 @@ async fn prepare_raw_pty_target(target: RawPtyTarget) -> Result<RawPtySubscripti
 async fn prepare_direct_structured_session_subscription(
     request: &SessionRequest,
     host: &AgentRuntime,
-) -> Result<(crate::agents::MultiplexStructuredReader, Option<u64>), ProtocolError> {
-    let (replay_query, terminal_size) = structured_replay_query(request)?;
+) -> Result<(crate::agents::MultiplexStructuredReader, ReplayFacts), ProtocolError> {
+    let (replay_query, terminal_size) = structured_replay_query(&request.args)?;
     let protocol = request.args.protocol();
     let log = {
         let state = host.state().read().await;
@@ -261,16 +267,13 @@ async fn prepare_direct_structured_session_subscription(
             })?;
     }
 
-    let (reader, current_seq) = log
-        .subscribe_with_query(replay_query)
+    log.subscribe_with_query(replay_query)
         .await
-        .ok_or(ProtocolError::NoAgentFound)?;
-    let replay_cursor = (protocol == Protocol::ClaudePtyTranscriptV1).then_some(current_seq);
-    Ok((reader, replay_cursor))
+        .ok_or(ProtocolError::NoAgentFound)
 }
 
 fn structured_replay_query(
-    request: &SessionRequest,
+    args: &SessionArgs,
 ) -> Result<
     (
         Option<crate::agents::SequencedReplayQuery>,
@@ -278,63 +281,18 @@ fn structured_replay_query(
     ),
     ProtocolError,
 > {
-    let out_of_range = |protocol: Protocol| ProtocolError::InvalidArgument {
-        message: format!("{protocol} replay since cursor is out of range"),
+    let (query, terminal_size) = match args {
+        SessionArgs::ClaudePtyTranscriptV1(args) => (args.replay_query.clone(), args.terminal_size),
+        SessionArgs::ClaudeSdkV1(args) => (args.replay_query.clone(), None),
+        SessionArgs::CodexSdkV1(args) => (args.replay_query.clone(), None),
+        SessionArgs::TerminalV1(_) | SessionArgs::TestEchoV1 => {
+            return Err(ProtocolError::InvalidArgument {
+                message: format!("{} is not a structured protocol", args.protocol()),
+            });
+        }
     };
-    let protocol = request.args.protocol();
-    match &request.args {
-        HostSessionArgs::ClaudePty(args) => {
-            let query = match args.replay_query {
-                None => None,
-                Some(ClaudePtyTranscriptV1ReplayQuery::Tail { count }) => {
-                    Some(crate::agents::SequencedReplayQuery::Tail { count })
-                }
-                Some(ClaudePtyTranscriptV1ReplayQuery::Since { seq_id }) => {
-                    Some(crate::agents::SequencedReplayQuery::Since {
-                        seq: seq_id
-                            .checked_add(1)
-                            .ok_or_else(|| out_of_range(protocol))?,
-                    })
-                }
-            };
-            Ok((query, args.terminal_size))
-        }
-        HostSessionArgs::ClaudeSdk(args) => {
-            let query = match args.replay_query {
-                None => None,
-                Some(model::ClaudeSdkV1ReplayQuery::Tail { count }) => {
-                    Some(crate::agents::SequencedReplayQuery::Tail { count })
-                }
-                Some(model::ClaudeSdkV1ReplayQuery::Since { seq_id }) => {
-                    Some(crate::agents::SequencedReplayQuery::Since {
-                        seq: seq_id
-                            .checked_add(1)
-                            .ok_or_else(|| out_of_range(protocol))?,
-                    })
-                }
-            };
-            Ok((query, None))
-        }
-        HostSessionArgs::Codex(args) => {
-            let query = match args.replay_query {
-                None => None,
-                Some(model::CodexSdkV1ReplayQuery::Tail { count }) => {
-                    Some(crate::agents::SequencedReplayQuery::Tail { count })
-                }
-                Some(model::CodexSdkV1ReplayQuery::Since { seq }) => {
-                    Some(crate::agents::SequencedReplayQuery::Since {
-                        seq: seq.checked_add(1).ok_or_else(|| out_of_range(protocol))?,
-                    })
-                }
-            };
-            Ok((query, None))
-        }
-        HostSessionArgs::Terminal(_) | HostSessionArgs::TestEcho => {
-            Err(ProtocolError::InvalidArgument {
-                message: format!("{protocol} is not a structured protocol"),
-            })
-        }
-    }
+    let query = query.map(crate::agents::SequencedReplayQuery::from_replay);
+    Ok((query, terminal_size))
 }
 
 pub(super) async fn send_session_input(
@@ -345,7 +303,7 @@ pub(super) async fn send_session_input(
 ) -> Result<(), ProtocolError> {
     let protocol = request.input.protocol();
     match request.input {
-        input @ (HostSessionInput::TerminalBytes(_) | HostSessionInput::TerminalControl(_)) => {
+        input @ (SessionInput::TerminalV1 { .. } | SessionInput::Control(_)) => {
             reject_raw_attachments(attachment_owner.as_deref(), &request.pin, protocol)?;
             send_raw_session_input(
                 host,
@@ -356,7 +314,7 @@ pub(super) async fn send_session_input(
             )
             .await
         }
-        HostSessionInput::ClaudePty(mut input) => {
+        SessionInput::ClaudePtyTranscriptV1(mut input) => {
             send_structured_session_input(
                 host,
                 request.agent_id,
@@ -368,7 +326,7 @@ pub(super) async fn send_session_input(
             )
             .await
         }
-        HostSessionInput::ClaudeSdk(input) => {
+        SessionInput::ClaudeSdkV1(input) => {
             let (log, target) = structured_plane_target(host, request.agent_id, protocol).await?;
             let mut input = claude_sdk_input(input)?;
             if let Some(owner) = attachment_owner.as_deref() {
@@ -397,7 +355,7 @@ pub(super) async fn send_session_input(
                 })
                 .await
         }
-        HostSessionInput::Codex(mut input) => {
+        SessionInput::CodexSdkV1(mut input) => {
             #[cfg(unix)]
             {
                 let (log, target) =
@@ -456,7 +414,7 @@ pub(super) async fn send_session_input(
                 })
             }
         }
-        input @ HostSessionInput::TestEcho(_) => {
+        input @ SessionInput::TestEchoV1 { .. } => {
             reject_raw_attachments(attachment_owner.as_deref(), &request.pin, protocol)?;
             send_raw_session_input(
                 host,
@@ -609,7 +567,7 @@ async fn send_raw_session_input(
     host: &AgentRuntime,
     agent_id: Uuid,
     protocol: Protocol,
-    input: HostSessionInput,
+    input: SessionInput,
     operation: host_api::OperationLease,
 ) -> Result<(), ProtocolError> {
     let pty = match raw_plane_target(host, agent_id, protocol).await? {
@@ -625,14 +583,14 @@ async fn send_raw_session_input(
     };
     drop(operation);
     match input {
-        HostSessionInput::TerminalBytes(payload) | HostSessionInput::TestEcho(payload) => pty
+        SessionInput::TerminalV1 { payload } | SessionInput::TestEchoV1 { payload } => pty
             .send_input(payload)
             .await
             .map_err(|error| ProtocolError::ServerError {
                 message: error.to_string(),
             }),
-        HostSessionInput::TerminalControl(control) => match control {
-            TerminalV1Control::Resize(size) => {
+        SessionInput::Control(control) => match control {
+            SessionControl::Resize(size) => {
                 pty.resize(size)
                     .await
                     .map_err(|error| ProtocolError::ServerError {
@@ -641,7 +599,7 @@ async fn send_raw_session_input(
             }
         },
         _ => Err(ProtocolError::InvalidArgument {
-            message: format!("{protocol} received incompatible input"),
+            message: format!("`{protocol}` input does not belong to a raw session"),
         }),
     }
 }
@@ -673,7 +631,7 @@ async fn send_claude_pty_to_target(
     log: StructuredLogSource,
     target: Box<dyn StructuredInput>,
     input_id: Vec<u8>,
-    input: &mut claude_io::ClaudePtyTranscriptV1Input,
+    input: &mut model::ClaudePtyTranscriptV1Input,
     attachment_owner: Option<&Owner>,
     pins: &[ArtifactId],
     operation: host_api::OperationLease,
@@ -686,12 +644,12 @@ async fn send_claude_pty_to_target(
                 current_seq,
             });
         }
-        let claude_io::Intent::Prompt { text } = &mut input.intent else {
+        let model::ClaudePtyIntent::Prompt { text } = &mut input.intent else {
             return Err(attachments_require_prompt(Protocol::ClaudePtyTranscriptV1));
         };
         let prepared = materialise_and_log(
             owner,
-            text,
+            text.as_str(),
             pins,
             MaterialiseBackend::ClaudePty,
             &input_id,
@@ -754,19 +712,14 @@ enum DirectSessionStreamState {
         reader: SessionOutputReader,
         close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
         shutdown_rx: mpsc::Receiver<ShutdownReason>,
-        /// The registry the exit code is read from when the output stream
-        /// ends. The stream itself carries no code, and the agent is still
-        /// registered at that moment, so this is where the code is.
         agents: SharedAgentServiceState,
     },
     Done,
 }
 
-/// What the backend says this agent exited with, or `None` when it has no
-/// code for it — because the agent is gone from the registry already, or was
-/// signalled, or runs on a backend that never reports one. An absent code is
-/// carried as absent all the way to the phone rather than being softened into
-/// a zero.
+/// Read the backend's exit code while the agent is still registered. The
+/// output stream itself only signals that it ended, so this preserves a real
+/// process status instead of turning every exit into an unknown one.
 async fn exit_code_for_agent(agents: &SharedAgentServiceState, agent_id: Uuid) -> Option<i32> {
     let state = agents.read().await;
     state
@@ -802,6 +755,7 @@ fn direct_session_response_stream(
                     replay_attachments,
                     agents,
                 } => {
+                    let replay = reader.replay_facts();
                     let next = match (replay_attachments, &reader) {
                         (Some(refs), SessionOutputReader::Structured { .. }) => {
                             DirectSessionStreamState::ReplayingAttachments {
@@ -821,7 +775,7 @@ fn direct_session_response_stream(
                             agents,
                         },
                     };
-                    Some((Ok(HostSessionEvent::Opened), next))
+                    Some((Ok(HostSessionEvent::Opened { replay }), next))
                 }
                 DirectSessionStreamState::ReplayingAttachments {
                     agent_id,
@@ -831,10 +785,17 @@ fn direct_session_response_stream(
                     refs,
                     agents,
                 } => {
-                    let event = structured_output_event(StructuredOutput {
-                        seq: 0,
-                        payload: attachments_row(None, &refs),
-                    });
+                    let protocol = reader.protocol();
+                    let event = structured_output_event(
+                        StructuredOutput {
+                            seq: 0,
+                            published_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+                            activity_at_unix_ms: None,
+                            payload: attachments_row(None, &refs),
+                        },
+                        protocol,
+                        true,
+                    );
                     Some((
                         event.map_err(HostStreamError::from),
                         DirectSessionStreamState::Reading {
@@ -892,12 +853,6 @@ fn direct_session_response_stream(
                                         detail: error.to_string(),
                                     },
                                 },
-                                // The output stream ending is how a subscriber
-                                // learns the agent has gone, but it carries no
-                                // code. The backend still holds one, so the
-                                // reason is completed from the registry rather
-                                // than sent out empty for every reader to
-                                // guess at.
                                 None => HostSessionEvent::Closed {
                                     reason: SessionCloseReason::AgentExited {
                                         exit_code: exit_code_for_agent(&agents, agent_id).await,
@@ -938,35 +893,50 @@ async fn recv_close_reason_for_agent(
     })
 }
 
+impl SessionOutputReader {
+    fn protocol(&self) -> Protocol {
+        match self {
+            Self::Raw(raw) => raw.protocol,
+            Self::Structured { protocol, .. } => *protocol,
+        }
+    }
+
+    fn replay_facts(&self) -> Option<ReplayFacts> {
+        match self {
+            Self::Raw(_) => None,
+            Self::Structured { replay, .. } => Some(replay.clone()),
+        }
+    }
+}
+
 async fn read_session_output_event(
     reader: &mut SessionOutputReader,
 ) -> Option<Result<HostSessionEvent, ProtocolError>> {
     match reader {
         SessionOutputReader::Raw(raw) => raw.reader.read_event().await.map(|event| match event {
             BroadcastRead::ReplayItem(payload) | BroadcastRead::LiveItem(payload) => {
-                Ok(HostSessionEvent::Output {
-                    sequence: None,
-                    payload,
-                })
+                let output = match raw.protocol {
+                    Protocol::TerminalV1 => SessionOutput::TerminalV1 { payload },
+                    Protocol::TestEchoV1 => SessionOutput::TestEchoV1 { payload },
+                    protocol => {
+                        return Err(ProtocolError::ServerError {
+                            message: format!("{protocol} cannot emit raw output"),
+                        });
+                    }
+                };
+                Ok(HostSessionEvent::Output(output))
             }
-            BroadcastRead::ReplayComplete => {
-                Ok(HostSessionEvent::ReplayComplete { sequence: None })
-            }
+            BroadcastRead::ReplayComplete => Ok(HostSessionEvent::ReplayComplete),
             BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
                 message: "session output subscriber queue closed".to_string(),
             }),
         }),
         SessionOutputReader::Structured {
-            reader,
-            replay_cursor,
-            ..
+            protocol, reader, ..
         } => reader.read_event().await.map(|event| match event {
-            BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
-                structured_output_event(output)
-            }
-            BroadcastRead::ReplayComplete => Ok(HostSessionEvent::ReplayComplete {
-                sequence: *replay_cursor,
-            }),
+            BroadcastRead::ReplayItem(output) => structured_output_event(output, *protocol, true),
+            BroadcastRead::LiveItem(output) => structured_output_event(output, *protocol, false),
+            BroadcastRead::ReplayComplete => Ok(HostSessionEvent::ReplayComplete),
             BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
                 message: "session output subscriber queue closed".to_string(),
             }),
@@ -974,15 +944,33 @@ async fn read_session_output_event(
     }
 }
 
-fn structured_output_event(output: StructuredOutput) -> Result<HostSessionEvent, ProtocolError> {
+fn structured_output_event(
+    output: StructuredOutput,
+    protocol: Protocol,
+    historical: bool,
+) -> Result<HostSessionEvent, ProtocolError> {
     let payload_json =
         serde_json::to_vec(&output.payload).map_err(|error| ProtocolError::ServerError {
             message: format!("failed to encode transcript SubscribeSession output: {error}"),
         })?;
-    Ok(HostSessionEvent::Output {
-        sequence: Some(output.seq),
+    let row = StructuredRow {
+        seq: output.seq,
+        published_at_unix_ms: output.published_at_unix_ms,
+        activity_at_unix_ms: output.activity_at_unix_ms,
+        historical,
         payload: payload_json,
-    })
+    };
+    let output = match protocol {
+        Protocol::ClaudePtyTranscriptV1 => SessionOutput::ClaudePtyTranscriptV1(row),
+        Protocol::ClaudeSdkV1 => SessionOutput::ClaudeSdkV1(row),
+        Protocol::CodexSdkV1 => SessionOutput::CodexSdkV1(row),
+        Protocol::TerminalV1 | Protocol::TestEchoV1 => {
+            return Err(ProtocolError::ServerError {
+                message: format!("{protocol} cannot encode structured output"),
+            });
+        }
+    };
+    Ok(HostSessionEvent::Output(output))
 }
 
 #[cfg(test)]
@@ -1031,19 +1019,125 @@ mod tests {
             &host,
             SessionRequest {
                 agent_id,
-                args: HostSessionArgs::Codex(model::CodexSdkV1Args::default()),
+                args: SessionArgs::CodexSdkV1(Default::default()),
             },
             None,
         )
         .await
         .unwrap();
         let opened = stream.next().await.unwrap().unwrap();
-        assert!(matches!(opened, HostSessionEvent::Opened));
+        assert_eq!(
+            opened,
+            HostSessionEvent::Opened {
+                replay: Some(ReplayFacts {
+                    retained_from: 0,
+                    through: 0,
+                    selected_from: 0,
+                    reset_at: 0,
+                    outcome: model::ReplayOutcome::Continuous,
+                })
+            }
+        );
         let replay_complete = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            replay_complete,
-            HostSessionEvent::ReplayComplete { sequence: None }
-        ));
+        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete));
+    }
+
+    #[tokio::test]
+    async fn replay_rpc_emits_opened_facts_before_rows() {
+        let cases = [
+            (
+                SessionArgs::ClaudePtyTranscriptV1(model::ClaudePtyTranscriptV1Args {
+                    terminal_size: None,
+                    replay_query: Some(model::ReplayQuery::After {
+                        after: 1,
+                        tail_bound: Some(2),
+                    }),
+                }),
+                ReplayFacts {
+                    retained_from: 3,
+                    through: 5,
+                    selected_from: 4,
+                    reset_at: 0,
+                    outcome: model::ReplayOutcome::Truncated { missing_after: 1 },
+                },
+            ),
+            (
+                SessionArgs::ClaudeSdkV1(model::ClaudeSdkV1Args {
+                    replay_query: Some(model::ReplayQuery::After {
+                        after: 3,
+                        tail_bound: Some(2),
+                    }),
+                }),
+                ReplayFacts {
+                    retained_from: 3,
+                    through: 5,
+                    selected_from: 4,
+                    reset_at: 0,
+                    outcome: model::ReplayOutcome::Continuous,
+                },
+            ),
+            (
+                SessionArgs::CodexSdkV1(model::CodexSdkV1Args {
+                    replay_query: Some(model::ReplayQuery::TailCount {
+                        count: 2,
+                        tail_bound: None,
+                    }),
+                }),
+                ReplayFacts {
+                    retained_from: 3,
+                    through: 5,
+                    selected_from: 4,
+                    reset_at: 0,
+                    outcome: model::ReplayOutcome::Truncated { missing_after: 3 },
+                },
+            ),
+        ];
+
+        for (args, expected) in cases {
+            let protocol = args.protocol();
+            let request = SessionRequest {
+                agent_id: Uuid::from_u128(90),
+                args,
+            };
+            let (query, terminal_size) = structured_replay_query(&request.args).unwrap();
+            assert!(terminal_size.is_none());
+
+            let log = StructuredLogSource::new(3);
+            for seq in 1..=5 {
+                log.write(serde_json::json!({"type": "row", "seq": seq}))
+                    .await;
+            }
+            let (reader, replay) = log.subscribe_with_query(query).await.unwrap();
+            assert_eq!(replay, expected);
+
+            let (_close_tx, close_rx) = mpsc::channel(1);
+            let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
+            let mut stream = direct_session_response_stream(
+                request.agent_id,
+                SessionOutputReader::Structured {
+                    protocol,
+                    reader,
+                    replay,
+                },
+                close_rx,
+                shutdown_rx,
+                None,
+                AgentRuntime::new(Uuid::from_u128(1)).state().clone(),
+            );
+
+            let opened = stream.next().await.unwrap().unwrap();
+            assert_eq!(
+                opened,
+                HostSessionEvent::Opened {
+                    replay: Some(expected)
+                },
+                "{protocol} did not open before replaying rows"
+            );
+            assert!(matches!(
+                stream.next().await.unwrap().unwrap(),
+                HostSessionEvent::Output(_)
+            ));
+        }
     }
 
     #[tokio::test]
@@ -1065,7 +1159,7 @@ mod tests {
             &host,
             SessionRequest {
                 agent_id,
-                args: HostSessionArgs::Terminal(model::TerminalV1Args::default()),
+                args: SessionArgs::TerminalV1(Default::default()),
             },
             None,
         )
@@ -1225,6 +1319,7 @@ mod tests {
         let mut stream = direct_session_response_stream(
             agent_id,
             SessionOutputReader::Raw(RawSessionOutputReader {
+                protocol: Protocol::TerminalV1,
                 reader,
                 #[cfg(unix)]
                 _codex_lease: None,
@@ -1240,12 +1335,9 @@ mod tests {
         }
 
         let opened = stream.next().await.unwrap().unwrap();
-        assert!(matches!(opened, HostSessionEvent::Opened));
+        assert!(matches!(opened, HostSessionEvent::Opened { replay: None }));
         let replay_complete = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            replay_complete,
-            HostSessionEvent::ReplayComplete { .. }
-        ));
+        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete));
 
         let mut saw_resource_exhausted = false;
         for _ in 0..300 {
@@ -1270,7 +1362,7 @@ mod tests {
     async fn structured_session_replays_pinned_refs_immediately_after_opened() {
         let agent_id = Uuid::from_u128(9);
         let log = StructuredLogSource::new(8);
-        let (reader, _) = log.subscribe_with_query(None).await.unwrap();
+        let (reader, replay) = log.subscribe_with_query(None).await.unwrap();
         let (_close_tx, close_rx) = mpsc::channel(1);
         let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let artifact = ArtifactRef {
@@ -1283,8 +1375,9 @@ mod tests {
         let mut stream = direct_session_response_stream(
             agent_id,
             SessionOutputReader::Structured {
+                protocol: Protocol::ClaudeSdkV1,
                 reader,
-                replay_cursor: None,
+                replay,
             },
             close_rx,
             shutdown_rx,
@@ -1293,22 +1386,19 @@ mod tests {
         );
 
         let opened = stream.next().await.unwrap().unwrap();
-        assert!(matches!(opened, HostSessionEvent::Opened));
+        assert!(matches!(opened, HostSessionEvent::Opened { .. }));
         let replay = stream.next().await.unwrap().unwrap();
-        let HostSessionEvent::Output { sequence, payload } = replay else {
+        let HostSessionEvent::Output(SessionOutput::ClaudeSdkV1(row)) = replay else {
             panic!("expected attachment replay output");
         };
-        assert_eq!(sequence, Some(0));
+        assert_eq!(row.seq, 0);
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&payload).unwrap(),
+            serde_json::from_slice::<serde_json::Value>(&row.payload).unwrap(),
             attachments_row(None, &[artifact])
         );
 
         let replay_complete = stream.next().await.unwrap().unwrap();
-        assert!(matches!(
-            replay_complete,
-            HostSessionEvent::ReplayComplete { .. }
-        ));
+        assert!(matches!(replay_complete, HostSessionEvent::ReplayComplete));
     }
 
     #[tokio::test]
@@ -1321,6 +1411,7 @@ mod tests {
         let mut stream = direct_session_response_stream(
             agent_id,
             SessionOutputReader::Raw(RawSessionOutputReader {
+                protocol: Protocol::TerminalV1,
                 reader,
                 #[cfg(unix)]
                 _codex_lease: None,
@@ -1332,7 +1423,7 @@ mod tests {
         );
 
         let opened = stream.next().await.unwrap().unwrap();
-        assert!(matches!(opened, HostSessionEvent::Opened));
+        assert!(matches!(opened, HostSessionEvent::Opened { .. }));
 
         shutdown_tx
             .send(ShutdownReason::Suspending)

@@ -1111,8 +1111,13 @@ impl AgentBackend for ClaudeSdkBackend {
         } else {
             BackendState::Starting
         };
-        let session =
-            SessionDebug::new(Some(&output), output.subscriber_count, backend, obligations);
+        let session = SessionDebug::new(
+            Some(&output),
+            output.subscriber_count,
+            backend,
+            obligations,
+            self.log.recent_subscriptions(),
+        );
         let mut value = serde_json::to_value(DebugView::new(self, verbose))?;
         value
             .as_object_mut()

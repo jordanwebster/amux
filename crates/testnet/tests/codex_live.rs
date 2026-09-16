@@ -732,11 +732,12 @@ fn main() -> anyhow::Result<()> {
         let mut bytes = raw_until(&mut raw, RAW_TIMEOUT, model.as_bytes()).await?;
         harness
             .client()
-            .send_input(node::SendInputRequest {
+            .send_input(model::SendInputRequest {
                 agent: node::AgentIdentifier::Id(agent),
                 input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: model::TERMINAL_V1.into(),
-                payload: bytes::Bytes::from_static(b"/status"),
+                input: model::SessionInput::TerminalV1 {
+                    payload: b"/status".to_vec(),
+                },
                 pin: Vec::new(),
             })
             .await?;
@@ -745,11 +746,12 @@ fn main() -> anyhow::Result<()> {
         bytes.extend(raw_until(&mut raw, RAW_TIMEOUT, b"/status").await?);
         harness
             .client()
-            .send_input(node::SendInputRequest {
+            .send_input(model::SendInputRequest {
                 agent: node::AgentIdentifier::Id(agent),
                 input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: model::TERMINAL_V1.into(),
-                payload: bytes::Bytes::from_static(b"\r"),
+                input: model::SessionInput::TerminalV1 {
+                    payload: b"\r".to_vec(),
+                },
                 pin: Vec::new(),
             })
             .await?;

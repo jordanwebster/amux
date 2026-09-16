@@ -1134,15 +1134,14 @@ impl wire::client_service_server::ClientService for ClientService {
             )?)
             .await
             .map_err(protocol_status)?;
-        let (protocol, args) = crate::agents::subscribe_protocol_from_client_wire(request.protocol)
-            .map_err(decode_remote_status)?;
+        let args = wire::session_args_from_client_wire(request.protocol.ok_or_else(|| {
+            tonic::Status::invalid_argument("ClientSubscribeSessionRequest missing protocol")
+        })?)
+        .map_err(decode_remote_status)?;
         if !self.is_local_host(agent.host_id) {
             let agent_request = wire::pb::SubscribeSessionRequest {
                 agent_id: agent.id.as_bytes().to_vec(),
-                protocol: Some(
-                    crate::agents::subscribe_protocol_to_agent_wire(protocol, args.as_deref())
-                        .map_err(decode_remote_status)?,
-                ),
+                protocol: Some(wire::session_args_to_wire(&args)),
             };
             return self
                 .remote_subscribe_session(agent.host_id, agent_request)
@@ -1152,7 +1151,6 @@ impl wire::client_service_server::ClientService for ClientService {
         let ctx = self.local_agent_service();
         let decoded = SubscribeSessionRequest {
             agent_id: agent.id,
-            protocol,
             args,
         };
         let stream = ctx
@@ -1174,13 +1172,14 @@ impl wire::client_service_server::ClientService for ClientService {
             )?)
             .await
             .map_err(protocol_status)?;
-        let (protocol, event) =
-            crate::agents::send_input_event_from_client_wire(request.input_id, request.event)
-                .map_err(decode_remote_status)?;
+        let input = wire::session_input_from_client_wire(request.event.ok_or_else(|| {
+            tonic::Status::invalid_argument("ClientSendInputRequest missing event")
+        })?)
+        .map_err(decode_remote_status)?;
+        let input_id = request.input_id;
         let pin = request.pin;
         if !self.is_local_host(agent.host_id) {
-            let (input_id, event) = crate::agents::send_input_event_to_agent_wire(protocol, &event)
-                .map_err(decode_remote_status)?;
+            let event = wire::session_input_to_wire(&input).map_err(encode_status)?;
             let agent_request = wire::pb::SendInputRequest {
                 agent_id: agent.id.as_bytes().to_vec(),
                 input_id,
@@ -1193,8 +1192,8 @@ impl wire::client_service_server::ClientService for ClientService {
         let ctx = self.local_agent_service();
         ctx.send_input(SendInputRequest {
             agent_id: agent.id,
-            protocol,
-            event,
+            input_id,
+            input,
             pin,
         })
         .await
@@ -1791,13 +1790,9 @@ fn host_unreachable_session_response_stream() -> ResponseStream<wire::SubscribeS
 }
 
 fn host_unreachable_session_closed() -> wire::SubscribeSessionResponse {
-    crate::agents::session_output_event_to_wire(
-        &SubscribeSessionEvent::Closed {
-            reason: crate::agents::SessionCloseReason::HostUnreachable,
-        },
-        crate::agents::Protocol::TerminalV1,
-    )
-    .expect("closed session events contain no protocol payload")
+    crate::agents::session_event_to_wire(&SubscribeSessionEvent::Closed {
+        reason: crate::agents::SessionCloseReason::HostUnreachable,
+    })
 }
 
 fn has_shutdown_reason_metadata(status: &tonic::Status) -> bool {
@@ -4062,7 +4057,7 @@ mod tests {
     async fn remote_session_stream_maps_unavailable_to_host_unreachable_close() {
         let opened = wire::SubscribeSessionResponse {
             event: Some(wire::subscribe_session_response::Event::Opened(
-                wire::SessionOpened {},
+                wire::SessionOpened { replay: None },
             )),
         };
         let mut stream = remote_session_response_stream(futures_util::stream::iter(vec![

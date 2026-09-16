@@ -951,7 +951,7 @@ mod tests {
     use std::time::Duration;
     use std::{fmt, io};
 
-    use agent_runtime::test_support::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
+    use agent_runtime::test_support::TEST_ECHO_COMMAND;
     use futures_util::StreamExt;
     use hyper_util::rt::TokioIo;
     use model::ProtocolError;
@@ -2271,8 +2271,7 @@ mod tests {
         let mut session = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: crate::AgentIdentifier::Name("public-client".to_string()),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::TestEchoV1,
             })
             .await
             .unwrap();
@@ -2280,8 +2279,9 @@ mod tests {
             .send_input(crate::SendInputRequest {
                 agent: crate::AgentIdentifier::Name("public-client".to_string()),
                 input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                payload: bytes::Bytes::from_static(b"hello"),
+                input: model::SessionInput::TestEchoV1 {
+                    payload: b"hello".to_vec(),
+                },
                 pin: Vec::new(),
             })
             .await
@@ -2388,8 +2388,7 @@ mod tests {
         let mut session = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: agent_id.into(),
-                io_protocol: TEST_ECHO_V1.to_string(),
-                args: None,
+                args: model::SessionArgs::TestEchoV1,
             })
             .await
             .unwrap();
@@ -2432,7 +2431,8 @@ mod tests {
                 .await
                 .expect("timed out waiting for session output")
                 .unwrap();
-            if let SubscribeSessionEvent::Output { payload } = event
+            if let SubscribeSessionEvent::Output(model::SessionOutput::TestEchoV1 { payload }) =
+                event
                 && payload == expected
             {
                 return payload;

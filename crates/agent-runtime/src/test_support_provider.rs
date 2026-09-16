@@ -59,12 +59,12 @@ impl StructuredBackendAdapter {
         let Plane::Structured { log, input } = backend.as_backend().plane(protocol)? else {
             bail!("fixture backend did not expose the requested structured plane");
         };
-        let (reader, count) = log
+        let (reader, replay) = log
             .subscribe_with_query(None)
             .await
             .context("fixture backend log was already closed")?;
-        if count != 0 {
-            bail!("fresh fixture backend unexpectedly retained {count} rows");
+        if replay.selected_from != 0 {
+            bail!("fresh fixture backend unexpectedly retained replay rows");
         }
         let (event_tx, events) = mpsc::channel(8);
         let ingest = backend.as_backend_mut().start(&event_tx)?;
