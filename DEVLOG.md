@@ -1,3 +1,12 @@
+2026-09-16 — **Resumed Claude SDK sessions publish their transcript history.**
+The daemon resolves the resumed session file across sibling worktrees, reads a
+single fixed tail, and maps supported transcript rows into the SDK vocabulary
+with provider activity times and historical provenance. Gap, begin and complete
+markers now frame that prefix before ready and current session facts; live SDK
+events wait in a byte-bounded queue during the read. Missing files retain the
+existing startup path, recovered todos survive ready, and conversation reset
+remains their authoritative clearing boundary.
+
 2026-09-16 — **Fleet standing and native chat now agree on provider rows.**
 Fleet badges, status labels, and family needs all use the same selected summary
 and working-staleness cap. Recorded Claude PTY interruption rows settle to idle,

@@ -57,6 +57,10 @@ test-daemon-protocol *ARGS:
 test-daemon-summarizer *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p agent-runtime daemon_summarizer "$@" && {{bounded}} 1200 cargo test --locked -p node daemon_summarizer "$@"
 
+# Exercise Claude SDK transcript-tail resume publication and fold semantics.
+test-daemon-sdk *ARGS:
+    if [ "${1-}" = -- ]; then shift; fi; {{bounded}} 1200 cargo test --locked -p claude history "$@" && {{bounded}} 1200 cargo test --locked -p agent-runtime daemon_sdk "$@" && {{bounded}} 1200 cargo test --locked -p fold claude_sdk "$@"
+
 # Exercise TUI behavior; `standing` runs the two-terminal daemon-summary proof.
 test-tui *ARGS:
     if [ "${1-}" = -- ]; then shift; fi; if [ "${1-}" = standing ]; then shift; {{bounded}} 900 cargo build --locked -p amux -p testnet --bins {{desktop_features}}; {{bounded}} 900 scripts/tui-standing-test.py "$@"; else {{bounded}} 1200 cargo test --locked -p tui --features fixtures "$@"; fi

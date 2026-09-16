@@ -1,8 +1,12 @@
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
 
 use crate::sdk::error::Error;
@@ -112,6 +116,282 @@ pub struct ForkSessionResult {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TailRead {
+    pub rows: Vec<Value>,
+    pub cut_bytes: u64,
+    pub clipped: bool,
+    pub partial_tail: bool,
+    pub unmappable: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoricalRow {
+    pub payload: Value,
+    pub activity_at: Option<DateTime<Utc>>,
+}
+
+/// Resolve a session transcript under the current project or one of its
+/// sibling Git worktrees.
+pub fn find_session_file(
+    config_root: &Path,
+    working_dir: &Path,
+    session_id: &str,
+) -> Option<PathBuf> {
+    if !valid_session_id(session_id) {
+        return None;
+    }
+    let mut worktrees = vec![absolute_path(working_dir).ok()?];
+    if let Ok(output) = Command::new("git")
+        .arg("-C")
+        .arg(working_dir)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        && output.status.success()
+    {
+        worktrees.extend(
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.strip_prefix("worktree "))
+                .map(PathBuf::from),
+        );
+    }
+    worktrees.sort();
+    worktrees.dedup();
+
+    worktrees.into_iter().find_map(|worktree| {
+        let path = config_root
+            .join("projects")
+            .join(hash_project_path(&worktree))
+            .join(format!("{session_id}.jsonl"));
+        path.is_file().then_some(path)
+    })
+}
+
+/// Read a fixed transcript tail. The file length is sampled once and bytes
+/// appended after that cut are never observed.
+pub fn read_tail(path: &Path, max_rows: usize, max_bytes: u64) -> io::Result<TailRead> {
+    let mut file = File::open(path)?;
+    let cut_bytes = file.metadata()?.len();
+    let start = cut_bytes.saturating_sub(max_bytes);
+    file.seek(SeekFrom::Start(start))?;
+
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(cut_bytes - start)
+            .unwrap_or(usize::MAX)
+            .min(4 * 1024 * 1024),
+    );
+    file.take(cut_bytes - start).read_to_end(&mut bytes)?;
+
+    let partial_tail = bytes.last().is_some_and(|byte| *byte != b'\n');
+    let byte_clipped = start > 0;
+    if byte_clipped {
+        if let Some(newline) = bytes.iter().position(|byte| *byte == b'\n') {
+            bytes.drain(..=newline);
+        } else {
+            bytes.clear();
+        }
+    }
+
+    if partial_tail {
+        let complete = bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |newline| newline + 1);
+        bytes.truncate(complete);
+    }
+
+    let lines = bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let row_clipped = lines.len() > max_rows;
+    let selected_from = lines.len().saturating_sub(max_rows);
+    let mut rows = Vec::with_capacity(lines.len().saturating_sub(selected_from));
+    let mut unmappable = 0;
+    for line in &lines[selected_from..] {
+        match serde_json::from_slice(line) {
+            Ok(row) => rows.push(row),
+            Err(_) => unmappable += 1,
+        }
+    }
+
+    Ok(TailRead {
+        rows,
+        cut_bytes,
+        clipped: byte_clipped || row_clipped,
+        partial_tail,
+        unmappable,
+    })
+}
+
+/// Convert one Claude transcript row into the equivalent SDK stream row.
+pub fn historical_row(row: &Value) -> Option<HistoricalRow> {
+    let activity_at = row
+        .get("timestamp")
+        .and_then(parse_activity_at)
+        .map(|timestamp| timestamp.with_timezone(&Utc));
+    let row_type = row.get("type").and_then(Value::as_str)?;
+    let payload = match row_type {
+        "assistant" => historical_assistant(row)?,
+        "user" => historical_user(row)?,
+        "system" if row.get("subtype").and_then(Value::as_str) == Some("compact_boundary") => {
+            historical_compact_boundary(row)?
+        }
+        _ => return None,
+    };
+    Some(HistoricalRow {
+        payload,
+        activity_at,
+    })
+}
+
+fn historical_assistant(row: &Value) -> Option<Value> {
+    let message = row.get("message")?;
+    let content = message.get("content").and_then(Value::as_array);
+    let api_error = row.get("isApiErrorMessage").and_then(Value::as_bool) == Some(true);
+    let supported = content.is_some_and(|blocks| {
+        blocks.iter().any(|block| {
+            matches!(
+                block.get("type").and_then(Value::as_str),
+                Some("text" | "thinking" | "redacted_thinking" | "tool_use" | "server_tool_use")
+            )
+        })
+    });
+    if !supported && !api_error {
+        return None;
+    }
+
+    let mut output = normalized_message_envelope(row, "assistant")?;
+    copy_renamed(row, &mut output, "requestId", "request_id");
+    copy_renamed(row, &mut output, "request_id", "request_id");
+    if api_error {
+        output.insert("is_api_error".into(), Value::Bool(true));
+    }
+    Some(Value::Object(output))
+}
+
+fn historical_user(row: &Value) -> Option<Value> {
+    if row.get("isMeta").and_then(Value::as_bool) == Some(true)
+        || row.get("isCompactSummary").and_then(Value::as_bool) == Some(true)
+        || row.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification")
+        || row.get("promptSource").and_then(Value::as_str) == Some("system")
+    {
+        return None;
+    }
+
+    let message = row.get("message")?;
+    match message.get("content")? {
+        Value::String(text) if is_interrupt_text(text) => {
+            Some(Value::Object(normalized_message_envelope(row, "user")?))
+        }
+        Value::String(text)
+            if !text.starts_with("<command-") && !text.starts_with("<local-command-") =>
+        {
+            let mut output = normalized_message_envelope(row, "user")?;
+            output.insert("isReplay".into(), Value::Bool(true));
+            Some(Value::Object(output))
+        }
+        Value::Array(blocks) => {
+            let tool_result = blocks
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"));
+            let interrupt = blocks.iter().any(|block| {
+                block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_interrupt_text)
+            });
+            if !tool_result && !interrupt {
+                return None;
+            }
+            let mut output = normalized_message_envelope(row, "user")?;
+            copy_renamed(row, &mut output, "toolUseResult", "tool_use_result");
+            copy_renamed(row, &mut output, "tool_use_result", "tool_use_result");
+            Some(Value::Object(output))
+        }
+        _ => None,
+    }
+}
+
+fn is_interrupt_text(text: &str) -> bool {
+    matches!(
+        text,
+        "[Request interrupted by user]" | "[Request interrupted by user for tool use]"
+    )
+}
+
+fn historical_compact_boundary(row: &Value) -> Option<Value> {
+    let metadata = row
+        .get("compactMetadata")
+        .or_else(|| row.get("compact_metadata"))?;
+    let mut output = Map::from_iter([
+        ("type".into(), Value::String("system".into())),
+        ("subtype".into(), Value::String("compact_boundary".into())),
+        ("compact_metadata".into(), snake_case_object(metadata)),
+    ]);
+    copy_renamed(row, &mut output, "uuid", "uuid");
+    copy_session_id(row, &mut output);
+    output.insert("parent_tool_use_id".into(), Value::Null);
+    Some(Value::Object(output))
+}
+
+fn normalized_message_envelope(row: &Value, row_type: &str) -> Option<Map<String, Value>> {
+    let mut output = Map::from_iter([
+        ("type".into(), Value::String(row_type.into())),
+        ("uuid".into(), row.get("uuid")?.clone()),
+        ("message".into(), row.get("message")?.clone()),
+        ("parent_tool_use_id".into(), Value::Null),
+    ]);
+    copy_session_id(row, &mut output);
+    copy_renamed(row, &mut output, "timestamp", "timestamp");
+    Some(output)
+}
+
+fn copy_session_id(row: &Value, output: &mut Map<String, Value>) {
+    if let Some(session_id) = row.get("sessionId").or_else(|| row.get("session_id")) {
+        output.insert("session_id".into(), session_id.clone());
+    }
+}
+
+fn copy_renamed(row: &Value, output: &mut Map<String, Value>, from: &str, to: &str) {
+    if let Some(value) = row.get(from) {
+        output.insert(to.into(), value.clone());
+    }
+}
+
+fn snake_case_object(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| (camel_to_snake(key), snake_case_object(value)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(snake_case_object).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn camel_to_snake(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_ascii_uppercase() {
+            output.push('_');
+            output.push(character.to_ascii_lowercase());
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
+fn parse_activity_at(value: &Value) -> Option<DateTime<chrono::FixedOffset>> {
+    value
+        .as_str()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+}
+
 pub async fn list_sessions(options: ListSessionsOptions) -> Result<Vec<SessionInfo>, Error> {
     validate_pagination(options.limit, options.offset)?;
     let directories =
@@ -167,7 +447,7 @@ pub async fn get_session_info(
     options: GetSessionInfoOptions,
 ) -> Result<Option<SessionInfo>, Error> {
     validate_session_id(session_id)?;
-    let Some(path) = find_session_file(session_id, options.dir.as_deref()).await? else {
+    let Some(path) = find_session_file_for_api(session_id, options.dir.as_deref()).await? else {
         return Ok(None);
     };
     read_session_info(&path, session_id).await
@@ -179,7 +459,7 @@ pub async fn get_session_messages(
 ) -> Result<Vec<SessionMessage>, Error> {
     validate_session_id(session_id)?;
     validate_pagination(options.limit, options.offset)?;
-    let Some(path) = find_session_file(session_id, options.dir.as_deref()).await? else {
+    let Some(path) = find_session_file_for_api(session_id, options.dir.as_deref()).await? else {
         return Ok(Vec::new());
     };
     read_messages(
@@ -197,7 +477,7 @@ pub async fn list_subagents(
     options: ListSubagentsOptions,
 ) -> Result<Vec<String>, Error> {
     validate_session_id(session_id)?;
-    let Some(path) = find_session_file(session_id, options.dir.as_deref()).await? else {
+    let Some(path) = find_session_file_for_api(session_id, options.dir.as_deref()).await? else {
         return Ok(Vec::new());
     };
     let Some(project) = path.parent() else {
@@ -231,7 +511,7 @@ pub async fn get_subagent_messages(
     validate_session_id(session_id)?;
     validate_component("agent_id", agent_id)?;
     validate_pagination(options.limit, options.offset)?;
-    let Some(path) = find_session_file(session_id, options.dir.as_deref()).await? else {
+    let Some(path) = find_session_file_for_api(session_id, options.dir.as_deref()).await? else {
         return Ok(Vec::new());
     };
     let path = path
@@ -284,7 +564,7 @@ pub async fn delete_session(
     options: SessionMutationOptions,
 ) -> Result<(), Error> {
     validate_session_id(session_id)?;
-    let path = find_session_file(session_id, options.dir.as_deref())
+    let path = find_session_file_for_api(session_id, options.dir.as_deref())
         .await?
         .ok_or_else(|| Error::Persistence(format!("session {session_id} was not found")))?;
     tokio::fs::remove_file(&path).await?;
@@ -306,7 +586,7 @@ pub async fn fork_session(
     if let Some(message_id) = &options.up_to_message_id {
         validate_component("up_to_message_id", message_id)?;
     }
-    let source = find_session_file(session_id, options.dir.as_deref())
+    let source = find_session_file_for_api(session_id, options.dir.as_deref())
         .await?
         .ok_or_else(|| Error::Persistence(format!("session {session_id} was not found")))?;
     let mut entries = read_json_lines(&source).await?;
@@ -379,7 +659,7 @@ pub async fn fork_session(
 
 async fn append_metadata(session_id: &str, dir: Option<&Path>, value: Value) -> Result<(), Error> {
     validate_session_id(session_id)?;
-    let path = find_session_file(session_id, dir)
+    let path = find_session_file_for_api(session_id, dir)
         .await?
         .ok_or_else(|| Error::Persistence(format!("session {session_id} was not found")))?;
     let mut file = tokio::fs::OpenOptions::new()
@@ -577,7 +857,10 @@ async fn read_json_lines(path: &Path) -> Result<Vec<Value>, Error> {
         .collect()
 }
 
-async fn find_session_file(session_id: &str, dir: Option<&Path>) -> Result<Option<PathBuf>, Error> {
+async fn find_session_file_for_api(
+    session_id: &str,
+    dir: Option<&Path>,
+) -> Result<Option<PathBuf>, Error> {
     for directory in project_directories(dir, Some(true)).await? {
         let path = directory.join(format!("{session_id}.jsonl"));
         if path.is_file() {
@@ -766,4 +1049,143 @@ fn parse_timestamp_millis(timestamp: &str) -> Option<u64> {
     let days = era * 146_097 + doe - 719_468;
     let seconds = days * 86_400 + hour * 3_600 + minute * 60 + second;
     (seconds >= 0).then_some((seconds * 1_000 + fraction) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn fixed_tail_drops_partial_edges_and_keeps_the_last_complete_rows() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            file,
+            "{{\"n\":0}}\n{{\"n\":1}}\n{{\"n\":2}}\n{{\"unfinished\":"
+        )
+        .unwrap();
+
+        let tail = read_tail(file.path(), 2, u64::MAX).unwrap();
+        assert_eq!(tail.rows, [json!({"n":1}), json!({"n":2})]);
+        assert_eq!(tail.cut_bytes, file.as_file().metadata().unwrap().len());
+        assert!(tail.clipped);
+        assert!(tail.partial_tail);
+        assert_eq!(tail.unmappable, 0);
+
+        let mut clipped = tempfile::NamedTempFile::new().unwrap();
+        write!(clipped, "{{\"n\":0}}\n{{\"n\":1}}\n{{\"n\":2}}\n").unwrap();
+        let tail = read_tail(clipped.path(), 10, 16).unwrap();
+        assert_eq!(tail.rows, [json!({"n":2})]);
+        assert!(tail.clipped);
+        assert!(!tail.partial_tail);
+
+        let mut no_complete_row = tempfile::NamedTempFile::new().unwrap();
+        write!(no_complete_row, "one-unfinished-row").unwrap();
+        let tail = read_tail(no_complete_row.path(), 10, 4).unwrap();
+        assert!(tail.rows.is_empty());
+        assert!(tail.clipped);
+        assert!(tail.partial_tail);
+    }
+
+    #[test]
+    fn fixed_tail_tolerates_complete_malformed_rows() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "{{\"n\":0}}\nnot-json\n{{\"n\":2}}\n").unwrap();
+        let tail = read_tail(file.path(), 10, u64::MAX).unwrap();
+        assert_eq!(tail.rows, [json!({"n":0}), json!({"n":2})]);
+        assert_eq!(tail.unmappable, 1);
+    }
+
+    #[test]
+    fn session_file_uses_the_configured_project_slug() {
+        let root = TempDir::new().unwrap();
+        let project = root.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        let config = root.path().join("claude");
+        let session_id = "11111111-1111-1111-1111-111111111111";
+        let transcript = config
+            .join("projects")
+            .join(hash_project_path(&project))
+            .join(format!("{session_id}.jsonl"));
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript, b"{}\n").unwrap();
+
+        assert_eq!(
+            find_session_file(&config, &project, session_id),
+            Some(transcript)
+        );
+    }
+
+    #[test]
+    fn historical_adapter_maps_sdk_vocabulary_and_omits_plumbing() {
+        let timestamp = "2026-09-16T10:11:12.345Z";
+        let assistant = historical_row(&json!({
+            "type":"assistant",
+            "uuid":"assistant-row",
+            "sessionId":"session",
+            "requestId":"request",
+            "timestamp":timestamp,
+            "isApiErrorMessage":true,
+            "message":{"id":"message","model":"claude","content":[{"type":"text","text":"hello"}]}
+        }))
+        .unwrap();
+        assert_eq!(assistant.payload["session_id"], "session");
+        assert_eq!(assistant.payload["request_id"], "request");
+        assert_eq!(assistant.payload["parent_tool_use_id"], Value::Null);
+        assert_eq!(assistant.payload["is_api_error"], true);
+        assert_eq!(
+            assistant.activity_at.unwrap().timestamp_millis(),
+            1_789_553_472_345
+        );
+
+        let prompt = historical_row(&json!({
+            "type":"user","uuid":"prompt","sessionId":"session",
+            "message":{"role":"user","content":"hello"}
+        }))
+        .unwrap();
+        assert_eq!(prompt.payload["isReplay"], true);
+
+        let interrupt = historical_row(&json!({
+            "type":"user","uuid":"interrupt","sessionId":"session",
+            "message":{"role":"user","content":"[Request interrupted by user]"}
+        }))
+        .unwrap();
+        assert!(interrupt.payload.get("isReplay").is_none());
+
+        let tool_result = historical_row(&json!({
+            "type":"user","uuid":"result","sessionId":"session",
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool","is_error":false}]},
+            "toolUseResult":{"stdout":"ok"}
+        }))
+        .unwrap();
+        assert_eq!(tool_result.payload["tool_use_result"]["stdout"], "ok");
+
+        let compact = historical_row(&json!({
+            "type":"system","subtype":"compact_boundary","uuid":"compact","sessionId":"session",
+            "compactMetadata":{"trigger":"manual","preTokens":10,"nestedValue":{"postTokens":2}}
+        }))
+        .unwrap();
+        assert_eq!(compact.payload["compact_metadata"]["pre_tokens"], 10);
+        assert_eq!(
+            compact.payload["compact_metadata"]["nested_value"]["post_tokens"],
+            2
+        );
+
+        for omitted in [
+            json!({"type":"user","uuid":"meta","isMeta":true,"message":{"content":"hidden"}}),
+            json!({"type":"user","uuid":"command","message":{"content":"<command-name>test"}}),
+            json!({"type":"user","uuid":"task","origin":{"kind":"task-notification"},"message":{"content":"done"}}),
+            json!({"type":"system","subtype":"turn_duration"}),
+            json!({"type":"future"}),
+        ] {
+            assert!(
+                historical_row(&omitted).is_none(),
+                "unexpected row: {omitted}"
+            );
+        }
+    }
 }

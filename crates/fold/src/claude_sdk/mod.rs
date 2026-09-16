@@ -677,11 +677,7 @@ impl Observation {
 
     pub fn observe(&mut self, seq: u64, row: &Value) {
         self.cursor = self.cursor.max(seq);
-        if row["parent_tool_use_id"].is_null()
-            && matches!(
-                row["type"].as_str(),
-                Some("amux.claude_sdk.ready" | "conversation_reset")
-            )
+        if row["parent_tool_use_id"].is_null() && row["type"].as_str() == Some("conversation_reset")
         {
             self.todos = ClaudeTodos::default();
         }
@@ -1870,6 +1866,16 @@ mod tests {
             observation.todos().unwrap().current.as_deref(),
             Some("Shipping it")
         );
+        observation.observe(
+            10,
+            &json!({"type":"amux.claude_sdk.ready","session_id":"s","resumed":true}),
+        );
+        assert_eq!(
+            observation.todos().unwrap().current.as_deref(),
+            Some("Shipping it")
+        );
+        observation.observe(11, &json!({"type":"conversation_reset"}));
+        assert!(observation.todos().is_none());
     }
 
     #[test]

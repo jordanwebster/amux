@@ -1,6 +1,6 @@
 //! amux adapter for Claude's canonical stream-JSON provider session.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -13,7 +13,7 @@ use claude::sdk::{
     SettingsConfig, SyncHookOutput, UserDialogResult, UserMessage,
 };
 use futures_util::StreamExt;
-use model::ProtocolError;
+use model::{ProtocolError, SummaryField};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use serde_json::{Value, json};
@@ -34,6 +34,17 @@ use crate::agents::{
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
+
+const HISTORY_MAX_ROWS: usize = 2_000;
+const HISTORY_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const HISTORY_LIVE_QUEUE_BYTES: usize = 4 * 1024 * 1024;
+
+struct IngestContext {
+    agent_id: Uuid,
+    resumed: bool,
+    history_config_root: Option<PathBuf>,
+    working_dir: PathBuf,
+}
 
 #[derive(Clone, Copy)]
 enum RequestKind {
@@ -141,6 +152,7 @@ pub(crate) struct ClaudeSdkBackend {
     created_at: DateTime<Utc>,
     launch_route: Option<McpLaunchRoute>,
     artifact_root: PathBuf,
+    history_config_root: Option<PathBuf>,
     runtime: Arc<Mutex<Runtime>>,
     input_done: Arc<Notify>,
     log: StructuredLogSource,
@@ -174,6 +186,7 @@ impl ClaudeSdkBackend {
             created_at: Utc::now(),
             launch_route: Some(launch_route),
             artifact_root: req.working_dir.join(".artifacts"),
+            history_config_root: claude_config_root(),
             runtime: Arc::new(Mutex::new(Runtime {
                 facts: SessionFacts::from_args(&req.args),
                 session_id: Some(req.agent_id),
@@ -238,6 +251,7 @@ impl ClaudeSdkBackend {
             created_at: record.created_at,
             launch_route: None,
             artifact_root,
+            history_config_root: claude_config_root(),
             runtime: Arc::new(Mutex::new(Runtime {
                 session_id,
                 facts,
@@ -387,19 +401,23 @@ impl ClaudeSdkBackend {
         let runtime = self.runtime.clone();
         let log = self.log.clone();
         let input_done = self.input_done.clone();
-        let agent_id = self.agent_id;
-        let resumed = self.resumed;
+        let context = IngestContext {
+            agent_id: self.agent_id,
+            resumed: self.resumed,
+            history_config_root: self.history_config_root.clone(),
+            working_dir: self.working_dir.clone(),
+        };
 
         let handle = if let Some(session) = self.injected.take() {
             tokio::spawn(ingest_session(
-                agent_id, resumed, session, runtime, input_done, log, event_tx,
+                context, session, runtime, input_done, log, event_tx,
             ))
         } else {
             let options = self.query_options()?;
             let sources = self.sources.clone();
             tokio::spawn(async move {
                 let supplied = match &sources {
-                    Some(sources) => sources.claude_sdk(agent_id, options).await,
+                    Some(sources) => sources.claude_sdk(context.agent_id, options).await,
                     None => ClaudeSdkSource::Launch(Box::new(options)),
                 };
                 let session = match supplied {
@@ -408,13 +426,10 @@ impl ClaudeSdkBackend {
                 };
                 match session {
                     Ok(session) => {
-                        ingest_session(
-                            agent_id, resumed, session, runtime, input_done, log, event_tx,
-                        )
-                        .await
+                        ingest_session(context, session, runtime, input_done, log, event_tx).await
                     }
                     Err(error) => {
-                        tracing::error!(%agent_id, %error, "failed to spawn Claude SDK session");
+                        tracing::error!(agent_id = %context.agent_id, %error, "failed to spawn Claude SDK session");
                         log.close().await;
                     }
                 }
@@ -467,14 +482,19 @@ fn insert_extra_args(options: &mut QueryOptions, args: &[String]) -> Result<()> 
 }
 
 async fn ingest_session(
-    agent_id: Uuid,
-    resumed: bool,
+    context: IngestContext,
     session: Session,
     runtime: Arc<Mutex<Runtime>>,
     input_done: Arc<Notify>,
     log: StructuredLogSource,
     event_tx: mpsc::Sender<SessionEvent>,
 ) {
+    let IngestContext {
+        agent_id,
+        resumed,
+        history_config_root,
+        working_dir,
+    } = context;
     let Session {
         mut events,
         control,
@@ -500,6 +520,22 @@ async fn ingest_session(
         )
         .await;
     }
+    let buffered = if resumed {
+        let (history, buffered) = load_resume_history(
+            agent_id,
+            &mut events,
+            history_config_root,
+            working_dir,
+            session_id.clone(),
+        )
+        .await;
+        if let Some(history) = history {
+            write_history(&log, history).await;
+        }
+        buffered
+    } else {
+        VecDeque::new()
+    };
     write_synthesized(
         &log,
         ClaudeSdkSynthesized::Ready {
@@ -516,6 +552,7 @@ async fn ingest_session(
         .expect("Claude SDK runtime poisoned")
         .prompt_publication
         .clone();
+    let mut events = futures_util::stream::iter(buffered).chain(events);
     while let Some(event) = events.next().await {
         let _publication = prompt_publication.lock().await;
         match event {
@@ -635,6 +672,164 @@ async fn ingest_session(
         write_synthesized(&log, kind.resolution(request_id, "session_exited")).await;
     }
     log.close().await;
+}
+
+struct ResumeHistory {
+    file: PathBuf,
+    tail: claude::history::TailRead,
+}
+
+async fn load_resume_history(
+    agent_id: Uuid,
+    events: &mut claude::sdk::EventStream,
+    config_root: Option<PathBuf>,
+    working_dir: PathBuf,
+    session_id: String,
+) -> (
+    Option<ResumeHistory>,
+    VecDeque<std::result::Result<SdkEvent, claude::sdk::Error>>,
+) {
+    let Some(config_root) = config_root else {
+        return (None, VecDeque::new());
+    };
+    let mut read = tokio::task::spawn_blocking(move || {
+        let file = claude::history::find_session_file(&config_root, &working_dir, &session_id)?;
+        let tail = claude::history::read_tail(&file, HISTORY_MAX_ROWS, HISTORY_MAX_BYTES);
+        Some((file, tail))
+    });
+    let mut buffered = VecDeque::new();
+    let mut buffered_bytes = 0usize;
+
+    let loaded = loop {
+        if buffered_bytes >= HISTORY_LIVE_QUEUE_BYTES {
+            break read.await;
+        }
+        tokio::select! {
+            loaded = &mut read => break loaded,
+            event = events.next() => {
+                let Some(event) = event else {
+                    break read.await;
+                };
+                // A single oversized provider event is admitted as one item;
+                // after that, polling pauses and upstream backpressure applies.
+                buffered_bytes = buffered_bytes.saturating_add(
+                    sdk_event_bytes(&event).min(HISTORY_LIVE_QUEUE_BYTES)
+                );
+                buffered.push_back(event);
+            }
+        }
+    };
+
+    let history = match loaded {
+        Ok(Some((file, Ok(tail)))) => Some(ResumeHistory { file, tail }),
+        Ok(Some((file, Err(error)))) => {
+            tracing::warn!(%agent_id, path = %file.display(), %error, "failed to read Claude SDK resume history");
+            None
+        }
+        Ok(None) => None,
+        Err(error) => {
+            tracing::warn!(%agent_id, %error, "Claude SDK resume history reader failed");
+            None
+        }
+    };
+    (history, buffered)
+}
+
+fn claude_config_root() -> Option<PathBuf> {
+    if let Some(config) = std::env::var_os("CLAUDE_CONFIG_DIR") {
+        return Some(PathBuf::from(config));
+    }
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .map(|home| home.join(".claude"))
+}
+
+fn sdk_event_bytes(event: &std::result::Result<SdkEvent, claude::sdk::Error>) -> usize {
+    format!("{event:?}").len().max(1)
+}
+
+async fn write_history(log: &StructuredLogSource, history: ResumeHistory) {
+    let cut_rows = history.tail.rows.len() + history.tail.unmappable;
+    write_synthesized(
+        log,
+        ClaudeSdkSynthesized::HistoryBegin {
+            cut_bytes: history.tail.cut_bytes,
+            cut_rows,
+            file: history.file.to_string_lossy().into_owned(),
+        },
+    )
+    .await;
+
+    let mapped = history
+        .tail
+        .rows
+        .iter()
+        .filter_map(claude::history::historical_row)
+        .collect::<Vec<_>>();
+    let coverage = history_coverage(&mapped);
+    for row in &mapped {
+        log.write_row(
+            row.payload.clone(),
+            row.activity_at
+                .map(|timestamp| timestamp.timestamp_millis()),
+            true,
+        )
+        .await;
+    }
+    write_synthesized(
+        log,
+        ClaudeSdkSynthesized::HistoryComplete {
+            rows_emitted: mapped.len(),
+            clipped: history.tail.clipped,
+            partial_tail: history.tail.partial_tail || history.tail.unmappable > 0,
+            coverage,
+        },
+    )
+    .await;
+}
+
+fn history_coverage(rows: &[claude::history::HistoricalRow]) -> Vec<SummaryField> {
+    let mut coverage = Vec::new();
+    if rows.iter().any(|row| row.activity_at.is_some()) {
+        coverage.push(SummaryField::LastActivity);
+    }
+
+    let todo_writes = rows
+        .iter()
+        .flat_map(|row| {
+            row.payload
+                .pointer("/message/content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter(|block| {
+            block.get("type").and_then(Value::as_str) == Some("tool_use")
+                && block.get("name").and_then(Value::as_str) == Some("TodoWrite")
+        })
+        .filter_map(|block| block.get("id").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    let successful_results = rows
+        .iter()
+        .flat_map(|row| {
+            row.payload
+                .pointer("/message/content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter(|block| {
+            block.get("type").and_then(Value::as_str) == Some("tool_result")
+                && block.get("is_error").and_then(Value::as_bool) != Some(true)
+        })
+        .filter_map(|block| block.get("tool_use_id").and_then(Value::as_str));
+    if successful_results
+        .into_iter()
+        .any(|tool_use_id| todo_writes.contains(tool_use_id))
+    {
+        coverage.push(SummaryField::Todo);
+    }
+    coverage
 }
 
 async fn wait_for_inputs(runtime: &Arc<Mutex<Runtime>>, input_done: &Notify) {
@@ -1184,6 +1379,67 @@ mod tests {
     /// the deadline is only here to turn a genuine hang into a failure rather
     /// than to measure how fast the process starts.
     const START_DEADLINE: Duration = Duration::from_secs(30);
+
+    #[tokio::test]
+    async fn daemon_sdk_history_adapter_emits_markers_rows_and_activity() {
+        let log = StructuredLogSource::with_policy(RingPolicy::claude_sdk());
+        let mut rows = log.subscribe().await.unwrap();
+        let history = ResumeHistory {
+            file: PathBuf::from("/transcripts/session.jsonl"),
+            tail: claude::history::TailRead {
+                rows: vec![
+                    json!({
+                        "type":"assistant","uuid":"todo-row","sessionId":"session",
+                        "timestamp":"2026-09-16T10:11:12.345Z",
+                        "message":{"id":"message","content":[{
+                            "type":"tool_use","id":"todo","name":"TodoWrite",
+                            "input":{"todos":[{"content":"ship","activeForm":"shipping","status":"in_progress"}]}
+                        }]}
+                    }),
+                    json!({
+                        "type":"user","uuid":"result","sessionId":"session",
+                        "message":{"content":[{
+                            "type":"tool_result","tool_use_id":"todo","content":"ok","is_error":false
+                        }]}
+                    }),
+                ],
+                cut_bytes: 321,
+                clipped: true,
+                partial_tail: false,
+                unmappable: 1,
+            },
+        };
+
+        write_history(&log, history).await;
+        let begin = rows.read().await.unwrap();
+        let assistant = rows.read().await.unwrap();
+        let result = rows.read().await.unwrap();
+        let complete = rows.read().await.unwrap();
+
+        assert_eq!(
+            begin.payload,
+            json!({
+                "type":"amux.claude_sdk.history_begin",
+                "cut_bytes":321,
+                "cut_rows":3,
+                "file":"/transcripts/session.jsonl"
+            })
+        );
+        assert!(assistant.historical);
+        assert_eq!(assistant.activity_at_unix_ms, Some(1_789_553_472_345));
+        assert_eq!(assistant.payload["session_id"], "session");
+        assert!(result.historical);
+        assert_eq!(
+            complete.payload,
+            json!({
+                "type":"amux.claude_sdk.history_complete",
+                "rows_emitted":2,
+                "clipped":true,
+                "partial_tail":true,
+                "coverage":["last_activity","todo"]
+            })
+        );
+    }
 
     #[tokio::test]
     async fn daemon_protocol_conversation_reset_cuts_the_sdk_log_and_subscribers() {
@@ -2156,7 +2412,100 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sdk_suspend_restart_round_trip_resumes_by_session_id_and_orders_gap() {
+    async fn daemon_sdk_resume_publishes_transcript_history_before_ready() {
+        let directory = tempfile::tempdir().unwrap();
+        let working_dir = directory.path().join("project");
+        std::fs::create_dir(&working_dir).unwrap();
+        let config_root = directory.path().join("claude");
+        let session_id = Uuid::new_v4();
+        let project_slug = std::fs::canonicalize(&working_dir)
+            .unwrap()
+            .to_string_lossy()
+            .replace(['/', '_'], "-");
+        let transcript = config_root
+            .join("projects")
+            .join(project_slug)
+            .join(format!("{session_id}.jsonl"));
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(
+            &transcript,
+            format!(
+                "{}\n",
+                json!({
+                    "type":"assistant","uuid":Uuid::new_v4(),"sessionId":session_id,
+                    "timestamp":"2026-09-16T10:11:12.345Z",
+                    "message":{"id":"historical-message","content":[{"type":"text","text":"from disk"}]}
+                })
+            ),
+        )
+        .unwrap();
+
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            host_id: None,
+            name: Some("resumed-sdk".to_string()),
+            agent_type: AgentType::Claude {
+                driver: ClaudeDriver::Sdk,
+            },
+            working_dir,
+            terminal_size: None,
+            args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
+        };
+        let mut backend = ClaudeSdkBackend::from_suspended(
+            &req,
+            LocalAgentNameSource::Amux,
+            session_id,
+            Utc::now(),
+            mcp_launch_route_for_tests(Uuid::new_v4()),
+            0,
+        );
+        backend.history_config_root = Some(config_root);
+        let (session, server) = initialized_session(backend.query_options().unwrap()).await;
+        backend.injected = Some(session);
+        let mut rows = backend.log.subscribe().await.unwrap();
+        let (event_tx, _event_rx) = mpsc::channel(8);
+        let ingest = backend.start(&event_tx).unwrap();
+
+        let mut published = Vec::new();
+        for _ in 0..6 {
+            published.push(
+                tokio::time::timeout(START_DEADLINE, rows.read())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        assert_eq!(
+            published
+                .iter()
+                .map(|row| row.payload["type"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "amux.claude_sdk.gap",
+                "amux.claude_sdk.history_begin",
+                "assistant",
+                "amux.claude_sdk.history_complete",
+                "amux.claude_sdk.ready",
+                "amux.claude_sdk.session_facts",
+            ]
+        );
+        assert!(published[2].historical);
+        assert_eq!(published[2].activity_at_unix_ms, Some(1_789_553_472_345));
+        assert_eq!(published[2].payload["message"]["id"], "historical-message");
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            backend.stop(StopPolicy::Interrupt).await;
+            ingest.await.unwrap();
+            server.await.unwrap();
+        })
+        .await
+        .expect("resumed backend did not close its session and fixture transport");
+    }
+
+    #[tokio::test]
+    async fn daemon_sdk_suspend_restart_round_trip_resumes_by_session_id_and_orders_gap() {
         let directory = tempfile::tempdir().unwrap();
         let state_path = directory.path().join("state.yaml");
 

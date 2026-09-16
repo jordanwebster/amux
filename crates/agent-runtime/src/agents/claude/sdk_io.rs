@@ -5,9 +5,9 @@
 //! `amux.attachments` row is also synthesized here. Both are a closed enum so
 //! additions require a protocol change and a frozen-shape test.
 
-pub use model::ModelFact;
 #[cfg(test)]
 use model::ProtocolError;
+pub use model::{ModelFact, SummaryField};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -58,6 +58,19 @@ pub enum ClaudeSdkSynthesized {
     Ready { session_id: String, resumed: bool },
     #[serde(rename = "amux.claude_sdk.gap")]
     Gap { resumed_session_id: String },
+    #[serde(rename = "amux.claude_sdk.history_begin")]
+    HistoryBegin {
+        cut_bytes: u64,
+        cut_rows: usize,
+        file: String,
+    },
+    #[serde(rename = "amux.claude_sdk.history_complete")]
+    HistoryComplete {
+        rows_emitted: usize,
+        clipped: bool,
+        partial_tail: bool,
+        coverage: Vec<SummaryField>,
+    },
     #[serde(rename = "amux.claude_sdk.permission_required")]
     PermissionRequired {
         request_id: String,
@@ -244,6 +257,23 @@ mod tests {
                     resumed_session_id: "session-1".to_string(),
                 },
                 json!({"type": "amux.claude_sdk.gap", "resumed_session_id": "session-1"}),
+            ),
+            (
+                ClaudeSdkSynthesized::HistoryBegin {
+                    cut_bytes: 4096,
+                    cut_rows: 23,
+                    file: "/transcripts/session.jsonl".to_string(),
+                },
+                json!({"type": "amux.claude_sdk.history_begin", "cut_bytes": 4096, "cut_rows": 23, "file": "/transcripts/session.jsonl"}),
+            ),
+            (
+                ClaudeSdkSynthesized::HistoryComplete {
+                    rows_emitted: 19,
+                    clipped: true,
+                    partial_tail: false,
+                    coverage: vec![SummaryField::Todo],
+                },
+                json!({"type": "amux.claude_sdk.history_complete", "rows_emitted": 19, "clipped": true, "partial_tail": false, "coverage": ["todo"]}),
             ),
             (
                 ClaudeSdkSynthesized::PermissionRequired {
