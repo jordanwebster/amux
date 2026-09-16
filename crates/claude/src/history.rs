@@ -1101,6 +1101,35 @@ mod tests {
     }
 
     #[test]
+    fn history_tail_enforces_the_resume_byte_and_row_limits() {
+        const MAX_ROWS: usize = 2_000;
+        const MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+        let mut row_limited = tempfile::NamedTempFile::new().unwrap();
+        for n in 0..=MAX_ROWS {
+            writeln!(row_limited, "{{\"n\":{n}}}").unwrap();
+        }
+        let tail = read_tail(row_limited.path(), MAX_ROWS, MAX_BYTES).unwrap();
+        assert_eq!(tail.rows.len(), MAX_ROWS);
+        assert_eq!(tail.rows.first(), Some(&json!({"n":1})));
+        assert_eq!(tail.rows.last(), Some(&json!({"n":MAX_ROWS})));
+        assert!(tail.clipped);
+        assert!(!tail.partial_tail);
+
+        let mut byte_limited = tempfile::NamedTempFile::new().unwrap();
+        write!(byte_limited, "{{\"padding\":\"").unwrap();
+        byte_limited
+            .write_all(&vec![b'x'; MAX_BYTES as usize])
+            .unwrap();
+        writeln!(byte_limited, "\"}}").unwrap();
+        writeln!(byte_limited, "{{\"kept\":true}}").unwrap();
+        let tail = read_tail(byte_limited.path(), MAX_ROWS, MAX_BYTES).unwrap();
+        assert_eq!(tail.rows, [json!({"kept":true})]);
+        assert!(tail.clipped);
+        assert!(!tail.partial_tail);
+    }
+
+    #[test]
     fn session_file_uses_the_configured_project_slug() {
         let root = TempDir::new().unwrap();
         let project = root.path().join("project");

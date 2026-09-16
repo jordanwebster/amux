@@ -1364,11 +1364,14 @@ impl Serialize for DebugView<'_, ClaudeSdkBackend> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
     use claude::sdk::{HookEvent, HookSubscription};
+    use fold::claude_sdk::ClaudeSdkFold;
+    use fold::{Baseline, Input, MutationOracle, ProviderFold};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex};
 
     use super::*;
@@ -1439,6 +1442,145 @@ mod tests {
                 "coverage":["last_activity","todo"]
             })
         );
+    }
+
+    async fn history_complete_from_file(path: &Path) -> Value {
+        let tail = claude::history::read_tail(path, HISTORY_MAX_ROWS, HISTORY_MAX_BYTES).unwrap();
+        let log = StructuredLogSource::with_policy(RingPolicy::claude_sdk());
+        let mut rows = log.subscribe().await.unwrap();
+        write_history(
+            &log,
+            ResumeHistory {
+                file: path.to_path_buf(),
+                tail,
+            },
+        )
+        .await;
+        loop {
+            let row = rows.read().await.unwrap();
+            if row.payload["type"] == "amux.claude_sdk.history_complete" {
+                return row.payload;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn daemon_sdk_history_complete_reports_byte_clipping_and_partial_tail() {
+        let mut byte_limited = tempfile::NamedTempFile::new().unwrap();
+        write!(byte_limited, "{{\"padding\":\"").unwrap();
+        byte_limited
+            .write_all(&vec![b'x'; HISTORY_MAX_BYTES as usize])
+            .unwrap();
+        writeln!(byte_limited, "\"}}").unwrap();
+        writeln!(
+            byte_limited,
+            "{}",
+            json!({
+                "type":"assistant","uuid":"kept","sessionId":"session",
+                "message":{"id":"message","content":[{"type":"text","text":"kept"}]}
+            })
+        )
+        .unwrap();
+        let complete = history_complete_from_file(byte_limited.path()).await;
+        assert_eq!(complete["rows_emitted"], 1);
+        assert_eq!(complete["clipped"], true);
+        assert_eq!(complete["partial_tail"], false);
+
+        let mut partial = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            partial,
+            "{}",
+            json!({
+                "type":"assistant","uuid":"complete","sessionId":"session",
+                "message":{"id":"message","content":[{"type":"text","text":"complete"}]}
+            })
+        )
+        .unwrap();
+        write!(partial, "{{\"type\":\"assistant\"").unwrap();
+        let complete = history_complete_from_file(partial.path()).await;
+        assert_eq!(complete["rows_emitted"], 1);
+        assert_eq!(complete["clipped"], false);
+        assert_eq!(complete["partial_tail"], true);
+    }
+
+    #[test]
+    fn daemon_sdk_captured_live_final_and_transcript_row_converge() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("fixtures/sdk-resume-identity.json")).unwrap();
+        assert_eq!(
+            fixture.pointer("/capture/harness"),
+            Some(&json!("claude-sdk-live"))
+        );
+        let live = fixture.get("live_final").unwrap();
+        let transcript = fixture.get("transcript_row").unwrap();
+        let resumed = fixture.get("resumed_historical").unwrap();
+        let mapped = claude::history::historical_row(transcript).unwrap().payload;
+        let slot = fixture.get("slot").and_then(Value::as_u64).unwrap() as usize;
+
+        assert_eq!(live["uuid"], transcript["uuid"]);
+        assert_eq!(live["uuid"], mapped["uuid"]);
+        assert_eq!(live["uuid"], resumed["uuid"]);
+        assert_eq!(
+            live.pointer(&format!("/message/content/{slot}")),
+            transcript.pointer(&format!("/message/content/{slot}"))
+        );
+        assert_eq!(
+            live.pointer(&format!("/message/content/{slot}")),
+            mapped.pointer(&format!("/message/content/{slot}"))
+        );
+        assert_eq!(
+            live.pointer(&format!("/message/content/{slot}")),
+            resumed.pointer(&format!("/message/content/{slot}"))
+        );
+
+        fn folded(
+            row: &Value,
+            historical: bool,
+        ) -> MutationOracle<fold::claude_sdk::ClaudeSdkEntry> {
+            let mut fold = ClaudeSdkFold::default();
+            fold.begin(1, Baseline::Start);
+            let payload = serde_json::to_vec(row).unwrap();
+            let changes = fold.apply(Input::Row {
+                seq: 1,
+                published_at: Utc::now(),
+                activity_at: None,
+                historical,
+                payload: &payload,
+            });
+            let mut oracle = MutationOracle::default();
+            oracle.apply_changes(&changes).unwrap();
+            oracle
+        }
+
+        let live_only = folded(live, false).entries();
+        let history_only = folded(&mapped, true).entries();
+        assert_eq!(live_only.len(), 1);
+        assert_eq!(history_only.len(), 1);
+        assert_eq!(live_only[0].key, history_only[0].key);
+        assert_eq!(live_only[0].entry, history_only[0].entry);
+        assert_eq!(live_only[0].order.slot(), slot as u16);
+        assert_eq!(history_only[0].order.slot(), slot as u16);
+
+        let mut fold = ClaudeSdkFold::default();
+        fold.begin(1, Baseline::Start);
+        let mut oracle = MutationOracle::default();
+        for (seq, historical, row) in [(1, true, &mapped), (2, false, live)] {
+            let payload = serde_json::to_vec(row).unwrap();
+            let changes = fold.apply(Input::Row {
+                seq,
+                published_at: Utc::now(),
+                activity_at: None,
+                historical,
+                payload: &payload,
+            });
+            oracle.apply_changes(&changes).unwrap();
+        }
+        assert_eq!(
+            oracle.entries().len(),
+            1,
+            "live overlap must upsert the historical key"
+        );
+        assert_eq!(oracle.entries()[0].key, live_only[0].key);
     }
 
     #[tokio::test]
@@ -2589,6 +2731,7 @@ mod tests {
             mcp_launch_route_for_tests(Uuid::new_v4()),
             0,
         );
+        resumed.history_config_root = Some(directory.path().join("empty-claude-config"));
         let options = resumed.query_options().unwrap();
         assert_eq!(
             options.resume.as_deref(),
@@ -2617,6 +2760,11 @@ mod tests {
         assert_eq!(ready.payload["type"], "amux.claude_sdk.ready");
         assert_eq!(ready.payload["session_id"], restored_session_id.to_string());
         assert_eq!(ready.payload["resumed"], true);
+        let facts = tokio::time::timeout(START_DEADLINE, rows.read())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(facts.payload["type"], "amux.claude_sdk.session_facts");
 
         tokio::time::timeout(Duration::from_secs(5), async {
             resumed.stop(StopPolicy::Interrupt).await;

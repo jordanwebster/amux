@@ -1,3 +1,11 @@
+2026-09-16 — **Claude SDK resume behavior is pinned to a real provider row.**
+The daemon SDK suite now exercises present and absent transcript files, the
+4 MiB and 2,000-line cuts, a partial final line, marker ordering, recovered
+todos, historical permission tools without live obligations, and overlapping
+final rows. Its identity fixture comes from the authenticated live SDK harness:
+the provider's live final, raw transcript row, and resumed historical row share
+one UUID and block at the same slot, then fold into one canonical entry.
+
 2026-09-16 — **Resumed Claude SDK sessions publish their transcript history.**
 The daemon resolves the resumed session file across sibling worktrees, reads a
 single fixed tail, and maps supported transcript rows into the SDK vocabulary

@@ -56,8 +56,9 @@ fn main() -> anyhow::Result<()> {
     const TURN_TIMEOUT: Duration = Duration::from_secs(240);
     const SCENARIO_TIMEOUT: Duration = Duration::from_secs(720);
     const SCENARIOS: &[&str] = &["sdk_driver"];
-    const REQUIRED_VERSION: &str = "2.1.251";
+    const REQUIRED_VERSION: &str = "2.1.272";
     const ROWS_ARTIFACT: &str = "sdk-driver-live.rows.jsonl";
+    const IDENTITY_ARTIFACT: &str = "sdk-resume-identity.json";
     const TRANSCRIPT_ARTIFACT: &str = "sdk-driver-live.txt";
     const UPDATE_GUARDS: &[(&str, &str)] = &[
         ("DISABLE_AUTOUPDATER", "1"),
@@ -68,6 +69,7 @@ fn main() -> anyhow::Result<()> {
     #[derive(Clone, Debug)]
     struct Row {
         seq: u64,
+        historical: bool,
         json: Value,
     }
 
@@ -346,6 +348,7 @@ fn main() -> anyhow::Result<()> {
                             .context("parse Claude SDK structured row")?;
                         self.rows.push(Row {
                             seq: output.seq,
+                            historical: output.historical,
                             json,
                         });
                     }
@@ -389,6 +392,7 @@ fn main() -> anyhow::Result<()> {
                             .context("parse trailing Claude SDK row")?;
                         self.rows.push(Row {
                             seq: output.seq,
+                            historical: output.historical,
                             json,
                         });
                     }
@@ -445,7 +449,97 @@ fn main() -> anyhow::Result<()> {
             .map(|(cursor, _)| cursor)
     }
 
-    async fn run_sdk_driver(harness: &mut Harness, model: &str) -> Result<(Vec<Row>, Value)> {
+    fn text_block(row: &Value, expected: &str) -> Option<(usize, Value)> {
+        row.pointer("/message/content")
+            .and_then(Value::as_array)?
+            .iter()
+            .enumerate()
+            .find(|(_, block)| {
+                block.get("type").and_then(Value::as_str) == Some("text")
+                    && block.get("text").and_then(Value::as_str) == Some(expected)
+            })
+            .map(|(slot, block)| (slot, block.clone()))
+    }
+
+    async fn transcript_row(harness: &Harness, session_id: &str, row_uuid: &str) -> Result<Value> {
+        let config_root = std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")))
+            .context("cannot determine Claude config root for transcript identity proof")?;
+        let deadline = Instant::now() + READY_TIMEOUT;
+        loop {
+            if let Some(file) = claude::history::find_session_file(
+                &config_root,
+                &harness.scratch.project,
+                session_id,
+            ) && let Some(row) = claude::history::read_tail(&file, usize::MAX, u64::MAX)?
+                .rows
+                .into_iter()
+                .find(|row| row.get("uuid").and_then(Value::as_str) == Some(row_uuid))
+            {
+                return Ok(row);
+            }
+            if Instant::now() >= deadline {
+                bail!("transcript has no assistant row {row_uuid} after {READY_TIMEOUT:?}");
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    fn identity_fixture(
+        version: &str,
+        live: &Row,
+        transcript: &Value,
+        resumed: &Row,
+    ) -> Result<Value> {
+        let uuid = live
+            .json
+            .get("uuid")
+            .and_then(Value::as_str)
+            .context("controlled live assistant final has no uuid")?;
+        if live.historical {
+            bail!("controlled live assistant final was marked historical");
+        }
+        if !resumed.historical {
+            bail!("resumed assistant final was not marked historical");
+        }
+        if transcript.get("uuid").and_then(Value::as_str) != Some(uuid)
+            || resumed.json.get("uuid").and_then(Value::as_str) != Some(uuid)
+        {
+            bail!("live, transcript, and resumed assistant UUIDs differ");
+        }
+
+        let expected = "SDK_PROMPT_OK";
+        let (live_slot, live_block) = text_block(&live.json, expected)
+            .context("controlled live final lacks its exact text block")?;
+        let (transcript_slot, transcript_block) = text_block(transcript, expected)
+            .context("provider transcript lacks the controlled final text block")?;
+        let (resumed_slot, resumed_block) = text_block(&resumed.json, expected)
+            .context("resumed historical final lacks the controlled text block")?;
+        if (live_slot, &live_block) != (transcript_slot, &transcript_block)
+            || (live_slot, &live_block) != (resumed_slot, &resumed_block)
+        {
+            bail!("live, transcript, and resumed final block content or slot differs");
+        }
+
+        Ok(json!({
+            "capture": {
+                "harness": "claude-sdk-live",
+                "claude_version": version,
+                "scenario": "sdk_driver"
+            },
+            "live_final": live.json,
+            "transcript_row": transcript,
+            "resumed_historical": resumed.json,
+            "slot": live_slot
+        }))
+    }
+
+    async fn run_sdk_driver(
+        harness: &mut Harness,
+        model: &str,
+        version: &str,
+    ) -> Result<(Vec<Row>, Value, Value)> {
         let memory_token = "SDK_RESTART_MEMORY_7F3A";
         let agent = harness.create_sdk_agent(model).await?;
         let mut capture = StructuredCapture::open(harness, agent).await?;
@@ -474,6 +568,18 @@ fn main() -> anyhow::Result<()> {
             "SDK_PROMPT_OK",
         )
         .await?;
+        let live_identity = capture
+            .rows
+            .iter()
+            .find(|row| row.assistant_text().as_deref() == Some("SDK_PROMPT_OK"))
+            .cloned()
+            .context("controlled prompt produced no live assistant final")?;
+        let identity_uuid = live_identity
+            .json
+            .get("uuid")
+            .and_then(Value::as_str)
+            .context("controlled live assistant final has no uuid")?
+            .to_string();
 
         let tool_path = harness.scratch.project.join("sdk-tool-ran.txt");
         let permission_prompt = format!(
@@ -653,6 +759,7 @@ fn main() -> anyhow::Result<()> {
         harness.client().delete_agent(sender).await?;
 
         capture.drain_idle().await?;
+        let transcript_identity = transcript_row(harness, &session_id, &identity_uuid).await?;
         let mut all_rows = capture.into_rows();
         let suspended_count = crate::live_installation::suspend(&harness.scratch.root).await?;
         if suspended_count != 1 {
@@ -687,6 +794,21 @@ fn main() -> anyhow::Result<()> {
         {
             bail!("resumed ready row did not preserve session id with resumed=true");
         }
+        let resumed_identity = resumed
+            .rows
+            .iter()
+            .find(|row| {
+                row.historical
+                    && row.json.get("uuid").and_then(Value::as_str) == Some(identity_uuid.as_str())
+            })
+            .cloned()
+            .context("resume did not publish the controlled transcript final as history")?;
+        let identity = identity_fixture(
+            version,
+            &live_identity,
+            &transcript_identity,
+            &resumed_identity,
+        )?;
         let _ = prompt_to_result(
             &mut resumed,
             resumed_cursor,
@@ -722,8 +844,10 @@ fn main() -> anyhow::Result<()> {
                     "resume_memory": memory_token,
                     "row_count": row_count,
                     "final_cursor_before_restart": cursor,
+                    "resume_identity_equal": true,
                 }
             }),
+            identity,
         ))
     }
 
@@ -912,12 +1036,20 @@ fn main() -> anyhow::Result<()> {
         Ok(())
     }
 
+    fn write_value(path: &Path, value: &Value, scratch: &Path) -> Result<()> {
+        let mut value = value.clone();
+        redact_value(&mut value, scratch);
+        std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&value)?))?;
+        Ok(())
+    }
+
     async fn run(selected: Vec<&str>) -> Result<()> {
         let out = std::env::var_os("AMUX_LIVE_OUT")
             .map(workspace_path)
             .unwrap_or_else(|| workspace_path("target/claude-sdk-live"));
         std::fs::create_dir_all(&out)?;
         let rows_path = out.join(ROWS_ARTIFACT);
+        let identity_path = out.join(IDENTITY_ARTIFACT);
         let transcript_path = out.join(TRANSCRIPT_ARTIFACT);
         if rows_path.exists() {
             std::fs::remove_file(&rows_path)?;
@@ -945,11 +1077,13 @@ fn main() -> anyhow::Result<()> {
             )?;
             let started = Instant::now();
             let mut harness = Harness::start(out.clone()).await?;
-            let result =
-                tokio::time::timeout(SCENARIO_TIMEOUT, run_sdk_driver(&mut harness, &model))
-                    .await
-                    .map_err(|_| anyhow!("scenario timeout after {SCENARIO_TIMEOUT:?}"))
-                    .and_then(|result| result);
+            let result = tokio::time::timeout(
+                SCENARIO_TIMEOUT,
+                run_sdk_driver(&mut harness, &model, &version),
+            )
+            .await
+            .map_err(|_| anyhow!("scenario timeout after {SCENARIO_TIMEOUT:?}"))
+            .and_then(|result| result);
             let cleanup = harness.shutdown().await;
             let result = match (result, cleanup) {
                 (Ok(capture), Ok(())) => Ok(capture),
@@ -962,8 +1096,9 @@ fn main() -> anyhow::Result<()> {
                 }
             };
             match result {
-                Ok((rows, notes)) => {
+                Ok((rows, notes, identity)) => {
                     write_rows(&rows_path, &rows, &harness.scratch.root)?;
+                    write_value(&identity_path, &identity, &harness.scratch.root)?;
                     report(&mut transcript, format!("assertions={notes}"))?;
                     report(
                         &mut transcript,

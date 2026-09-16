@@ -2678,7 +2678,7 @@ mod tests {
             json!({"type":"amux.claude_sdk.history_begin"}),
             json!({"type":"assistant","uuid":"todo-row","message":{"id":"m","content":[{"type":"tool_use","id":"todo","name":"TodoWrite","input":{"todos":[{"content":"ship","activeForm":"shipping","status":"in_progress"}]}}]}}),
             json!({"type":"user","uuid":"result","message":{"content":[{"type":"tool_result","tool_use_id":"todo","content":"ok"}]}}),
-            json!({"type":"amux.claude_sdk.permission_required","request_id":"old","tool_name":"Write"}),
+            json!({"type":"assistant","uuid":"old-permission-row","message":{"id":"old-permission-message","content":[{"type":"tool_use","id":"old-write","name":"Write","input":{"file_path":"/tmp/old","content":"old"}}]}}),
             json!({"type":"amux.claude_sdk.history_complete"}),
             json!({"type":"amux.claude_sdk.ready","session_id":"s","resumed":true}),
         ];
@@ -2698,6 +2698,15 @@ mod tests {
         assert_eq!(fold.summary().attention, Attention::Idle);
         assert!(fold.asks.is_empty());
         assert!(!fold.summary().unknown.contains(&SummaryField::Outstanding));
+        let entries = oracle.entries();
+        let old_permission = entries
+            .iter()
+            .find(|entry| entry.key.as_str() == "tool:old-write")
+            .expect("historical permission tool remains visible");
+        assert_eq!(
+            old_permission.entry.entry_kind(),
+            Some(ClaudeSdkEntryKind::Tool)
+        );
     }
 
     #[test]
